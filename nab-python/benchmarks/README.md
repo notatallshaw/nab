@@ -42,7 +42,7 @@ python nab-python/benchmarks/_profile_runner.py \
 
 `strategy_sweep.py` is a compatibility alias for `scenarios.py --strategy-matrix`; it does not implement another resolver or result format. Retired selections such as `--toml pip-lowest` fail with the canonical replacement command.
 
-Each run initializes `_standard_manifest.json` as incomplete before resolving anything. It becomes complete only after every selected supported execution has an exact, valid result; every selected unsupported scenario is declared; no result is missing or extra; and the source tree is clean. The manifest records the full source identity at both run boundaries, corpus hash, execution settings, strategies, selected files, and exact available, selected, completed, and unsupported logical and execution key sets. A missing, malformed, dirty, source-changing, or incomplete manifest does not describe a valid run. Reusing a result label resumes only when that manifest describes the same mode, strategy set, corpus, and selection. Use a new label or `--force` when any of those inputs changes. `--force` replaces the standard JSON results for the label while preserving universal results and top-level provenance.
+Each run initializes `_standard_manifest.json` as incomplete before resolving anything. It becomes complete only after every applicable execution has an exact, valid result; every unsupported or host-inapplicable scenario is accounted for; no result is missing or extra; and the source tree is clean. The manifest records the source identity at both run boundaries, corpus hash, execution settings, physical host identity, strategies, selected files, and terminal key sets. Reusing a result label requires the same mode, corpus, selection, and host. Use a new label or `--force` when any of those inputs changes. `--force` replaces the standard JSON results for the label while preserving universal results and top-level provenance.
 
 ### Canary subset
 
@@ -75,6 +75,8 @@ Benchmark outputs are local run artifacts rather than repository baselines. Gene
 ## Scenario shape
 
 Each single-environment scenario is a top-level TOML table keyed by name, with at least `requirements` and a fixed `datetime` (used as the `uploaded-prior-to` cutoff). Optional single-environment knobs include constraints, marker overlays, distribution policy, and build policy.
+
+Marker overrides on the wheel-tag axes also declare which physical hosts may run a scenario. A Windows marker scenario is inapplicable on Linux rather than resolving with Windows markers and Linux wheel tags. A top-level `platform_system` restricts the OS family. An exact target sets `platform_system`, `sys_platform`, `os_name`, `platform_machine`, `implementation_name`, and `platform_python_implementation` together.
 
 Universal scenarios require `python`, `platforms`, and `requirements`. They may also set constraints, a cutoff, Python ordering, alignment, resolution strategy, an explanatory reason, and expected-failure handling.
 

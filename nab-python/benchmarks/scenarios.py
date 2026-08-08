@@ -15,7 +15,6 @@ import hashlib
 import json
 import math
 import os
-import signal
 import subprocess
 import sys
 import time
@@ -26,10 +25,20 @@ from typing import TYPE_CHECKING, NamedTuple
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from nab_python.target import ResolveTarget
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib  # type: ignore[no-redef]
+
+from benchmark_host import (
+    HOST_TAG_MISMATCH_REASON,
+    BenchmarkHost,
+    BenchmarkTimeout,
+    parse_target_marker_environment,
+    settings_hash,
+)
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.multi_index import IndexConfig
@@ -54,7 +63,6 @@ from nab_python.provider import (
     VcsPolicy,
     split_extra,
 )
-from nab_python.target import ResolveTarget
 from nab_resolver.resolver import Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
@@ -62,7 +70,8 @@ SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
 RESULTS_DIR = BENCHMARKS_DIR / "results"
 _LEGACY_STRATEGY_SUFFIXES = ("-lowest", "-lowest-direct")
 STANDARD_MANIFEST_FILENAME = "_standard_manifest.json"
-STANDARD_MANIFEST_SCHEMA = 1
+STANDARD_MANIFEST_SCHEMA = 2
+_INAPPLICABLE_KEY_PREVIEW = 8
 _STANDARD_METADATA_FILENAMES = frozenset(
     {STANDARD_MANIFEST_FILENAME, "_provenance.json"}
 )
@@ -108,6 +117,7 @@ _STANDARD_MANIFEST_FIELDS = frozenset(
         "selected_logical_keys",
         "completed_logical_keys",
         "unsupported_logical_keys",
+        "inapplicable_logical_keys",
         "available_execution_keys",
         "selected_execution_keys",
         "completed_execution_keys",
@@ -139,7 +149,7 @@ def _is_portable_path_component(
 def _result_directory_label(value: str) -> str:
     """Validate a user-provided results-directory label."""
     if not _is_portable_path_component(value):
-        msg = f"commit label must use a portable ASCII filename, got {value!r}"
+        msg = f"result label must use a portable ASCII filename, got {value!r}"
         raise argparse.ArgumentTypeError(msg)
     return value
 
@@ -449,6 +459,14 @@ class StandardExecution(NamedTuple):
         return f"{self.result_stem}/{self.scenario.name}.json"
 
 
+class StandardRunPlan(NamedTuple):
+    """The admitted executions and host-inapplicable scenarios for one run."""
+
+    executions: list[StandardExecution]
+    targets_by_logical_key: dict[str, ResolveTarget]
+    inapplicable_logical_keys: list[str]
+
+
 def _standard_result_path(
     output_dir: Path,
     execution: StandardExecution,
@@ -488,16 +506,15 @@ def _standard_result_path(
 class PreparedStandardExecution(NamedTuple):
     """Validated inputs shared by cache validation and actual resolution."""
 
-    python_version: str
     requirement_strings: list[str]
     constraint_strings: list[str]
-    marker_environment: dict[str, str]
     indexes: list[IndexConfig]
     index_routes: list[IndexRoute]
     build_policy_overrides: dict[str, BuildPolicy]
     uploaded_prior_to: datetime | None
     vcs_config: VcsConfig
     trust_unverified_sdist_deps: bool
+    target: ResolveTarget
     expected_input: dict[str, object]
 
 
@@ -578,17 +595,49 @@ def standard_corpus_hash(rows: list[StandardScenario]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def standard_execution_plan(
+def standard_run_plan(
     rows: list[StandardScenario],
     strategies: tuple[ResolutionStrategy, ...],
-) -> list[StandardExecution]:
-    """Expand supported canonical rows over the selected strategies."""
-    return [
+    host: BenchmarkHost,
+) -> StandardRunPlan:
+    """Admit each scenario once, then expand faithful targets by strategy."""
+    targets: dict[str, ResolveTarget] = {}
+    inapplicable: list[str] = []
+    for row in rows:
+        if "unsupported_reason" in row.definition:
+            continue
+        marker_environment = parse_marker_environment(row.name, row.definition)
+        admission = host.target_for(
+            row.definition["python_version"],
+            marker_environment,
+        )
+        if admission.target is None:
+            inapplicable.append(row.logical_key)
+            continue
+        targets[row.logical_key] = admission.target
+
+    executions = [
         StandardExecution(row, strategy)
         for strategy in strategies
         for row in rows
-        if "unsupported_reason" not in row.definition
+        if row.logical_key in targets
     ]
+    return StandardRunPlan(executions, targets, sorted(inapplicable))
+
+
+def _report_host_inapplicable(logical_keys: list[str]) -> None:
+    """Print a bounded summary of scenarios this host cannot run faithfully."""
+    if not logical_keys:
+        return
+    count = len(logical_keys)
+    noun = "scenario" if count == 1 else "scenarios"
+    print(f"Host-inapplicable: {count} {noun}; {HOST_TAG_MISMATCH_REASON}.")
+    print("  " + ", ".join(logical_keys[:_INAPPLICABLE_KEY_PREVIEW]))
+    remaining = count - _INAPPLICABLE_KEY_PREVIEW
+    if remaining > 0:
+        print(
+            f"  ... {remaining} more; exact keys are in {STANDARD_MANIFEST_FILENAME}."
+        )
 
 
 def standard_execution_keys(
@@ -763,40 +812,6 @@ def _full_marker_environment(
     return env
 
 
-_PYTHON_VERSION_PARTS = 2
-
-
-def scenario_marker_env(
-    python_version: str,
-    overlay: dict[str, str],
-) -> dict[str, str]:
-    """Build the marker environment that root-requirement markers use.
-
-    Folds ``python_version`` into the overlay just like ``Provider``
-    does internally so root-level markers see the scenario's Python
-    rather than the host's.
-    """
-    env = dict(overlay)
-    env.setdefault("python_full_version", python_version)
-    if "python_version" not in env:
-        parts = python_version.split(".")
-        env["python_version"] = (
-            ".".join(parts[:_PYTHON_VERSION_PARTS])
-            if len(parts) >= _PYTHON_VERSION_PARTS
-            else python_version
-        )
-    return env
-
-
-def resolve_target(
-    python_version: str,
-    marker_environment: dict[str, str] | None,
-) -> ResolveTarget:
-    """Build the scenario's resolve target: host machine, scenario Python."""
-    target = ResolveTarget.for_host_python(python_version)
-    return target.with_marker_overrides(marker_environment or {})
-
-
 def parse_datetime(value: str) -> datetime:
     """Parse an ISO 8601 datetime string to a timezone-aware datetime."""
     dt = datetime.fromisoformat(value)
@@ -807,19 +822,6 @@ def parse_datetime(value: str) -> datetime:
 
 SCENARIO_WALL_TIMEOUT_SECONDS = 120
 MAX_ITERATIONS = 50_000
-
-
-class _ScenarioTimeoutError(BaseException):
-    """Raised when a scenario exceeds the per-run wall-clock budget.
-
-    Subclasses BaseException so the resolver's internal ``except Exception``
-    handlers cannot swallow the alarm mid-resolve.
-    """
-
-
-def _alarm_handler(_signum: int, _frame: object) -> None:
-    msg = f"scenario exceeded {SCENARIO_WALL_TIMEOUT_SECONDS}s wall-clock budget"
-    raise _ScenarioTimeoutError(msg)
 
 
 CACHE_DIR = BENCHMARKS_DIR / "cache"
@@ -853,14 +855,15 @@ _STANDARD_COUNTER_FIELDS = frozenset(
 )
 
 
-def standard_benchmark_settings() -> dict[str, object]:
+def standard_benchmark_settings(host: BenchmarkHost) -> dict[str, object]:
     """Return the global settings shared by every standard result."""
     return {
         "dist_policy": DistPolicy.WHEEL_OR_SDIST.value,
         "build_policy": BuildPolicy.NEVER.value,
         "trust_unverified_sdist_deps_default": True,
         "max_iterations": MAX_ITERATIONS,
-        "wall_timeout_seconds": SCENARIO_WALL_TIMEOUT_SECONDS,
+        "wall_timeout_seconds": host.wall_timeout_seconds,
+        "host": host.identity(),
     }
 
 
@@ -922,6 +925,7 @@ def _result_input(
     commit: str,
     source: dict[str, str | bool | None],
     corpus_hash: str,
+    settings_digest: str,
 ) -> dict[str, object]:
     return {
         "benchmark_schema": STANDARD_MANIFEST_SCHEMA,
@@ -930,6 +934,7 @@ def _result_input(
         "corpus_hash": corpus_hash,
         "logical_key": execution.scenario.logical_key,
         "execution_key": execution.result_key,
+        "settings_hash": settings_digest,
     }
 
 
@@ -949,10 +954,7 @@ def _standard_result_files(output_dir: Path) -> list[str]:
 def _completed_standard_executions(
     output_dir: Path,
     executions: list[StandardExecution],
-    *,
-    commit: str,
-    source: dict[str, str | bool | None],
-    corpus_hash: str,
+    prepared_executions: Mapping[str, PreparedStandardExecution],
 ) -> list[str]:
     completed: list[str] = []
     for execution in executions:
@@ -961,18 +963,13 @@ def _completed_standard_executions(
             data = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        prepared = prepare_standard_execution(
-            execution,
-            commit=commit,
-            source=source,
-            corpus_hash=corpus_hash,
-        )
+        prepared = prepared_executions[execution.result_key]
         if _standard_result_data_valid(data, prepared.expected_input):
             completed.append(execution.result_key)
     return sorted(completed)
 
 
-def standard_manifest_contract(
+def standard_manifest_contract(  # noqa: PLR0913 - explicit contract fields
     *,
     commit: str,
     mode: str,
@@ -982,6 +979,8 @@ def standard_manifest_contract(
     selected_files: list[str],
     strategies: tuple[ResolutionStrategy, ...],
     corpus_hash: str,
+    plan: StandardRunPlan,
+    settings: dict[str, object],
 ) -> dict[str, object]:
     """Return the immutable identity of one standard benchmark run."""
     unsupported_rows = [
@@ -992,13 +991,14 @@ def standard_manifest_contract(
         "commit": commit,
         "mode": mode,
         "strategies": [strategy.value for strategy in strategies],
-        "settings": standard_benchmark_settings(),
+        "settings": settings,
         "corpus_hash": corpus_hash,
         "corpus_files": sorted(corpus_files),
         "selected_files": sorted(selected_files),
         "available_logical_keys": sorted(row.logical_key for row in all_rows),
         "selected_logical_keys": sorted(row.logical_key for row in selected_rows),
         "unsupported_logical_keys": sorted(row.logical_key for row in unsupported_rows),
+        "inapplicable_logical_keys": plan.inapplicable_logical_keys,
         "available_execution_keys": standard_execution_keys(all_rows, strategies),
         "selected_execution_keys": standard_execution_keys(selected_rows, strategies),
         "unsupported_execution_keys": sorted(
@@ -1100,6 +1100,118 @@ def prepare_standard_result_namespace(
         raise ValueError(msg)
 
 
+def _is_exact_partition(whole: list[str], *parts: list[str]) -> bool:
+    """Return whether disjoint parts contain every member of whole."""
+    combined = [item for part in parts for item in part]
+    return len(combined) == len(set(combined)) and sorted(combined) == whole
+
+
+class StandardCompletionState(NamedTuple):
+    """Terminal logical keys, execution keys, and files for one standard run."""
+
+    completed_logical_keys: list[str]
+    unsupported_logical_keys: list[str]
+    completed_execution_keys: list[str]
+    unsupported_execution_keys: list[str]
+    inapplicable_execution_keys: list[str]
+    file_execution_keys: list[str]
+
+
+def _standard_completion_state(
+    output_dir: Path,
+    selected_rows: list[StandardScenario],
+    strategies: tuple[ResolutionStrategy, ...],
+    plan: StandardRunPlan,
+    prepared_executions: Mapping[str, PreparedStandardExecution],
+) -> StandardCompletionState:
+    """Derive each terminal partition from the selected rows and result files."""
+    completed_execution_keys = _completed_standard_executions(
+        output_dir,
+        plan.executions,
+        prepared_executions,
+    )
+    completed_set = set(completed_execution_keys)
+    supported_rows = [
+        row
+        for row in selected_rows
+        if "unsupported_reason" not in row.definition
+        and row.logical_key not in plan.inapplicable_logical_keys
+    ]
+    completed_logical_keys = sorted(
+        row.logical_key
+        for row in supported_rows
+        if all(
+            StandardExecution(row, strategy).result_key in completed_set
+            for strategy in strategies
+        )
+    )
+
+    unsupported_rows = [
+        row for row in selected_rows if "unsupported_reason" in row.definition
+    ]
+    unsupported_logical_keys = sorted(row.logical_key for row in unsupported_rows)
+    unsupported_execution_keys = sorted(
+        StandardExecution(row, strategy).result_key
+        for row in unsupported_rows
+        for strategy in strategies
+    )
+
+    inapplicable_rows = [
+        row
+        for row in selected_rows
+        if row.logical_key in plan.inapplicable_logical_keys
+    ]
+    inapplicable_execution_keys = sorted(
+        StandardExecution(row, strategy).result_key
+        for row in inapplicable_rows
+        for strategy in strategies
+    )
+    return StandardCompletionState(
+        completed_logical_keys=completed_logical_keys,
+        unsupported_logical_keys=unsupported_logical_keys,
+        completed_execution_keys=completed_execution_keys,
+        unsupported_execution_keys=unsupported_execution_keys,
+        inapplicable_execution_keys=inapplicable_execution_keys,
+        file_execution_keys=_standard_result_files(output_dir),
+    )
+
+
+def _standard_run_is_complete(
+    state: StandardCompletionState,
+    selected_rows: list[StandardScenario],
+    strategies: tuple[ResolutionStrategy, ...],
+    plan: StandardRunPlan,
+    source_start: dict[str, str | bool | None],
+    source_end: dict[str, str | bool | None] | None,
+    *,
+    finalize: bool,
+) -> bool:
+    """Return whether the terminal state satisfies the standard-run contract."""
+    selected_logical_keys = sorted(row.logical_key for row in selected_rows)
+    selected_execution_keys = standard_execution_keys(selected_rows, strategies)
+    expected_execution_keys = sorted(item.result_key for item in plan.executions)
+    return bool(
+        finalize
+        and _clean_source_identity(source_start)
+        and _clean_source_identity(source_end)
+        and source_end == source_start
+        and _is_exact_partition(
+            selected_logical_keys,
+            state.completed_logical_keys,
+            state.unsupported_logical_keys,
+            plan.inapplicable_logical_keys,
+        )
+        and _is_exact_partition(
+            selected_execution_keys,
+            state.completed_execution_keys,
+            state.unsupported_execution_keys,
+            state.inapplicable_execution_keys,
+        )
+        and state.completed_execution_keys == expected_execution_keys
+        and state.file_execution_keys == expected_execution_keys
+    )
+
+
 def write_standard_manifest(  # noqa: PLR0913 - explicit contract fields
     path: Path,
     *,
@@ -1113,6 +1225,9 @@ def write_standard_manifest(  # noqa: PLR0913 - explicit contract fields
     selected_files: list[str],
     strategies: tuple[ResolutionStrategy, ...],
     corpus_hash: str,
+    plan: StandardRunPlan,
+    settings: dict[str, object],
+    prepared_executions: Mapping[str, PreparedStandardExecution],
     finalize: bool,
 ) -> bool:
     """Write the strict standard-suite contract and return its completeness."""
@@ -1126,78 +1241,49 @@ def write_standard_manifest(  # noqa: PLR0913 - explicit contract fields
         selected_files=selected_files,
         strategies=strategies,
         corpus_hash=corpus_hash,
+        plan=plan,
+        settings=settings,
     )
-    selected_plan = standard_execution_plan(selected_rows, strategies)
-    expected_result_keys = sorted(item.result_key for item in selected_plan)
-    completed_execution_keys = _completed_standard_executions(
+    state = _standard_completion_state(
         output_dir,
-        selected_plan,
-        commit=commit,
-        source=source_start,
-        corpus_hash=corpus_hash,
+        selected_rows,
+        strategies,
+        plan,
+        prepared_executions,
     )
-    completed_set = set(completed_execution_keys)
-    supported_selected = [
-        row for row in selected_rows if "unsupported_reason" not in row.definition
-    ]
-    completed_logical_keys = sorted(
-        row.logical_key
-        for row in supported_selected
-        if all(
-            StandardExecution(row, strategy).result_key in completed_set
-            for strategy in strategies
-        )
-    )
-    unsupported_rows = [
-        row for row in selected_rows if "unsupported_reason" in row.definition
-    ]
-    unsupported_logical_keys = sorted(row.logical_key for row in unsupported_rows)
-    unsupported_execution_keys = sorted(
-        StandardExecution(row, strategy).result_key
-        for row in unsupported_rows
-        for strategy in strategies
-    )
-    selected_logical_keys = sorted(row.logical_key for row in selected_rows)
-    selected_execution_keys = standard_execution_keys(selected_rows, strategies)
-    file_execution_keys = _standard_result_files(output_dir)
-    complete = bool(
-        finalize
-        and _clean_source_identity(source_start)
-        and _clean_source_identity(source_end)
-        and source_end == source_start
-        and not (set(completed_logical_keys) & set(unsupported_logical_keys))
-        and sorted(completed_logical_keys + unsupported_logical_keys)
-        == selected_logical_keys
-        and not (set(completed_execution_keys) & set(unsupported_execution_keys))
-        and sorted(completed_execution_keys + unsupported_execution_keys)
-        == selected_execution_keys
-        and completed_execution_keys == expected_result_keys
-        and file_execution_keys == expected_result_keys
+    complete = _standard_run_is_complete(
+        state,
+        selected_rows,
+        strategies,
+        plan,
+        source_start,
+        source_end,
+        finalize=finalize,
     )
     data = {
         **contract,
         "source_start": source_start,
         "source_end": source_end,
-        "completed_logical_keys": completed_logical_keys,
-        "completed_execution_keys": completed_execution_keys,
-        "file_execution_keys": file_execution_keys,
+        "completed_logical_keys": state.completed_logical_keys,
+        "completed_execution_keys": state.completed_execution_keys,
+        "file_execution_keys": state.file_execution_keys,
         "complete": complete,
     }
     path.write_text(json.dumps(data, indent=2) + "\n")
     return complete
 
 
-def resolve_scenario(  # noqa: PLR0913, PLR0917 - one wrapper per scenario knob
+def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
     requirements: dict[str, VersionRange],
-    python_version: str,
     uploaded_prior_to: datetime | None = None,
     constraints: dict[str, VersionRange] | None = None,
-    marker_environment: dict[str, str] | None = None,
     indexes: list[IndexConfig] | None = None,
     index_routes: list[IndexRoute] | None = None,
     build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
     resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
     *,
+    target: ResolveTarget,
+    host: BenchmarkHost,
     trust_unverified_sdist_deps: bool = False,
 ) -> dict:
     """Resolve requirements and return stats dict."""
@@ -1221,7 +1307,7 @@ def resolve_scenario(  # noqa: PLR0913, PLR0917 - one wrapper per scenario knob
     ) as coordinator:
         provider = Provider(
             coordinator,
-            target=resolve_target(python_version, marker_environment),
+            target=target,
             root_requirements=requirements,
             uploaded_prior_to=uploaded_prior_to,
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
@@ -1238,24 +1324,20 @@ def resolve_scenario(  # noqa: PLR0913, PLR0917 - one wrapper per scenario knob
             max_iterations=MAX_ITERATIONS,
         )
 
-        previous_handler = signal.signal(signal.SIGALRM, _alarm_handler)
-        signal.alarm(SCENARIO_WALL_TIMEOUT_SECONDS)
         start = time.monotonic()
         try:
-            raw = resolver.resolve(requirements, constraints=constraints)
+            with host.wall_timeout():
+                raw = resolver.resolve(requirements, constraints=constraints)
             elapsed = time.monotonic() - start
             result = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
             success = True
             error = None
             packages_resolved = len(result)
-        except (_ScenarioTimeoutError, Exception) as exc:
+        except (BenchmarkTimeout, Exception) as exc:
             elapsed = time.monotonic() - start
             success = False
             error = f"{type(exc).__name__}: {exc}"
             packages_resolved = 0
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, previous_handler)
 
         rstats = resolver.stats
         pstats = provider.stats
@@ -1425,18 +1507,7 @@ def parse_marker_environment(
     scenario: dict,
 ) -> dict[str, str]:
     """Read the ``marker_environment`` table + ``platform_system`` shorthand."""
-    raw = scenario.get("marker_environment", {})
-    if not isinstance(raw, dict):
-        msg = (
-            f"{scenario_name}: marker_environment must be a TOML table"
-            f" of string -> string, got {type(raw).__name__}"
-        )
-        raise TypeError(msg)
-    overlay: dict[str, str] = {str(k): str(v) for k, v in raw.items()}
-    platform_system = scenario.get("platform_system")
-    if platform_system and "platform_system" not in overlay:
-        overlay["platform_system"] = platform_system
-    return overlay
+    return parse_target_marker_environment(scenario_name, scenario)
 
 
 def parse_build_packages(
@@ -1492,10 +1563,12 @@ def validate_scenario_build_policy(
 
 def prepare_standard_execution(
     execution: StandardExecution,
+    target: ResolveTarget,
     *,
     commit: str,
     source: dict[str, str | bool | None],
     corpus_hash: str,
+    settings_digest: str,
 ) -> PreparedStandardExecution:
     """Prepare and identify one execution without performing network work."""
     scenario_name = execution.scenario.name
@@ -1558,19 +1631,19 @@ def prepare_standard_execution(
             commit=commit,
             source=source,
             corpus_hash=corpus_hash,
+            settings_digest=settings_digest,
         ),
     }
     return PreparedStandardExecution(
-        python_version=python_version,
         requirement_strings=requirement_strings,
         constraint_strings=constraint_strings,
-        marker_environment=marker_environment,
         indexes=indexes,
         index_routes=index_routes,
         build_policy_overrides=build_policy_overrides,
         uploaded_prior_to=parse_datetime(datetime_str) if datetime_str else None,
         vcs_config=vcs_config,
         trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+        target=target,
         expected_input=expected_input,
     )
 
@@ -1580,20 +1653,11 @@ def process_scenario(
     commit: str,
     *,
     force: bool,
-    source: dict[str, str | bool | None],
-    corpus_hash: str,
-) -> bool:
+    prepared: PreparedStandardExecution,
+    host: BenchmarkHost,
+) -> None:
     """Resolve one scenario and save results."""
     scenario_name = execution.scenario.name
-    scenario = execution.scenario.definition
-    if "unsupported_reason" in scenario:
-        return False
-    prepared = prepare_standard_execution(
-        execution,
-        commit=commit,
-        source=source,
-        corpus_hash=corpus_hash,
-    )
 
     run_dir = _result_directory(commit)
     output_path = _standard_result_path(run_dir, execution)
@@ -1605,13 +1669,11 @@ def process_scenario(
         except (OSError, ValueError):
             existing = None
         if _standard_result_data_valid(existing, prepared.expected_input):
-            return True
+            return
 
     print(f"  {scenario_name} ", end="", flush=True)
 
-    requirement_marker_env = scenario_marker_env(
-        prepared.python_version, prepared.marker_environment
-    )
+    requirement_marker_env = dict(prepared.target.marker_env)
     requirements = parse_requirements(
         prepared.requirement_strings,
         vcs_config=prepared.vcs_config,
@@ -1628,14 +1690,14 @@ def process_scenario(
     )
     data = resolve_scenario(
         requirements,
-        prepared.python_version,
         prepared.uploaded_prior_to,
         constraints,
-        marker_environment=prepared.marker_environment or None,
         indexes=prepared.indexes,
         index_routes=prepared.index_routes or None,
         build_policy_overrides=prepared.build_policy_overrides or None,
         resolution_strategy=execution.strategy,
+        target=prepared.target,
+        host=host,
         trust_unverified_sdist_deps=prepared.trust_unverified_sdist_deps,
     )
     data["input"] = prepared.expected_input
@@ -1653,7 +1715,6 @@ def process_scenario(
         )
     else:
         print(f"FAILED: {data['result']['error']}")
-    return True
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -1688,6 +1749,7 @@ def main(argv: list[str] | None = None) -> None:
         except argparse.ArgumentTypeError as exc:
             parser.error(str(exc))
     source_start = get_git_source_state()
+    host = BenchmarkHost.current(SCENARIO_WALL_TIMEOUT_SECONDS)
 
     if not SCENARIOS_DIR.is_dir():
         print(f"Error: {SCENARIOS_DIR} does not exist")
@@ -1733,7 +1795,21 @@ def main(argv: list[str] | None = None) -> None:
     )
     mode = "strategy-matrix" if args.strategy_matrix else "default"
     corpus_hash = standard_corpus_hash(all_rows)
-    execution_plan = standard_execution_plan(selected_rows, strategies)
+    plan = standard_run_plan(selected_rows, strategies, host)
+    execution_plan = plan.executions
+    settings = standard_benchmark_settings(host)
+    settings_digest = settings_hash(settings)
+    prepared_executions = {
+        execution.result_key: prepare_standard_execution(
+            execution,
+            plan.targets_by_logical_key[execution.scenario.logical_key],
+            commit=commit,
+            source=source_start,
+            corpus_hash=corpus_hash,
+            settings_digest=settings_digest,
+        )
+        for execution in execution_plan
+    }
     contract = standard_manifest_contract(
         commit=commit,
         mode=mode,
@@ -1743,6 +1819,8 @@ def main(argv: list[str] | None = None) -> None:
         selected_files=[path.stem for path in selected_files],
         strategies=strategies,
         corpus_hash=corpus_hash,
+        plan=plan,
+        settings=settings,
     )
     try:
         output_dir = _result_directory(commit)
@@ -1766,6 +1844,9 @@ def main(argv: list[str] | None = None) -> None:
         "selected_files": [path.stem for path in selected_files],
         "strategies": strategies,
         "corpus_hash": corpus_hash,
+        "plan": plan,
+        "settings": settings,
+        "prepared_executions": prepared_executions,
     }
     write_standard_manifest(
         manifest_path,
@@ -1775,6 +1856,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     print(f"Running scenarios for commit: {commit} ({mode})")
+    _report_host_inapplicable(plan.inapplicable_logical_keys)
     previous_stem: str | None = None
     for execution in execution_plan:
         if execution.result_stem != previous_stem:
@@ -1784,8 +1866,8 @@ def main(argv: list[str] | None = None) -> None:
             execution,
             commit,
             force=args.force,
-            source=source_start,
-            corpus_hash=corpus_hash,
+            prepared=prepared_executions[execution.result_key],
+            host=host,
         )
 
     complete = write_standard_manifest(

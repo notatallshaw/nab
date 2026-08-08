@@ -68,6 +68,7 @@ def build_inputs(
     name: str,
     scenario: dict,
     resolution_override: sc.ResolutionStrategy | None = None,
+    host: sc.BenchmarkHost | None = None,
 ) -> dict:
     python_version = scenario["python_version"]
     requirement_strings = list(scenario["requirements"])
@@ -79,6 +80,12 @@ def build_inputs(
         marker_environment,
         build_policy_overrides,
     )
+    effective_host = host or sc.BenchmarkHost.current(sc.SCENARIO_WALL_TIMEOUT_SECONDS)
+    admission = effective_host.target_for(python_version, marker_environment)
+    if admission.target is None:
+        msg = f"{name}: benchmark is inapplicable: {admission.inapplicable_reason}"
+        raise SystemExit(msg)
+    target = admission.target
 
     declared_resolution = sc.ResolutionStrategy(
         scenario.get("resolution", sc.ResolutionStrategy.HIGHEST.value)
@@ -98,7 +105,7 @@ def build_inputs(
             scenario.get("optional_dependencies", {}),
         )
 
-    marker_env = sc.scenario_marker_env(python_version, marker_environment)
+    marker_env = dict(target.marker_env)
     requirements = sc.parse_requirements(
         requirement_strings, vcs_config=vcs_config, marker_environment=marker_env
     )
@@ -113,14 +120,14 @@ def build_inputs(
     datetime_str = scenario.get("datetime")
     return {
         "requirements": requirements,
-        "python_version": python_version,
         "uploaded_prior_to": sc.parse_datetime(datetime_str) if datetime_str else None,
         "constraints": constraints,
-        "marker_environment": marker_environment or None,
         "indexes": sc.parse_indexes(name, scenario),
         "index_routes": sc.parse_index_routes(name, scenario) or None,
         "build_policy_overrides": build_policy_overrides or None,
         "resolution_strategy": resolution_strategy,
+        "target": target,
+        "host": effective_host,
     }
 
 
@@ -154,7 +161,8 @@ def main() -> None:
     resolution_override = (
         sc.ResolutionStrategy(args.resolution) if args.resolution is not None else None
     )
-    inputs = build_inputs(name, scenario, resolution_override)
+    host = sc.BenchmarkHost.current(sc.SCENARIO_WALL_TIMEOUT_SECONDS)
+    inputs = build_inputs(name, scenario, resolution_override, host)
 
     if not args.cprofile:
         report(name, sc.resolve_scenario(**inputs))

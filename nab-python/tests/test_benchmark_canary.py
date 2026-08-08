@@ -22,18 +22,53 @@ def _harness() -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    benchmark_dir = str(_CANARY.parent)
+    sys.path.insert(0, benchmark_dir)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(benchmark_dir)
     return module
+
+
+def _run_result(
+    *,
+    success: bool = True,
+    decisions: int = 1,
+    distributions_seen: int = 0,
+    metadata_fetched: int = 0,
+    packages: int = 0,
+    conflicts: int = 0,
+    backjumps: int = 0,
+    wall_time_seconds: float = 0.0,
+) -> dict[str, object]:
+    return {
+        "success": success,
+        "error": None if success else "resolution failed",
+        "decisions": decisions,
+        "conflicts": conflicts,
+        "backjumps": backjumps,
+        "restarts": 0,
+        "incompatibilities_learned": 0,
+        "metadata_fetched": metadata_fetched,
+        "distributions_seen": distributions_seen,
+        "look_ahead_rejections": 0,
+        "packages": packages,
+        "wall_time_seconds": wall_time_seconds,
+    }
 
 
 def test_wall_timeout_noops_without_posix_alarm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _harness()
-    monkeypatch.delattr(module.signal, "SIGALRM", raising=False)
-    monkeypatch.delattr(module.signal, "alarm", raising=False)
+    host_module = sys.modules[module.BenchmarkHost.__module__]
+    monkeypatch.delattr(host_module.signal, "SIGALRM", raising=False)
+    monkeypatch.delattr(host_module.signal, "alarm", raising=False)
+    host = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
 
-    with module._scenario_wall_timeout():
+    assert host.wall_timeout_seconds is None
+    with host.wall_timeout():
         pass
 
 
@@ -41,6 +76,7 @@ def test_wall_timeout_installs_and_restores_alarm(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _harness()
+    host_module = sys.modules[module.BenchmarkHost.__module__]
     previous_handler = object()
     handlers: list[tuple[int, object]] = []
     alarms: list[int] = []
@@ -52,18 +88,27 @@ def test_wall_timeout_installs_and_restores_alarm(
     def fake_alarm(seconds: int) -> None:
         alarms.append(seconds)
 
-    monkeypatch.setattr(module.signal, "SIGALRM", 14, raising=False)
-    monkeypatch.setattr(module.signal, "signal", fake_signal)
-    monkeypatch.setattr(module.signal, "alarm", fake_alarm, raising=False)
+    monkeypatch.setattr(host_module.signal, "SIGALRM", 14, raising=False)
+    monkeypatch.setattr(host_module.signal, "signal", fake_signal)
+    monkeypatch.setattr(host_module.signal, "alarm", fake_alarm, raising=False)
+    host = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
 
-    with module._scenario_wall_timeout():
-        assert alarms == [module.WALL_TIMEOUT_S]
+    def trigger_timeout() -> None:
+        with host.wall_timeout():
+            assert alarms == [module.WALL_TIMEOUT_S]
+            timeout_handler = handlers[0][1]
+            assert callable(timeout_handler)
+            timeout_handler(14, None)
+
+    assert issubclass(module.BenchmarkTimeout, BaseException)
+    assert not issubclass(module.BenchmarkTimeout, Exception)
+    with pytest.raises(module.BenchmarkTimeout, match="wall-clock budget"):
+        trigger_timeout()
 
     assert alarms == [module.WALL_TIMEOUT_S, 0]
-    assert handlers == [
-        (14, module._alarm_handler),
-        (14, previous_handler),
-    ]
+    assert len(handlers) == 2
+    assert handlers[0][0] == 14
+    assert handlers[1] == (14, previous_handler)
 
 
 @pytest.mark.parametrize(
@@ -85,20 +130,7 @@ def test_canary_uses_scenario_resolution(
 
     def fake_run_one(*_args: object, **kwargs: object) -> dict:
         seen.append(str(kwargs["resolution_strategy"].value))
-        return {
-            "success": True,
-            "error": None,
-            "decisions": 1,
-            "conflicts": 0,
-            "backjumps": 0,
-            "restarts": 0,
-            "incompatibilities_learned": 0,
-            "metadata_fetched": 0,
-            "distributions_seen": 0,
-            "look_ahead_rejections": 0,
-            "packages": 0,
-            "wall_time_seconds": 0.0,
-        }
+        return _run_result()
 
     monkeypatch.setattr(module, "run_one", fake_run_one)
     scenario = {
@@ -137,6 +169,9 @@ def test_canary_rejects_supported_marker_build_policy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _harness()
+    host = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
+    current_system = host.target.marker_env["platform_system"]
+    required_system = "Windows" if current_system != "Windows" else "Linux"
 
     def unexpected_run(*_args: object, **_kwargs: object) -> dict:
         pytest.fail("scenario reached the resolver")
@@ -145,7 +180,7 @@ def test_canary_rejects_supported_marker_build_policy(
     scenario = {
         "python_version": "3.11",
         "requirements": ["demo"],
-        "platform_system": "Linux",
+        "platform_system": required_system,
         "build_packages": ["demo"],
     }
 
@@ -156,7 +191,89 @@ def test_canary_rejects_supported_marker_build_policy(
             "with a marker environment overlay"
         ),
     ):
-        module.median_run(scenario, 1, scenario_name="example")
+        module.median_run(scenario, 1, scenario_name="example", host=host)
+
+
+def test_canary_skips_a_platform_overlay_with_unfaithful_host_tags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    host = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
+    current_system = host.target.marker_env["platform_system"]
+    required_system = "Windows" if current_system != "Windows" else "Linux"
+
+    def unexpected_run(*_args: object, **_kwargs: object) -> dict:
+        pytest.fail("inapplicable scenario reached the resolver")
+
+    monkeypatch.setattr(module, "run_one", unexpected_run)
+    runs, summary = module.median_run(
+        {
+            "python_version": "3.11",
+            "requirements": [],
+            "platform_system": required_system,
+        },
+        1,
+        host=host,
+    )
+
+    assert runs == []
+    assert summary == {
+        "skipped": "marker environment requires wheel tags from a different host"
+    }
+
+
+def test_canary_rejects_an_invalid_host_restriction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+
+    def unexpected_run(*_args: object, **_kwargs: object) -> dict:
+        pytest.fail("invalid scenario reached the resolver")
+
+    monkeypatch.setattr(module, "run_one", unexpected_run)
+
+    with pytest.raises(ValueError, match="no supported platform"):
+        module.median_run(
+            {
+                "python_version": "3.11",
+                "requirements": [],
+                "platform_system": "Linuz",
+            },
+            1,
+            scenario_name="example",
+        )
+
+
+def test_canary_filters_root_markers_with_the_admitted_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    host = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
+    host_python = host.target.marker_env["python_version"]
+    scenario_python = "3.10" if host_python != "3.10" else "3.11"
+    seen: dict[str, object] = {}
+
+    def fake_run_one(requirements: dict, *_args: object, **kwargs: object) -> dict:
+        seen["requirements"] = set(requirements)
+        seen["target_python"] = kwargs["target"].marker_env["python_version"]
+        return _run_result(packages=1)
+
+    monkeypatch.setattr(module, "run_one", fake_run_one)
+    module.median_run(
+        {
+            "python_version": scenario_python,
+            "requirements": [
+                f"selected; python_version == '{scenario_python}'",
+                f"excluded; python_version != '{scenario_python}'",
+            ],
+        },
+        1,
+        scenario_name="example",
+        host=host,
+    )
+
+    assert seen["target_python"] == scenario_python
+    assert seen["requirements"] == {"selected"}
 
 
 def test_canary_explicit_resolution_overrides_declared_strategy(
@@ -167,20 +284,7 @@ def test_canary_explicit_resolution_overrides_declared_strategy(
 
     def fake_run_one(*_args: object, **kwargs: object) -> dict:
         seen.append(kwargs["resolution_strategy"])
-        return {
-            "success": True,
-            "error": None,
-            "decisions": 1,
-            "conflicts": 0,
-            "backjumps": 0,
-            "restarts": 0,
-            "incompatibilities_learned": 0,
-            "metadata_fetched": 0,
-            "distributions_seen": 0,
-            "look_ahead_rejections": 0,
-            "packages": 0,
-            "wall_time_seconds": 0.0,
-        }
+        return _run_result()
 
     monkeypatch.setattr(module, "run_one", fake_run_one)
     module.median_run(
@@ -195,6 +299,99 @@ def test_canary_explicit_resolution_overrides_declared_strategy(
     )
 
     assert seen == [module.ResolutionStrategy.LOWEST]
+
+
+def test_canary_prepares_inputs_and_summarizes_repeated_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    host = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
+    returned_runs = [
+        _run_result(
+            decisions=1,
+            distributions_seen=9,
+            metadata_fetched=3,
+            packages=1,
+            conflicts=7,
+            backjumps=4,
+            wall_time_seconds=0.1,
+        ),
+        _run_result(
+            success=False,
+            decisions=9,
+            distributions_seen=3,
+            metadata_fetched=9,
+            packages=0,
+            conflicts=1,
+            backjumps=8,
+            wall_time_seconds=0.3,
+        ),
+        _run_result(
+            decisions=5,
+            distributions_seen=6,
+            metadata_fetched=6,
+            packages=3,
+            conflicts=4,
+            backjumps=2,
+            wall_time_seconds=0.2,
+        ),
+    ]
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_run_one(*args: object, **kwargs: object) -> dict[str, object]:
+        calls.append((args, kwargs))
+        return returned_runs[len(calls) - 1]
+
+    monkeypatch.setattr(module, "run_one", fake_run_one)
+    runs, summary = module.median_run(
+        {
+            "python_version": "3.11",
+            "requirements": ["demo>=1"],
+            "constraints": ["support<3"],
+            "datetime": "2025-01-02 03:04:05",
+            "indexes": [{"name": "private", "url": "https://example.test/simple"}],
+            "index_routes": [{"name": "demo", "index": "private"}],
+            "build_packages": ["demo"],
+            "resolution": "lowest-direct",
+            "trust_unverified_sdist_deps": True,
+        },
+        3,
+        scenario_name="example",
+        host=host,
+    )
+
+    assert runs == returned_runs
+    assert summary == {
+        "success_runs": "2/3",
+        "median_decisions": 5,
+        "median_distributions_seen": 6,
+        "median_metadata_fetched": 6,
+        "median_packages": 1,
+        "median_conflicts": 4,
+        "median_backjumps": 4,
+        "median_wall": 0.2,
+        "min_decisions": 1,
+        "max_decisions": 9,
+        "min_wall": 0.1,
+        "max_wall": 0.3,
+    }
+
+    assert len(calls) == 3
+    assert calls[1:] == [calls[0], calls[0]]
+    args, kwargs = calls[0]
+    requirements, uploaded_prior_to, constraints = args
+    assert set(requirements) == {"demo"}
+    assert uploaded_prior_to == module.parse_datetime("2025-01-02 03:04:05")
+    assert set(constraints) == {"support"}
+    assert kwargs["indexes"] == [
+        module.IndexConfig("private", "https://example.test/simple")
+    ]
+    assert kwargs["index_routes"] == [module.IndexRoute("demo", "private")]
+    assert kwargs["build_policy_overrides"] == {"demo": module.BuildPolicy.BUILD_REMOTE}
+    assert kwargs["resolution_strategy"] is module.ResolutionStrategy.LOWEST_DIRECT
+    assert kwargs["trust_unverified_sdist_deps"] is True
+    assert kwargs["target"].marker_env["python_version"] == "3.11"
+    assert kwargs["host"] is host
 
 
 def test_canary_configures_lowest_direct_roots(
@@ -241,12 +438,17 @@ def test_canary_configures_lowest_direct_roots(
     monkeypatch.setattr(module, "Resolver", FakeResolver)
 
     requirements = module.parse_requirements(["Root[feature]", "Other==1"])
+    captured = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
+    host = module.BenchmarkHost(captured.target, captured.python_runtime, None)
+    admission = host.target_for("3.11", {})
+    assert admission.target is not None
     result = module.run_one(
         requirements,
-        "3.11",
         None,
         None,
         resolution_strategy=module.ResolutionStrategy.LOWEST_DIRECT,
+        target=admission.target,
+        host=host,
     )
 
     assert result["success"] is True
@@ -256,7 +458,7 @@ def test_canary_configures_lowest_direct_roots(
     assert settings["build_policy"] == "never"
     assert settings["trust_unverified_sdist_deps"] is False
     assert settings["max_iterations"] == module.MAX_ITERATIONS
-    assert settings["wall_timeout_seconds"] == module.WALL_TIMEOUT_S
+    assert settings["wall_timeout_seconds"] is None
     assert settings["runtime"]["python"] == sys.version
     assert settings["runtime"]["implementation"] == sys.implementation.name
     assert settings["direct_packages"] == ["other", "root"]
@@ -267,6 +469,7 @@ def test_canary_configures_lowest_direct_roots(
     assert settings["target"]["wheel_tags_count"] > 0
     assert seen["resolution_strategy"] is module.ResolutionStrategy.LOWEST_DIRECT
     assert seen["direct_packages"] == frozenset({"root", "other"})
+    assert seen["target"] is admission.target
 
 
 def test_canary_main_records_v2_contract(
@@ -352,7 +555,9 @@ def test_canary_main_preserves_v2_lowest_identity_and_effective_settings(
         *,
         scenario_name: str,
         resolution_override: object,
+        host: object,
     ) -> tuple[list[dict], dict]:
+        del host
         assert scenario_name == "example"
         assert resolution_override is module.ResolutionStrategy.LOWEST
         return [run], summary

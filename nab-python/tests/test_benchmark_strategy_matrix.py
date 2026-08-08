@@ -5,14 +5,18 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
+import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Literal
 
 import pytest
+
+from nab_python._vendor.packaging.tags import Tag
+from nab_python.target import ResolveTarget
 
 _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 _STANDARD_FILES = 14
@@ -20,7 +24,6 @@ _STANDARD_SCENARIOS = 558
 _RUNNABLE_SCENARIOS = 536
 _UNSUPPORTED_SCENARIOS = 22
 _TOTAL_EXECUTION_IDENTITIES = 1_674
-_RUNNABLE_STRATEGY_EXECUTIONS = 1_608
 _MARKER_BUILD_SCENARIOS = {
     "ai-stack:llama-index-experimental-gpt5",
     "ai-stack:open-r1",
@@ -29,6 +32,24 @@ _MARKER_BUILD_SCENARIOS = {
     "pip:pip-11760-torchgeo-nbconvert-pin",
     "pip:pip-9572-textract-pypdf2",
     "uv:uv-issue-13321-axolotl-stack",
+}
+_EXACT_HOST_MARKERS = {
+    "uv:uv-tensorflow-macos": {
+        "implementation_name": "cpython",
+        "os_name": "posix",
+        "platform_machine": "arm64",
+        "platform_python_implementation": "CPython",
+        "platform_system": "Darwin",
+        "sys_platform": "darwin",
+    },
+    "uv:pywin32-windows-amd64-real-index": {
+        "implementation_name": "cpython",
+        "os_name": "nt",
+        "platform_machine": "AMD64",
+        "platform_python_implementation": "CPython",
+        "platform_system": "Windows",
+        "sys_platform": "win32",
+    },
 }
 _CLEAN_SOURCE = {"commit": "a" * 40, "dirty": False, "diff_hash": None}
 _MANIFEST_FIELDS = {
@@ -46,6 +67,7 @@ _MANIFEST_FIELDS = {
     "selected_logical_keys",
     "completed_logical_keys",
     "unsupported_logical_keys",
+    "inapplicable_logical_keys",
     "available_execution_keys",
     "selected_execution_keys",
     "completed_execution_keys",
@@ -53,6 +75,75 @@ _MANIFEST_FIELDS = {
     "file_execution_keys",
     "complete",
 }
+
+
+def _host(
+    module: ModuleType,
+    *,
+    system: str,
+    sys_platform: str,
+    machine: str,
+    os_name: str,
+    platform_tag: str,
+    implementation: str = "cpython",
+) -> object:
+    platform_implementation = "CPython" if implementation == "cpython" else "PyPy"
+    interpreter = "cp312" if implementation == "cpython" else "pp312"
+    abi = "cp312" if implementation == "cpython" else "pypy312_pp73"
+    environment = {
+        "implementation_name": implementation,
+        "implementation_version": "3.12.0",
+        "os_name": os_name,
+        "platform_machine": machine,
+        "platform_python_implementation": platform_implementation,
+        "platform_release": "test-release",
+        "platform_system": system,
+        "platform_version": "test-version",
+        "python_full_version": "3.12.0",
+        "python_version": "3.12",
+        "sys_platform": sys_platform,
+    }
+    target = ResolveTarget.for_host(
+        env_source=lambda: environment,
+        tags_source=lambda: iter(
+            (Tag(interpreter, abi, platform_tag), Tag("py3", "none", "any"))
+        ),
+    )
+    return module.BenchmarkHost(target, "test-runtime", 120)
+
+
+def _empty_provider_stats() -> SimpleNamespace:
+    fields = (
+        "listings_fetched",
+        "metadata_fetched",
+        "sdist_pkg_info_fetched",
+        "distributions_seen",
+        "wheels_seen",
+        "sdists_seen",
+        "excluded_by_python",
+        "excluded_by_time",
+        "excluded_by_dist_policy",
+        "excluded_by_build_policy",
+        "sdist_pyproject_fallbacks",
+        "get_dependencies_calls",
+        "choose_version_calls",
+        "prioritize_calls",
+        "look_ahead_rejections",
+    )
+    return SimpleNamespace(**dict.fromkeys(fields, 0))
+
+
+def _empty_resolver_stats() -> SimpleNamespace:
+    fields = (
+        "rounds",
+        "decisions",
+        "conflicts",
+        "derivations",
+        "backjumps",
+        "restarts",
+        "incompatibilities_learned",
+    )
+    return SimpleNamespace(**dict.fromkeys(fields, 0))
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -126,8 +217,19 @@ def _harness(name: str) -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    sys.path.insert(0, str(_BENCHMARKS))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(_BENCHMARKS))
     return module
+
+
+def _exact_host_rows(module: ModuleType) -> dict[str, object]:
+    rows = module.load_standard_corpus(module.standard_scenario_files())
+    return {
+        row.logical_key: row for row in rows if "marker_environment" in row.definition
+    }
 
 
 def _write_corpus(
@@ -147,6 +249,11 @@ requirements = ["{requirement}"]
 python_version = "3.11"
 requirements = ["native-only"]
 unsupported_reason = "requires a native system dependency"
+
+[foreign-host]
+python_version = "3.11"
+requirements = []
+platform_system = "Windows"
 """.lstrip(),
         encoding="utf-8",
     )
@@ -171,11 +278,19 @@ def _result_payload(
     source: dict[str, object],
     corpus_hash: str,
 ) -> dict[str, object]:
+    host = module.BenchmarkHost.current(module.SCENARIO_WALL_TIMEOUT_SECONDS)
+    plan = module.standard_run_plan(
+        [execution.scenario],
+        (execution.strategy,),
+        host,
+    )
     input_data = module.prepare_standard_execution(
         execution,
+        plan.targets_by_logical_key[execution.scenario.logical_key],
         commit=commit,
         source=source,
         corpus_hash=corpus_hash,
+        settings_digest="test-settings",
     ).expected_input
     stats = dict.fromkeys(module._STANDARD_COUNTER_FIELDS, 0)
     stats["packages_resolved"] = 1
@@ -215,20 +330,44 @@ def _run_fake(
     source_states = iter((effective_source, effective_end_source))
     monkeypatch.setattr(module, "get_git_source_state", lambda: next(source_states))
     seen: list[object] = []
+    captured_hosts: list[object] = []
+    captured_host = _host(
+        module,
+        system="Linux",
+        sys_platform="linux",
+        machine="x86_64",
+        os_name="posix",
+        platform_tag="manylinux_2_17_x86_64",
+    )
+
+    def current_host(_cls: type, timeout: int) -> object:
+        assert timeout == module.SCENARIO_WALL_TIMEOUT_SECONDS
+        captured_hosts.append(captured_host)
+        return captured_host
+
+    monkeypatch.setattr(module.BenchmarkHost, "current", classmethod(current_host))
 
     def process(
         execution: object,
         commit: str,
         *,
         force: bool,
-        source: dict[str, object],
-        corpus_hash: str,
-    ) -> bool:
+        prepared: object,
+        host: object,
+    ) -> None:
         del force
+        assert host is captured_hosts[0]
         seen.append(execution)
         if result_kind == "missing":
-            return True
-        payload = _result_payload(module, execution, commit, source, corpus_hash)
+            return
+        stats = dict.fromkeys(module._STANDARD_COUNTER_FIELDS, 0)
+        stats["packages_resolved"] = 1
+        stats["wall_time_seconds"] = 0.01
+        payload = {
+            "input": json.loads(json.dumps(prepared.expected_input)),
+            "result": {"success": True, "error": None},
+            "stats": stats,
+        }
         if result_kind == "malformed":
             payload["stats"] = {"wall_time_seconds": 0.01}
         if result_kind == "changed-input":
@@ -246,7 +385,6 @@ def _run_fake(
             nested = results_dir / commit / "nested" / module.STANDARD_MANIFEST_FILENAME
             nested.parent.mkdir()
             nested.write_text(json.dumps(payload) + "\n", encoding="utf-8")
-        return True
 
     monkeypatch.setattr(module, "process_scenario", process)
     argv = ["--commit", "run"]
@@ -257,6 +395,7 @@ def _run_fake(
     if force:
         argv.append("--force")
     module.main(argv)
+    assert len(captured_hosts) == 1
     return module, seen, results_dir / "run" / module.STANDARD_MANIFEST_FILENAME
 
 
@@ -277,11 +416,379 @@ def test_standard_corpus_is_one_canonical_definition_per_scenario() -> None:
 def test_standard_execution_census() -> None:
     module = _harness("scenarios")
     rows = module.load_standard_corpus(module.standard_scenario_files())
-    executions = module.standard_execution_plan(rows, module.STANDARD_STRATEGIES)
     execution_keys = module.standard_execution_keys(rows, module.STANDARD_STRATEGIES)
 
-    assert len(executions) == _RUNNABLE_STRATEGY_EXECUTIONS
     assert len(execution_keys) == _TOTAL_EXECUTION_IDENTITIES
+
+
+@pytest.mark.parametrize(
+    ("host_kwargs", "expected"),
+    [
+        (
+            {
+                "system": "Linux",
+                "sys_platform": "linux",
+                "machine": "x86_64",
+                "os_name": "posix",
+                "platform_tag": "manylinux_2_17_x86_64",
+            },
+            {"linux", "neutral"},
+        ),
+        (
+            {
+                "system": "Windows",
+                "sys_platform": "win32",
+                "machine": "AMD64",
+                "os_name": "nt",
+                "platform_tag": "win_amd64",
+            },
+            {"windows", "windows-amd64", "neutral"},
+        ),
+        (
+            {
+                "system": "Windows",
+                "sys_platform": "win32",
+                "machine": "ARM64",
+                "os_name": "nt",
+                "platform_tag": "win_arm64",
+            },
+            {"windows", "neutral"},
+        ),
+        (
+            {
+                "system": "Darwin",
+                "sys_platform": "darwin",
+                "machine": "arm64",
+                "os_name": "posix",
+                "platform_tag": "macosx_14_0_arm64",
+            },
+            {"mac-arm", "neutral"},
+        ),
+        (
+            {
+                "system": "Darwin",
+                "sys_platform": "darwin",
+                "machine": "x86_64",
+                "os_name": "posix",
+                "platform_tag": "macosx_14_0_x86_64",
+            },
+            {"neutral"},
+        ),
+        (
+            {
+                "system": "Darwin",
+                "sys_platform": "darwin",
+                "machine": "arm64",
+                "os_name": "posix",
+                "platform_tag": "macosx_14_0_arm64",
+                "implementation": "pypy",
+            },
+            {"neutral"},
+        ),
+    ],
+)
+def test_standard_plan_admits_only_targets_with_host_wheel_tags(
+    host_kwargs: dict[str, str],
+    expected: set[str],
+) -> None:
+    module = _harness("scenarios")
+    rows = [
+        module.StandardScenario(
+            "test",
+            "linux",
+            {"python_version": "3.11", "platform_system": "Linux"},
+        ),
+        module.StandardScenario(
+            "test",
+            "windows",
+            {"python_version": "3.11", "platform_system": "Windows"},
+        ),
+        module.StandardScenario(
+            "test",
+            "windows-amd64",
+            {
+                "python_version": "3.11",
+                "marker_environment": {
+                    "implementation_name": "cpython",
+                    "os_name": "nt",
+                    "platform_machine": "AMD64",
+                    "platform_python_implementation": "CPython",
+                    "platform_system": "Windows",
+                    "sys_platform": "win32",
+                },
+            },
+        ),
+        module.StandardScenario(
+            "test",
+            "mac-arm",
+            {
+                "python_version": "3.11",
+                "marker_environment": {
+                    "implementation_name": "cpython",
+                    "os_name": "posix",
+                    "platform_machine": "arm64",
+                    "platform_python_implementation": "CPython",
+                    "platform_system": "Darwin",
+                    "sys_platform": "darwin",
+                },
+            },
+        ),
+        module.StandardScenario("test", "neutral", {"python_version": "3.11"}),
+    ]
+
+    plan = module.standard_run_plan(
+        rows,
+        (module.ResolutionStrategy.HIGHEST,),
+        _host(module, **host_kwargs),
+    )
+
+    assert {execution.scenario.name for execution in plan.executions} == expected
+    assert all(target.tags_faithful for target in plan.targets_by_logical_key.values())
+    assert len(plan.inapplicable_logical_keys) == len(rows) - len(expected)
+
+
+@pytest.mark.parametrize(
+    ("definition", "message"),
+    [
+        ({"platform_system": "Linuz"}, "no supported platform"),
+        (
+            {
+                "marker_environment": {
+                    "platform_system": "Darwin",
+                    "sys_platform": "win32",
+                }
+            },
+            "no supported platform",
+        ),
+        (
+            {
+                "marker_environment": {
+                    "implementation_name": "cpython",
+                    "platform_python_implementation": "PyPy",
+                }
+            },
+            "no supported interpreter",
+        ),
+        (
+            {
+                "platform_system": "Linux",
+                "marker_environment": {"platform_system": "Windows"},
+            },
+            "platform_system conflicts",
+        ),
+    ],
+)
+def test_invalid_host_restrictions_are_rejected(
+    definition: dict[str, object],
+    message: str,
+) -> None:
+    module = _harness("scenarios")
+
+    with pytest.raises(ValueError, match=message):
+        module.parse_marker_environment("invalid", definition)
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        {"platform_system": 1},
+        {"marker_environment": {"platform_system": 1}},
+    ],
+)
+def test_host_restrictions_require_string_values(
+    definition: dict[str, object],
+) -> None:
+    module = _harness("scenarios")
+
+    with pytest.raises(TypeError, match="must be .*string"):
+        module.parse_marker_environment("invalid", definition)
+
+
+def test_standard_plan_reuses_one_admitted_target_across_strategies() -> None:
+    module = _harness("scenarios")
+    row = module.StandardScenario(
+        "test",
+        "neutral",
+        {"python_version": "3.11", "requirements": []},
+    )
+    plan = module.standard_run_plan(
+        [row],
+        module.STANDARD_STRATEGIES,
+        module.BenchmarkHost.current(120),
+    )
+
+    assert len(plan.targets_by_logical_key) == 1
+    target = plan.targets_by_logical_key[row.logical_key]
+    assert all(
+        plan.targets_by_logical_key[execution.scenario.logical_key] is target
+        for execution in plan.executions
+    )
+
+
+def test_host_identity_distinguishes_wheel_tag_sets() -> None:
+    module = _harness("scenarios")
+    environment = {
+        "implementation_name": "cpython",
+        "implementation_version": "3.12.0",
+        "os_name": "posix",
+        "platform_machine": "x86_64",
+        "platform_python_implementation": "CPython",
+        "platform_release": "test-release",
+        "platform_system": "Linux",
+        "platform_version": "test-version",
+        "python_full_version": "3.12.0",
+        "python_version": "3.12",
+        "sys_platform": "linux",
+    }
+    tags = (
+        Tag("cp312", "cp312", "manylinux_2_28_x86_64"),
+        Tag("cp312", "abi3", "manylinux_2_17_x86_64"),
+    )
+
+    def identity_for(ordered_tags: tuple[Tag, ...]) -> dict[str, object]:
+        target = ResolveTarget.for_host(
+            env_source=lambda: environment,
+            tags_source=lambda: iter(ordered_tags),
+        )
+        return module.BenchmarkHost(target, "test-runtime", 120).identity()
+
+    identity = identity_for(tags)
+    reversed_identity = identity_for(tuple(reversed(tags)))
+    wheel_tags_hash = identity["wheel_tags_hash"]
+
+    assert identity == {
+        "python": "test-runtime",
+        "marker_environment": dict(sorted(environment.items())),
+        "wheel_tags_count": 2,
+        "wheel_tags_hash": wheel_tags_hash,
+    }
+    assert isinstance(wheel_tags_hash, str)
+    assert len(wheel_tags_hash) == 64
+    assert wheel_tags_hash != reversed_identity["wheel_tags_hash"]
+
+
+def test_process_scenario_uses_the_planned_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness("scenarios")
+    host = _host(
+        module,
+        system="Linux",
+        sys_platform="linux",
+        machine="x86_64",
+        os_name="posix",
+        platform_tag="manylinux_2_17_x86_64",
+    )
+    row = module.StandardScenario(
+        "quick",
+        "markers",
+        {
+            "python_version": "3.11",
+            "requirements": [
+                "selected; platform_machine == 'x86_64'",
+                "excluded; platform_machine == 'arm64'",
+            ],
+        },
+    )
+    plan = module.standard_run_plan(
+        [row],
+        (module.ResolutionStrategy.HIGHEST,),
+        host,
+    )
+    execution = plan.executions[0]
+    target = plan.targets_by_logical_key[row.logical_key]
+    settings = module.standard_benchmark_settings(host)
+    prepared = module.prepare_standard_execution(
+        execution,
+        target,
+        commit="run",
+        source=dict(_CLEAN_SOURCE),
+        corpus_hash="f" * 64,
+        settings_digest=module.settings_hash(settings),
+    )
+    seen: dict[str, object] = {}
+
+    def resolve(requirements: dict, *_args: object, **kwargs: object) -> dict:
+        seen["requirements"] = requirements
+        seen.update(kwargs)
+        stats = dict.fromkeys(module._STANDARD_COUNTER_FIELDS, 0)
+        stats["wall_time_seconds"] = 0.01
+        return {
+            "result": {"success": True, "error": None},
+            "stats": stats,
+        }
+
+    monkeypatch.setattr(module, "RESULTS_DIR", tmp_path)
+    monkeypatch.setattr(module, "resolve_scenario", resolve)
+    module.process_scenario(
+        execution,
+        "run",
+        force=False,
+        prepared=prepared,
+        host=host,
+    )
+
+    requirements = seen["requirements"]
+    assert isinstance(requirements, dict)
+    assert set(requirements) == {"selected"}
+    assert seen["target"] is target
+    assert seen["host"] is host
+
+
+def test_resolve_scenario_uses_the_supplied_target_and_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness("scenarios")
+    host = _host(
+        module,
+        system="Linux",
+        sys_platform="linux",
+        machine="x86_64",
+        os_name="posix",
+        platform_tag="manylinux_2_17_x86_64",
+    )
+    admission = host.target_for("3.11", {})
+    assert admission.target is not None
+    target = admission.target
+    seen: dict[str, object] = {}
+
+    @contextmanager
+    def fake_coordinator(*_args: object, **_kwargs: object) -> Iterator[object]:
+        yield object()
+
+    class FakeProvider:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            seen["target"] = kwargs["target"]
+            self.stats = _empty_provider_stats()
+
+    class FakeResolver:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.stats = _empty_resolver_stats()
+
+        def resolve(self, *_args: object, **_kwargs: object) -> dict:
+            return {"demo": "1.0"}
+
+    @contextmanager
+    def wall_timeout(actual_host: object) -> Iterator[None]:
+        assert actual_host is host
+        seen["timeout"] = actual_host
+        yield
+
+    monkeypatch.setattr(module, "FetchCoordinator", fake_coordinator)
+    monkeypatch.setattr(module, "HttpxAsyncTransport", object)
+    monkeypatch.setattr(module, "Provider", FakeProvider)
+    monkeypatch.setattr(module, "Resolver", FakeResolver)
+    monkeypatch.setattr(module.BenchmarkHost, "wall_timeout", wall_timeout)
+
+    result = module.resolve_scenario(
+        module.parse_requirements(["demo"]),
+        target=target,
+        host=host,
+    )
+
+    assert result["result"] == {"success": True, "error": None}
+    assert seen == {"target": target, "timeout": host}
 
 
 def test_marker_build_scenarios_are_explicitly_unsupported() -> None:
@@ -298,6 +805,72 @@ def test_marker_build_scenarios_are_explicitly_unsupported() -> None:
     assert all(
         row.definition.get("unsupported_reason") for row in marker_build_rows.values()
     )
+
+
+def test_exact_host_scenarios_define_complete_marker_environments() -> None:
+    module = _harness("scenarios")
+    rows = _exact_host_rows(module)
+
+    assert {
+        key: row.definition["marker_environment"] for key, row in rows.items()
+    } == _EXACT_HOST_MARKERS
+
+
+def test_exact_host_scenarios_retain_their_reviewed_inputs() -> None:
+    module = _harness("scenarios")
+    rows = _exact_host_rows(module)
+
+    tensorflow = rows["uv:uv-tensorflow-macos"].definition
+    assert tensorflow["python_version"] == "3.10.17"
+    assert tensorflow["datetime"] == "2025-05-21 09:12:43"
+    assert tensorflow["requirements"] == ["protobuf", "retina-face"]
+
+    pywin32 = rows["uv:pywin32-windows-amd64-real-index"].definition
+    assert pywin32["requirements"] == ["pywin32; sys_platform == 'win32'"]
+    assert all("unsupported_reason" not in row.definition for row in rows.values())
+
+
+@pytest.mark.parametrize(
+    ("logical_key", "host_kwargs"),
+    [
+        (
+            "uv:uv-tensorflow-macos",
+            {
+                "system": "Darwin",
+                "sys_platform": "darwin",
+                "machine": "arm64",
+                "os_name": "posix",
+                "platform_tag": "macosx_14_0_arm64",
+            },
+        ),
+        (
+            "uv:pywin32-windows-amd64-real-index",
+            {
+                "system": "Windows",
+                "sys_platform": "win32",
+                "machine": "AMD64",
+                "os_name": "nt",
+                "platform_tag": "win_amd64",
+            },
+        ),
+    ],
+)
+def test_exact_host_scenarios_run_on_matching_hosts(
+    logical_key: str,
+    host_kwargs: dict[str, str],
+) -> None:
+    module = _harness("scenarios")
+    row = _exact_host_rows(module)[logical_key]
+    host = _host(module, **host_kwargs)
+
+    plan = module.standard_run_plan(
+        [row],
+        (module.ResolutionStrategy.HIGHEST,),
+        host,
+    )
+
+    assert len(plan.executions) == 1
+    assert plan.targets_by_logical_key[logical_key].tags_faithful
 
 
 def test_standard_corpus_rejects_supported_marker_build_policy(
@@ -715,16 +1288,20 @@ def test_canonical_scenario_names_cannot_collide_case_insensitively(
 
 def test_matrix_uses_historical_result_paths_and_partitions_unsupported() -> None:
     module = _harness("scenarios")
-    supported = module.StandardScenario("quick", "example", {})
+    supported = module.StandardScenario(
+        "quick", "example", {"python_version": "3.11", "requirements": []}
+    )
     unsupported = module.StandardScenario(
         "quick", "unsupported", {"unsupported_reason": "reviewed"}
     )
 
     assert [
         execution.result_key
-        for execution in module.standard_execution_plan(
-            [supported, unsupported], module.STANDARD_STRATEGIES
-        )
+        for execution in module.standard_run_plan(
+            [supported, unsupported],
+            module.STANDARD_STRATEGIES,
+            module.BenchmarkHost.current(120),
+        ).executions
     ] == [
         "quick/example.json",
         "quick-lowest/example.json",
@@ -771,7 +1348,7 @@ def test_result_validation_rejects_json_type_coercions(
         payload_source,
         "f" * 64,
     )
-    expected_input = payload["input"]
+    expected_input = json.loads(json.dumps(payload["input"]))
     assert isinstance(expected_input, dict)
     target = expected_input
     for key in field_path[:-1]:
@@ -780,16 +1357,52 @@ def test_result_validation_rejects_json_type_coercions(
         target = nested
     target[field_path[-1]] = forged_value
 
-    prepared = module.prepare_standard_execution(
+    assert not module._standard_result_data_valid(
+        payload,
+        expected_input,
+    )
+
+
+def test_result_cache_identity_includes_the_host_settings_hash() -> None:
+    module = _harness("scenarios")
+    row = module.StandardScenario(
+        "quick",
+        "example",
+        {"python_version": "3.11", "requirements": ["demo"]},
+    )
+    host = module.BenchmarkHost.current(module.SCENARIO_WALL_TIMEOUT_SECONDS)
+    plan = module.standard_run_plan(
+        [row],
+        (module.ResolutionStrategy.HIGHEST,),
+        host,
+    )
+    execution = plan.executions[0]
+    target = plan.targets_by_logical_key[row.logical_key]
+    first = module.prepare_standard_execution(
         execution,
+        target,
         commit="run",
         source=dict(_CLEAN_SOURCE),
         corpus_hash="f" * 64,
+        settings_digest="first-host",
     )
-    assert not module._standard_result_data_valid(
-        payload,
-        prepared.expected_input,
+    second = module.prepare_standard_execution(
+        execution,
+        target,
+        commit="run",
+        source=dict(_CLEAN_SOURCE),
+        corpus_hash="f" * 64,
+        settings_digest="second-host",
     )
+    stats = dict.fromkeys(module._STANDARD_COUNTER_FIELDS, 0)
+    stats["wall_time_seconds"] = 0.01
+    payload = {
+        "input": first.expected_input,
+        "result": {"success": True, "error": None},
+        "stats": stats,
+    }
+
+    assert not module._standard_result_data_valid(payload, second.expected_input)
 
 
 @pytest.mark.parametrize(
@@ -818,35 +1431,109 @@ def test_main_writes_exact_complete_default_and_matrix_manifests(
     manifest = json.loads(manifest_path.read_text())
 
     assert [execution.strategy.value for execution in seen] == expected_strategies
+
     assert set(manifest) == _MANIFEST_FIELDS
     assert manifest["benchmark_schema"] == module.STANDARD_MANIFEST_SCHEMA
     assert manifest["source_start"] == _CLEAN_SOURCE
     assert manifest["source_end"] == _CLEAN_SOURCE
+
     assert manifest["mode"] == ("strategy-matrix" if matrix else "default")
     assert manifest["strategies"] == expected_strategies
+    assert manifest["settings"]["host"]["wheel_tags_count"] > 0
+    assert len(manifest["settings"]["host"]["wheel_tags_hash"]) == 64
+
     assert manifest["corpus_files"] == ["other", "quick"]
     assert manifest["selected_files"] == ["quick"]
     assert manifest["available_logical_keys"] == [
         "other:other",
         "quick:example",
+        "quick:foreign-host",
         "quick:unsupported",
     ]
     assert manifest["selected_logical_keys"] == [
         "quick:example",
+        "quick:foreign-host",
         "quick:unsupported",
     ]
+
     assert manifest["completed_logical_keys"] == ["quick:example"]
     assert manifest["unsupported_logical_keys"] == ["quick:unsupported"]
+    assert manifest["inapplicable_logical_keys"] == ["quick:foreign-host"]
+
     assert manifest["completed_execution_keys"] == expected_completed
     assert manifest["file_execution_keys"] == expected_completed
+    inapplicable_execution_keys = [
+        key
+        for key in manifest["selected_execution_keys"]
+        if key.endswith("/foreign-host.json")
+    ]
     assert (
         sorted(
             manifest["completed_execution_keys"]
             + manifest["unsupported_execution_keys"]
+            + inapplicable_execution_keys
         )
         == manifest["selected_execution_keys"]
     )
+
     assert manifest["complete"] is True
+
+
+def test_main_reports_host_inapplicable_scenarios(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _run_fake(tmp_path, monkeypatch, matrix=False)
+
+    output = capsys.readouterr().out
+    assert (
+        "Host-inapplicable: 1 scenario; marker environment requires wheel tags "
+        "from a different host."
+    ) in output
+    assert "  quick:foreign-host" in output
+
+
+def test_host_inapplicable_report_is_bounded(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _harness("scenarios")
+    logical_keys = [
+        f"cases:case-{index}" for index in range(module._INAPPLICABLE_KEY_PREVIEW + 2)
+    ]
+
+    module._report_host_inapplicable(logical_keys)
+
+    assert capsys.readouterr().out.splitlines() == [
+        (
+            "Host-inapplicable: 10 scenarios; marker environment requires wheel "
+            "tags from a different host."
+        ),
+        "  " + ", ".join(logical_keys[:8]),
+        "  ... 2 more; exact keys are in _standard_manifest.json.",
+    ]
+
+
+def test_standard_runner_output_is_accepted_by_the_comparator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenarios, _, manifest_path = _run_fake(
+        tmp_path,
+        monkeypatch,
+        matrix=True,
+    )
+    comparator = _harness("compare")
+
+    run = comparator.load_run(manifest_path.parent)
+
+    assert comparator._STANDARD_COUNTER_FIELDS == scenarios._STANDARD_COUNTER_FIELDS
+    assert run.manifest == json.loads(manifest_path.read_text())
+    assert all(
+        result["input"]["settings_hash"]
+        == comparator._settings_hash(run.manifest["settings"])
+        for result in run.results.values()
+    )
 
 
 def test_reusing_a_label_rejects_default_after_strategy_matrix(
@@ -1108,6 +1795,49 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
     assert lowest["resolution_strategy"] is module.sc.ResolutionStrategy.LOWEST
 
 
+def test_profile_runner_uses_the_admitted_target_for_roots_and_resolution() -> None:
+    module = _harness("_profile_runner")
+    physical_host = _host(
+        module.sc,
+        system="Linux",
+        sys_platform="linux",
+        machine="x86_64",
+        os_name="posix",
+        platform_tag="manylinux_2_17_x86_64",
+    )
+    admission = physical_host.target_for("3.11", {})
+    assert admission.target is not None
+
+    class PlannedHost:
+        target = physical_host.target
+
+        def target_for(
+            self,
+            python_version: str,
+            marker_environment: dict[str, str],
+        ) -> object:
+            assert python_version == "3.11"
+            assert marker_environment == {}
+            return admission
+
+    host = PlannedHost()
+    inputs = module.build_inputs(
+        "example",
+        {
+            "python_version": "3.11",
+            "requirements": [
+                "selected; python_version == '3.11'",
+                "excluded; python_version != '3.11'",
+            ],
+        },
+        host=host,
+    )
+
+    assert set(inputs["requirements"]) == {"selected"}
+    assert inputs["target"] is admission.target
+    assert inputs["host"] is host
+
+
 def test_profile_runner_rejects_supported_marker_build_policy() -> None:
     module = _harness("_profile_runner")
     scenario = {
@@ -1125,3 +1855,23 @@ def test_profile_runner_rejects_supported_marker_build_policy() -> None:
         ),
     ):
         module.build_inputs("example", scenario)
+
+
+def test_profile_runner_rejects_an_inapplicable_host_before_resolution() -> None:
+    module = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "platform_system": "Windows",
+    }
+    host = _host(
+        module.sc,
+        system="Linux",
+        sys_platform="linux",
+        machine="x86_64",
+        os_name="posix",
+        platform_tag="manylinux_2_17_x86_64",
+    )
+
+    with pytest.raises(SystemExit, match="benchmark is inapplicable"):
+        module.build_inputs("example", scenario, host=host)

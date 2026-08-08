@@ -16,24 +16,29 @@ import argparse
 import hashlib
 import json
 import os
-import platform
-import signal
 import statistics
 import subprocess
 import sys
 import time
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Mapping
+
+    from nab_python.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib  # type: ignore[no-redef]
+
+from benchmark_host import (
+    BenchmarkHost,
+    BenchmarkTimeout,
+    parse_target_marker_environment,
+)
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.multi_index import IndexConfig
@@ -58,7 +63,6 @@ from nab_python.provider import (
     VcsPolicy,
     split_extra,
 )
-from nab_python.target import ResolveTarget
 from nab_resolver.resolver import Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
@@ -87,18 +91,32 @@ class CanaryV2Identity(NamedTuple):
     definition: dict
 
 
+class PreparedCanaryExecution(NamedTuple):
+    """Validated inputs for one or more runs of a canary scenario."""
+
+    requirements: dict[str, VersionRange]
+    uploaded_prior_to: datetime | None
+    constraints: dict[str, VersionRange] | None
+    indexes: list[IndexConfig]
+    index_routes: list[IndexRoute]
+    build_policy_overrides: dict[str, BuildPolicy]
+    resolution_strategy: ResolutionStrategy
+    trust_unverified_sdist_deps: bool
+    target: ResolveTarget
+    host: BenchmarkHost
+
+
+class CanaryPreparation(NamedTuple):
+    """A prepared canary execution, or its host-inapplicable reason."""
+
+    execution: PreparedCanaryExecution | None
+    inapplicable_reason: str | None
+
+
 WALL_TIMEOUT_S = 60
 MAX_ITERATIONS = 50_000
 # Preserve contract v2 for comparisons with existing canary results.
 CANARY_CONTRACT_VERSION = 2
-
-
-class _ScenarioTimeoutError(BaseException):
-    """Raised when a scenario exceeds the per-run wall-clock budget.
-
-    Subclasses BaseException so the resolver's internal ``except Exception``
-    handlers cannot swallow the alarm mid-resolve.
-    """
 
 
 def scenario_input_hash(scenario_name: str, scenario: dict) -> str:
@@ -181,6 +199,7 @@ def get_git_source_state() -> dict[str, str | bool | None]:
 
 
 def _target_manifest(target: ResolveTarget) -> dict[str, object]:
+    """Return the contract-v2 identity of an effective canary target."""
     tags = [str(tag) for tag in target.tags.ordered]
     return {
         "label": target.label,
@@ -193,37 +212,16 @@ def _target_manifest(target: ResolveTarget) -> dict[str, object]:
     }
 
 
-def _runtime_manifest() -> dict[str, str]:
+def _runtime_manifest(host: BenchmarkHost) -> dict[str, str]:
+    """Return the contract-v2 runtime fields from the captured host."""
+    marker_environment = host.target.marker_env
     return {
-        "python": sys.version,
-        "implementation": sys.implementation.name,
-        "system": platform.system(),
-        "release": platform.release(),
-        "machine": platform.machine(),
+        "python": host.python_runtime,
+        "implementation": marker_environment["implementation_name"],
+        "system": marker_environment["platform_system"],
+        "release": marker_environment["platform_release"],
+        "machine": marker_environment["platform_machine"],
     }
-
-
-def _alarm_handler(_signum: int, _frame: object) -> None:
-    msg = f"scenario exceeded {WALL_TIMEOUT_S}s wall-clock budget"
-    raise _ScenarioTimeoutError(msg)
-
-
-@contextmanager
-def _scenario_wall_timeout() -> Iterator[None]:
-    """Install the POSIX wall timer when the platform provides one."""
-    sigalrm = getattr(signal, "SIGALRM", None)
-    alarm = getattr(signal, "alarm", None)
-    if sigalrm is None or alarm is None:
-        yield
-        return
-
-    previous_handler = signal.signal(sigalrm, _alarm_handler)
-    alarm(WALL_TIMEOUT_S)
-    try:
-        yield
-    finally:
-        alarm(0)
-        signal.signal(sigalrm, previous_handler)
 
 
 def expand_project_extras(
@@ -295,33 +293,6 @@ def _full_marker_environment(
     return env
 
 
-_PYTHON_VERSION_PARTS = 2
-
-
-def _resolve_target(
-    python_version: str,
-    marker_environment: dict[str, str] | None,
-) -> ResolveTarget:
-    target = ResolveTarget.for_host_python(python_version)
-    return target.with_marker_overrides(marker_environment or {})
-
-
-def _scenario_marker_env(
-    python_version: str,
-    overlay: dict[str, str],
-) -> dict[str, str]:
-    env = dict(overlay)
-    env.setdefault("python_full_version", python_version)
-    if "python_version" not in env:
-        parts = python_version.split(".")
-        env["python_version"] = (
-            ".".join(parts[:_PYTHON_VERSION_PARTS])
-            if len(parts) >= _PYTHON_VERSION_PARTS
-            else python_version
-        )
-    return env
-
-
 def parse_datetime(value: str) -> datetime:
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
@@ -342,16 +313,16 @@ def get_git_commit() -> str:
 
 def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
     requirements: dict[str, VersionRange],
-    python_version: str,
     uploaded_prior_to: datetime | None,
     constraints: dict[str, VersionRange] | None,
     *,
-    marker_environment: dict[str, str] | None = None,
     indexes: list[IndexConfig] | None = None,
     index_routes: list[IndexRoute] | None = None,
     build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
     resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
     trust_unverified_sdist_deps: bool = False,
+    target: ResolveTarget,
+    host: BenchmarkHost,
 ) -> dict:
     direct_packages = frozenset(
         name for name in requirements if split_extra(name)[1] is None
@@ -366,7 +337,6 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
         )
         for name, policy in (build_policy_overrides or {}).items()
     )
-    target = _resolve_target(python_version, marker_environment)
     with FetchCoordinator(
         HttpxAsyncTransport(),
         indexes=effective_indexes,
@@ -394,14 +364,14 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
 
         start = time.monotonic()
         try:
-            with _scenario_wall_timeout():
+            with host.wall_timeout():
                 raw = resolver.resolve(requirements, constraints=constraints)
             elapsed = time.monotonic() - start
             result = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
             success = True
             error = None
             packages = len(result)
-        except (_ScenarioTimeoutError, Exception) as exc:
+        except (BenchmarkTimeout, Exception) as exc:
             elapsed = time.monotonic() - start
             success = False
             error = f"{type(exc).__name__}: {exc}"
@@ -416,8 +386,8 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
                 "build_policy": BuildPolicy.NEVER.value,
                 "trust_unverified_sdist_deps": trust_unverified_sdist_deps,
                 "max_iterations": MAX_ITERATIONS,
-                "wall_timeout_seconds": WALL_TIMEOUT_S,
-                "runtime": _runtime_manifest(),
+                "wall_timeout_seconds": host.wall_timeout_seconds,
+                "runtime": _runtime_manifest(host),
                 "direct_packages": sorted(direct_packages),
                 "target": _target_manifest(target),
                 "indexes": [
@@ -757,62 +727,34 @@ def canary_v2_identity(
     return CanaryV2Identity(f"{stem}-{resolution.value}:{name}", definition)
 
 
-def median_run(
-    scenario: dict,
-    runs: int,
-    *,
-    scenario_name: str = "canary",
-    resolution_override: ResolutionStrategy | None = None,
-) -> tuple[list[dict], dict]:
-    if "unsupported_reason" in scenario:
-        return [], {"skipped": scenario["unsupported_reason"]}
-
-    python_version = scenario["python_version"]
-    requirement_strings = scenario["requirements"]
-    constraint_strings = scenario.get("constraints", [])
-    platform_system = scenario.get("platform_system")
-    marker_environment_raw = scenario.get("marker_environment", {})
-    if not isinstance(marker_environment_raw, dict):
-        msg = (
-            "marker_environment must be a TOML table of string -> string,"
-            f" got {type(marker_environment_raw).__name__}"
-        )
-        raise TypeError(msg)
-    marker_environment: dict[str, str] = {
-        str(k): str(v) for k, v in marker_environment_raw.items()
-    }
-    if platform_system and "platform_system" not in marker_environment:
-        marker_environment["platform_system"] = platform_system
-    datetime_str = scenario.get("datetime")
-    project_name = scenario.get("project_name")
-    project_extras = scenario.get("project_extras", [])
-    optional_dependencies = scenario.get("optional_dependencies", {})
-    vcs_config = VcsConfig(
-        policy=VcsPolicy(scenario.get("vcs_policy", "block")),
-        allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
-        allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
-        require_pin=scenario.get("vcs_require_pin", True),
-    )
-
-    if project_name:
-        requirement_strings = [
-            *requirement_strings,
-            *expand_project_extras(project_name, project_extras, optional_dependencies),
-        ]
-
-    raw_indexes = scenario.get("indexes")
-    if raw_indexes is None:
-        indexes = list(DEFAULT_INDEXES)
-    else:
-        indexes = [
-            IndexConfig(name=str(entry["name"]), url=str(entry["url"]))
-            for entry in raw_indexes
-        ]
-    raw_routes = scenario.get("index_routes", [])
-    index_routes = [
-        IndexRoute(name=str(entry["name"]), index=str(entry["index"]))
-        for entry in raw_routes
+def _canary_indexes(scenario: dict) -> list[IndexConfig]:
+    raw = scenario.get("indexes")
+    if raw is None:
+        return list(DEFAULT_INDEXES)
+    return [
+        IndexConfig(name=str(entry["name"]), url=str(entry["url"])) for entry in raw
     ]
+
+
+def _canary_index_routes(scenario: dict) -> list[IndexRoute]:
+    return [
+        IndexRoute(name=str(entry["name"]), index=str(entry["index"]))
+        for entry in scenario.get("index_routes", [])
+    ]
+
+
+def _prepare_canary_execution(
+    scenario: dict,
+    *,
+    scenario_name: str,
+    resolution_override: ResolutionStrategy | None,
+    host: BenchmarkHost,
+) -> CanaryPreparation:
+    """Validate and prepare a supported canary scenario for this host."""
+    python_version = scenario["python_version"]
+    requirement_strings = list(scenario["requirements"])
+    constraint_strings = scenario.get("constraints", [])
+    marker_environment = parse_target_marker_environment(scenario_name, scenario)
     raw_build_packages = scenario.get("build_packages", []) or []
     build_policy_overrides = {
         str(name): BuildPolicy.BUILD_REMOTE for name in raw_build_packages
@@ -823,7 +765,37 @@ def median_run(
             "with a marker environment overlay"
         )
         raise ValueError(msg)
-    requirement_marker_env = _scenario_marker_env(python_version, marker_environment)
+
+    resolution_strategy = scenario_resolution(
+        scenario,
+        scenario_name=scenario_name,
+        override=resolution_override,
+    )
+    vcs_config = VcsConfig(
+        policy=VcsPolicy(scenario.get("vcs_policy", "block")),
+        allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
+        allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
+        require_pin=scenario.get("vcs_require_pin", True),
+    )
+    indexes = _canary_indexes(scenario)
+    index_routes = _canary_index_routes(scenario)
+
+    admission = host.target_for(python_version, marker_environment)
+    if admission.target is None:
+        return CanaryPreparation(None, admission.inapplicable_reason)
+    target = admission.target
+
+    project_name = scenario.get("project_name")
+    if project_name:
+        requirement_strings.extend(
+            expand_project_extras(
+                project_name,
+                scenario.get("project_extras", []),
+                scenario.get("optional_dependencies", {}),
+            )
+        )
+
+    requirement_marker_env = dict(target.marker_env)
     requirements = parse_requirements(
         requirement_strings,
         vcs_config=vcs_config,
@@ -838,54 +810,92 @@ def median_run(
         if constraint_strings
         else None
     )
-    uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
-    resolution_strategy = scenario_resolution(
-        scenario,
-        scenario_name=scenario_name,
-        override=resolution_override,
-    )
     # See scenarios.py: trust pre-2.2 sdist PKG-INFO deps by default so the
     # benchmark measures search, not strict PEP 643 sdist rejection.
     trust_unverified_sdist_deps = bool(
         scenario.get("trust_unverified_sdist_deps", True)
     )
-
-    runs_data: list[dict] = [
-        run_one(
-            requirements,
-            python_version,
-            uploaded_prior_to,
-            constraints,
-            marker_environment=marker_environment or None,
+    datetime_str = scenario.get("datetime")
+    return CanaryPreparation(
+        PreparedCanaryExecution(
+            requirements=requirements,
+            uploaded_prior_to=parse_datetime(datetime_str) if datetime_str else None,
+            constraints=constraints,
             indexes=indexes,
-            index_routes=index_routes or None,
-            build_policy_overrides=build_policy_overrides or None,
+            index_routes=index_routes,
+            build_policy_overrides=build_policy_overrides,
             resolution_strategy=resolution_strategy,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,
-        )
-        for _ in range(runs)
-    ]
+            target=target,
+            host=host,
+        ),
+        None,
+    )
 
-    def med(key: str) -> float:
-        vals = [r[key] for r in runs_data if isinstance(r.get(key), (int, float))]
-        return statistics.median(vals) if vals else 0
 
-    successes = sum(1 for r in runs_data if r["success"])
-    summary = {
+def _run_prepared_canary(execution: PreparedCanaryExecution) -> dict:
+    return run_one(
+        execution.requirements,
+        execution.uploaded_prior_to,
+        execution.constraints,
+        indexes=execution.indexes,
+        index_routes=execution.index_routes or None,
+        build_policy_overrides=execution.build_policy_overrides or None,
+        resolution_strategy=execution.resolution_strategy,
+        trust_unverified_sdist_deps=execution.trust_unverified_sdist_deps,
+        target=execution.target,
+        host=execution.host,
+    )
+
+
+def _summarize_runs(runs_data: list[dict]) -> dict[str, object]:
+    def median(key: str) -> float:
+        values = [
+            run[key] for run in runs_data if isinstance(run.get(key), (int, float))
+        ]
+        return statistics.median(values) if values else 0
+
+    successes = sum(1 for run in runs_data if run["success"])
+    return {
         "success_runs": f"{successes}/{len(runs_data)}",
-        "median_decisions": int(med("decisions")),
-        "median_distributions_seen": int(med("distributions_seen")),
-        "median_metadata_fetched": int(med("metadata_fetched")),
-        "median_packages": int(med("packages")),
-        "median_conflicts": int(med("conflicts")),
-        "median_backjumps": int(med("backjumps")),
-        "median_wall": round(med("wall_time_seconds"), 2),
-        "min_decisions": min(r["decisions"] for r in runs_data),
-        "max_decisions": max(r["decisions"] for r in runs_data),
-        "min_wall": round(min(r["wall_time_seconds"] for r in runs_data), 2),
-        "max_wall": round(max(r["wall_time_seconds"] for r in runs_data), 2),
+        "median_decisions": int(median("decisions")),
+        "median_distributions_seen": int(median("distributions_seen")),
+        "median_metadata_fetched": int(median("metadata_fetched")),
+        "median_packages": int(median("packages")),
+        "median_conflicts": int(median("conflicts")),
+        "median_backjumps": int(median("backjumps")),
+        "median_wall": round(median("wall_time_seconds"), 2),
+        "min_decisions": min(run["decisions"] for run in runs_data),
+        "max_decisions": max(run["decisions"] for run in runs_data),
+        "min_wall": round(min(run["wall_time_seconds"] for run in runs_data), 2),
+        "max_wall": round(max(run["wall_time_seconds"] for run in runs_data), 2),
     }
-    return runs_data, summary
+
+
+def median_run(
+    scenario: dict,
+    runs: int,
+    *,
+    scenario_name: str = "canary",
+    resolution_override: ResolutionStrategy | None = None,
+    host: BenchmarkHost | None = None,
+) -> tuple[list[dict], dict]:
+    if "unsupported_reason" in scenario:
+        return [], {"skipped": scenario["unsupported_reason"]}
+
+    effective_host = host or BenchmarkHost.current(WALL_TIMEOUT_S)
+    preparation = _prepare_canary_execution(
+        scenario,
+        scenario_name=scenario_name,
+        resolution_override=resolution_override,
+        host=effective_host,
+    )
+    if preparation.execution is None:
+        assert preparation.inapplicable_reason is not None
+        return [], {"skipped": preparation.inapplicable_reason}
+
+    runs_data = [_run_prepared_canary(preparation.execution) for _ in range(runs)]
+    return runs_data, _summarize_runs(runs_data)
 
 
 def main() -> None:
@@ -902,6 +912,7 @@ def main() -> None:
 
     source = get_git_source_state()
     commit = args.commit or str(source["commit"] or "no-git")
+    host = BenchmarkHost.current(WALL_TIMEOUT_S)
 
     cases_to_run: list[CanaryCase]
     if args.scenarios_list:
@@ -955,6 +966,7 @@ def main() -> None:
             args.runs,
             scenario_name=label,
             resolution_override=resolution,
+            host=host,
         )
         identity = canary_v2_identity(case, scenario, resolution)
         input_hash = scenario_input_hash(identity.scenario, identity.definition)
