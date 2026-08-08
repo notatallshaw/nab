@@ -2011,6 +2011,23 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
     assert lowest["resolution_strategy"] is module.sc.ResolutionStrategy.LOWEST
 
 
+def test_profile_runner_uses_scenario_sdist_trust_policy() -> None:
+    module = _harness("_profile_runner")
+    base = {"python_version": "3.11", "requirements": []}
+
+    implicit = module.build_inputs("implicit", base)
+    trusted = module.build_inputs(
+        "trusted", {**base, "trust_unverified_sdist_deps": True}
+    )
+    strict = module.build_inputs(
+        "strict", {**base, "trust_unverified_sdist_deps": False}
+    )
+
+    assert implicit["trust_unverified_sdist_deps"] is True
+    assert trusted["trust_unverified_sdist_deps"] is True
+    assert strict["trust_unverified_sdist_deps"] is False
+
+
 def test_profile_runner_uses_the_admitted_target_for_roots_and_resolution() -> None:
     module = _harness("_profile_runner")
     physical_host = _host(

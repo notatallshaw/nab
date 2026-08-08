@@ -135,6 +135,9 @@ def build_inputs(
         "index_routes": sc.parse_index_routes(name, scenario) or None,
         "build_policy_overrides": build_policy_overrides or None,
         "resolution_strategy": resolution_strategy,
+        "trust_unverified_sdist_deps": scenario.get(
+            "trust_unverified_sdist_deps", True
+        ),
         "target": target,
         "host": effective_host,
     }
