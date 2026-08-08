@@ -23,8 +23,9 @@ from nab_index.client import SdistFile, WheelFile
 from .._iso8601 import parse_iso_datetime
 from .._toml import tool_nab_section
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
-from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
+from ..metadata import validate_specifier_versions
 from ..paths import path_state
 
 if TYPE_CHECKING:
@@ -656,19 +657,20 @@ def _common_requires_python(files: Iterable[WheelFile | SdistFile]) -> str | Non
     such artefact leaves the whole package unconstrained. Otherwise the
     value survives only when every artefact agrees.
 
-    A malformed value counts as unconstrained too, matching
-    ``excluded_by_python``, which admits a dist whose Requires-Python is
-    an unparseable specifier on any Python. So the lock writer always
-    parses a valid specifier or ``None``, and the pin is never
-    over-constrained by an artefact whose floor nab could not read.
+    A value nab cannot use counts as unconstrained too, matching
+    ``excluded_by_python``, which admits a dist on any Python when the
+    specifier will not parse or its versions will not convert. So the
+    lock writer always records a usable specifier or ``None``, and the
+    pin is never over-constrained by an artefact whose floor nab could
+    not read.
     """
     seen: set[str] = set()
     for f in files:
         if f.requires_python is None:
             return None
         try:
-            SpecifierSet(f.requires_python)
-        except InvalidSpecifier:
+            validate_specifier_versions(SpecifierSet(f.requires_python))
+        except ValueError:
             return None
         seen.add(f.requires_python)
     if len(seen) == 1:
