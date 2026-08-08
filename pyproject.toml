@@ -83,6 +83,9 @@ types = [
     "ty>=0.0.20",
     "pyrefly>=0.50",
     "zuban>=0.6",
+    # nab-resolver reads it under TYPE_CHECKING but takes no runtime
+    # dependency on it, so the checkers need it declared here.
+    "typing_extensions>=4.6",
 ]
 pre-commit = [
     "pre-commit>=4",

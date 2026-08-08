@@ -12,9 +12,12 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#definition
 from __future__ import annotations
 
 import enum
-from typing import Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Generic, Protocol, TypeVar
 
-from typing_extensions import Self, override
+from ._compat import override
+
+if TYPE_CHECKING:
+    from typing_extensions import Self
 
 __all__ = [
     "Incompatibility",

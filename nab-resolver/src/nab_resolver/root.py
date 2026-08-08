@@ -7,7 +7,7 @@ time (which would create a cycle).
 
 from __future__ import annotations
 
-from typing_extensions import override
+from ._compat import override
 
 __all__ = [
     "ROOT",
