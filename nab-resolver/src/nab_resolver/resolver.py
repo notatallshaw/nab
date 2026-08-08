@@ -10,8 +10,8 @@ The phase functions live in :mod:`nab_resolver.propagate`,
 :mod:`nab_resolver.incompat_index`.  ``Resolver`` is a thin coordinator that
 holds shared state and delegates to those modules.  State attributes are
 named without leading underscores so the phase modules can read and mutate
-them directly; the supported public API is ``__init__``, ``resolve``, and
-``stats``.
+them directly; the supported public API is ``__init__``, ``resolve``,
+``solve``, and ``stats``.
 
 Specification: https://github.com/dart-lang/pub/blob/master/doc/solver.md
 Original blog post: https://nex3.medium.com/pubgrub-2fb6470504f
@@ -29,7 +29,7 @@ from . import conflict, decide, incompat_index, propagate
 from .errors import ResolutionError
 from .partial_solution import PartialSolution
 from .ranges import Range
-from .result import build_reachable_decisions
+from .result import Solution, build_solution
 from .root import ROOT
 from .types import (
     Incompatibility,
@@ -59,6 +59,7 @@ __all__ = [
     "ResolverStats",
     "RootRequirement",
     "SetRelation",
+    "Solution",
     "Term",
 ]
 
@@ -449,6 +450,19 @@ class Resolver(Generic[PackageType, VersionType]):
     ) -> dict[PackageType, VersionType]:
         """Resolve requirements and return ``{package: version}``.
 
+        The pins of :meth:`solve`, for a caller that has no use for the
+        dependency graph.
+        """
+        return self.solve(requirements, constraints).pins
+
+    def solve(
+        self,
+        requirements: Mapping[PackageType, RangeProtocol[VersionType]]
+        | Sequence[RootRequirement[PackageType, VersionType]],
+        constraints: Mapping[PackageType, RangeProtocol[VersionType]] | None = None,
+    ) -> Solution[PackageType, VersionType]:
+        """Resolve requirements and return the pins, roots, and edges.
+
         ``requirements`` is either one range per package, or a sequence of
         :class:`~nab_resolver.types.RootRequirement` when the caller has more
         than one requirement on a package and wants each named as written in
@@ -581,13 +595,13 @@ class Resolver(Generic[PackageType, VersionType]):
                 )
         return next_package
 
-    def _build_result(self) -> dict[PackageType, VersionType]:
+    def _build_result(self) -> Solution[PackageType, VersionType]:
         """Build the final result, including only reachable packages.
 
         Per the PubGrub spec, the solution must not contain extra packages:
         "all selected packages are transitively reachable from the root."
         """
-        return build_reachable_decisions(
+        return build_solution(
             self.solution.decisions(),
             self.incompatibilities,
             self.provider.get_dependencies,
