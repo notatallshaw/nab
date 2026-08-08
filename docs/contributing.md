@@ -60,8 +60,13 @@ Lint and format with ruff; type-check with pyright:
 ```bash
 .venv/bin/python -m ruff check .
 .venv/bin/python -m ruff format .
-.venv/bin/python -m pyright nab-resolver/src/
+.venv/bin/python -m pyright
 ```
+
+CI checks the same trees with five checkers rather than one, so a change
+pyright accepts can still fail the matrix. Reproduce a single cell with
+`nox -s "types(checker='mypy')"`; the trees are `TYPED_TREES` in
+`noxfile.py`.
 
 ## Building the docs
 

@@ -919,7 +919,7 @@ class TestProjectCliOverrides:
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
-            patch("nab.cli.write_lock"),
+            patch("nab._lock.write_lock"),
         ):
             app.cli(
                 args=["lock", str(proj), "--no-cache", "--output", str(out), *extra],
@@ -978,7 +978,7 @@ class TestProjectCliOverrides:
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
-            patch("nab.cli.write_lock"),
+            patch("nab._lock.write_lock"),
         ):
             app.cli(
                 args=[
@@ -1076,7 +1076,7 @@ class TestDownloadLadder:
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
-            patch("nab.cli.download_lock", return_value=download_result),
+            patch("nab._download.download_lock", return_value=download_result),
         ):
             download(proj / "pyproject.toml", output=out, cache=False, offline=offline)
         return mock_resolve.call_args.kwargs

@@ -22,6 +22,8 @@ import time
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
 
+from typing_extensions import override
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
@@ -309,6 +311,7 @@ class _LevelFormatter(logging.Formatter):
         self._verbose = verbose
         self._color = color_enabled
 
+    @override
     def format(self, record: logging.LogRecord) -> str:
         message = record.getMessage()
         if self._verbose:

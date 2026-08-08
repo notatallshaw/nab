@@ -204,9 +204,10 @@ class _SparseFile:
         """Return the current read position."""
         return self._pos
 
-    def read(self, size: int = -1) -> bytes:
+    def read(self, size: int | None = -1) -> bytes:
         """Return up to ``size`` bytes from the current position.
 
+        ``None`` or a negative ``size`` reads to the end, as on a file object.
         Reads across contiguous spans and stops at the first gap, so a
         short return is the caller's cue that more bytes are needed.
         """
@@ -248,8 +249,12 @@ class _AcqKind(enum.Enum):
     NONE = "none"
 
 
+# The bytes an acquisition carries, read according to its _AcqKind: a whole
+# body, a tail window plus the offset it starts at, or nothing.
+_AcqPayload = bytes | tuple[_SparseFile, int] | None
+
 # A netloc that cannot serve usable ranges and volunteered no full body.
-_UNSUPPORTED_NONE: tuple[RangeCapability, _AcqKind, object] = (
+_UNSUPPORTED_NONE: tuple[RangeCapability, _AcqKind, _AcqPayload] = (
     RangeCapability.UNSUPPORTED,
     _AcqKind.NONE,
     None,
@@ -328,7 +333,7 @@ async def _suffix_attempt(
 
 async def _absolute_attempt(
     transport: AsyncHttpTransport, url: str, tail_size: int
-) -> tuple[RangeCapability, _AcqKind, object]:
+) -> tuple[RangeCapability, _AcqKind, _AcqPayload]:
     """Learn the length with ``bytes=0-0``, then read the tail absolutely.
 
     A probe that is refused, or that reports no usable total, steps down to
@@ -357,7 +362,7 @@ async def _absolute_attempt(
 
 async def _absolute_tail(
     transport: AsyncHttpTransport, url: str, total: int, tail_size: int
-) -> tuple[RangeCapability, _AcqKind, object]:
+) -> tuple[RangeCapability, _AcqKind, _AcqPayload]:
     """Read the tail window with an absolute range once the length is known.
 
     A tail refused after an honoured probe still steps down to the plain GET,
@@ -399,7 +404,7 @@ async def _full_body_fetch(transport: AsyncHttpTransport, url: str) -> bytes | N
 
 async def _fallback_full_body(
     transport: AsyncHttpTransport, url: str, *, latch: bool
-) -> tuple[RangeCapability, _AcqKind, object]:
+) -> tuple[RangeCapability, _AcqKind, _AcqPayload]:
     """Step an unusable range down to the plain GET, choosing what it teaches.
 
     ``latch`` records the netloc ``FULL_BODY_ONLY``, so later wheels skip the
@@ -421,7 +426,7 @@ async def _acquire(
     url: str,
     capability: RangeCapability,
     tail_size: int,
-) -> tuple[RangeCapability, _AcqKind, object]:
+) -> tuple[RangeCapability, _AcqKind, _AcqPayload]:
     """Fetch bytes per the netloc's known capability, learning it if unknown."""
     if capability is RangeCapability.UNSUPPORTED:
         return _UNSUPPORTED_NONE

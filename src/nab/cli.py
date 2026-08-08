@@ -56,17 +56,7 @@ from nab_python.config_sources import (
     read_env_layer,
     resolve_config,
 )
-from nab_python.download import download_lock  # noqa: F401 - re-exported for tests
-from nab_python.lockfile import (
-    DisjointnessError,  # noqa: F401 - referenced as _cli.DisjointnessError in _lock
-    DivergentBaseDependencyError,  # noqa: F401 - referenced via _cli in _lock
-    MissingHashError,
-    MissingSdistError,
-    render_lock,  # noqa: F401 - referenced as _cli.render_lock in _lock
-    write_lock,  # noqa: F401 - re-exported for tests
-    write_requirements_with_hashes,  # noqa: F401 - re-exported for tests
-    write_requirements_without_hashes,  # noqa: F401 - re-exported for tests
-)
+from nab_python.lockfile import MissingHashError, MissingSdistError
 from nab_python.paths import PathState, path_state
 from nab_python.provider import (
     InvalidUploadTimeError,
@@ -80,10 +70,7 @@ from nab_python.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
 )
-from nab_python.resolve import (
-    build_lock_input,  # noqa: F401 - referenced as _cli.build_lock_input in _lock
-    resolve_for_targets,
-)
+from nab_python.resolve import resolve_for_targets
 from nab_python.target import NonIntervalMarkerError, UnevaluableMarkerError
 from nab_python.workspace import WorkspaceDiscoveryError
 from nab_resolver.errors import ResolutionError
@@ -720,7 +707,7 @@ def _normalize_layered_bool_flags(argv: list[str]) -> list[str]:
         # --offline [value]: keep an explicit True/False/None, else it is bare.
         if token.startswith("--") and token[2:] in _LAYERED_BOOL_FLAGS:
             following = argv[i + 1] if i + 1 < len(argv) else None
-            if following in _BOOL_FLAG_VALUES:
+            if following is not None and following in _BOOL_FLAG_VALUES:
                 normalized += [token, following]
                 i += 2
             else:

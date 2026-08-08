@@ -13,6 +13,7 @@ from __future__ import annotations
 import random
 
 import urllib3
+from typing_extensions import override
 from urllib3.exceptions import InvalidHeader
 
 __all__ = [
@@ -61,6 +62,7 @@ def _retry_after_seconds(value: str) -> float | None:
 class _BoundedRetry(urllib3.Retry):
     """Retry that bounds the Retry-After wait and ignores a malformed one."""
 
+    @override
     def get_retry_after(self, response: urllib3.BaseHTTPResponse) -> float | None:
         value = response.headers.get("Retry-After")
         return None if value is None else _retry_after_seconds(value)
@@ -91,5 +93,7 @@ def next_delay(failures: int, retry_after: str | None = None) -> float:
             return seconds
     if failures <= 1:
         return 0.0
-    backoff = _BACKOFF_FACTOR * 2 ** (failures - 1)
+    # Annotated because typeshed types int ** int as Any: a negative exponent
+    # yields a float.
+    backoff: float = _BACKOFF_FACTOR * 2 ** (failures - 1)
     return backoff + random.random() * _BACKOFF_JITTER  # noqa: S311

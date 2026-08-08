@@ -5,10 +5,9 @@ archive into a local directory: the union of every target's
 artefacts, deduplicated by URL, which for a declared matrix
 pre-populates a directory for offline deployment across platforms.
 
-External callers (the resolver entry point and the download
-helper) are accessed through :mod:`nab.cli` so the test suite's
-``patch("nab.cli.download_lock")`` style of monkey patches keeps
-working after the per-command split.
+The helpers this shares with :mod:`nab._lock` (config loading, the
+printer, transport selection, the resolve step) live in :mod:`nab.cli`;
+everything else is imported from the module that defines it.
 """
 
 from __future__ import annotations
@@ -19,7 +18,8 @@ from typing import Annotated
 
 import tyro
 
-from nab_python.download import DownloadError
+from nab_python.download import DownloadError, download_lock
+from nab_python.resolve import build_lock_input
 
 from . import cli as _cli
 from ._lock import resolve_extra_selection, resolve_group_selection
@@ -130,7 +130,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
         resolution_strategy=settings.resolution,
         progress=ProgressReporter(_cli.printer()),
     )
-    lock_input = _cli.build_lock_input(
+    lock_input = build_lock_input(
         result,
         config=config,
         extras=selected_extras,
@@ -139,7 +139,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
 
     download_transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
     try:
-        outcome = _cli.download_lock(
+        outcome = download_lock(
             lock_input,
             download_transport,
             output,

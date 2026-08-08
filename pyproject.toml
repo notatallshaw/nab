@@ -24,6 +24,7 @@ dependencies = [
     "nab-python==0.0.13.dev0",
     "nab-index==0.0.13.dev0",
     "tyro>=1.0",
+    "typing_extensions>=4.6",
 ]
 
 [project.optional-dependencies]
@@ -57,6 +58,7 @@ exclude = [
     "tests/test_classifiers.py",
     "tests/test_contributing_docs.py",
     "tests/test_release.py",
+    "tests/test_type_check_scope.py",
 ]
 
 # Dependency groups feed `nab lock` for CI lockfiles; regenerate via
@@ -327,6 +329,8 @@ typeCheckingMode = "standard"
 include = [
     "nab-resolver/src",
     "nab-resolver/tests",
+    "nab-index/src",
+    "src",
 ]
 # Editable installs hide the workspace packages from pyright's auto-detection;
 # point it at the source trees directly so cross-package imports resolve.
@@ -339,7 +343,7 @@ extraPaths = [
 
 # https://pyrefly.org/en/docs/configuration/
 [tool.pyrefly]
-project-includes = ["nab-resolver/src"]
+project-includes = ["nab-resolver/src", "nab-index/src", "src"]
 
 # https://mypy.readthedocs.io/en/stable/config_file.html#using-a-pyproject-toml-file
 [tool.mypy]
@@ -347,7 +351,10 @@ python_version = "3.10"
 strict = true
 namespace_packages = true
 explicit_package_bases = true
-mypy_path = ["nab-resolver/src"]
+# Each checked tree is a package base. Without "src" the umbrella resolves
+# under two module names ("nab._version" and "src.nab._version") and mypy
+# stops before checking anything.
+mypy_path = ["nab-resolver/src", "nab-index/src", "src"]
 enable_error_code = [
     "redundant-expr",
     "truthy-bool",
