@@ -19,6 +19,7 @@ from nab_index.transport import HttpError
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.markers import Marker, default_environment
 from nab_python._vendor.packaging.pylock import Pylock
+from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
@@ -104,6 +105,15 @@ def _pins(result: ResolveResult) -> dict[str, Version]:
     return result.target_results[0].pins
 
 
+def _root_ranges(mock_resolver: MagicMock) -> dict[str, VersionRange]:
+    """The root requirements the resolver was called with, folded per package."""
+    folded: dict[str, VersionRange] = {}
+    for root in mock_resolver.resolve.call_args.args[0]:
+        previous = folded.get(root.package, VersionRange.full())
+        folded[root.package] = previous & root.constraint
+    return folded
+
+
 def _locked(lock_input: LockInput) -> dict[str, PinShape]:
     """The pins a single-environment lock carries."""
     (lock,) = lock_input.targets.values()
@@ -128,13 +138,12 @@ def _build_constraints(
     The parser is shared with the requirement side; ``kind`` is what
     tells the two apart.
     """
-    ranges, _ = _build_resolver_inputs(
+    return _build_resolver_inputs(
         [Requirement(text) for text in config.constraints],
         config,
         environment=environment,
         kind="constraint",
-    )
-    return ranges
+    ).ranges
 
 
 def _malformed_group_pyproject(tmp_path: Path) -> Path:
@@ -806,7 +815,7 @@ class TestResolvePyproject:
             }
             _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        forwarded = mock_resolver.resolve.call_args.args[0]
+        forwarded = _root_ranges(mock_resolver)
         assert "foo" in forwarded
         assert "bar" in forwarded
         assert "custom" in forwarded["foo"]
@@ -887,8 +896,7 @@ class TestResolvePyproject:
 
         _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        call_args = mock_resolver.resolve.call_args
-        requirements = call_args.args[0]
+        requirements = _root_ranges(mock_resolver)
         assert "requests" in requirements
         assert "requests[security]" in requirements
         # root_extras passed to provider
@@ -922,7 +930,7 @@ class TestResolvePyproject:
 
         _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
+        requirements = _root_ranges(mock_resolver_cls.return_value)
         assert "foo" in requirements
         assert "windows-only" not in requirements
 
@@ -963,7 +971,7 @@ class TestResolvePyproject:
 
         _resolved(pyproject, _FAKE_TRANSPORT)
 
-        requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
+        requirements = _root_ranges(mock_resolver_cls.return_value)
         assert "foo" in requirements
         assert "legacy" in requirements
 
@@ -997,7 +1005,7 @@ class TestResolvePyproject:
 
         _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
+        requirements = _root_ranges(mock_resolver_cls.return_value)
         assert "linux-only" in requirements
 
     @patch("nab_python.resolve.build_target_lock")
@@ -1023,7 +1031,7 @@ class TestResolvePyproject:
 
         _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.10.0")
 
-        requirements = mock_resolver_cls.return_value.resolve.call_args.args[0]
+        requirements = _root_ranges(mock_resolver_cls.return_value)
         assert "newer" not in requirements
 
     def test_unparseable_python_version_raises(self, tmp_path: Path) -> None:
@@ -2367,11 +2375,11 @@ class TestLoadExtraRequirements:
         assert req.name == "some-dep"
         assert str(req.marker) == 'python_version < "3.10"'
 
-        excluded, _ = _build_resolver_inputs(
+        excluded = _build_resolver_inputs(
             [req],
             NabProjectConfig(),
             environment={"python_version": "3.12", "python_full_version": "3.12.0"},
-        )
+        ).ranges
         assert "some-dep" not in excluded
 
 
@@ -2381,27 +2389,37 @@ class TestBuildResolverInputs:
     def test_duplicate_name_intersects(self) -> None:
         """Two requirements for one package combine to their overlap."""
         reqs = [Requirement("foo>=2.0"), Requirement("foo<3.0")]
-        resolver_requirements, _ = _build_resolver_inputs(
+        resolver_requirements = _build_resolver_inputs(
             reqs, NabProjectConfig(), environment={}
-        )
+        ).ranges
         foo = resolver_requirements["foo"]
         assert V("2.5") in foo
         assert V("1.0") not in foo
         assert V("5.0") not in foo
 
-    def test_conflicting_names_raise(self) -> None:
-        """Pinned-but-different requirements for one package raise."""
+    def test_conflicting_names_stay_separate_roots(self) -> None:
+        """Contradictory requirements reach the solver as their own clauses."""
         reqs = [Requirement("foo==1.0"), Requirement("foo==2.0")]
-        with pytest.raises(ResolutionError, match="foo==1.0"):
-            _build_resolver_inputs(reqs, NabProjectConfig(), environment={})
+        inputs = _build_resolver_inputs(reqs, NabProjectConfig(), environment={})
+        assert [(root.package, root.origin) for root in inputs.roots] == [
+            ("foo", "foo==1.0"),
+            ("foo", "foo==2.0"),
+        ]
+        assert inputs.ranges["foo"].is_empty
+
+    def test_a_repeated_extra_gets_one_proxy_root(self) -> None:
+        """A second mention of the same extra adds no second proxy clause."""
+        reqs = [Requirement("foo[dev]>1"), Requirement("foo[dev]<9")]
+        inputs = _build_resolver_inputs(reqs, NabProjectConfig(), environment={})
+        assert [root.package for root in inputs.roots] == ["foo", "foo[dev]", "foo"]
 
     def test_root_extra_marker_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         """A root requirement gated on ``extra ==`` is dropped with a warning."""
         reqs = [Requirement('foo ; extra == "test"')]
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
-            resolver_requirements, _ = _build_resolver_inputs(
+            resolver_requirements = _build_resolver_inputs(
                 reqs, NabProjectConfig(), environment={}
-            )
+            ).ranges
         assert "foo" not in resolver_requirements
         assert any("membership marker" in rec.message for rec in caplog.records)
 
@@ -2411,9 +2429,9 @@ class TestBuildResolverInputs:
         """A root ``"x" in extras`` marker is dropped with a warning, not a crash."""
         reqs = [Requirement('foo ; "x" in extras')]
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
-            resolver_requirements, _ = _build_resolver_inputs(
+            resolver_requirements = _build_resolver_inputs(
                 reqs, NabProjectConfig(), environment={}
-            )
+            ).ranges
         assert "foo" not in resolver_requirements
         assert any("membership marker" in rec.message for rec in caplog.records)
 
@@ -2423,9 +2441,9 @@ class TestBuildResolverInputs:
         """A root ``in dependency_groups`` marker is dropped with a warning."""
         reqs = [Requirement('foo ; "dev" in dependency_groups')]
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
-            resolver_requirements, _ = _build_resolver_inputs(
+            resolver_requirements = _build_resolver_inputs(
                 reqs, NabProjectConfig(), environment={}
-            )
+            ).ranges
         assert "foo" not in resolver_requirements
         assert any("membership marker" in rec.message for rec in caplog.records)
 
@@ -2444,9 +2462,9 @@ class TestBuildResolverInputs:
         """``pkg[redis]`` is the syntax the warning points at; it must not warn."""
         reqs = [Requirement("foo[redis]")]
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
-            resolver_requirements, _ = _build_resolver_inputs(
+            resolver_requirements = _build_resolver_inputs(
                 reqs, NabProjectConfig(), environment={}
-            )
+            ).ranges
         assert "foo" in resolver_requirements
         assert not caplog.records
 
@@ -2455,9 +2473,9 @@ class TestBuildResolverInputs:
         reqs = [Requirement('foo ; python_version < "3.0"')]
         env = {"python_version": "3.11", "python_full_version": "3.11.2"}
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
-            resolver_requirements, _ = _build_resolver_inputs(
+            resolver_requirements = _build_resolver_inputs(
                 reqs, NabProjectConfig(), environment=env
-            )
+            ).ranges
         assert "foo" not in resolver_requirements
         assert not caplog.records
 
@@ -2473,9 +2491,9 @@ class TestBuildResolverInputs:
         """
         req = Requirement("demo[x,y,z]")
         monkeypatch.setattr(req, "extras", ["z", "y", "x"])
-        resolver_requirements, _ = _build_resolver_inputs(
+        resolver_requirements = _build_resolver_inputs(
             [req], NabProjectConfig(), environment={}
-        )
+        ).ranges
         proxy_keys = [k for k in resolver_requirements if k.startswith("demo[")]
         assert proxy_keys == ["demo[x]", "demo[y]", "demo[z]"]
 
@@ -3324,6 +3342,58 @@ class TestAugmentResolutionError:
             in diagnostics
         )
         assert "foo: no version matches the requirement" not in diagnostics
+
+
+class TestConflictingRootRequirements:
+    def test_both_requirements_are_named(self, tmp_path: Path) -> None:
+        """Two requirements on one package each get their own line."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo>1.0", "foo==1.0"]\n',
+            encoding="utf-8",
+        )
+        coordinator = make_coordinator(
+            listings={"foo": _index_wheels("foo", "1.0", "2.0")},
+            metadata_by_version={
+                "1.0": _metadata("foo", "1.0"),
+                "2.0": _metadata("foo", "2.0"),
+            },
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        lines = str(info.value).splitlines()
+        named = [line for line in lines if "your project depends on foo" in line]
+        assert len(named) == 2
+        assert not any("empty" in line for line in lines)
+
+    def test_conflicting_constraints_still_fail_before_the_solve(
+        self, tmp_path: Path
+    ) -> None:
+        """Constraints are not root clauses, so their fold stays pre-checked."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[tool.nab]\nconstraints = ["foo<1.0", "foo>2.0"]\n',
+            encoding="utf-8",
+        )
+        coordinator = make_coordinator(
+            listings={"foo": _index_wheels("foo", "1.0", "2.0")},
+            metadata_by_version={
+                "1.0": _metadata("foo", "1.0"),
+                "2.0": _metadata("foo", "2.0"),
+            },
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError, match="conflicting constraints"):
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
 
 def _tuple_for_python(python_version: str) -> ResolveTarget:

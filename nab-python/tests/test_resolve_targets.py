@@ -1016,33 +1016,33 @@ class TestBuildResolverInputs:
     def test_marker_true_keeps_requirement(self) -> None:
         """A requirement whose marker matches the env is kept."""
         env = _linux_311().marker_env
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             _reqs('pkg; sys_platform == "linux"'), NabProjectConfig(), environment=env
-        )
+        ).ranges
         assert "pkg" in out
 
     def test_marker_false_drops_requirement(self) -> None:
         """A requirement whose marker excludes the env is dropped."""
         env = _linux_311().marker_env
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             _reqs('pkg; sys_platform == "win32"'), NabProjectConfig(), environment=env
-        )
+        ).ranges
         assert out == {}
 
     def test_set_marker_drops_without_crash(self) -> None:
         """A lockfile-only set marker is empty at resolve time, so the dep drops."""
         env = _linux_311().marker_env
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             _reqs('pkg ; "x" in extras'), NabProjectConfig(), environment=env
-        )
+        ).ranges
         assert out == {}
 
     def test_extras_get_separate_entries(self) -> None:
         """Extras become ``name[extra]`` entries with any-version range."""
         env = _linux_311().marker_env
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             _reqs("pkg[foo,bar]"), NabProjectConfig(), environment=env
-        )
+        ).ranges
         assert "pkg" in out
         assert "pkg[foo]" in out
         assert "pkg[bar]" in out
@@ -1059,24 +1059,24 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         req = Requirement("pkg[a,b,c]")
         monkeypatch.setattr(req, "extras", sorted(req.extras, reverse=True))
-        out, _ = _build_resolver_inputs([req], NabProjectConfig(), environment=env)
+        out = _build_resolver_inputs([req], NabProjectConfig(), environment=env).ranges
         proxy_keys = [k for k in out if k.startswith("pkg[")]
         assert proxy_keys == ["pkg[a]", "pkg[b]", "pkg[c]"]
 
     def test_no_specifier_yields_any(self) -> None:
         """An unconstrained requirement gets the any() range."""
         env = _linux_311().marker_env
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             _reqs("pkg"), NabProjectConfig(), environment=env
-        )
+        ).ranges
         assert out["pkg"] == VersionRange.full(admit_arbitrary=False)
 
     def test_specifier_yields_intervals(self) -> None:
         """A bounded specifier produces the corresponding interval."""
         env = _linux_311().marker_env
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             _reqs("pkg>=1.0,<2.0"), NabProjectConfig(), environment=env
-        )
+        ).ranges
         # The specifier should be stricter than unbounded; we check
         # by confirming a known-out-of-range version is excluded.
         assert Version("0.5") not in out["pkg"]
@@ -1090,9 +1090,9 @@ class TestBuildResolverInputs:
         Declared extras still flow through.
         """
         env = _linux_311().marker_env
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             _reqs("pkg[ext]===1.0.special"), NabProjectConfig(), environment=env
-        )
+        ).ranges
         assert "pkg" in out
         assert "1.0.special" in out["pkg"]
         assert Version("1.0") not in out["pkg"]
@@ -1101,20 +1101,21 @@ class TestBuildResolverInputs:
     def test_duplicate_name_intersects(self) -> None:
         """Two requirements for one package combine to their overlap."""
         env = _linux_311().marker_env
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             _reqs("pkg>=2.0", "pkg<3.0"), NabProjectConfig(), environment=env
-        )
+        ).ranges
         assert Version("2.5") in out["pkg"]
         assert Version("1.0") not in out["pkg"]
         assert Version("5.0") not in out["pkg"]
 
-    def test_conflicting_names_raise(self) -> None:
-        """Contradictory pins for one package raise ResolutionError."""
+    def test_conflicting_names_stay_separate_roots(self) -> None:
+        """Contradictory pins reach the solver as their own clauses."""
         env = _linux_311().marker_env
-        with pytest.raises(ResolutionError, match="pkg==1.0"):
-            _build_resolver_inputs(
-                _reqs("pkg==1.0", "pkg==2.0"), NabProjectConfig(), environment=env
-            )
+        inputs = _build_resolver_inputs(
+            _reqs("pkg==1.0", "pkg==2.0"), NabProjectConfig(), environment=env
+        )
+        assert [root.origin for root in inputs.roots] == ["pkg==1.0", "pkg==2.0"]
+        assert inputs.ranges["pkg"].is_empty
 
     def test_constraint_extras_rejected(self) -> None:
         """A constraint carrying extras is rejected, matching pip."""
@@ -1135,32 +1136,32 @@ class TestBuildResolverInputs:
         path once enforced such constraints unconditionally (issue #38).
         """
         env = _linux_311().marker_env
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             _reqs('pkg<2.0 ; sys_platform == "win32"'),
             NabProjectConfig(),
             environment=env,
             kind="constraint",
-        )
+        ).ranges
         assert out == {}
 
     def test_marker_true_keeps_constraint(self) -> None:
         """A constraint whose marker matches the env binds its range."""
         env = _linux_311().marker_env
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             _reqs('pkg<2.0 ; sys_platform == "linux"'),
             NabProjectConfig(),
             environment=env,
             kind="constraint",
-        )
+        ).ranges
         assert Version("1.0") in out["pkg"]
         assert Version("2.0") not in out["pkg"]
 
     def test_extra_proxy_key_normalized(self) -> None:
         """The proxy key is PEP 685 normalized."""
         env = _linux_311().marker_env
-        out, _ = _build_resolver_inputs(
+        out = _build_resolver_inputs(
             _reqs("pkg[My_Extra]"), NabProjectConfig(), environment=env
-        )
+        ).ranges
         assert "pkg[my-extra]" in out
 
     def test_plain_url_requirement_refused(self) -> None:
@@ -1232,18 +1233,18 @@ class TestSelfRefMarker:
                 ["all"],
             )
         )
-        excluded, _ = _build_resolver_inputs(
+        excluded = _build_resolver_inputs(
             reqs, NabProjectConfig(), environment=_linux_311().marker_env
-        )
+        ).ranges
         assert "some-dep" not in excluded
         included_env = {
             **_linux_311().marker_env,
             "python_version": "3.9",
             "python_full_version": "3.9.0",
         }
-        included, _ = _build_resolver_inputs(
+        included = _build_resolver_inputs(
             reqs, NabProjectConfig(), environment=included_env
-        )
+        ).ranges
         assert "some-dep" in included
 
 
@@ -1252,16 +1253,16 @@ class TestRootExtras:
 
     def test_recovers_and_normalizes_extras(self) -> None:
         env = _linux_311().marker_env
-        _, root_extras = _build_resolver_inputs(
+        root_extras = _build_resolver_inputs(
             _reqs("pkg[My_Extra]", "other"), NabProjectConfig(), environment=env
-        )
+        ).extras
         assert root_extras == {("pkg", "my-extra")}
 
     def test_no_extras_yields_empty(self) -> None:
         env = _linux_311().marker_env
-        _, root_extras = _build_resolver_inputs(
+        root_extras = _build_resolver_inputs(
             _reqs("pkg"), NabProjectConfig(), environment=env
-        )
+        ).extras
         assert root_extras == set()
 
 
