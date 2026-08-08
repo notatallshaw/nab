@@ -133,7 +133,7 @@ def test_canary_uses_scenario_resolution(
     seen: list[str] = []
 
     def fake_run_one(*_args: object, **kwargs: object) -> dict:
-        seen.append(str(kwargs["resolution_strategy"].value))
+        seen.append(str(kwargs["config"].resolution.value))
         return _run_result()
 
     monkeypatch.setattr(module, "run_one", fake_run_one)
@@ -321,7 +321,7 @@ def test_canary_explicit_resolution_overrides_declared_strategy(
     seen: list[object] = []
 
     def fake_run_one(*_args: object, **kwargs: object) -> dict:
-        seen.append(kwargs["resolution_strategy"])
+        seen.append(kwargs["config"].resolution)
         return _run_result()
 
     monkeypatch.setattr(module, "run_one", fake_run_one)
@@ -417,17 +417,21 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
     assert len(calls) == 3
     assert calls[1:] == [calls[0], calls[0]]
     args, kwargs = calls[0]
-    requirements, uploaded_prior_to, constraints = args
+    requirements, constraints = args
     assert set(requirements) == {"demo"}
-    assert uploaded_prior_to == module.parse_datetime("2025-01-02 03:04:05")
     assert set(constraints) == {"support"}
-    assert kwargs["indexes"] == [
-        module.IndexConfig("private", "https://example.test/simple")
+    config = kwargs["config"]
+    assert config.uploaded_prior_to == module.parse_datetime("2025-01-02 03:04:05")
+    assert config.indexes == (
+        module.IndexConfig("private", "https://example.test/simple"),
+    )
+    assert module.index_routes_from_config(config) == [
+        module.IndexRoute("demo", "private")
     ]
-    assert kwargs["index_routes"] == [module.IndexRoute("demo", "private")]
-    assert kwargs["build_policy_overrides"] == {"demo": module.BuildPolicy.BUILD_REMOTE}
-    assert kwargs["resolution_strategy"] is module.ResolutionStrategy.LOWEST_DIRECT
-    assert kwargs["trust_unverified_sdist_deps"] is True
+    assert len(config.package_overrides) == 1
+    assert config.package_overrides[0].build_policy is module.BuildPolicy.BUILD_REMOTE
+    assert config.resolution is module.ResolutionStrategy.LOWEST_DIRECT
+    assert config.trust_unverified_sdist_deps is True
     assert kwargs["target"].marker_env["python_version"] == "3.11"
     assert kwargs["host"] is host
 
@@ -450,8 +454,7 @@ def test_canary_configures_lowest_direct_roots(
             pass
 
     class FakeProvider:
-        def __init__(self, *_args: object, **kwargs: object) -> None:
-            seen.update(kwargs)
+        def __init__(self) -> None:
             self.stats = SimpleNamespace(
                 metadata_fetched=0,
                 distributions_seen=0,
@@ -472,9 +475,13 @@ def test_canary_configures_lowest_direct_roots(
         def resolve(self, *_args: object, **_kwargs: object) -> dict:
             return {}
 
+    def fake_build_provider(_coordinator: object, **kwargs: object) -> FakeProvider:
+        seen.update(kwargs)
+        return FakeProvider()
+
     monkeypatch.setattr(module, "FetchCoordinator", FakeCoordinator)
     monkeypatch.setattr(module, "HttpxAsyncTransport", object)
-    monkeypatch.setattr(module, "Provider", FakeProvider)
+    monkeypatch.setattr(module, "build_benchmark_provider", fake_build_provider)
     monkeypatch.setattr(module, "Resolver", FakeResolver)
 
     requirements = module.parse_requirements(["Root[feature]", "Other==1"])
@@ -482,11 +489,14 @@ def test_canary_configures_lowest_direct_roots(
     host = module.BenchmarkHost(captured.target, captured.python_runtime, None)
     admission = host.target_for("3.11", {}, requires_matching_host=False)
     assert admission.target is not None
+    config = module.build_benchmark_config(
+        indexes=module.DEFAULT_INDEXES,
+        resolution=module.ResolutionStrategy.LOWEST_DIRECT,
+    )
     result = module.run_one(
         requirements,
         None,
-        None,
-        resolution_strategy=module.ResolutionStrategy.LOWEST_DIRECT,
+        config=config,
         target=admission.target,
         host=host,
     )
@@ -499,16 +509,19 @@ def test_canary_configures_lowest_direct_roots(
     assert settings["trust_unverified_sdist_deps"] is False
     assert settings["max_iterations"] == module.DEFAULT_MAX_ITERATIONS
     assert settings["wall_timeout_seconds"] is None
+
     assert settings["runtime"]["python"] == sys.version
     assert settings["runtime"]["implementation"] == sys.implementation.name
+
     assert settings["direct_packages"] == ["other", "root"]
     assert settings["indexes"] == [
         {"name": module.DEFAULT_INDEX_NAME, "url": module.DEFAULT_INDEX_URL}
     ]
     assert settings["target"]["marker_environment"]["python_version"] == "3.11"
     assert settings["target"]["wheel_tags_count"] > 0
-    assert seen["resolution_strategy"] is module.ResolutionStrategy.LOWEST_DIRECT
-    assert seen["direct_packages"] == frozenset({"root", "other"})
+
+    assert seen["config"] is config
+    assert seen["requirements"] is requirements
     assert seen["target"] is admission.target
     assert resolver_kwargs == {
         "range_type": module.VersionRange,

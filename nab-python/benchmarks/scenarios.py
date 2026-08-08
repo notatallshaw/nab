@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from datetime import datetime
 
     from nab_python.target import ResolveTarget
 
@@ -32,6 +31,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from benchmark_config import build_benchmark_config, build_benchmark_provider
 from benchmark_datetime import parse_datetime
 from benchmark_host import (
     HOST_TAG_MISMATCH_REASON,
@@ -50,7 +50,7 @@ from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name, is_normalized_name
 from nab_python._vendor.packaging.version import Version
-from nab_python.config import PackageOverride
+from nab_python.config import NabProjectConfig, index_routes_from_config
 from nab_python.fetch import (
     DEFAULT_INDEX_NAME,
     DEFAULT_INDEX_URL,
@@ -60,7 +60,6 @@ from nab_python.fetch import (
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
-    Provider,
     ResolutionStrategy,
     VcsConfig,
     VcsPolicy,
@@ -512,12 +511,7 @@ class PreparedStandardExecution(NamedTuple):
 
     requirement_strings: list[str]
     constraint_strings: list[str]
-    indexes: list[IndexConfig]
-    index_routes: list[IndexRoute]
-    build_policy_overrides: dict[str, BuildPolicy]
-    uploaded_prior_to: datetime | None
-    vcs_config: VcsConfig
-    trust_unverified_sdist_deps: bool
+    config: NabProjectConfig
     target: ResolveTarget
     expected_input: dict[str, object]
 
@@ -1313,49 +1307,26 @@ def write_standard_manifest(  # noqa: PLR0913 - explicit contract fields
     return complete
 
 
-def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
+def resolve_scenario(
     requirements: dict[str, VersionRange],
-    uploaded_prior_to: datetime | None = None,
     constraints: dict[str, VersionRange] | None = None,
-    indexes: list[IndexConfig] | None = None,
-    index_routes: list[IndexRoute] | None = None,
-    build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
-    resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
     *,
+    config: NabProjectConfig,
     target: ResolveTarget,
     host: BenchmarkHost,
-    trust_unverified_sdist_deps: bool = False,
 ) -> dict:
     """Resolve requirements and return stats dict."""
-    direct_packages = frozenset(
-        name for name in requirements if split_extra(name)[1] is None
-    )
-    package_overrides = tuple(
-        PackageOverride(
-            requirement=Requirement(name),
-            name=canonicalize_name(name),
-            version_range=VersionRange.full(),
-            build_policy=policy,
-        )
-        for name, policy in (build_policy_overrides or {}).items()
-    )
     with FetchCoordinator(
         HttpxAsyncTransport(),
-        indexes=indexes,
+        indexes=list(config.indexes),
         cache_dir=CACHE_DIR,
-        index_routes=index_routes,
+        index_routes=index_routes_from_config(config),
     ) as coordinator:
-        provider = Provider(
+        provider = build_benchmark_provider(
             coordinator,
+            config=config,
             target=target,
-            root_requirements=requirements,
-            uploaded_prior_to=uploaded_prior_to,
-            dist_policy=DistPolicy.WHEEL_OR_SDIST,
-            build_policy=BuildPolicy.NEVER,
-            package_overrides=package_overrides,
-            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
-            resolution_strategy=resolution_strategy,
-            direct_packages=direct_packages,
+            requirements=requirements,
         )
         resolver = Resolver(
             provider,
@@ -1485,9 +1456,9 @@ def parse_index_routes(
 
     Each entry is a TOML inline table with keys ``name`` (the package
     name) and ``index`` (the *name* of an entry in ``indexes``).  A route
-    carries no version scope and no marker.  Entries are returned in
-    declaration order so :func:`nab_python.fetch._resolve_routes` can
-    apply last-match-wins on duplicates.
+    carries no version scope and no marker. Entries are returned in
+    declaration order; ``build_benchmark_config`` rejects duplicate canonical
+    package names.
     """
     raw = scenario.get("index_routes", [])
     if not isinstance(raw, list):
@@ -1655,6 +1626,16 @@ def prepare_standard_execution(
     trust_unverified_sdist_deps: bool = scenario.get(
         "trust_unverified_sdist_deps", True
     )
+    uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
+    config = build_benchmark_config(
+        uploaded_prior_to=uploaded_prior_to,
+        indexes=indexes,
+        index_routes=index_routes,
+        build_policy_overrides=build_policy_overrides,
+        resolution=execution.strategy,
+        trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+        vcs=vcs_config,
+    )
     expected_input = {
         **_expected_input(
             commit,
@@ -1684,12 +1665,7 @@ def prepare_standard_execution(
     return PreparedStandardExecution(
         requirement_strings=requirement_strings,
         constraint_strings=constraint_strings,
-        indexes=indexes,
-        index_routes=index_routes,
-        build_policy_overrides=build_policy_overrides,
-        uploaded_prior_to=parse_datetime(datetime_str) if datetime_str else None,
-        vcs_config=vcs_config,
-        trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+        config=config,
         target=target,
         expected_input=expected_input,
     )
@@ -1723,13 +1699,13 @@ def process_scenario(
     requirement_marker_env = dict(prepared.target.marker_env)
     requirements = parse_requirements(
         prepared.requirement_strings,
-        vcs_config=prepared.vcs_config,
+        vcs_config=prepared.config.vcs,
         marker_environment=requirement_marker_env,
     )
     constraints = (
         parse_requirements(
             prepared.constraint_strings,
-            vcs_config=prepared.vcs_config,
+            vcs_config=prepared.config.vcs,
             marker_environment=requirement_marker_env,
         )
         if prepared.constraint_strings
@@ -1737,15 +1713,10 @@ def process_scenario(
     )
     data = resolve_scenario(
         requirements,
-        prepared.uploaded_prior_to,
         constraints,
-        indexes=prepared.indexes,
-        index_routes=prepared.index_routes or None,
-        build_policy_overrides=prepared.build_policy_overrides or None,
-        resolution_strategy=execution.strategy,
+        config=prepared.config,
         target=prepared.target,
         host=host,
-        trust_unverified_sdist_deps=prepared.trust_unverified_sdist_deps,
     )
     data["input"] = prepared.expected_input
 

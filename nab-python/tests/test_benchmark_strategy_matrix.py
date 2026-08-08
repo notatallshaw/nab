@@ -118,6 +118,18 @@ def _host(
     return module.BenchmarkHost(target, "test-runtime", wall_timeout_seconds)
 
 
+def _linux_host(module: ModuleType) -> object:
+    """Return the common Linux x86-64 benchmark host used by wiring tests."""
+    return _host(
+        module,
+        system="Linux",
+        sys_platform="linux",
+        machine="x86_64",
+        os_name="posix",
+        platform_tag="manylinux_2_17_x86_64",
+    )
+
+
 def _empty_provider_stats() -> SimpleNamespace:
     fields = (
         "listings_fetched",
@@ -969,38 +981,187 @@ def test_process_scenario_uses_the_planned_target(
     assert payload["result"]["pins"] == {"selected": "1.0"}
 
 
-def test_resolve_scenario_uses_the_supplied_target_and_host(
-    monkeypatch: pytest.MonkeyPatch,
+def test_benchmark_config_combines_routing_and_build_policy() -> None:
+    module = _harness("scenarios")
+    indexes = [
+        module.IndexConfig("pypi", "https://pypi.org/simple/"),
+        module.IndexConfig("private", "https://example.test/simple"),
+    ]
+    cutoff = module.parse_datetime("2025-01-02 03:04:05")
+    vcs = module.VcsConfig(
+        policy=module.VcsPolicy.ALLOW,
+        allowed_schemes=frozenset({"git+https"}),
+        allowed_repos=("https://example.test/project",),
+        require_pin=False,
+    )
+
+    config = module.build_benchmark_config(
+        uploaded_prior_to=cutoff,
+        indexes=indexes,
+        index_routes=[module.IndexRoute("Demo_Pkg", "private")],
+        build_policy_overrides={
+            "demo-pkg": module.BuildPolicy.BUILD_REMOTE,
+            "build-only": module.BuildPolicy.BUILD_REMOTE,
+        },
+        resolution=module.ResolutionStrategy.LOWEST_DIRECT,
+        trust_unverified_sdist_deps=True,
+        vcs=vcs,
+    )
+
+    assert config.constraints == ()
+    assert config.uploaded_prior_to is cutoff
+    assert config.dist_policy is module.DistPolicy.WHEEL_OR_SDIST
+    assert config.build_policy is module.BuildPolicy.NEVER
+    assert config.trust_unverified_sdist_deps is True
+    assert config.indexes == tuple(indexes)
+    assert config.vcs is vcs
+    assert config.resolution is module.ResolutionStrategy.LOWEST_DIRECT
+
+    overrides = {override.name: override for override in config.package_overrides}
+    assert set(overrides) == {"build-only", "demo-pkg"}
+    assert overrides["demo-pkg"].index == "private"
+    assert overrides["demo-pkg"].build_policy is module.BuildPolicy.BUILD_REMOTE
+    assert overrides["build-only"].index is None
+    assert overrides["build-only"].build_policy is module.BuildPolicy.BUILD_REMOTE
+    assert module.index_routes_from_config(config) == [
+        module.IndexRoute("demo-pkg", "private")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("routes", "message"),
+    [
+        (
+            [
+                ("Demo_Pkg", "private"),
+                ("demo-pkg", "private"),
+            ],
+            "duplicate index route for 'demo-pkg'",
+        ),
+        (
+            [("demo", "missing")],
+            "index route for 'demo' names undeclared index 'missing'",
+        ),
+    ],
+)
+def test_benchmark_config_rejects_invalid_index_routes(
+    routes: list[tuple[str, str]],
+    message: str,
 ) -> None:
     module = _harness("scenarios")
-    host = _host(
-        module,
-        system="Linux",
-        sys_platform="linux",
-        machine="x86_64",
-        os_name="posix",
-        platform_tag="manylinux_2_17_x86_64",
-    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        module.build_benchmark_config(
+            indexes=[
+                module.IndexConfig("pypi", "https://pypi.org/simple/"),
+                module.IndexConfig("private", "https://example.test/simple"),
+            ],
+            index_routes=[module.IndexRoute(*route) for route in routes],
+        )
+
+
+def test_build_benchmark_provider_forwards_project_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    scenarios = _harness("scenarios")
+    config_module = _harness("benchmark_config")
+    host = _linux_host(scenarios)
     admission = host.target_for("3.11", {}, requires_matching_host=False)
     assert admission.target is not None
     target = admission.target
+    requirements = scenarios.parse_requirements(["demo[feature]", "other"])
+    config = config_module.build_benchmark_config(
+        uploaded_prior_to=scenarios.parse_datetime("2025-01-02 03:04:05"),
+        indexes=[scenarios.IndexConfig("private", "https://example.test/simple")],
+        index_routes=[scenarios.IndexRoute("demo", "private")],
+        build_policy_overrides={"demo": scenarios.BuildPolicy.BUILD_REMOTE},
+        resolution=config_module.ResolutionStrategy.LOWEST_DIRECT,
+        trust_unverified_sdist_deps=True,
+        vcs=config_module.VcsConfig(
+            policy=scenarios.VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://example.test/project",),
+            require_pin=False,
+        ),
+    )
+    seen: dict[str, object] = {}
+
+    class FakeProvider:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            seen["args"] = args
+            seen["kwargs"] = kwargs
+
+    monkeypatch.setattr(config_module, "Provider", FakeProvider)
+    coordinator = object()
+    provider = config_module.build_benchmark_provider(
+        coordinator,
+        config=config,
+        target=target,
+        requirements=requirements,
+    )
+
+    assert isinstance(provider, FakeProvider)
+    assert seen["args"] == (coordinator,)
+    kwargs = seen["kwargs"]
+    assert isinstance(kwargs, dict)
+    assert kwargs["target"] is target
+    assert kwargs["root_requirements"] is requirements
+    assert "constraints" not in kwargs
+
+    assert kwargs["uploaded_prior_to"] is config.uploaded_prior_to
+    assert kwargs["dist_policy"] is config.dist_policy
+    assert kwargs["build_policy"] is scenarios.BuildPolicy.NEVER
+    assert kwargs["package_overrides"] is config.package_overrides
+    assert kwargs["index_overrides"] is config.index_overrides
+    assert kwargs["trust_unverified_sdist_deps"] is True
+    assert kwargs["vcs_config"] is config.vcs
+
+    assert kwargs["local_sources"] is None
+    assert kwargs["vcs_sources"] is None
+    assert kwargs["archive_sources"] is None
+
+    assert kwargs["build_config"] is config
+    assert kwargs["resolution_strategy"] is config.resolution
+    assert kwargs["direct_packages"] == frozenset({"demo", "other"})
+
+
+def test_resolve_scenario_coordinates_config_target_and_constraints(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness("scenarios")
+    host = _linux_host(module)
+    admission = host.target_for("3.11", {}, requires_matching_host=False)
+    assert admission.target is not None
+    target = admission.target
+    requirements = module.parse_requirements(["demo"])
+    constraints = module.parse_requirements(["support<2"])
+    config = module.build_benchmark_config(
+        indexes=[module.IndexConfig("private", "https://example.test/simple")],
+        index_routes=[module.IndexRoute("demo", "private")],
+    )
+    coordinator = object()
+    provider = SimpleNamespace(stats=_empty_provider_stats())
     seen: dict[str, object] = {}
 
     @contextmanager
-    def fake_coordinator(*_args: object, **_kwargs: object) -> Iterator[object]:
-        yield object()
+    def fake_coordinator(*_args: object, **kwargs: object) -> Iterator[object]:
+        seen["coordinator"] = kwargs
+        yield coordinator
 
-    class FakeProvider:
-        def __init__(self, *_args: object, **kwargs: object) -> None:
-            seen["target"] = kwargs["target"]
-            self.stats = _empty_provider_stats()
+    def fake_build_provider(actual: object, **kwargs: object) -> object:
+        seen["provider_coordinator"] = actual
+        seen["provider"] = kwargs
+        return provider
 
     class FakeResolver:
-        def __init__(self, *_args: object, **kwargs: object) -> None:
+        def __init__(self, actual_provider: object, **kwargs: object) -> None:
+            seen["resolver_provider"] = actual_provider
             seen["resolver_kwargs"] = kwargs
             self.stats = _empty_resolver_stats()
 
-        def resolve(self, *_args: object, **_kwargs: object) -> dict:
+        def resolve(self, roots: object, **kwargs: object) -> dict:
+            seen["resolver_roots"] = roots
+            seen["resolver_constraints"] = kwargs["constraints"]
             return {
                 "z_pkg": Version("2.0.0"),
                 "Demo_Pkg": Version("1.0.0"),
@@ -1015,12 +1176,14 @@ def test_resolve_scenario_uses_the_supplied_target_and_host(
 
     monkeypatch.setattr(module, "FetchCoordinator", fake_coordinator)
     monkeypatch.setattr(module, "HttpxAsyncTransport", object)
-    monkeypatch.setattr(module, "Provider", FakeProvider)
+    monkeypatch.setattr(module, "build_benchmark_provider", fake_build_provider)
     monkeypatch.setattr(module, "Resolver", FakeResolver)
     monkeypatch.setattr(module.BenchmarkHost, "wall_timeout", wall_timeout)
 
     result = module.resolve_scenario(
-        module.parse_requirements(["demo"]),
+        requirements,
+        constraints,
+        config=config,
         target=target,
         host=host,
     )
@@ -1034,14 +1197,27 @@ def test_resolve_scenario_uses_the_supplied_target_and_host(
     assert json.loads(json.dumps(result))["result"] == expected_result
     assert result["result"] == expected_result
     assert result["stats"]["packages_resolved"] == 2
-    assert seen == {
-        "target": target,
-        "resolver_kwargs": {
-            "range_type": module.VersionRange,
-            "root_version": "0",
-        },
-        "timeout": host,
+
+    assert seen["coordinator"] == {
+        "indexes": list(config.indexes),
+        "cache_dir": module.CACHE_DIR,
+        "index_routes": module.index_routes_from_config(config),
     }
+    assert seen["provider_coordinator"] is coordinator
+    assert seen["provider"] == {
+        "config": config,
+        "target": target,
+        "requirements": requirements,
+    }
+
+    assert seen["resolver_provider"] is provider
+    assert seen["resolver_kwargs"] == {
+        "range_type": module.VersionRange,
+        "root_version": "0",
+    }
+    assert seen["resolver_roots"] is requirements
+    assert seen["resolver_constraints"] is constraints
+    assert seen["timeout"] is host
 
 
 def test_resolve_scenario_records_no_pins_after_failure(
@@ -1064,9 +1240,8 @@ def test_resolve_scenario_records_no_pins_after_failure(
     def fake_coordinator(*_args: object, **_kwargs: object) -> Iterator[object]:
         yield object()
 
-    class FakeProvider:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            self.stats = _empty_provider_stats()
+    def fake_build_provider(*_args: object, **_kwargs: object) -> object:
+        return SimpleNamespace(stats=_empty_provider_stats())
 
     class FakeResolver:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -1077,11 +1252,12 @@ def test_resolve_scenario_records_no_pins_after_failure(
 
     monkeypatch.setattr(module, "FetchCoordinator", fake_coordinator)
     monkeypatch.setattr(module, "HttpxAsyncTransport", object)
-    monkeypatch.setattr(module, "Provider", FakeProvider)
+    monkeypatch.setattr(module, "build_benchmark_provider", fake_build_provider)
     monkeypatch.setattr(module, "Resolver", FakeResolver)
 
     result = module.resolve_scenario(
         module.parse_requirements(["demo"]),
+        config=module.build_benchmark_config(indexes=[]),
         target=admission.target,
         host=host,
     )
@@ -2230,8 +2406,72 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
         "example", scenario, module.sc.ResolutionStrategy.LOWEST
     )
 
-    assert default["resolution_strategy"] is module.sc.ResolutionStrategy.HIGHEST
-    assert lowest["resolution_strategy"] is module.sc.ResolutionStrategy.LOWEST
+    assert default["config"].resolution is module.sc.ResolutionStrategy.HIGHEST
+    assert lowest["config"].resolution is module.sc.ResolutionStrategy.LOWEST
+
+
+def test_standard_canary_and_profile_build_the_same_project_config() -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    host = _host(
+        standard,
+        system="Linux",
+        sys_platform="linux",
+        machine="x86_64",
+        os_name="posix",
+        platform_tag="manylinux_2_17_x86_64",
+    )
+    scenario = {
+        "python_version": "3.11",
+        "requirements": ["demo>=1"],
+        "constraints": ["support<2"],
+        "datetime": "2025-01-02 03:04:05",
+        "indexes": [
+            {"name": "private", "url": "https://example.test/simple"},
+        ],
+        "index_routes": [{"name": "demo", "index": "private"}],
+        "build_packages": ["demo"],
+        "resolution": "lowest-direct",
+        "trust_unverified_sdist_deps": False,
+        "vcs_policy": "allow",
+        "vcs_allowed_schemes": ["git+https"],
+        "vcs_allowed_repos": ["https://example.test/project"],
+        "vcs_require_pin": False,
+    }
+
+    row = standard.StandardScenario("quick", "example", scenario)
+    plan = standard.standard_run_plan(
+        [row],
+        (standard.ResolutionStrategy.LOWEST_DIRECT,),
+        host,
+    )
+    standard_execution = standard.prepare_standard_execution(
+        plan.executions[0],
+        plan.targets_by_logical_key[row.logical_key],
+        commit="run",
+        source=dict(_CLEAN_SOURCE),
+        corpus_hash="f" * 64,
+        settings_digest="settings",
+    )
+    canary_preparation = canary._prepare_canary_execution(
+        scenario,
+        scenario_name="example",
+        resolution_override=None,
+        host=host,
+    )
+    profile_inputs = profile.build_inputs("example", scenario, host=host)
+
+    assert canary_preparation.execution is not None
+    assert (
+        standard_execution.config
+        == canary_preparation.execution.config
+        == profile_inputs["config"]
+    )
+    assert standard_execution.config.constraints == ()
+    assert standard_execution.constraint_strings == ["support<2"]
+    assert set(canary_preparation.execution.constraints or {}) == {"support"}
+    assert set(profile_inputs["constraints"] or {}) == {"support"}
 
 
 def test_profile_runner_uses_scenario_sdist_trust_policy() -> None:
@@ -2246,9 +2486,9 @@ def test_profile_runner_uses_scenario_sdist_trust_policy() -> None:
         "strict", {**base, "trust_unverified_sdist_deps": False}
     )
 
-    assert implicit["trust_unverified_sdist_deps"] is True
-    assert trusted["trust_unverified_sdist_deps"] is True
-    assert strict["trust_unverified_sdist_deps"] is False
+    assert implicit["config"].trust_unverified_sdist_deps is True
+    assert trusted["config"].trust_unverified_sdist_deps is True
+    assert strict["config"].trust_unverified_sdist_deps is False
 
 
 def test_profile_runner_uses_the_admitted_target_for_roots_and_resolution() -> None:

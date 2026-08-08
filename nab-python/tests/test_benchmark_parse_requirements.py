@@ -12,6 +12,7 @@ root seeds the resolver the same way in every process.
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import ModuleType
 from typing import TYPE_CHECKING
@@ -37,7 +38,12 @@ def _harness(name: str) -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    benchmark_dir = str(_BENCH)
+    sys.path.insert(0, benchmark_dir)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(benchmark_dir)
     return module
 
 
