@@ -4326,6 +4326,57 @@ class TestDecisionLookAhead:
 
         assert "exceeded" not in str(exc_info.value)
 
+    def test_full_resolve_report_spells_ranges_as_requirements(self) -> None:
+        """A real failure report spells a dependency the way a user wrote it.
+
+        The resolver runs with ``range_type=VersionRange``, which has no
+        ``__str__``, so without the hook a ``==V`` dependency shows the debug
+        repr and its internal ``AFTER_LOCALS`` boundary sentinel, and an
+        unconstrained root requirement shows ``(-inf, +inf)``.
+        """
+
+        def named_wheel(pkg: str, version: str) -> WheelFile:
+            return WheelFile(
+                filename=f"{pkg}-{version}-py3-none-any.whl",
+                url=f"https://example.com/{pkg}-{version}.whl",
+                version=version,
+                requires_python=None,
+                has_metadata=True,
+                upload_time=None,
+                local_path=None,
+            )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": [named_wheel("foo", "1.0")],
+                "app": [named_wheel("app", "3.0")],
+                "lib": [named_wheel("lib", "5.0"), named_wheel("lib", "9.0")],
+            },
+            metadata_by_version={
+                "1.0": make_metadata("foo", "1.0", "lib==9.0"),
+                "3.0": make_metadata("app", "3.0", "lib==5.0"),
+                "5.0": make_metadata("lib", "5.0"),
+                "9.0": make_metadata("lib", "9.0"),
+            },
+        )
+        root_reqs = {
+            "foo": VersionRange.full(admit_arbitrary=False),
+            "app": VersionRange.full(admit_arbitrary=False),
+        }
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        resolver = Resolver(
+            provider,
+            range_type=VersionRange,
+            root_version="0",
+            format_range=provider.format_range,
+        )
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(dict(root_reqs))
+
+        lines = str(exc_info.value).splitlines()
+        assert "because all versions of foo depend on lib ==9.0" in lines
+        assert "because your project depends on foo" in lines
+
 
 class TestLookAheadAbort:
     """Look-ahead abort path: when the scan rejects ``_LOOKAHEAD_ABORT_THRESHOLD``

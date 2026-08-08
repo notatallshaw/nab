@@ -970,7 +970,11 @@ def _resolve_one_target(
     )
     observer = _ResolveObserver(settings.progress)
     resolver: Resolver[str, Version] = Resolver(
-        provider, observer=observer, range_type=VersionRange, root_version="0"
+        provider,
+        observer=observer,
+        range_type=VersionRange,
+        root_version="0",
+        format_range=provider.format_range,
     )
 
     _logger.debug("resolving %s", target.label)

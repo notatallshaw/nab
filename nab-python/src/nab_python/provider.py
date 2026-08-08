@@ -2034,6 +2034,29 @@ class Provider:
             return VersionRange.full(admit_arbitrary=False)
         return constraint.snap_bounds(universe)
 
+    def format_range(self, constraint: RangeProtocol[Version]) -> str:
+        """Render ``constraint`` for a failure report.
+
+        ``VersionRange`` has no ``__str__``, so interpolating one gives the
+        debug repr, including the internal boundary-kind sentinels.  A range a
+        specifier set can spell reads as that specifier set, so ``==3.0.0``
+        shows the way a user would have written it.
+
+        An unconstrained range renders as nothing, leaving the package name to
+        carry the line, and the empty range gets a phrase rather than the
+        ``<0`` a specifier set spells it with.  A range with no specifier
+        spelling, such as a disjunction, keeps the range's own rendering.
+        """
+        assert isinstance(constraint, VersionRange)
+        if constraint.is_empty:
+            return "no version"
+        if (~constraint).is_empty:
+            return ""
+        specifier_set = constraint.to_specifier_set()
+        if specifier_set is None:
+            return str(constraint)
+        return str(specifier_set)
+
     def get_dependencies(
         self, package: str, version: Version
     ) -> dict[str, VersionRange]:
