@@ -14,6 +14,7 @@ import tarfile
 import time
 import zipfile
 from collections.abc import Mapping
+from email.utils import formatdate
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlsplit
@@ -26,9 +27,10 @@ import nab_index.cached_client as cached_client_mod
 from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
+    _freshness_lifetime,
     _header,
+    _max_age_directive,
     _parse_age,
-    _parse_max_age,
 )
 from nab_index.client import (
     MalformedSimpleResponseError,
@@ -725,36 +727,116 @@ class TestSelectArtifactHash:
         assert _select_artifact_hash(hashes) == ("sha512", "f" * 128)
 
 
-class TestParseMaxAge:
-    def test_default_when_none(self) -> None:
-        assert _parse_max_age(None) == 600
+class TestMaxAgeDirective:
+    def test_none_when_field_absent(self) -> None:
+        assert _max_age_directive(None) is None
 
-    def test_default_when_unparseable(self) -> None:
-        assert _parse_max_age("public") == 600
+    def test_none_when_directive_absent(self) -> None:
+        assert _max_age_directive("public") is None
 
     def test_extracts_value(self) -> None:
-        assert _parse_max_age("max-age=900, public") == 900
+        assert _max_age_directive("max-age=900, public") == 900
 
     def test_extracts_value_with_spaces(self) -> None:
-        assert _parse_max_age("public, max-age = 1200") == 1200
+        assert _max_age_directive("public, max-age = 1200") == 1200
 
     def test_leading_zeros_ignored(self) -> None:
-        assert _parse_max_age("max-age=00000000900") == 900
+        assert _max_age_directive("max-age=00000000900") == 900
 
     def test_above_ceiling_clamped(self) -> None:
-        assert _parse_max_age("max-age=9999999999") == 2**31
+        assert _max_age_directive("max-age=9999999999") == 2**31
 
     def test_digit_run_too_long_to_convert_clamped(self) -> None:
-        assert _parse_max_age("max-age=" + "9" * 9000) == 2**31
+        assert _max_age_directive("max-age=" + "9" * 9000) == 2**31
 
     def test_directive_name_is_case_insensitive(self) -> None:
-        assert _parse_max_age("Max-Age=0") == 0
+        assert _max_age_directive("Max-Age=0") == 0
 
     def test_uppercase_directive_among_others(self) -> None:
-        assert _parse_max_age("public, MAX-AGE = 30, must-revalidate") == 30
+        assert _max_age_directive("public, MAX-AGE = 30, must-revalidate") == 30
 
     def test_quoted_value_extracted(self) -> None:
-        assert _parse_max_age('max-age="300"') == 300
+        assert _max_age_directive('max-age="300"') == 300
+
+
+class TestFreshnessLifetime:
+    """Freshness lifetime read from one response's headers."""
+
+    _NOW = 1_700_000_000.0
+
+    @pytest.fixture(autouse=True)
+    def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(time, "time", lambda: self._NOW)
+
+    def _lifetime(self, headers: dict[str, str]) -> int:
+        return _freshness_lifetime(_FakeResponse(b"", headers=headers))
+
+    def _http_date(self, offset: float) -> str:
+        return formatdate(self._NOW + offset, usegmt=True)
+
+    def test_heuristic_when_response_states_nothing(self) -> None:
+        assert self._lifetime({}) == 600
+
+    def test_heuristic_when_cache_control_carries_no_max_age(self) -> None:
+        assert self._lifetime({"cache-control": "public"}) == 600
+
+    def test_max_age_outranks_expires(self) -> None:
+        headers = {
+            "cache-control": "max-age=30",
+            "date": self._http_date(0),
+            "expires": self._http_date(86400),
+        }
+        assert self._lifetime(headers) == 30
+
+    def test_expires_measured_from_date(self) -> None:
+        headers = {"date": self._http_date(-1000), "expires": self._http_date(800)}
+        assert self._lifetime(headers) == 1800
+
+    def test_expires_measured_from_arrival_without_date(self) -> None:
+        assert self._lifetime({"expires": self._http_date(45)}) == 45
+
+    def test_unparseable_date_falls_back_to_arrival(self) -> None:
+        headers = {"date": "whenever", "expires": self._http_date(45)}
+        assert self._lifetime(headers) == 45
+
+    def test_expires_before_date_is_already_expired(self) -> None:
+        headers = {"date": self._http_date(0), "expires": self._http_date(-1)}
+        assert self._lifetime(headers) == 0
+
+    def test_expires_zero_is_already_expired(self) -> None:
+        assert self._lifetime({"expires": "0"}) == 0
+
+    def test_unparseable_expires_is_already_expired(self) -> None:
+        assert self._lifetime({"expires": "tomorrow, maybe"}) == 0
+
+    def test_out_of_range_year_is_already_expired(self) -> None:
+        assert self._lifetime({"expires": "Mon, 01 Jan 99999 00:00:00 GMT"}) == 0
+
+    @pytest.mark.parametrize(
+        "expires",
+        [
+            "Mon, 01 Jan 2030 00:00:00 +99999999999999999999999",
+            "Mon, 01 Jan 9999999999999999999999999 00:00:00 GMT",
+            "Mon, 99999999999999999999 Jan 2030 00:00:00 GMT",
+            "Mon, 01 Jan 2030 99999999999999999999:00:00 GMT",
+        ],
+    )
+    def test_overflowing_expires_is_already_expired(self, expires: str) -> None:
+        assert self._lifetime({"expires": expires}) == 0
+
+    def test_overflowing_date_falls_back_to_arrival(self) -> None:
+        headers = {
+            "date": "Mon, 01 Jan 2030 00:00:00 +99999999999999999999999",
+            "expires": self._http_date(45),
+        }
+        assert self._lifetime(headers) == 45
+
+    def test_zoneless_expires_reads_as_gmt(self) -> None:
+        asctime = time.asctime(time.gmtime(self._NOW + 120))
+        assert self._lifetime({"expires": asctime}) == 120
+
+    def test_far_future_expires_clamped(self) -> None:
+        assert self._lifetime({"expires": "Fri, 31 Dec 9999 23:59:59 GMT"}) == 2**31
 
 
 class TestParseAge:
@@ -1413,6 +1495,159 @@ class TestResponseAge:
         sent_headers = warm.calls[0][1]
         assert sent_headers is not None
         assert sent_headers.get("If-None-Match") == "v1"
+
+
+class TestExpiresFreshness:
+    """Expires sets the freshness lifetime when Cache-Control does not.
+
+    RFC 9111 4.2.1 ranks Expires minus Date above the heuristic window, and
+    4.2.2 rules the heuristic out once a response carries an explicit expiry.
+    """
+
+    _NOW = 1_700_000_000.0
+    _RELISTING = json.dumps(
+        {
+            "meta": {"api-version": "1.0"},
+            "name": "pkg",
+            "files": [
+                *LISTING["files"],
+                {
+                    "filename": "pkg-2.0-py3-none-any.whl",
+                    "url": "https://files.example.com/pkg-2.0-py3-none-any.whl",
+                },
+            ],
+        }
+    ).encode()
+
+    def _freeze(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(time, "time", lambda: self._NOW)
+
+    def _resolve_twice(
+        self, tmp_path: Path, headers: dict[str, str]
+    ) -> tuple[_FakeTransport, list]:
+        """Read pkg, then read it again once a second release has landed."""
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(LISTING_BYTES, headers=headers),
+                _FakeResponse(self._RELISTING, headers=headers),
+            ]
+        )
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+        return transport, _run_get_files(transport, cache, "pkg")
+
+    def _stored_policy(self, tmp_path: Path, headers: dict[str, str]) -> CachePolicy:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES, headers=headers)])
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        return cached[1]
+
+    def test_expires_in_the_past_revalidates_immediately(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._freeze(monkeypatch)
+        transport, files = self._resolve_twice(
+            tmp_path,
+            {
+                "date": formatdate(self._NOW, usegmt=True),
+                "expires": formatdate(self._NOW - 3600, usegmt=True),
+            },
+        )
+
+        assert len(transport.calls) == 2
+        assert len(files) == 2
+
+    def test_expires_zero_is_already_expired(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._freeze(monkeypatch)
+        transport, files = self._resolve_twice(
+            tmp_path,
+            {"date": formatdate(self._NOW, usegmt=True), "expires": "0"},
+        )
+
+        assert len(transport.calls) == 2
+        assert len(files) == 2
+
+    def test_expires_grants_a_lifetime_past_the_heuristic_window(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._freeze(monkeypatch)
+        policy = self._stored_policy(
+            tmp_path,
+            {
+                "date": formatdate(self._NOW, usegmt=True),
+                "expires": formatdate(self._NOW + 86400, usegmt=True),
+            },
+        )
+
+        assert policy.max_age == 86400
+        assert policy.is_fresh(now=int(self._NOW) + 3600) is True
+
+    def test_expires_without_date_measured_from_arrival(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._freeze(monkeypatch)
+        policy = self._stored_policy(
+            tmp_path, {"expires": formatdate(self._NOW + 300, usegmt=True)}
+        )
+
+        assert policy.max_age == 300
+
+    def test_max_age_outranks_expires(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._freeze(monkeypatch)
+        policy = self._stored_policy(
+            tmp_path,
+            {
+                "cache-control": "max-age=60",
+                "date": formatdate(self._NOW, usegmt=True),
+                "expires": formatdate(self._NOW + 86400, usegmt=True),
+            },
+        )
+
+        assert policy.max_age == 60
+
+    def test_expires_with_an_overflowing_zone_offset_is_already_expired(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._freeze(monkeypatch)
+        policy = self._stored_policy(
+            tmp_path,
+            {"expires": "Mon, 01 Jan 2030 00:00:00 +99999999999999999999999"},
+        )
+
+        assert policy.max_age == 0
+
+    def test_304_expires_replaces_the_stored_lifetime(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._freeze(monkeypatch)
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg", LISTING_BYTES, CachePolicy(fetched_at=0, max_age=60, etag="v1")
+        )
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    b"",
+                    status=304,
+                    headers={
+                        "date": formatdate(self._NOW, usegmt=True),
+                        "expires": formatdate(self._NOW + 1800, usegmt=True),
+                    },
+                )
+            ]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        assert cached[1].max_age == 1800
 
 
 class TestNonJsonListingBody:
@@ -3082,6 +3317,73 @@ class TestNegativeCaching:
     def test_404_no_cache_control_defaults_600(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
         transport = _FakeTransport([_FakeResponse(b"", status=404)])
+
+        _run_get_files(transport, cache, "absent")
+        neg = cache.get_negative("absent")
+        assert neg is not None
+        assert neg.max_age == 600
+
+    def test_404_expires_in_the_past_refetches_on_the_next_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = 1_700_000_000.0
+        monkeypatch.setattr(time, "time", lambda: now)
+
+        published = json.dumps(
+            {
+                "meta": {"api-version": "1.0"},
+                "name": "absent",
+                "files": [
+                    {
+                        "filename": "absent-1.0-py3-none-any.whl",
+                        "url": "https://files.example.com/absent-1.0-py3-none-any.whl",
+                    }
+                ],
+            }
+        ).encode()
+
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    b"",
+                    status=404,
+                    headers={
+                        "date": formatdate(now, usegmt=True),
+                        "expires": formatdate(now - 60, usegmt=True),
+                    },
+                ),
+                _FakeResponse(published, headers={"cache-control": "max-age=600"}),
+            ]
+        )
+
+        assert _run_get_files(transport, cache, "absent") == []
+        neg = cache.get_negative("absent")
+        assert neg is not None
+        assert neg.max_age == 0
+
+        assert len(_run_get_files(transport, cache, "absent")) == 1
+        assert len(transport.calls) == 2
+
+    def test_404_expires_still_capped_at_600(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        now = 1_700_000_000.0
+        monkeypatch.setattr(time, "time", lambda: now)
+
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    b"",
+                    status=404,
+                    headers={
+                        "date": formatdate(now, usegmt=True),
+                        "expires": formatdate(now + 86400, usegmt=True),
+                    },
+                )
+            ]
+        )
 
         _run_get_files(transport, cache, "absent")
         neg = cache.get_negative("absent")
