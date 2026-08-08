@@ -58,7 +58,7 @@ from nab_python.provider import (
     VcsSource,
 )
 from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
+from nab_python.target import ResolveTarget, host_environment
 from nab_python.workspace import WorkspaceConfig
 
 
@@ -1480,6 +1480,19 @@ class TestResolution:
             read_pyproject_config(path)
 
 
+_FREE_THREADED_NO_PYTHON = (
+    "[tool.nab.environment]\n"
+    'platform = { id = "linux_x86_64", free-threaded = true }\n'
+    '[tool.nab]\nbuild-policy = "never"\n'
+)
+
+
+def _host_python(monkeypatch: pytest.MonkeyPatch, full_version: str) -> None:
+    """Report ``full_version`` as the running interpreter to the planner."""
+    env = {**host_environment(), "python_full_version": full_version}
+    monkeypatch.setattr("nab_python.config.host_environment", lambda: env)
+
+
 class TestEnvironment:
     """``[tool.nab.environment]``: the one environment to resolve for."""
 
@@ -1710,6 +1723,52 @@ class TestEnvironment:
         )
         with pytest.raises(ConfigError, match="needs CPython, not"):
             read_pyproject_config(path)
+
+    def test_free_threaded_rejects_pypy_without_a_python_axis(
+        self, tmp_path: Path
+    ) -> None:
+        """No flag moves the implementation axis, so the parse still checks it."""
+        path = write(
+            tmp_path,
+            "[tool.nab.environment]\n"
+            'implementation = "pypy"\n'
+            'platform = { id = "linux_x86_64", free-threaded = true }\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        with pytest.raises(ConfigError, match="needs CPython, not"):
+            read_pyproject_config(path)
+
+    def test_free_threaded_without_python_accepts_a_newer_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The floor is checked against the python ``--python`` picked."""
+        _host_python(monkeypatch, "3.12.11")
+        path = write(tmp_path, _FREE_THREADED_NO_PYTHON)
+        config = read_pyproject_config(path)
+        (target,) = plan_targets(with_python_override(config, "3.14"))
+
+        assert target.python_version == "3.14"
+        assert target.tags.accepts("somepkg-1.0-cp314-cp314t-manylinux_2_28_x86_64.whl")
+
+    def test_free_threaded_without_python_still_rejects_an_old_host(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no ``--python`` the host is the target, and 3.12 is too old."""
+        _host_python(monkeypatch, "3.12.11")
+        path = write(tmp_path, _FREE_THREADED_NO_PYTHON)
+        config = read_pyproject_config(path)
+        with pytest.raises(ConfigError, match="needs CPython 3.13 or newer"):
+            plan_targets(config)
+
+    def test_free_threaded_rejects_an_old_python_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--python`` is held to the same floor a declared python is."""
+        _host_python(monkeypatch, "3.14.0")
+        path = write(tmp_path, _FREE_THREADED_NO_PYTHON)
+        config = read_pyproject_config(path)
+        with pytest.raises(ConfigError, match="needs CPython 3.13 or newer"):
+            with_python_override(config, "3.12")
 
     def test_must_be_table(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nenvironment = "no"\n')
