@@ -554,6 +554,15 @@ class TestUnstatedVersions:
             message
         )
 
+    def test_states_the_gap_through_the_format_range_hook(self) -> None:
+        """The stated listing is a range too, so it renders like every other."""
+        with pytest.raises(ResolutionError) as exc_info:
+            Resolver(
+                _SnappingProvider(_REJECTED_RUN),
+                format_range=lambda _constraint: "SHOWN",
+            ).resolve({"a": Range.at_least(2)})
+        assert "because no versions of a SHOWN are available" in str(exc_info.value)
+
     def test_states_the_gap_a_resolved_requirement_leaves(self) -> None:
         """The requirement runs past the exclusion that resolves it."""
         packages = {"a": {1: {}, 2: {"py": Range.at_least(11)}, 3: {}}, "py": {9: {}}}

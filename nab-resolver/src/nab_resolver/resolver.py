@@ -21,7 +21,7 @@ Rust implementation: https://github.com/pubgrub-rs/pubgrub
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol
 
@@ -396,6 +396,7 @@ class Resolver(Generic[PackageType, VersionType]):
         max_iterations: int = DEFAULT_MAX_ITERATIONS,
         range_type: type[RangeProtocol[Any]] = Range,
         root_version: Any = 1,
+        format_range: Callable[[Any], str] = str,
     ) -> None:
         """Create a resolver with the given provider and optional observer.
 
@@ -405,6 +406,11 @@ class Resolver(Generic[PackageType, VersionType]):
         comparable type) but a PEP 440 range type such as
         :class:`packaging.ranges.VersionRange` requires a parseable
         version string or :class:`~packaging.version.Version` here.
+
+        ``format_range`` renders a constraint in a failure report.  It travels
+        with ``range_type``: the default ``str`` reads well for
+        :class:`~nab_resolver.ranges.Range`, while a range type whose ``str``
+        is a debug representation needs its own.
         """
         self.provider = provider
         self.observer: ResolverObserver[PackageType, VersionType] = (
@@ -413,6 +419,7 @@ class Resolver(Generic[PackageType, VersionType]):
         self.max_iterations = max_iterations
         self.range_type = range_type
         self.root_version = root_version
+        self.format_range = format_range
 
         self.incompatibilities: list[Incompatibility[Any, Any]] = []
         self.package_to_incompatibilities: defaultdict[Any, list[int]] = defaultdict(

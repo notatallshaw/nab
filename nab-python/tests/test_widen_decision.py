@@ -670,6 +670,40 @@ class TestNarrowForDisplay:
         coordinator.request_listing.assert_not_called()
 
 
+class TestFormatRange:
+    """``format_range`` prefers the specifier spelling of a range."""
+
+    def test_bounded_range_reads_as_its_specifiers(self) -> None:
+        provider = _listing_provider("p", ["1.0"])
+        assert provider.format_range(SpecifierSet(">=1,<2").to_range()) == "<2,>=1"
+
+    def test_equality_range_drops_the_boundary_sentinel(self) -> None:
+        """``==V`` carries an ``AFTER_LOCALS`` upper bound in its repr."""
+        provider = _listing_provider("p", ["1.0"])
+        constraint = SpecifierSet("==9.0").to_range()
+        assert "AFTER_LOCALS" in repr(constraint)
+        assert provider.format_range(constraint) == "==9.0"
+
+    def test_unconstrained_range_reads_as_nothing(self) -> None:
+        """Neither unconstrained form adds anything a reader needs."""
+        provider = _listing_provider("p", ["1.0"])
+        assert provider.format_range(VersionRange.full(admit_arbitrary=False)) == ""
+        assert provider.format_range(VersionRange.full(admit_arbitrary=True)) == ""
+
+    def test_empty_range_reads_as_no_version(self) -> None:
+        """The empty range spells as ``<0``, which says the wrong thing."""
+        provider = _listing_provider("p", ["1.0"])
+        assert str(VersionRange.empty().to_specifier_set()) == "<0"
+        assert provider.format_range(VersionRange.empty()) == "no version"
+
+    def test_unspellable_range_keeps_the_range_rendering(self) -> None:
+        """A disjunction has no specifier set, so the range renders itself."""
+        provider = _listing_provider("p", ["1.0"])
+        constraint = SpecifierSet("<5.0").to_range() | SpecifierSet(">=9.0").to_range()
+        assert constraint.to_specifier_set() is None
+        assert provider.format_range(constraint) == str(constraint)
+
+
 class TestPackagingProviderHooks:
     def test_widen_decision_returns_none(self) -> None:
         provider = PackagingProvider({"a": {V("1.0"): {}}})
