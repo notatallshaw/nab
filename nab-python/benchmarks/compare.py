@@ -14,9 +14,12 @@ import sys
 from pathlib import Path
 from typing import NamedTuple, NoReturn
 
+from nab_python._vendor.packaging.utils import is_normalized_name
+from nab_python._vendor.packaging.version import Version
+
 RESULTS_DIR = Path(__file__).parent / "results"
 MANIFEST_FILENAME = "_standard_manifest.json"
-MANIFEST_SCHEMA = 3
+MANIFEST_SCHEMA = 4
 _RESERVED_DIRECTORIES = frozenset({"universal", "universal-selected"})
 _MANIFEST_FIELDS = frozenset(
     {
@@ -338,16 +341,35 @@ def _settings_hash(settings: object) -> str:
     return hashlib.sha256(_canonical_json(settings).encode()).hexdigest()
 
 
+def _valid_pins(value: object) -> bool:
+    """Return whether *value* is a normalized name-to-version mapping."""
+    if not isinstance(value, dict):
+        return False
+    try:
+        return all(
+            type(name) is str
+            and is_normalized_name(name)
+            and type(version) is str
+            and str(Version(version)) == version
+            for name, version in value.items()
+        )
+    except ValueError:
+        return False
+
+
 def _validate_result_payload(data: dict[str, object], path: Path) -> None:
     result = data.get("result")
-    if not isinstance(result, dict) or set(result) != {"success", "error"}:
+    if not isinstance(result, dict) or set(result) != {"success", "error", "pins"}:
         _fail(f"invalid benchmark result payload: {path}")
     success = result["success"]
     error = result["error"]
+    pins = result["pins"]
     if (
         type(success) is not bool
         or (success and error is not None)
         or (not success and (not isinstance(error, str) or not error))
+        or not _valid_pins(pins)
+        or (not success and pins)
     ):
         _fail(f"invalid benchmark result payload: {path}")
 
@@ -360,6 +382,8 @@ def _validate_result_payload(data: dict[str, object], path: Path) -> None:
         type(stats[field]) is not int or stats[field] < 0
         for field in _STANDARD_COUNTER_FIELDS
     ):
+        _fail(f"invalid benchmark statistics: {path}")
+    if stats["packages_resolved"] != len(pins):
         _fail(f"invalid benchmark statistics: {path}")
     wall_time = stats["wall_time_seconds"]
     if (
@@ -452,6 +476,19 @@ def percent_change(old: float, new: float) -> str:
     return f"{((new - old) * 100) / old:+.1f}%"
 
 
+def _pin_changes(first: dict[str, str], second: dict[str, str]) -> list[str]:
+    """Describe each package whose selected version changed."""
+    messages: list[str] = []
+    for name in sorted(first.keys() | second.keys()):
+        if name not in first:
+            messages.append(f"Pin added: {name}=={second[name]}")
+        elif name not in second:
+            messages.append(f"Pin removed: {name}=={first[name]}")
+        elif first[name] != second[name]:
+            messages.append(f"Pin changed: {name} {first[name]} -> {second[name]}")
+    return messages
+
+
 def compare_scenario(
     data1: dict[str, object], data2: dict[str, object], label: str
 ) -> None:
@@ -464,7 +501,11 @@ def compare_scenario(
     assert isinstance(result2, dict)
     assert isinstance(stats1, dict)
     assert isinstance(stats2, dict)
-    messages: list[str] = []
+    pins1 = result1["pins"]
+    pins2 = result2["pins"]
+    assert isinstance(pins1, dict)
+    assert isinstance(pins2, dict)
+    messages = _pin_changes(pins1, pins2)
 
     if result1["success"] != result2["success"]:
         messages.append(f"Success: {result1['success']} -> {result2['success']}")
