@@ -957,7 +957,8 @@ def test_resolve_scenario_uses_the_supplied_target_and_host(
             self.stats = _empty_provider_stats()
 
     class FakeResolver:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            seen["resolver_kwargs"] = kwargs
             self.stats = _empty_resolver_stats()
 
         def resolve(self, *_args: object, **_kwargs: object) -> dict:
@@ -982,7 +983,14 @@ def test_resolve_scenario_uses_the_supplied_target_and_host(
     )
 
     assert result["result"] == {"success": True, "error": None}
-    assert seen == {"target": target, "timeout": host}
+    assert seen == {
+        "target": target,
+        "resolver_kwargs": {
+            "range_type": module.VersionRange,
+            "root_version": "0",
+        },
+        "timeout": host,
+    }
 
 
 def test_marker_build_scenarios_are_explicitly_unsupported() -> None:
@@ -1654,6 +1662,7 @@ def test_main_writes_exact_complete_default_and_matrix_manifests(
 
     assert manifest["mode"] == ("strategy-matrix" if matrix else "default")
     assert manifest["strategies"] == expected_strategies
+    assert manifest["settings"]["max_iterations"] == module.DEFAULT_MAX_ITERATIONS
     assert manifest["settings"]["host"]["wheel_tags_count"] > 0
     assert len(manifest["settings"]["host"]["wheel_tags_hash"]) == 64
 

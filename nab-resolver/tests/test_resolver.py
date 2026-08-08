@@ -35,6 +35,7 @@ from nab_resolver.report import (
     union_terms,
 )
 from nab_resolver.resolver import (
+    DEFAULT_MAX_ITERATIONS,
     ResolutionError,
     Resolver,
     ResolverObserver,
@@ -602,6 +603,12 @@ class TestPreference:
 
 
 class TestMaxIterations:
+    def test_default_is_public(self) -> None:
+        resolver = Resolver(DictProvider({}))
+
+        assert DEFAULT_MAX_ITERATIONS == 200_000
+        assert resolver.max_iterations == DEFAULT_MAX_ITERATIONS
+
     def test_exceeds_max_iterations(self) -> None:
         """Resolver raises when max_iterations is exceeded."""
         provider = DictProvider(

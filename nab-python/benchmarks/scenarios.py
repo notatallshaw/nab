@@ -64,7 +64,7 @@ from nab_python.provider import (
     VcsPolicy,
     split_extra,
 )
-from nab_resolver.resolver import Resolver
+from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
 SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
@@ -844,7 +844,6 @@ def parse_datetime(value: str) -> datetime:
 
 
 SCENARIO_WALL_TIMEOUT_SECONDS = 120
-MAX_ITERATIONS = 50_000
 
 
 CACHE_DIR = BENCHMARKS_DIR / "cache"
@@ -884,7 +883,7 @@ def standard_benchmark_settings(host: BenchmarkHost) -> dict[str, object]:
         "dist_policy": DistPolicy.WHEEL_OR_SDIST.value,
         "build_policy": BuildPolicy.NEVER.value,
         "trust_unverified_sdist_deps_default": True,
-        "max_iterations": MAX_ITERATIONS,
+        "max_iterations": DEFAULT_MAX_ITERATIONS,
         "wall_timeout_seconds": host.wall_timeout_seconds,
         "host": host.identity(),
     }
@@ -1347,7 +1346,6 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
             provider,
             range_type=VersionRange,
             root_version="0",
-            max_iterations=MAX_ITERATIONS,
         )
 
         start = time.monotonic()
