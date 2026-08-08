@@ -22,8 +22,8 @@ from .metadata import WheelMetadata, load_static_project, validate_specifier_ver
 from .paths import is_absent_error, path_state
 from .requirements_file import (
     InvalidProjectRequirementError,
-    _parse_project_requirement,
-    _require_string_list,
+    parse_project_requirement,
+    require_string_list,
 )
 
 if TYPE_CHECKING:
@@ -188,8 +188,8 @@ def _extend_with_dep_strings(
     extra: str | None = None,
 ) -> None:
     out.extend(
-        _parse_project_requirement(dep, source, extra=extra)
-        for dep in _require_string_list(raw, source)
+        parse_project_requirement(dep, source, extra=extra)
+        for dep in require_string_list(raw, source)
     )
 
 

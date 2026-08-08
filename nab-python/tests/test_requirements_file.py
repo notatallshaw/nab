@@ -13,10 +13,10 @@ from nab_python._vendor.packaging.utils import InvalidName
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
     _add_extra_marker,
-    _parse_project_requirement,
     expand_extra_requirements,
     expand_group_includes,
     expand_self_extras,
+    parse_project_requirement,
     raise_for_unsatisfiable,
     read_pyproject_dependencies,
     read_pyproject_groups,
@@ -93,7 +93,7 @@ class TestAddExtraMarker:
         """An invalid extra name is rejected by the synthesis path, not
         folded into a dependency with a marker that is always true."""
         with pytest.raises(InvalidProjectRequirementError):
-            _parse_project_requirement(
+            parse_project_requirement(
                 "pkg",
                 "[project.optional-dependencies] extra 'x'",
                 extra='a" or os_name != "x',
