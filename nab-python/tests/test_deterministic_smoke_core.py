@@ -256,6 +256,22 @@ def _unknown_dependency_field(case: _LockValidationCase) -> Pylock:
     return _extra_dependency_field(case, "unknown", value=True)
 
 
+def _listing_arrival_states(packages: Sequence[str]) -> dict[str, tuple[str, ...]]:
+    """Listing sets to land before a resolve, from none of them up to all of them.
+
+    Landing a prefix leaves the rest in flight, so each state hands the priority
+    scan a different view of what has arrived without changing anything the
+    resolver is asked to solve. The empty state repeats because it is the one a
+    user gets, and the one whose package order the machine's timing settles.
+    """
+    quarter = len(packages) // 4
+    counts = (0, 0, 0, quarter, 2 * quarter, 3 * quarter, len(packages))
+    return {
+        f"run{index}-landed-{count}": tuple(packages[:count])
+        for index, count in enumerate(counts)
+    }
+
+
 def test_fixture_is_content_addressed_and_reusable(tmp_path: Path) -> None:
     harness = _harness()
     distributions, expected_digest = harness.load_fixture()
@@ -524,6 +540,44 @@ def test_await_listings_dispatches_every_request_before_waiting() -> None:
 
     assert requested == ["beta", "alpha", "gamma"]
     assert [event.requests_at_wait for event in events] == [3, 3, 3]
+
+
+def test_pins_hold_however_the_listings_arrive(smoke_index: Path) -> None:
+    """Repeating one resolve reaches the same pins from any listing arrival state.
+
+    A resolve races its own fetches. The priority scan sorts a package whose
+    listing has not landed behind the ones that have, so package order, and with
+    it the decision and conflict counts, follows whichever listings the fetcher
+    thread delivered first. Landing every listing before the resolve is right
+    for a timing harness and wrong here: the race is what a user resolving
+    against a real index gets, and the pins are the part they depend on. So this
+    keeps the race, layers further arrival states on top of it, and compares
+    only the pins. The counters move between these runs and are not the property
+    under test.
+
+    Comparing against the scenario's declared pins rather than against the first
+    run keeps the assertion from being an equality between a value and itself.
+    """
+    harness = _harness()
+    distributions, _digest = harness.load_fixture()
+
+    # deep-backjump carries a competitor at every level, so which listings have
+    # landed decides how much of the graph the search walks.
+    backjump = next(
+        scenario
+        for scenario in harness.load_scenarios()
+        if scenario.id == "deep-backjump"
+    )
+    prepared = harness.prepare_scenario(backjump, smoke_index)
+    packages = harness._fixture_listing_packages(distributions)
+
+    observed: dict[str, dict[str, dict[str, str]]] = {}
+    for label, landed in _listing_arrival_states(packages).items():
+        result, _elapsed = harness._resolve_once(prepared, landed)
+        observed[label] = harness._pins(result)
+
+    expected = harness._expected(backjump)
+    assert observed == dict.fromkeys(observed, expected)
 
 
 def test_asyncio_wakeup_preflight_reports_restricted_execution() -> None:
