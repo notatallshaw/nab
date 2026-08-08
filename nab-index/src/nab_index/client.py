@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from .transport import AsyncHttpTransport, HttpResponse
 
 __all__ = [
+    "ACCEPTED_HASH_ALGORITHMS",
     "DEFAULT_INDEX",
     "AsyncSimpleClient",
     "MalformedSimpleResponseError",
@@ -51,7 +52,7 @@ __all__ = [
 ]
 
 # Verification order; sha256 is pip's hash-checking baseline.
-_ACCEPTED_HASH_ALGORITHMS = ("sha256", "sha384", "sha512")
+ACCEPTED_HASH_ALGORITHMS: tuple[str, ...] = ("sha256", "sha384", "sha512")
 
 # The tar ``data`` filter (PEP 706) landed in 3.12 and was backported to
 # 3.10.12 / 3.11.4; sdist extraction requires it (see extract_sdist_archive).
@@ -668,12 +669,12 @@ def _select_artifact_hash(
 ) -> tuple[str, str] | None:
     """Pick the preferred ``(algo, hex)`` to verify, or ``None`` if none qualify.
 
-    Walks :data:`_ACCEPTED_HASH_ALGORITHMS` in order, so sha256 is preferred,
+    Walks :data:`ACCEPTED_HASH_ALGORITHMS` in order, so sha256 is preferred,
     then sha384, then sha512. An empty set, an empty digest, or only unaccepted
     algorithms (md5) yields ``None``.
     """
     by_algo = {algo.lower(): digest.lower() for algo, digest in hashes}
-    for algo in _ACCEPTED_HASH_ALGORITHMS:
+    for algo in ACCEPTED_HASH_ALGORITHMS:
         digest = by_algo.get(algo)
         if digest:
             return (algo, digest)
