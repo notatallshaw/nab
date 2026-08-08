@@ -312,11 +312,11 @@ def check_locked(  # noqa: PLR0913 - the envelope fields and the validity inputs
     """Disqualify the committed lock at ``lockfile``, or return ``None``.
 
     Runs the envelope checks, then the validity checks over the active
-    direct requirements and constraints. ``roots`` of ``None`` (the caller
-    could not read them) runs the envelope checks alone. ``exclude`` holds
-    canonical names to skip, for the workspace members ``--no-emit-workspace``
-    drops from both sides. Constraints arrive as text; the config loader has
-    already rejected any that do not parse.
+    direct requirements and constraints. ``roots`` of ``None`` runs the
+    envelope checks alone. ``exclude`` holds canonical names to skip, for
+    the workspace members ``--no-emit-workspace`` drops from both sides.
+    Constraints arrive as text; the config loader has already rejected any
+    that do not parse.
 
     Raises the errors :func:`read_committed_pylock` raises.
     """

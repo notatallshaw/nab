@@ -324,15 +324,34 @@ def _fast_fail_locked(
     non-zero; otherwise it returns and the full resolve runs.
     """
     target = _locked_target_path(output)
+
     # A stat that failed is not an absent lock.
     if path_state(target) is PathState.ABSENT:
         _cli.printer().error(
             f"--locked: no lockfile at {target} to check; run `nab lock` first."
         )
         sys.exit(1)
-    roots, marker_env = _locked_check_inputs(
-        path, config, python=python, extras=extras, groups=groups
-    )
+
+    # A run whose own requirements cannot be read or evaluated is not the
+    # lock's fault, so leave the error to the resolve rather than reporting a
+    # stale lock.
+    try:
+        roots = _active_root_requirements(
+            path,
+            extras=extras,
+            groups=groups,
+            default_groups=config.default_groups,
+        )
+    except (
+        InvalidProjectTableError,
+        InvalidProjectRequirementError,
+        LookupError,
+        UnevaluableMarkerError,
+    ):
+        return
+
+    marker_env = _locked_marker_env(config, python=python)
+
     try:
         disqualification = check_locked(
             target,
@@ -369,35 +388,18 @@ def _fast_fail_locked(
     sys.exit(1)
 
 
-def _locked_check_inputs(
-    path: Path,
-    config: NabProjectConfig,
-    *,
-    python: str | None,
-    extras: tuple[str, ...],
-    groups: tuple[str, ...],
-) -> tuple[list[RootRequirement] | None, Mapping[str, str] | None]:
-    """Collect the validity-check inputs, or ``(None, None)`` to skip them.
+def _locked_marker_env(
+    config: NabProjectConfig, *, python: str | None
+) -> Mapping[str, str] | None:
+    """Return the environment the validity checks evaluate markers against.
 
-    A target the declaration excludes and a project whose requirements cannot
-    be read or evaluated both skip the validity checks, left for the full
-    resolve.  The envelope checks still run.
+    ``None`` when the declaration excludes this run's target, which leaves
+    the validity checks to the full resolve.  The envelope checks still run.
     """
     try:
-        target = plan_targets(with_python_override(config, python))[0]
+        return plan_targets(with_python_override(config, python))[0].marker_env
     except ConfigError:
-        return None, None
-    try:
-        roots = _active_root_requirements(path, extras=extras, groups=groups)
-    except (
-        KeyError,
-        InvalidProjectTableError,
-        InvalidProjectRequirementError,
-        LookupError,
-        UnevaluableMarkerError,
-    ):
-        return None, None
-    return roots, target.marker_env
+        return None
 
 
 def _active_root_requirements(
@@ -405,17 +407,20 @@ def _active_root_requirements(
     *,
     extras: tuple[str, ...],
     groups: tuple[str, ...],
+    default_groups: tuple[str, ...],
 ) -> list[RootRequirement]:
     """Collect this run's active direct requirements with their source clause.
 
     Covers ``[project].dependencies`` plus the requirements each selected extra
     and group contributes, each carrying the clause it came from so a
-    disqualification can name it.  Default groups are left to the full resolve.
+    disqualification can name it.  A default group is expanded only so an
+    undeclared name raises here too; its requirements are left to the resolve.
     """
     roots = [
         RootRequirement(requirement=req, source="[project].dependencies")
         for req in read_pyproject_dependencies(path)
     ]
+
     if extras:
         optional = read_pyproject_optional_dependencies(path)
         project_name = read_pyproject_name(path)
@@ -424,15 +429,21 @@ def _active_root_requirements(
                 RootRequirement(requirement=req, source=f"the {extra!r} extra")
                 for req in expand_extra_requirements(optional, project_name, [extra])
             )
-    if groups:
+
+    effective_groups = dict.fromkeys((*groups, *default_groups))
+    if effective_groups:
         table = read_pyproject_groups(path)
-        for group in groups:
+        for group in effective_groups:
+            requirements = resolve_groups_to_requirements(table, [group])
+            if group not in groups:
+                continue
             roots.extend(
                 RootRequirement(
                     requirement=req, source=f"the {group!r} dependency group"
                 )
-                for req in resolve_groups_to_requirements(table, [group])
+                for req in requirements
             )
+
     return roots
 
 
