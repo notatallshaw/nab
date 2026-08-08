@@ -30,11 +30,8 @@ from typing import TYPE_CHECKING
 
 import tomli
 
-from .._conflict_kind import dependency_marker_holds
-from .._vendor.packaging.markers import (
-    UndefinedComparison,
-    UndefinedEnvironmentName,
-)
+from .._conflict_kind import UnevaluableMarkerError, dependency_marker_holds
+from .._vendor.packaging.markers import UndefinedEnvironmentName
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.requirements import Requirement
 from .._vendor.packaging.specifiers import SpecifierSet
@@ -261,7 +258,7 @@ def _marker_skips(marker: Marker | None, marker_env: Mapping[str, str]) -> bool:
         return False
     try:
         active = dependency_marker_holds(marker, marker_env)
-    except (UndefinedComparison, UndefinedEnvironmentName):
+    except (UnevaluableMarkerError, UndefinedEnvironmentName):
         return True
     return not active
 

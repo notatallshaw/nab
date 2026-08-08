@@ -9,11 +9,10 @@ import tomli
 
 from nab_resolver.errors import ResolutionError
 
-from ._conflict_kind import dependency_marker_holds
+from ._conflict_kind import dependency_marker_holds, marker_set
 from ._vendor.packaging.dependency_groups import resolve_dependency_groups
 from ._vendor.packaging.errors import ExceptionGroup
 from ._vendor.packaging.markers import Marker
-from ._vendor.packaging.markersets import MarkerSet
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
 from .metadata import validate_specifier_versions
@@ -341,7 +340,7 @@ def _environment_residual(marker: Marker, extra: str) -> str | bool:
     extra``) is kept as a residual atom over the target's own value rather
     than decided against the machine running nab.
     """
-    residual = MarkerSet.from_marker(marker).restrict(
+    residual = marker_set(marker).restrict(
         {"extra": frozenset({extra})}, on_unknown_variable="residual"
     )
 
