@@ -1,7 +1,21 @@
 # Benchmarks
 
-nab ships two benchmark suites that exercise single-environment and
-universal resolves against real-world scenarios.
+nab ships two live-index benchmark suites that exercise single-environment and universal resolves against real-world scenarios. It also includes a small, deterministic offline smoke suite for repeatable correctness and performance checks.
+
+## Deterministic offline smoke suite
+
+`deterministic_smoke.py` materializes a content-addressed local Simple index and runs seven semantic cases plus four scaled performance cases. Every successful resolve is checked for exact target pins, PEP 751 lock projection, fixture sources, wheel hashes, and dependency edges. Unsatisfiable cases must return a proof-bearing resolution error without pins or a lock.
+
+Each performance case also pins its exact search counters. `pip-deep-backtracking` measures the volume of backtracking; its conflicts each name the decision one level up, so `deep-backjump` supplies the case where the culprit sits several levels below the conflict and the decision order matters. Between them a change that reaches the right answer along a different path moves a recorded number.
+
+```bash
+python nab-python/benchmarks/deterministic_smoke.py --lane semantic
+python nab-python/benchmarks/deterministic_smoke.py --lane performance --runs 5
+```
+
+The scenarios use Nab's default highest resolution strategy and default cross-target alignment. `strategy-lowest`, `strategy-lowest-direct`, and `universal-independent` declare the only exceptions.
+
+Each resolve gets a fresh coordinator against the same prebuilt offline fixture. Warmups happen before measurement, and each recorded inner interval covers only the resolver call; fixture generation, coordinator lifecycle, semantic validation, and lock emission stay outside it. Timing samples are local diagnostics, not a reusable baseline or comparative result, and should be collected sequentially under controlled conditions.
 
 ## Single-environment scenarios
 

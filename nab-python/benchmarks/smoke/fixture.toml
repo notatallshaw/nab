@@ -1,0 +1,132 @@
+[fixture]
+schema = 1
+sha256 = "46576cc582cd4033d39a6ffa27675b7060c5576e8bae339cb66a2853907ebe96"
+
+[[package]]
+name = "nab-smoke-basic"
+version = "1.0.0"
+dependencies = ["nab-smoke-basic-leaf>=1.0.0"]
+
+[[package]]
+name = "nab-smoke-basic-leaf"
+version = "1.0.0"
+
+[[package]]
+name = "nab-smoke-basic-leaf"
+version = "2.0.0"
+
+[[package]]
+name = "nab-smoke-constrained"
+version = "1.0.0"
+
+[[package]]
+name = "nab-smoke-constrained"
+version = "2.0.0"
+
+[[package]]
+name = "nab-smoke-constrained"
+version = "3.0.0"
+
+[[package]]
+name = "nab-smoke-extra-app"
+version = "1.0.0"
+provides-extra = ["speed"]
+dependencies = [
+    "nab-smoke-extra-base==1.0.0",
+    'nab-smoke-extra-speed==1.0.0; extra == "speed"',
+    'nab-smoke-marker-leaf==1.0.0; python_version < "3.12"',
+    'nab-smoke-marker-leaf==2.0.0; python_version >= "3.12"',
+]
+
+[[package]]
+name = "nab-smoke-extra-base"
+version = "1.0.0"
+
+[[package]]
+name = "nab-smoke-extra-speed"
+version = "1.0.0"
+
+[[package]]
+name = "nab-smoke-marker-leaf"
+version = "1.0.0"
+
+[[package]]
+name = "nab-smoke-marker-leaf"
+version = "2.0.0"
+
+[[package]]
+name = "nab-smoke-strategy-app"
+version = "1.0.0"
+dependencies = ["nab-smoke-strategy-transitive>=1.0.0"]
+
+[[package]]
+name = "nab-smoke-strategy-direct"
+version = "1.0.0"
+
+[[package]]
+name = "nab-smoke-strategy-direct"
+version = "2.0.0"
+
+[[package]]
+name = "nab-smoke-strategy-transitive"
+version = "1.0.0"
+
+[[package]]
+name = "nab-smoke-strategy-transitive"
+version = "2.0.0"
+
+[[package]]
+name = "nab-smoke-universal"
+version = "1.0.0"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    'nab-smoke-aligned>=1.0.0,<=2.0.0; python_version < "3.12"',
+    'nab-smoke-aligned>=1.0.0,<=3.0.0; python_version >= "3.12"',
+    'nab-smoke-platform==1.0.0; sys_platform == "linux"',
+    'nab-smoke-platform==2.0.0; sys_platform == "win32"',
+    'nab-smoke-python==1.0.0; python_version < "3.12"',
+    'nab-smoke-python==2.0.0; python_version >= "3.12"',
+]
+
+[[package]]
+name = "nab-smoke-aligned"
+version = "1.0.0"
+
+[[package]]
+name = "nab-smoke-aligned"
+version = "2.0.0"
+
+[[package]]
+name = "nab-smoke-aligned"
+version = "3.0.0"
+
+[[package]]
+name = "nab-smoke-platform"
+version = "1.0.0"
+
+[[package]]
+name = "nab-smoke-platform"
+version = "2.0.0"
+
+[[package]]
+name = "nab-smoke-python"
+version = "1.0.0"
+
+[[package]]
+name = "nab-smoke-python"
+version = "2.0.0"
+
+[[family]]
+kind = "pip-deep-backtracking"
+prefix = "nab-smoke-pip"
+size = 24
+
+[[family]]
+kind = "pip-deep-backtracking-unsatisfiable"
+prefix = "nab-smoke-pip-unsat"
+size = 24
+
+[[family]]
+kind = "deep-backjump"
+prefix = "nab-smoke-backjump"
+size = 6
