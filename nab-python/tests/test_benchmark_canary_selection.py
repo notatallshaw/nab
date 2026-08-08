@@ -41,7 +41,12 @@ def _harness() -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    benchmark_dir = str(_CANARY.parent)
+    sys.path.insert(0, benchmark_dir)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(benchmark_dir)
     return module
 
 

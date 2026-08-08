@@ -25,8 +25,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from nab_python.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
@@ -34,6 +32,11 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from benchmark_config import (
+    build_benchmark_config,
+    build_benchmark_provider,
+    direct_packages_from_requirements,
+)
 from benchmark_host import (
     BenchmarkHost,
     BenchmarkTimeout,
@@ -48,7 +51,7 @@ from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
-from nab_python.config import PackageOverride
+from nab_python.config import NabProjectConfig, index_routes_from_config
 from nab_python.fetch import (
     DEFAULT_INDEX_NAME,
     DEFAULT_INDEX_URL,
@@ -57,8 +60,6 @@ from nab_python.fetch import (
 )
 from nab_python.provider import (
     BuildPolicy,
-    DistPolicy,
-    Provider,
     ResolutionStrategy,
     VcsConfig,
     VcsPolicy,
@@ -96,13 +97,8 @@ class PreparedCanaryExecution(NamedTuple):
     """Validated inputs for one or more runs of a canary scenario."""
 
     requirements: dict[str, VersionRange]
-    uploaded_prior_to: datetime | None
     constraints: dict[str, VersionRange] | None
-    indexes: list[IndexConfig]
-    index_routes: list[IndexRoute]
-    build_policy_overrides: dict[str, BuildPolicy]
-    resolution_strategy: ResolutionStrategy
-    trust_unverified_sdist_deps: bool
+    config: NabProjectConfig
     target: ResolveTarget
     host: BenchmarkHost
 
@@ -312,49 +308,26 @@ def get_git_commit() -> str:
     return result.stdout.strip()
 
 
-def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
+def run_one(
     requirements: dict[str, VersionRange],
-    uploaded_prior_to: datetime | None,
     constraints: dict[str, VersionRange] | None,
     *,
-    indexes: list[IndexConfig] | None = None,
-    index_routes: list[IndexRoute] | None = None,
-    build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
-    resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
-    trust_unverified_sdist_deps: bool = False,
+    config: NabProjectConfig,
     target: ResolveTarget,
     host: BenchmarkHost,
 ) -> dict:
-    direct_packages = frozenset(
-        name for name in requirements if split_extra(name)[1] is None
-    )
-    effective_indexes = list(indexes) if indexes is not None else list(DEFAULT_INDEXES)
-    package_overrides = tuple(
-        PackageOverride(
-            requirement=Requirement(name),
-            name=canonicalize_name(name),
-            version_range=VersionRange.full(),
-            build_policy=policy,
-        )
-        for name, policy in (build_policy_overrides or {}).items()
-    )
+    direct_packages = direct_packages_from_requirements(requirements)
     with FetchCoordinator(
         HttpxAsyncTransport(),
-        indexes=effective_indexes,
+        indexes=list(config.indexes),
         cache_dir=CACHE_DIR,
-        index_routes=index_routes,
+        index_routes=index_routes_from_config(config),
     ) as coordinator:
-        provider = Provider(
+        provider = build_benchmark_provider(
             coordinator,
+            config=config,
             target=target,
-            root_requirements=requirements,
-            uploaded_prior_to=uploaded_prior_to,
-            dist_policy=DistPolicy.WHEEL_OR_SDIST,
-            build_policy=BuildPolicy.NEVER,
-            package_overrides=package_overrides,
-            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
-            resolution_strategy=resolution_strategy,
-            direct_packages=direct_packages,
+            requirements=requirements,
         )
         resolver = Resolver(
             provider,
@@ -382,26 +355,26 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
         ps = provider.stats
         return {
             "settings": {
-                "resolution": resolution_strategy.value,
-                "dist_policy": DistPolicy.WHEEL_OR_SDIST.value,
-                "build_policy": BuildPolicy.NEVER.value,
-                "trust_unverified_sdist_deps": trust_unverified_sdist_deps,
+                "resolution": config.resolution.value,
+                "dist_policy": config.dist_policy.value,
+                "build_policy": config.build_policy.value,
+                "trust_unverified_sdist_deps": config.trust_unverified_sdist_deps,
                 "max_iterations": MAX_ITERATIONS,
                 "wall_timeout_seconds": host.wall_timeout_seconds,
                 "runtime": _runtime_manifest(host),
                 "direct_packages": sorted(direct_packages),
                 "target": _target_manifest(target),
                 "indexes": [
-                    {"name": index.name, "url": index.url}
-                    for index in effective_indexes
+                    {"name": index.name, "url": index.url} for index in config.indexes
                 ],
                 "index_routes": [
                     {"name": route.name, "index": route.index}
-                    for route in (index_routes or [])
+                    for route in index_routes_from_config(config)
                 ],
                 "build_policy_overrides": {
-                    name: policy.value
-                    for name, policy in sorted((build_policy_overrides or {}).items())
+                    override.name: override.build_policy.value
+                    for override in config.package_overrides
+                    if override.build_policy is not None
                 },
             },
             "success": success,
@@ -826,16 +799,20 @@ def _prepare_canary_execution(
         scenario.get("trust_unverified_sdist_deps", True)
     )
     datetime_str = scenario.get("datetime")
+    config = build_benchmark_config(
+        uploaded_prior_to=parse_datetime(datetime_str) if datetime_str else None,
+        indexes=indexes,
+        index_routes=index_routes,
+        build_policy_overrides=build_policy_overrides,
+        resolution=resolution_strategy,
+        trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+        vcs=vcs_config,
+    )
     return CanaryPreparation(
         PreparedCanaryExecution(
             requirements=requirements,
-            uploaded_prior_to=parse_datetime(datetime_str) if datetime_str else None,
             constraints=constraints,
-            indexes=indexes,
-            index_routes=index_routes,
-            build_policy_overrides=build_policy_overrides,
-            resolution_strategy=resolution_strategy,
-            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+            config=config,
             target=target,
             host=host,
         ),
@@ -846,13 +823,8 @@ def _prepare_canary_execution(
 def _run_prepared_canary(execution: PreparedCanaryExecution) -> dict:
     return run_one(
         execution.requirements,
-        execution.uploaded_prior_to,
         execution.constraints,
-        indexes=execution.indexes,
-        index_routes=execution.index_routes or None,
-        build_policy_overrides=execution.build_policy_overrides or None,
-        resolution_strategy=execution.resolution_strategy,
-        trust_unverified_sdist_deps=execution.trust_unverified_sdist_deps,
+        config=execution.config,
         target=execution.target,
         host=execution.host,
     )
