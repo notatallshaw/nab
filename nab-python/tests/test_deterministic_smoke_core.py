@@ -401,8 +401,9 @@ def test_scenarios_use_product_defaults_except_declared_overrides(
     monkeypatch.setattr(harness, "Urllib3AsyncTransport", object)
     monkeypatch.setattr(harness, "resolve_with_coordinator", resolve)
 
-    harness._resolve_once(highest)
-    harness._resolve_once(independent)
+    # No listings to warm, so the stub coordinator is never asked for one.
+    harness._resolve_once(highest, ())
+    harness._resolve_once(independent, ())
 
     # A scenario that declares nothing must reach the resolver with the argument
     # absent, so the suite tracks the shipped default instead of restating it.
@@ -490,6 +491,39 @@ def test_basic_highest_local_coordinator_completes_bounded(smoke_index: Path) ->
 
     assert result["pins_per_target"] == expected
     assert result["lock_projection_per_target"] == expected
+
+
+def test_await_listings_dispatches_every_request_before_waiting() -> None:
+    """Every listing is requested first, then every one is awaited.
+
+    Waiting is what takes fetch timing out of the measurement, and dispatching
+    the whole set before the first wait is what keeps the reads overlapping.
+    Neither shows up in a resolve that happens to run on an idle machine, so
+    both are pinned here instead.
+    """
+    harness = _harness()
+    requested: list[str] = []
+
+    class _Event:
+        def __init__(self) -> None:
+            self.requests_at_wait: int | None = None
+
+        def wait(self) -> None:
+            self.requests_at_wait = len(requested)
+
+    events: list[_Event] = []
+
+    class _Coordinator:
+        def request_listing(self, package: str) -> _Event:
+            requested.append(package)
+            event = _Event()
+            events.append(event)
+            return event
+
+    harness._await_listings(_Coordinator(), ("beta", "alpha", "gamma"))
+
+    assert requested == ["beta", "alpha", "gamma"]
+    assert [event.requests_at_wait for event in events] == [3, 3, 3]
 
 
 def test_asyncio_wakeup_preflight_reports_restricted_execution() -> None:
@@ -607,9 +641,11 @@ def test_every_smoke_scenario_satisfies_its_contract(smoke_index: Path) -> None:
         "conflicts": 25,
         "backjumps": 24,
     }
+    # These hold only because _resolve_once lands every listing first; a
+    # resolve racing its own fetches walks this graph differently.
     assert results["deep-backjump"]["search"] == {
-        "decisions": 91,
-        "rounds": 111,
+        "decisions": 85,
+        "rounds": 105,
         "conflicts": 19,
         "backjumps": 19,
     }
