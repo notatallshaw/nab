@@ -17,6 +17,7 @@ from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     _MATRIX_KEYS,
+    _PEP508_MARKER_VARIABLES,
     ConfigError,
     ConflictKind,
     ConflictMember,
@@ -2016,6 +2017,14 @@ class TestMarkerEnvironmentDeprecation:
         )
         with pytest.raises(ConfigError, match="unknown marker-environment variable"):
             read_pyproject_config(path)
+
+    def test_accepted_variables_are_the_ones_packaging_defines(self) -> None:
+        """Every variable packaging defines is accepted, and nothing else is.
+
+        A variable packaging adds fails here rather than reading as a
+        misspelling in a user's config.
+        """
+        assert set(default_environment()) == _PEP508_MARKER_VARIABLES
 
     def test_python_version_must_be_pep440(self, tmp_path: Path) -> None:
         path = write(

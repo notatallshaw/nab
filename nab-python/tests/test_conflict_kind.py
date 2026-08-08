@@ -12,10 +12,11 @@ from collections.abc import Set as AbstractSet
 import pytest
 
 from nab_python._conflict_kind import (
+    EMPTY_MEMBERSHIP_SETS,
     UnevaluableMarkerError,
     dependency_marker_holds,
 )
-from nab_python._vendor.packaging.markers import Marker
+from nab_python._vendor.packaging.markers import MARKERS_ALLOWING_SET, Marker
 
 _ENV: dict[str, str] = {
     "python_version": "3.11",
@@ -76,6 +77,15 @@ class TestDependencyMarkerHoldsSetExtra:
         tests ``extras`` evaluates False rather than raising."""
         assert _holds('"docs" not in extras', frozenset({"cpu"})) is True
         assert _holds('"docs" in extras', frozenset({"cpu"})) is False
+
+    def test_seeding_covers_every_packaging_set_variable(self) -> None:
+        """Every variable packaging allows as a set is one of the seeded names.
+
+        The seeded names come from the conflict kinds, so a variable packaging
+        newly allows as a set would arrive unseeded and raise instead of
+        testing False against no members.
+        """
+        assert set(EMPTY_MEMBERSHIP_SETS) == set(MARKERS_ALLOWING_SET)
 
 
 class TestDependencyMarkerHoldsScalarExtra:

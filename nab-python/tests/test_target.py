@@ -12,7 +12,11 @@ from pathlib import Path
 
 import pytest
 
-from nab_python._vendor.packaging.markers import InvalidMarker, Marker
+from nab_python._vendor.packaging.markers import (
+    InvalidMarker,
+    Marker,
+    default_environment,
+)
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.tags import Tag
@@ -758,6 +762,15 @@ class TestMarkerVariables:
     def test_every_declared_variable_is_a_marker_environment_key(self) -> None:
         target = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
         assert target.marker_env.keys() >= PEP508_MARKER_VARIABLES
+
+    def test_variables_are_exactly_the_ones_packaging_defines(self) -> None:
+        """The filter set is packaging's environment, not a subset of it.
+
+        ``marker_variables`` intersects with it, so a variable missing here
+        drops out of the lock's ``environments`` declaration and the lock
+        claims to cover an installer that answers the marker the other way.
+        """
+        assert set(default_environment()) == PEP508_MARKER_VARIABLES
 
 
 class TestEnvironmentDeclaration:

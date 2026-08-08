@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from nab_python._vendor.packaging.markers import Marker
+from nab_python._vendor.packaging.markers import Marker, default_environment
 from nab_python.tags import PlatformSpec
 from nab_python.target import (
     KNOWN_PYTHON_MINORS,
@@ -78,29 +78,32 @@ class TestMatrixExpand:
             ("3.11", "windows_amd64"),
         }
 
-    def test_environment_has_all_required_pep508_keys(self) -> None:
-        """Every PEP 508 marker variable must be set per tuple."""
+    def test_environment_models_every_scalar_marker_variable(self) -> None:
+        """Every scalar packaging marker variable is set per target.
+
+        A variable the matrix leaves out does not read as missing. The
+        provider evaluates through ``Marker.evaluate``, which seeds the host
+        ``default_environment()`` beneath the environment it is handed, so the
+        host's value answers the marker on every target; the root-requirement
+        path evaluates through ``MarkerSet``, which raises instead. Deriving
+        the required set from packaging rather than a hardcoded list makes a
+        newly added variable fail here.
+        """
         matrix = Matrix(python="==3.12", platforms=(PlatformSpec("macos_arm64"),))
-        tuples = matrix.expand()
-        assert len(tuples) == 1
-        env = tuples[0].marker_env
-        required_keys = {
-            "python_version",
-            "python_full_version",
-            "implementation_name",
-            "implementation_version",
-            "os_name",
-            "platform_machine",
-            "platform_python_implementation",
-            "platform_release",
-            "platform_system",
-            "platform_version",
-            "sys_platform",
-        }
-        assert required_keys.issubset(env)
-        assert env["python_version"] == "3.12"
-        assert env["sys_platform"] == "darwin"
-        assert env["platform_machine"] == "arm64"
+        (only,) = matrix.expand()
+        missing = set(default_environment()) - set(only.marker_env)
+        assert not missing, (
+            f"matrix target does not model {sorted(missing)!r}; add each to "
+            "declared_environment or the resolve answers it from the host"
+        )
+
+    def test_environment_has_expected_axis_values(self) -> None:
+        """The python and platform axes drive their marker values."""
+        matrix = Matrix(python="==3.12", platforms=(PlatformSpec("macos_arm64"),))
+        (only,) = matrix.expand()
+        assert only.marker_env["python_version"] == "3.12"
+        assert only.marker_env["sys_platform"] == "darwin"
+        assert only.marker_env["platform_machine"] == "arm64"
 
     def test_unknown_platform_id_raises(self) -> None:
         """An unknown platform id is a user error, raised eagerly."""
