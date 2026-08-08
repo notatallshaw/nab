@@ -44,6 +44,7 @@ from nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
     RangeProtocol,
+    RootRequirement,
     SetRelation,
     Term,
 )
@@ -2138,6 +2139,95 @@ class TestFullRangeWording:
         assert lines[2] == "so p0 1"
         assert lines[-2] == f"because p{depth - 1} 1 depends on tail [1, +inf)"
         assert lines[-1] == f"so p{depth - 1} 1"
+
+
+class TestRootRequirements:
+    def test_disjoint_requirements_are_named_separately(self) -> None:
+        """Two roots on one package each get a line naming what was written."""
+        provider = DictProvider({"pkg": {2: {}, 1: {}}})
+        with pytest.raises(ResolutionError) as excinfo:
+            Resolver(provider).resolve(
+                [
+                    RootRequirement("pkg", Range.greater_than(1)),
+                    RootRequirement("pkg", Range.singleton(1)),
+                ]
+            )
+
+        lines = str(excinfo.value).splitlines()
+        assert "because your project depends on pkg (1, +inf)" in lines
+        assert "because your project depends on pkg 1" in lines
+        assert not any("empty" in line for line in lines)
+
+    def test_overlapping_requirements_survive_to_the_solution(self) -> None:
+        """Roots that intersect to a live range still resolve, once."""
+        provider = DictProvider({"pkg": {3: {}, 2: {}, 1: {}}})
+        result = Resolver(provider).resolve(
+            [
+                RootRequirement("pkg", Range.at_least(1)),
+                RootRequirement("pkg", Range.at_most(2)),
+            ]
+        )
+        assert result == {"pkg": 2}
+
+    def test_transitive_narrowing_names_the_written_requirement(self) -> None:
+        """A conflict past the intersection still quotes a root as written."""
+        provider = DictProvider(
+            {
+                "pkg": {2: {"dep": Range.singleton(9)}},
+                "dep": {1: {}},
+            }
+        )
+        with pytest.raises(ResolutionError) as excinfo:
+            Resolver(provider).resolve(
+                [
+                    RootRequirement("pkg", Range.at_least(1)),
+                    RootRequirement("pkg", Range.at_most(2)),
+                ]
+            )
+
+        lines = str(excinfo.value).splitlines()
+        assert "because your project depends on pkg [1, +inf)" in lines
+        assert "because your project depends on pkg (-inf, 2]" in lines
+
+    def test_repeated_package_keeps_its_first_mention_order(self) -> None:
+        """Naming a package twice must not push its decision later."""
+        provider = DictProvider({"pkg": {1: {}}, "other": {1: {}}})
+        resolver = Resolver(provider)
+        resolver.resolve(
+            [
+                RootRequirement("pkg", Range.full()),
+                RootRequirement("other", Range.full()),
+                RootRequirement("pkg", Range.at_least(1)),
+            ]
+        )
+        assert resolver.root_package_order["pkg"] == (0, 0, "")
+        assert resolver.root_package_order["other"] == (0, 1, "")
+
+    def test_origin_travels_onto_the_root_clause(self) -> None:
+        """The caller's opaque origin is readable off the clause it produced."""
+        provider = DictProvider({"pkg": {1: {}}})
+        resolver = Resolver(provider)
+        resolver.resolve([RootRequirement("pkg", Range.full(), "pkg>=1 (line 3)")])
+
+        origins = [
+            incompatibility.origin
+            for incompatibility in resolver.incompatibilities
+            if incompatibility.cause is IncompatibilityCause.ROOT
+        ]
+        assert origins == ["pkg>=1 (line 3)"]
+
+    def test_mapping_form_leaves_the_origin_unset(self) -> None:
+        """A mapping caller keeps working and sets no origin."""
+        provider = DictProvider({"pkg": {1: {}}})
+        resolver = Resolver(provider)
+        assert resolver.resolve({"pkg": Range.full()}) == {"pkg": 1}
+
+        roots = [
+            incompatibility
+            for incompatibility in resolver.incompatibilities
+            if incompatibility.cause is IncompatibilityCause.ROOT
+        ]
+        assert [incompatibility.origin for incompatibility in roots] == [None]
 
 
 class TestConstraints:

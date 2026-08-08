@@ -21,8 +21,11 @@ Rust implementation: https://github.com/pubgrub-rs/pubgrub
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Protocol
+from typing import Any, Generic, Protocol
+
+from typing_extensions import TypeIs
 
 from . import conflict, decide, incompat_index, propagate
 from .errors import ResolutionError
@@ -36,14 +39,11 @@ from .types import (
     IncompatibilityState,
     PackageType,
     RangeProtocol,
+    RootRequirement,
     SetRelation,
     Term,
     VersionType,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
-
 
 __all__ = [
     "Incompatibility",
@@ -54,6 +54,7 @@ __all__ = [
     "ResolverObserver",
     "ResolverProvider",
     "ResolverStats",
+    "RootRequirement",
     "SetRelation",
     "Term",
 ]
@@ -277,6 +278,34 @@ class ResolverObserver(Generic[PackageType, VersionType]):
         """Handle one iteration of the conflict resolution loop."""
 
 
+def _is_range_mapping(
+    requirements: Mapping[PackageType, RangeProtocol[VersionType]]
+    | Sequence[RootRequirement[PackageType, VersionType]],
+) -> TypeIs[Mapping[PackageType, RangeProtocol[VersionType]]]:
+    """Return whether the caller passed the one-range-per-package form.
+
+    A ``TypeIs`` rather than a bare ``isinstance``: one type can satisfy both
+    members of the union, so plain narrowing can leave an intersection that
+    has lost the mapping's value type.
+    """
+    return isinstance(requirements, Mapping)
+
+
+def _as_root_requirements(
+    requirements: Mapping[PackageType, RangeProtocol[VersionType]]
+    | Sequence[RootRequirement[PackageType, VersionType]],
+) -> Sequence[RootRequirement[PackageType, VersionType]]:
+    """Accept either shape ``Resolver.resolve`` takes and return the sequence."""
+    if not _is_range_mapping(requirements):
+        return requirements
+    # The parameters are spelled out because ``constraint`` is a contravariant
+    # protocol, which gives the version parameter no inference site.
+    return [
+        RootRequirement[PackageType, VersionType](package, required_range)
+        for package, required_range in requirements.items()
+    ]
+
+
 class Resolver(Generic[PackageType, VersionType]):
     """PubGrub dependency resolver.
 
@@ -352,10 +381,16 @@ class Resolver(Generic[PackageType, VersionType]):
 
     def resolve(
         self,
-        requirements: Mapping[PackageType, RangeProtocol[VersionType]],
+        requirements: Mapping[PackageType, RangeProtocol[VersionType]]
+        | Sequence[RootRequirement[PackageType, VersionType]],
         constraints: Mapping[PackageType, RangeProtocol[VersionType]] | None = None,
     ) -> dict[PackageType, VersionType]:
         """Resolve requirements and return ``{package: version}``.
+
+        ``requirements`` is either one range per package, or a sequence of
+        :class:`~nab_resolver.types.RootRequirement` when the caller has more
+        than one requirement on a package and wants each named as written in
+        the failure report.
 
         Constraints restrict a package's version range but do not cause
         it to be installed.  They are injected lazily: only when the
@@ -365,7 +400,7 @@ class Resolver(Generic[PackageType, VersionType]):
         Raises ``ResolutionError`` if no solution exists.
         """
         self._reset(constraints)
-        self._add_root_requirements(requirements)
+        self._add_root_requirements(_as_root_requirements(requirements))
 
         # Threshold doubles each restart (geometric schedule).
         restart_threshold = self._RESTART_THRESHOLD
@@ -515,20 +550,23 @@ class Resolver(Generic[PackageType, VersionType]):
         self.relation_cache.clear()
 
     def _add_root_requirements(
-        self, requirements: Mapping[PackageType, RangeProtocol[VersionType]]
+        self, requirements: Sequence[RootRequirement[PackageType, VersionType]]
     ) -> None:
-        """Create root incompatibilities and decide the root package."""
-        for idx, (package, required_range) in enumerate(requirements.items()):
+        """Create one root incompatibility per requirement, and decide root."""
+        for idx, root in enumerate(requirements):
             root_term: Term[Any, Any] = Term(
                 ROOT, self.range_type.singleton(self.root_version), positive=True
             )
             incompat_index.add_incompatibility(
                 self,
                 Incompatibility(
-                    [root_term, Term(package, required_range, positive=False)],
+                    [root_term, Term(root.package, root.constraint, positive=False)],
                     cause=IncompatibilityCause.ROOT,
+                    origin=root.origin,
                 ),
             )
-            self.root_package_order[package] = (0, idx, "")
+            # First mention fixes the tiebreak, so naming a package twice
+            # does not push its decision later.
+            self.root_package_order.setdefault(root.package, (0, idx, ""))
         self.solution.decide(ROOT, self.root_version)
         self.stats.decisions += 1
