@@ -499,7 +499,6 @@ class PreparedStandardExecution(NamedTuple):
     vcs_config: VcsConfig
     trust_unverified_sdist_deps: bool
     expected_input: dict[str, object]
-    dropped_build_packages: int
 
 
 def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
@@ -555,6 +554,16 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
         rows.extend(
             StandardScenario(path.stem, name, definition)
             for name, definition in scenarios.items()
+        )
+    for row in rows:
+        marker_environment = parse_marker_environment(row.name, row.definition)
+        build_policy_overrides = parse_build_packages(row.name, row.definition)
+        if "unsupported_reason" in row.definition:
+            continue
+        validate_scenario_build_policy(
+            row.name,
+            marker_environment,
+            build_policy_overrides,
         )
     return rows
 
@@ -1467,6 +1476,20 @@ def parse_build_packages(
     return overrides
 
 
+def validate_scenario_build_policy(
+    scenario_name: str,
+    marker_environment: Mapping[str, str],
+    build_policy_overrides: Mapping[str, BuildPolicy],
+) -> None:
+    """Reject build policy paired with a marker environment overlay."""
+    if marker_environment and build_policy_overrides:
+        msg = (
+            f"{scenario_name}: build_packages cannot be combined "
+            "with a marker environment overlay"
+        )
+        raise ValueError(msg)
+
+
 def prepare_standard_execution(
     execution: StandardExecution,
     *,
@@ -1484,10 +1507,12 @@ def prepare_standard_execution(
     indexes = parse_indexes(scenario_name, scenario)
     index_routes = parse_index_routes(scenario_name, scenario)
     build_policy_overrides = dict(parse_build_packages(scenario_name, scenario))
-    dropped_build_packages = 0
-    if marker_environment and build_policy_overrides:
-        dropped_build_packages = len(build_policy_overrides)
-        build_policy_overrides = {}
+    if "unsupported_reason" not in scenario:
+        validate_scenario_build_policy(
+            scenario_name,
+            marker_environment,
+            build_policy_overrides,
+        )
     datetime_str: str | None = scenario.get("datetime")
     project_name: str | None = scenario.get("project_name")
     project_extras: list[str] = scenario.get("project_extras", [])
@@ -1547,7 +1572,6 @@ def prepare_standard_execution(
         vcs_config=vcs_config,
         trust_unverified_sdist_deps=trust_unverified_sdist_deps,
         expected_input=expected_input,
-        dropped_build_packages=dropped_build_packages,
     )
 
 
@@ -1570,13 +1594,6 @@ def process_scenario(
         source=source,
         corpus_hash=corpus_hash,
     )
-    if prepared.dropped_build_packages:
-        print(
-            f"\n  [audit] {scenario_name}: dropping {prepared.dropped_build_packages}"
-            " build_packages override(s) because host-built metadata cannot"
-            " reflect a marker_environment overlay.",
-            flush=True,
-        )
 
     run_dir = _result_directory(commit)
     output_path = _standard_result_path(run_dir, execution)

@@ -74,10 +74,11 @@ def build_inputs(
     constraint_strings = scenario.get("constraints", [])
     marker_environment = sc.parse_marker_environment(name, scenario)
     build_policy_overrides = sc.parse_build_packages(name, scenario)
-
-    # BUILD_REMOTE + marker_environment overlay is unsupported; drop overrides.
-    if marker_environment and build_policy_overrides:
-        build_policy_overrides = {}
+    sc.validate_scenario_build_policy(
+        name,
+        marker_environment,
+        build_policy_overrides,
+    )
 
     declared_resolution = sc.ResolutionStrategy(
         scenario.get("resolution", sc.ResolutionStrategy.HIGHEST.value)

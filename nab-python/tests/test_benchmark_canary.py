@@ -133,6 +133,32 @@ def test_canary_rejects_unknown_resolution() -> None:
         )
 
 
+def test_canary_rejects_supported_marker_build_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+
+    def unexpected_run(*_args: object, **_kwargs: object) -> dict:
+        pytest.fail("scenario reached the resolver")
+
+    monkeypatch.setattr(module, "run_one", unexpected_run)
+    scenario = {
+        "python_version": "3.11",
+        "requirements": ["demo"],
+        "platform_system": "Linux",
+        "build_packages": ["demo"],
+    }
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "example: build_packages cannot be combined "
+            "with a marker environment overlay"
+        ),
+    ):
+        module.median_run(scenario, 1, scenario_name="example")
+
+
 def test_canary_explicit_resolution_overrides_declared_strategy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

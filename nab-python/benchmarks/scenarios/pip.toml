@@ -1169,6 +1169,7 @@ requirements = [
 python_version = "3.7"
 platform_system = "Linux"
 datetime = "2023-01-29 06:46:46"
+unsupported_reason = "build policy cannot represent a marker-only target"
 # Sdist-only at the listed pins.  shapely needs libgeos to build;
 # the rest are pure Python.
 build_packages = [
@@ -1206,8 +1207,8 @@ requirements = [
 python_version = "3.7"
 platform_system = "Linux"
 datetime = "2023-01-29 20:33:23"
-# Pure-Python sdists with no wheel under the exclude-newer date.  Building
-# them is cheap enough to run inside the benchmark host.
+unsupported_reason = "build policy cannot represent a marker-only target"
+# Pure-Python sdists with no wheel under the exclude-newer date.
 build_packages = ["antlr4-python3-runtime", "future"]
 requirements = [
     "einops==0.3",
@@ -1370,6 +1371,7 @@ requirements = [
 python_version = "3.8"
 platform_system = "Linux"
 datetime = "2021-02-09 09:53:34"
+unsupported_reason = "build policy cannot represent a marker-only target"
 # Pure-Python sdists with no wheel under the exclude-newer date.
 # olefile is built indirectly via extract-msg's pin chain (older
 # pins reference olefile==0.43 / 0.46, both sdist-only).

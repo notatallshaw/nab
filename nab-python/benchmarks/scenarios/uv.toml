@@ -614,6 +614,7 @@ requirements = [
 python_version = "3.13"
 platform_system = "Linux"
 datetime = "2025-05-06 22:13:25"
+unsupported_reason = "build policy cannot represent a marker-only target"
 # Sdist-only deps along the resolved path.  outlines-core (Rust),
 # sentencepiece (C++), and xformers (CUDA) need native toolchains;
 # the rest are pure Python.
