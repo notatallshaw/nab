@@ -29,9 +29,9 @@ from ..metadata import (
 )
 from ..requirements_file import (
     InvalidProjectRequirementError,
-    _parse_project_requirement,
-    _parse_requirements,
-    _require_string_list,
+    parse_project_requirement,
+    parse_requirements,
+    require_string_list,
 )
 from ..tags import python_axis_accepts
 
@@ -403,7 +403,7 @@ def augment_from_pyproject(
     if project is None:
         return None
 
-    deps = _require_string_list(
+    deps = require_string_list(
         project.get("dependencies", []), "[project].dependencies"
     )
     optional = project.get("optional-dependencies", {})
@@ -438,8 +438,8 @@ def extend_with_extras(requires_dist: list[Requirement], optional: dict) -> list
         source = f"[project].optional-dependencies extra {extra_name!r}"
         provides_extra.append(extra_name)
         requires_dist.extend(
-            _parse_project_requirement(dep_str, source, extra=extra_name)
-            for dep_str in _require_string_list(extra_deps, source)
+            parse_project_requirement(dep_str, source, extra=extra_name)
+            for dep_str in require_string_list(extra_deps, source)
         )
     return provides_extra
 
@@ -447,12 +447,12 @@ def extend_with_extras(requires_dist: list[Requirement], optional: dict) -> list
 def parse_pyproject_deps(deps: list) -> list[Requirement]:
     """Parse a ``project.dependencies`` list, raising on a malformed entry.
 
-    Entries are already validated as strings by :func:`_require_string_list`;
+    Entries are already validated as strings by :func:`require_string_list`;
     a string that is not valid PEP 508 raises
     :class:`InvalidProjectRequirementError`, so the whole version is rejected
     rather than resolved with the dependency dropped.
     """
-    return _parse_requirements(deps, "[project].dependencies")
+    return parse_requirements(deps, "[project].dependencies")
 
 
 def find_sdist(

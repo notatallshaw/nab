@@ -30,11 +30,14 @@ __all__ = [
     "expand_extra_requirements",
     "expand_group_includes",
     "expand_self_extras",
+    "parse_project_requirement",
+    "parse_requirements",
     "raise_for_unsatisfiable",
     "read_pyproject_dependencies",
     "read_pyproject_groups",
     "read_pyproject_name",
     "read_pyproject_optional_dependencies",
+    "require_string_list",
     "resolve_groups_to_requirements",
     "self_extra_markers",
 ]
@@ -78,7 +81,7 @@ def _add_extra_marker(dep_str: str, extra_name: str) -> str:
     return f"{req} ; {marker}"
 
 
-def _parse_project_requirement(
+def parse_project_requirement(
     dep_str: str, source: str, *, extra: str | None = None
 ) -> Requirement:
     """Parse one PEP 508 dependency string, raising if it is malformed.
@@ -99,12 +102,12 @@ def _parse_project_requirement(
     return req
 
 
-def _parse_requirements(strings: Sequence[str], source: str) -> list[Requirement]:
+def parse_requirements(strings: Sequence[str], source: str) -> list[Requirement]:
     """Parse PEP 508 strings, naming ``source`` if one is malformed."""
-    return [_parse_project_requirement(s, source) for s in strings]
+    return [parse_project_requirement(s, source) for s in strings]
 
 
-def _require_string_list(value: object, source: str) -> list[str]:
+def require_string_list(value: object, source: str) -> list[str]:
     """Validate that a PEP 621 dependency value is an array of strings.
 
     A bare string passes the type checker as ``Sequence[str]`` but
@@ -164,8 +167,8 @@ def read_pyproject_dependencies(path: Path) -> list[Requirement]:
                 " path does not support"
             )
             raise InvalidProjectRequirementError(msg)
-    dep_strings = _require_string_list(project.get("dependencies", []), source)
-    return _parse_requirements(dep_strings, source)
+    dep_strings = require_string_list(project.get("dependencies", []), source)
+    return parse_requirements(dep_strings, source)
 
 
 def read_pyproject_name(path: Path) -> str | None:
@@ -205,7 +208,7 @@ def _canonicalize_optional_deps(
     for name, reqs in optional_deps.items():
         source = f"[project.optional-dependencies] extra {name!r}"
         canonical.setdefault(canonicalize_name(name), []).extend(
-            _require_string_list(reqs, source)
+            require_string_list(reqs, source)
         )
     return canonical
 
@@ -390,7 +393,7 @@ def expand_extra_requirements(
                 f" [project.optional-dependencies]; defined: {sorted(canonical_deps)!r}"
             )
             raise LookupError(msg)
-        for req in _parse_requirements(
+        for req in parse_requirements(
             canonical_deps[extra],
             f"[project.optional-dependencies] extra {extra!r}",
         ):
@@ -506,7 +509,7 @@ def resolve_groups_to_requirements(
             raise LookupError(detail) from group
         msg = f"invalid [dependency-groups]: {detail}"
         raise InvalidProjectRequirementError(msg) from group
-    return _parse_requirements(resolved, "[dependency-groups]")
+    return parse_requirements(resolved, "[dependency-groups]")
 
 
 def raise_for_unsatisfiable(
