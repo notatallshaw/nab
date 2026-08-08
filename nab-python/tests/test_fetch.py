@@ -57,6 +57,23 @@ def _coord(**kwargs: object) -> FetchCoordinator:
     return FetchCoordinator(transport=HttpxAsyncTransport(), **kwargs)  # type: ignore[arg-type]
 
 
+class _FetcherDeath(BaseException):
+    """A BaseException that is not an Exception, as asyncio.CancelledError is."""
+
+
+class _FailingTransport:
+    """Transport whose operations raise the given BaseException."""
+
+    def __init__(self, failure: type[BaseException]) -> None:
+        self._failure = failure
+
+    async def get(self, url: str, *, headers: dict[str, str] | None = None) -> NoReturn:
+        raise self._failure
+
+    async def aclose(self) -> NoReturn:
+        raise self._failure
+
+
 def _make_wheel(name: str = "foo", version: str = "1.0") -> WheelFile:
     """Build a minimal WheelFile for InMemoryIndex round-trip tests."""
     return WheelFile(
@@ -995,6 +1012,30 @@ class TestFetchCoordinator:
         coord._async_fetcher = _boom  # type: ignore[assignment]
         coord._run_loop()
         assert coord._crashed is True
+
+    @pytest.mark.timeout(30)
+    @pytest.mark.parametrize("failure", [_FetcherDeath, KeyboardInterrupt])
+    def test_run_loop_records_a_base_exception_and_reraises(
+        self, monkeypatch: pytest.MonkeyPatch, failure: type[BaseException]
+    ) -> None:
+        """A BaseException out of the loop is recorded, then ends the thread."""
+        escaped: list[BaseException] = []
+
+        def _collect(args: threading.ExceptHookArgs) -> None:
+            assert args.exc_value is not None
+            escaped.append(args.exc_value)
+
+        monkeypatch.setattr(threading, "excepthook", _collect)
+        coord = FetchCoordinator(transport=_FailingTransport(failure))  # type: ignore[arg-type]
+
+        coord.start()
+        coord.shutdown()
+
+        assert coord._crashed
+        assert isinstance(coord._crash_error, failure)
+        assert escaped == [coord._crash_error]
+        with pytest.raises(RuntimeError, match="Fetcher thread crashed"):
+            coord.request_listing("foo")
 
     def test_shutdown_completes_after_startup_crash(self) -> None:
         """shutdown() tears down cleanly when the fetcher crashed at startup."""
