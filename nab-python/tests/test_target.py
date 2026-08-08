@@ -1340,6 +1340,32 @@ class TestMicroBoundarySplitting:
         with pytest.raises(NonIntervalMarkerError):
             micro_boundary_points(self._target(), [Marker(marker)])
 
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            'python_full_version < "3.12.*"',
+            'python_full_version <= "3.12.*"',
+            'python_full_version > "3.12.*"',
+            'python_full_version >= "3.12.*"',
+            'python_full_version < "3.13.*"',
+            'python_full_version < "3.11.0rc1.*"',
+            'python_full_version ~= "3"',
+            'python_full_version ~= "3.12.*"',
+            'implementation_version >= "3.12.*"',
+        ],
+    )
+    def test_a_literal_the_operator_rejects_crashes(self, marker: str) -> None:
+        """A ``.*`` suffix is a valid marker literal, but a valid specifier
+        only under ``==``/``!=``, and ``~=`` needs two release components.
+        The clause parses and the literal is a version either way, so the
+        mismatch shows up only when the specifier is built.
+
+        The literal names no interval under its operator whatever minor reads
+        it, so a literal outside the target's own minor is refused too.
+        """
+        with pytest.raises(NonIntervalMarkerError):
+            micro_boundary_points(self._target(), [Marker(marker)])
+
     def test_the_crash_names_the_same_clause_in_either_order(self) -> None:
         """Two untileable markers name the same clause in either order.
 

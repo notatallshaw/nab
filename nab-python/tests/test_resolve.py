@@ -1880,6 +1880,34 @@ class TestResolveUniversalPyproject:
         _resolved(pyproject, extras=["all"])
         mock_engine.assert_called_once()
 
+    @patch("nab_python.resolve.resolve_with_coordinator")
+    def test_wildcard_self_ref_marker_off_the_matrix_resolves(
+        self, mock_engine: MagicMock, tmp_path: Path
+    ) -> None:
+        """A ``.*`` literal under an ordering operator is skipped like any
+        other self-ref marker the closure carries but no tuple reaches.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[project.optional-dependencies]\n"
+            'cpu = ["foo==1.0"]\n'
+            'gpu = ["foo==2.0"]\n'
+            "legacy = [\"x[gpu]; python_full_version < '3.7.*'\"]\n"
+            "all = [\n"
+            '    "x[cpu]",\n'
+            "    \"x[legacy]; python_version < '3.8'\",\n"
+            "]\n"
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.10"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        _resolved(pyproject, extras=["all"])
+        mock_engine.assert_called_once()
+
     def test_untileable_self_ref_marker_keeps_the_other_boundaries(
         self, tmp_path: Path
     ) -> None:

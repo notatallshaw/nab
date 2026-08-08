@@ -1699,6 +1699,32 @@ class TestLockCommandUniversal:
         assert "cannot tile the py312-linux_x86_64 minor interval" in err
         assert "Traceback" not in err
 
+    def test_wildcard_micro_marker_exits_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``< "3.12.*"`` is a valid marker whose specifier form is not.
+
+        PEP 508 accepts the literal and PEP 440 accepts a ``.*`` suffix only
+        under ``==``/``!=``, so the clause parses and the specifier does not.
+        """
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "probe"\nversion = "0.1.0"\n'
+            "dependencies = [\"somepkg; python_full_version < '3.12.*'\"]\n"
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.12,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=Path("-"), offline=True)
+
+        err = capsys.readouterr().err
+        assert "cannot lock: consulted marker clause" in err
+        assert 'python_full_version < "3.12.*"' in err
+        assert "Traceback" not in err
+
     def test_pylock_writes_universal_lock(self, tmp_path: Path) -> None:
         """Universal + pylock format runs the real merge + write pipeline."""
         pyproject = _universal_pyproject(tmp_path)

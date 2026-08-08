@@ -28,7 +28,7 @@ from ._conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
 from ._vendor.packaging import tags as ptags
 from ._vendor.packaging.markers import Marker, default_environment
 from ._vendor.packaging.markersets import variable_names
-from ._vendor.packaging.specifiers import SpecifierSet
+from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.version import InvalidVersion, Version
 from .tags import (
     FREE_THREADED_MIN_PYTHON,
@@ -393,9 +393,10 @@ class NonIntervalMarkerError(ValueError):
     comparison has to partition that interval so every real interpreter reads
     it the same way its slice does.  A membership (``in``/``not in``), a
     verbatim ``===``, a non-version string comparison, a comparison against
-    another variable, or a prerelease-version literal that would carve a slice
-    off a real micro cannot be tiled, so the resolve stops loudly rather than
-    pin the whole minor to one synthetic answer.
+    another variable, a prerelease-version literal that would carve a slice
+    off a real micro, or a literal PEP 440 refuses under the operator it is
+    written with (``< "3.12.*"``, ``~= "3"``) cannot be tiled, so the resolve
+    stops loudly rather than pin the whole minor to one synthetic answer.
     """
 
 
@@ -406,9 +407,10 @@ def _non_interval(
     lhs, op, rhs = parts
     return NonIntervalMarkerError(
         f"consulted marker clause {lhs} {op} {rhs} cannot tile the"
-        f" {target.label} minor interval: a python_full_version membership,"
-        " verbatim ===, non-version, variable, or prerelease comparison names"
-        " no micro boundary the lock can render"
+        f" {target.label} minor interval: no micro boundary the lock can"
+        " render comes from a python_full_version membership, a verbatim ===,"
+        " a comparison against a variable, a prerelease comparison, or a"
+        " literal the operator cannot spell as a version bound"
     )
 
 
@@ -536,7 +538,7 @@ def _clause_boundary_points(
     parsed = _clause_interval_literal(parts, scanned, target)
     if parsed is None:
         return set()
-    op, raw, version = parsed
+    op, specifier, version = parsed
 
     if version.is_prerelease and op in _AT_LITERAL_OPERATORS:
         # The boundary lands at the prerelease itself; only a strictly interior
@@ -547,11 +549,7 @@ def _clause_boundary_points(
             raise _non_interval(parts, target)
         return set()
 
-    intervals = (
-        SpecifierSet(f"{op}{raw}")
-        .to_range()
-        .release_intervals(_PYTHON_FULL_VERSION_PARTS)
-    )
+    intervals = specifier.to_range().release_intervals(_PYTHON_FULL_VERSION_PARTS)
     return {
         edge
         for lower, upper in intervals
@@ -576,14 +574,21 @@ def _in_minor(point: Version, minor_release: tuple[int, ...], floor: Version) ->
 
 def _clause_interval_literal(
     parts: tuple[str, str, str], scanned: frozenset[str], target: ResolveTarget
-) -> tuple[str, str, Version] | None:
-    """Return ``(op, literal, version)`` for a version-boundary clause.
+) -> tuple[str, SpecifierSet, Version] | None:
+    """Return ``(op, specifier, version)`` for a version-boundary clause.
 
     ``None`` when the clause names no scanned version variable.  Raises
     :class:`NonIntervalMarkerError` when it names one but cannot tile an
     interval.  A literal-first clause has an ordered or symmetric operator
     mirrored back to variable-on-left form; ``~=``/``===`` and the membership
     operators cannot be mirrored, so a literal-first one of those is untileable.
+
+    The specifier is built here rather than by the caller because PEP 508
+    accepts literals PEP 440 refuses under the operator they are written with.
+    A ``.*`` suffix is a specifier only under ``==``/``!=``, and ``~=`` needs
+    two release components, so ``< "3.12.*"`` and ``~= "3"`` are valid markers
+    with no specifier form; building it is what tells them from the clauses
+    that have one.
     """
     lhs, op, rhs = parts
     if lhs in scanned:
@@ -603,9 +608,10 @@ def _clause_interval_literal(
     base = raw.removesuffix(".*")
     try:
         version = Version(base)
-    except InvalidVersion:
+        specifier = SpecifierSet(f"{op}{raw}")
+    except (InvalidVersion, InvalidSpecifier):
         raise _non_interval(parts, target) from None
-    return op, raw, version
+    return op, specifier, version
 
 
 def host_environment(
