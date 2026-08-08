@@ -24,7 +24,8 @@ from nab_index.client import (
     WheelFile,
     WheelHashMismatchError,
 )
-from nab_index.transport import HttpError, UnserveableUrlError
+from nab_index.errors import IndexAccessError
+from nab_index.transport import UnserveableUrlError
 
 from ._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from ._provider import extras as _extras
@@ -2145,7 +2146,7 @@ class Provider:
         except (
             SdistHashMismatchError,
             MetadataHashMismatchError,
-            HttpError,
+            IndexAccessError,
             UnsupportedVcsError,
             NotImplementedError,
             InvalidUploadTimeError,

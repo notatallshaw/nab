@@ -17,7 +17,7 @@ import stat
 import sys
 import tarfile
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import PackageNotFoundError
@@ -48,6 +48,7 @@ from nab.cli import (
 )
 from nab.output import Printer, Verbosity
 from nab_index.httpx_async_transport import HttpxAsyncTransport
+from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python._vendor.packaging.pylock import Pylock
@@ -850,6 +851,48 @@ class TestLockCommandSpecific:
             lock(pyproject)
         err = capsys.readouterr().err
         assert "malformed Simple-API" in err
+        assert "Traceback" not in err
+
+    def test_unreadable_local_index_exits(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An unreadable file:// index exits 1 cleanly, not a raw traceback.
+
+        A local index makes no request, so its failures are not HTTP errors.
+        Raises the local client's real error so the test tracks whatever type
+        a wheelhouse the process cannot list produces.
+        """
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+
+        # A real chmod would not do: root ignores the mode bits and Windows
+        # has none.
+        real_iterdir = Path.iterdir
+
+        def denied(self: Path) -> Iterator[Path]:
+            if self == wheelhouse:
+                raise PermissionError(errno.EACCES, "Permission denied", str(self))
+            return real_iterdir(self)
+
+        monkeypatch.setattr(Path, "iterdir", denied)
+
+        client = LocalIndexClient(wheelhouse.as_uri())
+        with pytest.raises(UnreadableLocalIndexError) as caught:
+            asyncio.run(client.get_files("foo"))
+
+        pyproject = _make_pyproject(tmp_path)
+        with (
+            patch("nab.cli.resolve_for_targets", side_effect=caught.value),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject)
+
+        err = capsys.readouterr().err
+        assert "Permission denied" in err
         assert "Traceback" not in err
 
     def test_missing_sdist_exits(

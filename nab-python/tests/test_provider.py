@@ -31,7 +31,7 @@ from nab_index.client import (
 )
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
-from nab_index.local_index import LocalIndexClient
+from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.multi_index import IndexConfig
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
@@ -9438,6 +9438,49 @@ class TestStaticSdistMetadata:
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
         with pytest.raises(HttpError):
+            provider.get_dependencies("pkg", V("1.0"))
+        assert ("pkg", V("1.0")) not in provider.deps_cache
+        assert ("pkg", V("1.0")) not in provider._invalid_metadata
+
+    def test_build_remote_archive_local_index_error_aborts_get_dependencies(
+        self,
+    ) -> None:
+        """A local index that cannot serve the archive aborts, not skips.
+
+        A local failure is not an HTTP error, so the hard-error arm has to name
+        the family both backends share; otherwise a wheelhouse that goes
+        unreadable mid-resolve is cached as a bad-metadata skip.
+        """
+        coordinator = make_coordinator(
+            [make_sdist("1.0")],
+            sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+        )
+
+        def _unreadable_archive(
+            pkg: str,
+            ver: str,
+            _url: str,
+            _hashes: tuple[tuple[str, str], ...],
+        ) -> threading.Event:
+            coordinator.index.store_sdist_archive_error(
+                pkg,
+                ver,
+                UnreadableLocalIndexError(
+                    "cannot read local sdist /wheelhouse/pkg-1.0.tar.gz:"
+                    " [Errno 13] Permission denied"
+                ),
+            )
+            return _done_event()
+
+        coordinator.request_sdist_archive.side_effect = _unreadable_archive
+
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            dist_policy=DistPolicy.WHEEL_OR_SDIST,
+            build_policy=BuildPolicy.BUILD_REMOTE,
+        )
+        with pytest.raises(UnreadableLocalIndexError):
             provider.get_dependencies("pkg", V("1.0"))
         assert ("pkg", V("1.0")) not in provider.deps_cache
         assert ("pkg", V("1.0")) not in provider._invalid_metadata

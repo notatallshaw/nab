@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import io
 import struct
 import sys
@@ -15,9 +16,13 @@ from typing import TYPE_CHECKING, TypeVar
 import pytest
 
 from nab_index.client import SdistFile, WheelFile
+from nab_index.errors import IndexAccessError
 from nab_index.local_index import (
     LocalIndexClient,
+    LocalIndexError,
     MalformedLocalListingError,
+    NonLocalArtifactError,
+    UnreadableLocalIndexError,
     UnsupportedWheelError,
     _is_zip_sdist,
     _make_record,
@@ -36,6 +41,21 @@ _T = TypeVar("_T")
 
 def run(coro: Coroutine[Any, Any, _T]) -> _T:
     return asyncio.run(coro)
+
+
+def _deny_access(monkeypatch: pytest.MonkeyPatch, method: str, target: Path) -> None:
+    """Make one ``Path`` call on ``target`` fail with EACCES.
+
+    A real chmod would not do: root ignores the mode bits and Windows has none.
+    """
+    original = getattr(Path, method)
+
+    def denied(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == target:
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, method, denied)
 
 
 def _write_wheel(
@@ -241,6 +261,35 @@ def _write_encrypted_metadata_wheel(path: Path, name: str, version: str) -> None
     _patch_wheel_member(path, member, encrypt=True)
 
 
+_LOCAL_ERRORS = [
+    UnreadableLocalIndexError,
+    MalformedLocalListingError,
+    NonLocalArtifactError,
+]
+
+
+class TestErrorHierarchy:
+    """What a caller catches for either index backend, and what it does not."""
+
+    @pytest.mark.parametrize("error", _LOCAL_ERRORS)
+    def test_local_errors_are_index_access_errors(
+        self, error: type[LocalIndexError]
+    ) -> None:
+        assert issubclass(error, LocalIndexError)
+        assert issubclass(error, IndexAccessError)
+
+    @pytest.mark.parametrize("error", _LOCAL_ERRORS)
+    def test_local_errors_are_not_http_errors(
+        self, error: type[LocalIndexError]
+    ) -> None:
+        # A file:// index makes no request, so naming one of these an HTTP
+        # failure would send a reader looking for a server that isn't there.
+        assert not issubclass(error, HttpError)
+
+    def test_http_errors_are_index_access_errors(self) -> None:
+        assert issubclass(HttpError, IndexAccessError)
+
+
 class TestParseFileUrl:
     def test_absolute_path(self, tmp_path: Path) -> None:
         url = tmp_path.as_uri()
@@ -407,6 +456,20 @@ class TestFlatWheelhouse:
         wheelhouse = run(client.get_files("bar"))
         assert [f.url for f in wheelhouse] == [flat.as_uri()]
         assert [f.local_path for f in wheelhouse] == [flat]
+
+    def test_unreadable_root_raises_index_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A wheelhouse that cannot be listed must raise, not return an empty
+        # list: an empty result would read as "package absent".
+        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        _deny_access(monkeypatch, "iterdir", tmp_path)
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(UnreadableLocalIndexError) as caught:
+            run(client.get_files("foo"))
+        assert isinstance(caught.value, IndexAccessError)
+        assert not isinstance(caught.value, OSError)
+        assert "Permission denied" in str(caught.value)
 
     def test_listing_order_independent_of_readdir_order(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -789,7 +852,7 @@ class TestPep503Directory:
         result = run(client.get_files("foo"))
         assert result == []
 
-    def test_non_utf8_index_html_raises_http_error(self, tmp_path: Path) -> None:
+    def test_non_utf8_index_html_raises_index_error(self, tmp_path: Path) -> None:
         # A non-UTF-8 listing must raise, not return an empty list: an empty
         # result would read as "package absent".
         package_dir = tmp_path / "foo"
@@ -800,8 +863,38 @@ class TestPep503Directory:
         client = LocalIndexClient(tmp_path.as_uri())
         with pytest.raises(MalformedLocalListingError) as caught:
             run(client.get_files("foo"))
-        assert isinstance(caught.value, HttpError)
+        assert isinstance(caught.value, IndexAccessError)
         assert "not valid UTF-8" in str(caught.value)
+
+    def test_unreadable_index_html_raises_index_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        package_dir = self._make_index(
+            tmp_path, '<a href="foo-1.0-py3-none-any.whl">foo-1.0</a>'
+        )
+        _deny_access(monkeypatch, "read_text", package_dir / "index.html")
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(UnreadableLocalIndexError) as caught:
+            run(client.get_files("foo"))
+        assert isinstance(caught.value, IndexAccessError)
+        assert not isinstance(caught.value, OSError)
+        assert "Permission denied" in str(caught.value)
+
+    def test_unreadable_package_dir_raises_index_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The layout probe stats <package>/index.html, so an unreadable package
+        # directory fails there.
+        package_dir = self._make_index(
+            tmp_path, '<a href="foo-1.0-py3-none-any.whl">foo-1.0</a>'
+        )
+        _deny_access(monkeypatch, "stat", package_dir / "index.html")
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(UnreadableLocalIndexError) as caught:
+            run(client.get_files("foo"))
+        assert isinstance(caught.value, IndexAccessError)
+        assert not isinstance(caught.value, OSError)
+        assert "Permission denied" in str(caught.value)
 
     def test_pep503_non_local_file_href_dropped(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1116,25 +1209,25 @@ class TestMetadataAndSdist:
         text = run(client.get_metadata_text("foo", "1.0", meta_path.as_uri()))
         assert text.startswith("Name: foo")
 
-    def test_non_utf8_metadata_sidecar_raises_http_error(self, tmp_path: Path) -> None:
-        # A non-UTF-8 sidecar must fail through HttpError like the
+    def test_non_utf8_metadata_sidecar_raises_index_error(self, tmp_path: Path) -> None:
+        # A non-UTF-8 sidecar must fail through the index-error path like the
         # index.html reader, not a raw UnicodeDecodeError.
         meta_path = tmp_path / "foo-1.0.metadata"
         meta_path.write_bytes(b"Author: J\xe9an\n")
         client = LocalIndexClient(tmp_path.as_uri())
         with pytest.raises(MalformedLocalListingError) as caught:
             run(client.get_metadata_text("foo", "1.0", meta_path.as_uri()))
-        assert isinstance(caught.value, HttpError)
+        assert isinstance(caught.value, IndexAccessError)
         assert "not valid UTF-8" in str(caught.value)
 
-    def test_missing_metadata_sidecar_raises_http_error(self, tmp_path: Path) -> None:
-        # An advertised-but-absent sidecar must fail through HttpError, not a
-        # raw FileNotFoundError, matching a remote 404.
+    def test_missing_metadata_sidecar_raises_index_error(self, tmp_path: Path) -> None:
+        # An advertised-but-absent sidecar must fail through the index-error
+        # path, not a raw FileNotFoundError, matching a remote 404.
         meta_path = tmp_path / "foo-1.0.metadata"
         client = LocalIndexClient(tmp_path.as_uri())
-        with pytest.raises(MalformedLocalListingError) as caught:
+        with pytest.raises(UnreadableLocalIndexError) as caught:
             run(client.get_metadata_text("foo", "1.0", meta_path.as_uri()))
-        assert isinstance(caught.value, HttpError)
+        assert isinstance(caught.value, IndexAccessError)
         assert not isinstance(caught.value, OSError)
 
     def test_get_sdist_files(self, tmp_path: Path) -> None:
@@ -1159,27 +1252,27 @@ class TestMetadataAndSdist:
         assert pyproject is not None
         assert 'name = "foo"' in pyproject
 
-    def test_missing_sdist_files_raises_http_error(self, tmp_path: Path) -> None:
-        # An advertised-but-absent sdist must fail through HttpError, not a
-        # raw FileNotFoundError, matching a remote 404.
+    def test_missing_sdist_files_raises_index_error(self, tmp_path: Path) -> None:
+        # An advertised-but-absent sdist must fail through the index-error
+        # path, not a raw FileNotFoundError, matching a remote 404.
         sdist_path = tmp_path / "foo-1.0.tar.gz"
         client = LocalIndexClient(tmp_path.as_uri())
-        with pytest.raises(MalformedLocalListingError) as caught:
+        with pytest.raises(UnreadableLocalIndexError) as caught:
             run(client.get_sdist_files("foo", "1.0", sdist_path.as_uri()))
-        assert isinstance(caught.value, HttpError)
+        assert isinstance(caught.value, IndexAccessError)
         assert not isinstance(caught.value, OSError)
 
-    def test_missing_sdist_archive_raises_http_error(self, tmp_path: Path) -> None:
+    def test_missing_sdist_archive_raises_index_error(self, tmp_path: Path) -> None:
         sdist_path = tmp_path / "foo-1.0.tar.gz"
         client = LocalIndexClient(tmp_path.as_uri())
-        with pytest.raises(MalformedLocalListingError) as caught:
+        with pytest.raises(UnreadableLocalIndexError) as caught:
             run(client.get_sdist_archive("foo", "1.0", sdist_path.as_uri()))
-        assert isinstance(caught.value, HttpError)
+        assert isinstance(caught.value, IndexAccessError)
         assert not isinstance(caught.value, OSError)
 
-    def test_https_metadata_url_raises_http_error(self, tmp_path: Path) -> None:
-        # An absolute-href record admitted by get_files must fetch through
-        # HttpError, not a raw ValueError, when its sidecar is fetched.
+    def test_https_metadata_url_raises_index_error(self, tmp_path: Path) -> None:
+        # An absolute-href record admitted by get_files must fetch through the
+        # index-error path, not a raw ValueError, when its sidecar is fetched.
         package_dir = tmp_path / "foo"
         package_dir.mkdir()
         (package_dir / "index.html").write_text(
@@ -1195,10 +1288,10 @@ class TestMetadataAndSdist:
         assert metadata_url == (
             "https://files.example.com/foo-1.0-py3-none-any.whl.metadata"
         )
-        with pytest.raises(HttpError):
+        with pytest.raises(NonLocalArtifactError):
             run(client.get_metadata_text("foo", "1.0", metadata_url))
 
-    def test_https_sdist_url_raises_http_error(self, tmp_path: Path) -> None:
+    def test_https_sdist_url_raises_index_error(self, tmp_path: Path) -> None:
         package_dir = tmp_path / "foo"
         package_dir.mkdir()
         (package_dir / "index.html").write_text(
@@ -1210,9 +1303,9 @@ class TestMetadataAndSdist:
         assert isinstance(record, SdistFile)
         assert record.local_path is None
         assert record.url == "https://files.example.com/foo-1.0.tar.gz"
-        with pytest.raises(HttpError):
+        with pytest.raises(NonLocalArtifactError):
             run(client.get_sdist_files("foo", "1.0", record.url))
-        with pytest.raises(HttpError):
+        with pytest.raises(NonLocalArtifactError):
             run(client.get_sdist_archive("foo", "1.0", record.url))
 
 
