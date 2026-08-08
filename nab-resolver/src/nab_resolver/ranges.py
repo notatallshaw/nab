@@ -14,8 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Generic, TypeAlias
 
-from typing_extensions import override
-
+from ._compat import override
 from .types import RangeRelation, VersionType
 
 # Bound once so the hot return paths load a module global instead of a class
