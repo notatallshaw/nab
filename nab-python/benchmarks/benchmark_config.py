@@ -53,6 +53,14 @@ class ScenarioRequirementStrings(NamedTuple):
     constraints: list[str]
 
 
+class ScenarioProjectMetadata(NamedTuple):
+    """Copied project metadata used to expand a scenario's selected extras."""
+
+    project_name: str | None
+    project_extras: list[str]
+    optional_dependencies: dict[str, list[str]]
+
+
 def _scenario_string_list(
     scenario_name: str,
     field: str,
@@ -97,6 +105,69 @@ def parse_scenario_requirement_strings(
             scenario_name,
             "constraints",
             scenario.get("constraints", []),
+        ),
+    )
+
+
+def _scenario_optional_dependencies(
+    scenario_name: str,
+    value: object,
+) -> dict[str, list[str]]:
+    """Validate and copy a scenario's optional-dependency table."""
+    if type(value) is not dict:
+        msg = (
+            f"{scenario_name}: optional_dependencies must be a table, "
+            f"got {type(value).__name__}"
+        )
+        raise TypeError(msg)
+
+    optional_dependencies: dict[str, list[str]] = {}
+    for extra, dependencies in value.items():
+        if not isinstance(extra, str):
+            msg = (
+                f"{scenario_name}: optional_dependencies keys must be "
+                f"non-empty strings, got {type(extra).__name__}"
+            )
+            raise TypeError(msg)
+        if not extra:
+            msg = (
+                f"{scenario_name}: optional_dependencies keys must be non-empty strings"
+            )
+            raise ValueError(msg)
+        optional_dependencies[extra] = _scenario_string_list(
+            scenario_name,
+            f"optional_dependencies[{extra!r}]",
+            dependencies,
+        )
+    return optional_dependencies
+
+
+def parse_scenario_project_metadata(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+) -> ScenarioProjectMetadata:
+    """Validate and copy project metadata from one benchmark scenario."""
+    project_name = scenario.get("project_name")
+    if project_name is not None and not isinstance(project_name, str):
+        msg = (
+            f"{scenario_name}: project_name must be a non-empty string, "
+            f"got {type(project_name).__name__}"
+        )
+        raise TypeError(msg)
+    if project_name == "":
+        msg = f"{scenario_name}: project_name must be a non-empty string"
+        raise ValueError(msg)
+
+    return ScenarioProjectMetadata(
+        project_name=project_name,
+        project_extras=_scenario_string_list(
+            scenario_name,
+            "project_extras",
+            scenario.get("project_extras", []),
+        ),
+        optional_dependencies=_scenario_optional_dependencies(
+            scenario_name,
+            scenario.get("optional_dependencies", {}),
         ),
     )
 
