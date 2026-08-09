@@ -30,6 +30,10 @@ plus at most one checked-in patch, and nothing else.
   - `markersets.py` and `_markersets.py`: the marker-algebra module and the
     private engine behind it, both new files, plus the `Marker.to_set`
     accessor they need on `markers.py`.
+  - `_parser.py`: `Value.serialize` from pypa/packaging#1213, which merged
+    after the pin. A value containing a double quote is emitted single-quoted,
+    so `str(Marker)` stays parseable. Drop this hunk once the pin moves past
+    `5b583e3`.
 
   Upstream PRs are planned for the bound ordering, the direct subset and
   disjoint walks, `filter`'s `assume_sorted` fast path, and

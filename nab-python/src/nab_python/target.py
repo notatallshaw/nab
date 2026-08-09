@@ -250,9 +250,11 @@ _BY_CONSTRAINT = ("python_full_version", "implementation_version")
 
 # One ``lhs op rhs`` comparison of a marker, matched against the string form
 # :func:`Marker.__str__` normalises to: an operand is either a quoted literal
-# or a bare variable token, which is what tells the two apart.  Ordered so
-# the two-character operators win over their prefixes.
-_MARKER_OPERAND = r'"[^"]*"|[A-Za-z_][A-Za-z0-9_]*'
+# or a bare variable token, which is what tells the two apart.  Both quote
+# styles are matched, since packaging emits a value holding a double quote
+# single-quoted.  Ordered so the two-character operators win over their
+# prefixes.
+_MARKER_OPERAND = r'"[^"]*"|\'[^\']*\'|[A-Za-z_][A-Za-z0-9_]*'
 _MARKER_CLAUSE_RE = re.compile(
     rf"(?P<lhs>{_MARKER_OPERAND})\s*"
     r"(?P<op>===|==|!=|<=|>=|~=|<|>|not\s+in|in)\s*"

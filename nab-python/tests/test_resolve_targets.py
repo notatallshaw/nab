@@ -1816,6 +1816,48 @@ class TestBuildLockInput:
         versions = {lock.pins["pkg"].version for lock in merged.targets.values()}
         assert versions == {"1.0", "2.0"}
 
+    def test_a_double_quote_in_a_consulted_marker_value_still_locks(self) -> None:
+        """A marker value carrying a double quote still locks.
+
+        urllib3 1.11 gates a dependency on
+        ``extra == 'secure;python_version>"2.7"'``, and the lock's
+        ``environments`` come from re-parsing the markers the resolve read,
+        so the value has to survive that round trip.
+        """
+        metadata = (
+            "Metadata-Version: 2.1\n"
+            "Name: foo\n"
+            "Version: 1.0\n"
+            'Provides-Extra: secure;python_version>"2.7"\n'
+            "Requires-Dist: mid ; extra == 'secure;python_version>\"2.7\"'\n"
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": [_make_wheel("1.0", package="foo")],
+                "mid": [_make_wheel("2.0", package="mid")],
+            },
+            metadata_by_version={
+                "1.0": metadata,
+                "2.0": "Metadata-Version: 2.1\nName: mid\nVersion: 2.0\n",
+            },
+        )
+        result = resolve_with_coordinator(
+            coordinator, [_linux_311()], _reqs("foo"), config=_no_build()
+        )
+
+        assert result.success
+        assert set(result.target_results[0].pins) == {"foo"}
+
+        merged = build_lock_input(result, config=_no_build())
+        assert set(merged.targets) == {"py311-linux_x86_64"}
+        assert [str(row) for row in merged.environments] == [
+            (
+                'python_version == "3.11" and sys_platform == "linux"'
+                ' and platform_machine == "x86_64"'
+            )
+        ]
+
 
 class TestResolveWithCoordinator:
     """End-to-end orchestration via the testable injected-coordinator entry."""
@@ -2462,6 +2504,42 @@ class TestMicroBoundaryNarrowing:
         assert result.success
         assert len(result.target_results) == 1
         assert spy.call_count == 1
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            'x;python_full_version>="3.10.4"',
+            'a python_full_version in "3.10.4"',
+        ],
+    )
+    def test_a_quote_in_a_marker_value_does_not_cut_the_minor(self, value: str) -> None:
+        """A single-quoted value is consumed whole by the micro scanner, so
+        the clause inside it neither splits 3.10 at a boundary no dependency
+        gates on nor trips the splitter on an operator it cannot tile."""
+        coordinator = self._coordinator(
+            {
+                "1.0": self._meta("foo", "1.0", f"mid ; platform_release == '{value}'"),
+                "2.0": self._meta("mid", "2.0"),
+            }
+        )
+        targets = Matrix(
+            python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+
+        result = resolve_with_coordinator(
+            coordinator, targets, _reqs("foo"), config=_no_build()
+        )
+
+        assert result.success
+        assert self._pins_by_label(result) == {"py310-linux_x86_64": {"foo"}}
+
+        merged = build_lock_input(result, config=_no_build())
+        assert [str(row) for row in merged.environments] == [
+            (
+                'python_version == "3.10" and sys_platform == "linux"'
+                ' and platform_machine == "x86_64"'
+            )
+        ]
 
     @staticmethod
     def _linux_host_env() -> dict[str, str]:
