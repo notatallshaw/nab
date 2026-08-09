@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import enum
 import posixpath
+import re
 from dataclasses import dataclass
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit
 
 from nab_index.vcs import FULL_GIT_SHA_RE
 
@@ -113,18 +114,26 @@ def split_vcs_scheme(url: str) -> tuple[str | None, str]:
     return (None, url)
 
 
+# The authority ends at the first "/", "?" or "#"; its userinfo ends at
+# the last "@" before that.
+_AUTHORITY_USERINFO_RE = re.compile(r"^([^/?#]*//)[^/?#]*@")
+
+
 def _without_userinfo(url: str) -> str:
     """Drop any authority ``user[:pass]@`` / SSH ``git@`` from ``url``.
 
     An ``allowed-repos`` prefix names a repo by scheme + host + path, not
     by credentials, so both the candidate URL and the prefix are stripped
     before the match. A URL with no userinfo is returned unchanged.
+
+    The cut is made on the raw string, since
+    :func:`urllib.parse.urlsplit` deletes every tab, CR and LF and does
+    not record an empty ``?``: a URL rebuilt from the parse is not the
+    one git is handed.
     """
-    parts = urlsplit(url)
-    if "@" not in parts.netloc:
+    if "@" not in urlsplit(url).netloc:
         return url
-    host = parts.netloc.rsplit("@", 1)[1]
-    return urlunsplit(parts._replace(netloc=host))
+    return _AUTHORITY_USERINFO_RE.sub(r"\1", url)
 
 
 def _drop_ref(remainder: str) -> str:
