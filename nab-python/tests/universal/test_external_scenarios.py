@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from nab_index.client import WheelFile
 from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._vendor.packaging.pylock import Package, Pylock
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig, enforce_build_policy_for_targets
@@ -13,11 +14,14 @@ from nab_python.lockfile import build_pylock
 from nab_python.provider import BuildPolicy
 from nab_python.resolve import build_lock_input, resolve_with_coordinator
 from nab_python.tags import PlatformSpec
-from nab_python.target import Matrix
+from nab_python.target import Matrix, ResolveTarget
 
 _PLATFORM_WHEEL_SHA256 = (
     "170f4c280ebc110a306ff320681729df2ce8545154e5c829c1e8b182cf2fff79"
 )
+
+_LockPin = tuple[str, str]
+_LockEdge = tuple[_LockPin, _LockPin]
 
 
 def _wheel(
@@ -35,6 +39,56 @@ def _wheel(
         upload_time=None,
         hashes=(("sha256", "a" * 64),),
     )
+
+
+def _metadata(package: str, version: str, *dependencies: str) -> str:
+    """Return wheel metadata with the requested dependencies."""
+    requires_dist = "".join(
+        f"Requires-Dist: {dependency}\n" for dependency in dependencies
+    )
+    return (
+        f"Metadata-Version: 2.1\nName: {package}\nVersion: {version}\n{requires_dist}\n"
+    )
+
+
+def _package_pin(package: Package) -> _LockPin:
+    """Return the package name and version used by graph assertions."""
+    assert package.version is not None
+    return str(package.name), str(package.version)
+
+
+def _reachable_lock_graph(
+    pylock: Pylock,
+    target: ResolveTarget,
+    *,
+    root: str,
+) -> tuple[frozenset[_LockPin], frozenset[_LockEdge]]:
+    """Return the pins and dependency edges reachable for one target."""
+    active_packages = [
+        package
+        for package in pylock.packages
+        if package.marker is None or package.marker.evaluate(target.marker_env)
+    ]
+    packages_by_name = {str(package.name): package for package in active_packages}
+    assert len(packages_by_name) == len(active_packages)
+
+    pins: set[_LockPin] = set()
+    edges: set[_LockEdge] = set()
+    pending = [root]
+    while pending:
+        package = packages_by_name[pending.pop()]
+        pin = _package_pin(package)
+        if pin in pins:
+            continue
+        pins.add(pin)
+
+        for dependency in package.dependencies or ():
+            dependency_name = str(dependency["name"])
+            dependency_pin = _package_pin(packages_by_name[dependency_name])
+            edges.add((pin, dependency_pin))
+            pending.append(dependency_name)
+
+    return frozenset(pins), frozenset(edges)
 
 
 def test_overlapping_root_markers_cover_each_python_partition() -> None:
@@ -387,3 +441,115 @@ def test_platform_marked_root_keeps_its_compatible_wheel() -> None:
             {"sha256": _PLATFORM_WHEEL_SHA256},
         )
     ]
+
+
+def test_platform_and_implementation_forks_keep_transitive_dependencies() -> None:
+    """Resolve nested platform and interpreter forks into one lock."""
+    python = ">=3.12,<3.13"
+    a1 = _wheel("a", "1.0.0", requires_python=python)
+    a2 = _wheel("a", "2.0.0", requires_python=python)
+    b1 = _wheel("b", "1.0.0", requires_python=python)
+    b2 = _wheel("b", "2.0.0", requires_python=python)
+    c1 = _wheel("c", "1.0.0", requires_python=python)
+    wheels = (a1, a2, b1, b2, c1)
+    assert all(wheel.metadata_url is not None for wheel in wheels)
+    metadata = {
+        a1.metadata_url: _metadata(
+            "a",
+            "1.0.0",
+            "b>=2 ; implementation_name == 'cpython'",
+            "b<2 ; implementation_name == 'pypy'",
+        ),
+        a2.metadata_url: _metadata("a", "2.0.0"),
+        b1.metadata_url: _metadata(
+            "b",
+            "1.0.0",
+            "c ; sys_platform == 'linux' or implementation_name == 'pypy'",
+        ),
+        b2.metadata_url: _metadata("b", "2.0.0"),
+        c1.metadata_url: _metadata("c", "1.0.0"),
+    }
+    coordinator = make_coordinator(
+        listings={"a": [a1, a2], "b": [b1, b2], "c": [c1]},
+        metadata_by_url=metadata,
+    )
+    targets = Matrix(
+        python=python,
+        platforms=(
+            PlatformSpec("linux_x86_64"),
+            PlatformSpec("macos_arm64"),
+        ),
+        implementations=("cpython", "pypy"),
+    ).expand()
+    config = NabProjectConfig(requires_python=python)
+
+    result = resolve_with_coordinator(
+        coordinator,
+        targets,
+        [
+            Requirement("a>=2 ; sys_platform == 'linux'"),
+            Requirement("a<2 ; sys_platform == 'darwin'"),
+        ],
+        config=config,
+    )
+
+    assert result.success
+    assert {
+        target_result.target.label: target_result.pins
+        for target_result in result.target_results
+    } == {
+        "py312-linux_x86_64": {"a": Version("2.0.0")},
+        "pp312-linux_x86_64": {"a": Version("2.0.0")},
+        "py312-macos_arm64": {
+            "a": Version("1.0.0"),
+            "b": Version("2.0.0"),
+        },
+        "pp312-macos_arm64": {
+            "a": Version("1.0.0"),
+            "b": Version("1.0.0"),
+            "c": Version("1.0.0"),
+        },
+    }
+
+    pylock = build_pylock(build_lock_input(result, config=config))
+    pylock.validate()
+    assert pylock.environments is not None
+    assert len(pylock.environments) == len(targets) == 4
+    assert {
+        frozenset(
+            target.label for target in targets if marker.evaluate(target.marker_env)
+        )
+        for marker in pylock.environments
+    } == {
+        frozenset({"py312-linux_x86_64"}),
+        frozenset({"pp312-linux_x86_64"}),
+        frozenset({"py312-macos_arm64"}),
+        frozenset({"pp312-macos_arm64"}),
+    }
+
+    assert {
+        target.label: _reachable_lock_graph(pylock, target, root="a")
+        for target in targets
+    } == {
+        "py312-linux_x86_64": (
+            frozenset({("a", "2.0.0")}),
+            frozenset(),
+        ),
+        "pp312-linux_x86_64": (
+            frozenset({("a", "2.0.0")}),
+            frozenset(),
+        ),
+        "py312-macos_arm64": (
+            frozenset({("a", "1.0.0"), ("b", "2.0.0")}),
+            frozenset({(("a", "1.0.0"), ("b", "2.0.0"))}),
+        ),
+        "pp312-macos_arm64": (
+            frozenset({("a", "1.0.0"), ("b", "1.0.0"), ("c", "1.0.0")}),
+            frozenset(
+                {
+                    (("a", "1.0.0"), ("b", "1.0.0")),
+                    (("b", "1.0.0"), ("c", "1.0.0")),
+                }
+            ),
+        ),
+    }
