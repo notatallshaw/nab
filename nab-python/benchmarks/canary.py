@@ -36,6 +36,7 @@ from benchmark_config import (
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
     direct_packages_from_requirements,
+    parse_trust_unverified_sdist_deps,
 )
 from benchmark_datetime import parse_datetime
 from benchmark_host import (
@@ -556,11 +557,30 @@ def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
     if not cases:
         msg = "at least one scenario must be selected"
         raise _SelectionError(msg)
-    missing = [case.scenario for case in cases if find_scenario(case.scenario) is None]
+    missing: list[str] = []
+    found_scenarios: list[tuple[str, dict]] = []
+    for case in cases:
+        scenario = find_scenario(case.scenario)
+        if scenario is None:
+            missing.append(case.scenario)
+            continue
+        found_scenarios.append((case.scenario, scenario))
     if missing:
         label = "scenario" if len(missing) == 1 else "scenarios"
         msg = f"{label} not found: {', '.join(repr(spec) for spec in missing)}"
         raise _SelectionError(msg)
+
+    labels = [case.scenario.split(":", 1)[-1] for case in cases]
+    duplicate_labels = sorted({label for label in labels if labels.count(label) > 1})
+    if duplicate_labels:
+        msg = (
+            "scenario names must be unique across selected files; duplicate(s): "
+            + ", ".join(duplicate_labels)
+        )
+        raise _SelectionError(msg)
+
+    for scenario_name, scenario in found_scenarios:
+        parse_trust_unverified_sdist_deps(scenario_name, scenario)
     return cases
 
 
@@ -570,7 +590,7 @@ def _parse_scenario_selection(
 ) -> list[CanaryCase]:
     try:
         return select_scenarios([parse_canary_case(spec) for spec in specs])
-    except _SelectionError as exc:
+    except (_SelectionError, TypeError) as exc:
         parser.error(str(exc))
 
 
@@ -579,7 +599,7 @@ def _parse_default_selection(
 ) -> list[CanaryCase]:
     try:
         return select_scenarios(load_canary_manifest())
-    except _SelectionError as exc:
+    except (_SelectionError, TypeError) as exc:
         parser.error(str(exc))
 
 
@@ -721,6 +741,10 @@ def _prepare_canary_execution(
     host: BenchmarkHost,
 ) -> CanaryPreparation:
     """Validate and prepare a supported canary scenario for this host."""
+    trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(
+        scenario_name,
+        scenario,
+    )
     python_version = scenario["python_version"]
     requirement_strings = list(scenario["requirements"])
     constraint_strings = scenario.get("constraints", [])
@@ -788,11 +812,6 @@ def _prepare_canary_execution(
         )
         if constraint_strings
         else None
-    )
-    # See scenarios.py: trust pre-2.2 sdist PKG-INFO deps by default so the
-    # benchmark measures search, not strict PEP 643 sdist rejection.
-    trust_unverified_sdist_deps = bool(
-        scenario.get("trust_unverified_sdist_deps", True)
     )
     datetime_str = scenario.get("datetime")
     config = build_benchmark_config(
@@ -905,12 +924,6 @@ def main() -> None:
         cases_to_run = _parse_default_selection(parser)
 
     labels = [case.scenario.split(":", 1)[-1] for case in cases_to_run]
-    duplicate_labels = sorted({label for label in labels if labels.count(label) > 1})
-    if duplicate_labels:
-        parser.error(
-            "scenario names must be unique across selected files; duplicate(s): "
-            + ", ".join(duplicate_labels)
-        )
 
     out_dir = RESULTS_DIR / commit
     out_dir.mkdir(parents=True, exist_ok=True)

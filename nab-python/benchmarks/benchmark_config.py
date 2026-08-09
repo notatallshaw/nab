@@ -28,6 +28,10 @@ if TYPE_CHECKING:
     from nab_python.target import ResolveTarget
 
 
+# Search benchmarks trust pre-2.2 PKG-INFO dependency metadata by default.
+DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS = True
+
+
 class _BenchmarkResolveInputs(NamedTuple):
     """Inputs shared by one benchmark's provider and resolver.
 
@@ -39,6 +43,24 @@ class _BenchmarkResolveInputs(NamedTuple):
     requirements: dict[str, VersionRange]
     constraints: Mapping[str, VersionRange] | None
     root_extras: set[tuple[str, str]]
+
+
+def parse_trust_unverified_sdist_deps(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+) -> bool:
+    """Read whether a scenario accepts unverified sdist dependency metadata."""
+    value = scenario.get(
+        "trust_unverified_sdist_deps",
+        DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS,
+    )
+    if type(value) is not bool:
+        msg = (
+            f"{scenario_name}: trust_unverified_sdist_deps must be a boolean, "
+            f"got {type(value).__name__}"
+        )
+        raise TypeError(msg)
+    return value
 
 
 def _package_overrides(

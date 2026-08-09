@@ -579,6 +579,41 @@ def test_canary_main_records_v2_contract(
     }
 
 
+def test_canary_main_rejects_non_boolean_sdist_trust_before_result_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _harness()
+    results_dir = tmp_path / "results"
+    monkeypatch.setattr(module, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(
+        module,
+        "get_git_source_state",
+        lambda: {"commit": "source-sha", "dirty": False, "diff_hash": None},
+    )
+    scenario = {
+        "unsupported_reason": "test fixture",
+        "trust_unverified_sdist_deps": "false",
+    }
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["canary.py", "--commit", "test", "--scenario", "quick:requests"],
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        module.main()
+
+    assert exc_info.value.code == 2
+    assert (
+        "quick:requests: trust_unverified_sdist_deps must be a boolean, got str"
+        in capsys.readouterr().err
+    )
+    assert not results_dir.exists()
+
+
 def test_canary_main_preserves_v2_lowest_identity_and_effective_settings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -849,20 +884,39 @@ def test_canary_source_state_preserves_commit_when_hashing_fails(
 
 
 def test_canary_main_rejects_duplicate_output_labels(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     module = _harness()
+    results_dir = tmp_path / "results"
+    monkeypatch.setattr(module, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(
+        module,
+        "get_git_source_state",
+        lambda: {"commit": "source-sha", "dirty": False, "diff_hash": None},
+    )
+    scenario = {"trust_unverified_sdist_deps": "false"}
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "canary.py",
+            "--commit",
+            "test",
             "--scenario",
-            "quick:requests",
+            "first:shared",
             "--scenario",
-            "quick:requests",
+            "second:shared",
         ],
     )
 
-    with pytest.raises(SystemExit, match="2"):
+    with pytest.raises(SystemExit) as exc_info:
         module.main()
+
+    stderr = capsys.readouterr().err
+    assert exc_info.value.code == 2
+    assert "scenario names must be unique across selected files" in stderr
+    assert "trust_unverified_sdist_deps" not in stderr
+    assert not results_dir.exists()
