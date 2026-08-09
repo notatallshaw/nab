@@ -117,6 +117,21 @@ def parse_trust_unverified_sdist_deps(
     return value
 
 
+def parse_vcs_require_pin(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+) -> bool:
+    """Read whether a scenario requires VCS URLs to pin a commit."""
+    value = scenario.get("vcs_require_pin", True)
+    if type(value) is not bool:
+        msg = (
+            f"{scenario_name}: vcs_require_pin must be a boolean, "
+            f"got {type(value).__name__}"
+        )
+        raise TypeError(msg)
+    return value
+
+
 def _package_overrides(
     indexes: Sequence[IndexConfig],
     index_routes: Sequence[IndexRoute],

@@ -32,6 +32,7 @@ from benchmark_config import (
     build_benchmark_config,
     parse_scenario_requirement_strings,
     parse_trust_unverified_sdist_deps,
+    parse_vcs_require_pin,
 )
 
 
@@ -77,6 +78,7 @@ def build_inputs(
 ) -> dict:
     trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(name, scenario)
     requirement_inputs = parse_scenario_requirement_strings(name, scenario)
+    vcs_require_pin = parse_vcs_require_pin(name, scenario)
     python_version = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -111,7 +113,7 @@ def build_inputs(
         policy=sc.VcsPolicy(scenario.get("vcs_policy", "block")),
         allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
         allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
-        require_pin=scenario.get("vcs_require_pin", True),
+        require_pin=vcs_require_pin,
     )
 
     if scenario.get("project_name"):
@@ -182,8 +184,7 @@ def main() -> None:
     resolution_override = (
         sc.ResolutionStrategy(args.resolution) if args.resolution is not None else None
     )
-    host = sc.BenchmarkHost.current(sc.SCENARIO_WALL_TIMEOUT_SECONDS)
-    inputs = build_inputs(name, scenario, resolution_override, host)
+    inputs = build_inputs(name, scenario, resolution_override, host=None)
 
     if not args.cprofile:
         report(name, sc.resolve_scenario(**inputs))

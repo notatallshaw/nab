@@ -602,10 +602,26 @@ def test_canary_main_records_v2_contract(
             True,
             "quick:requests: requirements[0] must be a non-empty string",
         ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
+                "vcs_require_pin": "false",
+            },
+            False,
+            "quick:requests: vcs_require_pin must be a boolean, got str",
+        ),
     ],
-    ids=("sdist-trust", "missing", "scalar", "empty-item", "default-empty-item"),
+    ids=(
+        "sdist-trust",
+        "missing",
+        "scalar",
+        "empty-item",
+        "default-empty-item",
+        "vcs-require-pin",
+    ),
 )
-def test_canary_main_rejects_scenario_schema_before_result_creation(
+def test_canary_schema_validation_precedes_host_capture_and_result_creation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -621,6 +637,11 @@ def test_canary_main_rejects_scenario_schema_before_result_creation(
         "get_git_source_state",
         lambda: {"commit": "source-sha", "dirty": False, "diff_hash": None},
     )
+
+    def fail_host(*_args: object, **_kwargs: object) -> object:
+        pytest.fail("scenario validation reached host capture")
+
+    monkeypatch.setattr(module.BenchmarkHost, "current", classmethod(fail_host))
     monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
     if default_selection:
         monkeypatch.setattr(

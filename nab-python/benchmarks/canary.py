@@ -39,6 +39,7 @@ from benchmark_config import (
     direct_packages_from_requirements,
     parse_scenario_requirement_strings,
     parse_trust_unverified_sdist_deps,
+    parse_vcs_require_pin,
 )
 from benchmark_host import (
     BenchmarkHost,
@@ -595,6 +596,9 @@ def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
 
     for scenario_name, scenario in found_scenarios:
         parse_scenario_requirement_strings(scenario_name, scenario)
+
+    for scenario_name, scenario in found_scenarios:
+        parse_vcs_require_pin(scenario_name, scenario)
     return cases
 
 
@@ -760,6 +764,7 @@ def _prepare_canary_execution(
         scenario,
     )
     requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
+    vcs_require_pin = parse_vcs_require_pin(scenario_name, scenario)
     python_version = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -784,7 +789,7 @@ def _prepare_canary_execution(
         policy=VcsPolicy(scenario.get("vcs_policy", "block")),
         allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
         allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
-        require_pin=scenario.get("vcs_require_pin", True),
+        require_pin=vcs_require_pin,
     )
     indexes = _canary_indexes(scenario)
     index_routes = _canary_index_routes(scenario)
@@ -924,8 +929,6 @@ def main() -> None:
 
     source = get_git_source_state()
     commit = args.commit or str(source["commit"] or "no-git")
-    host = BenchmarkHost.current(WALL_TIMEOUT_S)
-
     cases_to_run: list[CanaryCase]
     if args.scenarios_list:
         with Path(args.scenarios_list).open(encoding="utf-8") as f:
@@ -938,6 +941,7 @@ def main() -> None:
     else:
         cases_to_run = _parse_default_selection(parser)
 
+    host = BenchmarkHost.current(WALL_TIMEOUT_S)
     labels = [case.scenario.split(":", 1)[-1] for case in cases_to_run]
 
     out_dir = RESULTS_DIR / commit

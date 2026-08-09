@@ -265,9 +265,11 @@ def _prepare_runner_parity(
     standard: ModuleType,
     canary: ModuleType,
     profile: ModuleType,
+    *,
+    scenario: dict[str, object] | None = None,
 ) -> tuple[object, object, dict[str, object]]:
     """Prepare equivalent inputs through the three benchmark entry points."""
-    scenario = _runner_parity_scenario()
+    scenario = _runner_parity_scenario() if scenario is None else scenario
     host = _linux_host(standard)
     standard_execution = _prepare_standard_scenario(standard, scenario, host)
     canary_preparation = canary._prepare_canary_execution(
@@ -1157,6 +1159,53 @@ def test_parse_trust_unverified_sdist_deps_rejects_other_types(
         module.parse_trust_unverified_sdist_deps(
             "example",
             {"trust_unverified_sdist_deps": invalid},
+        )
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected"),
+    [
+        ({}, True),
+        ({"vcs_require_pin": True}, True),
+        ({"vcs_require_pin": False}, False),
+    ],
+    ids=("implicit", "required", "optional"),
+)
+def test_parse_vcs_require_pin_accepts_exact_booleans(
+    scenario: dict[str, object],
+    expected: bool,
+) -> None:
+    module = _harness("benchmark_config")
+    original = dict(scenario)
+
+    assert module.parse_vcs_require_pin("example", scenario) is expected
+    assert scenario == original
+
+
+@pytest.mark.parametrize(
+    ("invalid", "type_name"),
+    [
+        (0, "int"),
+        (1, "int"),
+        (0.0, "float"),
+        ("false", "str"),
+        ([False], "list"),
+        ({"value": False}, "dict"),
+        (None, "NoneType"),
+    ],
+    ids=("zero", "one", "float", "string", "list", "table", "none"),
+)
+def test_parse_vcs_require_pin_rejects_other_types(
+    invalid: object,
+    type_name: str,
+) -> None:
+    module = _harness("benchmark_config")
+    message = f"example: vcs_require_pin must be a boolean, got {type_name}"
+
+    with pytest.raises(TypeError, match=message):
+        module.parse_vcs_require_pin(
+            "example",
+            {"vcs_require_pin": invalid},
         )
 
 
@@ -2539,10 +2588,20 @@ unsupported_reason = "not runnable"
 """,
             "other:other: requirements must be a list, got str",
         ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
+vcs_require_pin = "false"
+""",
+            "other:other: vcs_require_pin must be a boolean, got str",
+        ),
     ],
-    ids=("sdist-trust", "requirements"),
+    ids=("sdist-trust", "requirements", "vcs-require-pin"),
 )
-def test_unselected_unsupported_definition_fails_before_result_creation(
+def test_unselected_unsupported_definition_fails_before_host_capture_and_result_creation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
@@ -2561,9 +2620,13 @@ def test_unselected_unsupported_definition_fails_before_result_creation(
     monkeypatch.setattr(module, "RESULTS_DIR", results_dir)
     monkeypatch.setattr(module, "get_git_source_state", lambda: _CLEAN_SOURCE)
 
+    def fail_host(*_args: object, **_kwargs: object) -> object:
+        pytest.fail("scenario validation reached host capture")
+
     def fail_result_creation(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("result namespace creation was reached")
 
+    monkeypatch.setattr(module.BenchmarkHost, "current", classmethod(fail_host))
     monkeypatch.setattr(
         module,
         "prepare_standard_result_namespace",
@@ -2607,6 +2670,30 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
     assert lowest["config"].resolution is module.sc.ResolutionStrategy.LOWEST
 
 
+def test_profile_main_validates_vcs_pin_before_host_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "vcs_require_pin": "false",
+    }
+    monkeypatch.setattr(module, "find_scenario", lambda _spec: ("example", scenario))
+    monkeypatch.setattr(module.sys, "argv", ["_profile_runner.py", "example"])
+
+    def fail_host(*_args: object, **_kwargs: object) -> object:
+        pytest.fail("VCS pin validation reached host capture")
+
+    monkeypatch.setattr(module.sc.BenchmarkHost, "current", classmethod(fail_host))
+
+    with pytest.raises(
+        TypeError,
+        match="example: vcs_require_pin must be a boolean, got str",
+    ):
+        module.main()
+
+
 def test_standard_canary_and_profile_build_the_same_project_config() -> None:
     standard = _harness("scenarios")
     canary = _harness("canary")
@@ -2625,14 +2712,51 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
     assert "trust_unverified_sdist_deps" not in standard_execution.expected_input
 
 
-def test_standard_canary_and_profile_reject_non_boolean_sdist_trust() -> None:
+@pytest.mark.parametrize(
+    ("vcs_setting", "expected"),
+    [
+        ({}, True),
+        ({"vcs_require_pin": True}, True),
+        ({"vcs_require_pin": False}, False),
+    ],
+    ids=("implicit", "required", "optional"),
+)
+def test_standard_canary_and_profile_use_valid_vcs_pin_settings(
+    vcs_setting: dict[str, object],
+    expected: bool,
+) -> None:
     standard = _harness("scenarios")
     canary = _harness("canary")
     profile = _harness("_profile_runner")
     scenario = {
         "python_version": "3.11",
         "requirements": [],
+        **vcs_setting,
+    }
+    original = dict(scenario)
+
+    standard_execution, canary_execution, profile_inputs = _prepare_runner_parity(
+        standard,
+        canary,
+        profile,
+        scenario=scenario,
+    )
+
+    assert standard_execution.config.vcs.require_pin is expected
+    assert canary_execution.config.vcs.require_pin is expected
+    assert profile_inputs["config"].vcs.require_pin is expected
+    assert scenario == original
+
+
+def test_sdist_trust_validation_precedes_requirement_and_vcs_validation() -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": "demo",
         "trust_unverified_sdist_deps": "false",
+        "vcs_require_pin": "false",
     }
     host = _linux_host(standard)
     message = "example: trust_unverified_sdist_deps must be a boolean"
@@ -2652,12 +2776,48 @@ def test_standard_canary_and_profile_reject_non_boolean_sdist_trust() -> None:
         profile.build_inputs("example", scenario, host=host)
 
 
+def test_standard_canary_and_profile_reject_non_boolean_vcs_require_pin() -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "vcs_require_pin": "false",
+    }
+    standard_host = _linux_host(standard)
+    message = "example: vcs_require_pin must be a boolean, got str"
+
+    class UnusedHost:
+        """Fail if schema validation reaches target admission."""
+
+        def target_for(self, *_args: object, **_kwargs: object) -> object:
+            pytest.fail("VCS pin validation reached host admission")
+
+    with pytest.raises(TypeError, match=message):
+        _prepare_standard_scenario(standard, scenario, standard_host)
+
+    with pytest.raises(TypeError, match=message):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=UnusedHost(),
+        )
+
+    with pytest.raises(TypeError, match=message):
+        profile.build_inputs("example", scenario, host=UnusedHost())
+
+
 @pytest.mark.parametrize("field", ["requirements", "constraints"])
-def test_standard_direct_preparation_validates_requirement_lists(field: str) -> None:
+def test_standard_requirement_list_validation_precedes_vcs_pin_validation(
+    field: str,
+) -> None:
     standard = _harness("scenarios")
     scenario: dict[str, object] = {
         "python_version": "3.11",
         "requirements": [],
+        "vcs_require_pin": "false",
     }
     scenario[field] = "demo"
     host = _linux_host(standard)
@@ -2670,11 +2830,14 @@ def test_standard_direct_preparation_validates_requirement_lists(field: str) -> 
 
 
 @pytest.mark.parametrize("field", ["requirements", "constraints"])
-def test_canary_direct_preparation_validates_requirement_lists(field: str) -> None:
+def test_canary_requirement_list_validation_precedes_vcs_pin_validation(
+    field: str,
+) -> None:
     canary = _harness("canary")
     scenario: dict[str, object] = {
         "python_version": "3.11",
         "requirements": [],
+        "vcs_require_pin": "false",
     }
     scenario[field] = "demo"
     host = _linux_host(canary)
@@ -2692,13 +2855,14 @@ def test_canary_direct_preparation_validates_requirement_lists(field: str) -> No
 
 
 @pytest.mark.parametrize("field", ["requirements", "constraints"])
-def test_profile_build_inputs_validates_requirement_lists_before_host_admission(
+def test_profile_requirement_list_validation_precedes_vcs_pin_validation_and_host_admission(
     field: str,
 ) -> None:
     profile = _harness("_profile_runner")
     scenario: dict[str, object] = {
         "python_version": "3.11",
         "requirements": [],
+        "vcs_require_pin": "false",
     }
     scenario[field] = "demo"
     host = MagicMock()

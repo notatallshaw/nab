@@ -39,6 +39,7 @@ from benchmark_config import (
     build_benchmark_resolver_inputs,
     parse_scenario_requirement_strings,
     parse_trust_unverified_sdist_deps,
+    parse_vcs_require_pin,
 )
 from benchmark_host import (
     HOST_TAG_MISMATCH_REASON,
@@ -581,6 +582,7 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
         parse_requires_matching_host(row.name, row.definition, marker_environment)
         parse_trust_unverified_sdist_deps(row.logical_key, row.definition)
         parse_scenario_requirement_strings(row.logical_key, row.definition)
+        parse_vcs_require_pin(row.logical_key, row.definition)
         build_policy_overrides = parse_build_packages(row.name, row.definition)
         if "unsupported_reason" in row.definition:
             continue
@@ -1591,6 +1593,7 @@ def prepare_standard_execution(
         scenario,
     )
     requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
+    vcs_require_pin = parse_vcs_require_pin(scenario_name, scenario)
     python_version: str = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -1619,7 +1622,7 @@ def prepare_standard_execution(
         policy=VcsPolicy(vcs_policy_str),
         allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
         allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
-        require_pin=scenario.get("vcs_require_pin", True),
+        require_pin=vcs_require_pin,
     )
     uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
     config = build_benchmark_config(
@@ -1762,7 +1765,6 @@ def main(argv: list[str] | None = None) -> None:
         except argparse.ArgumentTypeError as exc:
             parser.error(str(exc))
     source_start = get_git_source_state()
-    host = BenchmarkHost.current(SCENARIO_WALL_TIMEOUT_SECONDS)
 
     if not SCENARIOS_DIR.is_dir():
         print(f"Error: {SCENARIOS_DIR} does not exist")
@@ -1808,6 +1810,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     mode = "strategy-matrix" if args.strategy_matrix else "default"
     corpus_hash = standard_corpus_hash(all_rows)
+    host = BenchmarkHost.current(SCENARIO_WALL_TIMEOUT_SECONDS)
     plan = standard_run_plan(selected_rows, strategies, host)
     execution_plan = plan.executions
     settings = standard_benchmark_settings(host)
