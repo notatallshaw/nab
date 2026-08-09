@@ -949,6 +949,140 @@ def test_target_marker_declarations_require_string_values(
 
 
 @pytest.mark.parametrize(
+    ("marker_environment", "unknown"),
+    [
+        ({"platform_codename": "Windows"}, ["platform_codename"]),
+        (
+            {"zulu_marker": "z", "platform_system": "Linux", "alpha_marker": "a"},
+            ["alpha_marker", "zulu_marker"],
+        ),
+    ],
+    ids=("single", "multiple-sorted"),
+)
+def test_target_marker_declarations_reject_unknown_variables(
+    marker_environment: dict[str, str],
+    unknown: list[str],
+) -> None:
+    module = _harness("scenarios")
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(f"invalid: unknown marker_environment variables: {unknown!r}"),
+    ):
+        module.parse_marker_environment(
+            "invalid",
+            {"marker_environment": marker_environment},
+        )
+
+
+def test_target_marker_shape_precedes_unknown_variables() -> None:
+    module = _harness("scenarios")
+    definition = {"marker_environment": {"platform_codename": 1}}
+
+    with pytest.raises(
+        TypeError,
+        match="invalid: marker_environment must be a table of strings",
+    ):
+        module.parse_marker_environment("invalid", definition)
+
+
+@pytest.mark.parametrize(
+    "platform_system",
+    ["Linux", 1],
+    ids=("conflict", "invalid-type"),
+)
+def test_unknown_marker_variables_precede_platform_shorthand_validation(
+    platform_system: object,
+) -> None:
+    module = _harness("scenarios")
+    definition = {
+        "platform_system": platform_system,
+        "marker_environment": {
+            "platform_system": "Windows",
+            "platform_codename": "Windows",
+        },
+    }
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "invalid: unknown marker_environment variables: ['platform_codename']"
+        ),
+    ):
+        module.parse_marker_environment("invalid", definition)
+
+
+@pytest.mark.parametrize(
+    "target_markers",
+    [
+        {"platform_system": "Darwin", "sys_platform": "win32"},
+        {
+            "implementation_name": "cpython",
+            "platform_python_implementation": "PyPy",
+        },
+    ],
+    ids=("platform", "interpreter"),
+)
+def test_unknown_marker_variables_precede_supported_target_validation(
+    target_markers: dict[str, str],
+) -> None:
+    module = _harness("scenarios")
+    definition = {
+        "marker_environment": {
+            "platform_codename": "stable",
+            **target_markers,
+        }
+    }
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "invalid: unknown marker_environment variables: ['platform_codename']"
+        ),
+    ):
+        module.parse_marker_environment("invalid", definition)
+
+
+def test_target_marker_declarations_accept_every_pep508_variable() -> None:
+    module = _harness("scenarios")
+    # Nonalphabetical order makes an accidental sort visible.
+    declared = {
+        "platform_system": "Linux",
+        "python_version": "3.12.5",
+        "implementation_name": "cpython",
+        "sys_platform": "linux",
+        "platform_release": "test-release",
+        "os_name": "posix",
+        "python_full_version": "3.12.5",
+        "platform_machine": "x86_64",
+        "implementation_version": "3.12.5",
+        "platform_version": "test-version",
+        "platform_python_implementation": "CPython",
+    }
+
+    parsed = module.parse_marker_environment(
+        "valid",
+        {"marker_environment": declared},
+    )
+
+    assert parsed == declared
+    assert list(parsed) == list(declared)
+
+
+def test_target_marker_declarations_accept_partial_known_overlays() -> None:
+    module = _harness("scenarios")
+    declared = {"platform_release": "test-release"}
+
+    assert (
+        module.parse_marker_environment(
+            "valid",
+            {"marker_environment": declared},
+        )
+        == declared
+    )
+
+
+@pytest.mark.parametrize(
     ("definition", "expected"),
     [
         ({}, False),
@@ -2831,6 +2965,42 @@ requires_matching_host = "yes"
         module.load_standard_corpus([path])
 
 
+@pytest.mark.parametrize(
+    "unsupported_reason",
+    [None, "not runnable"],
+    ids=("supported", "unsupported"),
+)
+def test_standard_corpus_rejects_unknown_marker_variables(
+    tmp_path: Path,
+    unsupported_reason: str | None,
+) -> None:
+    module = _harness("scenarios")
+    path = tmp_path / "quick.toml"
+    unsupported_declaration = (
+        f'unsupported_reason = "{unsupported_reason}"'
+        if unsupported_reason is not None
+        else ""
+    )
+    path.write_text(
+        f"""
+[example]
+python_version = "3.11"
+requirements = []
+{unsupported_declaration}
+marker_environment = {{ platform_codename = "Windows" }}
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "example: unknown marker_environment variables: ['platform_codename']"
+        ),
+    ):
+        module.load_standard_corpus([path])
+
+
 def test_standard_corpus_rejects_a_strategy_clone(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4351,6 +4521,35 @@ def test_all_runners_validate_marker_shape_before_build_packages() -> None:
         TypeError,
         "example: marker_environment must be a table of strings",
     )
+
+
+def test_unknown_marker_variables_fail_before_runner_host_admission() -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "marker_environment": {"platform_codename": "Windows"},
+    }
+    message = "example: unknown marker_environment variables: ['platform_codename']"
+    host = MagicMock()
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        _prepare_standard_scenario(standard, scenario, host)
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=host,
+        )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        profile.build_inputs("example", scenario, host=host)
+
+    host.target_for.assert_not_called()
 
 
 def test_all_runners_validate_build_schema_before_compatibility() -> None:
