@@ -12,10 +12,13 @@ provider uses int; the Python provider uses packaging.version.Version.
 
 from __future__ import annotations
 
-from typing import Any, Generic, TypeAlias
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, cast
 
 from ._compat import override
 from .types import RangeRelation, VersionType
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # Bound once so the hot return paths load a module global instead of a class
 # attribute.
@@ -185,8 +188,24 @@ class Range(Generic[VersionType]):
         """Create a range containing exactly one version.
 
         Mirrors :meth:`packaging.ranges.VersionRange.singleton`.
+        For a set of versions use :meth:`from_versions`.
         """
         return cls(((version, True, version, True),))
+
+    @classmethod
+    def from_versions(cls, versions: Iterable[VersionType]) -> Range[VersionType]:
+        """Create a range holding exactly the given versions.
+
+        The iterable is consumed once and equal versions collapse.
+        Distinct versions never merge: a range has no notion of one
+        version following another, so the result still excludes
+        everything strictly between them.
+
+        Cheaper than folding :meth:`singleton` with ``|``.
+        """
+        # sorted() needs an ordering bound, which VersionType does not declare.
+        distinct = sorted(set(cast("Iterable[Any]", versions)))
+        return cls(tuple((version, True, version, True) for version in distinct))
 
     @classmethod
     def at_least(cls, version: VersionType) -> Range[VersionType]:

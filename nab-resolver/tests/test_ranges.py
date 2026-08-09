@@ -6,8 +6,27 @@ We use int as the version type for simplicity.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+import pytest
+
 from nab_resolver.ranges import Range
 from nab_resolver.types import RangeRelation
+
+
+@dataclass(frozen=True, order=True)
+class Release:
+    """A version type whose equal values are separate objects, unlike small ints."""
+
+    number: int
+
+
+def fold_singletons(versions: list[int]) -> Range[int]:
+    """Build a range the way a caller without a bulk constructor has to."""
+    folded: Range[int] = Range.empty()
+    for version in versions:
+        folded = folded | Range.singleton(version)
+    return folded
 
 
 class TestRangeConstruction:
@@ -58,6 +77,45 @@ class TestRangeConstruction:
         assert r.is_empty
         assert r == Range.empty()
         assert ~~r == r
+
+
+class TestRangeFromVersions:
+    def test_no_versions_is_the_empty_range(self) -> None:
+        assert Range.from_versions([]) == Range.empty()
+
+    def test_one_version_is_a_singleton(self) -> None:
+        assert Range.from_versions([5]) == Range.singleton(5)
+
+    def test_versions_are_sorted(self) -> None:
+        assert Range.from_versions([5, 1, 3]) == fold_singletons([1, 3, 5])
+
+    def test_repeats_collapse(self) -> None:
+        assert Range.from_versions([2, 2, 2]) == Range.singleton(2)
+
+    def test_equal_but_separate_version_objects_collapse(self) -> None:
+        """Repeats are found by comparing versions, not by identity."""
+        first, second = Release(1), Release(1)
+
+        assert first is not second
+        assert Range.from_versions([first, second]) == Range.singleton(first)
+
+    def test_neighbouring_versions_stay_apart(self) -> None:
+        """Nothing merges: a range cannot know that 2 follows 1."""
+        built = Range.from_versions([1, 2])
+
+        assert 1 in built
+        assert 2 in built
+        assert 1.5 not in built
+
+    def test_an_iterator_is_consumed_once(self) -> None:
+        versions = iter([3, 1, 2])
+
+        assert Range.from_versions(versions) == fold_singletons([1, 2, 3])
+        assert list(versions) == []
+
+    @pytest.mark.parametrize("versions", [[1, 2, 3, 4], [10, 1, 10, 5, 1]])
+    def test_matches_folding_singletons(self, versions: list[int]) -> None:
+        assert Range.from_versions(versions) == fold_singletons(versions)
 
 
 class TestRangeOperations:
