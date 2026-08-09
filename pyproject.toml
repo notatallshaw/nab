@@ -61,6 +61,7 @@ exclude = [
     "tests/test_embedding_docs.py",
     "tests/test_release.py",
     "tests/test_type_check_scope.py",
+    "tests/test_workspace_shape.py",
 ]
 
 # Dependency groups feed `nab lock` for CI lockfiles; regenerate via

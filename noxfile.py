@@ -1,14 +1,9 @@
-"""Nox sessions for nab's per-workspace tests and its type-check matrix.
+"""Nox sessions for nab: ``tests``, ``types``, ``benchmarks`` and ``dists``.
 
-``tests`` runs one workspace's suite and gates each package it owns at 100
-percent. ``fail_under`` and the ``[tool.coverage.paths]`` remaps live in
-``pyproject.toml``; the per-package ``--include`` globs are built here.
-``types`` runs one type-checker over the source trees in ``TYPED_TREES``.
-``benchmarks`` runs the benchmark-harness tests, which carry the ``benchmark``
-marker and so sit outside every workspace run. ``dists`` builds every
-distribution and installs each sdist and wheel to catch packaging regressions
-that building alone misses. All take their pinned dependencies from
-``.github/requirements``.
+Coverage is split across two files: ``fail_under`` and the
+``[tool.coverage.paths]`` remaps live in ``pyproject.toml``, while the
+per-package ``--include`` globs are built here. Every session takes its
+pinned dependencies from ``.github/requirements``.
 
 The Python version comes from whoever launches nox, so CI drives the matrix
 through ``actions/setup-python`` and stays off the per-OS versioned-binary
@@ -33,9 +28,11 @@ DISTS_LOCK = ".github/requirements/pylock.dists.toml"
 BUILD_LOCK = ".github/requirements/pylock.build.toml"
 
 # workspace -> (editable packages, pytest paths, coverage-gated packages).
-# nab-index rides with the python workspace: nab-python is its only consumer
-# and its tests supply most of nab-index's coverage, so the two are gated here
-# without running nab-python's suite twice.
+# Each entry installs the dependency closure of what it gates; the umbrella
+# builds from the repo root, so it installs as ".".
+#
+# nab-index is gated with the python workspace because each entry has to reach
+# 100 percent from its own suite, and nab-python's tests cover most of nab-index.
 WORKSPACES = {
     "resolver": (
         ["nab-resolver"],
@@ -90,9 +87,9 @@ def tests(session: nox.Session, workspace: str) -> None:
     session.run("coverage", "erase")
 
     # pytest-cov measures the xdist workers, which a bare `coverage run` cannot
-    # see, and combines their data files when the session ends. Its own gate is
-    # off because it scores every source package at once, and a workspace only
-    # imports the ones it owns; the per-package reports below are the gate.
+    # see, and combines their data files at the end. Its own gate is off because
+    # it scores every source package at once, and a workspace only imports the
+    # ones it owns.
     session.run(
         "python",
         "-m",
@@ -113,8 +110,7 @@ def tests(session: nox.Session, workspace: str) -> None:
 def benchmarks(session: nox.Session) -> None:
     """Run the benchmark-harness tests the workspace sessions deselect."""
     # These cover the scripts under nab-resolver/benchmarks and
-    # nab-python/benchmarks, which no coverage gate owns, so this session only
-    # has to prove they still pass.
+    # nab-python/benchmarks, which no coverage gate owns.
     _install(session, TESTS_LOCK, ["nab-resolver", "nab-index", "nab-python"])
     session.run(
         "python",
@@ -130,18 +126,16 @@ def benchmarks(session: nox.Session) -> None:
 @nox.session
 @nox.parametrize("checker", list(TYPE_CHECKERS))
 def types(session: nox.Session, checker: str) -> None:
-    """Type-check the trees in ``TYPED_TREES`` with one checker."""
-    # Installing the whole workspace resolves every import; TYPED_TREES alone
-    # decides what is reported, which is how nab-python's own errors stay out.
-    _install(session, TYPES_LOCK, ["nab-resolver", "nab-index", "nab-python", "."])
+    """Run one checker over its own scope: ``TYPED_TREES``, or pyright's include."""
+    # The umbrella entry installs every distribution, so every import resolves.
+    editables, _, _ = WORKSPACES["umbrella"]
+    _install(session, TYPES_LOCK, editables)
     session.run(*TYPE_CHECKERS[checker])
 
 
 @nox.session
 def dists(session: nox.Session) -> None:
     """Build every distribution and prove each sdist and wheel installs."""
-    # Only the build toolchain lands here; the check builds each package in a
-    # subprocess and installs it into its own throwaway venv.
     session.install("--upgrade", "pip>=26.1")
     session.install("-r", DISTS_LOCK)
     # The build runs with --no-isolation, so the backend comes from the lock

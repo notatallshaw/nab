@@ -1,13 +1,11 @@
 """Build the release distributions and prove that they install.
 
-Builds an sdist and a wheel for all four workspace packages, installs every
+Builds an sdist and a wheel for every released distribution, installs every
 sdist and the full wheel set into throwaway venvs, and checks that each
 artifact ships its LICENSE. Building alone does not catch a broken sdist:
-``build`` extracts an sdist with a permissive tar filter, while ``pip install``
-applies the data filter and rejects a link that points outside the archive, so
-an sdist that builds cleanly can still fail for anyone who installs it. A
-symlinked license also drops out of the wheel silently, which the artifact
-checks below catch.
+``build`` extracts one with a permissive tar filter, while ``pip install``
+applies the data filter and rejects a link that points outside the archive. A
+symlinked license drops out of the wheel silently.
 
 Run through nox::
 
@@ -29,13 +27,15 @@ import build_dists
 
 REPO_ROOT = build_dists.REPO_ROOT
 
-# Build order and package directories come from the release build so the
-# checked artifacts are exactly the set the release publishes.
+# The checked artifacts are the set the release publishes.
 PACKAGES = build_dists.PACKAGES
 
-# Every nab-python artifact ships the vendored packaging tree, so its license
-# files have to travel with it. Matched by suffix because the wheel roots the
-# package at nab_python/ while the sdist roots it at <root>/src/nab_python/.
+# The import name of each released distribution, for the wheel smoke import.
+MODULES = tuple(name.replace("-", "_") for name in PACKAGES)
+
+# Every nab-python artifact ships the vendored packaging tree, so its licenses
+# travel with it. Matched by suffix because the wheel roots the package at
+# nab_python/ while the sdist roots it at <root>/src/nab_python/.
 VENDOR_LICENSES = (
     "nab_python/_vendor/packaging/LICENSE",
     "nab_python/_vendor/packaging/LICENSE.APACHE",
@@ -88,8 +88,8 @@ def _make_venv(path: Path) -> Path:
 def _find_links(dist_root: Path) -> list[str]:
     """Return --find-links args covering every built package directory.
 
-    With these, the nab-* cross-dependencies resolve to the in-tree build
-    rather than an older release on PyPI.
+    They point the nab-* cross-dependencies at the in-tree build rather than an
+    older release on PyPI.
     """
     links: list[str] = []
     for package in PACKAGES:
@@ -137,12 +137,12 @@ def install_each_sdist(dist_root: Path, scratch: Path) -> None:
 
 
 def install_wheels(dist_root: Path, scratch: Path) -> None:
-    """Install all four wheels together, then import and run the CLI."""
+    """Install every wheel together, then import each package and run the CLI."""
     wheels = [str(_wheel(dist_root, package)) for package in PACKAGES]
     version = _wheel_version(_wheel(dist_root, "nab"))
     python = _make_venv(scratch / "wheels")
     _run([str(python), "-m", "pip", "install", *wheels])
-    _run([str(python), "-c", "import nab, nab_resolver, nab_python, nab_index"])
+    _run([str(python), "-c", f"import {', '.join(MODULES)}"])
     output = _capture([str(python), "-m", "nab", "--version"])
     expected = f"nab {version}"
     if expected not in output:
@@ -212,7 +212,7 @@ def check_vendored_licenses(wheel: Path, sdist: Path) -> None:
 
 
 def main() -> None:
-    """Build the four distributions, then install and check every artifact."""
+    """Build every distribution, then install and check each artifact."""
     source_date_epoch = _source_date_epoch()
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
