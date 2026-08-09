@@ -6,6 +6,7 @@ import asyncio
 import builtins
 import contextlib
 import errno
+import hashlib
 import importlib
 import inspect
 import io
@@ -175,6 +176,47 @@ def _stub_resolve_result(
     )
 
 
+def _fetchable_resolve_result(count: int) -> tuple[ResolveResult, dict[str, bytes]]:
+    """A host resolve of ``count`` wheel-only pins, with the bytes each URL serves.
+
+    Each digest is of the payload its own URL serves, so a real download
+    writes every file instead of failing the hash check.
+    """
+    payloads: dict[str, bytes] = {}
+    pins: dict[str, PinShape] = {}
+    for index in range(count):
+        name = f"pkg{index}"
+        filename = f"{name}-1.0-py3-none-any.whl"
+        url = f"https://example.com/{filename}"
+        payloads[url] = f"wheel {index}".encode()
+        pins[name] = IndexPin(
+            name=name,
+            version="1.0",
+            index="pypi",
+            wheels=(
+                WheelArtifact(
+                    filename=filename,
+                    url=url,
+                    hashes=(("sha256", hashlib.sha256(payloads[url]).hexdigest()),),
+                ),
+            ),
+        )
+
+    target = ResolveTarget.for_host()
+    result = ResolveResult(
+        targets=(target,),
+        target_results=[
+            TargetResult(
+                target=target,
+                success=True,
+                pins=dict.fromkeys(pins, V("1.0")),
+                lock=TargetLock(target=target, pins=pins),
+            )
+        ],
+    )
+    return result, payloads
+
+
 def _hashless_resolve_result() -> ResolveResult:
     """A host resolve whose one wheel carries no hash at all."""
     target = ResolveTarget.for_host()
@@ -313,6 +355,36 @@ class _SidecarTransport:
             msg = f"unexpected request to {url}"
             raise AssertionError(msg)
         return _SidecarResponse(self._bodies[url])
+
+    async def aclose(self) -> None:
+        return None
+
+
+class _ConcurrencyProbeTransport:
+    """Serves wheel bytes and records how many fetches ever overlap.
+
+    Every fetch yields to the event loop once per payload before returning,
+    so each fetch the download starts is still open when the next one runs
+    and ``peak`` measures its concurrency limit, not the loop's interleaving.
+    """
+
+    def __init__(self, payloads: dict[str, bytes]) -> None:
+        self._payloads = payloads
+        self._in_flight = 0
+        self.peak = 0
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> _SidecarResponse:
+        del headers
+        self._in_flight += 1
+        self.peak = max(self.peak, self._in_flight)
+
+        for _ in range(len(self._payloads)):
+            await asyncio.sleep(0)
+
+        self._in_flight -= 1
+        return _SidecarResponse(self._payloads[url])
 
     async def aclose(self) -> None:
         return None
@@ -4921,6 +4993,47 @@ class TestDownloadCommand:
         ):
             download(pyproject, output=out, offline=offline)
         assert mock_dl.call_args.kwargs["offline"] is offline
+
+    @pytest.mark.parametrize("cap", [1, 2])
+    def test_max_concurrency_flag_caps_parallel_fetches(
+        self, tmp_path: Path, cap: int
+    ) -> None:
+        """``--max-concurrency N`` holds the download to N fetches at a time."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "vendor"
+        result, payloads = _fetchable_resolve_result(4)
+        transport = _ConcurrencyProbeTransport(payloads)
+
+        with (
+            patch("nab.cli.resolve_for_targets", return_value=result),
+            patch("nab.cli._make_transport", return_value=transport),
+        ):
+            download(pyproject, output=out, max_concurrency=cap)
+
+        assert transport.peak == cap
+        assert len(list(out.iterdir())) == len(payloads)
+
+    def test_env_max_concurrency_caps_parallel_fetches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``NAB_MAX_CONCURRENCY`` caps the download the way the flag does."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "vendor"
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+        monkeypatch.setenv("NAB_MAX_CONCURRENCY", "2")
+
+        result, payloads = _fetchable_resolve_result(4)
+        transport = _ConcurrencyProbeTransport(payloads)
+        with (
+            patch("nab.cli.resolve_for_targets", return_value=result),
+            patch("nab.cli._make_transport", return_value=transport),
+        ):
+            download(pyproject, output=out)
+
+        assert transport.peak == 2
 
     def test_project_override_uses_download_wording(
         self,
