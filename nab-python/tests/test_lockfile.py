@@ -3016,6 +3016,43 @@ class TestBuildTargetLock:
         text = write_lock(_lock_from(lock))
         assert ">=3.6.*" not in text
 
+    def test_oversized_requires_python_dropped_and_emittable(self) -> None:
+        """A digit run past int()'s limit is dropped like a malformed value.
+
+        ``SpecifierSet`` converts a clause version only when something compares
+        against it, so this one constructs and ``excluded_by_python`` admits the
+        artefact on every Python.
+        """
+        oversized = ">=" + "9" * (sys.get_int_max_str_digits() + 1)
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file(requires_python=oversized))]}
+        )
+
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.requires_python is None
+
+        text = write_lock(_lock_from(lock))
+        assert "999" not in text
+        package = Pylock.from_dict(tomllib.loads(text)).packages[0]
+        assert package.requires_python is None
+
+    def test_at_limit_requires_python_is_recorded(self) -> None:
+        """A digit run of exactly int()'s limit converts, so the pin keeps it.
+
+        The check is a conversion, not a length cap.
+        """
+        at_limit = ">=" + "9" * sys.get_int_max_str_digits()
+        provider = _FakeProvider(
+            listings={"foo": [(Version("1.0"), _wheel_file(requires_python=at_limit))]}
+        )
+
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.requires_python == at_limit
+
     def test_common_requires_python_malformed_with_valid_stays_unconstrained(
         self,
     ) -> None:
