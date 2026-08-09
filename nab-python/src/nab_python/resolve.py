@@ -28,6 +28,7 @@ from collections import defaultdict
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
@@ -93,7 +94,7 @@ from .target import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import AbstractSet, Iterator, Mapping, Sequence
 
     from nab_index.transport import AsyncHttpTransport
 
@@ -107,6 +108,7 @@ __all__ = [
     "ResolveResult",
     "TargetResult",
     "build_lock_input",
+    "constraints_with_root_extra_proxies",
     "resolve_for_targets",
     "resolve_with_coordinator",
 ]
@@ -854,7 +856,10 @@ def _resolve_one_target(
     except ResolutionError as exc:
         return TargetResult(target=target, success=False, error=exc)
 
-    _extend_constraints_to_proxies(resolver_constraints, root_extras)
+    resolver_constraints = constraints_with_root_extra_proxies(
+        resolver_constraints,
+        root_extras,
+    )
 
     source_root = settings.source_root
     provider = Provider(
@@ -1632,22 +1637,21 @@ def _build_resolver_inputs(
     return _ResolverInputs(roots, resolver_requirements, root_extras)
 
 
-def _extend_constraints_to_proxies(
-    constraints: dict[str, VersionRange],
-    root_extras: set[tuple[str, str]],
-) -> None:
-    """Copy each base package's constraint onto its extras proxies.
+def constraints_with_root_extra_proxies(
+    constraints: Mapping[str, VersionRange],
+    root_extras: AbstractSet[tuple[str, str]],
+) -> Mapping[str, VersionRange]:
+    """Return immutable constraints extended to requested root-extra proxies.
 
-    The resolver keys constraints by the package it is deciding, and an
-    extras proxy decides under its own ``name[extra]`` key, so the base's
-    constraint does not otherwise reach it.  Sharing the key also keeps
-    the proxy on the constraint-attribution path, so a constraint that
-    leaves it nothing is named in the failure.
+    An extra proxy resolves under its own ``name[extra]`` key, so copying the base
+    range there both constrains selection and attributes an empty range to the proxy.
     """
+    extended = dict(constraints)
     for name, extra in root_extras:
-        constraint = constraints.get(name)
+        constraint = extended.get(name)
         if constraint is not None:
-            constraints[join_extra(name, extra)] = constraint
+            extended[join_extra(name, extra)] = constraint
+    return MappingProxyType(extended)
 
 
 def _raise_for_source_python(

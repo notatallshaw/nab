@@ -6,15 +6,19 @@ import importlib.util
 import json
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from operator import setitem
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Literal
+from unittest.mock import MagicMock
 
 import pytest
 
+from nab_index.client import WheelFile
+from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.tags import Tag
 from nab_python.target import ResolveTarget
 
@@ -157,6 +161,118 @@ def _empty_resolver_stats() -> SimpleNamespace:
         "incompatibilities_learned",
     )
     return SimpleNamespace(**dict.fromkeys(fields, 0))
+
+
+def _wheel(package: str, version: str) -> WheelFile:
+    """Return one universal wheel with sidecar metadata for benchmark tests."""
+    return WheelFile(
+        filename=f"{package}-{version}-py3-none-any.whl",
+        url=f"https://example.test/{package}-{version}.whl",
+        version=version,
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+        hashes=(("sha256", "a" * 64),),
+    )
+
+
+def _wheel_metadata(package: str, version: str, *fields: str) -> str:
+    """Return wheel metadata with any additional fields requested by a test."""
+    return "\n".join(
+        (
+            "Metadata-Version: 2.1",
+            f"Name: {package}",
+            f"Version: {version}",
+            *fields,
+            "",
+            "",
+        )
+    )
+
+
+def _sidecar(wheel: WheelFile) -> str:
+    """Return the sidecar URL advertised by a benchmark-test wheel."""
+    url = wheel.metadata_url
+    assert url is not None
+    return url
+
+
+def _dropped_extra_coordinator() -> MagicMock:
+    """Return an index where aaa 3.0 no longer provides its x extra."""
+    aaa_wheels = [_wheel("aaa", version) for version in ("1.0", "2.0", "3.0")]
+    bbb_wheel = _wheel("bbb", "1.0")
+    metadata = {
+        _sidecar(wheel): _wheel_metadata(
+            "aaa",
+            wheel.version,
+            "Provides-Extra: x",
+            'Requires-Dist: bbb; extra == "x"',
+        )
+        for wheel in aaa_wheels[:2]
+    }
+    metadata[_sidecar(aaa_wheels[2])] = _wheel_metadata("aaa", "3.0")
+    metadata[_sidecar(bbb_wheel)] = _wheel_metadata("bbb", "1.0")
+
+    return make_coordinator(
+        listings={"aaa": aaa_wheels, "bbb": [bbb_wheel]},
+        metadata_by_url=metadata,
+    )
+
+
+def _runner_parity_scenario() -> dict[str, object]:
+    """Return a scenario that exercises shared runner configuration."""
+    return {
+        "python_version": "3.11",
+        "requirements": ["demo[feature]>=1"],
+        "constraints": ["demo<2"],
+        "datetime": "2025-01-02 03:04:05",
+        "indexes": [
+            {"name": "private", "url": "https://example.test/simple"},
+        ],
+        "index_routes": [{"name": "demo", "index": "private"}],
+        "build_packages": ["demo"],
+        "resolution": "lowest-direct",
+        "trust_unverified_sdist_deps": False,
+        "vcs_policy": "allow",
+        "vcs_allowed_schemes": ["git+https"],
+        "vcs_allowed_repos": ["https://example.test/project"],
+        "vcs_require_pin": False,
+    }
+
+
+def _prepare_runner_parity(
+    standard: ModuleType,
+    canary: ModuleType,
+    profile: ModuleType,
+) -> tuple[object, object, dict[str, object]]:
+    """Prepare equivalent inputs through the three benchmark entry points."""
+    scenario = _runner_parity_scenario()
+    host = _linux_host(standard)
+    row = standard.StandardScenario("quick", "example", scenario)
+    plan = standard.standard_run_plan(
+        [row],
+        (standard.ResolutionStrategy.LOWEST_DIRECT,),
+        host,
+    )
+    standard_execution = standard.prepare_standard_execution(
+        plan.executions[0],
+        plan.targets_by_logical_key[row.logical_key],
+        commit="run",
+        source=dict(_CLEAN_SOURCE),
+        corpus_hash="f" * 64,
+        settings_digest="settings",
+    )
+    canary_preparation = canary._prepare_canary_execution(
+        scenario,
+        scenario_name="example",
+        resolution_override=None,
+        host=host,
+    )
+    profile_inputs = profile.build_inputs("example", scenario, host=host)
+
+    canary_execution = canary_preparation.execution
+    assert canary_execution is not None
+    return standard_execution, canary_execution, profile_inputs
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -1031,6 +1147,11 @@ def test_build_benchmark_provider_forwards_project_config(
     assert admission.target is not None
     target = admission.target
     requirements = scenarios.parse_requirements(["demo[feature]", "other"])
+    constraints = scenarios.parse_requirements(["demo<2"])
+    inputs = config_module.build_benchmark_resolver_inputs(
+        requirements,
+        constraints,
+    )
     config = config_module.build_benchmark_config(
         uploaded_prior_to=scenarios.parse_datetime("2025-01-02 03:04:05"),
         indexes=[scenarios.IndexConfig("private", "https://example.test/simple")],
@@ -1058,7 +1179,7 @@ def test_build_benchmark_provider_forwards_project_config(
         coordinator,
         config=config,
         target=target,
-        requirements=requirements,
+        inputs=inputs,
     )
 
     assert isinstance(provider, FakeProvider)
@@ -1067,7 +1188,9 @@ def test_build_benchmark_provider_forwards_project_config(
     assert isinstance(kwargs, dict)
     assert kwargs["target"] is target
     assert kwargs["root_requirements"] is requirements
-    assert "constraints" not in kwargs
+    assert kwargs["root_extras"] == {("demo", "feature")}
+    assert kwargs["constraints"] is inputs.constraints
+    assert set(kwargs["constraints"]) == {"demo", "demo[feature]"}
 
     assert kwargs["uploaded_prior_to"] is config.uploaded_prior_to
     assert kwargs["dist_policy"] is config.dist_policy
@@ -1086,6 +1209,28 @@ def test_build_benchmark_provider_forwards_project_config(
     assert kwargs["direct_packages"] == frozenset({"demo", "other"})
 
 
+def test_benchmark_resolver_inputs_copy_constraints_to_extra_proxies() -> None:
+    scenarios = _harness("scenarios")
+    config_module = _harness("benchmark_config")
+    requirements = scenarios.parse_requirements(["demo[feature]"])
+    constraints = scenarios.parse_requirements(["demo<2"])
+
+    inputs = config_module.build_benchmark_resolver_inputs(
+        requirements,
+        constraints,
+    )
+
+    assert inputs.requirements is requirements
+    assert inputs.root_extras == {("demo", "feature")}
+    assert inputs.constraints is not constraints
+    assert set(constraints) == {"demo"}
+    assert inputs.constraints is not None
+    assert set(inputs.constraints) == {"demo", "demo[feature]"}
+    assert inputs.constraints["demo[feature]"] is inputs.constraints["demo"]
+    with pytest.raises(TypeError):
+        setitem(inputs.constraints, "demo", constraints["demo"])
+
+
 def test_resolve_scenario_coordinates_config_target_and_constraints(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1094,8 +1239,8 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
     admission = host.target_for("3.11", {}, requires_matching_host=False)
     assert admission.target is not None
     target = admission.target
-    requirements = module.parse_requirements(["demo"])
-    constraints = module.parse_requirements(["support<2"])
+    requirements = module.parse_requirements(["demo[feature]"])
+    constraints = module.parse_requirements(["demo<2"])
     config = module.build_benchmark_config(
         indexes=[module.IndexConfig("private", "https://example.test/simple")],
         index_routes=[module.IndexRoute("demo", "private")],
@@ -1151,15 +1296,91 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
         "index_routes": module.index_routes_from_config(config),
     }
     assert seen["provider_coordinator"] is coordinator
-    assert seen["provider"] == {
+    provider_kwargs = seen["provider"]
+    assert isinstance(provider_kwargs, dict)
+    assert provider_kwargs == {
         "config": config,
         "target": target,
-        "requirements": requirements,
+        "inputs": module.build_benchmark_resolver_inputs(
+            requirements,
+            constraints,
+        ),
     }
     assert seen["resolver_provider"] is provider
     assert seen["resolver_roots"] is requirements
-    assert seen["resolver_constraints"] is constraints
+    resolver_constraints = seen["resolver_constraints"]
+    assert isinstance(resolver_constraints, Mapping)
+    provider_inputs = provider_kwargs["inputs"]
+    assert resolver_constraints is provider_inputs.constraints
+    assert set(resolver_constraints) == {"demo", "demo[feature]"}
     assert seen["timeout"] is host
+
+
+@pytest.mark.parametrize(
+    ("constraint", "success", "error_fragments", "expected_packages"),
+    [
+        pytest.param(
+            "aaa==2.0",
+            True,
+            (),
+            2,
+            id="constrained-version-provides-extra",
+        ),
+        pytest.param(
+            "aaa==3.0",
+            False,
+            ("MissingExtraError", "aaa==3.0 does not provide extra 'x'"),
+            0,
+            id="constrained-version-dropped-extra",
+        ),
+        pytest.param(
+            "aaa<0.5",
+            False,
+            ("ResolutionError", "the user constrained aaa[x]", "0.5"),
+            0,
+            id="constraint-empties-extra-proxy",
+        ),
+    ],
+)
+def test_standard_runner_applies_root_extra_constraints(
+    constraint: str,
+    success: bool,
+    error_fragments: tuple[str, ...],
+    expected_packages: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness("scenarios")
+    coordinator = _dropped_extra_coordinator()
+
+    @contextmanager
+    def fake_coordinator(*_args: object, **_kwargs: object) -> Iterator[object]:
+        yield coordinator
+
+    monkeypatch.setattr(module, "FetchCoordinator", fake_coordinator)
+    monkeypatch.setattr(module, "HttpxAsyncTransport", object)
+
+    captured = _linux_host(module)
+    host = module.BenchmarkHost(captured.target, captured.python_runtime, None)
+    admission = host.target_for("3.11", {}, requires_matching_host=False)
+    assert admission.target is not None
+    result = module.resolve_scenario(
+        module.parse_requirements(["aaa[x]"]),
+        module.parse_requirements([constraint]),
+        config=module.build_benchmark_config(indexes=module.DEFAULT_INDEXES),
+        target=admission.target,
+        host=host,
+    )
+
+    outcome = result["result"]
+    assert outcome["success"] is success
+    error = outcome["error"]
+    if error_fragments:
+        assert isinstance(error, str)
+        for fragment in error_fragments:
+            assert fragment in error
+    else:
+        assert error is None
+    assert result["stats"]["packages_resolved"] == expected_packages
 
 
 def test_marker_build_scenarios_are_explicitly_unsupported() -> None:
@@ -2192,64 +2413,59 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
     standard = _harness("scenarios")
     canary = _harness("canary")
     profile = _harness("_profile_runner")
-    host = _host(
+    standard_execution, canary_execution, profile_inputs = _prepare_runner_parity(
         standard,
-        system="Linux",
-        sys_platform="linux",
-        machine="x86_64",
-        os_name="posix",
-        platform_tag="manylinux_2_17_x86_64",
+        canary,
+        profile,
     )
-    scenario = {
-        "python_version": "3.11",
-        "requirements": ["demo>=1"],
-        "constraints": ["support<2"],
-        "datetime": "2025-01-02 03:04:05",
-        "indexes": [
-            {"name": "private", "url": "https://example.test/simple"},
-        ],
-        "index_routes": [{"name": "demo", "index": "private"}],
-        "build_packages": ["demo"],
-        "resolution": "lowest-direct",
-        "trust_unverified_sdist_deps": False,
-        "vcs_policy": "allow",
-        "vcs_allowed_schemes": ["git+https"],
-        "vcs_allowed_repos": ["https://example.test/project"],
-        "vcs_require_pin": False,
-    }
 
-    row = standard.StandardScenario("quick", "example", scenario)
-    plan = standard.standard_run_plan(
-        [row],
-        (standard.ResolutionStrategy.LOWEST_DIRECT,),
-        host,
-    )
-    standard_execution = standard.prepare_standard_execution(
-        plan.executions[0],
-        plan.targets_by_logical_key[row.logical_key],
-        commit="run",
-        source=dict(_CLEAN_SOURCE),
-        corpus_hash="f" * 64,
-        settings_digest="settings",
-    )
-    canary_preparation = canary._prepare_canary_execution(
-        scenario,
-        scenario_name="example",
-        resolution_override=None,
-        host=host,
-    )
-    profile_inputs = profile.build_inputs("example", scenario, host=host)
-
-    assert canary_preparation.execution is not None
     assert (
-        standard_execution.config
-        == canary_preparation.execution.config
-        == profile_inputs["config"]
+        standard_execution.config == canary_execution.config == profile_inputs["config"]
     )
     assert standard_execution.config.constraints == ()
-    assert standard_execution.constraint_strings == ["support<2"]
-    assert set(canary_preparation.execution.constraints or {}) == {"support"}
-    assert set(profile_inputs["constraints"] or {}) == {"support"}
+    assert standard_execution.constraint_strings == ["demo<2"]
+
+
+def test_standard_canary_and_profile_prepare_the_same_resolver_inputs() -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    standard_execution, canary_execution, profile_inputs = _prepare_runner_parity(
+        standard,
+        canary,
+        profile,
+    )
+
+    marker_environment = dict(standard_execution.target.marker_env)
+    standard_requirements = standard.parse_requirements(
+        standard_execution.requirement_strings,
+        vcs_config=standard_execution.config.vcs,
+        marker_environment=marker_environment,
+    )
+    standard_constraints = standard.parse_requirements(
+        standard_execution.constraint_strings,
+        vcs_config=standard_execution.config.vcs,
+        marker_environment=marker_environment,
+    )
+    standard_resolver_inputs = standard.build_benchmark_resolver_inputs(
+        standard_requirements,
+        standard_constraints,
+    )
+    canary_resolver_inputs = canary.build_benchmark_resolver_inputs(
+        canary_execution.requirements,
+        canary_execution.constraints,
+    )
+    profile_resolver_inputs = profile.sc.build_benchmark_resolver_inputs(
+        profile_inputs["requirements"],
+        profile_inputs["constraints"],
+    )
+
+    assert standard_resolver_inputs == canary_resolver_inputs == profile_resolver_inputs
+    assert standard_resolver_inputs.root_extras == {("demo", "feature")}
+    assert set(standard_resolver_inputs.constraints or {}) == {
+        "demo",
+        "demo[feature]",
+    }
 
 
 def test_profile_runner_uses_scenario_sdist_trust_policy() -> None:

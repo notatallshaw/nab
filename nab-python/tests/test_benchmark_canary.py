@@ -468,7 +468,9 @@ def test_canary_configures_lowest_direct_roots(
                 incompatibilities_learned=0,
             )
 
-        def resolve(self, *_args: object, **_kwargs: object) -> dict:
+        def resolve(self, roots: object, **kwargs: object) -> dict:
+            seen["resolver_roots"] = roots
+            seen["resolver_constraints"] = kwargs["constraints"]
             return {}
 
     def fake_build_provider(_coordinator: object, **kwargs: object) -> FakeProvider:
@@ -481,6 +483,7 @@ def test_canary_configures_lowest_direct_roots(
     monkeypatch.setattr(module, "Resolver", FakeResolver)
 
     requirements = module.parse_requirements(["Root[feature]", "Other==1"])
+    constraints = module.parse_requirements(["root==1"])
     captured = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
     host = module.BenchmarkHost(captured.target, captured.python_runtime, None)
     admission = host.target_for("3.11", {}, requires_matching_host=False)
@@ -491,7 +494,7 @@ def test_canary_configures_lowest_direct_roots(
     )
     result = module.run_one(
         requirements,
-        None,
+        constraints,
         config=config,
         target=admission.target,
         host=host,
@@ -517,8 +520,19 @@ def test_canary_configures_lowest_direct_roots(
     assert settings["target"]["wheel_tags_count"] > 0
 
     assert seen["config"] is config
-    assert seen["requirements"] is requirements
     assert seen["target"] is admission.target
+
+    inputs = seen["inputs"]
+    assert inputs.requirements is requirements
+    assert inputs.root_extras == {("root", "feature")}
+
+    assert inputs.constraints is not constraints
+    assert set(constraints) == {"root"}
+    assert inputs.constraints is not None
+    assert set(inputs.constraints) == {"root", "root[feature]"}
+
+    assert seen["resolver_roots"] is requirements
+    assert seen["resolver_constraints"] is inputs.constraints
 
 
 def test_canary_main_records_v2_contract(
