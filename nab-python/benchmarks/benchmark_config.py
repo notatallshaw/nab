@@ -10,9 +10,9 @@ from nab_index.multi_index import IndexConfig
 from nab_index.serialization import SimpleSerialization
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.utils import canonicalize_name
+from nab_python._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_python.config import NabProjectConfig, PackageOverride
-from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
+from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import AbstractSet, Mapping, Sequence
     from datetime import datetime
 
-    from nab_python.fetch import FetchCoordinator, IndexRoute
+    from nab_python.fetch import FetchCoordinator
     from nab_python.target import ResolveTarget
 
 
@@ -38,6 +38,7 @@ DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
     IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
 )
 _INDEX_KEYS = frozenset({"name", "url", "serialization"})
+_INDEX_ROUTE_KEYS = frozenset({"name", "index"})
 
 
 class _BenchmarkResolveInputs(NamedTuple):
@@ -294,6 +295,106 @@ def parse_scenario_indexes(
     ]
     _check_scenario_index_name_uniqueness(scenario_name, indexes)
     return indexes
+
+
+def _parse_scenario_index_route(
+    scenario_name: str,
+    position: int,
+    value: object,
+) -> IndexRoute:
+    """Validate and copy one package route from a benchmark scenario."""
+    if not isinstance(value, dict):
+        msg = (
+            f"{scenario_name}: index_routes[{position}] must be a table, "
+            f"got {type(value).__name__}"
+        )
+        raise TypeError(msg)
+
+    unknown = sorted(set(value) - _INDEX_ROUTE_KEYS)
+    if unknown:
+        msg = (
+            f"{scenario_name}: unknown index_routes[{position}] keys: {unknown!r}; "
+            f"expected {sorted(_INDEX_ROUTE_KEYS)!r}"
+        )
+        raise ValueError(msg)
+    if "name" not in value:
+        msg = f"{scenario_name}: index_routes[{position}] missing required key 'name'"
+        raise ValueError(msg)
+    if "index" not in value:
+        msg = f"{scenario_name}: index_routes[{position}] missing required key 'index'"
+        raise ValueError(msg)
+
+    name = value["name"]
+    index = value["index"]
+    if not isinstance(name, str):
+        msg = (
+            f"{scenario_name}: index_routes[{position}].name must be a string, "
+            f"got {type(name).__name__}"
+        )
+        raise TypeError(msg)
+    if not isinstance(index, str):
+        msg = (
+            f"{scenario_name}: index_routes[{position}].index must be a string, "
+            f"got {type(index).__name__}"
+        )
+        raise TypeError(msg)
+
+    try:
+        canonicalize_name(name, validate=True)
+    except InvalidName as exc:
+        msg = (
+            f"{scenario_name}: index_routes[{position}].name must be a valid "
+            f"distribution name, got {name!r}"
+        )
+        raise ValueError(msg) from exc
+    return IndexRoute(name=name, index=index)
+
+
+def _check_scenario_index_route_relationships(
+    scenario_name: str,
+    routes: Sequence[IndexRoute],
+    indexes: Sequence[IndexConfig],
+) -> None:
+    """Reject duplicate package routes and references to undeclared indexes."""
+    seen: set[str] = set()
+    for route in routes:
+        name = canonicalize_name(route.name, validate=True)
+        if name in seen:
+            msg = f"{scenario_name}: duplicate index route for {name!r}"
+            raise ValueError(msg)
+        seen.add(name)
+
+    declared_indexes = {index.name for index in indexes}
+    for route in routes:
+        if route.index not in declared_indexes:
+            msg = (
+                f"{scenario_name}: index route for {route.name!r} names undeclared "
+                f"index {route.index!r}; declared indexes are "
+                f"{sorted(declared_indexes)!r}"
+            )
+            raise ValueError(msg)
+
+
+def parse_scenario_index_routes(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+    indexes: Sequence[IndexConfig],
+) -> list[IndexRoute]:
+    """Validate and copy the package routes declared by a benchmark scenario."""
+    raw = scenario.get("index_routes", [])
+    if not isinstance(raw, list):
+        msg = (
+            f"{scenario_name}: index_routes must be an array of tables, "
+            f"got {type(raw).__name__}"
+        )
+        raise TypeError(msg)
+
+    routes = [
+        _parse_scenario_index_route(scenario_name, position, entry)
+        for position, entry in enumerate(raw)
+    ]
+    _check_scenario_index_route_relationships(scenario_name, routes, indexes)
+    return routes
 
 
 def benchmark_index_settings(
