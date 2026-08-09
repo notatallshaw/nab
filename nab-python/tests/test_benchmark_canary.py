@@ -19,6 +19,8 @@ from nab_python._vendor.packaging.version import Version
 from nab_python.target import ResolveTarget
 
 _CANARY = Path(__file__).resolve().parents[1] / "benchmarks" / "canary.py"
+_CLEAN_SOURCE = {"commit": "a" * 40, "dirty": False, "diff_hash": None}
+_DIRTY_SOURCE = {"commit": "a" * 40, "dirty": True, "diff_hash": "b" * 64}
 
 
 def _harness() -> ModuleType:
@@ -38,6 +40,22 @@ def _harness() -> ModuleType:
 def _result_contract(module: ModuleType) -> ModuleType:
     """Return the canary-result module imported by the benchmark harness."""
     return sys.modules[module.build_canary_artifacts.__module__]
+
+
+def _patch_main_selection(
+    module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    results_dir: Path,
+    *specs: str,
+) -> None:
+    """Select unsupported fixtures for a canary ``main`` test."""
+    monkeypatch.setattr(module, "RESULTS_DIR", results_dir)
+    scenario = {"unsupported_reason": "test fixture"}
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+    argv = ["canary.py", "--commit", "test"]
+    for spec in specs:
+        argv.extend(("--scenario", spec))
+    monkeypatch.setattr(sys, "argv", argv)
 
 
 def _run_result(
@@ -606,7 +624,7 @@ def test_canary_main_records_contract_for_skipped_case(
 ) -> None:
     module = _harness()
     monkeypatch.setattr(module, "RESULTS_DIR", tmp_path)
-    source = {"commit": "source-sha", "dirty": False, "diff_hash": None}
+    source = dict(_CLEAN_SOURCE)
     monkeypatch.setattr(module, "get_git_source_state", lambda: source)
     scenario = {"unsupported_reason": "test fixture"}
     input_hash = module.scenario_input_hash("quick:requests", scenario)
@@ -658,7 +676,7 @@ def test_canary_main_preserves_v2_input_identity_and_effective_settings(
 ) -> None:
     module = _harness()
     monkeypatch.setattr(module, "RESULTS_DIR", tmp_path)
-    source = {"commit": "source-sha", "dirty": False, "diff_hash": None}
+    source = dict(_CLEAN_SOURCE)
     monkeypatch.setattr(module, "get_git_source_state", lambda: source)
     scenario = {"python_version": "3.11", "requirements": ["demo"]}
     settings = {"resolution": "lowest", "target": "test-host"}
@@ -754,6 +772,171 @@ def test_canary_main_preserves_v2_input_identity_and_effective_settings(
         expected_input_hash, settings
     )
     assert pins_record["execution_hash"] == record["execution_hash"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [_CLEAN_SOURCE, _DIRTY_SOURCE],
+    ids=["clean", "hash-identified-dirty"],
+)
+def test_canary_main_publishes_only_after_two_matching_source_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: dict[str, object],
+) -> None:
+    module = _harness()
+    _patch_main_selection(module, monkeypatch, tmp_path, "quick:example")
+    reads: list[dict[str, object]] = []
+
+    def get_source() -> dict[str, object]:
+        snapshot = dict(source)
+        reads.append(snapshot)
+        return snapshot
+
+    monkeypatch.setattr(module, "get_git_source_state", get_source)
+    module.main()
+
+    assert reads == [source, source]
+    result_path = next((tmp_path / "test").glob("canary_*.json"))
+    result = json.loads(result_path.read_text())
+    assert result["example"]["source"] == source
+
+
+@pytest.mark.parametrize(
+    ("source_start", "source_end", "message"),
+    [
+        (
+            _CLEAN_SOURCE,
+            {"commit": "a" * 40, "dirty": True, "diff_hash": "b" * 64},
+            "canary source changed during the run",
+        ),
+        (
+            _CLEAN_SOURCE,
+            {"commit": "c" * 40, "dirty": False, "diff_hash": None},
+            "canary source changed during the run",
+        ),
+        (
+            {"commit": None, "dirty": True, "diff_hash": None},
+            _CLEAN_SOURCE,
+            "canary source identity is unavailable",
+        ),
+        (
+            _CLEAN_SOURCE,
+            {"commit": "a" * 40, "dirty": True, "diff_hash": None},
+            "canary source identity is unavailable",
+        ),
+        (
+            {"commit": None, "dirty": True, "diff_hash": None},
+            {"commit": None, "dirty": True, "diff_hash": None},
+            "canary source identity is unavailable",
+        ),
+        (
+            {"commit": "unknown", "dirty": False, "diff_hash": None},
+            _CLEAN_SOURCE,
+            "canary source identity is unavailable",
+        ),
+        (
+            {"commit": "a" * 40, "dirty": False},
+            _CLEAN_SOURCE,
+            "canary source identity is unavailable",
+        ),
+        (
+            _CLEAN_SOURCE,
+            {"commit": "a" * 40, "dirty": True, "diff_hash": "not-a-hash"},
+            "canary source identity is unavailable",
+        ),
+    ],
+    ids=[
+        "clean-to-dirty",
+        "commit-changed",
+        "start-missing-commit",
+        "end-missing-diff-hash",
+        "matching-unavailable-sentinels",
+        "unknown-commit",
+        "incomplete-start",
+        "invalid-diff-hash",
+    ],
+)
+def test_canary_main_rejects_unstable_or_unavailable_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    source_start: dict[str, object],
+    source_end: dict[str, object],
+    message: str,
+) -> None:
+    module = _harness()
+    _patch_main_selection(module, monkeypatch, tmp_path, "quick:example")
+    snapshots = iter((source_start, source_end))
+    reads: list[dict[str, object]] = []
+
+    def get_source() -> dict[str, object]:
+        snapshot = dict(next(snapshots))
+        reads.append(snapshot)
+        return snapshot
+
+    def unexpected_artifact_call(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("source rejection reached artifact publication")
+
+    monkeypatch.setattr(module, "get_git_source_state", get_source)
+    monkeypatch.setattr(module, "build_canary_artifacts", unexpected_artifact_call)
+    monkeypatch.setattr(module, "write_canary_artifacts", unexpected_artifact_call)
+    with pytest.raises(SystemExit) as exc_info:
+        module.main()
+
+    assert exc_info.value.code == 1
+    assert reads == [source_start, source_end]
+    assert message in capsys.readouterr().out
+    assert not list(tmp_path.rglob("canary_*.json"))
+    assert not list(tmp_path.rglob("canary-pins_*.json"))
+    assert not list(tmp_path.rglob(".canary-artifacts-*"))
+
+
+def test_canary_main_reads_end_source_after_the_last_scenario(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    _patch_main_selection(
+        module,
+        monkeypatch,
+        tmp_path,
+        "quick:first",
+        "quick:second",
+    )
+    events: list[str] = []
+    source_reads = 0
+
+    def get_source() -> dict[str, object]:
+        nonlocal source_reads
+        source_reads += 1
+        events.append(f"source:{source_reads}")
+        return dict(_CLEAN_SOURCE)
+
+    def median_run(
+        _scenario: dict,
+        _runs: int,
+        *,
+        scenario_name: str,
+        resolution_override: object,
+        host: object,
+    ) -> tuple[list[dict], dict]:
+        del resolution_override, host
+        events.append(f"run:{scenario_name}")
+        return [], {"skipped": "test fixture"}
+
+    real_build = module.build_canary_artifacts
+
+    def build_artifacts(*args: object, **kwargs: object) -> object:
+        events.append("build")
+        return real_build(*args, **kwargs)
+
+    monkeypatch.setattr(module, "get_git_source_state", get_source)
+    monkeypatch.setattr(module, "median_run", median_run)
+    monkeypatch.setattr(module, "build_canary_artifacts", build_artifacts)
+    module.main()
+
+    assert events == ["source:1", "run:first", "run:second", "source:2", "build"]
 
 
 def test_canary_input_hash_captures_executable_definition() -> None:

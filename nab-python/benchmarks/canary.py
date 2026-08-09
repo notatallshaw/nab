@@ -79,6 +79,8 @@ CACHE_DIR = BENCHMARKS_DIR / "cache"
 CANARY_MANIFEST = BENCHMARKS_DIR / "canary.toml"
 CANARY_MANIFEST_SCHEMA = 1
 _LEGACY_STRATEGY_SUFFIXES = ("-lowest", "-lowest-direct")
+_LOWER_HEX = frozenset("0123456789abcdef")
+_SOURCE_FIELDS = frozenset({"commit", "dirty", "diff_hash"})
 DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
     IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
 )
@@ -208,6 +210,30 @@ def get_git_source_state() -> dict[str, str | bool | None]:
         else None
     )
     return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
+
+
+def _source_identity_is_usable(source: object) -> bool:
+    """Return whether a source snapshot can identify this benchmark run."""
+    if not isinstance(source, dict) or set(source) != _SOURCE_FIELDS:
+        return False
+
+    commit = source["commit"]
+    dirty = source["dirty"]
+    diff_hash = source["diff_hash"]
+    if (
+        not isinstance(commit, str)
+        or len(commit) not in {40, 64}
+        or any(character not in _LOWER_HEX for character in commit)
+        or type(dirty) is not bool
+    ):
+        return False
+    if dirty:
+        return (
+            isinstance(diff_hash, str)
+            and len(diff_hash) == 64
+            and all(character in _LOWER_HEX for character in diff_hash)
+        )
+    return diff_hash is None
 
 
 def _target_manifest(target: ResolveTarget) -> dict[str, object]:
@@ -952,8 +978,8 @@ def main() -> None:
     parser.add_argument("--scenarios-list", help="File with one scenario per line")
     args = parser.parse_args()
 
-    source = get_git_source_state()
-    commit = args.commit or str(source["commit"] or "no-git")
+    source_start = get_git_source_state()
+    commit = args.commit or str(source_start["commit"] or "no-git")
     host = BenchmarkHost.current(WALL_TIMEOUT_S)
 
     cases_to_run: list[CanaryCase]
@@ -1016,7 +1042,7 @@ def main() -> None:
         summary_all[label] = {
             "contract_version": CANARY_CONTRACT_VERSION,
             "scenario": identity.scenario,
-            "source": source,
+            "source": source_start,
             "input_hash": input_hash,
             "execution_hash": scenario_execution_hash(
                 input_hash,
@@ -1043,6 +1069,17 @@ def main() -> None:
         )
 
     paths = _artifact_paths(parser, commit)
+    source_end = get_git_source_state()
+    if not (
+        _source_identity_is_usable(source_start)
+        and _source_identity_is_usable(source_end)
+    ):
+        print("Error: canary source identity is unavailable")
+        raise SystemExit(1)
+    if source_end != source_start:
+        print("Error: canary source changed during the run")
+        raise SystemExit(1)
+
     artifacts = build_canary_artifacts(
         summary_all,
         paths.result.name,
