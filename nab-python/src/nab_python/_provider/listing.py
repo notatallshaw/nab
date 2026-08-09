@@ -20,13 +20,13 @@ from ..metadata import intern_version as _intern_version
 from .metadata_resolver import pick_dist, pick_dist_for_metadata
 
 if TYPE_CHECKING:
-    import threading
     from collections.abc import Mapping, Sequence
     from datetime import datetime
 
     from nab_resolver.types import RangeProtocol
 
     from .._vendor.packaging.ranges import VersionRange
+    from ..fetch_port import Waitable
     from ..provider import DistFile, DistPolicy, Provider
     from ..tags import TagSet
 
@@ -731,7 +731,7 @@ def prefetch_batch(
     package: str,
     versions: list[Version],
     wheel_by_version_map: dict[Version, DistFile],
-) -> list[tuple[Version, str, str, threading.Event]]:
+) -> list[tuple[Version, str, str, Waitable]]:
     """Submit metadata fetches for a batch of candidates.
 
     Uses request_metadata_batch so all requests reach the fetcher
@@ -769,7 +769,7 @@ def prefetch_batch(
 def await_metadata_batch(
     provider: Provider,
     package: str,
-    submitted: list[tuple[Version, str, str, threading.Event]],
+    submitted: list[tuple[Version, str, str, Waitable]],
 ) -> None:
     """Wait for all submitted metadata to arrive, then parse into cache."""
     # Imported lazily: provider.py imports this module.

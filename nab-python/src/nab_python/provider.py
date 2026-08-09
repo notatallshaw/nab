@@ -1,9 +1,8 @@
 """Index-backed provider for nab-resolver.
 
-Fetches package metadata from package indexes on demand using
-nab-index, converting PEP 440/508 types into nab-resolver Range
-types.  A FetchCoordinator overlaps index I/O on a background
-asyncio loop.
+Fetches package metadata on demand through a
+:class:`~nab_python.fetch_port.FetchPort`, converting PEP 440/508
+types into nab-resolver Range types.
 """
 
 from __future__ import annotations
@@ -46,7 +45,6 @@ from .metadata import WheelMetadata
 from .target import host_environment
 
 if TYPE_CHECKING:
-    import threading
     from collections.abc import Callable, Mapping, Sequence
     from datetime import datetime
     from pathlib import Path
@@ -57,7 +55,7 @@ if TYPE_CHECKING:
     from ._vendor.packaging.requirements import Requirement
     from ._vendor.packaging.version import Version
     from .config import IndexOverride, NabProjectConfig, PackageOverride
-    from .fetch import FetchCoordinator
+    from .fetch_port import FetchPort, Waitable
     from .tags import TagSet
     from .target import ResolveTarget
 
@@ -555,10 +553,9 @@ def _requirement_over_listing(
 class Provider:
     """Lazy index-backed provider for nab-resolver.
 
-    Fetches version lists and .metadata from PyPI via nab-index.
-    A FetchCoordinator submits listing fetches to a background
-    asyncio loop, so transitive deps are fetched concurrently with
-    resolution.
+    Fetches version lists and metadata through ``coordinator``, the
+    port the host supplies; nab's own implementation submits them to a
+    background asyncio loop, so transitive deps land during resolution.
 
     ``target`` is the environment the resolve is for: its markers gate
     every dependency, its Python filters candidates by Requires-Python,
@@ -640,7 +637,7 @@ class Provider:
 
     def __init__(  # noqa: PLR0913, PLR0915, PLR0917 - resolver config is wide; bundling all flags into one bag is worse for callers
         self,
-        coordinator: FetchCoordinator,
+        coordinator: FetchPort,
         target: ResolveTarget | None = None,
         root_requirements: dict[str, VersionRange] | None = None,
         uploaded_prior_to: datetime | None = None,
@@ -1562,7 +1559,7 @@ class Provider:
 
         starts_iter = iter(range(0, len(remaining), self.PREFETCH_BATCH))
         in_flight: deque[
-            tuple[list[Version], list[tuple[Version, str, str, threading.Event]]]
+            tuple[list[Version], list[tuple[Version, str, str, Waitable]]]
         ] = deque()
         for _ in range(self.PREFETCH_DEPTH):
             start = next(starts_iter, None)
@@ -1900,14 +1897,14 @@ class Provider:
         package: str,
         versions: list[Version],
         wheel_by_version: dict[Version, DistFile],
-    ) -> list[tuple[Version, str, str, threading.Event]]:
+    ) -> list[tuple[Version, str, str, Waitable]]:
         """See :func:`nab_python._provider.listing.prefetch_batch`."""
         return _listing.prefetch_batch(self, package, versions, wheel_by_version)
 
     def _await_metadata_batch(
         self,
         package: str,
-        submitted: list[tuple[Version, str, str, threading.Event]],
+        submitted: list[tuple[Version, str, str, Waitable]],
     ) -> None:
         """See :func:`nab_python._provider.listing.await_metadata_batch`."""
         _listing.await_metadata_batch(self, package, submitted)
