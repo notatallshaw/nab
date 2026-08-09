@@ -44,7 +44,7 @@ def _settings() -> dict[str, object]:
         "dist_policy": "wheel-or-sdist",
         "build_policy": "never",
         "trust_unverified_sdist_deps_default": True,
-        "max_iterations": 50_000,
+        "max_iterations": 200_000,
         "wall_timeout_seconds": 120,
         "host": {
             "python": "3.12.1 (benchmark fixture)",
@@ -384,7 +384,7 @@ def test_comparison_rejects_manifest_identity_differences(tmp_path: Path) -> Non
     second_dir = _write_run(module, tmp_path, "second", source_commit="b" * 40)
     _rewrite_json(
         second_dir / module.MANIFEST_FILENAME,
-        lambda data: data["settings"].update(wall_timeout_seconds=None),
+        lambda data: data["settings"].update(max_iterations=100_000),
     )
     manifest = json.loads((second_dir / module.MANIFEST_FILENAME).read_text())
     for key in manifest["completed_execution_keys"]:

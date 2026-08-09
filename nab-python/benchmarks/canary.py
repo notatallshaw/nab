@@ -65,7 +65,7 @@ from nab_python.provider import (
     VcsPolicy,
     split_extra,
 )
-from nab_resolver.resolver import Resolver
+from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
 SCENARIOS_DIR = BENCHMARKS_DIR / "scenarios"
@@ -116,7 +116,6 @@ class CanaryPreparation(NamedTuple):
 
 
 WALL_TIMEOUT_S = 60
-MAX_ITERATIONS = 50_000
 # Preserve contract v2 for comparisons with existing canary results.
 CANARY_CONTRACT_VERSION = 2
 
@@ -354,7 +353,6 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
             provider,
             range_type=VersionRange,
             root_version="0",
-            max_iterations=MAX_ITERATIONS,
         )
 
         start = time.monotonic()
@@ -380,7 +378,7 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
                 "dist_policy": DistPolicy.WHEEL_OR_SDIST.value,
                 "build_policy": BuildPolicy.NEVER.value,
                 "trust_unverified_sdist_deps": trust_unverified_sdist_deps,
-                "max_iterations": MAX_ITERATIONS,
+                "max_iterations": DEFAULT_MAX_ITERATIONS,
                 "wall_timeout_seconds": host.wall_timeout_seconds,
                 "runtime": _runtime_manifest(host),
                 "direct_packages": sorted(direct_packages),

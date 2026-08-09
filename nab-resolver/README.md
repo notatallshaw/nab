@@ -22,7 +22,8 @@ internal and may be renamed or relocated in any release.
 ```text
 nab_resolver.errors     ResolutionError
 nab_resolver.ranges     Range
-nab_resolver.resolver   BaseProvider, Resolver, ResolverObserver, ResolverProvider
+nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
+                        ResolverObserver, ResolverProvider
 nab_resolver.root       ROOT
 nab_resolver.types      Incompatibility, IncompatibilityCause,
                         RangeProtocol, RootRequirement, Term

@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from typing_extensions import TypeIs
 
 __all__ = [
+    "DEFAULT_MAX_ITERATIONS",
     "BaseProvider",
     "Incompatibility",
     "IncompatibilityCause",
@@ -60,6 +61,8 @@ __all__ = [
     "SetRelation",
     "Term",
 ]
+
+DEFAULT_MAX_ITERATIONS = 200_000
 
 
 class ResolverProvider(Protocol[PackageType, VersionType]):
@@ -390,7 +393,7 @@ class Resolver(Generic[PackageType, VersionType]):
         self,
         provider: ResolverProvider[PackageType, VersionType],
         observer: ResolverObserver[PackageType, VersionType] | None = None,
-        max_iterations: int = 200_000,
+        max_iterations: int = DEFAULT_MAX_ITERATIONS,
         range_type: type[RangeProtocol[Any]] = Range,
         root_version: Any = 1,
     ) -> None:

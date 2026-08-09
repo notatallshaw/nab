@@ -435,6 +435,7 @@ def test_canary_configures_lowest_direct_roots(
 ) -> None:
     module = _harness()
     seen: dict[str, object] = {}
+    resolver_kwargs: dict[str, object] = {}
 
     class FakeCoordinator:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -456,7 +457,8 @@ def test_canary_configures_lowest_direct_roots(
             )
 
     class FakeResolver:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            resolver_kwargs.update(kwargs)
             self.stats = SimpleNamespace(
                 decisions=0,
                 conflicts=0,
@@ -493,7 +495,7 @@ def test_canary_configures_lowest_direct_roots(
     assert settings["dist_policy"] == "wheel-or-sdist"
     assert settings["build_policy"] == "never"
     assert settings["trust_unverified_sdist_deps"] is False
-    assert settings["max_iterations"] == module.MAX_ITERATIONS
+    assert settings["max_iterations"] == module.DEFAULT_MAX_ITERATIONS
     assert settings["wall_timeout_seconds"] is None
     assert settings["runtime"]["python"] == sys.version
     assert settings["runtime"]["implementation"] == sys.implementation.name
@@ -506,6 +508,10 @@ def test_canary_configures_lowest_direct_roots(
     assert seen["resolution_strategy"] is module.ResolutionStrategy.LOWEST_DIRECT
     assert seen["direct_packages"] == frozenset({"root", "other"})
     assert seen["target"] is admission.target
+    assert resolver_kwargs == {
+        "range_type": module.VersionRange,
+        "root_version": "0",
+    }
 
 
 def test_canary_main_records_v2_contract(
