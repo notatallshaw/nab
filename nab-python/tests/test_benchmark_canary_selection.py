@@ -32,8 +32,8 @@ _EXPECTED_V2_INPUT_HASHES = {
     "forums-lowest-direct:so-dbt-core-snowflake-79744735": "2f409a250216abc0c5f89f74bf752db4c2b6b1564264d2df2d22dbb8f3a8d541",
     "uv-lowest:uv-issue-16601-xinference": "a6aa7fbec8e1291349a311745800095e4ed52c02805180da8517299860fb5476",
     "uv-lowest:uv-issue-16601-xinference-fixed": "109bb4cd7dd756a96f5b04edd007f3312fe5853c442ea7ee1b64ae6ea234903f",
-    "ai-stack:rag-chroma-langchain": "7dfda04a2fb704451afd48ee66d3fb617955535138f663dc7926ce397a304722",
-    "ai-stack:streamlit-langchain": "906384169268c46027f15ddead1f021edbc2f20589bd165ebf5ddc1e521fe338",
+    "ai-stack:rag-chroma-langchain": "0aeb86e88d6f7410ef858b51c4104d1f5c79349b9c25a1b71e7b59e053b642fe",
+    "ai-stack:streamlit-langchain": "145f34978276b96146e589c080ece06229d3b4817e619f2dfbf7ae95b247f784",
 }
 
 
