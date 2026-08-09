@@ -726,6 +726,50 @@ class TestRunBuildBackend:
         ):
             run_build_backend(tmp_path, config=config)
 
+    def test_unencodable_build_requirement_wrapped(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A build requirement with no UTF-8 encoding is wrapped.
+
+        A backend that derives a requirement from a filesystem name passes
+        on what ``os.fsdecode`` gave it, so a name that is not valid UTF-8
+        comes back as a lone surrogate.
+        """
+        monkeypatch.setattr("venv.EnvBuilder", _StubEnvBuilder)
+        monkeypatch.setattr(
+            "nab_python._build.env._venv_scheme_paths",
+            lambda _python: {"purelib": str(tmp_path)},
+        )
+
+        (tmp_path / "pyproject.toml").write_text(
+            '[build-system]\nrequires = []\nbuild-backend = "setuptools.build_meta"\n',
+            encoding="utf-8",
+        )
+
+        project = MagicMock()
+        project.get_requires_for_build.return_value = [
+            "setuptools",
+            "pkg @ file:///vendor/p\udce9kg-1.0-py3-none-any.whl",
+        ]
+
+        with (
+            patch(
+                "nab_python._build.runner.build.ProjectBuilder.from_isolated_env",
+                return_value=project,
+            ),
+            pytest.raises(BuildBackendError) as excinfo,
+        ):
+            run_build_backend(tmp_path, config=config)
+
+        message = str(excinfo.value)
+        assert "cannot be encoded as UTF-8" in message
+
+        # The message carries the repr, so the surrogate appears escaped.
+        assert r"pkg @ file:///vendor/p\udce9kg-1.0-py3-none-any.whl" in message
+
 
 class TestShouldSkipPrepare:
     """Unit tests for the hatchling+dynamic-deps detection predicate."""
