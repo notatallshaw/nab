@@ -20,6 +20,7 @@ multi-index router can treat local and remote indexes uniformly.
 
 from __future__ import annotations
 
+import errno
 import lzma
 import re
 import stat
@@ -179,17 +180,30 @@ def _read_served_bytes(path: Path, kind: str) -> bytes:
         raise UnreadableLocalIndexError(msg) from exc
 
 
-def _stat_mode(path: Path) -> int | None:
-    """Return ``path``'s ``st_mode``, or ``None`` when it does not exist.
+# The errnos pathlib itself treats as "no such file".
+_ABSENT_ERRNOS = frozenset({errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP})
 
-    Any other failure raises. From Python 3.14 ``Path.exists`` and
-    ``Path.is_file`` swallow every :class:`OSError`, so an unreadable path
-    would read as absent.
+# Windows: drive not ready, invalid name, symlink loop.
+_ABSENT_WINERRORS = frozenset({21, 123, 1921})
+
+
+def _stat_mode(path: Path) -> int | None:
+    """Return ``path``'s ``st_mode``, or ``None`` when nothing is there.
+
+    Only an error meaning the path is absent gives ``None``, so a broken entry
+    skips instead of failing the listing it sits in. Anything else raises: from
+    Python 3.14 ``Path.exists`` and ``Path.is_file`` swallow every
+    :class:`OSError`, so an unreadable path would read as absent.
     """
     try:
         return path.stat().st_mode
-    except (FileNotFoundError, NotADirectoryError):
-        return None
+    except OSError as exc:
+        if (
+            exc.errno in _ABSENT_ERRNOS
+            or getattr(exc, "winerror", None) in _ABSENT_WINERRORS
+        ):
+            return None
+        raise
 
 
 def _is_file(path: Path) -> bool:
@@ -332,7 +346,7 @@ def _scan_flat_wheelhouse(
     unreadable = False
 
     for entry in sorted(root.iterdir()):
-        if not entry.is_file():
+        if not _is_file(entry):
             continue
         if _FLAT_EXTS.search(entry.name) is None:
             unreadable = unreadable or _is_zip_sdist(entry.name, canonical)

@@ -43,19 +43,46 @@ def run(coro: Coroutine[Any, Any, _T]) -> _T:
     return asyncio.run(coro)
 
 
+def _fail_path_call(
+    monkeypatch: pytest.MonkeyPatch, method: str, target: Path, error: OSError
+) -> None:
+    """Make one ``Path`` call on ``target`` raise ``error``."""
+    original = getattr(Path, method)
+
+    def failing(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == target:
+            raise error
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, method, failing)
+
+
 def _deny_access(monkeypatch: pytest.MonkeyPatch, method: str, target: Path) -> None:
     """Make one ``Path`` call on ``target`` fail with EACCES.
 
     A real chmod would not do: root ignores the mode bits and Windows has none.
     """
-    original = getattr(Path, method)
+    denied = PermissionError(errno.EACCES, "Permission denied", str(target))
+    _fail_path_call(monkeypatch, method, target, denied)
 
-    def denied(self: Path, *args: Any, **kwargs: Any) -> Any:
-        if self == target:
-            raise PermissionError(errno.EACCES, "Permission denied", str(self))
-        return original(self, *args, **kwargs)
 
-    monkeypatch.setattr(Path, method, denied)
+def _swallow_is_file_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give ``Path.is_file`` Python 3.14's error handling on every version.
+
+    From 3.14 it answers False for any :class:`OSError`, so an entry the
+    process cannot stat reads as "not a file". The scan does not call it, so
+    the patch only bites if someone puts ``entry.is_file()`` back; that is what
+    keeps the tests below able to fail on an older interpreter.
+    """
+    original = Path.is_file
+
+    def is_file(self: Path, *args: Any, **kwargs: Any) -> bool:
+        try:
+            return original(self, *args, **kwargs)
+        except OSError:
+            return False
+
+    monkeypatch.setattr(Path, "is_file", is_file)
 
 
 def _write_wheel(
@@ -470,6 +497,76 @@ class TestFlatWheelhouse:
         assert isinstance(caught.value, IndexAccessError)
         assert not isinstance(caught.value, OSError)
         assert "Permission denied" in str(caught.value)
+
+    def test_unreadable_entry_raises_index_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A release the process cannot stat must fail the listing rather than
+        # drop out of it, which would read as "1.0 is all there is".
+        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        denied = tmp_path / "foo-2.0-py3-none-any.whl"
+        denied.write_bytes(b"")
+
+        _swallow_is_file_errors(monkeypatch)
+        _deny_access(monkeypatch, "stat", denied)
+
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(UnreadableLocalIndexError) as caught:
+            run(client.get_files("foo"))
+
+        assert isinstance(caught.value, IndexAccessError)
+        assert not isinstance(caught.value, OSError)
+        assert "Permission denied" in str(caught.value)
+
+    def test_unreadable_entry_of_another_package_raises_index_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A wheelhouse serves every package from one directory, so an entry
+        # naming none of them still fails the listing.
+        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        denied = tmp_path / "bar-2.0-py3-none-any.whl"
+        denied.write_bytes(b"")
+
+        _swallow_is_file_errors(monkeypatch)
+        _deny_access(monkeypatch, "stat", denied)
+
+        client = LocalIndexClient(tmp_path.as_uri())
+        with pytest.raises(UnreadableLocalIndexError):
+            run(client.get_files("foo"))
+
+    def test_symlink_cycle_entry_is_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A junk entry that stats as a symlink loop is not a wheelhouse fault.
+
+        Faked rather than made with :func:`os.symlink`, which needs a
+        privilege the Windows CI runner does not have.
+        """
+        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        cycle = tmp_path / "cycle-link"
+        cycle.write_bytes(b"")
+
+        loop = OSError(errno.ELOOP, "Too many levels of symbolic links", str(cycle))
+        _fail_path_call(monkeypatch, "stat", cycle, loop)
+
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert [f.version for f in run(client.get_files("foo"))] == ["1.0"]
+
+    def test_entry_gone_since_listing_is_skipped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A name the directory no longer holds drops out of the listing."""
+        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        original = Path.iterdir
+
+        def iterdir(self: Path) -> Iterator[Path]:
+            yield from original(self)
+            yield self / "foo-2.0-py3-none-any.whl"
+
+        monkeypatch.setattr(Path, "iterdir", iterdir)
+
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert [f.version for f in run(client.get_files("foo"))] == ["1.0"]
 
     def test_listing_order_independent_of_readdir_order(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
