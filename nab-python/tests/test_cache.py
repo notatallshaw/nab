@@ -494,6 +494,31 @@ class TestUnwritableRoot:
         stored = replace(old_policy, body_digest=old_digest)
         assert cache.get_simple("foo") == (b"OLD-LISTING", stored)
 
+    def test_dropped_policy_write_hands_back_no_digest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A body that lands without its sidecar binds no parsed blob.
+
+        The caller keys its parsed blob on the returned digest, so a stored
+        body whose policy never landed has to come back as no digest at all.
+        """
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+
+        def fail_policy(path: Path, data: bytes) -> None:
+            if path.suffix == ".policy":
+                raise OSError(28, "No space left on device")
+            atomic_write(path, data)
+
+        monkeypatch.setattr("nab_index.cache.atomic_write", fail_policy)
+        digest = cache.put_simple(
+            "foo",
+            b"LISTING",
+            CachePolicy(fetched_at=int(time.time()), max_age=600, etag="E1"),
+        )
+
+        assert digest is None
+        assert cache.get_simple("foo") is None
+
     def test_bad_key_still_raises(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
         with pytest.raises(ValueError, match="not a single path segment"):

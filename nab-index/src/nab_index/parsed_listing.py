@@ -84,6 +84,9 @@ _SdistRow = tuple[
     tuple[tuple[str, str], ...],
     "int | None",
 ]
+# The body's three columns as marshal hands them back, before any of it is
+# trusted; the rows reach their field types in the per-record decoders.
+_Body = tuple[list[tuple[object, ...]], list[tuple[object, ...]], list[object]]
 
 
 def encode(files: list[WheelFile | SdistFile], body_digest: str) -> bytes:
@@ -208,9 +211,7 @@ def corruption_reason(blob: bytes) -> str | None:
     return None
 
 
-def _decode_body(
-    body: tuple[list, list, list],
-) -> list[WheelFile | SdistFile]:
+def _decode_body(body: _Body) -> list[WheelFile | SdistFile]:
     wheel_rows, sdist_rows, order = body
     wheels = iter(wheel_rows)
     sdists = iter(sdist_rows)
