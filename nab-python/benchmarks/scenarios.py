@@ -37,8 +37,8 @@ from benchmark_config import (
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
     parse_scenario_requirement_strings,
+    parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
-    parse_vcs_require_pin,
 )
 from benchmark_datetime import parse_datetime
 from benchmark_host import (
@@ -583,7 +583,7 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
         parse_requires_matching_host(row.name, row.definition, marker_environment)
         parse_trust_unverified_sdist_deps(row.logical_key, row.definition)
         parse_scenario_requirement_strings(row.logical_key, row.definition)
-        parse_vcs_require_pin(row.logical_key, row.definition)
+        parse_scenario_vcs_config(row.logical_key, row.definition)
         build_policy_overrides = parse_build_packages(row.name, row.definition)
         if "unsupported_reason" in row.definition:
             continue
@@ -1410,7 +1410,7 @@ def resolve_scenario(
         }
 
 
-def _expected_input(  # noqa: PLR0913, PLR0917 - assembling the JSON dump key
+def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
     commit: str,
     python_version: str,
     requirement_strings: list[str],
@@ -1418,14 +1418,13 @@ def _expected_input(  # noqa: PLR0913, PLR0917 - assembling the JSON dump key
     datetime_str: str | None,
     project_name: str | None,
     project_extras: list[str],
+    *,
     vcs_config: VcsConfig,
-    vcs_policy_str: str,
     marker_environment: dict[str, str],
     indexes: list[IndexConfig],
     index_routes: list[IndexRoute],
     build_packages: list[str] | None = None,
     resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
-    *,
     trust_unverified_sdist_deps: bool = False,
 ) -> dict:
     """Build the JSON-serialisable ``input`` block describing the scenario."""
@@ -1442,7 +1441,7 @@ def _expected_input(  # noqa: PLR0913, PLR0917 - assembling the JSON dump key
         expected_input["project_name"] = project_name
         expected_input["project_extras"] = project_extras
     if vcs_config.policy is not VcsPolicy.BLOCK:
-        expected_input["vcs_policy"] = vcs_policy_str
+        expected_input["vcs_policy"] = vcs_config.policy.value
         expected_input["vcs_allowed_schemes"] = sorted(vcs_config.allowed_schemes)
         expected_input["vcs_allowed_repos"] = list(vcs_config.allowed_repos)
         expected_input["vcs_require_pin"] = vcs_config.require_pin
@@ -1613,7 +1612,7 @@ def prepare_standard_execution(
         scenario,
     )
     requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
-    vcs_require_pin = parse_vcs_require_pin(scenario_name, scenario)
+    vcs_config = parse_scenario_vcs_config(scenario_name, scenario)
     python_version: str = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -1637,13 +1636,6 @@ def prepare_standard_execution(
         requirement_strings.extend(
             expand_project_extras(project_name, project_extras, optional_dependencies)
         )
-    vcs_policy_str: str = scenario.get("vcs_policy", "block")
-    vcs_config = VcsConfig(
-        policy=VcsPolicy(vcs_policy_str),
-        allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
-        allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
-        require_pin=vcs_require_pin,
-    )
     uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
     config = build_benchmark_config(
         uploaded_prior_to=uploaded_prior_to,
@@ -1663,11 +1655,10 @@ def prepare_standard_execution(
             datetime_str,
             project_name,
             project_extras,
-            vcs_config,
-            vcs_policy_str,
-            marker_environment,
-            indexes,
-            index_routes,
+            vcs_config=vcs_config,
+            marker_environment=marker_environment,
+            indexes=indexes,
+            index_routes=index_routes,
             build_packages=sorted(build_policy_overrides),
             resolution_strategy=execution.strategy,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,

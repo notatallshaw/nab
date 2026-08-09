@@ -15,6 +15,7 @@ from nab_python.provider import (
     Provider,
     ResolutionStrategy,
     VcsConfig,
+    VcsPolicy,
     join_extra,
     split_extra,
 )
@@ -131,6 +132,88 @@ def parse_vcs_require_pin(
         )
         raise TypeError(msg)
     return value
+
+
+def parse_vcs_policy(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+) -> VcsPolicy:
+    """Return the VCS policy declared by a scenario."""
+    value = scenario.get("vcs_policy", VcsPolicy.BLOCK.value)
+    try:
+        return VcsPolicy(value)
+    except (TypeError, ValueError) as exc:
+        valid = sorted(policy.value for policy in VcsPolicy)
+        msg = f"{scenario_name}: vcs_policy must be one of {valid!r}, got {value!r}"
+        raise ValueError(msg) from exc
+
+
+def _scenario_vcs_string_list(
+    scenario_name: str,
+    field: str,
+    value: object,
+) -> list[str]:
+    """Validate and copy one VCS list without interpreting its strings."""
+    if type(value) is not list:
+        msg = f"{scenario_name}: {field} must be a list, got {type(value).__name__}"
+        raise TypeError(msg)
+
+    strings: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            msg = (
+                f"{scenario_name}: {field}[{index}] must be a string, "
+                f"got {type(item).__name__}"
+            )
+            raise TypeError(msg)
+        strings.append(item)
+    return strings
+
+
+def parse_vcs_allowed_schemes(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+) -> frozenset[str]:
+    """Return a scenario's copied VCS scheme allowlist as a set."""
+    return frozenset(
+        _scenario_vcs_string_list(
+            scenario_name,
+            "vcs_allowed_schemes",
+            scenario.get("vcs_allowed_schemes", []),
+        )
+    )
+
+
+def parse_vcs_allowed_repos(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+) -> tuple[str, ...]:
+    """Return a scenario's copied VCS repository allowlist in declaration order."""
+    return tuple(
+        _scenario_vcs_string_list(
+            scenario_name,
+            "vcs_allowed_repos",
+            scenario.get("vcs_allowed_repos", []),
+        )
+    )
+
+
+def parse_scenario_vcs_config(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+) -> VcsConfig:
+    """Build the VCS config declared by a benchmark scenario."""
+    require_pin = parse_vcs_require_pin(scenario_name, scenario)
+    policy = parse_vcs_policy(scenario_name, scenario)
+    allowed_schemes = parse_vcs_allowed_schemes(scenario_name, scenario)
+    allowed_repos = parse_vcs_allowed_repos(scenario_name, scenario)
+
+    return VcsConfig(
+        policy=policy,
+        allowed_schemes=allowed_schemes,
+        allowed_repos=allowed_repos,
+        require_pin=require_pin,
+    )
 
 
 def _package_overrides(

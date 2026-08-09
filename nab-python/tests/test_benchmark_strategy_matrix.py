@@ -8,6 +8,7 @@ import re
 import sys
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
 from operator import setitem
 from pathlib import Path
@@ -1246,6 +1247,143 @@ def test_parse_vcs_require_pin_rejects_other_types(
             "example",
             {"vcs_require_pin": invalid},
         )
+
+
+def test_parse_vcs_policy_normalizes_type_errors() -> None:
+    module = _harness("benchmark_config")
+
+    class InvalidPolicy:
+        """Make Enum lookup fail while comparing a scenario value."""
+
+        def __hash__(self) -> int:
+            return hash("allow")
+
+        def __eq__(self, _other: object) -> bool:
+            raise TypeError("policy values cannot be compared")
+
+        def __repr__(self) -> str:
+            return "<invalid policy>"
+
+    message = (
+        "example: vcs_policy must be one of ['allow', 'block'], got <invalid policy>"
+    )
+    with pytest.raises(ValueError, match=re.escape(message)) as exc_info:
+        module.parse_vcs_policy("example", {"vcs_policy": InvalidPolicy()})
+
+    assert isinstance(exc_info.value.__cause__, TypeError)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_schemes", "expected_repos"),
+    [
+        ({}, frozenset(), ()),
+        (
+            {"vcs_allowed_schemes": [], "vcs_allowed_repos": []},
+            frozenset(),
+            (),
+        ),
+        (
+            {
+                "vcs_allowed_schemes": [
+                    "git+https",
+                    "git+https",
+                    " git+ssh ",
+                    "",
+                ],
+                "vcs_allowed_repos": [
+                    "not a URL",
+                    "not a URL",
+                    " https://example.test/repo ",
+                    "",
+                ],
+            },
+            frozenset({"git+https", " git+ssh ", ""}),
+            (
+                "not a URL",
+                "not a URL",
+                " https://example.test/repo ",
+                "",
+            ),
+        ),
+    ],
+    ids=("missing", "empty", "declared"),
+)
+def test_parse_vcs_allowlists_preserves_declared_values(
+    scenario: dict[str, object],
+    expected_schemes: frozenset[str],
+    expected_repos: tuple[str, ...],
+) -> None:
+    module = _harness("benchmark_config")
+    original = deepcopy(scenario)
+
+    schemes = module.parse_vcs_allowed_schemes("example", scenario)
+    repos = module.parse_vcs_allowed_repos("example", scenario)
+
+    assert schemes == expected_schemes
+    assert repos == expected_repos
+    assert scenario == original
+
+
+@pytest.mark.parametrize(
+    ("parser_name", "field", "invalid", "message"),
+    [
+        (
+            "parse_vcs_allowed_schemes",
+            "vcs_allowed_schemes",
+            {"git+https": False},
+            "example: vcs_allowed_schemes must be a list, got dict",
+        ),
+        (
+            "parse_vcs_allowed_repos",
+            "vcs_allowed_repos",
+            {"https://example.test/repo": False},
+            "example: vcs_allowed_repos must be a list, got dict",
+        ),
+        (
+            "parse_vcs_allowed_schemes",
+            "vcs_allowed_schemes",
+            ("git+https",),
+            "example: vcs_allowed_schemes must be a list, got tuple",
+        ),
+        (
+            "parse_vcs_allowed_repos",
+            "vcs_allowed_repos",
+            ("https://example.test/repo",),
+            "example: vcs_allowed_repos must be a list, got tuple",
+        ),
+        (
+            "parse_vcs_allowed_schemes",
+            "vcs_allowed_schemes",
+            ["git+https", False],
+            "example: vcs_allowed_schemes[1] must be a string, got bool",
+        ),
+        (
+            "parse_vcs_allowed_repos",
+            "vcs_allowed_repos",
+            ["https://example.test/repo", 1],
+            "example: vcs_allowed_repos[1] must be a string, got int",
+        ),
+    ],
+    ids=(
+        "scheme-table",
+        "repo-table",
+        "scheme-tuple",
+        "repo-tuple",
+        "scheme-member",
+        "repo-member",
+    ),
+)
+def test_parse_vcs_allowlists_rejects_non_lists_and_non_strings(
+    parser_name: str,
+    field: str,
+    invalid: object,
+    message: str,
+) -> None:
+    module = _harness("benchmark_config")
+    parser = getattr(module, parser_name)
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        parser("example", {field: invalid})
 
 
 def test_parse_scenario_requirement_strings_returns_fresh_unchanged_lists() -> None:
@@ -2820,8 +2958,59 @@ vcs_require_pin = "false"
 """,
             "other:other: vcs_require_pin must be a boolean, got str",
         ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
+vcs_policy = "permit"
+""",
+            "other:other: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+        ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
+vcs_policy = { allow = false }
+""",
+            (
+                "other:other: vcs_policy must be one of ['allow', 'block'], "
+                "got {'allow': False}"
+            ),
+        ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
+vcs_allowed_schemes = { "git+https" = false }
+""",
+            "other:other: vcs_allowed_schemes must be a list, got dict",
+        ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
+vcs_allowed_repos = { "https://example.test/repo" = false }
+""",
+            "other:other: vcs_allowed_repos must be a list, got dict",
+        ),
     ],
-    ids=("sdist-trust", "requirements", "vcs-require-pin"),
+    ids=(
+        "sdist-trust",
+        "requirements",
+        "vcs-require-pin",
+        "vcs-policy",
+        "vcs-policy-table",
+        "vcs-scheme-table",
+        "vcs-repo-table",
+    ),
 )
 def test_unselected_unsupported_definition_fails_before_host_capture_and_result_creation(
     tmp_path: Path,
@@ -2892,27 +3081,53 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
     assert lowest["config"].resolution is module.sc.ResolutionStrategy.LOWEST
 
 
-def test_profile_main_validates_vcs_pin_before_host_capture(
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        (
+            "vcs_require_pin",
+            "false",
+            "example: vcs_require_pin must be a boolean, got str",
+        ),
+        (
+            "vcs_policy",
+            "permit",
+            "example: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+        ),
+        (
+            "vcs_allowed_schemes",
+            {"git+https": False},
+            "example: vcs_allowed_schemes must be a list, got dict",
+        ),
+        (
+            "vcs_allowed_repos",
+            {"https://example.test/repo": False},
+            "example: vcs_allowed_repos must be a list, got dict",
+        ),
+    ],
+    ids=("pin", "policy", "scheme-table", "repo-table"),
+)
+def test_profile_main_validates_vcs_settings_before_host_capture(
     monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+    message: str,
 ) -> None:
     module = _harness("_profile_runner")
     scenario = {
         "python_version": "3.11",
         "requirements": [],
-        "vcs_require_pin": "false",
+        field: value,
     }
     monkeypatch.setattr(module, "find_scenario", lambda _spec: ("example", scenario))
     monkeypatch.setattr(module.sys, "argv", ["_profile_runner.py", "example"])
 
     def fail_host(*_args: object, **_kwargs: object) -> object:
-        pytest.fail("VCS pin validation reached host capture")
+        pytest.fail("VCS validation reached host capture")
 
     monkeypatch.setattr(module.sc.BenchmarkHost, "current", classmethod(fail_host))
 
-    with pytest.raises(
-        TypeError,
-        match="example: vcs_require_pin must be a boolean, got str",
-    ):
+    with pytest.raises((TypeError, ValueError), match=re.escape(message)):
         module.main()
 
 
@@ -2932,6 +3147,11 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
     assert standard_execution.config.constraints == ()
     assert standard_execution.constraint_strings == ["demo<2"]
     assert "trust_unverified_sdist_deps" not in standard_execution.expected_input
+    assert standard_execution.expected_input["vcs_policy"] == "allow"
+    assert standard_execution.expected_input["vcs_allowed_schemes"] == ["git+https"]
+    assert standard_execution.expected_input["vcs_allowed_repos"] == [
+        "https://example.test/project"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -2970,6 +3190,46 @@ def test_standard_canary_and_profile_use_valid_vcs_pin_settings(
     assert scenario == original
 
 
+@pytest.mark.parametrize(
+    ("vcs_setting", "expected"),
+    [
+        ({}, "block"),
+        ({"vcs_policy": "block"}, "block"),
+        ({"vcs_policy": "allow"}, "allow"),
+    ],
+    ids=("implicit", "block", "allow"),
+)
+def test_vcs_policy_matches_across_parser_and_runners(
+    vcs_setting: dict[str, object],
+    expected: str,
+) -> None:
+    config_parser = _harness("benchmark_config")
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        **vcs_setting,
+    }
+    original = dict(scenario)
+    expected_policy = standard.VcsPolicy(expected)
+
+    parsed_config = config_parser.parse_scenario_vcs_config("example", scenario)
+    standard_execution, canary_execution, profile_inputs = _prepare_runner_parity(
+        standard,
+        canary,
+        profile,
+        scenario=scenario,
+    )
+
+    assert parsed_config.policy is expected_policy
+    assert standard_execution.config.vcs.policy is expected_policy
+    assert canary_execution.config.vcs.policy is expected_policy
+    assert profile_inputs["config"].vcs.policy is expected_policy
+    assert scenario == original
+
+
 def test_sdist_trust_validation_precedes_requirement_and_vcs_validation() -> None:
     standard = _harness("scenarios")
     canary = _harness("canary")
@@ -2979,6 +3239,9 @@ def test_sdist_trust_validation_precedes_requirement_and_vcs_validation() -> Non
         "requirements": "demo",
         "trust_unverified_sdist_deps": "false",
         "vcs_require_pin": "false",
+        "vcs_policy": "permit",
+        "vcs_allowed_schemes": {"git+https": False},
+        "vcs_allowed_repos": {"https://example.test/repo": False},
     }
     host = _linux_host(standard)
     message = "example: trust_unverified_sdist_deps must be a boolean"
@@ -3006,6 +3269,9 @@ def test_standard_canary_and_profile_reject_non_boolean_vcs_require_pin() -> Non
         "python_version": "3.11",
         "requirements": [],
         "vcs_require_pin": "false",
+        "vcs_policy": "permit",
+        "vcs_allowed_schemes": {"git+https": False},
+        "vcs_allowed_repos": {"https://example.test/repo": False},
     }
     standard_host = _linux_host(standard)
     message = "example: vcs_require_pin must be a boolean, got str"
@@ -3031,6 +3297,66 @@ def test_standard_canary_and_profile_reject_non_boolean_vcs_require_pin() -> Non
         profile.build_inputs("example", scenario, host=UnusedHost())
 
 
+@pytest.mark.parametrize(
+    ("vcs_settings", "message"),
+    [
+        (
+            {
+                "vcs_policy": "permit",
+                "vcs_allowed_schemes": {"git+https": False},
+                "vcs_allowed_repos": {"https://example.test/repo": False},
+            },
+            "example: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+        ),
+        (
+            {
+                "vcs_allowed_schemes": {"git+https": False},
+                "vcs_allowed_repos": {"https://example.test/repo": False},
+            },
+            "example: vcs_allowed_schemes must be a list, got dict",
+        ),
+        (
+            {"vcs_allowed_repos": {"https://example.test/repo": False}},
+            "example: vcs_allowed_repos must be a list, got dict",
+        ),
+    ],
+    ids=("policy", "schemes", "repos"),
+)
+def test_standard_canary_and_profile_validate_vcs_settings_in_order(
+    vcs_settings: dict[str, object],
+    message: str,
+) -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        **vcs_settings,
+    }
+    standard_host = _linux_host(standard)
+
+    class UnusedHost:
+        """Fail if VCS validation reaches target admission."""
+
+        def target_for(self, *_args: object, **_kwargs: object) -> object:
+            pytest.fail("VCS validation reached host admission")
+
+    with pytest.raises((TypeError, ValueError), match=re.escape(message)):
+        _prepare_standard_scenario(standard, scenario, standard_host)
+
+    with pytest.raises((TypeError, ValueError), match=re.escape(message)):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=UnusedHost(),
+        )
+
+    with pytest.raises((TypeError, ValueError), match=re.escape(message)):
+        profile.build_inputs("example", scenario, host=UnusedHost())
+
+
 @pytest.mark.parametrize("field", ["requirements", "constraints"])
 def test_standard_requirement_list_validation_precedes_vcs_pin_validation(
     field: str,
@@ -3040,6 +3366,9 @@ def test_standard_requirement_list_validation_precedes_vcs_pin_validation(
         "python_version": "3.11",
         "requirements": [],
         "vcs_require_pin": "false",
+        "vcs_policy": "permit",
+        "vcs_allowed_schemes": {"git+https": False},
+        "vcs_allowed_repos": {"https://example.test/repo": False},
     }
     scenario[field] = "demo"
     host = _linux_host(standard)
@@ -3060,6 +3389,9 @@ def test_canary_requirement_list_validation_precedes_vcs_pin_validation(
         "python_version": "3.11",
         "requirements": [],
         "vcs_require_pin": "false",
+        "vcs_policy": "permit",
+        "vcs_allowed_schemes": {"git+https": False},
+        "vcs_allowed_repos": {"https://example.test/repo": False},
     }
     scenario[field] = "demo"
     host = _linux_host(canary)
@@ -3085,6 +3417,9 @@ def test_profile_requirement_list_validation_precedes_vcs_pin_validation_and_hos
         "python_version": "3.11",
         "requirements": [],
         "vcs_require_pin": "false",
+        "vcs_policy": "permit",
+        "vcs_allowed_schemes": {"git+https": False},
+        "vcs_allowed_repos": {"https://example.test/repo": False},
     }
     scenario[field] = "demo"
     host = MagicMock()

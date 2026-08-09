@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -483,7 +484,13 @@ def test_selection_validates_requirement_lists_before_vcs_pin_settings(
 ) -> None:
     module = _harness()
     scenarios = {
-        "quick:first": {"requirements": [], "vcs_require_pin": "false"},
+        "quick:first": {
+            "requirements": [],
+            "vcs_require_pin": "false",
+            "vcs_policy": "permit",
+            "vcs_allowed_schemes": {"git+https": False},
+            "vcs_allowed_repos": {"https://example.test/repo": False},
+        },
         "quick:second": {"requirements": "demo"},
     }
     monkeypatch.setattr(module, "find_scenario", scenarios.get)
@@ -492,6 +499,55 @@ def test_selection_validates_requirement_lists_before_vcs_pin_settings(
         TypeError,
         match="quick:second: requirements must be a list, got str",
     ):
+        module.select_scenarios(
+            [
+                module.CanaryCase("quick:first", None),
+                module.CanaryCase("quick:second", None),
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    ("first_scenario", "second_scenario", "message"),
+    [
+        (
+            {"vcs_policy": "permit"},
+            {"vcs_require_pin": "false"},
+            "quick:second: vcs_require_pin must be a boolean, got str",
+        ),
+        (
+            {"vcs_allowed_schemes": {"git+https": False}},
+            {"vcs_policy": "permit"},
+            "quick:second: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+        ),
+        (
+            {"vcs_allowed_repos": {"https://example.test/repo": False}},
+            {"vcs_allowed_schemes": {"git+https": False}},
+            "quick:second: vcs_allowed_schemes must be a list, got dict",
+        ),
+    ],
+    ids=("pin-before-policy", "policy-before-schemes", "schemes-before-repos"),
+)
+def test_selection_validates_vcs_fields_across_the_whole_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    first_scenario: dict[str, object],
+    second_scenario: dict[str, object],
+    message: str,
+) -> None:
+    module = _harness()
+    scenarios = {
+        "quick:first": {
+            "requirements": [],
+            **first_scenario,
+        },
+        "quick:second": {
+            "requirements": [],
+            **second_scenario,
+        },
+    }
+    monkeypatch.setattr(module, "find_scenario", scenarios.get)
+
+    with pytest.raises((TypeError, ValueError), match=re.escape(message)):
         module.select_scenarios(
             [
                 module.CanaryCase("quick:first", None),

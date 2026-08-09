@@ -37,7 +37,11 @@ from benchmark_config import (
     build_benchmark_resolver_inputs,
     direct_packages_from_requirements,
     parse_scenario_requirement_strings,
+    parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
+    parse_vcs_allowed_repos,
+    parse_vcs_allowed_schemes,
+    parse_vcs_policy,
     parse_vcs_require_pin,
 )
 from benchmark_datetime import parse_datetime
@@ -66,7 +70,6 @@ from nab_python.provider import (
     BuildPolicy,
     ResolutionStrategy,
     VcsConfig,
-    VcsPolicy,
     split_extra,
 )
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
@@ -581,15 +584,17 @@ def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
         )
         raise _SelectionError(msg)
 
-    # Check each field across the whole selection before moving to the next field.
-    for scenario_name, scenario in found_scenarios:
-        parse_trust_unverified_sdist_deps(scenario_name, scenario)
-
-    for scenario_name, scenario in found_scenarios:
-        parse_scenario_requirement_strings(scenario_name, scenario)
-
-    for scenario_name, scenario in found_scenarios:
-        parse_vcs_require_pin(scenario_name, scenario)
+    field_validators = (
+        parse_trust_unverified_sdist_deps,
+        parse_scenario_requirement_strings,
+        parse_vcs_require_pin,
+        parse_vcs_policy,
+        parse_vcs_allowed_schemes,
+        parse_vcs_allowed_repos,
+    )
+    for validate_field in field_validators:
+        for scenario_name, scenario in found_scenarios:
+            validate_field(scenario_name, scenario)
     return cases
 
 
@@ -755,7 +760,7 @@ def _prepare_canary_execution(
         scenario,
     )
     requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
-    vcs_require_pin = parse_vcs_require_pin(scenario_name, scenario)
+    vcs_config = parse_scenario_vcs_config(scenario_name, scenario)
     python_version = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -775,12 +780,6 @@ def _prepare_canary_execution(
         scenario,
         scenario_name=scenario_name,
         override=resolution_override,
-    )
-    vcs_config = VcsConfig(
-        policy=VcsPolicy(scenario.get("vcs_policy", "block")),
-        allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
-        allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
-        require_pin=vcs_require_pin,
     )
     indexes = _canary_indexes(scenario)
     index_routes = _canary_index_routes(scenario)
