@@ -7688,6 +7688,95 @@ class TestDistPolicy:
             provider.get_dependencies("pkg", V("1.0"))
 
 
+class TestLadderSdistAvailability:
+    """The metadata ladder tells a filtered sdist from one never published.
+
+    A filtered sdist comes back by loosening the cutoff or the policy that
+    dropped it; a release that published none has nothing to loosen.  So the
+    two failures must not read alike.
+    """
+
+    _FILTERED = (
+        "no PEP 658 metadata and the sdist was filtered by"
+        " requires-python, dist-policy, or upload-time"
+    )
+    _ABSENT = "no PEP 658 metadata and no sdist available"
+
+    def test_upload_cutoff_filtered_sdist_names_the_filter(self) -> None:
+        """A cutoff keeping the wheel and dropping the sdist names the filter."""
+        coordinator = make_coordinator(
+            [
+                make_wheel(
+                    "1.0", has_metadata=False, upload_time="2026-01-01T00:00:00Z"
+                ),
+                make_sdist("1.0", upload_time="2026-01-20T00:00:00Z"),
+            ]
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            uploaded_prior_to=datetime(2026, 1, 10, tzinfo=timezone.utc),
+        )
+
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+
+        assert self._FILTERED in str(excinfo.value)
+
+    def test_requires_python_filtered_sdist_names_the_filter(self) -> None:
+        """An sdist whose own Requires-Python excludes the target still exists."""
+        coordinator = make_coordinator(
+            [
+                make_wheel("1.0", has_metadata=False),
+                make_sdist("1.0", requires_python=">=3.13"),
+            ]
+        )
+        provider = Provider(coordinator, target=_PY312)
+
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+
+        assert self._FILTERED in str(excinfo.value)
+
+    def test_wheel_only_policy_filtered_sdist_names_the_filter(self) -> None:
+        """The sdist a wheel-only policy dropped is not reported as absent."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0", has_metadata=False), make_sdist("1.0")]
+        )
+        provider = Provider(
+            coordinator, target=_PY312, dist_policy=DistPolicy.WHEEL_ONLY
+        )
+
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+
+        assert self._FILTERED in str(excinfo.value)
+
+    def test_sdist_of_another_release_is_reported_as_absent(self) -> None:
+        """Only this release's own sdist counts as one the filter dropped."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0", has_metadata=False), make_sdist("2.0")]
+        )
+        provider = Provider(coordinator, target=_PY312)
+
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+
+        assert self._ABSENT in str(excinfo.value)
+
+    def test_unparseable_sdist_version_is_reported_as_absent(self) -> None:
+        """A version nab cannot parse cannot be this release's sdist."""
+        coordinator = make_coordinator(
+            [make_wheel("1.0", has_metadata=False), make_sdist("not-a-version")]
+        )
+        provider = Provider(coordinator, target=_PY312)
+
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+
+        assert self._ABSENT in str(excinfo.value)
+
+
 class TestFetchVersionsNotInIndex:
     def test_listing_not_in_index_blocks_on_request(self) -> None:
         """When listing is not in the index, request_listing + wait is used."""

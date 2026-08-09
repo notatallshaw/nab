@@ -13,7 +13,7 @@ import httpx
 import pytest
 import respx
 
-from nab_index.client import WheelFile
+from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.transport import HttpError
 from nab_python._testing.coordinator_fake import make_coordinator
@@ -3366,6 +3366,53 @@ class TestAugmentResolutionError:
             in diagnostics
         )
         assert "foo: no version matches the requirement" not in diagnostics
+
+    def test_cutoff_filtered_sdist_is_not_reported_as_never_published(
+        self, tmp_path: Path
+    ) -> None:
+        """An sdist the cutoff dropped is reported as filtered, not as absent.
+
+        ``foo`` 1.0 publishes a sidecar-less wheel and an sdist uploaded
+        after the cutoff, so the metadata ladder runs out of rungs.  Moving
+        the cutoff is the repair, so a line saying no sdist exists would send
+        the user to the index instead.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[tool.nab]\nuploaded-prior-to = "2026-01-10T00:00:00Z"\n',
+            encoding="utf-8",
+        )
+
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://example.com/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=None,
+            has_metadata=False,
+            upload_time="2026-01-01T00:00:00Z",
+        )
+        sdist = SdistFile(
+            filename="foo-1.0.tar.gz",
+            url="https://example.com/foo-1.0.tar.gz",
+            version="1.0",
+            requires_python=None,
+            upload_time="2026-01-20T00:00:00Z",
+        )
+        coordinator = make_coordinator(listings={"foo": [wheel, sdist]})
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        diagnostics = str(info.value).split("Diagnostics:")[1]
+        assert (
+            "foo: every version in range was rejected: No metadata for foo==1.0:"
+            " no PEP 658 metadata and the sdist was filtered by requires-python,"
+            " dist-policy, or upload-time" in diagnostics
+        )
 
 
 class TestConflictingRootRequirements:

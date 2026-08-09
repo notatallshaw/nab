@@ -25,9 +25,11 @@ from .._vcs_admission import admit_vcs_url
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
+from .._vendor.packaging.version import InvalidVersion
 from ..metadata import (
     DEPENDENCY_FIELDS,
     WheelMetadata,
+    intern_version,
     metadata_deps_are_static,
     parse_metadata,
 )
@@ -176,11 +178,35 @@ def _ladder_failure(
     elif sdist is not None:
         # A fetched sdist with no PKG-INFO is distinct from no sdist at all.
         reason = "no PEP 658 metadata and the sdist has no readable PKG-INFO"
+    elif _index_published_sdist(index, normalized, version):
+        reason = (
+            "no PEP 658 metadata and the sdist was filtered by"
+            " requires-python, dist-policy, or upload-time"
+        )
     else:
         reason = "no PEP 658 metadata and no sdist available"
 
     msg = f"No metadata for {package}=={version}: {reason}"
     return MetadataError(msg)
+
+
+def _index_published_sdist(
+    index: InMemoryIndex, normalized: str, version: Version
+) -> bool:
+    """Whether the index served an sdist for ``version``.
+
+    The ladder only sees the post-filter listing, where an sdist the filter
+    dropped and one that was never published both read as absent.
+    """
+    for dist in index.get_listing(normalized) or ():
+        if not isinstance(dist, SdistFile):
+            continue
+        try:
+            if intern_version(dist.version) == version:
+                return True
+        except InvalidVersion:
+            continue
+    return False
 
 
 def _report_offline_skip(
