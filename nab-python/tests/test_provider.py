@@ -812,24 +812,13 @@ class TestHasSatisfyingVersion:
         )
         assert provider.get_no_versions_reason("foo") == "sentinel"
 
-    def test_preserves_prior_abort_state(self) -> None:
-        """Abort markers and force-backtrack counts survive the probe."""
-        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
-        provider = Provider(coordinator)
-        provider._lookahead_aborted["bar"] = ("baz", V("1.0"))
-        provider._force_backtrack_counts["baz"] = 2
-        provider.has_satisfying_version("foo", VersionRange.full())
-        assert provider._lookahead_aborted == {"bar": ("baz", V("1.0"))}
-        assert provider._force_backtrack_counts == {"baz": 2}
-
     def test_false_when_every_candidate_hits_the_abort_blocker(self) -> None:
         """The look-ahead abort's optimistic pick is not a satisfying version.
 
         Every candidate in range is rejected by one decided blocker, tripping
         ``choose_version``'s monolithic-rejection abort, which returns the first
         candidate for the resolver to decide and back-jump.  The probe must
-        report that no usable version exists, both when the abort
-        fires fresh and when a prior abort is already recorded.
+        report that no usable version exists.
         """
         versions = [f"{n}.0" for n in range(8, 0, -1)]
         wheels = [make_wheel(v) for v in versions]
@@ -842,11 +831,9 @@ class TestHasSatisfyingVersion:
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("5.0")})
-        # choose_version takes the abort shortcut: returns the first pick and
-        # records the skip state a later call would reuse.
+        # choose_version takes the abort shortcut and returns the first pick.
         assert provider.choose_version("foo", VersionRange.full()) == V("8.0")
-        assert provider._lookahead_aborted == {"foo": ("bar", V("5.0"))}
-        # The probe ignores both the recorded skip and a fresh abort.
+
         assert not provider.has_satisfying_version("foo", VersionRange.full())
 
     def test_true_when_a_usable_version_sits_past_the_abort_threshold(self) -> None:
@@ -4474,28 +4461,6 @@ class TestLookAheadAbort:
         clauses = provider.consume_pending_clauses()
         assert len(clauses) == 1
 
-    def test_abort_records_state_for_per_package_skip(self) -> None:
-        """When the abort fires, ``_lookahead_aborted`` records the blocker so
-        the next ``choose_version`` for this package can short-circuit
-        look-ahead while the blocker decision is unchanged.
-        """
-        versions = ["3.0", "2.0", "1.0"]
-        wheels = [make_wheel(v) for v in versions]
-        meta_template = (
-            "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\nRequires-Dist: bar<2.0\n"
-        )
-        coordinator = make_coordinator(
-            wheels,
-            metadata_by_version={v: meta_template.format(ver=v) for v in versions},
-            package="foo",
-        )
-        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
-        provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
-        provider._LOOKAHEAD_ABORT_THRESHOLD = 2  # type: ignore[misc]
-        assert provider.choose_version("foo", VersionRange.full()) == V("3.0")
-        assert provider._lookahead_aborted == {"foo": ("bar", V("3.0"))}
-
     def test_abort_queues_force_backtrack_target(self) -> None:
         """The abort path queues the blocker package on
         ``_force_backtrack_targets`` so the resolver can pick it up via
@@ -4524,8 +4489,8 @@ class TestLookAheadAbort:
     def test_force_backtrack_refires_up_to_cap(self) -> None:
         """A blocker can drive at most ``_MAX_FORCE_BACKTRACKS_PER_PKG``
         force-backtracks, mirroring uv's repeated ConflictTracker fires.
-        After the cap the abort path still records the skip but does not
-        re-queue the force-backtrack target.
+        After the cap the abort still fires but does not re-queue the
+        force-backtrack target.
         """
         versions = ["3.0", "2.0", "1.0"]
         wheels = [make_wheel(v) for v in versions]
@@ -4545,111 +4510,10 @@ class TestLookAheadAbort:
         for _ in range(3):
             provider.choose_version("foo", VersionRange.full())
             assert provider.consume_force_backtrack_targets() == ["bar"]
-            provider._lookahead_aborted.pop("foo", None)
+
         # Fourth abort blaming the same blocker is past the cap; no re-queue.
         provider.choose_version("foo", VersionRange.full())
         assert provider.consume_force_backtrack_targets() == []
-
-    def test_per_package_skip_short_circuits_while_blocker_decided(self) -> None:
-        """A recorded abort makes ``choose_version`` skip the full scan
-        when the blocker decision is unchanged.  If the first candidate's
-        metadata is already cached (warm path), it is returned without
-        running look-ahead at all.  If not cached (cold path), a non
-        -decision look-ahead gate runs to guard against unreadable
-        wheels.
-        """
-        meta = (
-            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar<2.0\n"
-        )
-        coordinator = make_coordinator(
-            [make_wheel("1.0")], metadata_text=meta, package="foo"
-        )
-        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
-        # bar=3.0 conflicts with foo's bar<2.0 dep, the same
-        # state that would have triggered the abort in the first place.
-        provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
-        # Pre-record the abort state as if a prior scan had populated it.
-        provider._lookahead_aborted["foo"] = ("bar", V("3.0"))
-        # Pre-warm the deps_cache so the skip path takes the cache fast
-        # path (no look-ahead invocation).
-        provider.get_dependencies("foo", V("1.0"))
-        before_rejections = provider.stats.look_ahead_rejections
-        chosen = provider.choose_version("foo", VersionRange.full())
-        assert chosen == V("1.0")
-        # Cache hit, no extra look-ahead rejections recorded.
-        assert provider.stats.look_ahead_rejections == before_rejections
-
-    def test_per_package_skip_cold_runs_safety_check(self) -> None:
-        """Cold cache: the skip path runs ``_look_ahead_ok`` with
-        ``check_decisions=False`` to catch unreadable wheels before the
-        resolver decides them.
-        """
-        meta = (
-            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar<2.0\n"
-        )
-        coordinator = make_coordinator(
-            [make_wheel("1.0")], metadata_text=meta, package="foo"
-        )
-        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
-        provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
-        provider._lookahead_aborted["foo"] = ("bar", V("3.0"))
-        # No pre-warm; cold cache. The safety look-ahead fetches the
-        # metadata and the skip path returns the candidate.
-        chosen = provider.choose_version("foo", VersionRange.full())
-        assert chosen == V("1.0")
-
-    def test_per_package_skip_falls_through_on_metadata_error(self) -> None:
-        """If the first candidate has unreadable metadata, the safety
-        check rejects it and the normal scan path runs.  Prevents the
-        resolver from deciding a broken candidate and crashing with
-        ``MetadataError``.
-        """
-        wheels = [make_wheel("1.0"), make_wheel("0.9")]
-        meta_v1_broken = "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar(invalid\n"
-        meta_v09 = (
-            "Metadata-Version: 2.1\nName: foo\nVersion: 0.9\nRequires-Dist: bar>=1.0\n"
-        )
-        coordinator = make_coordinator(
-            wheels,
-            metadata_by_version={"1.0": meta_v1_broken, "0.9": meta_v09},
-            package="foo",
-        )
-        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
-        provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
-        # Skip is recorded, but foo==1.0 has bad metadata so the
-        # safety check rejects and the scan proceeds.
-        provider._lookahead_aborted["foo"] = ("bar", V("3.0"))
-        chosen = provider.choose_version("foo", VersionRange.full())
-        # The broken candidate is rejected via the metadata-block path;
-        # the scan continues to ``0.9`` which does *not* conflict with
-        # bar=3.0 (its dep is bar>=1.0).  Returning ``0.9`` shows the
-        # safety check successfully kept the resolver from crashing.
-        assert chosen == V("0.9")
-
-    def test_per_package_skip_invalidated_when_blocker_changes(self) -> None:
-        """A recorded abort is dropped once the blocker decision changes,
-        and the normal look-ahead path runs again.
-        """
-        wheels = [make_wheel("1.0")]
-        meta = (
-            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar>=5.0\n"
-        )
-        coordinator = make_coordinator(wheels, metadata_text=meta, package="foo")
-        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
-        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
-        # Recorded state names bar==3.0, but the current decisions have
-        # bar==2.0, so the recorded state is stale.
-        provider.receive_partial_solution_hint({}, {"bar": V("2.0")})
-        provider._lookahead_aborted["foo"] = ("bar", V("3.0"))
-        chosen = provider.choose_version("foo", VersionRange.full())
-        # Look-ahead ran normally: foo==1.0 rejects because bar==2.0
-        # doesn't match its >=5.0 dep.
-        assert chosen is None
-        # Stale record was dropped.
-        assert "foo" not in provider._lookahead_aborted
 
 
 class TestConstraintNotBlamedWhenProbeAborts:
@@ -7765,7 +7629,7 @@ class TestSpeculativePrefetchBatchLimit:
 
 
 class TestPrefetchWalkAhead:
-    """``prefetch_walk_ahead`` covers the abort-skip walk after the scan.
+    """``prefetch_walk_ahead`` covers the walk past the first batch.
 
     Fired from ``_scan_candidates_pipelined``; submits up to
     ``DEEP_PREFETCH_COUNT`` wheel metadata requests in scan order over
