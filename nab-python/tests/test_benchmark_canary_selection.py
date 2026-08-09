@@ -78,6 +78,42 @@ def _resolve_path_as(
     monkeypatch.setattr(Path, "resolve", resolve)
 
 
+def _assert_main_preflight_error(
+    module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    scenario: dict[str, object],
+    message: str,
+) -> None:
+    """Assert selection fails before canary host capture or result creation."""
+    results_dir = tmp_path / "results"
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+    monkeypatch.setattr(module, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(
+        module,
+        "get_git_source_state",
+        lambda: {"commit": "a" * 40, "dirty": False, "diff_hash": None},
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["canary.py", "--commit", "safe", "--scenario", "quick:example"],
+    )
+
+    def fail_host(*_args: object, **_kwargs: object) -> object:
+        pytest.fail("scenario preflight reached host capture")
+
+    monkeypatch.setattr(module.BenchmarkHost, "current", classmethod(fail_host))
+
+    with pytest.raises(SystemExit) as exc_info:
+        module.main()
+
+    assert exc_info.value.code == 2
+    assert message in capsys.readouterr().err
+    assert not results_dir.exists()
+
+
 def test_default_canary_manifest_preserves_19_strategies() -> None:
     module = _harness()
 
@@ -93,6 +129,15 @@ def test_default_canary_manifest_preserves_19_strategies() -> None:
         "lowest-direct": 5,
     }
     assert all("-lowest" not in case.scenario.split(":", 1)[0] for case in cases)
+
+
+def test_default_canaries_do_not_build_packages() -> None:
+    module = _harness()
+    cases = module.load_canary_manifest()
+
+    assert all(
+        "build_packages" not in module.find_scenario(case.scenario) for case in cases
+    )
 
 
 def test_default_canary_manifest_preserves_v2_input_identities() -> None:
@@ -669,6 +714,132 @@ def test_selection_validates_all_indexes_before_any_index_routes(
                 module.CanaryCase("quick:second", None),
             ]
         )
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "message"),
+    [
+        (
+            {"build_packages": "demo"},
+            {"marker_environment": "Linux"},
+            "quick:second: marker_environment must be a table of strings",
+        ),
+        (
+            {
+                "platform_system": "Linux",
+                "build_packages": ["demo"],
+            },
+            {"build_packages": "demo"},
+            ("quick:second: build_packages must be a list of package names, got str"),
+        ),
+    ],
+    ids=("markers-before-build", "build-shapes-before-compatibility"),
+)
+def test_selection_validates_field_phases_across_the_whole_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    first: dict[str, object],
+    second: dict[str, object],
+    message: str,
+) -> None:
+    module = _harness()
+    scenarios = {
+        "quick:first": {"requirements": [], **first},
+        "quick:second": {"requirements": [], **second},
+    }
+    monkeypatch.setattr(module, "find_scenario", scenarios.get)
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        module.select_scenarios(
+            [
+                module.CanaryCase("quick:first", None),
+                module.CanaryCase("quick:second", None),
+            ]
+        )
+
+
+def test_selection_validates_build_compatibility_before_resolution_and_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenario = {
+        "requirements": [],
+        "platform_system": "Linux",
+        "build_packages": ["demo"],
+        "resolution": "middle",
+        "requires_matching_host": "yes",
+    }
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+    message = (
+        "quick:example: build_packages cannot be combined "
+        "with a marker environment overlay"
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        module.select_scenarios([module.CanaryCase("quick:example", None)])
+
+
+def test_selection_validates_unsupported_build_shape_but_not_compatibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    valid_quarantine = {
+        "requirements": [],
+        "unsupported_reason": "marker/build metadata is unsound",
+        "platform_system": "Linux",
+        "build_packages": ["Demo_Pkg"],
+    }
+    invalid_quarantine = {
+        **valid_quarantine,
+        "build_packages": ["demo>=1"],
+    }
+    selected = [module.CanaryCase("quick:example", None)]
+
+    monkeypatch.setattr(
+        module,
+        "find_scenario",
+        lambda _name: valid_quarantine,
+    )
+    assert module.select_scenarios(selected) == selected
+
+    monkeypatch.setattr(module, "find_scenario", lambda _name: invalid_quarantine)
+    with pytest.raises(ValueError, match="valid distribution name"):
+        module.select_scenarios(selected)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "message"),
+    [
+        (
+            {"requirements": [], "build_packages": "demo"},
+            "build_packages must be a list of package names",
+        ),
+        (
+            {"requirements": [], "resolution": "middle"},
+            "resolution must be one of ['highest', 'lowest', 'lowest-direct']",
+        ),
+        (
+            {"requirements": [], "requires_matching_host": "yes"},
+            "requires_matching_host must be a boolean",
+        ),
+    ],
+    ids=("build-packages", "resolution", "host-requirement"),
+)
+def test_selected_scenario_preflight_fails_before_host_and_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    scenario: dict[str, object],
+    message: str,
+) -> None:
+    module = _harness()
+    _assert_main_preflight_error(
+        module,
+        tmp_path,
+        monkeypatch,
+        capsys,
+        scenario,
+        message,
+    )
 
 
 def test_empty_scenarios_list_exits_before_creating_results(

@@ -39,12 +39,14 @@ from benchmark_config import (
     build_benchmark_config,
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
+    parse_scenario_build_packages,
     parse_scenario_index_routes,
     parse_scenario_indexes,
     parse_scenario_project_metadata,
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
+    validate_scenario_build_policy,
 )
 from benchmark_datetime import parse_datetime
 from benchmark_host import (
@@ -579,22 +581,24 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
             for name, definition in scenarios.items()
         )
     for row in rows:
-        marker_environment = parse_marker_environment(row.name, row.definition)
-        parse_requires_matching_host(row.name, row.definition, marker_environment)
         parse_trust_unverified_sdist_deps(row.logical_key, row.definition)
         parse_scenario_requirement_strings(row.logical_key, row.definition)
         parse_scenario_vcs_config(row.logical_key, row.definition)
         parse_scenario_project_metadata(row.logical_key, row.definition)
         indexes = parse_scenario_indexes(row.logical_key, row.definition)
         parse_scenario_index_routes(row.logical_key, row.definition, indexes)
-        build_policy_overrides = parse_build_packages(row.name, row.definition)
-        if "unsupported_reason" in row.definition:
-            continue
-        validate_scenario_build_policy(
+        marker_environment = parse_marker_environment(row.name, row.definition)
+        build_policy_overrides = parse_scenario_build_packages(
             row.name,
-            marker_environment,
-            build_policy_overrides,
+            row.definition,
         )
+        if "unsupported_reason" not in row.definition:
+            validate_scenario_build_policy(
+                row.name,
+                marker_environment,
+                build_policy_overrides,
+            )
+        parse_requires_matching_host(row.name, row.definition, marker_environment)
     return rows
 
 
@@ -1457,7 +1461,7 @@ def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
             {"name": o.name, "index": o.index} for o in index_routes
         ]
     if build_packages:
-        expected_input["build_packages"] = sorted(build_packages)
+        expected_input["build_packages"] = list(build_packages)
     if resolution_strategy is not ResolutionStrategy.HIGHEST:
         expected_input["resolution"] = resolution_strategy.value
     if trust_unverified_sdist_deps:
@@ -1471,57 +1475,6 @@ def parse_marker_environment(
 ) -> dict[str, str]:
     """Read the ``marker_environment`` table + ``platform_system`` shorthand."""
     return parse_target_marker_environment(scenario_name, scenario)
-
-
-def parse_build_packages(
-    scenario_name: str,
-    scenario: dict,
-) -> Mapping[str, BuildPolicy]:
-    """Read ``build_packages`` and lift them to ``BUILD_REMOTE`` overrides.
-
-    ``build_packages`` is a list of canonical package names whose
-    sdists may be built (PEP 517 backend invocation against the
-    fetched sdist).  The default benchmark policy is
-    ``BuildPolicy.NEVER``; entries here override that on a
-    per-package basis without affecting any other package in the
-    same scenario.
-
-    Use this when the scenario's resolution requires a sdist that
-    has no usable wheel and the build is cheap enough to run inside
-    the benchmark host.  Native or CUDA-heavy sdists belong in
-    ``unsupported.toml`` instead.
-    """
-    raw = scenario.get("build_packages", [])
-    if not isinstance(raw, list):
-        msg = (
-            f"{scenario_name}: build_packages must be an array of"
-            f" package names, got {type(raw).__name__}"
-        )
-        raise TypeError(msg)
-    overrides: dict[str, BuildPolicy] = {}
-    for i, name in enumerate(raw):
-        if not isinstance(name, str):
-            msg = (
-                f"{scenario_name}: build_packages[{i}] must be a string,"
-                f" got {type(name).__name__}"
-            )
-            raise TypeError(msg)
-        overrides[name] = BuildPolicy.BUILD_REMOTE
-    return overrides
-
-
-def validate_scenario_build_policy(
-    scenario_name: str,
-    marker_environment: Mapping[str, str],
-    build_policy_overrides: Mapping[str, BuildPolicy],
-) -> None:
-    """Reject build policy paired with a marker environment overlay."""
-    if marker_environment and build_policy_overrides:
-        msg = (
-            f"{scenario_name}: build_packages cannot be combined "
-            "with a marker environment overlay"
-        )
-        raise ValueError(msg)
 
 
 def prepare_standard_execution(
@@ -1549,7 +1502,7 @@ def prepare_standard_execution(
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
     marker_environment = parse_marker_environment(scenario_name, scenario)
-    build_policy_overrides = dict(parse_build_packages(scenario_name, scenario))
+    build_policy_overrides = parse_scenario_build_packages(scenario_name, scenario)
     if "unsupported_reason" not in scenario:
         validate_scenario_build_policy(
             scenario_name,
@@ -1590,7 +1543,7 @@ def prepare_standard_execution(
             marker_environment=marker_environment,
             indexes=indexes,
             index_routes=index_routes,
-            build_packages=sorted(build_policy_overrides),
+            build_packages=list(build_policy_overrides),
             resolution_strategy=execution.strategy,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,
         ),

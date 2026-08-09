@@ -37,6 +37,7 @@ from benchmark_config import (
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
     direct_packages_from_requirements,
+    parse_scenario_build_packages,
     parse_scenario_index_routes,
     parse_scenario_indexes,
     parse_scenario_project_metadata,
@@ -47,6 +48,7 @@ from benchmark_config import (
     parse_vcs_allowed_schemes,
     parse_vcs_policy,
     parse_vcs_require_pin,
+    validate_scenario_build_policy,
 )
 from benchmark_datetime import parse_datetime
 from benchmark_host import (
@@ -64,12 +66,7 @@ from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python.config import NabProjectConfig, index_routes_from_config
 from nab_python.fetch import FetchCoordinator
-from nab_python.provider import (
-    BuildPolicy,
-    ResolutionStrategy,
-    VcsConfig,
-    split_extra,
-)
+from nab_python.provider import BuildPolicy, ResolutionStrategy, VcsConfig, split_extra
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
@@ -550,6 +547,51 @@ def _scenario_file(toml_stem: str) -> Path:
     return toml_path
 
 
+def _validate_selected_execution_fields(
+    cases: list[CanaryCase],
+    scenarios: list[tuple[str, dict]],
+) -> None:
+    """Validate marker, build, resolution, and host fields by phase."""
+    marker_environments = [
+        parse_target_marker_environment(scenario_name, scenario)
+        for scenario_name, scenario in scenarios
+    ]
+    build_policy_overrides: list[dict[str, BuildPolicy]] = [
+        parse_scenario_build_packages(scenario_name, scenario)
+        for scenario_name, scenario in scenarios
+    ]
+
+    for (scenario_name, scenario), marker_environment, overrides in zip(
+        scenarios,
+        marker_environments,
+        build_policy_overrides,
+        strict=True,
+    ):
+        if "unsupported_reason" not in scenario:
+            validate_scenario_build_policy(
+                scenario_name,
+                marker_environment,
+                overrides,
+            )
+
+    for case, (scenario_name, scenario), marker_environment in zip(
+        cases,
+        scenarios,
+        marker_environments,
+        strict=True,
+    ):
+        scenario_resolution(
+            scenario,
+            scenario_name=scenario_name,
+            override=case.resolution,
+        )
+        parse_requires_matching_host(
+            scenario_name,
+            scenario,
+            marker_environment,
+        )
+
+
 def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
     """Validate every selection before a benchmark run or result write."""
     if not cases:
@@ -600,6 +642,7 @@ def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
         strict=True,
     ):
         parse_scenario_index_routes(scenario_name, scenario, indexes)
+    _validate_selected_execution_fields(cases, found_scenarios)
     return cases
 
 
@@ -757,16 +800,12 @@ def _prepare_canary_execution(
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
     marker_environment = parse_target_marker_environment(scenario_name, scenario)
-    raw_build_packages = scenario.get("build_packages", []) or []
-    build_policy_overrides = {
-        str(name): BuildPolicy.BUILD_REMOTE for name in raw_build_packages
-    }
-    if marker_environment and build_policy_overrides:
-        msg = (
-            f"{scenario_name}: build_packages cannot be combined "
-            "with a marker environment overlay"
-        )
-        raise ValueError(msg)
+    build_policy_overrides = parse_scenario_build_packages(scenario_name, scenario)
+    validate_scenario_build_policy(
+        scenario_name,
+        marker_environment,
+        build_policy_overrides,
+    )
 
     resolution_strategy = scenario_resolution(
         scenario,

@@ -246,7 +246,7 @@ def _runner_parity_scenario() -> dict[str, object]:
             {"name": "Demo_Pkg", "index": "private"},
             {"name": "Other.Package", "index": "private"},
         ],
-        "build_packages": ["demo"],
+        "build_packages": ["Zulu_Pkg", "alpha.pkg", "Demo-Pkg"],
         "resolution": "lowest-direct",
         "trust_unverified_sdist_deps": False,
         "vcs_policy": "allow",
@@ -305,6 +305,32 @@ def _prepare_runner_parity(
     canary_execution = canary_preparation.execution
     assert canary_execution is not None
     return standard_execution, canary_execution, profile_inputs
+
+
+def _assert_all_runners_reject_scenario(
+    scenario: dict[str, object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    """Assert the three benchmark runners reject one scenario identically."""
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    host = _linux_host(standard)
+
+    with pytest.raises(error, match=re.escape(message)):
+        _prepare_standard_scenario(standard, scenario, host)
+
+    with pytest.raises(error, match=re.escape(message)):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=host,
+        )
+
+    with pytest.raises(error, match=re.escape(message)):
+        profile.build_inputs("example", scenario, host=host)
 
 
 @dataclass(frozen=True, order=True, slots=True)
@@ -2181,6 +2207,153 @@ def test_parse_scenario_index_routes_parses_every_entry_before_relationships(
 
 
 @pytest.mark.parametrize(
+    "scenario", [{}, {"build_packages": []}], ids=("missing", "empty")
+)
+def test_parse_scenario_build_packages_returns_a_fresh_empty_mapping(
+    scenario: dict[str, object],
+) -> None:
+    module = _harness("benchmark_config")
+
+    first = module.parse_scenario_build_packages("quick:build", scenario)
+    second = module.parse_scenario_build_packages("quick:build", scenario)
+
+    assert first == second == {}
+    assert first is not second
+
+
+def test_parse_scenario_build_packages_preserves_raw_names_and_order() -> None:
+    module = _harness("benchmark_config")
+    scenario = {"build_packages": ["Zulu_Pkg", "alpha.pkg", "Demo-Pkg"]}
+    original = deepcopy(scenario)
+
+    overrides = module.parse_scenario_build_packages("quick:build", scenario)
+
+    assert list(overrides) == ["Zulu_Pkg", "alpha.pkg", "Demo-Pkg"]
+    assert set(overrides.values()) == {module.BuildPolicy.BUILD_REMOTE}
+    assert scenario == original
+
+
+@pytest.mark.parametrize(
+    ("build_packages", "error", "message"),
+    [
+        (
+            "demo",
+            TypeError,
+            "quick:build: build_packages must be a list of package names, got str",
+        ),
+        (
+            None,
+            TypeError,
+            "quick:build: build_packages must be a list of package names, got NoneType",
+        ),
+        (
+            [123],
+            TypeError,
+            "quick:build: build_packages[0] must be a string, got int",
+        ),
+    ],
+    ids=("string", "null", "entry"),
+)
+def test_parse_scenario_build_packages_rejects_malformed_values(
+    build_packages: object,
+    error: type[Exception],
+    message: str,
+) -> None:
+    module = _harness("benchmark_config")
+
+    with pytest.raises(error, match=re.escape(message)):
+        module.parse_scenario_build_packages(
+            "quick:build",
+            {"build_packages": build_packages},
+        )
+
+
+def test_parse_scenario_build_packages_rejects_a_list_subclass() -> None:
+    module = _harness("benchmark_config")
+
+    class PackageList(list[str]):
+        pass
+
+    with pytest.raises(
+        TypeError,
+        match=(
+            "quick:build: build_packages must be a list of package names, "
+            "got PackageList"
+        ),
+    ):
+        module.parse_scenario_build_packages(
+            "quick:build",
+            {"build_packages": PackageList(["demo"])},
+        )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        " ",
+        "demo>=1",
+        "demo[extra]",
+        "demo; python_version < '3.12'",
+        "demo @ https://example.test/demo.whl",
+    ],
+    ids=("empty", "whitespace", "specifier", "extra", "marker", "url"),
+)
+def test_parse_scenario_build_packages_rejects_non_package_names(name: str) -> None:
+    module = _harness("benchmark_config")
+    message = (
+        "quick:build: build_packages[0] must be a valid distribution name, "
+        f"got {name!r}"
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        module.parse_scenario_build_packages(
+            "quick:build",
+            {"build_packages": [name]},
+        )
+
+
+@pytest.mark.parametrize(
+    ("build_packages", "message"),
+    [
+        (["demo", "demo"], "quick:build: duplicate build package 'demo'"),
+        (
+            ["Demo_Pkg", "demo-pkg"],
+            "quick:build: duplicate build package 'demo-pkg'",
+        ),
+        (
+            ["Bravo_Pkg", "Alpha.Pkg", "bravo-pkg", "alpha-pkg"],
+            "quick:build: duplicate build package 'bravo-pkg'",
+        ),
+    ],
+    ids=("exact", "canonical", "first-canonical"),
+)
+def test_parse_scenario_build_packages_rejects_duplicates(
+    build_packages: list[str],
+    message: str,
+) -> None:
+    module = _harness("benchmark_config")
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        module.parse_scenario_build_packages(
+            "quick:build",
+            {"build_packages": build_packages},
+        )
+
+
+def test_parse_scenario_build_packages_validates_every_name_before_duplicates() -> None:
+    module = _harness("benchmark_config")
+    scenario = {"build_packages": ["Demo_Pkg", "demo-pkg", "later>=1"]}
+    message = (
+        "quick:build: build_packages[2] must be a valid distribution name, "
+        "got 'later>=1'"
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        module.parse_scenario_build_packages("quick:build", scenario)
+
+
+@pytest.mark.parametrize(
     ("routes", "message"),
     [
         (
@@ -2534,10 +2707,11 @@ def test_marker_build_scenarios_are_explicitly_unsupported() -> None:
         row.logical_key: row
         for row in rows
         if module.parse_marker_environment(row.name, row.definition)
-        and module.parse_build_packages(row.name, row.definition)
+        and module.parse_scenario_build_packages(row.name, row.definition)
     }
 
     assert set(marker_build_rows) == _MARKER_BUILD_SCENARIOS
+    assert sum("build_packages" in row.definition for row in rows) == 7
     assert all(
         row.definition.get("unsupported_reason") for row in marker_build_rows.values()
     )
@@ -2622,6 +2796,7 @@ python_version = "3.11"
 platform_system = "Linux"
 build_packages = ["demo"]
 requirements = ["demo"]
+requires_matching_host = "yes"
 """.lstrip(),
         encoding="utf-8",
     )
@@ -3756,6 +3931,16 @@ index_routes = "private"
 python_version = "3.11"
 requirements = []
 unsupported_reason = "not runnable"
+build_packages = "demo"
+""",
+            "other: build_packages must be a list of package names, got str",
+        ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
 indexes = "private"
 project_name = "demo-project"
 project_extras = ["all"]
@@ -3786,6 +3971,7 @@ vcs_allowed_repos = { "https://example.test/repo" = false }
         "vcs-scheme-table",
         "indexes",
         "index-routes",
+        "build-packages",
         "project-before-indexes",
         "vcs-repo-table",
     ),
@@ -3892,6 +4078,11 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
             "private",
             "example: index_routes must be an array of tables, got str",
         ),
+        (
+            "build_packages",
+            "demo",
+            "example: build_packages must be a list of package names, got str",
+        ),
     ],
     ids=(
         "pin",
@@ -3900,6 +4091,7 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
         "repo-table",
         "indexes",
         "index-routes",
+        "build-packages",
     ),
 )
 def test_profile_main_validates_schema_before_host_capture(
@@ -3967,12 +4159,26 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
         {"name": "Demo_Pkg", "index": "private"},
         {"name": "Other.Package", "index": "private"},
     ]
+    assert standard_execution.expected_input["build_packages"] == [
+        "Zulu_Pkg",
+        "alpha.pkg",
+        "Demo-Pkg",
+    ]
     assert (
         standard_execution.config.indexes[0].serialization is SimpleSerialization.HTML
     )
     assert standard.index_routes_from_config(standard_execution.config) == [
         IndexRoute("demo-pkg", "private"),
         IndexRoute("other-package", "private"),
+    ]
+    assert [
+        (override.name, override.build_policy)
+        for override in standard_execution.config.package_overrides
+    ] == [
+        ("demo-pkg", standard.BuildPolicy.BUILD_REMOTE),
+        ("other-package", None),
+        ("zulu-pkg", standard.BuildPolicy.BUILD_REMOTE),
+        ("alpha-pkg", standard.BuildPolicy.BUILD_REMOTE),
     ]
 
     identity = canary.canary_v2_identity(
@@ -3983,6 +4189,11 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
     assert identity.definition["index_routes"] == [
         {"name": "Demo_Pkg", "index": "private"},
         {"name": "Other.Package", "index": "private"},
+    ]
+    assert identity.definition["build_packages"] == [
+        "Zulu_Pkg",
+        "alpha.pkg",
+        "Demo-Pkg",
     ]
 
     assert standard_execution.expected_input["requirements"] == [
@@ -4056,90 +4267,138 @@ def test_all_runners_validate_project_metadata_in_schema_order(
         profile.build_inputs("example", scenario, host=host)
 
 
-def test_all_runners_reject_malformed_indexes() -> None:
-    standard = _harness("scenarios")
-    canary = _harness("canary")
-    profile = _harness("_profile_runner")
+def test_all_runners_validate_indexes_before_index_routes() -> None:
     scenario = {
         "python_version": "3.11",
         "requirements": [],
         "indexes": [{"name": False, "url": 123}],
         "index_routes": "private",
     }
-    host = _linux_host(standard)
-    message = "example: indexes[0] name and url must be strings"
 
-    with pytest.raises(TypeError, match=re.escape(message)):
-        _prepare_standard_scenario(standard, scenario, host)
-
-    with pytest.raises(TypeError, match=re.escape(message)):
-        canary._prepare_canary_execution(
-            scenario,
-            scenario_name="example",
-            resolution_override=None,
-            host=host,
-        )
-
-    with pytest.raises(TypeError, match=re.escape(message)):
-        profile.build_inputs("example", scenario, host=host)
+    _assert_all_runners_reject_scenario(
+        scenario,
+        TypeError,
+        "example: indexes[0] name and url must be strings",
+    )
 
 
-def test_all_runners_reject_malformed_index_routes() -> None:
-    standard = _harness("scenarios")
-    canary = _harness("canary")
-    profile = _harness("_profile_runner")
+def test_all_runners_reject_invalid_index_route_names() -> None:
     scenario = {
         "python_version": "3.11",
         "requirements": [],
         "indexes": [{"name": "private", "url": "https://example.test/simple"}],
         "index_routes": [{"name": "demo>=1", "index": "private"}],
     }
-    host = _linux_host(standard)
     message = (
         "example: index_routes[0].name must be a valid distribution name, got 'demo>=1'"
     )
 
-    with pytest.raises(ValueError, match=re.escape(message)):
-        _prepare_standard_scenario(standard, scenario, host)
-
-    with pytest.raises(ValueError, match=re.escape(message)):
-        canary._prepare_canary_execution(
-            scenario,
-            scenario_name="example",
-            resolution_override=None,
-            host=host,
-        )
-
-    with pytest.raises(ValueError, match=re.escape(message)):
-        profile.build_inputs("example", scenario, host=host)
+    _assert_all_runners_reject_scenario(scenario, ValueError, message)
 
 
 def test_all_runners_validate_index_routes_before_build_packages() -> None:
-    standard = _harness("scenarios")
-    canary = _harness("canary")
-    profile = _harness("_profile_runner")
     scenario = {
         "python_version": "3.11",
         "requirements": [],
         "index_routes": [{"name": "demo", "index": 123}],
         "build_packages": "demo",
     }
-    host = _linux_host(standard)
-    message = "example: index_routes[0].index must be a string, got int"
 
-    with pytest.raises(TypeError, match=re.escape(message)):
-        _prepare_standard_scenario(standard, scenario, host)
+    _assert_all_runners_reject_scenario(
+        scenario,
+        TypeError,
+        "example: index_routes[0].index must be a string, got int",
+    )
 
-    with pytest.raises(TypeError, match=re.escape(message)):
+
+def test_all_runners_reject_invalid_build_package_names() -> None:
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "build_packages": ["demo>=1"],
+    }
+    message = (
+        "example: build_packages[0] must be a valid distribution name, got 'demo>=1'"
+    )
+
+    _assert_all_runners_reject_scenario(scenario, ValueError, message)
+
+
+def test_all_runners_reject_non_list_build_packages() -> None:
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "build_packages": "demo",
+    }
+
+    _assert_all_runners_reject_scenario(
+        scenario,
+        TypeError,
+        "example: build_packages must be a list of package names, got str",
+    )
+
+
+def test_all_runners_validate_marker_shape_before_build_packages() -> None:
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "marker_environment": "Linux",
+        "build_packages": "demo",
+    }
+
+    _assert_all_runners_reject_scenario(
+        scenario,
+        TypeError,
+        "example: marker_environment must be a table of strings",
+    )
+
+
+def test_all_runners_validate_build_schema_before_compatibility() -> None:
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "platform_system": "Linux",
+        "build_packages": ["Demo_Pkg", "demo-pkg"],
+    }
+
+    _assert_all_runners_reject_scenario(
+        scenario,
+        ValueError,
+        "example: duplicate build package 'demo-pkg'",
+    )
+
+
+def test_build_compatibility_precedes_resolution_and_host_validation() -> None:
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "platform_system": "Linux",
+        "build_packages": ["demo"],
+        "resolution": "middle",
+        "requires_matching_host": "yes",
+    }
+    message = (
+        "example: build_packages cannot be combined with a marker environment overlay"
+    )
+
+    class UnusedHost:
+        """Fail if build-policy validation reaches target admission."""
+
+        def target_for(self, *_args: object, **_kwargs: object) -> object:
+            pytest.fail("build-policy validation reached host admission")
+
+    with pytest.raises(ValueError, match=re.escape(message)):
         canary._prepare_canary_execution(
             scenario,
             scenario_name="example",
             resolution_override=None,
-            host=host,
+            host=UnusedHost(),
         )
 
-    with pytest.raises(TypeError, match=re.escape(message)):
-        profile.build_inputs("example", scenario, host=host)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        profile.build_inputs("example", scenario, host=UnusedHost())
 
 
 @pytest.mark.parametrize(

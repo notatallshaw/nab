@@ -397,6 +397,61 @@ def parse_scenario_index_routes(
     return routes
 
 
+def parse_scenario_build_packages(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+) -> dict[str, BuildPolicy]:
+    """Return remote-build overrides preserving declared spelling and order."""
+    raw = scenario.get("build_packages", [])
+    if type(raw) is not list:
+        msg = (
+            f"{scenario_name}: build_packages must be a list of package names, "
+            f"got {type(raw).__name__}"
+        )
+        raise TypeError(msg)
+
+    packages: list[tuple[str, str]] = []
+    for position, name in enumerate(raw):
+        if not isinstance(name, str):
+            msg = (
+                f"{scenario_name}: build_packages[{position}] must be a string, "
+                f"got {type(name).__name__}"
+            )
+            raise TypeError(msg)
+        try:
+            canonical_name = canonicalize_name(name, validate=True)
+        except InvalidName as exc:
+            msg = (
+                f"{scenario_name}: build_packages[{position}] must be a valid "
+                f"distribution name, got {name!r}"
+            )
+            raise ValueError(msg) from exc
+        packages.append((name, canonical_name))
+
+    seen: set[str] = set()
+    for _, canonical_name in packages:
+        if canonical_name in seen:
+            msg = f"{scenario_name}: duplicate build package {canonical_name!r}"
+            raise ValueError(msg)
+        seen.add(canonical_name)
+
+    return {name: BuildPolicy.BUILD_REMOTE for name, _ in packages}
+
+
+def validate_scenario_build_policy(
+    scenario_name: str,
+    marker_environment: Mapping[str, str],
+    build_policy_overrides: Mapping[str, BuildPolicy],
+) -> None:
+    """Reject build policy paired with a marker environment overlay."""
+    if marker_environment and build_policy_overrides:
+        msg = (
+            f"{scenario_name}: build_packages cannot be combined "
+            "with a marker environment overlay"
+        )
+        raise ValueError(msg)
+
+
 def benchmark_index_settings(
     indexes: Sequence[IndexConfig],
 ) -> list[dict[str, str]]:

@@ -30,12 +30,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 import scenarios as sc
 from benchmark_config import (
     build_benchmark_config,
+    parse_scenario_build_packages,
     parse_scenario_index_routes,
     parse_scenario_indexes,
     parse_scenario_project_metadata,
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
+    validate_scenario_build_policy,
 )
 
 
@@ -89,12 +91,16 @@ def build_inputs(
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
     marker_environment = sc.parse_marker_environment(name, scenario)
-    build_policy_overrides = sc.parse_build_packages(name, scenario)
-    sc.validate_scenario_build_policy(
+    build_policy_overrides = parse_scenario_build_packages(name, scenario)
+    validate_scenario_build_policy(
         name,
         marker_environment,
         build_policy_overrides,
     )
+    declared_resolution = sc.ResolutionStrategy(
+        scenario.get("resolution", sc.ResolutionStrategy.HIGHEST.value)
+    )
+    resolution_strategy = resolution_override or declared_resolution
     requires_matching_host = sc.parse_requires_matching_host(
         name,
         scenario,
@@ -111,10 +117,6 @@ def build_inputs(
         raise SystemExit(msg)
     target = admission.target
 
-    declared_resolution = sc.ResolutionStrategy(
-        scenario.get("resolution", sc.ResolutionStrategy.HIGHEST.value)
-    )
-    resolution_strategy = resolution_override or declared_resolution
     if project_metadata.project_name:
         requirement_strings += sc.expand_project_extras(
             project_metadata.project_name,
