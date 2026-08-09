@@ -9,10 +9,16 @@ compared against each other, can answer from different moments.
 The index double below lands a listing on the first read that asks for it,
 which is the race a traced resolve caught: the listing arrives between
 ``prioritize`` and ``is_ready`` for one package.
+
+Freezing that view keeps one scan consistent with itself, but the scans
+of two runs can still disagree: what had landed when each scan opened is
+a fact about the HTTP cache.  ``decision-order = "stable"`` closes that,
+and the last class here varies only which listings were already resident.
 """
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING
 
 from nab_index.client import WheelFile
@@ -21,7 +27,7 @@ from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.version import Version
 from nab_python.fetch import InMemoryIndex
-from nab_python.provider import Provider
+from nab_python.provider import DecisionOrder, Provider
 from nab_resolver import decide
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -69,8 +75,12 @@ class _ArrivesOnReadIndex(InMemoryIndex):
 class _ScanRecordingProvider(Provider):
     """Records both halves of every sort key a scan builds, in scan order."""
 
-    def __init__(self, coordinator: MagicMock) -> None:
-        super().__init__(coordinator)
+    def __init__(
+        self,
+        coordinator: MagicMock,
+        decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
+    ) -> None:
+        super().__init__(coordinator, decision_order=decision_order)
         self.scan_reads: list[tuple[str, int, bool]] = []
         self._matching: dict[str, int] = {}
 
@@ -104,6 +114,95 @@ def _coordinator(
         index.store_listing(package, files)
     coordinator.index = index
     return coordinator
+
+
+class _LandsOnWait(threading.Event):
+    """The fetcher's event, carrying the store it does just before setting it.
+
+    A synchronous double cannot race its reader, so the arrival hangs off
+    ``wait`` itself.  A caller that does not wait then sees no listing, which
+    is what it would see against a fetcher that had not finished.
+    """
+
+    def __init__(
+        self,
+        index: InMemoryIndex,
+        package: str,
+        files: Sequence[WheelFile | SdistFile],
+    ) -> None:
+        super().__init__()
+        self._index = index
+        self._package = package
+        self._files = files
+
+    def wait(self, timeout: float | None = None) -> bool:
+        self._index.store_listing(self._package, self._files)
+        self.set()
+        return super().wait(timeout)
+
+
+def _fetching_coordinator(
+    pending: Mapping[str, Sequence[WheelFile | SdistFile]],
+) -> MagicMock:
+    """Coordinator whose listings land only for a caller that waits."""
+    coordinator = make_coordinator(None)
+    index = InMemoryIndex()
+    coordinator.index = index
+    coordinator.request_listing.side_effect = lambda package: _LandsOnWait(
+        index, package, pending[package]
+    )
+    return coordinator
+
+
+def _two_package_resolver(
+    *, resident: bool, decision_order: DecisionOrder
+) -> tuple[Resolver[str, Version], _ScanRecordingProvider]:
+    """Resolver over a three-version ``alpha`` and a one-version ``beta``.
+
+    ``resident`` is the only thing that differs between two runs of this
+    project against this index: whether ``beta``'s listing had already
+    landed when the scan opened, or lands during it.
+    """
+    beta = [_wheel("beta")]
+    resident_listings: dict[str, Sequence[WheelFile | SdistFile]] = {
+        "alpha": [_wheel("alpha", version) for version in ("1.0", "2.0", "3.0")]
+    }
+    arrivals: dict[str, Sequence[WheelFile | SdistFile]] = {}
+    if resident:
+        resident_listings["beta"] = beta
+    else:
+        arrivals["beta"] = beta
+
+    provider = _ScanRecordingProvider(
+        _coordinator(arrivals, resident_listings), decision_order
+    )
+    resolver: Resolver[str, Version] = Resolver(
+        provider, range_type=VersionRange, root_version="0"
+    )
+    for package in ("alpha", "beta"):
+        resolver.solution.derive(
+            package, VersionRange.full(), positive=True, cause=_cause()
+        )
+    return resolver, provider
+
+
+def _scan_keys(*, resident: bool, decision_order: DecisionOrder) -> dict[str, object]:
+    """Return one scan's ``package -> (matching, ready)`` map."""
+    resolver, provider = _two_package_resolver(
+        resident=resident, decision_order=decision_order
+    )
+    decide.choose_package_to_decide(resolver)
+    return {
+        package: (matching, ready) for package, matching, ready in provider.scan_reads
+    }
+
+
+def _decided_first(*, resident: bool, decision_order: DecisionOrder) -> str | None:
+    """Return the package the scan would decide next."""
+    resolver, _ = _two_package_resolver(
+        resident=resident, decision_order=decision_order
+    )
+    return decide.choose_package_to_decide(resolver)
 
 
 def _cause() -> Incompatibility[str, Version]:
@@ -208,3 +307,89 @@ class TestScanKeysShareOneView:
         decide.choose_package_to_decide(resolver)
 
         assert all(ready for _, _, ready in provider.scan_reads)
+
+
+class TestStableOrderIgnoresArrival:
+    """Under ``stable`` the scan settles a listing rather than ranking its absence."""
+
+    def test_a_listing_that_lands_mid_scan_is_counted_now(self) -> None:
+        """The count is the real one, not the in-flight sentinel."""
+        provider = Provider(
+            _coordinator({"foo": [_wheel("foo")]}),
+            decision_order=DecisionOrder.STABLE,
+        )
+
+        provider.begin_decision_scan()
+
+        assert provider.prioritize("foo", VersionRange.full(), {})[1] == 1
+        assert provider.is_ready("foo") is True
+
+    def test_settling_waits_for_the_fetch(self) -> None:
+        """The count comes from the wait, not from a second look at the index."""
+        provider = Provider(
+            _fetching_coordinator({"foo": [_wheel("foo")]}),
+            decision_order=DecisionOrder.STABLE,
+        )
+
+        provider.begin_decision_scan()
+
+        assert provider.prioritize("foo", VersionRange.full(), {})[1] == 1
+        assert provider.is_ready("foo") is True
+
+    def test_a_resident_listing_is_read_without_a_request(self) -> None:
+        """Settling costs nothing once the listing is in the index."""
+        coordinator = _coordinator({}, {"foo": [_wheel("foo")]})
+        provider = Provider(coordinator, decision_order=DecisionOrder.STABLE)
+
+        listing = provider.settled_listing("foo")
+
+        assert listing is not None
+        assert [file.filename for file in listing] == ["foo-1.0-py3-none-any.whl"]
+        coordinator.request_listing.assert_not_called()
+
+    def test_a_failed_listing_is_not_requested_again(self) -> None:
+        """A fetch that already failed has settled; asking again would not help."""
+        coordinator = _coordinator({})
+        coordinator.index.store_listing_error("foo", RuntimeError("index is down"))
+        provider = Provider(coordinator, decision_order=DecisionOrder.STABLE)
+
+        provider.begin_decision_scan()
+
+        assert (
+            provider.prioritize("foo", VersionRange.full(), {})[1] == _NO_LISTING_PRIOR
+        )
+        assert provider.is_ready("foo") is False
+        coordinator.request_listing.assert_not_called()
+
+    def test_a_listing_that_never_lands_leaves_the_package_in_flight(self) -> None:
+        """One wait, then the sentinel: the scan must not spin on a dead fetch."""
+        provider = Provider(_coordinator({}), decision_order=DecisionOrder.STABLE)
+
+        provider.begin_decision_scan()
+
+        assert (
+            provider.prioritize("foo", VersionRange.full(), {})[1] == _NO_LISTING_PRIOR
+        )
+        assert provider.is_ready("foo") is False
+
+    def test_the_scan_builds_the_same_keys_whatever_had_landed(self) -> None:
+        """Cache warmth is invisible to the sort key."""
+        warm = _scan_keys(resident=True, decision_order=DecisionOrder.STABLE)
+        cold = _scan_keys(resident=False, decision_order=DecisionOrder.STABLE)
+
+        assert warm == cold == {"alpha": (3, True), "beta": (1, True)}
+
+    def test_the_same_package_is_decided_whatever_had_landed(self) -> None:
+        """The package with fewer candidates decides first either way."""
+        warm = _decided_first(resident=True, decision_order=DecisionOrder.STABLE)
+        cold = _decided_first(resident=False, decision_order=DecisionOrder.STABLE)
+
+        assert warm == cold == "beta"
+
+    def test_the_default_decides_on_what_happened_to_have_landed(self) -> None:
+        """The default decides on cache warmth, which is what the option closes."""
+        warm = _decided_first(resident=True, decision_order=DecisionOrder.ARRIVAL)
+        cold = _decided_first(resident=False, decision_order=DecisionOrder.ARRIVAL)
+
+        assert warm == "beta"
+        assert cold == "alpha"

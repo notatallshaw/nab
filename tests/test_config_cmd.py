@@ -44,7 +44,7 @@ from nab_python.lockfile import (
     WheelArtifact,
     read_lockfile_anchor,
 )
-from nab_python.provider import DistPolicy, ResolutionStrategy
+from nab_python.provider import DecisionOrder, DistPolicy, ResolutionStrategy
 from nab_python.resolve import ResolveResult, TargetResult
 from nab_python.target import ResolveTarget
 
@@ -999,6 +999,16 @@ class TestProjectCliOverrides:
             ["--project-build-requires-depth", "3"],
         )
         assert config.build_requires_depth == 3
+
+    def test_project_decision_order_reaches_resolve(self, hermetic_roots: Path) -> None:
+        # The file declares stable, so a resolve seeing arrival read the flag.
+        proj = _project(hermetic_roots, 'decision-order = "stable"\n')
+        config, _ = self._lock_config(
+            proj,
+            hermetic_roots / "pylock.toml",
+            ["--project-decision-order", "arrival"],
+        )
+        assert config.decision_order is DecisionOrder.ARRIVAL
 
     def test_project_constraint_repeats_replace_the_file_list(
         self, hermetic_roots: Path

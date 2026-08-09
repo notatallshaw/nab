@@ -72,6 +72,10 @@ def compute_matching(
     :data:`_NO_LISTING_PRIOR` while the listing is still in flight, reading
     arrival through ``arrived_listing`` so it agrees with ``is_ready`` for the
     whole decision scan.
+
+    Under :attr:`~nab_python.provider.DecisionOrder.STABLE` it waits for the
+    listing instead, so the count is the real one and this sentinel is only
+    reached by a package with no listing to count.
     """
     per_pkg = provider.matching_cache.get(normalized)
     if per_pkg is not None:
@@ -87,7 +91,11 @@ def compute_matching(
         or normalized in provider.archive_sources
     )
     if normalized not in provider.versions_cache and not has_local_source:
-        files = provider.arrived_listing(normalized)
+        files = (
+            provider.settled_listing(normalized)
+            if provider.settle_listings
+            else provider.arrived_listing(normalized)
+        )
         if files is not None:
             versions = provider.filter_distributions(normalized, files)
             provider.versions_cache[normalized] = versions
@@ -155,7 +163,9 @@ def prioritize(
     their base at equal tier so they pin the base version directly (avoids
     the backtrack storm when the base is decided before the extras proxy).
 
-    Never blocks on I/O.
+    Blocks on I/O only under
+    :attr:`~nab_python.provider.DecisionOrder.STABLE`, which waits for a
+    listing rather than ranking its absence.
     """
     provider.stats.prioritize_calls += 1
     _, extra, normalized = provider.split_and_normalize(package)

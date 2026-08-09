@@ -324,18 +324,44 @@ entries some other way if that is the workflow you need.
 
 ## Reproducibility
 
-Use `[tool.nab].uploaded-prior-to` to make the resolve
-time-bounded. Distributions uploaded after that timestamp are
-ignored, even if newer files exist on the index when you run.
-This pairs naturally with the lockfile: a fresh resolve with the
-same `uploaded-prior-to` produces the same pin set, so the
-lockfile is truly reproducible rather than "reproducible until
-upstream re-uploads".
+Two things have to hold for a lock to reproduce: the index has to
+give the same answer, and the resolver has to search the same
+way. They are separate settings.
 
-When `uploaded-prior-to` is an absolute timestamp, that timestamp
-also becomes the lockfile's `created-at`, so two locks from
-identical inputs are byte-for-byte identical. `--upgrade` is the
-exception: it stamps the run time instead.
+`[tool.nab].uploaded-prior-to` bounds the index view.
+Distributions uploaded after that timestamp are ignored, even if
+newer files exist on the index when you run, so the lockfile is
+truly reproducible rather than "reproducible until upstream
+re-uploads".
+
+`[tool.nab].decision-order = "stable"` bounds the search. On the
+default `arrival`, nab decides packages whose listing has already
+arrived ahead of ones still in flight, so a machine with a cold
+HTTP cache can search differently, and on some inputs pin
+differently, from one with a warm cache on the same inputs and
+the same frozen index. See "Decision order" in the
+[configuration reference](configuration.md) for what it costs.
+
+With both set, a fresh resolve produces the same pin set, and an
+absolute `uploaded-prior-to` also becomes the lockfile's
+`created-at`, so two locks from identical inputs are
+byte-for-byte identical. `--upgrade` is the exception: it stamps
+the run time instead.
+
+Both settings assume an index that does not move. Several things
+move it. Yanking is a property of the listing as it stands, not
+of the upload, so a file yanked after you locked changes the
+resolve and `uploaded-prior-to` does not bring it back. A deleted
+file cannot be resolved to at all.
+
+The cutoff also trusts the upload times the index reports. An
+index that rewrites them changes what a past cutoff admits, and
+nab does not detect that. A distribution reported without an
+upload time is excluded once a cutoff is set, so an index that
+reports none serves nothing at all. Local `file://` and
+find-links artifacts carry no upload time either, and those are
+kept rather than excluded, so a resolve mixing a wheelhouse with
+an index is only partly time-bounded.
 
 A relative `P<n>D` cutoff is measured back from `created-at`
 rather than from the clock, and a re-lock reuses the `created-at`
@@ -369,6 +395,12 @@ single-environment mode.
 Some mismatches are provable from your inputs without resolving, so
 `--locked` can fail fast with the reason before it re-resolves; see the
 [CLI reference](cli.md).
+
+`--locked` re-resolves, so it depends on everything the resolve
+depends on. On the default `decision-order = "arrival"` the check
+can fail on a commit nobody changed, when the CI runner's HTTP
+cache is colder than the machine that wrote the lock. Set
+`decision-order = "stable"` on any project that runs it.
 
 ## `nab download`
 

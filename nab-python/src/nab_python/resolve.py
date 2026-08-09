@@ -878,6 +878,7 @@ def _resolve_one_target(
             source_root / ARCHIVE_BUCKET if source_root is not None else None
         ),
         build_config=config,
+        decision_order=config.decision_order,
         resolution_strategy=settings.resolution,
         direct_packages=frozenset(
             name for name in resolver_requirements if split_extra(name)[1] is None
