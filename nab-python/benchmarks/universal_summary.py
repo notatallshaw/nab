@@ -10,6 +10,7 @@ from typing import cast
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
+    is_portable_scenario_name,
     result_is_accepted,
     result_is_well_formed,
 )
@@ -20,12 +21,10 @@ RESULTS_DIR = Path(__file__).parent / "results"
 def _valid_scenario_names(value: object) -> bool:
     if not isinstance(value, list) or not value:
         return False
-    if not all(isinstance(name, str) and name for name in value):
+    if not all(is_portable_scenario_name(name) for name in value):
         return False
     names: list[str] = value
-    return all(Path(name).name == name for name in names) and len(set(names)) == len(
-        names
-    )
+    return len({name.casefold() for name in names}) == len(names)
 
 
 def _valid_clean_source(value: object) -> bool:

@@ -43,6 +43,7 @@ else:
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
+    is_portable_scenario_name,
     result_is_accepted,
     result_is_well_formed,
 )
@@ -243,8 +244,32 @@ def check_lock_consistency(result: ResolveResult) -> tuple[bool, list[str]]:
     return not problems, problems
 
 
+def _validate_scenario_names(names: list[str]) -> None:
+    """Reject names that cannot identify distinct universal result files."""
+    invalid = sorted(name for name in names if not is_portable_scenario_name(name))
+    if invalid:
+        rendered = ", ".join(repr(name) for name in invalid)
+        msg = f"invalid universal scenario name(s): {rendered}"
+        raise ValueError(msg)
+
+    names_by_casefold: dict[str, list[str]] = {}
+    for name in names:
+        names_by_casefold.setdefault(name.casefold(), []).append(name)
+    collisions = [group for group in names_by_casefold.values() if len(group) > 1]
+    if collisions:
+        rendered = ", ".join(
+            " / ".join(repr(name) for name in group) for group in collisions
+        )
+        msg = (
+            "universal scenario names collide on case-insensitive filesystems: "
+            f"{rendered}"
+        )
+        raise ValueError(msg)
+
+
 def validate_scenario(scenario_name: str, scenario: dict) -> None:
     """Reject invalid settings before running a universal scenario."""
+    _validate_scenario_names([scenario_name])
     unknown = sorted(set(scenario) - UNIVERSAL_SCENARIO_KEYS)
     if unknown:
         msg = f"{scenario_name}: unknown scenario setting(s): {', '.join(unknown)}"
@@ -573,6 +598,7 @@ def main() -> None:
     toml_path = SCENARIOS_DIR / "universal.toml"
     print(f"Running universal scenarios from {toml_path}")
     scenarios = tomllib.loads(toml_path.read_text())
+    _validate_scenario_names(list(scenarios))
     if args.scenario:
         duplicates = sorted(
             {name for name in args.scenario if args.scenario.count(name) > 1}
