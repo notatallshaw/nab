@@ -11,8 +11,7 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#result
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic
+from typing import TYPE_CHECKING, Any
 
 from .types import IncompatibilityCause, PackageType, VersionType
 
@@ -21,38 +20,10 @@ if TYPE_CHECKING:
 
     from .types import Incompatibility, RangeProtocol
 
-__all__ = [
-    "Solution",
-    "build_solution",
-]
+__all__ = ["build_solution_data"]
 
 
-@dataclass(frozen=True)
-class Solution(Generic[PackageType, VersionType]):
-    """A finished resolution: what was chosen, and how it was reached.
-
-    ``pins`` maps every transitively reachable package to its decided
-    version.  ``roots`` are the packages the caller required directly, in
-    the order they were required.  ``edges`` are ``(parent, child)`` pairs,
-    one per dependency the reachability walk crossed, in breadth-first
-    order from ``roots``; a pair appears once, and both ends of every edge
-    are keys of ``pins``.
-
-    An edge records only that one pinned package depends on another, with
-    no version range and no requirement text, so reading the graph needs
-    nothing this package cannot express.  A caller that installs what it
-    resolves has to put a dependency on disk before its dependent, and
-    that ordering is a property of the graph rather than of the pins.  A
-    caller wanting one rooted graph joins ``roots`` to a root node of its
-    own.
-    """
-
-    pins: dict[PackageType, VersionType]
-    edges: tuple[tuple[PackageType, PackageType], ...]
-    roots: tuple[PackageType, ...]
-
-
-def build_solution(
+def build_solution_data(
     decisions: Mapping[PackageType, VersionType],
     incompatibilities: Iterable[Incompatibility[PackageType, VersionType]],
     get_dependencies: Callable[
@@ -60,22 +31,23 @@ def build_solution(
     ],
     *,
     root_sentinel: Any,
-) -> Solution[PackageType, VersionType]:
-    """Filter ``decisions`` to packages transitively reachable from root.
+) -> tuple[
+    dict[PackageType, VersionType],
+    tuple[tuple[PackageType, PackageType], ...],
+    tuple[PackageType, ...],
+]:
+    """Return pins, edges, and roots for decisions reachable from the root.
 
     ``incompatibilities`` is scanned for clauses with cause ``ROOT``
     to recover the user-specified root requirements.  ``get_dependencies``
     is the provider's ``get_dependencies(package, version)`` method,
     which is used to traverse the dependency graph.  Every dependency it
-    reports for a reachable package becomes an edge: the walk asks for
-    them to find the reachable set, so the graph costs nothing more.
+    reports for a reachable package becomes an edge.
     """
     all_decisions = dict(decisions)
     all_decisions.pop(root_sentinel, None)
 
-    # Recover the user-specified roots from ROOT-cause clauses.  Insertion
-    # ordered rather than a set, so the walk that starts here, and the edge
-    # order that comes out of it, do not move with the hash seed.
+    # Keep each root's first appearance so traversal follows the caller's order.
     root_required: dict[PackageType, None] = {}
     for incompatibility in incompatibilities:
         if incompatibility.cause != IncompatibilityCause.ROOT:
@@ -105,12 +77,12 @@ def build_solution(
             if dep_package not in reachable:
                 queue.append(dep_package)
 
-    return Solution(
-        pins={
+    return (
+        {
             package: version
             for package, version in all_decisions.items()
             if package in reachable
         },
-        edges=tuple(edges),
-        roots=tuple(root_required),
+        tuple(edges),
+        tuple(root_required),
     )

@@ -29,7 +29,7 @@ from . import conflict, decide, incompat_index, propagate
 from .errors import ResolutionError
 from .partial_solution import PartialSolution
 from .ranges import Range
-from .result import Solution, build_solution
+from .result import build_solution_data
 from .root import ROOT
 from .types import (
     Incompatibility,
@@ -64,6 +64,22 @@ __all__ = [
 ]
 
 DEFAULT_MAX_ITERATIONS = 200_000
+
+
+@dataclass(frozen=True)
+class Solution(Generic[PackageType, VersionType]):
+    """Pins and dependency relationships from a finished resolution.
+
+    ``pins`` maps every transitively reachable package to its decided
+    version.  ``edges`` are distinct ``(parent, child)`` pairs in
+    breadth-first order from ``roots``.  Both endpoints of each edge are
+    keys of ``pins``.  ``roots`` are the packages the caller required
+    directly, in requirement order.
+    """
+
+    pins: dict[PackageType, VersionType]
+    edges: tuple[tuple[PackageType, PackageType], ...]
+    roots: tuple[PackageType, ...]
 
 
 class ResolverProvider(Protocol[PackageType, VersionType]):
@@ -601,12 +617,13 @@ class Resolver(Generic[PackageType, VersionType]):
         Per the PubGrub spec, the solution must not contain extra packages:
         "all selected packages are transitively reachable from the root."
         """
-        return build_solution(
+        pins, edges, roots = build_solution_data(
             self.solution.decisions(),
             self.incompatibilities,
             self.provider.get_dependencies,
             root_sentinel=ROOT,
         )
+        return Solution(pins=pins, edges=edges, roots=roots)
 
     def _reset(
         self,

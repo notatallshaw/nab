@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import pickle
+from itertools import permutations
 from typing import Any
 
 import pytest
 
+import nab_resolver.result as result_module
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import ResolutionError, Resolver, Solution
-from nab_resolver.result import build_solution
+from nab_resolver.result import build_solution_data
 from nab_resolver.root import ROOT
-from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
+from nab_resolver.types import (
+    Incompatibility,
+    IncompatibilityCause,
+    RootRequirement,
+    Term,
+)
 
 from .test_resolver import DictProvider
 
@@ -19,6 +27,11 @@ Packages = dict[str, dict[int, dict[str, Range]]]
 
 def solve(packages: Packages, **requirements: Range) -> Solution[str, int]:
     return Resolver(DictProvider(packages)).solve(dict(requirements))
+
+
+def _order_not_preserved_by_set(packages: tuple[str, ...]) -> tuple[str, ...]:
+    """Choose an order that this interpreter's set iteration changes."""
+    return next(order for order in permutations(packages) if tuple(set(order)) != order)
 
 
 class TestPins:
@@ -40,13 +53,30 @@ class TestPins:
             Resolver(DictProvider(packages)).solve({"foo": Range.full()})
 
 
+class TestPublicSolution:
+    def test_solution_uses_the_promised_module_and_pickle_path(self) -> None:
+        solution = solve({"a": {1: {}}}, a=Range.full())
+        serialized = pickle.dumps(solution, protocol=0)
+        restored = pickle.loads(serialized)  # noqa: S301
+
+        assert type(solution) is Solution
+        assert Solution.__module__ == "nab_resolver.resolver"
+        assert not hasattr(result_module, "Solution")
+        assert b"cnab_resolver.resolver\nSolution\n" in serialized
+        assert restored == solution
+
+
 class TestRoots:
     def test_roots_are_the_requirements_in_the_order_given(self) -> None:
         packages: Packages = {"a": {1: {}}, "b": {1: {}}, "c": {1: {}}}
+        root_order = _order_not_preserved_by_set(tuple(packages))
+        requirements = [
+            RootRequirement(package, Range.full()) for package in root_order
+        ]
 
-        solution = solve(packages, c=Range.full(), a=Range.full(), b=Range.full())
+        solution = Resolver(DictProvider(packages)).solve(requirements)
 
-        assert solution.roots == ("c", "a", "b")
+        assert solution.roots == root_order
 
     def test_a_root_that_is_also_a_dependency_is_still_a_root(self) -> None:
         packages: Packages = {"a": {1: {"b": Range.full()}}, "b": {1: {}}}
@@ -115,7 +145,7 @@ class TestEdges:
         )
 
 
-class TestBuildSolution:
+class TestBuildSolutionData:
     def test_the_root_sentinel_is_neither_pinned_nor_a_root(self) -> None:
         # Term[Any, int] sidesteps the invariant PackageType TypeVar so
         # ROOT and str entries can share a list.
@@ -125,15 +155,16 @@ class TestBuildSolution:
         ]
         root_clause = Incompatibility(terms, cause=IncompatibilityCause.ROOT)
 
-        solution = build_solution(
+        pins, edges, roots = build_solution_data(
             {ROOT: 1, "a": 3},
             [root_clause],
             lambda package, version: {},
             root_sentinel=ROOT,
         )
 
-        assert solution.pins == {"a": 3}
-        assert solution.roots == ("a",)
+        assert pins == {"a": 3}
+        assert edges == ()
+        assert roots == ("a",)
 
     def test_clauses_that_are_not_root_causes_contribute_no_roots(self) -> None:
         terms: list[Term[Any, int]] = [
@@ -144,13 +175,13 @@ class TestBuildSolution:
             terms, cause=IncompatibilityCause.DEPENDENCY
         )
 
-        solution = build_solution(
+        pins, edges, roots = build_solution_data(
             {"a": 1, "b": 1},
             [dependency_clause],
             lambda package, version: {},
             root_sentinel=ROOT,
         )
 
-        assert solution.pins == {}
-        assert solution.roots == ()
-        assert solution.edges == ()
+        assert pins == {}
+        assert edges == ()
+        assert roots == ()
