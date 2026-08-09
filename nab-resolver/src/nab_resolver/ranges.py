@@ -1,7 +1,8 @@
 """Generic version range with interval operations.
 
-A Range represents a set of versions as a sorted list of non-overlapping
-intervals. Supports intersection, union, complement, and containment.
+A Range represents a set of versions as a canonical list of intervals; see
+``Range.__init__`` for what makes a list canonical. Supports intersection,
+union, complement, and containment.
 
 This is equivalent to pubgrub-rs's ``version_ranges::Ranges<V>``:
 https://github.com/pubgrub-rs/pubgrub/tree/release/version-ranges
@@ -152,19 +153,32 @@ def _interval_is_empty(
 
 
 class Range(Generic[VersionType]):
-    """A set of versions represented as sorted, non-overlapping intervals.
+    """A set of versions represented as a canonical list of intervals.
 
     Modeled after pubgrub-rs ``version_ranges::Ranges<V>``:
     https://docs.rs/version-ranges/latest/version_ranges/struct.Ranges.html
 
     Each interval is ``(lower, lower_inclusive, upper, upper_inclusive)``.
-    The list is sorted by lower bound and intervals do not overlap or touch.
+    See :meth:`__init__` for the invariant the interval list must satisfy.
     """
 
     __slots__ = ("_intervals",)
 
     def __init__(self, intervals: tuple[Interval, ...] = ()) -> None:
-        """Create a range from pre-sorted, non-overlapping intervals."""
+        """Create a range from intervals that already satisfy the invariant.
+
+        The intervals must be sorted by lower bound, must not overlap or
+        touch, must each hold at least one version, and must be exclusive at
+        ``NEGATIVE_INFINITY`` and ``POSITIVE_INFINITY``.  Every operator
+        returns through here, so this neither checks nor normalizes: the
+        classmethods and the operators maintain the invariant, and a caller
+        that assembles its own tuple owns it.
+
+        Equality and hashing compare interval tuples, so two lists denoting
+        the same set must be the same list, and
+        ``((1, True, 2, False), (2, True, 3, True))`` is not a legal way to
+        write ``[1, 3]``.
+        """
         self._intervals = intervals
 
     @classmethod
@@ -406,7 +420,13 @@ class Range(Generic[VersionType]):
 
 
 def _normalize_intervals(intervals: list[Interval]) -> tuple[Interval, ...]:
-    """Sort intervals by lower bound and merge overlapping or adjacent ones."""
+    """Sort intervals by lower bound and merge overlapping or adjacent ones.
+
+    Order, overlap and touching are all it repairs.  An empty interval, a
+    reversed one or an inclusive infinity bound comes through untouched unless
+    a merge happens to absorb or rebuild it, so this is not a way to normalize
+    a list that breaks the ``Range`` invariant.
+    """
     if not intervals:
         return ()
 

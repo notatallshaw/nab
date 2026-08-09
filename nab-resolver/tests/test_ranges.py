@@ -308,13 +308,15 @@ class TestRangeComplementEdgeCases:
         assert 1 not in complement
         assert 2 in complement
 
-    def test_complement_of_touching_intervals(self) -> None:
-        """Complement of [1,2) | [2,3) has no gap at 2."""
-        r = Range(((1, True, 2, False), (2, True, 3, False)))
+    def test_complement_of_a_merged_touch(self) -> None:
+        """[1,2) | [2,3) merges to [1,3), so the complement has no gap at 2."""
+        r = Range.between(1, 2) | Range.between(2, 3)
+        assert r == Range.between(1, 3)
+
         complement = ~r
         assert 0 in complement
         assert 1 not in complement
-        assert 2 not in complement  # 2 is in [2,3)
+        assert 2 not in complement
         assert 3 in complement
 
 
