@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import scenarios as sc
 from benchmark_config import (
     build_benchmark_config,
+    parse_scenario_requirement_strings,
     parse_trust_unverified_sdist_deps,
 )
 
@@ -75,9 +76,10 @@ def build_inputs(
     host: sc.BenchmarkHost | None = None,
 ) -> dict:
     trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(name, scenario)
+    requirement_inputs = parse_scenario_requirement_strings(name, scenario)
     python_version = scenario["python_version"]
-    requirement_strings = list(scenario["requirements"])
-    constraint_strings = scenario.get("constraints", [])
+    requirement_strings = requirement_inputs.requirements
+    constraint_strings = requirement_inputs.constraints
     marker_environment = sc.parse_marker_environment(name, scenario)
     build_policy_overrides = sc.parse_build_packages(name, scenario)
     sc.validate_scenario_build_policy(

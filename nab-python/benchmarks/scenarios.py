@@ -37,6 +37,7 @@ from benchmark_config import (
     build_benchmark_config,
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
+    parse_scenario_requirement_strings,
     parse_trust_unverified_sdist_deps,
 )
 from benchmark_host import (
@@ -579,6 +580,7 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
         marker_environment = parse_marker_environment(row.name, row.definition)
         parse_requires_matching_host(row.name, row.definition, marker_environment)
         parse_trust_unverified_sdist_deps(row.logical_key, row.definition)
+        parse_scenario_requirement_strings(row.logical_key, row.definition)
         build_policy_overrides = parse_build_packages(row.name, row.definition)
         if "unsupported_reason" in row.definition:
             continue
@@ -1584,9 +1586,14 @@ def prepare_standard_execution(
     """Prepare and identify one execution without performing network work."""
     scenario_name = execution.scenario.name
     scenario = execution.scenario.definition
+    trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(
+        scenario_name,
+        scenario,
+    )
+    requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
     python_version: str = scenario["python_version"]
-    requirement_strings: list[str] = list(scenario["requirements"])
-    constraint_strings: list[str] = scenario.get("constraints", [])
+    requirement_strings = requirement_inputs.requirements
+    constraint_strings = requirement_inputs.constraints
     marker_environment = parse_marker_environment(scenario_name, scenario)
     indexes = parse_indexes(scenario_name, scenario)
     index_routes = parse_index_routes(scenario_name, scenario)
@@ -1613,10 +1620,6 @@ def prepare_standard_execution(
         allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
         allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
         require_pin=scenario.get("vcs_require_pin", True),
-    )
-    trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(
-        scenario_name,
-        scenario,
     )
     uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
     config = build_benchmark_config(
