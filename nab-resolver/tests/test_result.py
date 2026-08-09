@@ -71,7 +71,7 @@ class TestRoots:
         packages: Packages = {"a": {1: {}}, "b": {1: {}}, "c": {1: {}}}
         root_order = _order_not_preserved_by_set(tuple(packages))
         requirements = [
-            RootRequirement(package, Range.full()) for package in root_order
+            RootRequirement[str, int](package, Range.full()) for package in root_order
         ]
 
         solution = Resolver(DictProvider(packages)).solve(requirements)
