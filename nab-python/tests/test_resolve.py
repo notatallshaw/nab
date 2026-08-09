@@ -4312,6 +4312,9 @@ class TestLockDeclaresItsEnvironment:
         assert not Marker(rows["above"]).evaluate(low)
 
 
+_BASE_GROUP = '[tool.nab]\nbase-group = "default"\n'
+
+
 class TestExtraAndGroupMembershipMarkers:
     """A selected extra or group gates the packages only it reaches.
 
@@ -4422,6 +4425,49 @@ class TestExtraAndGroupMembershipMarkers:
             "subtool",
         }
 
+    def test_a_group_can_be_selected_without_the_project_dependencies(
+        self, tmp_path: Path
+    ) -> None:
+        """What naming them buys: a lock can be asked for one group.
+
+        The project's own dependencies answer to their own group name, so
+        an installer asked for ``dev`` alone gets the group and nothing
+        else.  Naming groups replaces the defaults rather than adding to
+        them, so an install that wants both asks for both.
+        """
+        pylock = self._lock(
+            tmp_path, extras=("cli",), groups=("dev",), root=self._ROOT + _BASE_GROUP
+        )
+
+        assert self._markers(pylock) == {
+            "core": '"default" in dependency_groups',
+            "mydev": '"dev" in dependency_groups',
+            "mytool": '"cli" in extras',
+            "subtool": '"cli" in extras',
+        }
+
+        assert self._selected(pylock, dependency_groups=["dev"]) == {"mydev"}
+        assert self._selected(pylock, dependency_groups=["default", "dev"]) == {
+            "core",
+            "mydev",
+        }
+
+    def test_package_reached_by_base_and_group_installs_for_either(
+        self, tmp_path: Path
+    ) -> None:
+        """A group that re-requires a project dependency still gets it.
+
+        The package answers to both names, so selecting the group alone
+        installs it even though the project's own dependencies are out.
+        """
+        root = self._ROOT.replace('dev = ["mydev"]', 'dev = ["mydev", "core"]')
+        pylock = self._lock(tmp_path, groups=("dev",), root=root + _BASE_GROUP)
+
+        assert self._markers(pylock)["core"] == (
+            '"default" in dependency_groups or "dev" in dependency_groups'
+        )
+        assert self._selected(pylock, dependency_groups=["dev"]) == {"core", "mydev"}
+
     def test_package_reached_by_base_and_extra_is_unconditional(
         self, tmp_path: Path
     ) -> None:
@@ -4445,6 +4491,95 @@ class TestExtraAndGroupMembershipMarkers:
         assert pylock.default_groups == ("dev",)
         assert self._selected(pylock) == {"core", "mydev"}
         assert self._selected(pylock, dependency_groups=[]) == {"core"}
+
+    def test_declared_default_groups_replace_rather_than_extend(
+        self, tmp_path: Path
+    ) -> None:
+        """Declaring ``default-groups`` drops the base group from them.
+
+        The project chose that selection, so nab does not add to it; the
+        name goes back in by being declared there.
+        """
+        root = self._ROOT + '[tool.nab]\ndefault-groups = ["dev"]\n'
+        replaced = self._lock(tmp_path, root=root + 'base-group = "base"\n')
+
+        assert replaced.default_groups == ("dev",)
+        assert self._selected(replaced) == {"mydev"}
+
+    def test_naming_the_base_group_in_default_groups_keeps_it(
+        self, tmp_path: Path
+    ) -> None:
+        """It is not a declared group, but ``default-groups`` accepts it."""
+        root = self._ROOT + '[tool.nab]\ndefault-groups = ["dev", "base"]\n'
+        pylock = self._lock(tmp_path, root=root + 'base-group = "base"\n')
+
+        assert pylock.default_groups == ("dev", "base")
+        assert self._selected(pylock) == {"core", "mydev"}
+
+    def test_selecting_the_base_group_by_name_refuses(self, tmp_path: Path) -> None:
+        """It is project policy, not a per-run selection.
+
+        ``default-groups`` takes the name; ``--groups`` does not, and
+        being silently accepted there would make the flag a no-op.
+        """
+        with pytest.raises(LookupError, match="'default' not found"):
+            self._lock(tmp_path, groups=("default",), root=self._ROOT + _BASE_GROUP)
+
+    def test_a_declared_group_of_that_name_refuses(self, tmp_path: Path) -> None:
+        """One marker cannot mean both the project's own and a declared group."""
+        root = self._ROOT.replace(
+            '[dependency-groups]\ndev = ["mydev"]',
+            '[dependency-groups]\nDefault = ["mydev"]',
+        )
+        with pytest.raises(ConfigError, match=r"^base-group 'default' and"):
+            self._lock(tmp_path, groups=("default",), root=root + _BASE_GROUP)
+
+    def test_a_name_merely_resembling_it_is_allowed(self, tmp_path: Path) -> None:
+        """``de_fault`` normalises to ``de-fault``, which collides with nothing."""
+        root = self._ROOT.replace(
+            '[dependency-groups]\ndev = ["mydev"]',
+            '[dependency-groups]\nde_fault = ["mydev"]',
+        )
+        pylock = self._lock(tmp_path, groups=("de_fault",), root=root + _BASE_GROUP)
+
+        assert pylock.dependency_groups == ("de-fault", "default")
+        assert self._selected(pylock, dependency_groups=["de-fault"]) == {"mydev"}
+
+    def test_no_group_offered_names_nothing(self, tmp_path: Path) -> None:
+        """With no group to select, nothing needs a name for the project's own."""
+        root = self._ROOT.replace(
+            '[dependency-groups]\ndev = ["mydev"]',
+            '[dependency-groups]\ndefault = ["mydev"]',
+        )
+        pylock = self._lock(tmp_path, root=root)
+
+        assert pylock.default_groups is None
+        assert self._markers(pylock) == {"core": None}
+
+    def test_naming_them_gates_them_with_nothing_selected(self, tmp_path: Path) -> None:
+        """The name means one thing whether or not the run selects a group.
+
+        A lock written with no selection still gates the project's own
+        dependencies, so an installer reading two locks of the same
+        project does not get two answers to the same request.
+        """
+        pylock = self._lock(tmp_path, root=self._ROOT + _BASE_GROUP)
+
+        assert self._markers(pylock) == {"core": '"default" in dependency_groups'}
+        assert self._selected(pylock) == {"core"}
+        assert self._selected(pylock, dependency_groups=[]) == set()
+
+    def test_dynamic_project_dependencies_still_refuse(self, tmp_path: Path) -> None:
+        """Setting the option does not open a path around the refusal.
+
+        There is nothing to name when the project's own dependencies need
+        a build to compute, and this run stops before that matters.
+        """
+        root = self._ROOT.replace(
+            'dependencies = ["core"]', 'dynamic = ["dependencies"]'
+        )
+        with pytest.raises(InvalidProjectRequirementError, match="declared dynamic"):
+            self._lock(tmp_path, groups=("dev",), root=root + _BASE_GROUP)
 
     def test_no_selection_leaves_every_package_unmarked(self, tmp_path: Path) -> None:
         pylock = self._lock(tmp_path)

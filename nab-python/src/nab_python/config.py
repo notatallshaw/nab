@@ -435,6 +435,7 @@ class NabProjectConfig:
     mode: ResolveMode = ResolveMode.SPECIFIC
     constraints: tuple[str, ...] = ()
     default_groups: tuple[str, ...] = ()
+    base_group: str | None = None
     # The project's declared Python support range: recorded as the lock's
     # top-level ``requires-python`` and checked against the resolve target.
     # It does not choose the target; ``environment`` does.
@@ -656,6 +657,7 @@ def read_pyproject_config(
         pyproject_dir=pyproject_dir,
         project_requires_python=project_requires_python,
     )
+    _validate_base_group_is_free(effective["base-group"], path)
     if discover_workspace:
         config = _apply_workspace_discovery(
             path, config, declared_in=effective["workspace"].origin.label
@@ -774,6 +776,7 @@ def _config_from_effective(
         mode=mode,
         constraints=effective["constraints"].value,
         default_groups=default_groups,
+        base_group=effective["base-group"].value,
         requires_python=requires_python,
         requires_python_source=requires_python_source,
         uploaded_prior_to=effective["uploaded-prior-to"].value,
@@ -1306,6 +1309,22 @@ def _parse_string_value(key: str, value: object) -> str:
     return value
 
 
+def _parse_base_group(value: object) -> str | None:
+    """Parse ``[tool.nab].base-group`` as a PEP 735 group name.
+
+    Names the group a lock gives the project's own dependencies, so an
+    installer can ask for one group without them.  Unset leaves them
+    unconditional.
+    """
+    raw = _parse_string_value("base-group", value)
+    try:
+        canonical = canonicalize_name(raw, validate=True)
+    except InvalidName as e:
+        msg = f"base-group {raw!r} is not a valid group name: {e}"
+        raise ConfigError(msg) from e
+    return str(canonical)
+
+
 def _parse_requires_python(value: object) -> str | None:
     """Parse ``[tool.nab].requires-python`` as a PEP 440 specifier.
 
@@ -1329,6 +1348,39 @@ def _parse_requires_python(value: object) -> str | None:
         )
         raise ConfigError(msg) from exc
     return raw
+
+
+def _validate_base_group_is_free(base_group: EffectiveValue, path: Path) -> None:
+    """Reject a ``base-group`` the project already declares as a group.
+
+    Both would emit ``'name' in dependency_groups`` and no marker could
+    say which was meant.  Checked as the file is read rather than at
+    emission, so it costs no resolve and holds for every output format.
+    """
+    name: str | None = base_group.value
+    if name is None:
+        return
+    with path.open("rb") as f:
+        data = tomli.load(f)
+    groups = data.get("dependency-groups")
+    if not isinstance(groups, dict):
+        return
+    taken = sorted(
+        declared for declared in groups if canonicalize_name(declared) == name
+    )
+    if not taken:
+        return
+    names = ", ".join(repr(declared) for declared in taken)
+    key = (
+        "--project-base-group"
+        if base_group.origin.kind is SourceKind.CLI
+        else "base-group"
+    )
+    msg = (
+        f"{key} {name!r} and [dependency-groups] {names} are the same name;"
+        " one marker cannot mean both"
+    )
+    raise ConfigError(msg)
 
 
 def _read_project_requires_python(path: Path) -> str | None:

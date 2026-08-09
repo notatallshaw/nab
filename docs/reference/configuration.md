@@ -28,6 +28,15 @@ constraints = ["urllib3<2"]
 # both be defaults.
 default-groups = ["dev"]
 
+# The group name a lock gives the project's own [project.dependencies],
+# recorded in both of the lockfile's group arrays.  Unset, they carry no
+# marker and install under every selection, so a lock offering groups
+# cannot be asked for one group without them.  The name must not be one
+# the file being locked declares in [dependency-groups].  It joins the
+# lockfile's default-groups only when default-groups above is unset;
+# declare it there too to keep it in the default selection.
+base-group = "base"
+
 # The Python range this project supports.  A declaration: it is
 # recorded in the lockfile and checked against the resolve target,
 # and it does not choose that target.  Falls back to

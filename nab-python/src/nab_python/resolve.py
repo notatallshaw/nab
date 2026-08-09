@@ -106,6 +106,7 @@ __all__ = [
     "ResolveFork",
     "ResolveResult",
     "TargetResult",
+    "active_group_names",
     "build_lock_input",
     "resolve_for_targets",
     "resolve_with_coordinator",
@@ -165,19 +166,25 @@ class InstallContexts:
     ``project`` is the project's own dependencies, and ``selectors``
     holds one requirement list per active extra and group, keyed by its
     ``(kind, name)`` member.  The lock writer walks the resolved graph
-    from each of them, so a package only a selection reaches is gated on
-    it (see :attr:`~nab_python.lockfile.TargetLock.package_gates`) and a
-    default install leaves it out.
+    from each of them, so each package is gated on the contexts that
+    reach it (see :attr:`~nab_python.lockfile.TargetLock.package_gates`)
+    and a default install leaves out what only a selection brings.
 
     The fork's own ``selection`` is one of those selectors, so a package
     it shares with another active selection names both members and
     installs for either.
+
+    ``name_project`` is set when ``[tool.nab].base-group`` names the
+    project's own dependencies.  They are then walked even with nothing
+    selected, since the name has to mean the same thing in every lock it
+    appears in.
     """
 
     project: tuple[Requirement, ...] = ()
     selectors: Mapping[tuple[str, str], tuple[Requirement, ...]] = field(
         default_factory=dict
     )
+    name_project: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -327,7 +334,9 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
     # activates them, so the conflict checks, the fork plan, and the
     # resolves all fold them into the active group set alongside the CLI
     # selection.
-    effective_groups = tuple(dict.fromkeys((*groups, *config.default_groups)))
+    effective_groups = active_group_names(
+        groups, config.default_groups, config.base_group
+    )
 
     forks, base_requirements = _plan_forks(
         path,
@@ -719,6 +728,28 @@ def _base_pass(
     return results, env_base_names
 
 
+def active_group_names(
+    groups: Sequence[str],
+    default_groups: Sequence[str],
+    base_group: str | None,
+) -> tuple[str, ...]:
+    """Return the ``[dependency-groups]`` names this run activates, in order.
+
+    ``base-group`` may be named in ``default-groups`` to keep the
+    project's own dependencies in the default selection.  Its
+    requirements are ``[project].dependencies``, which are roots already,
+    so it is dropped here rather than looked up as a declared group.
+    ``groups`` is this run's ``--groups`` selection and keeps the name, so
+    selecting a group the project does not declare still raises.
+    """
+    policy = tuple(
+        name
+        for name in default_groups
+        if base_group is None or canonicalize_name(name) != base_group
+    )
+    return tuple(dict.fromkeys((*groups, *policy)))
+
+
 def build_lock_input(
     result: ResolveResult,
     *,
@@ -736,8 +767,9 @@ def build_lock_input(
     ``result.success`` first.
 
     ``extras`` and ``dependency_groups`` are this run's selection, which
-    the lock records at the top level;  ``default-groups`` and the
-    declared conflicts are project policy and come from ``config``.
+    the lock records at the top level;  ``default-groups``, the declared
+    conflicts, and ``base-group`` are project policy and come from
+    ``config``.
     """
     effective = config if config is not None else NabProjectConfig()
     targets: dict[str, TargetLock] = {}
@@ -769,6 +801,7 @@ def build_lock_input(
         dependency_groups=tuple(dependency_groups),
         default_groups=effective.default_groups,
         conflicts=effective.conflicts,
+        base_group=effective.base_group,
     )
 
 
@@ -1026,12 +1059,13 @@ def _install_context_roots(
 ) -> tuple[frozenset[str] | None, dict[tuple[str, str], frozenset[str]] | None]:
     """Return the lock writer's install-context roots for one target.
 
-    ``(None, None)`` when there is no selection to attribute packages to,
-    which leaves every package unconditional.  A requirement whose marker
-    this target's environment fails is dropped, exactly as the resolve
-    dropped it, so it gates nothing.
+    ``(None, None)`` when nothing needs attributing, which leaves every
+    package unconditional: no selection to name, and no name for the
+    project's own dependencies either.  A requirement whose marker this
+    target's environment fails is dropped, exactly as the resolve dropped
+    it, so it gates nothing.
     """
-    if contexts is None or not contexts.selectors:
+    if contexts is None or not (contexts.selectors or contexts.name_project):
         return None, None
     return (
         _root_keys(contexts.project, environment),
@@ -1161,6 +1195,7 @@ def _plan_forks(
                 contexts=InstallContexts(
                     project=tuple(tables.dependencies),
                     selectors=_selector_requirements(path, tables, fork),
+                    name_project=config.base_group is not None,
                 ),
             )
         )

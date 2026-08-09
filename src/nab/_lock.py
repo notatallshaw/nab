@@ -68,7 +68,7 @@ from nab_python.requirements_file import (
     read_pyproject_optional_dependencies,
     resolve_groups_to_requirements,
 )
-from nab_python.resolve import build_lock_input
+from nab_python.resolve import active_group_names, build_lock_input
 from nab_python.target import UnevaluableMarkerError
 
 from . import cli as _cli
@@ -128,6 +128,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     project_decision_order: DecisionOrderFlag | None = None,
     project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
+    project_base_group: str | None = None,
     upgrade: bool = False,
     locked: bool = False,
 ) -> None:
@@ -190,6 +191,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         cli_decision_order=project_decision_order,
         cli_constraint=project_constraint,
         cli_default_group=project_default_group,
+        cli_base_group=project_base_group,
     )
     project_overrides = _cli.project_config_overrides(overrides)
     _cli._project_cli_overrides_or_exit(project_overrides)  # noqa: SLF001
@@ -344,6 +346,7 @@ def _fast_fail_locked(
             extras=extras,
             groups=groups,
             default_groups=config.default_groups,
+            base_group=config.base_group,
         )
     except (
         InvalidProjectTableError,
@@ -362,6 +365,7 @@ def _fast_fail_locked(
             extras=extras,
             dependency_groups=groups,
             default_groups=config.default_groups,
+            base_group=config.base_group,
             roots=roots,
             constraints=config.constraints,
             resolve_target=resolve_target,
@@ -413,6 +417,7 @@ def _active_root_requirements(
     extras: tuple[str, ...],
     groups: tuple[str, ...],
     default_groups: tuple[str, ...],
+    base_group: str | None = None,
 ) -> list[RootRequirement]:
     """Collect this run's active direct requirements with their source clause.
 
@@ -435,7 +440,9 @@ def _active_root_requirements(
                 for req in expand_extra_requirements(optional, project_name, [extra])
             )
 
-    effective_groups = dict.fromkeys((*groups, *default_groups))
+    effective_groups = dict.fromkeys(
+        active_group_names(groups, default_groups, base_group)
+    )
     if effective_groups:
         table = read_pyproject_groups(path)
         for group in effective_groups:

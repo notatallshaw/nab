@@ -888,6 +888,31 @@ class TestDefaultGroups:
         assert any(word in comment for word in ("resolve", "activat")), comment
 
 
+class TestMainGroup:
+    """``base-group`` names the project's own dependencies in a lock."""
+
+    def test_base_group_is_normalised(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nbase-group = "Runtime_Deps"\n')
+        assert read_pyproject_config(path).base_group == "runtime-deps"
+
+    def test_base_group_names_every_declaration_it_collides_with(
+        self, tmp_path: Path
+    ) -> None:
+        """Two spellings of one group name, so the message reads in order."""
+        path = write(
+            tmp_path,
+            "[dependency-groups]\nDefault = []\nDEFAULT = []\n"
+            '[tool.nab]\nbase-group = "default"\n',
+        )
+        with pytest.raises(ConfigError, match="'DEFAULT', 'Default' are the same"):
+            read_pyproject_config(path)
+
+    def test_base_group_rejects_a_non_name(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nbase-group = "-nope-"\n')
+        with pytest.raises(ConfigError, match="not a valid group name"):
+            read_pyproject_config(path)
+
+
 class TestRequiresPython:
     """``requires-python`` declares the supported range; it is not a target.
 
@@ -4779,6 +4804,60 @@ class TestWorkspaceDiscoveryIntegration:
         )
         config = read_pyproject_config(member)
         assert config.build_policy is BuildPolicy.BUILD_LOCAL
+
+    def test_discovery_carries_members_and_not_the_root_base_group(
+        self, tmp_path: Path
+    ) -> None:
+        """A member takes the root's sources, never the name it gives its own.
+
+        Discovery reads the root's ``members`` list and nothing else from
+        it, so the two files each name their own dependencies.
+        """
+        member = self._ws(tmp_path)
+        root = tmp_path / "pyproject.toml"
+        root.write_text(
+            root.read_text(encoding="utf-8") + '[tool.nab]\nbase-group = "root"\n',
+            encoding="utf-8",
+        )
+
+        assert read_pyproject_config(root).base_group == "root"
+
+        config = read_pyproject_config(member)
+        assert config.base_group is None
+        assert config.local_sources == (
+            LocalSource(name="alpha", path=str(member.parent), editable=True),
+        )
+
+    def test_a_member_group_may_take_the_root_base_group_name(
+        self, tmp_path: Path
+    ) -> None:
+        """A member's groups are not selectable in the root's lock.
+
+        They are in a different marker namespace, so the name the root
+        gives its own dependencies does not collide with them.  The same
+        name on the member's own file does.
+        """
+        member = self._ws(tmp_path)
+        member.write_text(
+            member.read_text(encoding="utf-8")
+            + '[dependency-groups]\nroot = ["iniconfig"]\n',
+            encoding="utf-8",
+        )
+        root = tmp_path / "pyproject.toml"
+        root.write_text(
+            root.read_text(encoding="utf-8") + '[tool.nab]\nbase-group = "root"\n',
+            encoding="utf-8",
+        )
+
+        assert read_pyproject_config(root).base_group == "root"
+        assert read_pyproject_config(member).base_group is None
+
+        member.write_text(
+            member.read_text(encoding="utf-8") + '[tool.nab]\nbase-group = "root"\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigError, match=r"^base-group 'root' and"):
+            read_pyproject_config(member)
 
     def test_no_discovery_skips_walk(self, tmp_path: Path) -> None:
         member = self._ws(tmp_path)

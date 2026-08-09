@@ -95,13 +95,21 @@ locked: the workspace `members`, merged into `local-sources`. Everything
 else under `[tool.nab]` is scoped to the pyproject being locked: `conflicts`,
 `default-groups`, `constraints`, `matrix`, `mode`, `requires-python`,
 `uploaded-prior-to`, `build-policy` itself, `dist-policy`, `vcs`,
-`indexes`, and `environment`. Locking a member with `nab lock
+`indexes`, `base-group`, and `environment`. Locking a member with `nab lock
 packages/core/pyproject.toml` reads only that file's keys; the
 root's are ignored.
 
 Declare conflicts and default-groups on each member that needs them.
 The same applies to constraints: a root-level constraint table does
 not constrain a member resolve.
+
+`base-group` follows the same rule: the root's setting names the root's
+own dependencies in the root's lock, and a member's lock is unaffected.
+Members are ordinary packages there, so the gate covers everything the
+root's `[project.dependencies]` pull in, members and other local sources
+alike. An install asked for `dev` alone no longer gets them, and one
+that wants both asks for both. A root that declares members but has no
+dependencies of its own has nothing to name.
 
 ## Example layout
 

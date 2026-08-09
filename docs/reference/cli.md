@@ -47,7 +47,8 @@ Dependency-group selection (PEP 735):
   group names land in the lockfile's top-level
   `dependency-groups` array. The separate `default-groups` array
   records the `[tool.nab].default-groups` project setting, not
-  this run's selection.
+  this run's selection, plus the group named by
+  `[tool.nab].base-group` when it is set.
 * `--all-groups` selects every group defined in the project.
 
 Extras selection:
@@ -138,11 +139,11 @@ A project option can be overridden for one run with a `--project-<key>`
 flag: `--project-resolution`, `--project-mode`, `--project-requires-python`,
 `--project-uploaded-prior-to`, `--project-dist-policy`,
 `--project-build-policy`, `--project-build-requires-depth`,
-`--project-decision-order`, and the repeatable
-`--project-constraint` and `--project-default-group`. Every one
+`--project-decision-order`, `--project-base-group`, and the
+repeatable `--project-constraint` and `--project-default-group`. Every one
 of them replaces the file value outright; repeating `--project-constraint`
 builds up that run's whole constraint list rather than adding to the
-declared one. Each changes the resolved set, so passing one prints a
+declared one. Each changes what the run writes, so passing one prints a
 reproducibility notice on stderr and records the override in the
 lockfile's `[tool.nab]` block, since the lock no longer derives from the
 committed files alone.

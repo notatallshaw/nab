@@ -917,6 +917,7 @@ class TestReproducibilityNotice:
                 "project_build_policy": None,
                 "project_build_requires_depth": None,
                 "project_decision_order": None,
+                "project_base_group": None,
                 "project_constraint": (),
                 "project_default_group": ("dev",),
             }
@@ -938,6 +939,7 @@ class TestParserFoldHelpers:
             {
                 "resolution",
                 "decision-order",
+                "base-group",
                 "mode",
                 "constraints",
                 "default-groups",

@@ -92,6 +92,7 @@ def check_envelope(
     extras: tuple[str, ...],
     dependency_groups: tuple[str, ...],
     default_groups: tuple[str, ...],
+    base_group: str | None = None,
 ) -> LockDisqualification | None:
     """Compare the current envelope against the committed lock.
 
@@ -99,6 +100,11 @@ def check_envelope(
     selection as a set of normalized names, so reformatting or reordering
     does not fire and an empty selection matches the ``None`` the writer
     commits. Returns the first difference, or ``None`` when every field agrees.
+
+    ``base_group`` is the name this run would give the project's own
+    dependencies. No run selects it, so it is checked before the arrays are
+    compared and then dropped from them, and a run that sets it gets a
+    reason naming only groups the caller asked for.
     """
     requires_python_result = _check_requires_python(
         committed.requires_python, requires_python
@@ -106,16 +112,63 @@ def check_envelope(
     if requires_python_result is not None:
         return requires_python_result
 
+    base_group_result = _check_base_group(committed, base_group)
+    if base_group_result is not None:
+        return base_group_result
+
     for kind, committed_names, current_names in (
         ("extras", committed.extras, extras),
-        ("dependency-groups", committed.dependency_groups, dependency_groups),
-        ("default-groups", committed.default_groups, default_groups),
+        (
+            "dependency-groups",
+            _without(committed.dependency_groups, base_group),
+            dependency_groups,
+        ),
+        (
+            "default-groups",
+            _without(committed.default_groups, base_group),
+            default_groups,
+        ),
     ):
         result = _check_name_set(kind, committed_names, current_names)
         if result is not None:
             return result
 
     return None
+
+
+def _without(names: Sequence[str] | None, dropped: str | None) -> list[str]:
+    """Return ``names`` without ``dropped``, comparing canonical names."""
+    if dropped is None:
+        return list(names or ())
+    return [
+        name
+        for name in names or ()
+        if canonicalize_name(name) != canonicalize_name(dropped)
+    ]
+
+
+def _check_base_group(
+    committed: Pylock, base_group: str | None
+) -> LockDisqualification | None:
+    """Whether the lock names the project's own dependencies as this run does.
+
+    A committed name looks like any other group, so which one an earlier
+    run gave them cannot be read back.  The reason says only what this
+    run would write and the lock does not have.
+    """
+    if base_group is None:
+        return None
+    if any(
+        canonicalize_name(name) == canonicalize_name(base_group)
+        for name in committed.dependency_groups or ()
+    ):
+        return None
+    return LockDisqualification(
+        reason=(
+            f"the lockfile does not name {base_group!r} for the project's"
+            f" own dependencies, which this run does"
+        )
+    )
 
 
 def _check_requires_python(
@@ -343,6 +396,7 @@ def check_locked(  # noqa: PLR0913 - the envelope fields and the validity inputs
     extras: tuple[str, ...],
     dependency_groups: tuple[str, ...],
     default_groups: tuple[str, ...],
+    base_group: str | None = None,
     roots: Iterable[RootRequirement] | None = None,
     constraints: Iterable[str] = (),
     resolve_target: ResolveTarget | None = None,
@@ -366,6 +420,7 @@ def check_locked(  # noqa: PLR0913 - the envelope fields and the validity inputs
         extras=extras,
         dependency_groups=dependency_groups,
         default_groups=default_groups,
+        base_group=base_group,
     )
     if disqualification is not None or roots is None or resolve_target is None:
         return disqualification

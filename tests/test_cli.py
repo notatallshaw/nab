@@ -2045,6 +2045,45 @@ class TestLockCommandUniversal:
         err = capsys.readouterr().err
         assert f"error: {hint}\n" in err
 
+    def test_base_group_naming_a_declared_group_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The configured name is already a group of the project's own.
+
+        Refused as the config is read, so nothing here has to stand in
+        for a resolve.
+        """
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            '[dependency-groups]\ndev = ["foo"]\ndefault = ["foo"]\n'
+            '[tool.nab]\nbase-group = "default"\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=tmp_path / "pylock.toml", groups=("dev",))
+        err = capsys.readouterr().err
+        assert "error: in [tool.nab]: base-group 'default' and" in err
+        assert "--project-base-group" not in err
+        assert "Traceback" not in err
+
+    def test_the_flag_naming_a_declared_group_names_the_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The project file may not hold the value the run is refusing."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n[dependency-groups]\ndev = ["foo"]\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(
+                pyproject,
+                output=tmp_path / "pylock.toml",
+                groups=("dev",),
+                project_base_group="dev",
+            )
+
+        assert "--project-base-group 'dev' and" in capsys.readouterr().err
+
     def test_pylock_divergent_base_dep_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -3815,6 +3854,55 @@ class TestLockedFlag:
         self._run_locked(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         assert "is up to date" in capsys.readouterr().err
         assert out.read_bytes() == before
+
+    def test_lock_offering_groups_is_up_to_date(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The name lands in ``default-groups`` while no run selects it.
+
+        A checker comparing that array as it stands would call every lock
+        that names the project's own dependencies out of date.
+        """
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n[dependency-groups]\ndev = ["foo"]\n'
+            '[tool.nab]\nbase-group = "default"\n',
+        )
+        out = tmp_path / "pylock.toml"
+        result = _stub_resolve_result(pins={"foo": V("1.0")})
+        self._write_lock(pyproject, out, result, "--groups", "dev")
+        capsys.readouterr()
+        assert "default" in tomli.loads(out.read_text())["default-groups"]
+
+        self._run_locked(pyproject, out, result, "--groups", "dev")
+        assert "is up to date" in capsys.readouterr().err
+
+    def test_a_renamed_base_group_is_out_of_date(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Renaming the group renames a marker on every package it gates.
+
+        Nothing else about the lock changes, so only the name the writer
+        would now use can tell the checker it is stale.
+        """
+        body = (
+            '[project]\ndependencies = ["foo"]\n'
+            '[dependency-groups]\ndev = ["foo"]\n'
+            "[tool.nab]\n"
+        )
+        pyproject = _make_pyproject(tmp_path, body + 'base-group = "default"\n')
+        out = tmp_path / "pylock.toml"
+        result = _stub_resolve_result(pins={"foo": V("1.0")})
+        self._write_lock(pyproject, out, result, "--groups", "dev")
+        capsys.readouterr()
+        assert tomli.loads(out.read_text())["default-groups"] == ["default"]
+
+        pyproject.write_text(body + 'base-group = "base"\n', encoding="utf-8")
+        with pytest.raises(SystemExit) as exc:
+            self._run_locked(pyproject, out, result, "--groups", "dev")
+
+        assert exc.value.code == 1
+        assert "out of date" in capsys.readouterr().err
 
     def test_out_of_date_version_exits_one_without_writing(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
