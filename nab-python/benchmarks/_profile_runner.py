@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import scenarios as sc
 from benchmark_config import (
     build_benchmark_config,
+    parse_scenario_indexes,
     parse_scenario_project_metadata,
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
@@ -81,6 +82,7 @@ def build_inputs(
     requirement_inputs = parse_scenario_requirement_strings(name, scenario)
     vcs_config = parse_scenario_vcs_config(name, scenario)
     project_metadata = parse_scenario_project_metadata(name, scenario)
+    indexes = parse_scenario_indexes(name, scenario)
     python_version = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -133,7 +135,7 @@ def build_inputs(
     datetime_str = scenario.get("datetime")
     config = build_benchmark_config(
         uploaded_prior_to=sc.parse_datetime(datetime_str) if datetime_str else None,
-        indexes=sc.parse_indexes(name, scenario),
+        indexes=indexes,
         index_routes=sc.parse_index_routes(name, scenario),
         build_policy_overrides=build_policy_overrides,
         resolution=resolution_strategy,

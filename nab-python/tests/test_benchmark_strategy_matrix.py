@@ -19,6 +19,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from nab_index.client import WheelFile
+from nab_index.multi_index import IndexConfig
+from nab_index.serialization import SimpleSerialization
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.tags import Tag
 from nab_python.target import ResolveTarget
@@ -228,7 +230,11 @@ def _runner_parity_scenario() -> dict[str, object]:
         "constraints": ["demo<2"],
         "datetime": "2025-01-02 03:04:05",
         "indexes": [
-            {"name": "private", "url": "https://example.test/simple"},
+            {
+                "name": "private",
+                "url": "https://example.test/simple",
+                "serialization": "html",
+            },
         ],
         "index_routes": [{"name": "demo", "index": "private"}],
         "build_packages": ["demo"],
@@ -1078,8 +1084,8 @@ def test_process_scenario_uses_the_planned_target(
 def test_benchmark_config_combines_routing_and_build_policy() -> None:
     module = _harness("scenarios")
     indexes = [
-        module.IndexConfig("pypi", "https://pypi.org/simple/"),
-        module.IndexConfig("private", "https://example.test/simple"),
+        IndexConfig("pypi", "https://pypi.org/simple/"),
+        IndexConfig("private", "https://example.test/simple"),
     ]
     cutoff = module.parse_datetime("2025-01-02 03:04:05")
     vcs = module.VcsConfig(
@@ -1590,6 +1596,264 @@ def test_parse_scenario_project_metadata_rejects_malformed_values(
         module.parse_scenario_project_metadata("quick:project", scenario)
 
 
+def test_parse_scenario_indexes_defaults_to_pypi() -> None:
+    module = _harness("benchmark_config")
+
+    assert module.parse_scenario_indexes("quick:indexes", {}) == list(
+        module.DEFAULT_INDEXES
+    )
+
+
+def test_parse_scenario_indexes_preserves_declaration_details() -> None:
+    module = _harness("benchmark_config")
+    scenario = {
+        "indexes": [
+            {
+                "name": "Private_Index",
+                "url": "not a URL",
+                "serialization": "json",
+            },
+            {
+                "name": "",
+                "url": "",
+                "serialization": "html",
+            },
+            {
+                "name": "third",
+                "url": "https://example.test/simple",
+                "serialization": "negotiate",
+            },
+        ]
+    }
+    original = deepcopy(scenario)
+
+    indexes = module.parse_scenario_indexes("quick:indexes", scenario)
+
+    assert indexes == [
+        module.IndexConfig(
+            "Private_Index",
+            "not a URL",
+            SimpleSerialization.JSON,
+        ),
+        module.IndexConfig("", "", SimpleSerialization.HTML),
+        module.IndexConfig(
+            "third",
+            "https://example.test/simple",
+            SimpleSerialization.NEGOTIATE,
+        ),
+    ]
+    assert scenario == original
+
+
+def test_benchmark_index_settings_omits_only_default_serialization() -> None:
+    module = _harness("benchmark_config")
+
+    settings = module.benchmark_index_settings(
+        [
+            module.IndexConfig("default", "https://one.example/simple"),
+            module.IndexConfig(
+                "pinned",
+                "https://two.example/simple",
+                SimpleSerialization.HTML,
+            ),
+            module.IndexConfig(
+                "json",
+                "https://three.example/simple",
+                SimpleSerialization.JSON,
+            ),
+        ]
+    )
+
+    assert settings == [
+        {"name": "default", "url": "https://one.example/simple"},
+        {
+            "name": "pinned",
+            "url": "https://two.example/simple",
+            "serialization": "html",
+        },
+        {
+            "name": "json",
+            "url": "https://three.example/simple",
+            "serialization": "json",
+        },
+    ]
+
+
+@pytest.mark.parametrize("url", ["https://example.test/simple", "file:///index"])
+def test_parse_scenario_indexes_defaults_to_negotiated_serialization(
+    url: str,
+) -> None:
+    module = _harness("benchmark_config")
+
+    indexes = module.parse_scenario_indexes(
+        "quick:indexes",
+        {"indexes": [{"name": "default", "url": url}]},
+    )
+
+    assert indexes == [
+        module.IndexConfig(
+            "default",
+            url,
+            SimpleSerialization.NEGOTIATE,
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "url", ["file:/index", "file://localhost/index", "file:///index"]
+)
+@pytest.mark.parametrize("serialization", ["negotiate", "json", "html", 1, "xml"])
+def test_parse_scenario_indexes_rejects_serialization_for_file_urls(
+    url: str,
+    serialization: object,
+) -> None:
+    module = _harness("benchmark_config")
+    message = (
+        "quick:indexes: indexes[0].serialization must be omitted "
+        "for file:// index 'local'"
+    )
+    scenario = {
+        "indexes": [
+            {
+                "name": "local",
+                "url": url,
+                "serialization": serialization,
+            }
+        ]
+    }
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        module.parse_scenario_indexes("quick:indexes", scenario)
+
+
+@pytest.mark.parametrize(
+    ("indexes", "error", "message"),
+    [
+        (
+            "private",
+            TypeError,
+            "quick:indexes: indexes must be an array of tables, got str",
+        ),
+        (
+            None,
+            TypeError,
+            "quick:indexes: indexes must be an array of tables, got NoneType",
+        ),
+        (
+            [],
+            ValueError,
+            "quick:indexes: indexes must contain at least one entry when present",
+        ),
+        (
+            ["private"],
+            TypeError,
+            "quick:indexes: indexes[0] must be a table, got str",
+        ),
+        (
+            [{"name": "private"}],
+            ValueError,
+            "quick:indexes: indexes[0] missing required key 'url'",
+        ),
+        (
+            [{"url": "https://example.test/simple"}],
+            ValueError,
+            "quick:indexes: indexes[0] missing required key 'name'",
+        ),
+        (
+            [{"name": False, "url": "https://example.test/simple"}],
+            TypeError,
+            "quick:indexes: indexes[0] name and url must be strings",
+        ),
+        (
+            [{"name": "private", "url": 123}],
+            TypeError,
+            "quick:indexes: indexes[0] name and url must be strings",
+        ),
+        (
+            [{"typo": True}],
+            ValueError,
+            (
+                "quick:indexes: unknown indexes[0] keys: ['typo']; "
+                "expected ['name', 'serialization', 'url']"
+            ),
+        ),
+        (
+            [
+                {
+                    "name": "private",
+                    "url": "https://example.test/simple",
+                    "serialization": 1,
+                }
+            ],
+            TypeError,
+            "quick:indexes: indexes[0].serialization must be a string, got int",
+        ),
+        (
+            [
+                {
+                    "name": "private",
+                    "url": "https://example.test/simple",
+                    "serialization": "xml",
+                }
+            ],
+            ValueError,
+            (
+                "quick:indexes: indexes[0].serialization must be one of "
+                "['html', 'json', 'negotiate'], got 'xml'"
+            ),
+        ),
+        (
+            [
+                {"name": "private", "url": "https://one.example/simple"},
+                {"name": "private", "url": "https://two.example/simple"},
+                {
+                    "name": "later",
+                    "url": "https://three.example/simple",
+                    "serialization": "xml",
+                },
+            ],
+            ValueError,
+            (
+                "quick:indexes: indexes[2].serialization must be one of "
+                "['html', 'json', 'negotiate'], got 'xml'"
+            ),
+        ),
+        (
+            [
+                {"name": "private", "url": "https://one.example/simple"},
+                {"name": "private", "url": "https://two.example/simple"},
+            ],
+            ValueError,
+            "quick:indexes: duplicate index name: 'private'",
+        ),
+    ],
+    ids=(
+        "array",
+        "null",
+        "empty",
+        "entry",
+        "missing-url",
+        "missing-name",
+        "name-type",
+        "url-type",
+        "unknown-key",
+        "serialization-type",
+        "serialization-value",
+        "parse-before-duplicates",
+        "duplicate",
+    ),
+)
+def test_parse_scenario_indexes_rejects_malformed_values(
+    indexes: object,
+    error: type[Exception],
+    message: str,
+) -> None:
+    module = _harness("benchmark_config")
+
+    with pytest.raises(error, match=re.escape(message)):
+        module.parse_scenario_indexes("quick:indexes", {"indexes": indexes})
+
+
 @pytest.mark.parametrize(
     ("routes", "message"),
     [
@@ -1615,8 +1879,8 @@ def test_benchmark_config_rejects_invalid_index_routes(
     with pytest.raises(ValueError, match=re.escape(message)):
         module.build_benchmark_config(
             indexes=[
-                module.IndexConfig("pypi", "https://pypi.org/simple/"),
-                module.IndexConfig("private", "https://example.test/simple"),
+                IndexConfig("pypi", "https://pypi.org/simple/"),
+                IndexConfig("private", "https://example.test/simple"),
             ],
             index_routes=[module.IndexRoute(*route) for route in routes],
         )
@@ -1639,7 +1903,7 @@ def test_build_benchmark_provider_forwards_project_config(
     )
     config = config_module.build_benchmark_config(
         uploaded_prior_to=scenarios.parse_datetime("2025-01-02 03:04:05"),
-        indexes=[scenarios.IndexConfig("private", "https://example.test/simple")],
+        indexes=[IndexConfig("private", "https://example.test/simple")],
         index_routes=[scenarios.IndexRoute("demo", "private")],
         build_policy_overrides={"demo": scenarios.BuildPolicy.BUILD_REMOTE},
         resolution=config_module.ResolutionStrategy.LOWEST_DIRECT,
@@ -1727,7 +1991,7 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
     requirements = module.parse_requirements(["demo[feature]"])
     constraints = module.parse_requirements(["demo<2"])
     config = module.build_benchmark_config(
-        indexes=[module.IndexConfig("private", "https://example.test/simple")],
+        indexes=[IndexConfig("private", "https://example.test/simple")],
         index_routes=[module.IndexRoute("demo", "private")],
     )
     coordinator = object()
@@ -2963,6 +3227,30 @@ vcs_allowed_schemes = { "git+https" = false }
 python_version = "3.11"
 requirements = []
 unsupported_reason = "not runnable"
+indexes = "private"
+""",
+            "other:other: indexes must be an array of tables, got str",
+        ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
+indexes = "private"
+project_name = "demo-project"
+project_extras = ["all"]
+[other.optional_dependencies]
+all = "demo"
+""",
+            "other:other: optional_dependencies['all'] must be a list, got str",
+        ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
 vcs_allowed_repos = { "https://example.test/repo" = false }
 """,
             "other:other: vcs_allowed_repos must be a list, got dict",
@@ -2977,6 +3265,8 @@ vcs_allowed_repos = { "https://example.test/repo" = false }
         "vcs-policy",
         "vcs-policy-table",
         "vcs-scheme-table",
+        "indexes",
+        "project-before-indexes",
         "vcs-repo-table",
     ),
 )
@@ -3072,10 +3362,15 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
             {"https://example.test/repo": False},
             "example: vcs_allowed_repos must be a list, got dict",
         ),
+        (
+            "indexes",
+            "private",
+            "example: indexes must be an array of tables, got str",
+        ),
     ],
-    ids=("pin", "policy", "scheme-table", "repo-table"),
+    ids=("pin", "policy", "scheme-table", "repo-table", "indexes"),
 )
-def test_profile_main_validates_vcs_settings_before_host_capture(
+def test_profile_main_validates_schema_before_host_capture(
     monkeypatch: pytest.MonkeyPatch,
     field: str,
     value: object,
@@ -3091,7 +3386,7 @@ def test_profile_main_validates_vcs_settings_before_host_capture(
     monkeypatch.setattr(module.sys, "argv", ["_profile_runner.py", "example"])
 
     def fail_host(*_args: object, **_kwargs: object) -> object:
-        pytest.fail("VCS validation reached host capture")
+        pytest.fail("scenario validation reached host capture")
 
     monkeypatch.setattr(module.sc.BenchmarkHost, "current", classmethod(fail_host))
 
@@ -3129,6 +3424,16 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
         "All_Features",
         "Direct_Use",
     ]
+    assert standard_execution.expected_input["indexes"] == [
+        {
+            "name": "private",
+            "url": "https://example.test/simple",
+            "serialization": "html",
+        }
+    ]
+    assert (
+        standard_execution.config.indexes[0].serialization is SimpleSerialization.HTML
+    )
 
     assert standard_execution.expected_input["requirements"] == [
         "demo[feature]>=1",
@@ -3181,9 +3486,37 @@ def test_all_runners_validate_project_metadata_in_schema_order(
         "project_name": "demo-project",
         "project_extras": ["all"],
         "optional_dependencies": {"all": "demo"},
+        "indexes": "private",
         **vcs_settings,
     }
     host = _linux_host(standard)
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        _prepare_standard_scenario(standard, scenario, host)
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=host,
+        )
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        profile.build_inputs("example", scenario, host=host)
+
+
+def test_all_runners_reject_malformed_indexes() -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "indexes": [{"name": False, "url": 123}],
+    }
+    host = _linux_host(standard)
+    message = "example: indexes[0] name and url must be strings"
 
     with pytest.raises(TypeError, match=re.escape(message)):
         _prepare_standard_scenario(standard, scenario, host)

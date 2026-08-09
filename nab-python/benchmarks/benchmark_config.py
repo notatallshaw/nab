@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
+from nab_index.local_index import is_file_url
+from nab_index.multi_index import IndexConfig
+from nab_index.serialization import SimpleSerialization
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python.config import NabProjectConfig, PackageOverride
+from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
@@ -23,13 +27,16 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
 
-    from nab_index.multi_index import IndexConfig
     from nab_python.fetch import FetchCoordinator, IndexRoute
     from nab_python.target import ResolveTarget
 
 
 # Search benchmarks trust pre-2.2 PKG-INFO dependency metadata by default.
 DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS = True
+DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
+    IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
+)
+_INDEX_KEYS = frozenset({"name", "url", "serialization"})
 
 
 class _BenchmarkResolveInputs(NamedTuple):
@@ -169,6 +176,136 @@ def parse_scenario_project_metadata(
             scenario.get("optional_dependencies", {}),
         ),
     )
+
+
+def _parse_scenario_index_serialization(
+    scenario_name: str,
+    position: int,
+    entry: Mapping[str, object],
+    *,
+    name: str,
+    url: str,
+) -> SimpleSerialization:
+    """Return the serialization requested by one scenario index."""
+    if "serialization" in entry and is_file_url(url):
+        msg = (
+            f"{scenario_name}: indexes[{position}].serialization must be omitted "
+            f"for file:// index {name!r}"
+        )
+        raise ValueError(msg)
+
+    serialization = entry.get("serialization")
+    if serialization is None:
+        return SimpleSerialization.NEGOTIATE
+    if not isinstance(serialization, str):
+        msg = (
+            f"{scenario_name}: indexes[{position}].serialization must be a string, "
+            f"got {type(serialization).__name__}"
+        )
+        raise TypeError(msg)
+
+    try:
+        return SimpleSerialization(serialization)
+    except ValueError as exc:
+        valid = sorted(member.value for member in SimpleSerialization)
+        msg = (
+            f"{scenario_name}: indexes[{position}].serialization must be one "
+            f"of {valid!r}, got {serialization!r}"
+        )
+        raise ValueError(msg) from exc
+
+
+def _parse_scenario_index(
+    scenario_name: str,
+    position: int,
+    value: object,
+) -> IndexConfig:
+    """Validate and copy one index entry from a benchmark scenario."""
+    if not isinstance(value, dict):
+        msg = (
+            f"{scenario_name}: indexes[{position}] must be a table, "
+            f"got {type(value).__name__}"
+        )
+        raise TypeError(msg)
+
+    unknown = sorted(set(value) - _INDEX_KEYS)
+    if unknown:
+        msg = (
+            f"{scenario_name}: unknown indexes[{position}] keys: {unknown!r}; "
+            f"expected {sorted(_INDEX_KEYS)!r}"
+        )
+        raise ValueError(msg)
+    try:
+        name = value["name"]
+        url = value["url"]
+    except KeyError as missing:
+        msg = f"{scenario_name}: indexes[{position}] missing required key {missing!s}"
+        raise ValueError(msg) from None
+    if not isinstance(name, str) or not isinstance(url, str):
+        msg = f"{scenario_name}: indexes[{position}] name and url must be strings"
+        raise TypeError(msg)
+
+    serialization = _parse_scenario_index_serialization(
+        scenario_name,
+        position,
+        value,
+        name=name,
+        url=url,
+    )
+    return IndexConfig(name, url, serialization)
+
+
+def _check_scenario_index_name_uniqueness(
+    scenario_name: str,
+    indexes: Sequence[IndexConfig],
+) -> None:
+    """Reject duplicate scenario index names after parsing every entry."""
+    seen: set[str] = set()
+    for index in indexes:
+        if index.name in seen:
+            msg = f"{scenario_name}: duplicate index name: {index.name!r}"
+            raise ValueError(msg)
+        seen.add(index.name)
+
+
+def parse_scenario_indexes(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+) -> list[IndexConfig]:
+    """Validate and copy the indexes declared by a benchmark scenario."""
+    if "indexes" not in scenario:
+        return list(DEFAULT_INDEXES)
+
+    raw = scenario["indexes"]
+    if not isinstance(raw, list):
+        msg = (
+            f"{scenario_name}: indexes must be an array of tables, "
+            f"got {type(raw).__name__}"
+        )
+        raise TypeError(msg)
+    if not raw:
+        msg = f"{scenario_name}: indexes must contain at least one entry when present"
+        raise ValueError(msg)
+
+    indexes = [
+        _parse_scenario_index(scenario_name, position, entry)
+        for position, entry in enumerate(raw)
+    ]
+    _check_scenario_index_name_uniqueness(scenario_name, indexes)
+    return indexes
+
+
+def benchmark_index_settings(
+    indexes: Sequence[IndexConfig],
+) -> list[dict[str, str]]:
+    """Return effective index settings with default serialization omitted."""
+    settings: list[dict[str, str]] = []
+    for index in indexes:
+        entry = {"name": index.name, "url": index.url}
+        if index.serialization is not SimpleSerialization.NEGOTIATE:
+            entry["serialization"] = index.serialization.value
+        settings.append(entry)
+    return settings
 
 
 def parse_trust_unverified_sdist_deps(

@@ -33,10 +33,12 @@ else:
     import tomli as tomllib  # type: ignore[no-redef]
 
 from benchmark_config import (
+    benchmark_index_settings,
     build_benchmark_config,
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
     direct_packages_from_requirements,
+    parse_scenario_indexes,
     parse_scenario_project_metadata,
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
@@ -54,7 +56,6 @@ from benchmark_host import (
 )
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_index.multi_index import IndexConfig
 from nab_python._vcs_admission import admit_vcs_url
 from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.ranges import VersionRange
@@ -62,8 +63,6 @@ from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python.config import NabProjectConfig, index_routes_from_config
 from nab_python.fetch import (
-    DEFAULT_INDEX_NAME,
-    DEFAULT_INDEX_URL,
     FetchCoordinator,
     IndexRoute,
 )
@@ -82,9 +81,6 @@ CACHE_DIR = BENCHMARKS_DIR / "cache"
 CANARY_MANIFEST = BENCHMARKS_DIR / "canary.toml"
 CANARY_MANIFEST_SCHEMA = 1
 _LEGACY_STRATEGY_SUFFIXES = ("-lowest", "-lowest-direct")
-DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
-    IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
-)
 
 
 class CanaryCase(NamedTuple):
@@ -376,9 +372,7 @@ def run_one(
                 "runtime": _runtime_manifest(host),
                 "direct_packages": sorted(direct_packages),
                 "target": _target_manifest(target),
-                "indexes": [
-                    {"name": index.name, "url": index.url} for index in config.indexes
-                ],
+                "indexes": benchmark_index_settings(config.indexes),
                 "index_routes": [
                     {"name": route.name, "index": route.index}
                     for route in index_routes_from_config(config)
@@ -602,6 +596,7 @@ def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
         parse_vcs_allowed_schemes,
         parse_vcs_allowed_repos,
         parse_scenario_project_metadata,
+        parse_scenario_indexes,
     )
     for validate_field in field_validators:
         for scenario_name, scenario in found_scenarios:
@@ -742,15 +737,6 @@ def canary_v2_identity(
     return CanaryV2Identity(f"{stem}-{resolution.value}:{name}", definition)
 
 
-def _canary_indexes(scenario: dict) -> list[IndexConfig]:
-    raw = scenario.get("indexes")
-    if raw is None:
-        return list(DEFAULT_INDEXES)
-    return [
-        IndexConfig(name=str(entry["name"]), url=str(entry["url"])) for entry in raw
-    ]
-
-
 def _canary_index_routes(scenario: dict) -> list[IndexRoute]:
     return [
         IndexRoute(name=str(entry["name"]), index=str(entry["index"]))
@@ -773,6 +759,7 @@ def _prepare_canary_execution(
     requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
     vcs_config = parse_scenario_vcs_config(scenario_name, scenario)
     project_metadata = parse_scenario_project_metadata(scenario_name, scenario)
+    indexes = parse_scenario_indexes(scenario_name, scenario)
     python_version = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -793,7 +780,6 @@ def _prepare_canary_execution(
         scenario_name=scenario_name,
         override=resolution_override,
     )
-    indexes = _canary_indexes(scenario)
     index_routes = _canary_index_routes(scenario)
 
     requires_matching_host = parse_requires_matching_host(

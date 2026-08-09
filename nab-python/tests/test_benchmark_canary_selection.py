@@ -577,10 +577,24 @@ def test_selection_validates_vcs_settings_before_project_metadata(
             {"vcs_allowed_schemes": {"git+https": False}},
             "quick:second: vcs_allowed_schemes must be a list, got dict",
         ),
+        (
+            {"indexes": "private"},
+            {
+                "project_name": "demo-project",
+                "project_extras": ["all"],
+                "optional_dependencies": {"all": "demo"},
+            },
+            "quick:second: optional_dependencies['all'] must be a list, got str",
+        ),
     ],
-    ids=("pin-before-policy", "policy-before-schemes", "schemes-before-repos"),
+    ids=(
+        "pin-before-policy",
+        "policy-before-schemes",
+        "schemes-before-repos",
+        "project-before-indexes",
+    ),
 )
-def test_selection_validates_vcs_fields_across_the_whole_selection(
+def test_selection_validates_fields_across_the_whole_selection(
     monkeypatch: pytest.MonkeyPatch,
     first_scenario: dict[str, object],
     second_scenario: dict[str, object],
