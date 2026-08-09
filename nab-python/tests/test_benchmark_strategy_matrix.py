@@ -31,10 +31,16 @@ pytestmark = pytest.mark.benchmark
 
 _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 _STANDARD_FILES = 14
-_STANDARD_SCENARIOS = 557
-_RUNNABLE_SCENARIOS = 533
+_STANDARD_SCENARIOS = 553
+_RUNNABLE_SCENARIOS = 529
 _UNSUPPORTED_SCENARIOS = 24
-_TOTAL_EXECUTION_IDENTITIES = 1_671
+_TOTAL_EXECUTION_IDENTITIES = 1_659
+_OUT_OF_SCOPE_ECOSYSTEM_SCENARIOS = {
+    "ecosystem:dask-bottleneck-2024",
+    "ecosystem:gradio-client-sync",
+    "ecosystem:ray-llm-native-libs",
+    "ecosystem:ray-train-tune-import",
+}
 # Keep the expected vocabulary independent of the validator's private set.
 _LIVE_SCENARIO_SETTINGS = {
     "requirements",
@@ -655,6 +661,7 @@ def test_standard_corpus_is_one_canonical_definition_per_scenario() -> None:
     assert runnable == _RUNNABLE_SCENARIOS
     assert len(rows) - runnable == _UNSUPPORTED_SCENARIOS
     assert all("resolution" not in row.definition for row in rows)
+    assert _OUT_OF_SCOPE_ECOSYSTEM_SCENARIOS.isdisjoint(row.logical_key for row in rows)
 
 
 def _scenario_input_key(definition: dict[str, object]) -> str:

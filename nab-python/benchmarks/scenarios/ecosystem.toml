@@ -54,26 +54,12 @@ platform_system = "Linux"
 datetime = "2026-03-19 16:03:38"
 requirements = ["ray[llm]==2.54.0"]
 
-[ray-llm-native-libs]
-# https://github.com/ray-project/ray/issues/62111
-python_version = "3.11"
-platform_system = "Linux"
-datetime = "2026-03-26 21:21:01"
-requirements = ["ray[llm]==2.55"]
-
 [ray-tune-sklearn]
 # https://github.com/ray-project/ray/issues/47266
 python_version = "3.12"
 platform_system = "Linux"
 datetime = "2024-08-22 00:31:58"
 requirements = ["tune-sklearn", "ray[tune]"]
-
-[ray-train-tune-import]
-# https://github.com/ray-project/ray/issues/58280
-python_version = "3.13"
-platform_system = "Linux"
-datetime = "2025-10-29 11:00:46"
-requirements = ["ray[tune]==2.51.0"]
 
 [ray-full]
 # "ray" with all extras -> huge dependency fanout.
@@ -119,16 +105,6 @@ requirements = [
     "gradio_leaderboard",
 ]
 
-[gradio-client-sync]
-# https://github.com/gradio-app/gradio/issues/12844
-python_version = "3.11"
-platform_system = "Linux"
-datetime = "2026-01-29 08:24:15"
-requirements = [
-    "gradio==6.5.0",
-    "gradio-client==2.0.3",
-]
-
 # -----------------------------------------------------------------------
 # Dask / Modin
 # -----------------------------------------------------------------------
@@ -141,18 +117,6 @@ datetime = "2025-11-21 16:49:04"
 requirements = [
     "dask==2025.11.0",
     "distributed==2025.11.0",
-]
-
-[dask-bottleneck-2024]
-# https://github.com/dask/dask/issues/12198
-python_version = "3.11"
-platform_system = "Linux"
-datetime = "2025-12-16 10:55:07"
-requirements = [
-    "dask>=2024.11.0",
-    "bottleneck",
-    "pandas",
-    "numpy",
 ]
 
 # -----------------------------------------------------------------------
