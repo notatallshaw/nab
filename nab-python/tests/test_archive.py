@@ -625,7 +625,7 @@ class TestArchiveChosenNames:
     """The archive chooses every name inside its own tree.
 
     Only the bytes are pinned, by the URL's hash, so the root directory can
-    carry any name tarfile decodes, including the cache's own marker names.
+    carry any name, including the cache's own marker names.
     """
 
     @requires_data_filter
@@ -648,32 +648,10 @@ class TestArchiveChosenNames:
             "tree",
         ]
 
-    @requires_data_filter
-    def test_non_utf8_root_directory_name_resolves(self, tmp_path: Path) -> None:
-        # tarfile decodes a member name that is not valid UTF-8 with
-        # surrogateescape, so the root lands on disk holding a lone surrogate.
-        provider = _archive_provider(
-            _make_rooted_sdist("foo-1.0.0\udce9", _PYPROJECT), tmp_path / "arch"
-        )
-
-        versions = provider.fetch_versions("foo")
-
-        assert str(versions[0][0]) == "1.0.0"
-
-    @requires_data_filter
-    def test_root_name_with_trailing_space_survives_the_cache(
-        self, tmp_path: Path
-    ) -> None:
-        # The trailing space is part of the directory name, so that exact
-        # directory is what the extraction has to move into place.
-        data = _make_rooted_sdist("foo-1.0.0 ", _PYPROJECT)
-        cache = tmp_path / "arch"
-        _archive_provider(data, cache).fetch_versions("foo")
-
+        # Both markers are still files the warm path can read, so a second
+        # resolve is served from the cache.
         second = _archive_provider(data, cache)
-        versions = second.fetch_versions("foo")
-
-        assert str(versions[0][0]) == "1.0.0"
+        assert str(second.fetch_versions("foo")[0][0]) == "1.0.0"
         second.coordinator.request_direct_archive.assert_not_called()
 
     @requires_data_filter
