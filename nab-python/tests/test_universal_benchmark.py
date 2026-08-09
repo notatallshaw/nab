@@ -19,6 +19,8 @@ from nab_python.resolve import ResolveResult, TargetResult
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
 
+pytestmark = pytest.mark.benchmark
+
 _BENCHMARK = (
     Path(__file__).resolve().parents[1] / "benchmarks" / "universal_scenarios.py"
 )

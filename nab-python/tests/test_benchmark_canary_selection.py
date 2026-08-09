@@ -9,6 +9,8 @@ from types import ModuleType
 
 import pytest
 
+pytestmark = pytest.mark.benchmark
+
 _CANARY = Path(__file__).resolve().parents[1] / "benchmarks" / "canary.py"
 _EXPECTED_CANARY_CASES = 19
 _EXPECTED_V2_INPUT_HASHES = {

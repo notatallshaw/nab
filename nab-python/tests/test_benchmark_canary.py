@@ -16,6 +16,8 @@ from typing_extensions import Self
 
 from nab_python.target import ResolveTarget
 
+pytestmark = pytest.mark.benchmark
+
 _CANARY = Path(__file__).resolve().parents[1] / "benchmarks" / "canary.py"
 
 

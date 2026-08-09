@@ -25,6 +25,8 @@ from nab_python._vendor.packaging.version import Version
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+pytestmark = pytest.mark.benchmark
+
 _BENCH = Path(__file__).resolve().parents[1] / "benchmarks"
 
 

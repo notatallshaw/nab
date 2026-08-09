@@ -59,6 +59,50 @@ jobs:
         env:
           WORKSPACE: ${{ matrix.workspace }}
 
+  benchmarks:
+    name: benchmark harness / ${{ matrix.os }} / ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      # These cover nab-python/benchmarks, which is developer tooling rather
+      # than shipped code, so they run on the ends of the supported range
+      # instead of the full matrix. Windows earns its cell because the
+      # harness builds output paths and the tests pin its device-name rules.
+      matrix:
+        include:
+          - os: ubuntu
+            python-version: "3.10"
+          - os: ubuntu
+            python-version: "3.14"
+          - os: windows
+            python-version: "3.14"
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        name: Install Python ${{ matrix.python-version }}
+        with:
+          python-version: ${{ matrix.python-version }}
+          check-latest: true
+          cache: pip
+          cache-dependency-path: |
+            .github/requirements/pylock.nox.toml
+            .github/requirements/pylock.tests.toml
+          allow-prereleases: true
+
+      - name: Upgrade pip to PEP 751 install support
+        run: python -m pip install --upgrade "pip>=26.1"
+
+      - name: Install nox
+        run: pip install -r .github/requirements/pylock.nox.toml
+
+      - name: Run the benchmark-harness tests
+        run: nox -s benchmarks
+
   property-tests:
     name: Property tests
     runs-on: ubuntu-latest
@@ -153,6 +197,7 @@ jobs:
     if: always()
     needs:
       - test
+      - benchmarks
       - property-tests
       - crosshair-tests
       - dists

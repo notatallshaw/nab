@@ -66,7 +66,9 @@ exclude = [
 [dependency-groups]
 tests = [
     "pytest>=9",
+    "pytest-cov>=7",
     "pytest-timeout>=2.3",
+    "pytest-xdist>=3.8",
     "coverage>=7",
     "hypothesis>=6.100",
     "respx>=0.22",
@@ -159,7 +161,7 @@ addopts = [
     "--import-mode=importlib",
     "--showlocals",
     "-m",
-    "not property and not crosshair and not network",
+    "not property and not crosshair and not network and not benchmark",
 ]
 testpaths = [
     "nab-resolver/tests",
@@ -174,6 +176,7 @@ markers = [
     "network: hits a real network endpoint (skipped by default in CI)",
     "property: Hypothesis property tests (opt-in; run with -m property)",
     "crosshair: CrossHair-backed property tests (opt-in; very slow; -m crosshair)",
+    "benchmark: covers the benchmark harness, not the resolver (opt-in; -m benchmark)",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run

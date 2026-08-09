@@ -60,14 +60,16 @@ def _coord(**kwargs: object) -> FetchCoordinator:
 def _wait_until(predicate: Callable[[], bool], timeout: float = 5) -> bool:
     """Poll ``predicate`` until it holds, and report whether it did.
 
-    For work the coordinator finishes without setting a waiter's event, where
-    waiting on the event itself would only burn the whole timeout.
+    The coordinator finishes some work without setting the waiter's event, so
+    waiting on the event itself would just spend the whole timeout.
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
             return True
         time.sleep(0.01)
+
+    # One last look, in case the work landed during the final sleep.
     return predicate()
 
 
@@ -1367,8 +1369,8 @@ class TestFetchCoordinator:
             )
             event = coord.request_metadata("pkg", "1.0", "https://f.com/m")
 
-            # Handing back the pending's own event is what marks it deduplicated;
-            # nothing was submitted, so no one ever sets it.
+            # Deduplicating means handing back the pending's own event. Nothing
+            # was submitted for it, so nothing ever sets it.
             assert event is pending.event
             assert not event.is_set()
 
