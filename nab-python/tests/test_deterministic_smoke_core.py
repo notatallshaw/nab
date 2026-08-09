@@ -20,6 +20,8 @@ from nab_python.config import NabProjectConfig
 from nab_python.lockfile import IndexPin, TargetLock, WheelArtifact
 from nab_python.resolve import ResolveResult, TargetResult
 
+pytestmark = pytest.mark.benchmark
+
 _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 
 

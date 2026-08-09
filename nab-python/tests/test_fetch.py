@@ -57,6 +57,22 @@ def _coord(**kwargs: object) -> FetchCoordinator:
     return FetchCoordinator(transport=HttpxAsyncTransport(), **kwargs)  # type: ignore[arg-type]
 
 
+def _wait_until(predicate: Callable[[], bool], timeout: float = 5) -> bool:
+    """Poll ``predicate`` until it holds, and report whether it did.
+
+    The coordinator finishes some work without setting the waiter's event, so
+    waiting on the event itself would just spend the whole timeout.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+
+    # One last look, in case the work landed during the final sleep.
+    return predicate()
+
+
 class _FetcherDeath(BaseException):
     """A BaseException that is not an Exception, as asyncio.CancelledError is."""
 
@@ -589,14 +605,14 @@ class TestFetchCoordinator:
             # Put a request with None url directly on the queue
             from nab_python.fetch import FetchKind, FetchRequest
 
-            pending, _ = coord.index.get_or_create_pending("metadata:pkg:1.0")
+            coord.index.get_or_create_pending("metadata:pkg:1.0")
             coord._submit(
                 FetchRequest(
                     kind=FetchKind.METADATA, package="pkg", version="1.0", url=None
                 )
             )
-            pending.event.wait(timeout=5)
-            assert coord.index.has_metadata("pkg", "1.0")
+
+            assert _wait_until(lambda: coord.index.has_metadata("pkg", "1.0"))
             assert coord.index.get_metadata("pkg", "1.0") is None
 
     @respx.mock
@@ -1348,11 +1364,15 @@ class TestFetchCoordinator:
         """Second request_metadata for the same key reuses the pending."""
         respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="meta"))
         with _coord() as coord:
-            # Pre-create a pending so the second request finds it.
-            coord.index.get_or_create_pending("metadata:pkg:1.0:https://f.com/m")
-            e = coord.request_metadata("pkg", "1.0", "https://f.com/m")
-            # Should reuse the existing pending (existed=True path).
-            e.wait(timeout=5)
+            pending, _ = coord.index.get_or_create_pending(
+                "metadata:pkg:1.0:https://f.com/m"
+            )
+            event = coord.request_metadata("pkg", "1.0", "https://f.com/m")
+
+            # Deduplicating means handing back the pending's own event. Nothing
+            # was submitted for it, so nothing ever sets it.
+            assert event is pending.event
+            assert not event.is_set()
 
     @respx.mock
     def test_request_sdist(self) -> None:
@@ -1552,9 +1572,11 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, content=buf.getvalue())
         )
         with _coord() as coord:
-            coord.index.get_or_create_pending("sdist:pkg:1.0")
-            e = coord.request_sdist("pkg", "1.0", "https://f.com/pkg-1.0.tar.gz")
-            e.wait(timeout=5)
+            pending, _ = coord.index.get_or_create_pending("sdist:pkg:1.0")
+            event = coord.request_sdist("pkg", "1.0", "https://f.com/pkg-1.0.tar.gz")
+
+            assert event is pending.event
+            assert not event.is_set()
 
     @respx.mock
     def test_request_sdist_archive_stores_bytes(self) -> None:
@@ -1616,11 +1638,13 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, content=b"archive"),
         )
         with _coord() as coord:
-            coord.index.get_or_create_pending("sdist-archive:pkg:1.0")
+            pending, _ = coord.index.get_or_create_pending("sdist-archive:pkg:1.0")
             event = coord.request_sdist_archive(
                 "pkg", "1.0", "https://f.com/pkg-1.0.tar.gz"
             )
-            event.wait(timeout=5)
+
+            assert event is pending.event
+            assert not event.is_set()
 
     @respx.mock
     def test_request_sdist_archive_404_records_error(self) -> None:
@@ -1715,16 +1739,23 @@ class TestFetchCoordinator:
         """Batch request skips items with existing pending."""
         respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="meta"))
         with _coord() as coord:
-            # Pre-create a pending for one of the batch items.
-            coord.index.get_or_create_pending("metadata:a:1.0:https://f.com/a")
+            pending, _ = coord.index.get_or_create_pending(
+                "metadata:a:1.0:https://f.com/a"
+            )
             results = coord.request_metadata_batch(
                 [
                     ("a", "1.0", "https://f.com/a", None),
                     ("b", "1.0", "https://f.com/b", None),
                 ]
             )
-            for _, _, ev in results:
-                ev.wait(timeout=5)
+            events = {package: event for package, _version, event in results}
+
+            assert events["a"] is pending.event
+            assert not events["a"].is_set()
+
+            # The item without a pending is still fetched.
+            assert events["b"].wait(timeout=5)
+            assert coord.index.get_metadata("b", "1.0", "https://f.com/b") == "meta"
 
 
 class TestFetchCoordinatorCache:

@@ -10,6 +10,8 @@ from types import ModuleType
 
 import pytest
 
+pytestmark = pytest.mark.benchmark
+
 _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 _FRACTION_WIDTHS = [
     ("", 0),

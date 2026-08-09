@@ -4,9 +4,11 @@
 percent. ``fail_under`` and the ``[tool.coverage.paths]`` remaps live in
 ``pyproject.toml``; the per-package ``--include`` globs are built here.
 ``types`` runs one type-checker over the source trees in ``TYPED_TREES``.
-``dists`` builds every distribution and installs each sdist and wheel to
-catch packaging regressions that building alone misses. All take their
-pinned dependencies from ``.github/requirements``.
+``benchmarks`` runs the benchmark-harness tests, which carry the ``benchmark``
+marker and so sit outside every workspace run. ``dists`` builds every
+distribution and installs each sdist and wheel to catch packaging regressions
+that building alone misses. All take their pinned dependencies from
+``.github/requirements``.
 
 The Python version comes from whoever launches nox, so CI drives the matrix
 through ``actions/setup-python`` and stays off the per-OS versioned-binary
@@ -14,6 +16,7 @@ lookup. Run a single cell locally, for example::
 
     nox -s "tests(workspace='python')"
     nox -s "types(checker='mypy')"
+    nox -s benchmarks
     nox -s dists
 """
 
@@ -84,10 +87,34 @@ def tests(session: nox.Session, workspace: str) -> None:
     _install(session, TESTS_LOCK, editables)
 
     session.run("coverage", "erase")
-    session.run("coverage", "run", "-m", "pytest", *paths)
-    session.run("coverage", "combine")
+
+    # pytest-cov measures the xdist workers, which a bare `coverage run` cannot
+    # see, and combines their data files when the session ends. Its own gate is
+    # off because it scores every source package at once, and a workspace only
+    # imports the ones it owns; the per-package reports below are the gate.
+    session.run(
+        "python",
+        "-m",
+        "pytest",
+        "-n",
+        "auto",
+        "--cov",
+        "--cov-report=",
+        "--cov-fail-under=0",
+        *paths,
+    )
+
     for package in packages:
         session.run("coverage", "report", f"--include=*/{package}/*")
+
+
+@nox.session
+def benchmarks(session: nox.Session) -> None:
+    """Run the benchmark-harness tests the workspace sessions deselect."""
+    # These cover scripts under nab-python/benchmarks, which no coverage gate
+    # owns, so this session only has to prove they still pass.
+    _install(session, TESTS_LOCK, ["nab-resolver", "nab-index", "nab-python"])
+    session.run("python", "-m", "pytest", "-m", "benchmark", "nab-python/tests")
 
 
 @nox.session

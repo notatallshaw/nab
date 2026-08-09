@@ -18,6 +18,8 @@ import pytest
 from nab_python._vendor.packaging.tags import Tag
 from nab_python.target import ResolveTarget
 
+pytestmark = pytest.mark.benchmark
+
 _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 _STANDARD_FILES = 14
 _STANDARD_SCENARIOS = 557

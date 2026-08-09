@@ -10,6 +10,8 @@ from types import ModuleType
 
 import pytest
 
+pytestmark = pytest.mark.benchmark
+
 _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 _STRATEGIES = ("highest", "lowest", "lowest-direct")
 _COMPLETED_LOGICAL = ("cases:done",)
