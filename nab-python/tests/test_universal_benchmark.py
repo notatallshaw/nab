@@ -38,6 +38,14 @@ class _FakeCoordinator:
         pass
 
 
+def _universal_scenario(*platforms: str) -> dict:
+    return {
+        "python": ">=3.11,<3.12",
+        "platforms": list(platforms),
+        "requirements": ["foo"],
+    }
+
+
 def _successful_result() -> tuple[ResolveTarget, ResolveResult]:
     target = ResolveTarget.for_declared(
         python_version="3.11",
@@ -701,6 +709,57 @@ def test_unknown_universal_setting_is_rejected() -> None:
         module.validate_scenario("example", {"parallel": True})
 
 
+def test_duplicate_universal_platforms_are_rejected_in_declaration_order() -> None:
+    module = _harness()
+
+    with pytest.raises(
+        ValueError,
+        match=r"^example: platforms has duplicate entry: 'windows_amd64'$",
+    ):
+        module.validate_scenario(
+            "example",
+            _universal_scenario(
+                "linux_x86_64",
+                "windows_amd64",
+                "macos_arm64",
+                "windows_amd64",
+                "linux_x86_64",
+            ),
+        )
+
+
+def test_process_rejects_duplicate_platforms_before_network(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+
+    def unexpected_transport() -> None:
+        pytest.fail("transport constructed for an invalid scenario")
+
+    monkeypatch.setattr(module, "Urllib3AsyncTransport", unexpected_transport)
+    output_dir = tmp_path / "results"
+
+    with pytest.raises(
+        ValueError,
+        match=r"^example: platforms has duplicate entry: 'linux_x86_64'$",
+    ):
+        module.process_scenario(
+            "example",
+            _universal_scenario(
+                "linux_x86_64",
+                "macos_arm64",
+                "linux_x86_64",
+            ),
+            "commit",
+            force=True,
+            output_dir=output_dir,
+            source=_CLEAN_SOURCE,
+        )
+
+    assert not output_dir.exists()
+
+
 def test_universal_boolean_settings_do_not_coerce_strings() -> None:
     module = _harness()
     with pytest.raises(
@@ -716,6 +775,53 @@ def test_universal_boolean_settings_do_not_coerce_strings() -> None:
                 "align_across_tuples": "false",
             },
         )
+
+
+def test_main_preflights_every_universal_scenario(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenarios_dir = tmp_path / "scenarios"
+    scenarios_dir.mkdir()
+    (scenarios_dir / "universal.toml").write_text(
+        """[valid]
+python = ">=3.11,<3.12"
+platforms = ["linux_x86_64"]
+requirements = ["foo"]
+
+[duplicate]
+python = ">=3.11,<3.12"
+platforms = ["linux_x86_64", "linux_x86_64"]
+requirements = ["bar"]
+
+[valid-after]
+python = ">=3.11,<3.12"
+platforms = ["macos_arm64"]
+requirements = ["baz"]
+"""
+    )
+    results_dir = tmp_path / "results"
+    processed: list[str] = []
+
+    def record_process(name: str, *_args: object, **_kwargs: object) -> bool:
+        processed.append(name)
+        return True
+
+    monkeypatch.setattr(module, "SCENARIOS_DIR", scenarios_dir)
+    monkeypatch.setattr(module, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(module, "get_git_source_state", lambda: _CLEAN_SOURCE)
+    monkeypatch.setattr(module, "process_scenario", record_process)
+    monkeypatch.setattr(sys, "argv", [str(_BENCHMARK), "--commit", "label"])
+
+    with pytest.raises(
+        ValueError,
+        match=r"^duplicate: platforms has duplicate entry: 'linux_x86_64'$",
+    ):
+        module.main()
+
+    assert processed == []
+    assert not (results_dir / "label" / "universal").exists()
 
 
 def test_main_exits_nonzero_for_unexpected_failure(

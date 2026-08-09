@@ -236,7 +236,7 @@ def check_lock_consistency(result: ResolveResult) -> tuple[bool, list[str]]:
 
 
 def validate_scenario(scenario_name: str, scenario: dict) -> None:
-    """Reject settings the universal runner would otherwise silently ignore."""
+    """Reject invalid settings before running a universal scenario."""
     unknown = sorted(set(scenario) - UNIVERSAL_SCENARIO_KEYS)
     if unknown:
         msg = f"{scenario_name}: unknown scenario setting(s): {', '.join(unknown)}"
@@ -258,6 +258,12 @@ def validate_scenario(scenario_name: str, scenario: dict) -> None:
     if not scenario["platforms"] or not scenario["requirements"]:
         msg = f"{scenario_name}: platforms and requirements cannot be empty"
         raise ValueError(msg)
+    seen_platforms: set[str] = set()
+    for platform in scenario["platforms"]:
+        if platform in seen_platforms:
+            msg = f"{scenario_name}: platforms has duplicate entry: {platform!r}"
+            raise ValueError(msg)
+        seen_platforms.add(platform)
     for key in ("align_across_tuples", "skip_on_fail"):
         if key in scenario and type(scenario[key]) is not bool:
             msg = f"{scenario_name}: {key} must be a boolean"
@@ -571,6 +577,9 @@ def main() -> None:
         selected = [(name, scenarios[name]) for name in args.scenario]
     else:
         selected = list(scenarios.items())
+
+    for name, scenario in selected:
+        validate_scenario(name, scenario)
 
     result_kind = "universal-selected" if args.scenario else "universal"
     output_dir = RESULTS_DIR / commit / result_kind
