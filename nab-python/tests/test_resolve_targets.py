@@ -2684,3 +2684,153 @@ class TestMicroBoundaryNarrowing:
                 "implementation_name": "cpython",
             }
             assert sum(row.evaluate(env) for row in rows) == 1
+
+
+class TestMicroSliceAlignmentDirection:
+    """Splitting a minor does not turn cross-target alignment around.
+
+    Within a fork's pass alignment threads forward: a target's slices start
+    from what the targets before it settled on, and a target that resolves
+    later leaves them alone.
+    """
+
+    @staticmethod
+    def _meta(name: str, version: str, *requires: str) -> str:
+        head = f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+        return head + "".join(f"Requires-Dist: {req}\n" for req in requires)
+
+    @classmethod
+    def _coordinator(cls, *split_markers: str) -> MagicMock:
+        """A graph whose ``foo`` splits every minor ``split_markers`` cuts.
+
+        ``bar`` is the package under test: nothing in the split concerns it,
+        and both its versions resolve everywhere, so whichever one a slice
+        pins came from that slice's preferences.
+        """
+        requires = {"foo": [f"mid ; {marker}" for marker in split_markers]}
+        listings = {
+            "foo": [_make_wheel("1.0", package="foo")],
+            "mid": [_make_wheel("1.0", package="mid")],
+            "bar": [
+                _make_wheel("1.0", package="bar"),
+                _make_wheel("2.0", package="bar"),
+            ],
+        }
+        metadata: dict[str, str | None] = {}
+        for name, wheels in listings.items():
+            for wheel in wheels:
+                assert wheel.metadata_url is not None
+                metadata[wheel.metadata_url] = cls._meta(
+                    name, wheel.version, *requires.get(name, ())
+                )
+        return make_coordinator(listings=listings, metadata_by_url=metadata)
+
+    @staticmethod
+    def _bar_versions(result: ResolveResult) -> dict[str, str]:
+        return {tr.target.label: str(tr.pins["bar"]) for tr in result.target_results}
+
+    def test_a_later_target_does_not_seed_the_slices_before_it(self) -> None:
+        """Windows resolves after linux and caps ``bar`` at 1.0, so the linux
+        slices keep 2.0."""
+        targets = Matrix(
+            python="==3.11",
+            platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
+        ).expand()
+
+        result = resolve_with_coordinator(
+            self._coordinator('python_full_version >= "3.11.4"'),
+            targets,
+            _reqs("foo", "bar", 'bar<2.0 ; sys_platform == "win32"'),
+            config=_no_build(),
+        )
+
+        assert result.success
+        assert self._bar_versions(result) == {
+            "py311-linux_x86_64-pf3110": "2.0",
+            "py311-linux_x86_64-pf3114": "2.0",
+            "py311-windows_amd64-pf3110": "1.0",
+            "py311-windows_amd64-pf3114": "1.0",
+        }
+
+    def test_a_desc_matrix_keeps_the_newest_python_pin_on_its_slices(self) -> None:
+        """``python_order = "desc"`` resolves 3.12 first, so 3.11's narrower
+        answer must not propagate back onto the 3.12 slices."""
+        targets = Matrix(
+            python=">=3.11,<3.13",
+            platforms=(PlatformSpec("linux_x86_64"),),
+            python_order="desc",
+        ).expand()
+
+        result = resolve_with_coordinator(
+            self._coordinator(
+                'python_full_version >= "3.11.4"', 'python_full_version >= "3.12.3"'
+            ),
+            targets,
+            _reqs("foo", "bar", 'bar<2.0 ; python_version == "3.11"'),
+            config=_no_build(),
+        )
+
+        assert result.success
+        assert self._bar_versions(result) == {
+            "py312-linux_x86_64-pf3120": "2.0",
+            "py312-linux_x86_64-pf3123": "2.0",
+            "py311-linux_x86_64-pf3110": "1.0",
+            "py311-linux_x86_64-pf3114": "1.0",
+        }
+
+    def test_an_earlier_unsplit_target_still_seeds_a_later_split_one(self) -> None:
+        """3.10 does not split and caps ``bar`` at 1.0.  It resolves first, so
+        the 3.11 slices still align onto it rather than jumping to 2.0."""
+        targets = Matrix(
+            python=">=3.10,<3.12", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+
+        result = resolve_with_coordinator(
+            self._coordinator('python_full_version >= "3.11.4"'),
+            targets,
+            _reqs("foo", "bar", 'bar<2.0 ; python_version == "3.10"'),
+            config=_no_build(),
+        )
+
+        assert result.success
+        assert self._bar_versions(result) == {
+            "py310-linux_x86_64": "1.0",
+            "py311-linux_x86_64-pf3110": "1.0",
+            "py311-linux_x86_64-pf3114": "1.0",
+        }
+
+    def test_slices_align_within_their_own_fork(self) -> None:
+        """Only group ``b`` caps ``bar``, and only on 3.11.  Group ``a``'s
+        slices walk the matrix under its own answers, so they keep 2.0
+        throughout."""
+        targets = Matrix(
+            python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+        forks = [
+            ResolveFork((("group", "a"),), tuple(_reqs("foo", "bar"))),
+            ResolveFork(
+                (("group", "b"),),
+                tuple(_reqs("foo", "bar", 'bar<2.0 ; python_version == "3.11"')),
+            ),
+        ]
+
+        result = resolve_with_coordinator(
+            self._coordinator(
+                'python_full_version >= "3.11.4"', 'python_full_version >= "3.12.3"'
+            ),
+            targets,
+            forks=forks,
+            config=_no_build(),
+        )
+
+        assert result.success
+        assert self._bar_versions(result) == {
+            "py311-linux_x86_64-pf3110-group-a": "2.0",
+            "py311-linux_x86_64-pf3114-group-a": "2.0",
+            "py312-linux_x86_64-pf3120-group-a": "2.0",
+            "py312-linux_x86_64-pf3123-group-a": "2.0",
+            "py311-linux_x86_64-pf3110-group-b": "1.0",
+            "py311-linux_x86_64-pf3114-group-b": "1.0",
+            "py312-linux_x86_64-pf3120-group-b": "1.0",
+            "py312-linux_x86_64-pf3123-group-b": "1.0",
+        }
