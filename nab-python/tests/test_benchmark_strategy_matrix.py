@@ -29,8 +29,8 @@ from nab_python.target import ResolveTarget
 _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 _STANDARD_FILES = 14
 _STANDARD_SCENARIOS = 558
-_RUNNABLE_SCENARIOS = 536
-_UNSUPPORTED_SCENARIOS = 22
+_RUNNABLE_SCENARIOS = 534
+_UNSUPPORTED_SCENARIOS = 24
 _TOTAL_EXECUTION_IDENTITIES = 1_674
 # Keep the expected vocabulary independent of the validator's private set.
 _LIVE_SCENARIO_SETTINGS = {
@@ -64,6 +64,11 @@ _MARKER_BUILD_SCENARIOS = {
     "pip:pip-9572-textract-pypdf2",
     "uv:uv-issue-13321-axolotl-stack",
 }
+_UNVERIFIED_SDIST_METADATA_SCENARIOS = {
+    "ai-stack:rag-chroma-langchain",
+    "ai-stack:streamlit-langchain",
+}
+_UNVERIFIED_SDIST_METADATA_REASON = "requires unverified sdist dependency metadata"
 _MATCHING_HOST_MARKERS = {
     "uv:uv-tensorflow-macos": {
         "implementation_name": "cpython",
@@ -2789,6 +2794,22 @@ def test_marker_build_scenarios_are_explicitly_unsupported() -> None:
     assert sum("build_packages" in row.definition for row in rows) == 7
     assert all(
         row.definition.get("unsupported_reason") for row in marker_build_rows.values()
+    )
+
+
+def test_unverified_sdist_metadata_scenarios_are_explicitly_unsupported() -> None:
+    module = _harness("scenarios")
+    rows = module.load_standard_corpus(module.standard_scenario_files())
+    definitions = {row.logical_key: row.definition for row in rows}
+    affected = {
+        key
+        for key, definition in definitions.items()
+        if definition.get("unsupported_reason") == _UNVERIFIED_SDIST_METADATA_REASON
+    }
+
+    assert affected == _UNVERIFIED_SDIST_METADATA_SCENARIOS
+    assert all(
+        "trust_unverified_sdist_deps" not in definitions[key] for key in affected
     )
 
 
