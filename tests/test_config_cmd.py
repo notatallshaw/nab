@@ -36,7 +36,7 @@ from nab._lock import lock
 from nab.cli import app, effective_config
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
-from nab_python.config_sources import OPTIONS, SourceRoots
+from nab_python.config_sources import OPTIONS, OptionSpec, Scope, SourceRoots
 from nab_python.lockfile import (
     IndexPin,
     SdistArtifact,
@@ -426,6 +426,39 @@ class TestLockReferenceDocumentsProjectOverrides:
         assert "append" not in prose
 
 
+_STRUCTURED_PROJECT_TABLES = frozenset(
+    {
+        "archive-sources",
+        "conflicts",
+        "environment",
+        "index",
+        "indexes",
+        "local-sources",
+        "marker-environment",
+        "matrix",
+        "package-rules",
+        "packages",
+        "vcs",
+        "vcs-sources",
+        "workspace",
+    }
+)
+
+
+def test_only_structured_tables_lack_a_project_flag() -> None:
+    """The configuration reference's rule: only the tables stay file-only.
+
+    The keys are listed rather than derived from ``type_label`` so that a
+    new file-only option has to be added here deliberately.
+    """
+    file_only = {
+        spec.key
+        for spec in OPTIONS
+        if spec.scope is Scope.PROJECT and spec.cli_flag is None
+    }
+    assert file_only == _STRUCTURED_PROJECT_TABLES
+
+
 class TestConfigErrors:
     def test_unknown_action_exits(
         self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
@@ -645,7 +678,7 @@ class TestTyroConformance:
 
     def test_conformance_catches_a_deliberate_mismatch(self) -> None:
         """Prove the gate is real: a registry flag with no CLI param fails."""
-        from nab_python.config_sources import OptionSpec, Scope, _parse_bool
+        from nab_python.config_sources import _parse_bool
 
         bogus = OptionSpec(
             key="made-up",
@@ -954,6 +987,18 @@ class TestProjectCliOverrides:
         )
         assert config.dist_policy is DistPolicy.SDIST_ONLY
         assert config.trust_unverified_sdist_deps is False
+
+    def test_project_build_requires_depth_reaches_resolve(
+        self, hermetic_roots: Path
+    ) -> None:
+        # The file declares 1, so a resolve seeing 3 read it off the flag.
+        proj = _project(hermetic_roots, "build-requires-depth = 1\n")
+        config, _ = self._lock_config(
+            proj,
+            hermetic_roots / "pylock.toml",
+            ["--project-build-requires-depth", "3"],
+        )
+        assert config.build_requires_depth == 3
 
     def test_project_constraint_repeats_replace_the_file_list(
         self, hermetic_roots: Path

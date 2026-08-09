@@ -137,13 +137,14 @@ rejected in universal mode, where the matrix declares the Python axis.
 A project option can be overridden for one run with a `--project-<key>`
 flag: `--project-resolution`, `--project-mode`, `--project-requires-python`,
 `--project-uploaded-prior-to`, `--project-dist-policy`,
-`--project-build-policy`, and the repeatable `--project-constraint` and
-`--project-default-group`. Every one of them replaces the file value
-outright; repeating `--project-constraint` builds up that run's whole
-constraint list rather than adding to the declared one. Each changes the
-resolved set, so passing one prints a reproducibility notice on stderr
-and records the override in the lockfile's `[tool.nab]` block, since the
-lock no longer derives from the committed files alone.
+`--project-build-policy`, `--project-build-requires-depth`, and the
+repeatable `--project-constraint` and `--project-default-group`. Every one
+of them replaces the file value outright; repeating `--project-constraint`
+builds up that run's whole constraint list rather than adding to the
+declared one. Each changes the resolved set, so passing one prints a
+reproducibility notice on stderr and records the override in the
+lockfile's `[tool.nab]` block, since the lock no longer derives from the
+committed files alone.
 
 `--locked` re-resolves and checks that the committed `pylock.toml` is
 already up to date, writing nothing. It exits non-zero if the lock would

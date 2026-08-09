@@ -866,6 +866,7 @@ class TestReproducibilityNotice:
                 "project_uploaded_prior_to": None,
                 "project_dist_policy": "sdist-only",
                 "project_build_policy": None,
+                "project_build_requires_depth": None,
                 "project_constraint": (),
                 "project_default_group": ("dev",),
             }
