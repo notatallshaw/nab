@@ -32,8 +32,9 @@ if TYPE_CHECKING:
     from nab_python.target import ResolveTarget
 
 
-# Search benchmarks trust pre-2.2 PKG-INFO dependency metadata by default.
-DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS = True
+DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS = (
+    NabProjectConfig().trust_unverified_sdist_deps
+)
 DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
     IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
 )
@@ -660,11 +661,11 @@ def _package_overrides(
 def build_benchmark_config(
     *,
     indexes: Sequence[IndexConfig],
+    trust_unverified_sdist_deps: bool,
     uploaded_prior_to: datetime | None = None,
     index_routes: Sequence[IndexRoute] = (),
     build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
     resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST,
-    trust_unverified_sdist_deps: bool = False,
     vcs: VcsConfig | None = None,
 ) -> NabProjectConfig:
     """Build the project config represented by one benchmark scenario."""

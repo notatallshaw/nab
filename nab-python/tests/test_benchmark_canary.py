@@ -512,6 +512,7 @@ def test_canary_configures_lowest_direct_roots(
             ),
         ),
         resolution=module.ResolutionStrategy.LOWEST_DIRECT,
+        trust_unverified_sdist_deps=False,
     )
     result = module.run_one(
         requirements,

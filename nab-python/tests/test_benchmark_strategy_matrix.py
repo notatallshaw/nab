@@ -282,7 +282,6 @@ def _runner_parity_scenario() -> dict[str, object]:
         ],
         "build_packages": ["Zulu_Pkg", "alpha.pkg", "Demo-Pkg"],
         "resolution": "lowest-direct",
-        "trust_unverified_sdist_deps": False,
         "vcs_policy": "allow",
         "vcs_allowed_schemes": ["git+https"],
         "vcs_allowed_repos": ["https://example.test/project"],
@@ -1392,10 +1391,26 @@ def test_benchmark_config_combines_routing_and_build_policy() -> None:
     ]
 
 
+def test_benchmark_config_requires_an_explicit_sdist_trust_policy() -> None:
+    module = _harness("benchmark_config")
+
+    with pytest.raises(TypeError, match="trust_unverified_sdist_deps"):
+        module.build_benchmark_config(indexes=module.DEFAULT_INDEXES)
+
+
+def test_scenario_sdist_trust_default_matches_the_product_default() -> None:
+    module = _harness("benchmark_config")
+
+    assert (
+        module.DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS
+        is module.NabProjectConfig().trust_unverified_sdist_deps
+    )
+
+
 @pytest.mark.parametrize(
     ("scenario", "expected"),
     [
-        ({}, True),
+        ({}, False),
         ({"trust_unverified_sdist_deps": True}, True),
         ({"trust_unverified_sdist_deps": False}, False),
     ],
@@ -2577,6 +2592,7 @@ def test_benchmark_config_rejects_invalid_index_routes(
                 IndexConfig("private", "https://example.test/simple"),
             ],
             index_routes=[module.IndexRoute(*route) for route in routes],
+            trust_unverified_sdist_deps=False,
         )
 
 
@@ -2687,6 +2703,7 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
     config = module.build_benchmark_config(
         indexes=[IndexConfig("private", "https://example.test/simple")],
         index_routes=[module.IndexRoute("demo", "private")],
+        trust_unverified_sdist_deps=False,
     )
     coordinator = object()
     provider = SimpleNamespace(stats=_empty_provider_stats())
@@ -2815,7 +2832,10 @@ def test_resolve_scenario_records_no_pins_after_failure(
 
     result = module.resolve_scenario(
         module.parse_requirements(["demo"]),
-        config=module.build_benchmark_config(indexes=[]),
+        config=module.build_benchmark_config(
+            indexes=[],
+            trust_unverified_sdist_deps=False,
+        ),
         target=admission.target,
         host=host,
     )
@@ -2878,7 +2898,10 @@ def test_standard_runner_applies_root_extra_constraints(
     result = module.resolve_scenario(
         module.parse_requirements(["aaa[x]"]),
         module.parse_requirements([constraint]),
-        config=module.build_benchmark_config(indexes=module.DEFAULT_INDEXES),
+        config=module.build_benchmark_config(
+            indexes=module.DEFAULT_INDEXES,
+            trust_unverified_sdist_deps=False,
+        ),
         target=admission.target,
         host=host,
     )
@@ -4443,6 +4466,7 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
     assert (
         standard_execution.config == canary_execution.config == profile_inputs["config"]
     )
+    assert standard_execution.config.trust_unverified_sdist_deps is False
     assert standard_execution.config.constraints == ()
     assert standard_execution.constraint_strings == ["demo<2"]
 
@@ -5216,7 +5240,7 @@ def test_profile_runner_uses_scenario_sdist_trust_policy() -> None:
         "strict", {**base, "trust_unverified_sdist_deps": False}
     )
 
-    assert implicit["config"].trust_unverified_sdist_deps is True
+    assert implicit["config"].trust_unverified_sdist_deps is False
     assert trusted["config"].trust_unverified_sdist_deps is True
     assert strict["config"].trust_unverified_sdist_deps is False
 
