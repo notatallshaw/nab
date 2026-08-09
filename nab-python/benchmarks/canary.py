@@ -50,6 +50,7 @@ from benchmark_config import (
     parse_vcs_policy,
     parse_vcs_require_pin,
     validate_scenario_build_policy,
+    validate_scenario_settings,
 )
 from benchmark_host import (
     BenchmarkHost,
@@ -628,6 +629,9 @@ def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
         )
         raise _SelectionError(msg)
 
+    for scenario_name, scenario in found_scenarios:
+        validate_scenario_settings(scenario_name, scenario)
+
     field_validators = (
         parse_trust_unverified_sdist_deps,
         parse_scenario_requirement_strings,
@@ -796,6 +800,7 @@ def _prepare_canary_execution(
     host: BenchmarkHost,
 ) -> CanaryPreparation:
     """Validate and prepare a supported canary scenario for this host."""
+    validate_scenario_settings(scenario_name, scenario)
     trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(
         scenario_name,
         scenario,

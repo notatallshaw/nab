@@ -551,6 +551,46 @@ def test_selection_validates_requirement_lists_before_vcs_pin_settings(
 
 
 @pytest.mark.parametrize(
+    "unsupported_reason",
+    [None, "not runnable"],
+    ids=("supported", "unsupported"),
+)
+def test_selection_validates_unknown_settings_across_the_whole_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    unsupported_reason: str | None,
+) -> None:
+    module = _harness()
+    second: dict[str, object] = {
+        "requirements": [],
+        "trust_unverified_sdist_dependencies": False,
+    }
+    if unsupported_reason is not None:
+        second["unsupported_reason"] = unsupported_reason
+    scenarios = {
+        "quick:first": {
+            "requirements": [],
+            "trust_unverified_sdist_deps": "false",
+        },
+        "quick:second": second,
+    }
+    monkeypatch.setattr(module, "find_scenario", scenarios.get)
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "quick:second: unknown scenario settings: "
+            "['trust_unverified_sdist_dependencies']"
+        ),
+    ):
+        module.select_scenarios(
+            [
+                module.CanaryCase("quick:first", None),
+                module.CanaryCase("quick:second", None),
+            ]
+        )
+
+
+@pytest.mark.parametrize(
     ("vcs_settings", "message"),
     [
         (
@@ -843,6 +883,14 @@ def test_selection_rejects_unknown_marker_variables_on_unsupported_rows(
     ("scenario", "message"),
     [
         (
+            {
+                "requirements": [],
+                "trust_unverified_sdist_deps": "false",
+                "trust_unverified_sdist_dependencies": False,
+            },
+            "unknown scenario settings: ['trust_unverified_sdist_dependencies']",
+        ),
+        (
             {"requirements": [], "build_packages": "demo"},
             "build_packages must be a list of package names",
         ),
@@ -862,7 +910,13 @@ def test_selection_rejects_unknown_marker_variables_on_unsupported_rows(
             "unknown marker_environment variables: ['platform_codename']",
         ),
     ],
-    ids=("build-packages", "resolution", "host-requirement", "marker-variable"),
+    ids=(
+        "unknown-setting",
+        "build-packages",
+        "resolution",
+        "host-requirement",
+        "marker-variable",
+    ),
 )
 def test_selected_scenario_preflight_fails_before_host_and_output(
     tmp_path: Path,

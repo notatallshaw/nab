@@ -48,6 +48,7 @@ from benchmark_config import (
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
     validate_scenario_build_policy,
+    validate_scenario_settings,
 )
 from benchmark_host import (
     HOST_TAG_MISMATCH_REASON,
@@ -580,6 +581,7 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
             for name, definition in scenarios.items()
         )
     for row in rows:
+        validate_scenario_settings(row.logical_key, row.definition)
         parse_trust_unverified_sdist_deps(row.logical_key, row.definition)
         parse_scenario_requirement_strings(row.logical_key, row.definition)
         parse_scenario_vcs_config(row.logical_key, row.definition)
@@ -1469,6 +1471,7 @@ def prepare_standard_execution(
     """Prepare and identify one execution without performing network work."""
     scenario_name = execution.scenario.name
     scenario = execution.scenario.definition
+    validate_scenario_settings(scenario_name, scenario)
     trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(
         scenario_name,
         scenario,
