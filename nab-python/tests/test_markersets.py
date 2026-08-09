@@ -12,6 +12,7 @@ import importlib.util
 from collections import defaultdict
 from functools import reduce
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from packaging.markers import Marker
@@ -22,6 +23,11 @@ from nab_python._vendor.packaging.markersets import (
     IntractableMarkerSet,
     MarkerSet,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
+    from nab_python._vendor.packaging._markersets import Atom, Cell
 
 _spec = importlib.util.spec_from_file_location(
     "simplify_corpus_fixtures",
@@ -490,4 +496,182 @@ def test_work_meter_is_unset_outside_a_simplify() -> None:
     within = _narrow_universe()
     ms(_narrow_linux_span()).simplify(within=within)
     assert getattr(engine._work_meter, "remaining", None) is None
-    assert getattr(engine._partition_cache, "store", None) is None
+
+
+def _partition_counter(monkeypatch: pytest.MonkeyPatch) -> Callable[[], int]:
+    """Start counting axis partitions, and return a reader for the count.
+
+    Counts the calls that reach :func:`_partition_axis`, so a partition served
+    from an operation's store adds nothing.
+    """
+    calls = 0
+    real = engine._partition_axis
+
+    def counting(
+        axis: tuple, atoms: Sequence[Atom], max_cells: int, memo: engine.Memo
+    ) -> list[Cell]:
+        nonlocal calls
+        calls += 1
+        return real(axis, atoms, max_cells, memo)
+
+    monkeypatch.setattr(engine, "_partition_axis", counting)
+    return lambda: calls
+
+
+def _truth_counter(monkeypatch: pytest.MonkeyPatch) -> Callable[[], int]:
+    """Start counting atom-truth evaluations, and return a reader for the count.
+
+    Counts the calls that reach :func:`_holds_value`, so a truth served from an
+    operation's memo adds nothing.
+    """
+    calls = 0
+    real = engine._holds_value
+
+    def counting(atom: Atom, text: str) -> bool:
+        nonlocal calls
+        calls += 1
+        return real(atom, text)
+
+    monkeypatch.setattr(engine, "_holds_value", counting)
+    return lambda: calls
+
+
+def _row_universe() -> MarkerSet:
+    """Return a universe of six rows, each pinning a python minor and a platform."""
+    return union(
+        *(
+            f'python_version == "3.{minor}" and sys_platform == "{platform}"'
+            for minor in (10, 11, 12)
+            for platform in ("linux", "darwin")
+        )
+    )
+
+
+# Operands reaching all three axis kinds: a version axis, a set axis through
+# ``extra``, and an opaque contains axis. A universe row pins ``sys_platform`` away,
+# so a scenario without the last two would exercise the value axis alone.
+_SPREAD = ' and extra == "gpu" and "arm" in platform_machine'
+
+
+def test_one_operation_partitions_each_axis_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A within-universe decision partitions each axis once, not once per row.
+
+    The row walk issues two emptiness decisions for each of the six rows, so the
+    count is exact rather than bounded: 5 partitions here, against 36 with the store
+    ignored and 27 with a store that serves value axes only.
+    """
+    left = ms('python_version < "3.12"' + _SPREAD)
+    right = ms('python_version < "3.12" and sys_platform != "aix"' + _SPREAD)
+
+    partitions = _partition_counter(monkeypatch)
+    assert left.equivalent_within(right, _row_universe()) is True
+
+    assert partitions() == 5
+
+
+def test_simplify_keeps_its_partitions_to_one_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two identical simplifies each pay for their own partitions.
+
+    ``simplify_within`` creates the store its greedy fixpoint reuses, so a second
+    call repeats the whole cost. A store reaching past one call would make the repeat
+    nearly free, which is what this refuses.
+    """
+    universe = _row_universe()
+    marker = ms('python_version < "3.12"' + _SPREAD)
+
+    partitions = _partition_counter(monkeypatch)
+    marker.simplify(within=universe)
+    first = partitions()
+    marker.simplify(within=universe)
+
+    assert first > 0
+    assert partitions() == 2 * first
+
+
+def test_one_operation_reads_each_atom_truth_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An atom's truth on one point is evaluated once per operation.
+
+    Partitions of one axis over overlapping atom sets re-read the same atom on the
+    same point, which is why the memo pays. 156 evaluations here, against 208 with
+    the memo bypassed.
+    """
+    left = ms('python_version < "3.12"' + _SPREAD)
+    right = ms('python_version < "3.12" and sys_platform != "aix"' + _SPREAD)
+
+    truths = _truth_counter(monkeypatch)
+    assert left.equivalent_within(right, _row_universe()) is True
+
+    assert truths() == 156
+
+
+def test_atoms_keep_no_truths_between_operations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second identical decision re-evaluates every atom truth.
+
+    The memo belongs to the operation, not to the atom, so an ``Atom`` that outlives
+    a decision carries nothing from it. A per-atom cache would make the repeat nearly
+    free, which is what this refuses.
+    """
+    universe = _row_universe()
+    left = ms('python_version < "3.12"' + _SPREAD)
+    right = ms('python_version < "3.12" and sys_platform != "aix"' + _SPREAD)
+
+    truths = _truth_counter(monkeypatch)
+    left.equivalent_within(right, universe)
+    first = truths()
+    left.equivalent_within(right, universe)
+
+    assert first > 0
+    assert truths() == 2 * first
+
+
+def test_partition_is_keyed_on_atom_order_not_just_the_set() -> None:
+    """A partition's cell vectors stay aligned with the atom list it was built for.
+
+    ``collect_atoms`` returns encounter order and nothing normalises it, while
+    ``_rows_equivalent`` builds its two halves with the operands in opposite
+    positions. So one operation can reach one axis with one atom set in two orders,
+    and keying on an unordered set would answer the second from the first's cells.
+    """
+    atoms = engine.collect_atoms(
+        engine.parse('python_version < "3.11" and python_version >= "3.10"')
+    )
+    axis = atoms[0].axis()
+    memo = engine.Memo()
+
+    forward = engine.partition_axis(axis, atoms, _MAX_CELLS, memo)
+    backward = engine.partition_axis(axis, list(reversed(atoms)), _MAX_CELLS, memo)
+
+    for cell in forward:
+        assert cell.vector == tuple(atom.holds(cell.point) for atom in atoms)
+    for cell in backward:
+        assert cell.vector == tuple(atom.holds(cell.point) for atom in reversed(atoms))
+
+
+def test_partitions_do_not_outlive_one_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second identical decision pays for its partitions again.
+
+    The store belongs to one operation, so nothing carries between two of them.
+    A cache reaching further would make the repeat free, which is what this
+    refuses.
+    """
+    universe = _row_universe()
+    left = ms('python_version < "3.12"' + _SPREAD)
+    right = ms('python_version < "3.12" and sys_platform != "aix"' + _SPREAD)
+
+    partitions = _partition_counter(monkeypatch)
+    left.equivalent_within(right, universe)
+    first = partitions()
+    left.equivalent_within(right, universe)
+
+    assert first > 0
+    assert partitions() == 2 * first
