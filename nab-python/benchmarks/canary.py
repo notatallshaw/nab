@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, NamedTuple
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from nab_python._vendor.packaging.version import Version
     from nab_python.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
@@ -39,6 +40,11 @@ from benchmark_host import (
     BenchmarkTimeout,
     parse_requires_matching_host,
     parse_target_marker_environment,
+)
+from canary_result import (
+    CANARY_CONTRACT_VERSION,
+    build_canary_artifacts,
+    write_canary_artifacts,
 )
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
@@ -114,10 +120,15 @@ class CanaryPreparation(NamedTuple):
     inapplicable_reason: str | None
 
 
+class CanaryArtifactPaths(NamedTuple):
+    """The comparison result and its selected-pin sidecar."""
+
+    result: Path
+    pins: Path
+
+
 WALL_TIMEOUT_S = 60
 MAX_ITERATIONS = 50_000
-# Preserve contract v2 for comparisons with existing canary results.
-CANARY_CONTRACT_VERSION = 2
 
 
 def scenario_input_hash(scenario_name: str, scenario: dict) -> str:
@@ -312,6 +323,17 @@ def get_git_commit() -> str:
     return result.stdout.strip()
 
 
+def _result_pins(solution: Mapping[str, Version]) -> dict[str, str]:
+    """Return normalized base-package pins for a canary run."""
+    return dict(
+        sorted(
+            (canonicalize_name(name), str(version))
+            for name, version in solution.items()
+            if split_extra(name)[1] is None
+        )
+    )
+
+
 def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
     requirements: dict[str, VersionRange],
     uploaded_prior_to: datetime | None,
@@ -363,15 +385,16 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
             max_iterations=MAX_ITERATIONS,
         )
 
+        pins: dict[str, str] = {}
         start = time.monotonic()
         try:
             with host.wall_timeout():
                 raw = resolver.resolve(requirements, constraints=constraints)
             elapsed = time.monotonic() - start
-            result = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
+            pins = _result_pins(raw)
             success = True
             error = None
-            packages = len(result)
+            packages = len(pins)
         except (BenchmarkTimeout, Exception) as exc:
             elapsed = time.monotonic() - start
             success = False
@@ -406,6 +429,7 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
             },
             "success": success,
             "error": error,
+            "pins": pins,
             "decisions": rs.decisions,
             "conflicts": rs.conflicts,
             "backjumps": rs.backjumps,
@@ -624,12 +648,20 @@ def _check_result_directory(
         parser.error(str(exc))
 
 
-def _summary_path(parser: argparse.ArgumentParser, label: str) -> Path:
+def _artifact_paths(
+    parser: argparse.ArgumentParser,
+    label: str,
+) -> CanaryArtifactPaths:
+    """Return paired paths for one canary invocation."""
     try:
         out_dir = _result_directory(label)
     except _SelectionError as exc:
         parser.error(str(exc))
-    return out_dir / f"canary_{int(time.time())}.json"
+    suffix = int(time.time())
+    return CanaryArtifactPaths(
+        result=out_dir / f"canary_{suffix}.json",
+        pins=out_dir / f"canary-pins_{suffix}.json",
+    )
 
 
 def find_scenario(spec: str) -> dict | None:
@@ -1010,10 +1042,14 @@ def main() -> None:
             f"{summary['max_decisions']:>8}"
         )
 
-    out_file = _summary_path(parser, commit)
-    with out_file.open("x", encoding="utf-8") as f:
-        f.write(json.dumps(summary_all, indent=2) + "\n")
-    print(f"\nResults: {out_file}")
+    paths = _artifact_paths(parser, commit)
+    artifacts = build_canary_artifacts(
+        summary_all,
+        paths.result.name,
+    )
+    write_canary_artifacts(paths.result, paths.pins, artifacts)
+    print(f"\nResults: {paths.result}")
+    print(f"Pins: {paths.pins}")
 
 
 if __name__ == "__main__":

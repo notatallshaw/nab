@@ -47,7 +47,7 @@ Each run initializes `_standard_manifest.json` as incomplete before resolving an
 ### Canary subset
 
 `canary.py` runs the small hard-case subset used by the local verification gate.
-`canary.toml` selects canonical scenario definitions and declares the strategy for each case. Manual selections may use an explicit suffix such as `pip:trustllm@lowest`. The runner records the complete TOML input, effective target and policy, source state, and content hashes. Canary artifacts retain contract version 2: non-default cases reconstruct the equivalent historical selector and input definition at the serialization boundary, so existing scoreboards remain comparable even though strategy-clone files are gone. The local verifier compares success results only when their contract version and host-aware execution hashes match and both source trees are clean.
+`canary.toml` selects canonical scenario definitions and declares the strategy for each case. Manual selections may use an explicit suffix such as `pip:trustllm@lowest`. The runner records the complete TOML input, effective target and policy, source state, and content hashes. Canary comparison results retain contract version 2, including the reconstructed historical selector for a non-default strategy. A paired `canary-pins_<timestamp>.json` file records sorted package pins for each run and identifies its comparison result by filename and SHA-256 digest. Failed runs have an empty pin map. The local verifier compares success results only when their contract versions and host-aware execution hashes match and both source trees are clean.
 
 ## Universal-resolution scenarios
 

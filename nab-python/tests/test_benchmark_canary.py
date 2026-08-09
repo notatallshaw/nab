@@ -8,12 +8,14 @@ import json
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
 from typing_extensions import Self
 
+from nab_python._vendor.packaging.version import Version
 from nab_python.target import ResolveTarget
 
 _CANARY = Path(__file__).resolve().parents[1] / "benchmarks" / "canary.py"
@@ -33,20 +35,27 @@ def _harness() -> ModuleType:
     return module
 
 
+def _result_contract(module: ModuleType) -> ModuleType:
+    """Return the canary-result module imported by the benchmark harness."""
+    return sys.modules[module.build_canary_artifacts.__module__]
+
+
 def _run_result(
     *,
     success: bool = True,
     decisions: int = 1,
     distributions_seen: int = 0,
     metadata_fetched: int = 0,
-    packages: int = 0,
+    pins: dict[str, str] | None = None,
     conflicts: int = 0,
     backjumps: int = 0,
     wall_time_seconds: float = 0.0,
 ) -> dict[str, object]:
+    selected_pins = {} if pins is None else pins
     return {
         "success": success,
         "error": None if success else "resolution failed",
+        "pins": selected_pins,
         "decisions": decisions,
         "conflicts": conflicts,
         "backjumps": backjumps,
@@ -55,9 +64,56 @@ def _run_result(
         "metadata_fetched": metadata_fetched,
         "distributions_seen": distributions_seen,
         "look_ahead_rejections": 0,
-        "packages": packages,
+        "packages": len(selected_pins),
         "wall_time_seconds": wall_time_seconds,
     }
+
+
+def _patch_run_one_boundaries(
+    module: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    resolve: Callable[..., dict[str, Version]],
+) -> dict[str, object]:
+    """Install deterministic dependencies for ``run_one`` result tests."""
+    seen: dict[str, object] = {}
+
+    class FakeCoordinator:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            pass
+
+    class FakeProvider:
+        def __init__(self, *_args: object, **kwargs: object) -> None:
+            seen.update(kwargs)
+            self.stats = SimpleNamespace(
+                metadata_fetched=0,
+                distributions_seen=0,
+                look_ahead_rejections=0,
+            )
+
+    class FakeResolver:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.stats = SimpleNamespace(
+                decisions=0,
+                conflicts=0,
+                backjumps=0,
+                restarts=0,
+                incompatibilities_learned=0,
+            )
+
+        def resolve(self, *args: object, **kwargs: object) -> dict[str, Version]:
+            return resolve(*args, **kwargs)
+
+    monkeypatch.setattr(module, "FetchCoordinator", FakeCoordinator)
+    monkeypatch.setattr(module, "HttpxAsyncTransport", object)
+    monkeypatch.setattr(module, "Provider", FakeProvider)
+    monkeypatch.setattr(module, "Resolver", FakeResolver)
+    return seen
 
 
 def test_wall_timeout_noops_without_posix_alarm(
@@ -292,7 +348,7 @@ def test_canary_filters_root_markers_with_the_admitted_target(
     def fake_run_one(requirements: dict, *_args: object, **kwargs: object) -> dict:
         seen["requirements"] = set(requirements)
         seen["target_python"] = kwargs["target"].marker_env["python_version"]
-        return _run_result(packages=1)
+        return _run_result(pins={"selected": "1.0"})
 
     monkeypatch.setattr(module, "run_one", fake_run_one)
     module.median_run(
@@ -337,7 +393,7 @@ def test_canary_explicit_resolution_overrides_declared_strategy(
     assert seen == [module.ResolutionStrategy.LOWEST]
 
 
-def test_canary_prepares_inputs_and_summarizes_repeated_runs(
+def test_canary_prepares_inputs_and_summarizes_runs_with_different_pins(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _harness()
@@ -347,7 +403,7 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
             decisions=1,
             distributions_seen=9,
             metadata_fetched=3,
-            packages=1,
+            pins={"demo": "1.0"},
             conflicts=7,
             backjumps=4,
             wall_time_seconds=0.1,
@@ -357,7 +413,6 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
             decisions=9,
             distributions_seen=3,
             metadata_fetched=9,
-            packages=0,
             conflicts=1,
             backjumps=8,
             wall_time_seconds=0.3,
@@ -366,7 +421,7 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
             decisions=5,
             distributions_seen=6,
             metadata_fetched=6,
-            packages=3,
+            pins={"demo": "2.0", "first": "1.0", "second": "1.0"},
             conflicts=4,
             backjumps=2,
             wall_time_seconds=0.2,
@@ -397,6 +452,7 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
     )
 
     assert runs == returned_runs
+    assert runs[0]["pins"] != runs[2]["pins"]
     assert summary == {
         "success_runs": "2/3",
         "median_decisions": 5,
@@ -434,44 +490,11 @@ def test_canary_configures_lowest_direct_roots(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _harness()
-    seen: dict[str, object] = {}
 
-    class FakeCoordinator:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            pass
+    def resolve(*_args: object, **_kwargs: object) -> dict[str, Version]:
+        return {}
 
-        def __enter__(self) -> Self:
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            pass
-
-    class FakeProvider:
-        def __init__(self, *_args: object, **kwargs: object) -> None:
-            seen.update(kwargs)
-            self.stats = SimpleNamespace(
-                metadata_fetched=0,
-                distributions_seen=0,
-                look_ahead_rejections=0,
-            )
-
-    class FakeResolver:
-        def __init__(self, *_args: object, **_kwargs: object) -> None:
-            self.stats = SimpleNamespace(
-                decisions=0,
-                conflicts=0,
-                backjumps=0,
-                restarts=0,
-                incompatibilities_learned=0,
-            )
-
-        def resolve(self, *_args: object, **_kwargs: object) -> dict:
-            return {}
-
-    monkeypatch.setattr(module, "FetchCoordinator", FakeCoordinator)
-    monkeypatch.setattr(module, "HttpxAsyncTransport", object)
-    monkeypatch.setattr(module, "Provider", FakeProvider)
-    monkeypatch.setattr(module, "Resolver", FakeResolver)
+    seen = _patch_run_one_boundaries(module, monkeypatch, resolve)
 
     requirements = module.parse_requirements(["Root[feature]", "Other==1"])
     captured = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
@@ -508,7 +531,76 @@ def test_canary_configures_lowest_direct_roots(
     assert seen["target"] is admission.target
 
 
-def test_canary_main_records_v2_contract(
+def test_canary_records_normalized_pins_after_timing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    events: list[str] = []
+    clock_values = iter((10.0, 11.25))
+
+    def monotonic() -> float:
+        events.append("clock")
+        return next(clock_values)
+
+    real_result_pins = module._result_pins
+
+    def result_pins(solution: dict[str, Version]) -> dict[str, str]:
+        events.append("pins")
+        return real_result_pins(solution)
+
+    def resolve(*_args: object, **_kwargs: object) -> dict[str, Version]:
+        return {
+            "Z_Pkg": Version("2.0.0"),
+            "Demo_Pkg": Version("01.0"),
+            "demo_pkg[feature]": Version("1.0"),
+        }
+
+    _patch_run_one_boundaries(module, monkeypatch, resolve)
+    monkeypatch.setattr(module, "time", SimpleNamespace(monotonic=monotonic))
+    monkeypatch.setattr(module, "_result_pins", result_pins)
+    host = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
+
+    result = module.run_one(
+        module.parse_requirements(["demo-pkg"]),
+        None,
+        None,
+        target=host.target,
+        host=host,
+    )
+
+    assert result["pins"] == {"demo-pkg": "1.0", "z-pkg": "2.0.0"}
+    assert list(result["pins"]) == ["demo-pkg", "z-pkg"]
+    assert result["packages"] == 2
+    assert result["wall_time_seconds"] == 1.25
+    assert events == ["clock", "clock", "pins"]
+
+
+def test_canary_records_no_pins_after_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+
+    def resolve(*_args: object, **_kwargs: object) -> dict[str, Version]:
+        raise RuntimeError("fixture failure")
+
+    _patch_run_one_boundaries(module, monkeypatch, resolve)
+    host = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
+
+    result = module.run_one(
+        module.parse_requirements(["demo"]),
+        None,
+        None,
+        target=host.target,
+        host=host,
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "RuntimeError: fixture failure"
+    assert result["pins"] == {}
+    assert result["packages"] == 0
+
+
+def test_canary_main_records_contract_for_skipped_case(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -528,8 +620,10 @@ def test_canary_main_records_v2_contract(
     module.main()
 
     result_path = next((tmp_path / "test").glob("canary_*.json"))
-    data = json.loads(result_path.read_text())
-    assert data == {
+    pins_path = next((tmp_path / "test").glob("canary-pins_*.json"))
+    contract = _result_contract(module)
+    result_data = json.loads(result_path.read_text())
+    assert result_data == {
         "requests": {
             "contract_version": module.CANARY_CONTRACT_VERSION,
             "scenario": "quick:requests",
@@ -542,9 +636,23 @@ def test_canary_main_records_v2_contract(
             "summary": {"skipped": "test fixture"},
         }
     }
+    assert json.loads(pins_path.read_text()) == {
+        "pins_contract_version": contract.CANARY_PINS_CONTRACT_VERSION,
+        "canary_result": {
+            "filename": result_path.name,
+            "sha256": hashlib.sha256(result_path.read_bytes()).hexdigest(),
+        },
+        "scenarios": {
+            "requests": {
+                "input_hash": input_hash,
+                "execution_hash": module.scenario_execution_hash(input_hash, None),
+                "runs": [],
+            }
+        },
+    }
 
 
-def test_canary_main_preserves_v2_lowest_identity_and_effective_settings(
+def test_canary_main_preserves_v2_input_identity_and_effective_settings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -557,6 +665,7 @@ def test_canary_main_preserves_v2_lowest_identity_and_effective_settings(
     run = {
         "success": True,
         "error": None,
+        "pins": {"demo": "1.0"},
         "decisions": 1,
         "conflicts": 0,
         "backjumps": 0,
@@ -615,9 +724,13 @@ def test_canary_main_preserves_v2_lowest_identity_and_effective_settings(
 
     module.main()
 
-    record = json.loads(next((tmp_path / "test").glob("canary_*.json")).read_text())[
-        "example"
-    ]
+    result_paths = list((tmp_path / "test").glob("canary_*.json"))
+    assert len(result_paths) == 1
+    result_path = result_paths[0]
+    record = json.loads(result_path.read_text())["example"]
+    pins_record = json.loads(
+        next((tmp_path / "test").glob("canary-pins_*.json")).read_text()
+    )["scenarios"]["example"]
     expected_input = {**scenario, "resolution": "lowest"}
     expected_input_hash = module.scenario_input_hash(
         "quick-lowest:example", expected_input
@@ -627,9 +740,20 @@ def test_canary_main_preserves_v2_lowest_identity_and_effective_settings(
     assert record["input"] == expected_input
     assert record["input_hash"] == expected_input_hash
     assert record["effective_settings"] == settings
+    assert "pins" not in record["runs"][0]
+    assert pins_record["runs"] == [
+        {
+            "run": 0,
+            "success": True,
+            "packages": 1,
+            "pins": {"demo": "1.0"},
+        }
+    ]
+    assert pins_record["input_hash"] == expected_input_hash
     assert record["execution_hash"] == module.scenario_execution_hash(
         expected_input_hash, settings
     )
+    assert pins_record["execution_hash"] == record["execution_hash"]
 
 
 def test_canary_input_hash_captures_executable_definition() -> None:
