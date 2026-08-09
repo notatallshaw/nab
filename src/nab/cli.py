@@ -316,6 +316,7 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
     cli_uploaded_prior_to: str | None = None,
     cli_dist_policy: str | None = None,
     cli_build_policy: str | None = None,
+    cli_build_requires_depth: int | None = None,
     cli_constraint: tuple[str, ...] = (),
     cli_default_group: tuple[str, ...] = (),
 ) -> dict[str, object]:
@@ -340,6 +341,7 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
             "project_uploaded_prior_to": cli_uploaded_prior_to,
             "project_dist_policy": cli_dist_policy,
             "project_build_policy": cli_build_policy,
+            "project_build_requires_depth": cli_build_requires_depth,
             "project_constraint": cli_constraint,
             "project_default_group": cli_default_group,
         }

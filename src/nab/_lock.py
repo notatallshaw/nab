@@ -123,6 +123,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     project_uploaded_prior_to: str | None = None,
     project_dist_policy: DistPolicyFlag | None = None,
     project_build_policy: BuildPolicyFlag | None = None,
+    project_build_requires_depth: int | None = None,
     project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     upgrade: bool = False,
@@ -183,6 +184,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         cli_uploaded_prior_to=project_uploaded_prior_to,
         cli_dist_policy=project_dist_policy,
         cli_build_policy=project_build_policy,
+        cli_build_requires_depth=project_build_requires_depth,
         cli_constraint=project_constraint,
         cli_default_group=project_default_group,
     )
