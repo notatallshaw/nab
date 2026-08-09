@@ -93,11 +93,6 @@ logger = logging.getLogger(__name__)
 _EXTRA_RE = re.compile(r"^(?P<base>[^\[]+)\[(?P<extra>[^\]]+)\]$")
 
 
-def _normalize_extra(extra: str) -> str:
-    """Normalize an extra name per PEP 685 (same rules as package names)."""
-    return canonicalize_name(extra)
-
-
 def split_extra(package: str) -> tuple[str, str | None]:
     """Split 'name[extra]' into ('name', 'extra'), or ('name', None).
 
@@ -106,7 +101,7 @@ def split_extra(package: str) -> tuple[str, str | None]:
     m = _EXTRA_RE.match(package)
     if m is None:
         return (package, None)
-    return (m.group("base"), _normalize_extra(m.group("extra")))
+    return (m.group("base"), canonicalize_name(m.group("extra")))
 
 
 def join_extra(base: str, extra: str) -> str:
@@ -114,7 +109,7 @@ def join_extra(base: str, extra: str) -> str:
 
     The extra name is normalized per PEP 685.
     """
-    return f"{base}[{_normalize_extra(extra)}]"
+    return f"{base}[{canonicalize_name(extra)}]"
 
 
 class MissingExtraError(Exception):

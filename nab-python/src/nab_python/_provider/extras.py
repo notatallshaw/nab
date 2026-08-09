@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from .._vendor.packaging.ranges import VersionRange
+from .._vendor.packaging.utils import canonicalize_name
 from .metadata_resolver import refuse_url_dep
 
 if TYPE_CHECKING:
@@ -110,7 +111,7 @@ def _pick_in_mode(
     checks ``Provides-Extra`` for transitive extras.
     """
     # Late import: ``provider`` imports this module at module load.
-    from ..provider import ExtrasMode, MetadataError, _normalize_extra
+    from ..provider import ExtrasMode, MetadataError
 
     _, _, normalized = provider.split_and_normalize(base)
     is_user = (normalized, extra) in provider.root_extras
@@ -126,7 +127,7 @@ def _pick_in_mode(
             return version
         metadata = provider.metadata_cache.get((normalized, version))
         provided = (
-            {_normalize_extra(e) for e in metadata.provides_extra}
+            {canonicalize_name(e) for e in metadata.provides_extra}
             if metadata
             else set()
         )
@@ -193,7 +194,7 @@ def version_provides_extra(
     extractable metadata in this tuple.
     """
     # Late import: provider imports this module at module load.
-    from ..provider import MetadataError, _normalize_extra
+    from ..provider import MetadataError
 
     _, _, normalized = provider.split_and_normalize(base)
     try:
@@ -202,7 +203,7 @@ def version_provides_extra(
         return False
 
     metadata = provider.metadata_cache[(normalized, version)]
-    provided = {_normalize_extra(e) for e in metadata.provides_extra}
+    provided = {canonicalize_name(e) for e in metadata.provides_extra}
     return extra in provided
 
 

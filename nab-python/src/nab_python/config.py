@@ -60,7 +60,6 @@ from .provider import (
     VcsConfig,
     VcsPolicy,
     VcsSource,
-    _normalize_extra,
 )
 from .tags import DEFAULT_LIBC, LIBC_MAJOR, Libc, PlatformSpec, platform_kind
 from .target import (
@@ -2391,11 +2390,10 @@ def _parse_override_dependencies(
 def _parse_override_provides_extra(value: object, where: str) -> tuple[str, ...] | None:
     """Parse the ``provides-extra`` body: the extras the override declares.
 
-    A TOML array of extra names, each normalised per PEP 685 (the same
-    rule :func:`nab_python.provider._normalize_extra` applies to parsed
-    ``Provides-Extra``), so an extra compares equal regardless of spelling.
-    A present-but-empty list is stored as ``()`` (declares no extras),
-    distinct from the key being absent (``None``).
+    A TOML array of extra names, each normalised per PEP 685 like a parsed
+    ``Provides-Extra``, so an extra compares equal regardless of spelling. A
+    present-but-empty list is stored as ``()`` (declares no extras), distinct
+    from the key being absent (``None``).
     """
     if value is None:
         return None
@@ -2415,7 +2413,7 @@ def _parse_override_provides_extra(value: object, where: str) -> tuple[str, ...]
                 f" {type(item).__name__}"
             )
             raise ConfigError(msg)
-        out.append(_normalize_extra(item))
+        out.append(canonicalize_name(item))
     return tuple(out)
 
 

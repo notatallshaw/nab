@@ -795,16 +795,13 @@ def cache_deps_from_metadata(
     :meth:`nab_python.provider.Provider.get_dependencies` (which hands in a
     bare :class:`WheelMetadata` for a complete ``dependencies`` override).
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import _normalize_extra
-
     metadata = effective_metadata(provider, cache_key, metadata)
 
     # Split the (possibly overridden) requirements into base deps and
     # per-extra deps, deferring any direct-URL deps that aren't yet active.
     package = cache_key[0]
     provider.metadata_cache[cache_key] = metadata
-    provided_extras = {_normalize_extra(e) for e in metadata.provides_extra}
+    provided_extras: set[str] = {canonicalize_name(e) for e in metadata.provides_extra}
     base_deps: dict[str, VersionRange] = {}
     extra_deps_map: dict[str, dict[str, VersionRange]] = {
         e: {} for e in provided_extras
@@ -909,11 +906,8 @@ def target_dep_signature(
     already refused its own URL deps, so a sibling's URL dep is a divergence to
     report.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import _normalize_extra
-
     metadata = effective_metadata(provider, cache_key, metadata)
-    provided_extras = {_normalize_extra(e) for e in metadata.provides_extra}
+    provided_extras: set[str] = {canonicalize_name(e) for e in metadata.provides_extra}
     base_deps: dict[str, VersionRange] = {}
     extra_deps_map: dict[str, dict[str, VersionRange]] = {
         e: {} for e in provided_extras
