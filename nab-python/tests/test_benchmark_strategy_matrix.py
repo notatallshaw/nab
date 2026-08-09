@@ -35,6 +35,29 @@ _STANDARD_SCENARIOS = 557
 _RUNNABLE_SCENARIOS = 535
 _UNSUPPORTED_SCENARIOS = 22
 _TOTAL_EXECUTION_IDENTITIES = 1_671
+# Keep the expected vocabulary independent of the validator's private set.
+_LIVE_SCENARIO_SETTINGS = {
+    "requirements",
+    "constraints",
+    "project_name",
+    "project_extras",
+    "optional_dependencies",
+    "indexes",
+    "index_routes",
+    "build_packages",
+    "trust_unverified_sdist_deps",
+    "vcs_policy",
+    "vcs_allowed_schemes",
+    "vcs_allowed_repos",
+    "vcs_require_pin",
+    "python_version",
+    "marker_environment",
+    "platform_system",
+    "resolution",
+    "datetime",
+    "requires_matching_host",
+    "unsupported_reason",
+}
 _MARKER_BUILD_SCENARIOS = {
     "ai-stack:llama-index-experimental-gpt5",
     "ai-stack:open-r1",
@@ -410,6 +433,32 @@ def _harness(name: str) -> ModuleType:
     finally:
         sys.path.remove(str(_BENCHMARKS))
     return module
+
+
+def test_scenario_setting_validator_accepts_the_complete_live_vocabulary() -> None:
+    module = _harness("benchmark_config")
+
+    module.validate_scenario_settings(
+        "example",
+        dict.fromkeys(_LIVE_SCENARIO_SETTINGS),
+    )
+
+
+def test_scenario_setting_validator_sorts_unknown_names() -> None:
+    module = _harness("benchmark_config")
+    scenario = {
+        "trust_unverified_sdist_dependencies": False,
+        "output_directory": "results",
+    }
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "example: unknown scenario settings: "
+            "['output_directory', 'trust_unverified_sdist_dependencies']"
+        ),
+    ):
+        module.validate_scenario_settings("example", scenario)
 
 
 def _matching_host_rows(module: ModuleType) -> dict[str, object]:
@@ -2970,6 +3019,44 @@ requires_matching_host = "yes"
     [None, "not runnable"],
     ids=("supported", "unsupported"),
 )
+def test_standard_corpus_rejects_unknown_settings_before_other_fields(
+    tmp_path: Path,
+    unsupported_reason: str | None,
+) -> None:
+    module = _harness("scenarios")
+    path = tmp_path / "quick.toml"
+    unsupported_declaration = (
+        f'unsupported_reason = "{unsupported_reason}"'
+        if unsupported_reason is not None
+        else ""
+    )
+    path.write_text(
+        f"""
+[example]
+python_version = "3.11"
+requirements = []
+{unsupported_declaration}
+trust_unverified_sdist_deps = "false"
+trust_unverified_sdist_dependencies = false
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "quick:example: unknown scenario settings: "
+            "['trust_unverified_sdist_dependencies']"
+        ),
+    ):
+        module.load_standard_corpus([path])
+
+
+@pytest.mark.parametrize(
+    "unsupported_reason",
+    [None, "not runnable"],
+    ids=("supported", "unsupported"),
+)
 def test_standard_corpus_rejects_unknown_marker_variables(
     tmp_path: Path,
     unsupported_reason: str | None,
@@ -3993,6 +4080,20 @@ python_version = "3.11"
 requirements = []
 unsupported_reason = "not runnable"
 trust_unverified_sdist_deps = "false"
+trust_unverified_sdist_dependencies = false
+""",
+            (
+                "other:other: unknown scenario settings: "
+                "['trust_unverified_sdist_dependencies']"
+            ),
+        ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
+trust_unverified_sdist_deps = "false"
 """,
             "other:other: trust_unverified_sdist_deps must be a boolean, got str",
         ),
@@ -4131,6 +4232,7 @@ vcs_allowed_repos = { "https://example.test/repo" = false }
         ),
     ],
     ids=(
+        "unknown-setting",
         "sdist-trust",
         "requirements",
         "project-metadata",
@@ -4219,6 +4321,14 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
     ("field", "value", "message"),
     [
         (
+            "trust_unverified_sdist_dependencies",
+            False,
+            (
+                "example: unknown scenario settings: "
+                "['trust_unverified_sdist_dependencies']"
+            ),
+        ),
+        (
             "vcs_require_pin",
             "false",
             "example: vcs_require_pin must be a boolean, got str",
@@ -4255,6 +4365,7 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
         ),
     ],
     ids=(
+        "unknown-setting",
         "pin",
         "policy",
         "scheme-table",
@@ -4537,6 +4648,50 @@ def test_unknown_marker_variables_fail_before_runner_host_admission() -> None:
 
     with pytest.raises(ValueError, match=re.escape(message)):
         _prepare_standard_scenario(standard, scenario, host)
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=host,
+        )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        profile.build_inputs("example", scenario, host=host)
+
+    host.target_for.assert_not_called()
+
+
+def test_unknown_scenario_settings_fail_at_every_direct_runner_boundary() -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "trust_unverified_sdist_deps": "false",
+        "trust_unverified_sdist_dependencies": False,
+    }
+    message = (
+        "example: unknown scenario settings: ['trust_unverified_sdist_dependencies']"
+    )
+    execution = standard.StandardExecution(
+        standard.StandardScenario("quick", "example", scenario),
+        standard.ResolutionStrategy.HIGHEST,
+    )
+    target = _linux_host(standard).target
+    host = MagicMock()
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        standard.prepare_standard_execution(
+            execution,
+            target,
+            commit="run",
+            source=dict(_CLEAN_SOURCE),
+            corpus_hash="f" * 64,
+            settings_digest="settings",
+        )
 
     with pytest.raises(ValueError, match=re.escape(message)):
         canary._prepare_canary_execution(

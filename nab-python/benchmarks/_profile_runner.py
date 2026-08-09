@@ -38,6 +38,7 @@ from benchmark_config import (
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
     validate_scenario_build_policy,
+    validate_scenario_settings,
 )
 
 
@@ -81,6 +82,7 @@ def build_inputs(
     resolution_override: sc.ResolutionStrategy | None = None,
     host: sc.BenchmarkHost | None = None,
 ) -> dict:
+    validate_scenario_settings(name, scenario)
     trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(name, scenario)
     requirement_inputs = parse_scenario_requirement_strings(name, scenario)
     vcs_config = parse_scenario_vcs_config(name, scenario)

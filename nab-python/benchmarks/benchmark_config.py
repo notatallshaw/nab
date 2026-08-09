@@ -39,6 +39,30 @@ DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
 )
 _INDEX_KEYS = frozenset({"name", "url", "serialization"})
 _INDEX_ROUTE_KEYS = frozenset({"name", "index"})
+_SCENARIO_SETTINGS = frozenset(
+    {
+        "requirements",
+        "constraints",
+        "project_name",
+        "project_extras",
+        "optional_dependencies",
+        "indexes",
+        "index_routes",
+        "build_packages",
+        "trust_unverified_sdist_deps",
+        "vcs_policy",
+        "vcs_allowed_schemes",
+        "vcs_allowed_repos",
+        "vcs_require_pin",
+        "python_version",
+        "marker_environment",
+        "platform_system",
+        "resolution",
+        "datetime",
+        "requires_matching_host",
+        "unsupported_reason",
+    }
+)
 
 
 class _BenchmarkResolveInputs(NamedTuple):
@@ -67,6 +91,19 @@ class ScenarioProjectMetadata(NamedTuple):
     project_name: str | None
     project_extras: list[str]
     optional_dependencies: dict[str, list[str]]
+
+
+def validate_scenario_settings(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+) -> None:
+    """Reject setting names that no live benchmark runner understands."""
+    unknown = sorted(
+        setting for setting in scenario if setting not in _SCENARIO_SETTINGS
+    )
+    if unknown:
+        msg = f"{scenario_name}: unknown scenario settings: {unknown!r}"
+        raise ValueError(msg)
 
 
 def _scenario_string_list(
