@@ -18,7 +18,7 @@ _EXPECTED_V2_INPUT_HASHES = {
     "pip-lowest:trustllm": "df30174b6d056d4935f4fa1509b0793b54802abcc6d32d54291f4ca4cc1c6956",
     "pip-lowest:copick": "31499574be189da527d8e14ae82f894ea78aede42bb5698805686a68ba441668",
     "pip-lowest:promptflow-vectordb": "df451641b6115b623a42e7cef6d0e8942c191a11d42575289fb4f627a37b0f64",
-    "pip-lowest:ultralytics-export": "a61e66d55fa8b05744c80af5eee833186c54fc60b889d9a80a7c0afbc83569ce",
+    "pip:ultralytics-export": "fe9f57216b10878fec77925c7bac99cb98995625f5946646629b7e7eacde7098",
     "pip-lowest:datacontract-cli": "e4f3cf317d15791206d1379d4917aeae91a9ce0306c3624ec375483b96a7fcd5",
     "pip-lowest:pandas-aws-boto3-dandi-frenzy": "87c9501504c42ecbcf90c610391252dac18e2ab39fde4d7a949410f0f43f9e2b",
     "ai-stack:vllm-transformers-floor": "38b7cba134e62de586d4d19a02dac092df50b4ad8aa16e1f0555abf3eb7877bc",
@@ -87,8 +87,8 @@ def test_default_canary_manifest_preserves_19_strategies() -> None:
     assert selected == cases
     assert len({case.scenario for case in cases}) == _EXPECTED_CANARY_CASES
     assert Counter(case.resolution.value for case in cases) == {
-        "highest": 3,
-        "lowest": 11,
+        "highest": 4,
+        "lowest": 10,
         "lowest-direct": 5,
     }
     assert all("-lowest" not in case.scenario.split(":", 1)[0] for case in cases)
