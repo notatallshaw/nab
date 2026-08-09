@@ -4342,11 +4342,12 @@ _PAST_INT_LIMIT = "9" * 5000
 
 
 class TestDigitRunPastIntLimit:
-    """A version digit run past CPython's int limit is a config error.
+    """A digit run past CPython's int limit is a config error.
 
     ``Version()`` raises a bare ``ValueError`` for one (not
     ``InvalidVersion``), and a specifier defers the conversion to its first
-    comparison, so each validator forces it and reports the key.
+    comparison, so each version validator forces it and reports the key.
+    ``int()`` rejects the same run when it is a ``P<n>D`` day count.
     """
 
     def test_environment_python(self, tmp_path: Path) -> None:
@@ -4483,6 +4484,13 @@ class TestDigitRunPastIntLimit:
             ConfigError, match=r"dependencies\[0\] is not a valid PEP 508 requirement"
         ):
             read_pyproject_config(path, discover_workspace=False)
+
+    def test_uploaded_prior_to_duration(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, f'[tool.nab]\nuploaded-prior-to = "P{_PAST_INT_LIMIT}D"\n'
+        )
+        with pytest.raises(ConfigError, match="duration is too large"):
+            read_pyproject_config(path)
 
 
 class TestWorkspace:

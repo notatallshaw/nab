@@ -1389,10 +1389,10 @@ def _parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime:
 
     duration_match = _DURATION_PATTERN.match(value)
     if duration_match is not None:
-        days = int(duration_match.group(1))
+        # ``int()`` raises ValueError past CPython's int-from-string limit.
         try:
-            return anchor - timedelta(days=days)
-        except OverflowError:
+            return anchor - timedelta(days=int(duration_match.group(1)))
+        except (OverflowError, ValueError):
             msg = f"uploaded-prior-to duration is too large: {value!r}"
             raise ConfigError(msg) from None
     try:
