@@ -28,7 +28,10 @@ else:
 sys.path.insert(0, str(Path(__file__).parent))
 
 import scenarios as sc
-from benchmark_config import build_benchmark_config
+from benchmark_config import (
+    build_benchmark_config,
+    parse_trust_unverified_sdist_deps,
+)
 
 
 def find_scenario(spec: str) -> tuple[str, dict]:
@@ -71,6 +74,7 @@ def build_inputs(
     resolution_override: sc.ResolutionStrategy | None = None,
     host: sc.BenchmarkHost | None = None,
 ) -> dict:
+    trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(name, scenario)
     python_version = scenario["python_version"]
     requirement_strings = list(scenario["requirements"])
     constraint_strings = scenario.get("constraints", [])
@@ -134,10 +138,7 @@ def build_inputs(
         index_routes=sc.parse_index_routes(name, scenario),
         build_policy_overrides=build_policy_overrides,
         resolution=resolution_strategy,
-        trust_unverified_sdist_deps=scenario.get(
-            "trust_unverified_sdist_deps",
-            True,
-        ),
+        trust_unverified_sdist_deps=trust_unverified_sdist_deps,
         vcs=vcs_config,
     )
     return {

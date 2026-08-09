@@ -240,6 +240,27 @@ def _runner_parity_scenario() -> dict[str, object]:
     }
 
 
+def _prepare_standard_scenario(
+    standard: ModuleType,
+    scenario: dict[str, object],
+    host: object,
+) -> object:
+    """Prepare one standard scenario without running its resolver."""
+    strategy = standard.ResolutionStrategy(
+        scenario.get("resolution", standard.ResolutionStrategy.HIGHEST.value)
+    )
+    row = standard.StandardScenario("quick", "example", scenario)
+    plan = standard.standard_run_plan([row], (strategy,), host)
+    return standard.prepare_standard_execution(
+        plan.executions[0],
+        plan.targets_by_logical_key[row.logical_key],
+        commit="run",
+        source=dict(_CLEAN_SOURCE),
+        corpus_hash="f" * 64,
+        settings_digest="settings",
+    )
+
+
 def _prepare_runner_parity(
     standard: ModuleType,
     canary: ModuleType,
@@ -248,20 +269,7 @@ def _prepare_runner_parity(
     """Prepare equivalent inputs through the three benchmark entry points."""
     scenario = _runner_parity_scenario()
     host = _linux_host(standard)
-    row = standard.StandardScenario("quick", "example", scenario)
-    plan = standard.standard_run_plan(
-        [row],
-        (standard.ResolutionStrategy.LOWEST_DIRECT,),
-        host,
-    )
-    standard_execution = standard.prepare_standard_execution(
-        plan.executions[0],
-        plan.targets_by_logical_key[row.logical_key],
-        commit="run",
-        source=dict(_CLEAN_SOURCE),
-        corpus_hash="f" * 64,
-        settings_digest="settings",
-    )
+    standard_execution = _prepare_standard_scenario(standard, scenario, host)
     canary_preparation = canary._prepare_canary_execution(
         scenario,
         scenario_name="example",
@@ -1103,6 +1111,53 @@ def test_benchmark_config_combines_routing_and_build_policy() -> None:
     assert module.index_routes_from_config(config) == [
         module.IndexRoute("demo-pkg", "private")
     ]
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected"),
+    [
+        ({}, True),
+        ({"trust_unverified_sdist_deps": True}, True),
+        ({"trust_unverified_sdist_deps": False}, False),
+    ],
+    ids=("implicit", "trusted", "strict"),
+)
+def test_parse_trust_unverified_sdist_deps_accepts_exact_booleans(
+    scenario: dict[str, object],
+    expected: bool,
+) -> None:
+    module = _harness("benchmark_config")
+    original = dict(scenario)
+
+    assert module.parse_trust_unverified_sdist_deps("example", scenario) is expected
+    assert scenario == original
+
+
+@pytest.mark.parametrize(
+    ("invalid", "type_name"),
+    [
+        (0, "int"),
+        (1, "int"),
+        (0.0, "float"),
+        ("false", "str"),
+        ([False], "list"),
+        ({"value": False}, "dict"),
+        (None, "NoneType"),
+    ],
+    ids=("zero", "one", "float", "string", "list", "table", "none"),
+)
+def test_parse_trust_unverified_sdist_deps_rejects_other_types(
+    invalid: object,
+    type_name: str,
+) -> None:
+    module = _harness("benchmark_config")
+    message = f"example: trust_unverified_sdist_deps must be a boolean, got {type_name}"
+
+    with pytest.raises(TypeError, match=message):
+        module.parse_trust_unverified_sdist_deps(
+            "example",
+            {"trust_unverified_sdist_deps": invalid},
+        )
 
 
 @pytest.mark.parametrize(
@@ -2380,6 +2435,49 @@ def test_selector_errors_are_actionable(
     assert not (tmp_path / "results").exists()
 
 
+def test_unselected_unsupported_sdist_trust_fails_before_result_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _harness("scenarios")
+    scenarios_dir = tmp_path / "scenarios"
+    _write_corpus(scenarios_dir)
+    (scenarios_dir / "other.toml").write_text(
+        """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
+trust_unverified_sdist_deps = "false"
+""".lstrip(),
+        encoding="utf-8",
+    )
+    results_dir = tmp_path / "results"
+    monkeypatch.setattr(module, "SCENARIOS_DIR", scenarios_dir)
+    monkeypatch.setattr(module, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(module, "get_git_source_state", lambda: _CLEAN_SOURCE)
+
+    def fail_result_creation(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("result namespace creation was reached")
+
+    monkeypatch.setattr(
+        module,
+        "prepare_standard_result_namespace",
+        fail_result_creation,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        module.main(["--commit", "run", "--toml", "quick"])
+
+    assert exc_info.value.code == 2
+    assert (
+        "other:other: trust_unverified_sdist_deps must be a boolean, got str"
+        in capsys.readouterr().err
+    )
+    assert not results_dir.exists()
+
+
 def test_strategy_sweep_is_only_a_matrix_forwarder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2424,6 +2522,59 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
     )
     assert standard_execution.config.constraints == ()
     assert standard_execution.constraint_strings == ["demo<2"]
+    assert "trust_unverified_sdist_deps" not in standard_execution.expected_input
+
+
+def test_standard_canary_and_profile_reject_non_boolean_sdist_trust() -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "trust_unverified_sdist_deps": "false",
+    }
+    host = _linux_host(standard)
+    message = "example: trust_unverified_sdist_deps must be a boolean"
+
+    with pytest.raises(TypeError, match=message):
+        _prepare_standard_scenario(standard, scenario, host)
+
+    with pytest.raises(TypeError, match=message):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=host,
+        )
+
+    with pytest.raises(TypeError, match=message):
+        profile.build_inputs("example", scenario, host=host)
+
+
+def test_sdist_trust_validation_precedes_host_admission() -> None:
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "platform_system": "Windows",
+        "requires_matching_host": True,
+        "trust_unverified_sdist_deps": "false",
+    }
+    host = _linux_host(canary)
+    message = "example: trust_unverified_sdist_deps must be a boolean"
+
+    with pytest.raises(TypeError, match=message):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=host,
+        )
+
+    with pytest.raises(TypeError, match=message):
+        profile.build_inputs("example", scenario, host=host)
 
 
 def test_standard_canary_and_profile_prepare_the_same_resolver_inputs() -> None:

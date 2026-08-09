@@ -33,9 +33,11 @@ else:
     import tomli as tomllib  # type: ignore[no-redef]
 
 from benchmark_config import (
+    DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS,
     build_benchmark_config,
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
+    parse_trust_unverified_sdist_deps,
 )
 from benchmark_host import (
     HOST_TAG_MISMATCH_REASON,
@@ -576,6 +578,7 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
     for row in rows:
         marker_environment = parse_marker_environment(row.name, row.definition)
         parse_requires_matching_host(row.name, row.definition, marker_environment)
+        parse_trust_unverified_sdist_deps(row.logical_key, row.definition)
         build_policy_overrides = parse_build_packages(row.name, row.definition)
         if "unsupported_reason" in row.definition:
             continue
@@ -882,7 +885,9 @@ def standard_benchmark_settings(host: BenchmarkHost) -> dict[str, object]:
     return {
         "dist_policy": DistPolicy.WHEEL_OR_SDIST.value,
         "build_policy": BuildPolicy.NEVER.value,
-        "trust_unverified_sdist_deps_default": True,
+        "trust_unverified_sdist_deps_default": (
+            DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS
+        ),
         "max_iterations": MAX_ITERATIONS,
         "wall_timeout_seconds": host.wall_timeout_seconds,
         "host": host.identity(),
@@ -1609,10 +1614,9 @@ def prepare_standard_execution(
         allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
         require_pin=scenario.get("vcs_require_pin", True),
     )
-    # Search benchmarks accept pre-2.2 PKG-INFO dependency metadata by default;
-    # individual strict-policy scenarios opt out explicitly.
-    trust_unverified_sdist_deps: bool = scenario.get(
-        "trust_unverified_sdist_deps", True
+    trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(
+        scenario_name,
+        scenario,
     )
     uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
     config = build_benchmark_config(
@@ -1792,7 +1796,7 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         all_rows = load_standard_corpus(all_files)
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         parser.error(str(exc))
     selected_stems = {path.stem for path in selected_files}
     selected_rows = [row for row in all_rows if row.toml_stem in selected_stems]
