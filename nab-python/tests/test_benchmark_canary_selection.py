@@ -328,7 +328,7 @@ def test_existing_summary_is_not_overwritten(
     scenarios_dir = tmp_path / "scenarios"
     scenarios_dir.mkdir()
     (scenarios_dir / "inside.toml").write_text(
-        '[skipped]\nunsupported_reason = "test fixture"\n',
+        '[skipped]\nrequirements = []\nunsupported_reason = "test fixture"\n',
         encoding="utf-8",
     )
     results_dir = tmp_path / "results"

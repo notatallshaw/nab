@@ -36,6 +36,7 @@ from benchmark_config import (
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
     direct_packages_from_requirements,
+    parse_scenario_requirement_strings,
     parse_trust_unverified_sdist_deps,
 )
 from benchmark_datetime import parse_datetime
@@ -579,8 +580,12 @@ def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
         )
         raise _SelectionError(msg)
 
+    # Check each field across the whole selection before moving to the next field.
     for scenario_name, scenario in found_scenarios:
         parse_trust_unverified_sdist_deps(scenario_name, scenario)
+
+    for scenario_name, scenario in found_scenarios:
+        parse_scenario_requirement_strings(scenario_name, scenario)
     return cases
 
 
@@ -590,7 +595,7 @@ def _parse_scenario_selection(
 ) -> list[CanaryCase]:
     try:
         return select_scenarios([parse_canary_case(spec) for spec in specs])
-    except (_SelectionError, TypeError) as exc:
+    except (TypeError, ValueError) as exc:
         parser.error(str(exc))
 
 
@@ -599,7 +604,7 @@ def _parse_default_selection(
 ) -> list[CanaryCase]:
     try:
         return select_scenarios(load_canary_manifest())
-    except (_SelectionError, TypeError) as exc:
+    except (TypeError, ValueError) as exc:
         parser.error(str(exc))
 
 
@@ -745,9 +750,10 @@ def _prepare_canary_execution(
         scenario_name,
         scenario,
     )
+    requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
     python_version = scenario["python_version"]
-    requirement_strings = list(scenario["requirements"])
-    constraint_strings = scenario.get("constraints", [])
+    requirement_strings = requirement_inputs.requirements
+    constraint_strings = requirement_inputs.constraints
     marker_environment = parse_target_marker_environment(scenario_name, scenario)
     raw_build_packages = scenario.get("build_packages", []) or []
     build_policy_overrides = {

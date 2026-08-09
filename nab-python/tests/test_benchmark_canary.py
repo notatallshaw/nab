@@ -551,7 +551,7 @@ def test_canary_main_records_v2_contract(
     monkeypatch.setattr(module, "RESULTS_DIR", tmp_path)
     source = {"commit": "source-sha", "dirty": False, "diff_hash": None}
     monkeypatch.setattr(module, "get_git_source_state", lambda: source)
-    scenario = {"unsupported_reason": "test fixture"}
+    scenario = {"requirements": [], "unsupported_reason": "test fixture"}
     input_hash = module.scenario_input_hash("quick:requests", scenario)
     monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
     monkeypatch.setattr(
@@ -579,10 +579,47 @@ def test_canary_main_records_v2_contract(
     }
 
 
-def test_canary_main_rejects_non_boolean_sdist_trust_before_result_creation(
+@pytest.mark.parametrize(
+    ("scenario", "default_selection", "message"),
+    [
+        (
+            {
+                "unsupported_reason": "test fixture",
+                "trust_unverified_sdist_deps": "false",
+            },
+            False,
+            "quick:requests: trust_unverified_sdist_deps must be a boolean, got str",
+        ),
+        (
+            {"unsupported_reason": "test fixture"},
+            False,
+            "quick:requests: missing required field 'requirements'",
+        ),
+        (
+            {"requirements": "demo", "unsupported_reason": "test fixture"},
+            False,
+            "quick:requests: requirements must be a list, got str",
+        ),
+        (
+            {"requirements": [""], "unsupported_reason": "test fixture"},
+            False,
+            "quick:requests: requirements[0] must be a non-empty string",
+        ),
+        (
+            {"requirements": [""], "unsupported_reason": "test fixture"},
+            True,
+            "quick:requests: requirements[0] must be a non-empty string",
+        ),
+    ],
+    ids=("sdist-trust", "missing", "scalar", "empty-item", "default-empty-item"),
+)
+def test_canary_main_rejects_scenario_schema_before_result_creation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    scenario: dict[str, object],
+    default_selection: bool,
+    message: str,
 ) -> None:
     module = _harness()
     results_dir = tmp_path / "results"
@@ -592,25 +629,23 @@ def test_canary_main_rejects_non_boolean_sdist_trust_before_result_creation(
         "get_git_source_state",
         lambda: {"commit": "source-sha", "dirty": False, "diff_hash": None},
     )
-    scenario = {
-        "unsupported_reason": "test fixture",
-        "trust_unverified_sdist_deps": "false",
-    }
     monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        ["canary.py", "--commit", "test", "--scenario", "quick:requests"],
-    )
+    if default_selection:
+        monkeypatch.setattr(
+            module,
+            "load_canary_manifest",
+            lambda: [module.CanaryCase("quick:requests", None)],
+        )
+    argv = ["canary.py", "--commit", "test"]
+    if not default_selection:
+        argv.extend(("--scenario", "quick:requests"))
+    monkeypatch.setattr(sys, "argv", argv)
 
     with pytest.raises(SystemExit) as exc_info:
         module.main()
 
     assert exc_info.value.code == 2
-    assert (
-        "quick:requests: trust_unverified_sdist_deps must be a boolean, got str"
-        in capsys.readouterr().err
-    )
+    assert message in capsys.readouterr().err
     assert not results_dir.exists()
 
 

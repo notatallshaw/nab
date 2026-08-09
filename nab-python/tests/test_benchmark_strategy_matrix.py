@@ -1199,6 +1199,88 @@ def test_parse_trust_unverified_sdist_deps_rejects_other_types(
         )
 
 
+def test_parse_scenario_requirement_strings_returns_fresh_unchanged_lists() -> None:
+    module = _harness("benchmark_config")
+    requirements = ["Z_pkg", " demo >= 1 "]
+    constraints = ["demo!=2", "Other===local"]
+    scenario = {"requirements": requirements, "constraints": constraints}
+
+    parsed = module.parse_scenario_requirement_strings("quick:example", scenario)
+
+    assert parsed.requirements == requirements
+    assert parsed.constraints == constraints
+    assert parsed.requirements is not requirements
+    assert parsed.constraints is not constraints
+
+    parsed.requirements.append("new-root")
+    parsed.constraints.clear()
+    assert scenario == {
+        "requirements": ["Z_pkg", " demo >= 1 "],
+        "constraints": ["demo!=2", "Other===local"],
+    }
+
+
+def test_parse_scenario_requirement_strings_accepts_empty_lists() -> None:
+    module = _harness("benchmark_config")
+    scenario: dict[str, object] = {"requirements": [], "constraints": []}
+
+    parsed = module.parse_scenario_requirement_strings("quick:empty", scenario)
+
+    assert parsed.requirements == []
+    assert parsed.constraints == []
+    assert parsed.requirements is not scenario["requirements"]
+    assert parsed.constraints is not scenario["constraints"]
+
+
+def test_parse_scenario_requirement_strings_requires_requirements() -> None:
+    module = _harness("benchmark_config")
+
+    with pytest.raises(
+        ValueError,
+        match="quick:missing: missing required field 'requirements'",
+    ):
+        module.parse_scenario_requirement_strings("quick:missing", {})
+
+
+@pytest.mark.parametrize("field", ["requirements", "constraints"])
+def test_parse_scenario_requirement_strings_rejects_scalar_fields(field: str) -> None:
+    module = _harness("benchmark_config")
+    scenario: dict[str, object] = {"requirements": []}
+    scenario[field] = "demo"
+
+    with pytest.raises(
+        TypeError,
+        match=rf"quick:scalar: {field} must be a list, got str",
+    ):
+        module.parse_scenario_requirement_strings("quick:scalar", scenario)
+
+
+@pytest.mark.parametrize("field", ["requirements", "constraints"])
+def test_parse_scenario_requirement_strings_rejects_mixed_fields(field: str) -> None:
+    module = _harness("benchmark_config")
+    scenario: dict[str, object] = {"requirements": []}
+    scenario[field] = ["demo", 1]
+
+    with pytest.raises(
+        TypeError,
+        match=rf"quick:mixed: {field}\[1\] must be a non-empty string, got int",
+    ):
+        module.parse_scenario_requirement_strings("quick:mixed", scenario)
+
+
+@pytest.mark.parametrize("field", ["requirements", "constraints"])
+def test_parse_scenario_requirement_strings_rejects_empty_items(field: str) -> None:
+    module = _harness("benchmark_config")
+    scenario: dict[str, object] = {"requirements": []}
+    scenario[field] = ["demo", ""]
+
+    with pytest.raises(
+        ValueError,
+        match=rf"quick:empty-item: {field}\[1\] must be a non-empty string$",
+    ):
+        module.parse_scenario_requirement_strings("quick:empty-item", scenario)
+
+
 @pytest.mark.parametrize(
     ("routes", "message"),
     [
@@ -2657,22 +2739,43 @@ def test_selector_errors_are_actionable(
     assert not (tmp_path / "results").exists()
 
 
-def test_unselected_unsupported_sdist_trust_fails_before_result_creation(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    module = _harness("scenarios")
-    scenarios_dir = tmp_path / "scenarios"
-    _write_corpus(scenarios_dir)
-    (scenarios_dir / "other.toml").write_text(
-        """
+@pytest.mark.parametrize(
+    ("invalid_toml", "message"),
+    [
+        (
+            """
 [other]
 python_version = "3.11"
 requirements = []
 unsupported_reason = "not runnable"
 trust_unverified_sdist_deps = "false"
-""".lstrip(),
+""",
+            "other:other: trust_unverified_sdist_deps must be a boolean, got str",
+        ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = "demo"
+unsupported_reason = "not runnable"
+""",
+            "other:other: requirements must be a list, got str",
+        ),
+    ],
+    ids=("sdist-trust", "requirements"),
+)
+def test_unselected_unsupported_definition_fails_before_result_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    invalid_toml: str,
+    message: str,
+) -> None:
+    module = _harness("scenarios")
+    scenarios_dir = tmp_path / "scenarios"
+    _write_corpus(scenarios_dir)
+    (scenarios_dir / "other.toml").write_text(
+        invalid_toml.lstrip(),
         encoding="utf-8",
     )
     results_dir = tmp_path / "results"
@@ -2693,10 +2796,7 @@ trust_unverified_sdist_deps = "false"
         module.main(["--commit", "run", "--toml", "quick"])
 
     assert exc_info.value.code == 2
-    assert (
-        "other:other: trust_unverified_sdist_deps must be a boolean, got str"
-        in capsys.readouterr().err
-    )
+    assert message in capsys.readouterr().err
     assert not results_dir.exists()
 
 
@@ -2772,6 +2872,66 @@ def test_standard_canary_and_profile_reject_non_boolean_sdist_trust() -> None:
 
     with pytest.raises(TypeError, match=message):
         profile.build_inputs("example", scenario, host=host)
+
+
+@pytest.mark.parametrize("field", ["requirements", "constraints"])
+def test_standard_direct_preparation_validates_requirement_lists(field: str) -> None:
+    standard = _harness("scenarios")
+    scenario: dict[str, object] = {
+        "python_version": "3.11",
+        "requirements": [],
+    }
+    scenario[field] = "demo"
+    host = _linux_host(standard)
+
+    with pytest.raises(
+        TypeError,
+        match=rf"example: {field} must be a list, got str",
+    ):
+        _prepare_standard_scenario(standard, scenario, host)
+
+
+@pytest.mark.parametrize("field", ["requirements", "constraints"])
+def test_canary_direct_preparation_validates_requirement_lists(field: str) -> None:
+    canary = _harness("canary")
+    scenario: dict[str, object] = {
+        "python_version": "3.11",
+        "requirements": [],
+    }
+    scenario[field] = "demo"
+    host = _linux_host(canary)
+
+    with pytest.raises(
+        TypeError,
+        match=rf"example: {field} must be a list, got str",
+    ):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=host,
+        )
+
+
+@pytest.mark.parametrize("field", ["requirements", "constraints"])
+def test_profile_build_inputs_validates_requirement_lists_before_host_admission(
+    field: str,
+) -> None:
+    profile = _harness("_profile_runner")
+    scenario: dict[str, object] = {
+        "python_version": "3.11",
+        "requirements": [],
+    }
+    scenario[field] = "demo"
+    host = MagicMock()
+
+    with pytest.raises(
+        TypeError,
+        match=rf"example: {field} must be a list, got str",
+    ):
+        profile.build_inputs("example", scenario, host=host)
+
+    host.target_for.assert_not_called()
 
 
 def test_sdist_trust_validation_precedes_host_admission() -> None:

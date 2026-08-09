@@ -45,6 +45,61 @@ class _BenchmarkResolveInputs(NamedTuple):
     root_extras: set[tuple[str, str]]
 
 
+class ScenarioRequirementStrings(NamedTuple):
+    """Copied requirement and constraint strings from one scenario."""
+
+    requirements: list[str]
+    constraints: list[str]
+
+
+def _scenario_string_list(
+    scenario_name: str,
+    field: str,
+    value: object,
+) -> list[str]:
+    """Validate and copy one scenario list of strings."""
+    if type(value) is not list:
+        msg = f"{scenario_name}: {field} must be a list, got {type(value).__name__}"
+        raise TypeError(msg)
+
+    strings: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str):
+            msg = (
+                f"{scenario_name}: {field}[{index}] must be a non-empty string, "
+                f"got {type(item).__name__}"
+            )
+            raise TypeError(msg)
+        if not item:
+            msg = f"{scenario_name}: {field}[{index}] must be a non-empty string"
+            raise ValueError(msg)
+        strings.append(item)
+    return strings
+
+
+def parse_scenario_requirement_strings(
+    scenario_name: str,
+    scenario: Mapping[str, object],
+) -> ScenarioRequirementStrings:
+    """Validate and copy a scenario's root and constraint strings."""
+    if "requirements" not in scenario:
+        msg = f"{scenario_name}: missing required field 'requirements'"
+        raise ValueError(msg)
+
+    return ScenarioRequirementStrings(
+        requirements=_scenario_string_list(
+            scenario_name,
+            "requirements",
+            scenario["requirements"],
+        ),
+        constraints=_scenario_string_list(
+            scenario_name,
+            "constraints",
+            scenario.get("constraints", []),
+        ),
+    )
+
+
 def parse_trust_unverified_sdist_deps(
     scenario_name: str,
     scenario: Mapping[str, object],
