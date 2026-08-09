@@ -611,6 +611,33 @@ def test_canary_main_records_v2_contract(
             False,
             "quick:requests: vcs_require_pin must be a boolean, got str",
         ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
+                "vcs_policy": "permit",
+            },
+            False,
+            "quick:requests: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
+                "vcs_allowed_schemes": {"git+https": False},
+            },
+            False,
+            "quick:requests: vcs_allowed_schemes must be a list, got dict",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
+                "vcs_allowed_repos": {"https://example.test/repo": False},
+            },
+            True,
+            "quick:requests: vcs_allowed_repos must be a list, got dict",
+        ),
     ],
     ids=(
         "sdist-trust",
@@ -619,6 +646,9 @@ def test_canary_main_records_v2_contract(
         "empty-item",
         "default-empty-item",
         "vcs-require-pin",
+        "vcs-policy",
+        "vcs-scheme-table",
+        "default-vcs-repo-table",
     ),
 )
 def test_canary_schema_validation_precedes_host_capture_and_result_creation(

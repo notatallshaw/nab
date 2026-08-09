@@ -31,8 +31,8 @@ import scenarios as sc
 from benchmark_config import (
     build_benchmark_config,
     parse_scenario_requirement_strings,
+    parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
-    parse_vcs_require_pin,
 )
 
 
@@ -78,7 +78,7 @@ def build_inputs(
 ) -> dict:
     trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(name, scenario)
     requirement_inputs = parse_scenario_requirement_strings(name, scenario)
-    vcs_require_pin = parse_vcs_require_pin(name, scenario)
+    vcs_config = parse_scenario_vcs_config(name, scenario)
     python_version = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -109,13 +109,6 @@ def build_inputs(
         scenario.get("resolution", sc.ResolutionStrategy.HIGHEST.value)
     )
     resolution_strategy = resolution_override or declared_resolution
-    vcs_config = sc.VcsConfig(
-        policy=sc.VcsPolicy(scenario.get("vcs_policy", "block")),
-        allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
-        allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
-        require_pin=vcs_require_pin,
-    )
-
     if scenario.get("project_name"):
         requirement_strings += sc.expand_project_extras(
             scenario["project_name"],
