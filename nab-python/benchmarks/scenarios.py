@@ -31,7 +31,11 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
-from benchmark_config import build_benchmark_config, build_benchmark_provider
+from benchmark_config import (
+    build_benchmark_config,
+    build_benchmark_provider,
+    build_benchmark_resolver_inputs,
+)
 from benchmark_datetime import parse_datetime
 from benchmark_host import (
     HOST_TAG_MISMATCH_REASON,
@@ -1316,6 +1320,7 @@ def resolve_scenario(
     host: BenchmarkHost,
 ) -> dict:
     """Resolve requirements and return stats dict."""
+    inputs = build_benchmark_resolver_inputs(requirements, constraints)
     with FetchCoordinator(
         HttpxAsyncTransport(),
         indexes=list(config.indexes),
@@ -1326,7 +1331,7 @@ def resolve_scenario(
             coordinator,
             config=config,
             target=target,
-            requirements=requirements,
+            inputs=inputs,
         )
         resolver = Resolver(
             provider,
@@ -1338,7 +1343,10 @@ def resolve_scenario(
         start = time.monotonic()
         try:
             with host.wall_timeout():
-                raw = resolver.resolve(requirements, constraints=constraints)
+                raw = resolver.resolve(
+                    inputs.requirements,
+                    constraints=inputs.constraints,
+                )
             elapsed = time.monotonic() - start
             pins = dict(
                 sorted(

@@ -34,6 +34,7 @@ else:
 from benchmark_config import (
     build_benchmark_config,
     build_benchmark_provider,
+    build_benchmark_resolver_inputs,
     direct_packages_from_requirements,
 )
 from benchmark_datetime import parse_datetime
@@ -309,6 +310,7 @@ def run_one(
     host: BenchmarkHost,
 ) -> dict:
     direct_packages = direct_packages_from_requirements(requirements)
+    inputs = build_benchmark_resolver_inputs(requirements, constraints)
     with FetchCoordinator(
         HttpxAsyncTransport(),
         indexes=list(config.indexes),
@@ -319,7 +321,7 @@ def run_one(
             coordinator,
             config=config,
             target=target,
-            requirements=requirements,
+            inputs=inputs,
         )
         resolver = Resolver(
             provider,
@@ -330,7 +332,10 @@ def run_one(
         start = time.monotonic()
         try:
             with host.wall_timeout():
-                raw = resolver.resolve(requirements, constraints=constraints)
+                raw = resolver.resolve(
+                    inputs.requirements,
+                    constraints=inputs.constraints,
+                )
             elapsed = time.monotonic() - start
             result = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
             success = True

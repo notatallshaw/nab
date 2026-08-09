@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from types import MappingProxyType
+from typing import TYPE_CHECKING, NamedTuple
 
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
@@ -14,16 +15,30 @@ from nab_python.provider import (
     Provider,
     ResolutionStrategy,
     VcsConfig,
+    join_extra,
     split_extra,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import AbstractSet, Mapping, Sequence
     from datetime import datetime
 
     from nab_index.multi_index import IndexConfig
     from nab_python.fetch import FetchCoordinator, IndexRoute
     from nab_python.target import ResolveTarget
+
+
+class _BenchmarkResolveInputs(NamedTuple):
+    """Inputs shared by one benchmark's provider and resolver.
+
+    ``requirements`` holds the parsed roots, including extra proxy keys.
+    ``constraints`` is an immutable copy extended to root-extra proxy keys.
+    ``root_extras`` identifies extras requested directly by the benchmark.
+    """
+
+    requirements: dict[str, VersionRange]
+    constraints: Mapping[str, VersionRange] | None
+    root_extras: set[tuple[str, str]]
 
 
 def _package_overrides(
@@ -100,18 +115,60 @@ def direct_packages_from_requirements(
     return frozenset(name for name in requirements if split_extra(name)[1] is None)
 
 
+def _constraints_with_extra_proxies(
+    constraints: Mapping[str, VersionRange],
+    root_extras: AbstractSet[tuple[str, str]],
+) -> Mapping[str, VersionRange]:
+    """Return immutable constraints extended to the requested root-extra proxies.
+
+    An extra proxy resolves under its own ``name[extra]`` key, so copying the base
+    range there both constrains selection and attributes an empty range to the proxy,
+    which is what the product does through its own constraints mapping.
+    """
+    extended = dict(constraints)
+    for name, extra in root_extras:
+        constraint = extended.get(name)
+        if constraint is not None:
+            extended[join_extra(name, extra)] = constraint
+    return MappingProxyType(extended)
+
+
+def build_benchmark_resolver_inputs(
+    requirements: dict[str, VersionRange],
+    constraints: Mapping[str, VersionRange] | None,
+) -> _BenchmarkResolveInputs:
+    """Copy constraints and extend them to the requested root-extra proxies."""
+    root_extras: set[tuple[str, str]] = set()
+    for package in requirements:
+        name, extra = split_extra(package)
+        if extra is not None:
+            root_extras.add((name, extra))
+
+    resolver_constraints = (
+        _constraints_with_extra_proxies(constraints, root_extras)
+        if constraints is not None
+        else None
+    )
+    return _BenchmarkResolveInputs(
+        requirements=requirements,
+        constraints=resolver_constraints,
+        root_extras=root_extras,
+    )
+
+
 def build_benchmark_provider(
     coordinator: FetchCoordinator,
     *,
     config: NabProjectConfig,
     target: ResolveTarget,
-    requirements: dict[str, VersionRange],
+    inputs: _BenchmarkResolveInputs,
 ) -> Provider:
     """Build a provider from a benchmark project config and its roots."""
     return Provider(
         coordinator,
         target=target,
-        root_requirements=requirements,
+        root_requirements=inputs.requirements,
+        root_extras=inputs.root_extras,
         uploaded_prior_to=config.uploaded_prior_to,
         dist_policy=config.dist_policy,
         build_policy=config.build_policy,
@@ -124,5 +181,6 @@ def build_benchmark_provider(
         archive_sources=list(config.archive_sources) or None,
         build_config=config,
         resolution_strategy=config.resolution,
-        direct_packages=direct_packages_from_requirements(requirements),
+        direct_packages=direct_packages_from_requirements(inputs.requirements),
+        constraints=inputs.constraints,
     )
