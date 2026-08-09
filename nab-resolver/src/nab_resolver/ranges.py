@@ -189,7 +189,7 @@ class Range(Generic[VersionType]):
     See :meth:`__init__` for the invariant the interval list must satisfy.
     """
 
-    __slots__ = ("_intervals",)
+    __slots__ = ("_hash", "_intervals")
 
     def __init__(self, intervals: tuple[Interval, ...] = ()) -> None:
         """Create a range from intervals that already satisfy the invariant.
@@ -207,6 +207,7 @@ class Range(Generic[VersionType]):
         write ``[1, 3]``.
         """
         self._intervals = intervals
+        self._hash = 0
 
     @classmethod
     def empty(cls) -> Range[VersionType]:
@@ -541,8 +542,33 @@ class Range(Generic[VersionType]):
 
     @override
     def __hash__(self) -> int:
-        """Hash based on interval tuples."""
-        return hash(self._intervals)
+        """Hash the interval tuple once and keep the answer.
+
+        A range is immutable and is hashed over and over as a cache key, and
+        each hash walks every interval and every bound in it.  Zero marks "not
+        computed yet", so a tuple that really hashes to zero is stored as one.
+        """
+        cached = self._hash
+        if cached == 0:
+            cached = hash(self._intervals) or 1
+            self._hash = cached
+        return cached
+
+    def __getstate__(self) -> tuple[tuple[Interval, ...]]:
+        """Return the intervals alone, keeping the memo out of the pickle.
+
+        The infinity sentinels hash as plain strings, so a memo computed in
+        one process is wrong in a process running a different
+        ``PYTHONHASHSEED``.  The wrapping tuple is what makes the empty range
+        survive: protocols 0 and 1 discard a pickle state that is falsy, and
+        an empty range's intervals are ``()``.
+        """
+        return (self._intervals,)
+
+    def __setstate__(self, state: tuple[tuple[Interval, ...]]) -> None:
+        """Restore from :meth:`__getstate__`, leaving the hash to be recomputed."""
+        (self._intervals,) = state
+        self._hash = 0
 
     @override
     def __repr__(self) -> str:
