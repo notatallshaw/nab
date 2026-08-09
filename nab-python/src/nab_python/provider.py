@@ -63,6 +63,7 @@ if TYPE_CHECKING:
 __all__ = [
     "ArchiveSource",
     "BuildPolicy",
+    "DecisionOrder",
     "DistFile",
     "DistPolicy",
     "ExtrasMode",
@@ -230,6 +231,16 @@ class ResolutionStrategy(enum.Enum):
 
     LOWEST_DIRECT = "lowest-direct"
     """Oldest for direct deps; newest for transitive deps."""
+
+
+class DecisionOrder(enum.Enum):
+    """Whether arrived listings may steer which package is decided next."""
+
+    ARRIVAL = "arrival"
+    """Rank on what has already landed, so the search keeps moving (default)."""
+
+    STABLE = "stable"
+    """Wait for each listing, so the sort key cannot see which had arrived."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,6 +507,10 @@ class Provider:
     ``listing_filter_cache`` shares the platform-independent half of the
     listing filter with the other targets of the same resolve; see
     :class:`ListingFilterCache`.
+
+    ``decision_order`` chooses whether the decision scan may rank a
+    package on whether its listing has landed yet.  See
+    :meth:`settled_listing`.
     """
 
     # Drives two prefetch paths: the speculative root-batch prefetch
@@ -577,6 +592,7 @@ class Provider:
         *,
         constraints: Mapping[str, VersionRange] | None = None,
         trust_unverified_sdist_deps: bool = False,
+        decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
     ) -> None:
         """Construct the provider; see the class docstring for parameters."""
         if isinstance(resolution_strategy, str):
@@ -612,6 +628,8 @@ class Provider:
             build_config is not None and build_config.trust_unverified_sdist_deps
         )
         self._resolution_strategy = resolution_strategy
+        # The scan asks this once per package, so keep the answer.
+        self.settle_listings = decision_order is DecisionOrder.STABLE
         self._direct_packages: frozenset[str] = direct_packages or frozenset()
         # Versions another target already decided, tried first when they are
         # usable here: uv-style cross-target alignment ("target A picked numpy
@@ -2257,11 +2275,38 @@ class Provider:
             self._absent_listing_scan[normalized] = self._scan_generation
         return listing
 
+    def settled_listing(self, normalized: str) -> list[DistFile] | None:
+        """Return ``normalized``'s listing, waiting once for it to land.
+
+        The blocking counterpart of :meth:`arrived_listing`, used by the
+        decision scan under :attr:`DecisionOrder.STABLE`: waiting for the
+        fetch gives the scan the same version count whatever the HTTP
+        cache held, where reading what has arrived so far does not.
+
+        A listing that already failed is not re-requested, and one wait is
+        enough because every terminal path in the fetcher sets the event.
+        ``None`` still means there is no listing to count, so a caller must
+        not spin on it.
+        """
+        listing = self.coordinator.index.get_listing(normalized)
+        if listing is not None:
+            return listing
+        if self.coordinator.index.get_listing_error(normalized) is not None:
+            return None
+        self.coordinator.request_listing(normalized).wait()
+        return self.coordinator.index.get_listing(normalized)
+
     def is_ready(self, package: str) -> bool:
         """Check if a package's listing is available without blocking.
 
         Used by the resolver to prefer packages with cached data,
         letting it make progress while other listings are in flight.
+
+        Under :attr:`DecisionOrder.STABLE` it needs no blocking half of its
+        own.  ``prioritize`` runs first in the same sort key and has already
+        settled the listing into ``versions_cache``; what is left is a
+        failed listing or a package served from a local, VCS, or archive
+        source, and no listing is ever requested for those.
         """
         _, extra, normalized = self.split_and_normalize(package)
         if extra is not None:

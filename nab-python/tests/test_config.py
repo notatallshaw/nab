@@ -51,6 +51,7 @@ from nab_python.config_sources import (
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from nab_python.provider import (
     BuildPolicy,
+    DecisionOrder,
     DistPolicy,
     LocalSource,
     ResolutionStrategy,
@@ -1379,6 +1380,19 @@ class TestPolicies:
     def test_build_requires_depth_reaches_the_config(self, tmp_path: Path) -> None:
         path = write(tmp_path, "[tool.nab]\nbuild-requires-depth = 2\n")
         assert read_pyproject_config(path).build_requires_depth == 2
+
+    def test_invalid_decision_order(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\ndecision-order = "eventually"\n')
+        with pytest.raises(ConfigError, match="decision-order must be one of"):
+            read_pyproject_config(path)
+
+    def test_decision_order_reaches_the_config(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\ndecision-order = "stable"\n')
+        assert read_pyproject_config(path).decision_order is DecisionOrder.STABLE
+
+    def test_decision_order_defaults_to_arrival(self, tmp_path: Path) -> None:
+        path = write(tmp_path, "[tool.nab]\n")
+        assert read_pyproject_config(path).decision_order is DecisionOrder.ARRIVAL
 
 
 _UNIVERSAL_MATRIX = (

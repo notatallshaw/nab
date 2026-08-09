@@ -48,6 +48,7 @@ from .paths import PathState, is_usable_path_name, path_state
 from .provider import (
     ArchiveSource,
     BuildPolicy,
+    DecisionOrder,
     DistPolicy,
     LocalSource,
     ResolutionStrategy,
@@ -436,6 +437,15 @@ def _parse_build_policy(value: Any, where: str) -> BuildPolicy:
     )
 
 
+def _parse_decision_order(value: Any, where: str) -> DecisionOrder:
+    del where
+    from .config import _parse_enum as _impl  # noqa: PLC0415 (config import cycle)
+
+    return _delegate(
+        lambda: _impl("decision-order", value, DecisionOrder, DecisionOrder.ARRIVAL)
+    )
+
+
 def _parse_uploaded_prior_to(value: Any, where: str) -> Any:
     """Parse ``uploaded-prior-to`` without re-anchoring relative durations.
 
@@ -817,6 +827,17 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_flag="--project-resolution",
         cli_param="project_resolution",
         parse=_parse_resolution,
+        render=lambda v: v.value,
+    ),
+    OptionSpec(
+        key="decision-order",
+        scope=Scope.PROJECT,
+        type_label=f"enum({'|'.join(o.value for o in DecisionOrder)})",
+        default=DecisionOrder.ARRIVAL,
+        env_var=None,
+        cli_flag="--project-decision-order",
+        cli_param="project_decision_order",
+        parse=_parse_decision_order,
         render=lambda v: v.value,
     ),
     OptionSpec(

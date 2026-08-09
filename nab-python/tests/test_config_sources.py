@@ -59,6 +59,7 @@ from nab_python.config_sources import (
 from nab_python.provider import (
     ArchiveSource,
     BuildPolicy,
+    DecisionOrder,
     DistPolicy,
     ResolutionStrategy,
     ResolveMode,
@@ -177,6 +178,54 @@ class TestResolutionLadder:
 
     def test_resolution_non_string_errors(self, tmp_path: Path) -> None:
         _project(tmp_path, "resolution = 3\n")
+        with pytest.raises(SourceConfigError, match="must be a string"):
+            _resolve(SourceRoots(project_dir=tmp_path))
+
+
+class TestDecisionOrderLadder:
+    def test_default_is_arrival(self, tmp_path: Path) -> None:
+        _project(tmp_path)
+        eff = _resolve(SourceRoots(project_dir=tmp_path))
+        assert eff["decision-order"].value is DecisionOrder.ARRIVAL
+        assert eff["decision-order"].origin.kind is SourceKind.DEFAULT
+
+    def test_pyproject_sets_decision_order(self, tmp_path: Path) -> None:
+        _project(tmp_path, 'decision-order = "stable"\n')
+        eff = _resolve(SourceRoots(project_dir=tmp_path))
+        assert eff["decision-order"].value is DecisionOrder.STABLE
+        assert eff["decision-order"].origin.kind is SourceKind.PYPROJECT
+
+    def test_project_nab_toml_sets_decision_order(self, tmp_path: Path) -> None:
+        _project(tmp_path)
+        _write(tmp_path / "nab.toml", 'decision-order = "stable"\n')
+        eff = _resolve(SourceRoots(project_dir=tmp_path))
+        assert eff["decision-order"].value is DecisionOrder.STABLE
+        assert eff["decision-order"].origin.kind is SourceKind.PROJECT_TOML
+
+    def test_cli_project_decision_order_wins(self, tmp_path: Path) -> None:
+        _project(tmp_path, 'decision-order = "stable"\n')
+        eff = _resolve(
+            SourceRoots(project_dir=tmp_path), cli={"decision-order": "arrival"}
+        )
+        assert eff["decision-order"].value is DecisionOrder.ARRIVAL
+        assert eff["decision-order"].origin.kind is SourceKind.CLI
+
+    def test_decision_order_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+        _project(tmp_path)
+        user = _write(
+            tmp_path / "usr" / "nab" / "nab.toml", 'decision-order = "stable"\n'
+        )
+        roots = SourceRoots(user_toml=user, project_dir=tmp_path)
+        with pytest.raises(SourceConfigError, match="project-scope option"):
+            _resolve(roots)
+
+    def test_bad_decision_order_value_errors(self, tmp_path: Path) -> None:
+        _project(tmp_path, 'decision-order = "whenever"\n')
+        with pytest.raises(SourceConfigError, match="must be one of"):
+            _resolve(SourceRoots(project_dir=tmp_path))
+
+    def test_decision_order_non_string_errors(self, tmp_path: Path) -> None:
+        _project(tmp_path, "decision-order = 3\n")
         with pytest.raises(SourceConfigError, match="must be a string"):
             _resolve(SourceRoots(project_dir=tmp_path))
 
@@ -867,6 +916,7 @@ class TestReproducibilityNotice:
                 "project_dist_policy": "sdist-only",
                 "project_build_policy": None,
                 "project_build_requires_depth": None,
+                "project_decision_order": None,
                 "project_constraint": (),
                 "project_default_group": ("dev",),
             }
@@ -887,6 +937,7 @@ class TestParserFoldHelpers:
         assert pyproject_registry_keys() == frozenset(
             {
                 "resolution",
+                "decision-order",
                 "mode",
                 "constraints",
                 "default-groups",

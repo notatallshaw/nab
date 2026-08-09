@@ -25,6 +25,7 @@ from . import cli as _cli
 from ._lock import resolve_extra_selection, resolve_group_selection
 from .cli import (
     BuildPolicyFlag,
+    DecisionOrderFlag,
     DistPolicyFlag,
     HttpBackend,
     ModeFlag,
@@ -59,6 +60,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     project_dist_policy: DistPolicyFlag | None = None,
     project_build_policy: BuildPolicyFlag | None = None,
     project_build_requires_depth: int | None = None,
+    project_decision_order: DecisionOrderFlag | None = None,
     project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
 ) -> None:
@@ -101,6 +103,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
         cli_dist_policy=project_dist_policy,
         cli_build_policy=project_build_policy,
         cli_build_requires_depth=project_build_requires_depth,
+        cli_decision_order=project_decision_order,
         cli_constraint=project_constraint,
         cli_default_group=project_default_group,
     )

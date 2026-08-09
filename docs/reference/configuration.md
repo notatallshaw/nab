@@ -45,6 +45,12 @@ uploaded-prior-to = "2026-05-01T00:00:00Z"
 # Version selection within an allowed range.  Mirrors uv's --resolution.
 resolution = "highest"          # "highest" | "lowest" | "lowest-direct"
 
+# Whether listings that have already arrived may steer the decision
+# order.  "stable" waits for the listing instead, so the resolve does
+# not depend on how warm the HTTP cache was.  Costs wall time.  See
+# "Decision order" below.
+decision-order = "arrival"      # "arrival" | "stable"
+
 # Distribution policy.  See "Dist policy" below for details.
 dist-policy = "wheel-or-sdist"
 # "wheel-only" | "prefer-wheel" | "wheel-or-sdist" | "sdist-only" | "sdist-install"
@@ -552,6 +558,37 @@ dist-policy = "sdist-install"
 
 The same five values are accepted.  Package names are canonicalised, so
 `Foo-Bar`, `foo_bar`, and `foo-bar` name the same package.
+
+## Decision order
+
+`[tool.nab].decision-order` controls whether the listings that have
+arrived so far may steer which package the resolver decides next.
+
+nab fetches listings on a background thread while it resolves, and the
+decision scan prefers packages whose listing has already landed so the
+search keeps moving while the rest are in flight.  Which ones have
+landed depends on what the HTTP cache held, so one project resolved
+twice against one index can search differently, and on some inputs
+settle on a different valid answer.
+
+| Value | Behaviour |
+|---|---|
+| `arrival` (default) | Rank a package on the listings that have already landed. |
+| `stable` | Wait for the listing, then rank on its real version count. |
+
+Under `stable` nothing about fetch timing reaches the decision scan, so
+one project resolved twice against one index gives one lockfile.  This
+is the setting to reach for when `nab lock --locked` fails in CI on a
+commit nobody changed.
+
+It costs wall time: a few percent on nab's slower benchmark scenarios,
+with a wider run-to-run spread even though the answer stops moving.  The
+wait is usually on a fetch already in flight rather than one the scan
+issues, so fetching is not serialised.
+
+`stable` settles the resolver; the index can still move under you.  See
+"Reproducibility" in the [lockfile reference](lockfile.md) for the
+conditions that remain.
 
 ## VCS policy
 

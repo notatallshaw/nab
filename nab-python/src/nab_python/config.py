@@ -53,6 +53,7 @@ from .paths import resolve_path
 from .provider import (
     ArchiveSource,
     BuildPolicy,
+    DecisionOrder,
     DistPolicy,
     LocalSource,
     ResolutionStrategy,
@@ -456,6 +457,7 @@ class NabProjectConfig:
     archive_sources: tuple[ArchiveSource, ...] = ()
     matrix: MatrixConfig | None = None
     resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST
+    decision_order: DecisionOrder = DecisionOrder.ARRIVAL
     workspace: WorkspaceConfig | None = None
     conflicts: tuple[ConflictSet, ...] = ()
     # Per-package overrides from ``[tool.nab.packages.<name>]`` and
@@ -783,6 +785,7 @@ def _config_from_effective(
         archive_sources=archive_sources,
         matrix=matrix,
         resolution=effective["resolution"].value,
+        decision_order=effective["decision-order"].value,
         workspace=effective["workspace"].value,
         conflicts=conflicts,
         package_overrides=package_overrides,
