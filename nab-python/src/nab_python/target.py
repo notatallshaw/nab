@@ -373,6 +373,12 @@ _NON_INTERVAL_OPERATORS = frozenset({"===", "in", "not in"})
 # release, so a prerelease there maps cleanly to that release.
 _AT_LITERAL_OPERATORS = frozenset({"<", ">=", "==", "!=", "~="})
 
+# ``<`` is dropped: a post-release sorts just above its release, so
+# ``< "3.12.4.post1"`` lands its boundary on the next real micro (3.12.5) and
+# tiles cleanly.  The other at-literal operators snap a post's boundary onto a
+# micro whose truth does not flip there, so a post-release crashes on those.
+_POST_AT_LITERAL_OPERATORS = _AT_LITERAL_OPERATORS - frozenset({"<"})
+
 # PEP 508 lets either operand be the variable, and packaging preserves the
 # written order, so ``python_full_version < "3.10.2"`` and its literal-first
 # equivalent ``"3.10.2" > python_full_version`` both reach the scanner.  When
@@ -398,10 +404,11 @@ class NonIntervalMarkerError(ValueError):
     comparison has to partition that interval so every real interpreter reads
     it the same way its slice does.  A membership (``in``/``not in``), a
     verbatim ``===``, a non-version string comparison, a comparison against
-    another variable, a prerelease-version literal that would carve a slice
-    off a real micro, or a literal PEP 440 refuses under the operator it is
-    written with (``< "3.12.*"``, ``~= "3"``) cannot be tiled, so the resolve
-    stops loudly rather than pin the whole minor to one synthetic answer.
+    another variable, a pre- or post-release version literal that would carve
+    a slice off a real micro, or a literal PEP 440 refuses under the operator
+    it is written with (``< "3.12.*"``, ``~= "3"``) cannot be tiled, so the
+    resolve stops loudly rather than pin the whole minor to one synthetic
+    answer.
     """
 
 
@@ -414,8 +421,8 @@ def _non_interval(
         f"consulted marker clause {lhs} {op} {rhs} cannot tile the"
         f" {target.label} minor interval: no micro boundary the lock can"
         " render comes from a python_full_version membership, a verbatim ===,"
-        " a comparison against a variable, a prerelease comparison, or a"
-        " literal the operator cannot spell as a version bound"
+        " a comparison against a variable, a pre- or post-release comparison,"
+        " or a literal the operator cannot spell as a version bound"
     )
 
 
@@ -545,12 +552,17 @@ def _clause_boundary_points(
         return set()
     op, specifier, version = parsed
 
-    if version.is_prerelease and op in _AT_LITERAL_OPERATORS:
-        # The boundary lands at the prerelease itself; only a strictly interior
-        # one carves a slice whose release floor sits outside it.  A prerelease
-        # of the minor's floor, or one outside the minor, is uniform under the
-        # rides-with-X convention and splits nothing.
-        if _in_minor(Version(version.base_version), minor_release, floor):
+    if (version.is_prerelease and op in _AT_LITERAL_OPERATORS) or (
+        version.is_postrelease and op in _POST_AT_LITERAL_OPERATORS
+    ):
+        # An at-literal boundary lands on the literal, and a pre- or post-release
+        # literal falls between two micros, so no micro reads it the way its slice
+        # would.  Interior to the minor that cannot be tiled and crashes; below the
+        # floor or in another minor it is uniform and splits nothing.  The literal
+        # itself decides which, not its release form: a prerelease sorts just below
+        # its release and a post just above, so ``3.12.0a1`` sits below the floor
+        # while ``3.12.0.post1`` sits above it.
+        if _in_minor(version, minor_release, floor):
             raise _non_interval(parts, target)
         return set()
 
