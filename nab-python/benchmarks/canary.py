@@ -37,6 +37,7 @@ from benchmark_config import (
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
     direct_packages_from_requirements,
+    parse_scenario_project_metadata,
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
@@ -600,6 +601,7 @@ def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
         parse_vcs_policy,
         parse_vcs_allowed_schemes,
         parse_vcs_allowed_repos,
+        parse_scenario_project_metadata,
     )
     for validate_field in field_validators:
         for scenario_name, scenario in found_scenarios:
@@ -770,6 +772,7 @@ def _prepare_canary_execution(
     )
     requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
     vcs_config = parse_scenario_vcs_config(scenario_name, scenario)
+    project_metadata = parse_scenario_project_metadata(scenario_name, scenario)
     python_version = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -807,13 +810,13 @@ def _prepare_canary_execution(
         return CanaryPreparation(None, admission.inapplicable_reason)
     target = admission.target
 
-    project_name = scenario.get("project_name")
+    project_name = project_metadata.project_name
     if project_name:
         requirement_strings.extend(
             expand_project_extras(
                 project_name,
-                scenario.get("project_extras", []),
-                scenario.get("optional_dependencies", {}),
+                project_metadata.project_extras,
+                project_metadata.optional_dependencies,
             )
         )
 

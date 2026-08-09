@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import scenarios as sc
 from benchmark_config import (
     build_benchmark_config,
+    parse_scenario_project_metadata,
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
@@ -79,6 +80,7 @@ def build_inputs(
     trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(name, scenario)
     requirement_inputs = parse_scenario_requirement_strings(name, scenario)
     vcs_config = parse_scenario_vcs_config(name, scenario)
+    project_metadata = parse_scenario_project_metadata(name, scenario)
     python_version = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -109,11 +111,11 @@ def build_inputs(
         scenario.get("resolution", sc.ResolutionStrategy.HIGHEST.value)
     )
     resolution_strategy = resolution_override or declared_resolution
-    if scenario.get("project_name"):
+    if project_metadata.project_name:
         requirement_strings += sc.expand_project_extras(
-            scenario["project_name"],
-            scenario.get("project_extras", []),
-            scenario.get("optional_dependencies", {}),
+            project_metadata.project_name,
+            project_metadata.project_extras,
+            project_metadata.optional_dependencies,
         )
 
     marker_env = dict(target.marker_env)

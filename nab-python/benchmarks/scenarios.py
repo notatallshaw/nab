@@ -37,6 +37,7 @@ from benchmark_config import (
     build_benchmark_config,
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
+    parse_scenario_project_metadata,
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
@@ -583,6 +584,7 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
         parse_trust_unverified_sdist_deps(row.logical_key, row.definition)
         parse_scenario_requirement_strings(row.logical_key, row.definition)
         parse_scenario_vcs_config(row.logical_key, row.definition)
+        parse_scenario_project_metadata(row.logical_key, row.definition)
         build_policy_overrides = parse_build_packages(row.name, row.definition)
         if "unsupported_reason" in row.definition:
             continue
@@ -1593,6 +1595,7 @@ def prepare_standard_execution(
     )
     requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
     vcs_config = parse_scenario_vcs_config(scenario_name, scenario)
+    project_metadata = parse_scenario_project_metadata(scenario_name, scenario)
     python_version: str = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -1607,14 +1610,15 @@ def prepare_standard_execution(
             build_policy_overrides,
         )
     datetime_str: str | None = scenario.get("datetime")
-    project_name: str | None = scenario.get("project_name")
-    project_extras: list[str] = scenario.get("project_extras", [])
-    optional_dependencies: dict[str, list[str]] = scenario.get(
-        "optional_dependencies", {}
-    )
+    project_name = project_metadata.project_name
+    project_extras = project_metadata.project_extras
     if project_name:
         requirement_strings.extend(
-            expand_project_extras(project_name, project_extras, optional_dependencies)
+            expand_project_extras(
+                project_name,
+                project_extras,
+                project_metadata.optional_dependencies,
+            )
         )
     uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
     config = build_benchmark_config(

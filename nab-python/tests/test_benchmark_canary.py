@@ -606,6 +606,17 @@ def test_canary_main_records_v2_contract(
             {
                 "requirements": [],
                 "unsupported_reason": "test fixture",
+                "project_name": "demo-project",
+                "project_extras": ["all"],
+                "optional_dependencies": {"all": "demo"},
+            },
+            True,
+            "quick:requests: optional_dependencies['all'] must be a list, got str",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
                 "vcs_require_pin": "false",
             },
             False,
@@ -645,6 +656,7 @@ def test_canary_main_records_v2_contract(
         "scalar",
         "empty-item",
         "default-empty-item",
+        "default-project-metadata",
         "vcs-require-pin",
         "vcs-policy",
         "vcs-scheme-table",

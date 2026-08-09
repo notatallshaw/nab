@@ -238,6 +238,12 @@ def _runner_parity_scenario() -> dict[str, object]:
         "vcs_allowed_schemes": ["git+https"],
         "vcs_allowed_repos": ["https://example.test/project"],
         "vcs_require_pin": False,
+        "project_name": "Demo_Project",
+        "project_extras": ["All_Features", "Direct_Use"],
+        "optional_dependencies": {
+            "all.features": ["Project_Leaf>=2", "Second.Leaf"],
+            "DIRECT-use": ["Another_Leaf==1"],
+        },
     }
 
 
@@ -1427,6 +1433,161 @@ def test_parse_scenario_requirement_strings_rejects_empty_items(field: str) -> N
         match=rf"quick:empty-item: {field}\[1\] must be a non-empty string$",
     ):
         module.parse_scenario_requirement_strings("quick:empty-item", scenario)
+
+
+def test_parse_scenario_project_metadata_returns_fresh_nested_values() -> None:
+    module = _harness("benchmark_config")
+    project_extras = ["All_Features", "OpenAI"]
+    optional_dependencies = {
+        "all.features": ["Eval_Framework[OpenAI]"],
+        "open_ai": ["OpenAI_Client>=1.62,<2"],
+    }
+    scenario = {
+        "project_name": "Eval_Framework",
+        "project_extras": project_extras,
+        "optional_dependencies": optional_dependencies,
+    }
+    original = deepcopy(scenario)
+
+    parsed = module.parse_scenario_project_metadata(
+        "ecosystem:eval-framework", scenario
+    )
+
+    assert parsed.project_name == "Eval_Framework"
+    assert parsed.project_extras == ["All_Features", "OpenAI"]
+    assert list(parsed.optional_dependencies) == ["all.features", "open_ai"]
+    assert parsed.optional_dependencies == optional_dependencies
+
+    assert parsed.project_extras is not project_extras
+    assert parsed.optional_dependencies is not optional_dependencies
+    for extra, dependencies in optional_dependencies.items():
+        assert parsed.optional_dependencies[extra] is not dependencies
+
+    parsed.project_extras.reverse()
+    parsed.optional_dependencies["all.features"].clear()
+    assert scenario == original
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        {"project_name": "Eval_Framework"},
+        {"project_extras": ["All_Features", "OpenAI"]},
+        {
+            "optional_dependencies": {
+                "all.features": ["Eval_Framework[OpenAI]"],
+                "open_ai": ["OpenAI_Client>=1.62,<2"],
+            }
+        },
+        {
+            "project_extras": ["OpenAI", "All_Features"],
+            "optional_dependencies": {
+                "open_ai": ["OpenAI_Client>=1.62,<2"],
+                "all.features": ["Eval_Framework[OpenAI]"],
+            },
+        },
+    ],
+    ids=("name", "extras", "optional-dependencies", "extras-and-optional"),
+)
+def test_parse_scenario_project_metadata_accepts_partial_forms(
+    scenario: dict[str, object],
+) -> None:
+    module = _harness("benchmark_config")
+
+    parsed = module.parse_scenario_project_metadata(
+        "ecosystem:eval-framework", scenario
+    )
+
+    assert parsed.project_name == scenario.get("project_name")
+    assert parsed.project_extras == scenario.get("project_extras", [])
+    assert list(parsed.optional_dependencies) == list(
+        scenario.get("optional_dependencies", {})
+    )
+    assert parsed.optional_dependencies == scenario.get("optional_dependencies", {})
+
+
+@pytest.mark.parametrize(
+    ("scenario", "error", "message"),
+    [
+        (
+            {"project_name": False},
+            TypeError,
+            "quick:project: project_name must be a non-empty string, got bool",
+        ),
+        (
+            {"project_name": ""},
+            ValueError,
+            "quick:project: project_name must be a non-empty string",
+        ),
+        (
+            {"project_extras": "all"},
+            TypeError,
+            "quick:project: project_extras must be a list, got str",
+        ),
+        (
+            {"project_extras": ["all", 1]},
+            TypeError,
+            "quick:project: project_extras[1] must be a non-empty string, got int",
+        ),
+        (
+            {"project_extras": ["all", ""]},
+            ValueError,
+            "quick:project: project_extras[1] must be a non-empty string",
+        ),
+        (
+            {"optional_dependencies": ["demo"]},
+            TypeError,
+            "quick:project: optional_dependencies must be a table, got list",
+        ),
+        (
+            {"optional_dependencies": {"all": "demo"}},
+            TypeError,
+            "quick:project: optional_dependencies['all'] must be a list, got str",
+        ),
+        (
+            {"optional_dependencies": {"all": ["demo", 1]}},
+            TypeError,
+            (
+                "quick:project: optional_dependencies['all'][1] must be a "
+                "non-empty string, got int"
+            ),
+        ),
+        (
+            {"optional_dependencies": {"all": ["demo", ""]}},
+            ValueError,
+            (
+                "quick:project: optional_dependencies['all'][1] must be a "
+                "non-empty string"
+            ),
+        ),
+        (
+            {"optional_dependencies": {"": ["demo"]}},
+            ValueError,
+            "quick:project: optional_dependencies keys must be non-empty strings",
+        ),
+    ],
+    ids=(
+        "project-name-type",
+        "project-name-empty",
+        "project-extras-scalar",
+        "project-extras-member",
+        "project-extras-empty",
+        "optional-dependencies-array",
+        "optional-dependency-scalar",
+        "optional-dependency-member",
+        "optional-dependency-empty",
+        "optional-dependency-empty-key",
+    ),
+)
+def test_parse_scenario_project_metadata_rejects_malformed_values(
+    scenario: dict[str, object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    module = _harness("benchmark_config")
+
+    with pytest.raises(error, match=re.escape(message)):
+        module.parse_scenario_project_metadata("quick:project", scenario)
 
 
 @pytest.mark.parametrize(
@@ -2732,6 +2893,33 @@ unsupported_reason = "not runnable"
 python_version = "3.11"
 requirements = []
 unsupported_reason = "not runnable"
+project_name = "demo-project"
+project_extras = ["all"]
+[other.optional_dependencies]
+all = "demo"
+""",
+            "other:other: optional_dependencies['all'] must be a list, got str",
+        ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
+vcs_require_pin = "false"
+project_name = "demo-project"
+project_extras = ["all"]
+[other.optional_dependencies]
+all = "demo"
+""",
+            "other:other: vcs_require_pin must be a boolean, got str",
+        ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
 vcs_require_pin = "false"
 """,
             "other:other: vcs_require_pin must be a boolean, got str",
@@ -2783,6 +2971,8 @@ vcs_allowed_repos = { "https://example.test/repo" = false }
     ids=(
         "sdist-trust",
         "requirements",
+        "project-metadata",
+        "vcs-before-project-metadata",
         "vcs-require-pin",
         "vcs-policy",
         "vcs-policy-table",
@@ -2913,10 +3103,13 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
     standard = _harness("scenarios")
     canary = _harness("canary")
     profile = _harness("_profile_runner")
+    scenario = _runner_parity_scenario()
+    original = deepcopy(scenario)
     standard_execution, canary_execution, profile_inputs = _prepare_runner_parity(
         standard,
         canary,
         profile,
+        scenario=scenario,
     )
 
     assert (
@@ -2924,12 +3117,112 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
     )
     assert standard_execution.config.constraints == ()
     assert standard_execution.constraint_strings == ["demo<2"]
+
     assert "trust_unverified_sdist_deps" not in standard_execution.expected_input
     assert standard_execution.expected_input["vcs_policy"] == "allow"
     assert standard_execution.expected_input["vcs_allowed_schemes"] == ["git+https"]
     assert standard_execution.expected_input["vcs_allowed_repos"] == [
         "https://example.test/project"
     ]
+    assert standard_execution.expected_input["project_name"] == "Demo_Project"
+    assert standard_execution.expected_input["project_extras"] == [
+        "All_Features",
+        "Direct_Use",
+    ]
+
+    assert standard_execution.expected_input["requirements"] == [
+        "demo[feature]>=1",
+        "Project_Leaf>=2",
+        "Second.Leaf",
+        "Another_Leaf==1",
+    ]
+    assert set(canary_execution.requirements) == {
+        "another-leaf",
+        "demo",
+        "demo[feature]",
+        "project-leaf",
+        "second-leaf",
+    }
+    assert set(profile_inputs["requirements"]) == {
+        "another-leaf",
+        "demo",
+        "demo[feature]",
+        "project-leaf",
+        "second-leaf",
+    }
+
+    assert scenario == original
+
+
+@pytest.mark.parametrize(
+    ("vcs_settings", "message"),
+    [
+        (
+            {},
+            "example: optional_dependencies['all'] must be a list, got str",
+        ),
+        (
+            {"vcs_require_pin": "false"},
+            "example: vcs_require_pin must be a boolean, got str",
+        ),
+    ],
+    ids=("project-metadata", "vcs-precedence"),
+)
+def test_all_runners_validate_project_metadata_in_schema_order(
+    vcs_settings: dict[str, object],
+    message: str,
+) -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "project_name": "demo-project",
+        "project_extras": ["all"],
+        "optional_dependencies": {"all": "demo"},
+        **vcs_settings,
+    }
+    host = _linux_host(standard)
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        _prepare_standard_scenario(standard, scenario, host)
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=host,
+        )
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        profile.build_inputs("example", scenario, host=host)
+
+
+def test_profile_project_metadata_validation_precedes_host_admission() -> None:
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "project_name": "demo-project",
+        "project_extras": ["all"],
+        "optional_dependencies": {"all": "demo"},
+    }
+
+    class UnusedHost:
+        """Fail if project-metadata validation reaches target admission."""
+
+        def target_for(self, *_args: object, **_kwargs: object) -> object:
+            pytest.fail("project-metadata validation reached host admission")
+
+    with pytest.raises(
+        TypeError,
+        match=re.escape(
+            "example: optional_dependencies['all'] must be a list, got str"
+        ),
+    ):
+        profile.build_inputs("example", scenario, host=UnusedHost())
 
 
 @pytest.mark.parametrize(
