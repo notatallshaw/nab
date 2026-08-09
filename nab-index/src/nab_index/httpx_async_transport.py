@@ -50,6 +50,10 @@ class _HttpxResponse:
         return self._response.status_code
 
     @property
+    def url(self) -> str:
+        return str(self._response.url)
+
+    @property
     def headers(self) -> Mapping[str, str]:
         return self._response.headers
 
@@ -65,7 +69,7 @@ class _HttpxResponse:
         return _json.loads(self._content)
 
     def raise_for_status(self) -> None:
-        raise_for_error_status(self._response.status_code, str(self._response.url))
+        raise_for_error_status(self._response.status_code, self.url)
 
 
 class HttpxAsyncTransport:

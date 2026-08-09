@@ -532,14 +532,55 @@ class TestCorruptEntryLogging:
 
 class TestEncodePolicy:
     def test_round_trip_with_etag(self) -> None:
-        policy = CachePolicy(fetched_at=10, max_age=20, etag="x")
+        policy = CachePolicy(
+            fetched_at=10, max_age=20, etag="x", page_url="https://e.test/simple/foo/"
+        )
         decoded = json.loads(_encode_policy(policy))
-        assert decoded == {"fetched_at": 10, "max_age": 20, "etag": "x"}
+        assert decoded == {
+            "fetched_at": 10,
+            "max_age": 20,
+            "etag": "x",
+            "page_url": "https://e.test/simple/foo/",
+        }
 
     def test_round_trip_without_etag(self) -> None:
         policy = CachePolicy(fetched_at=10, max_age=20, etag=None)
         decoded = json.loads(_encode_policy(policy))
-        assert decoded == {"fetched_at": 10, "max_age": 20, "etag": None}
+        assert decoded == {
+            "fetched_at": 10,
+            "max_age": 20,
+            "etag": None,
+            "page_url": None,
+        }
+
+    def test_policy_without_a_page_url_decodes(self, tmp_path: Path) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
+        cache.put_simple("foo", b"{}", _FRESH)
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
+        path.write_bytes(b'{"fetched_at":1,"max_age":600,"etag":"x"}')
+
+        entry = cache.get_simple("foo")
+
+        assert entry is not None
+        assert entry[1].page_url is None
+
+    @pytest.mark.parametrize("page_url", [123, "", []])
+    def test_unusable_page_url_is_dropped(
+        self, tmp_path: Path, page_url: object
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
+        cache.put_simple("foo", b"{}", _FRESH)
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
+        path.write_bytes(
+            json.dumps(
+                {"fetched_at": 1, "max_age": 600, "etag": "x", "page_url": page_url}
+            ).encode()
+        )
+
+        entry = cache.get_simple("foo")
+
+        assert entry is not None
+        assert entry[1].page_url is None
 
 
 class TestReadCacheEntry:

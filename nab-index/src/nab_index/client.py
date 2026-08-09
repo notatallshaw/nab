@@ -255,6 +255,9 @@ def _listing_body(
     so the parser and the cache only ever see one shape; any other body is
     passed through untouched. A pinned index that answers in the other
     serialization raises instead.
+
+    An HTML page's hrefs resolve against the URL that served the page, which
+    is not the requested one when the index redirected.
     """
     body = response.content
     content_type = _header(response, "content-type")
@@ -294,7 +297,7 @@ def _listing_body(
         raise MalformedSimpleResponseError(msg) from exc
 
     try:
-        return json_listing(text, f"{index_url}{package}/")
+        return json_listing(text, response.url)
     except ValueError as exc:
         msg = (
             f"{index_url} served a malformed Simple-API response for {package!r}: {exc}"
@@ -416,7 +419,7 @@ class AsyncSimpleClient:
                 f"{package!r}: body is not valid JSON"
             )
             raise MalformedSimpleResponseError(msg) from exc
-        return _parse_files(data, self._index_url, package)
+        return _parse_files(data, self._index_url, package, page_url=response.url)
 
     async def get_metadata_text(self, metadata_url: str) -> str:
         """Fetch metadata text from a known PEP 658/714 metadata URL."""
@@ -432,7 +435,7 @@ class AsyncSimpleClient:
 
 
 def _parse_files(
-    data: object, index_url: str, package: str
+    data: object, index_url: str, package: str, *, page_url: str | None = None
 ) -> list[WheelFile | SdistFile]:
     """Parse distribution files from a Simple API JSON response.
 
@@ -444,6 +447,10 @@ def _parse_files(
     different project (``cffi-1-0-2`` at version ``2``).  Without the
     name check those leak into the listing as a phantom version, and
     show up in the resolved lockfile as ``cffi==2``.
+
+    ``page_url`` is the URL the project page was retrieved from, the base a
+    relative entry resolves against. ``None`` falls back to the page URL
+    built from ``index_url`` and ``package``.
 
     PEP 592 ``yanked`` files are dropped unconditionally.
 
@@ -458,7 +465,7 @@ def _parse_files(
     """
     expected = canonicalize_name(package)
     # PEP 691: relative URLs resolve against the package page, not the index root.
-    base_url = f"{index_url}{package}/"
+    base_url = page_url if page_url is not None else f"{index_url}{package}/"
     files: list[WheelFile | SdistFile] = []
     if not isinstance(data, dict):
         msg = (

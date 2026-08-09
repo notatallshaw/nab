@@ -76,14 +76,21 @@ def _parse_range(value: str) -> tuple[str, int, int]:
 
 
 class _FakeResponse:
-    def __init__(self, status: int, headers: dict[str, str], content: bytes) -> None:
+    def __init__(
+        self, status: int, headers: dict[str, str], content: bytes, url: str
+    ) -> None:
         self._status = status
         self._headers = headers
         self._content = content
+        self._url = url
 
     @property
     def status_code(self) -> int:
         return self._status
+
+    @property
+    def url(self) -> str:
+        return self._url
 
     @property
     def headers(self) -> dict[str, str]:
@@ -138,11 +145,11 @@ class FakeRangeTransport:
         rng = headers.get("Range")
         self.requests.append((url, rng))
         if url != _WHEEL_URL:
-            return _FakeResponse(200, {"content-type": _JSON_MEDIA}, self.listing)
+            return _FakeResponse(200, {"content-type": _JSON_MEDIA}, self.listing, url)
         if self.wheel_status is not None:
-            return _FakeResponse(self.wheel_status, {}, b"")
+            return _FakeResponse(self.wheel_status, {}, b"", url)
         if rng is None or self.ignore_range:
-            return _FakeResponse(200, {}, self.wheel)
+            return _FakeResponse(200, {}, self.wheel, url)
         return self._range(rng)
 
     async def aclose(self) -> None:
@@ -163,7 +170,7 @@ class FakeRangeTransport:
         else:
             start, end = a, min(b, self.total - 1)
         headers = {"content-range": f"bytes {start}-{end}/{self.total}"}
-        return _FakeResponse(206, headers, self.wheel[start : end + 1])
+        return _FakeResponse(206, headers, self.wheel[start : end + 1], _WHEEL_URL)
 
 
 _TARGET = ResolveTarget.for_declared(

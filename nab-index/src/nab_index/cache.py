@@ -8,7 +8,8 @@ before any HTTP transport call.
 Layout under ``root``:
 
     simple-v1/<index>[-<serialization>]/<package>.json    <- PEP 691 JSON body
-    simple-v1/<index>[-<serialization>]/<package>.policy  <- {fetched_at, max_age, etag}
+    simple-v1/<index>[-<serialization>]/<package>.policy  <- {fetched_at, max_age,
+                                                              etag, page_url}
     simple-neg-v0/<index>[-<serialization>]/<package>.neg <- {fetched_at, max_age, etag}
     metadata-v1/<index>/<package>/<url digest>.metadata
     sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
@@ -96,11 +97,16 @@ class CachePolicy:
 
     ``fetched_at`` is the start of the freshness window: when nab received the
     response, less any Age a relaying shared cache reported.
+
+    ``page_url`` is the URL the stored body was retrieved from, the base its
+    relative entries resolve against. It is ``None`` for the negative
+    sentinel, which has no body, and for an entry cached without it.
     """
 
     fetched_at: int
     max_age: int
     etag: str | None
+    page_url: str | None = None
 
     def is_fresh(self, now: int | None = None) -> bool:
         """Return True if the entry is still within its freshness window."""
@@ -452,8 +458,14 @@ def _encode_policy(policy: CachePolicy) -> bytes:
             "fetched_at": policy.fetched_at,
             "max_age": policy.max_age,
             "etag": policy.etag,
+            "page_url": policy.page_url,
         }
     ).encode("utf-8")
+
+
+def _policy_page_url(value: object) -> str | None:
+    """Page URL from a decoded policy, or None when it is unusable as a base."""
+    return value if isinstance(value, str) and value else None
 
 
 def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
@@ -463,6 +475,7 @@ def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
             fetched_at=int(doc["fetched_at"]),
             max_age=int(doc["max_age"]),
             etag=doc.get("etag"),
+            page_url=_policy_page_url(doc.get("page_url")),
         )
     except (ValueError, KeyError, TypeError):
         return None

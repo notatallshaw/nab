@@ -71,10 +71,14 @@ class _FakeResponse:
         body: bytes,
         status: int = 200,
         headers: Mapping[str, str] | None = None,
+        url: str = "",
     ) -> None:
         self.content = body
         self.status_code = status
         self.headers = headers or {}
+        # Empty means the transport fills in the requested URL. Set it to
+        # stand in for a page the index redirected to.
+        self.url = url
 
     @property
     def text(self) -> str:
@@ -114,7 +118,10 @@ class _FakeTransport:
         if not self._responses:
             msg = f"unexpected request to {url}"
             raise AssertionError(msg)
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if not response.url:
+            response.url = url
+        return response
 
     async def aclose(self) -> None:
         return None
@@ -485,6 +492,25 @@ class TestRelativeUrlResolution:
         }
         files = _parse_files(data, "https://example.com/simple/", "foo")
         expected = "https://example.com/simple/foo/foo-1.0-py3-none-any.whl"
+        assert files[0].url == expected
+
+    def test_relative_url_resolves_against_the_page_that_was_served(self) -> None:
+        """A redirect moves the project page, and with it the base."""
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": "foo-1.0-py3-none-any.whl",
+                },
+            ],
+        }
+        files = _parse_files(
+            data,
+            "https://example.com/simple/",
+            "foo",
+            page_url="https://example.com/pypi/simple/foo/",
+        )
+        expected = "https://example.com/pypi/simple/foo/foo-1.0-py3-none-any.whl"
         assert files[0].url == expected
 
     def test_dot_dot_relative_url_is_normalised(self) -> None:
@@ -1650,6 +1676,146 @@ class TestExpiresFreshness:
         assert cached[1].max_age == 1800
 
 
+class TestRedirectedProjectPage:
+    """A relative file URL resolves against the page the index served.
+
+    An index may redirect a project page and still publish a relative
+    ``files[].url``. RFC 3986 section 5.1.3 makes the redirect target the
+    base, so the resolved URL must not point back at the requested path.
+    """
+
+    _MOVED_PAGE = "https://mirror.example.com/pypi/simple/pkg/"
+    _EXPECTED_URL = f"{_MOVED_PAGE}pkg-1.0-py3-none-any.whl"
+    _RELATIVE_LISTING = json.dumps(
+        {
+            "meta": {"api-version": "1.1"},
+            "name": "pkg",
+            "files": [
+                {
+                    "filename": "pkg-1.0-py3-none-any.whl",
+                    "url": "pkg-1.0-py3-none-any.whl",
+                    "hashes": {"sha256": "0" * 64},
+                    "core-metadata": True,
+                }
+            ],
+        }
+    ).encode()
+
+    def _run(self, transport: _FakeTransport, cache: OnDiskCache) -> list:
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        return asyncio.run(go())
+
+    def test_cold_fetch_resolves_against_the_redirect_target(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [_FakeResponse(self._RELATIVE_LISTING, url=self._MOVED_PAGE)]
+        )
+
+        (wheel,) = self._run(transport, cache)
+
+        assert wheel.url == self._EXPECTED_URL
+        assert isinstance(wheel, WheelFile)
+        assert wheel.metadata_url == f"{self._EXPECTED_URL}.metadata"
+
+    def test_warm_hit_reuses_the_recorded_page(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    self._RELATIVE_LISTING,
+                    headers={"cache-control": "max-age=600"},
+                    url=self._MOVED_PAGE,
+                )
+            ]
+        )
+        self._run(transport, cache)
+
+        # A second transport with nothing queued fails any request it gets.
+        (wheel,) = self._run(_FakeTransport(), cache)
+
+        assert wheel.url == self._EXPECTED_URL
+        assert len(transport.calls) == 1
+
+    def test_offline_hit_reuses_the_recorded_page(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            self._RELATIVE_LISTING,
+            CachePolicy(fetched_at=0, max_age=1, etag=None, page_url=self._MOVED_PAGE),
+        )
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(_FakeTransport(), cache, offline=True)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        (wheel,) = asyncio.run(go())
+
+        assert wheel.url == self._EXPECTED_URL
+
+    def test_304_revalidation_adopts_the_redirect_target(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            self._RELATIVE_LISTING,
+            CachePolicy(fetched_at=0, max_age=1, etag="v1"),
+        )
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    b"", status=304, headers={"etag": "v1"}, url=self._MOVED_PAGE
+                )
+            ]
+        )
+
+        (wheel,) = self._run(transport, cache)
+
+        assert wheel.url == self._EXPECTED_URL
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        assert cached[1].page_url == self._MOVED_PAGE
+
+    def test_200_revalidation_adopts_the_redirect_target(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            b'{"files": []}',
+            CachePolicy(fetched_at=0, max_age=1, etag="old"),
+        )
+        transport = _FakeTransport(
+            [_FakeResponse(self._RELATIVE_LISTING, url=self._MOVED_PAGE)]
+        )
+
+        (wheel,) = self._run(transport, cache)
+
+        assert wheel.url == self._EXPECTED_URL
+
+    def test_entry_stored_without_a_page_falls_back_to_the_index(
+        self, tmp_path: Path
+    ) -> None:
+        """A cache written before the page URL was recorded keeps working."""
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            self._RELATIVE_LISTING,
+            CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
+        )
+
+        (wheel,) = self._run(_FakeTransport(), cache)
+
+        assert wheel.url == "https://pypi.org/simple/pkg/pkg-1.0-py3-none-any.whl"
+
+
 class TestNonJsonListingBody:
     """A 200 response whose body is not JSON must not poison the cache.
 
@@ -1873,6 +2039,29 @@ class TestHtmlListing:
         ).encode()
         files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
         assert files[0].hashes == (("sha256", self._DIGEST), ("sha512", sha512))
+
+    def test_relative_href_resolves_against_the_redirect_target(
+        self, tmp_path: Path
+    ) -> None:
+        """A moved HTML page is the base for its own relative hrefs."""
+        moved = "https://mirror.example.com/whl/cpu/torch/"
+        page = b'<a href="torch-2.7.0-py3-none-any.whl">torch</a>'
+        transport = _FakeTransport(
+            [_FakeResponse(page, headers={"content-type": "text/html"}, url=moved)]
+        )
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(
+                transport, _make_cache(tmp_path), self._INDEX
+            )
+            try:
+                return await client.get_files("torch")
+            finally:
+                await client.aclose()
+
+        (wheel,) = asyncio.run(go())
+
+        assert wheel.url == f"{moved}torch-2.7.0-py3-none-any.whl"
 
     def test_malformed_ipv6_href_is_dropped(self, tmp_path: Path) -> None:
         # An unterminated IPv6 bracket makes the href join and split raise;

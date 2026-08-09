@@ -14,6 +14,7 @@ import ssl
 import threading
 import time
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urljoin
 
 import truststore
 import urllib3
@@ -61,6 +62,24 @@ class _SSLContext(truststore.SSLContext):
         return {"x509_ca": 1, "x509": 1, "crl": 0}
 
 
+def _final_url(response: urllib3.BaseHTTPResponse, requested_url: str) -> str:
+    """Return the absolute URL ``response`` was retrieved from.
+
+    urllib3 records status, connect, and read retries in the same history as
+    redirects, and records them with the request path alone, so only a hop
+    carrying a ``Location`` moves the URL. A ``Location`` is reported verbatim
+    and may be relative, so each is resolved against the URL that served it
+    (RFC 3986 section 5.1.3).
+    """
+    history = response.retries.history if response.retries is not None else ()
+
+    url = requested_url
+    for hop in history:
+        if hop.redirect_location:
+            url = urljoin(hop.url or url, hop.redirect_location)
+    return url
+
+
 class _Urllib3Response:
     """Adapter that gives a urllib3 response the HttpResponse shape.
 
@@ -69,15 +88,22 @@ class _Urllib3Response:
     so it is carried here rather than read from the urllib3 response.
     """
 
-    __slots__ = ("_content", "_response")
+    __slots__ = ("_content", "_requested_url", "_response")
 
-    def __init__(self, response: urllib3.BaseHTTPResponse, content: bytes) -> None:
+    def __init__(
+        self, response: urllib3.BaseHTTPResponse, content: bytes, requested_url: str
+    ) -> None:
         self._response = response
         self._content = content
+        self._requested_url = requested_url
 
     @property
     def status_code(self) -> int:
         return self._response.status
+
+    @property
+    def url(self) -> str:
+        return _final_url(self._response, self._requested_url)
 
     @property
     def headers(self) -> Mapping[str, str]:
@@ -95,9 +121,7 @@ class _Urllib3Response:
         return _json.loads(self._content)
 
     def raise_for_status(self) -> None:
-        raise_for_error_status(
-            self._response.status, self._response.geturl() or "<unknown>"
-        )
+        raise_for_error_status(self._response.status, self.url)
 
 
 class Urllib3AsyncTransport:
@@ -166,7 +190,7 @@ class Urllib3AsyncTransport:
             )
 
             if not decode:
-                return _Urllib3Response(response, response.data)
+                return _Urllib3Response(response, response.data, url)
 
             try:
                 content = decode_body(
@@ -179,7 +203,7 @@ class Urllib3AsyncTransport:
                 time.sleep(next_delay(failures))
                 continue
 
-            return _Urllib3Response(response, content)
+            return _Urllib3Response(response, content, url)
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None

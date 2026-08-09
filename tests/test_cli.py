@@ -318,9 +318,10 @@ def _source_name_mismatch_message(tmp_path: Path, prefix: str) -> str:
 class _SidecarResponse:
     """Minimal HttpResponse for the fake index transport."""
 
-    def __init__(self, body: bytes) -> None:
+    def __init__(self, body: bytes, url: str) -> None:
         self.content = body
         self.status_code = 200
+        self.url = url
 
     @property
     def headers(self) -> dict[str, str]:
@@ -354,7 +355,7 @@ class _SidecarTransport:
         if url not in self._bodies:
             msg = f"unexpected request to {url}"
             raise AssertionError(msg)
-        return _SidecarResponse(self._bodies[url])
+        return _SidecarResponse(self._bodies[url], url)
 
     async def aclose(self) -> None:
         return None
