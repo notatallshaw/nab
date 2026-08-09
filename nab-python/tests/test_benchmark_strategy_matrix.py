@@ -23,6 +23,7 @@ from nab_index.multi_index import IndexConfig
 from nab_index.serialization import SimpleSerialization
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.tags import Tag
+from nab_python.fetch import IndexRoute
 from nab_python.target import ResolveTarget
 
 _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
@@ -236,7 +237,10 @@ def _runner_parity_scenario() -> dict[str, object]:
                 "serialization": "html",
             },
         ],
-        "index_routes": [{"name": "demo", "index": "private"}],
+        "index_routes": [
+            {"name": "Demo_Pkg", "index": "private"},
+            {"name": "Other.Package", "index": "private"},
+        ],
         "build_packages": ["demo"],
         "resolution": "lowest-direct",
         "trust_unverified_sdist_deps": False,
@@ -1855,6 +1859,289 @@ def test_parse_scenario_indexes_rejects_malformed_values(
 
 
 @pytest.mark.parametrize(
+    "scenario", [{}, {"index_routes": []}], ids=("missing", "empty")
+)
+def test_parse_scenario_index_routes_returns_a_fresh_empty_list(
+    scenario: dict[str, object],
+) -> None:
+    module = _harness("benchmark_config")
+
+    first = module.parse_scenario_index_routes(
+        "quick:routes",
+        scenario,
+        list(module.DEFAULT_INDEXES),
+    )
+    second = module.parse_scenario_index_routes(
+        "quick:routes",
+        scenario,
+        list(module.DEFAULT_INDEXES),
+    )
+
+    assert first == second == []
+    assert first is not second
+
+
+def test_parse_scenario_index_routes_preserves_raw_names_and_order() -> None:
+    module = _harness("benchmark_config")
+    indexes = [
+        IndexConfig("private", "https://one.example/simple"),
+        IndexConfig("Private", "https://two.example/simple"),
+    ]
+    scenario = {
+        "index_routes": [
+            {"name": "Demo_Pkg", "index": "Private"},
+            {"name": "Second.Package", "index": "private"},
+        ]
+    }
+    original = deepcopy(scenario)
+
+    routes = module.parse_scenario_index_routes("quick:routes", scenario, indexes)
+
+    assert routes == [
+        IndexRoute("Demo_Pkg", "Private"),
+        IndexRoute("Second.Package", "private"),
+    ]
+    assert scenario == original
+
+
+@pytest.mark.parametrize(
+    ("routes", "error", "message"),
+    [
+        (
+            "private",
+            TypeError,
+            "quick:routes: index_routes must be an array of tables, got str",
+        ),
+        (
+            None,
+            TypeError,
+            "quick:routes: index_routes must be an array of tables, got NoneType",
+        ),
+        (
+            ["private"],
+            TypeError,
+            "quick:routes: index_routes[0] must be a table, got str",
+        ),
+        (
+            [{}],
+            ValueError,
+            "quick:routes: index_routes[0] missing required key 'name'",
+        ),
+        (
+            [{"zulu": True, "alpha": False}],
+            ValueError,
+            (
+                "quick:routes: unknown index_routes[0] keys: ['alpha', 'zulu']; "
+                "expected ['index', 'name']"
+            ),
+        ),
+        (
+            [{"name": "demo", "extra": True}],
+            ValueError,
+            (
+                "quick:routes: unknown index_routes[0] keys: ['extra']; "
+                "expected ['index', 'name']"
+            ),
+        ),
+        (
+            [{"name": "demo", "index": "pypi", "extra": True}],
+            ValueError,
+            (
+                "quick:routes: unknown index_routes[0] keys: ['extra']; "
+                "expected ['index', 'name']"
+            ),
+        ),
+        (
+            [{"index": "private"}],
+            ValueError,
+            "quick:routes: index_routes[0] missing required key 'name'",
+        ),
+        (
+            [{"name": "demo"}],
+            ValueError,
+            "quick:routes: index_routes[0] missing required key 'index'",
+        ),
+        (
+            [{"name": False, "index": "pypi"}],
+            TypeError,
+            "quick:routes: index_routes[0].name must be a string, got bool",
+        ),
+        (
+            [{"name": "demo", "index": 123}],
+            TypeError,
+            "quick:routes: index_routes[0].index must be a string, got int",
+        ),
+    ],
+    ids=(
+        "array",
+        "null",
+        "entry",
+        "missing-name-and-index",
+        "unknown-before-missing",
+        "unknown-before-missing-index",
+        "unknown-with-required-keys",
+        "missing-name",
+        "missing-index",
+        "name-type",
+        "index-type",
+    ),
+)
+def test_parse_scenario_index_routes_rejects_malformed_values(
+    routes: object,
+    error: type[Exception],
+    message: str,
+) -> None:
+    module = _harness("benchmark_config")
+
+    with pytest.raises(error, match=re.escape(message)):
+        module.parse_scenario_index_routes(
+            "quick:routes",
+            {"index_routes": routes},
+            list(module.DEFAULT_INDEXES),
+        )
+
+
+def test_parse_scenario_index_routes_does_not_coerce_index_references() -> None:
+    module = _harness("benchmark_config")
+    scenario = {"index_routes": [{"name": "demo", "index": 123}]}
+    indexes = [IndexConfig("123", "https://example.test/simple")]
+    message = "quick:routes: index_routes[0].index must be a string, got int"
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        module.parse_scenario_index_routes("quick:routes", scenario, indexes)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "",
+        " ",
+        "demo>=1",
+        "demo[extra]",
+        "demo; python_version < '3.12'",
+        "demo @ https://example.test/demo.whl",
+    ],
+    ids=("empty", "whitespace", "specifier", "extra", "marker", "url"),
+)
+def test_parse_scenario_index_routes_rejects_non_package_names(name: str) -> None:
+    module = _harness("benchmark_config")
+    message = (
+        "quick:routes: index_routes[0].name must be a valid distribution name, "
+        f"got {name!r}"
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        module.parse_scenario_index_routes(
+            "quick:routes",
+            {"index_routes": [{"name": name, "index": "pypi"}]},
+            list(module.DEFAULT_INDEXES),
+        )
+
+
+@pytest.mark.parametrize(
+    ("routes", "message"),
+    [
+        (
+            [
+                {"name": "demo", "index": "pypi"},
+                {"name": "demo", "index": "pypi"},
+            ],
+            "quick:routes: duplicate index route for 'demo'",
+        ),
+        (
+            [
+                {"name": "Demo_Pkg", "index": "pypi"},
+                {"name": "demo-pkg", "index": "pypi"},
+            ],
+            "quick:routes: duplicate index route for 'demo-pkg'",
+        ),
+        (
+            [
+                {"name": "Bravo_Pkg", "index": "pypi"},
+                {"name": "Alpha.Pkg", "index": "pypi"},
+                {"name": "bravo-pkg", "index": "pypi"},
+                {"name": "alpha-pkg", "index": "pypi"},
+            ],
+            "quick:routes: duplicate index route for 'bravo-pkg'",
+        ),
+        (
+            [{"name": "demo", "index": "missing"}],
+            (
+                "quick:routes: index route for 'demo' names undeclared index "
+                "'missing'; declared indexes are ['Private', 'pypi']"
+            ),
+        ),
+        (
+            [{"name": "demo", "index": "private"}],
+            (
+                "quick:routes: index route for 'demo' names undeclared index "
+                "'private'; declared indexes are ['Private', 'pypi']"
+            ),
+        ),
+        (
+            [
+                {"name": "demo", "index": "missing"},
+                {"name": "demo", "index": "other-missing"},
+            ],
+            "quick:routes: duplicate index route for 'demo'",
+        ),
+    ],
+    ids=(
+        "exact-duplicate",
+        "canonical-duplicate",
+        "first-canonical-duplicate",
+        "undeclared-index",
+        "case-sensitive-index",
+        "duplicate-before-index-reference",
+    ),
+)
+def test_parse_scenario_index_routes_rejects_invalid_relationships(
+    routes: list[dict[str, object]],
+    message: str,
+) -> None:
+    module = _harness("benchmark_config")
+    indexes = [
+        IndexConfig("pypi", "https://pypi.org/simple/"),
+        IndexConfig("Private", "https://example.test/simple"),
+    ]
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        module.parse_scenario_index_routes(
+            "quick:routes",
+            {"index_routes": routes},
+            indexes,
+        )
+
+
+@pytest.mark.parametrize(
+    "earlier_routes",
+    [
+        [
+            {"name": "demo", "index": "pypi"},
+            {"name": "demo", "index": "pypi"},
+        ],
+        [{"name": "demo", "index": "missing"}],
+    ],
+    ids=("duplicate", "undeclared-index"),
+)
+def test_parse_scenario_index_routes_parses_every_entry_before_relationships(
+    earlier_routes: list[dict[str, object]],
+) -> None:
+    module = _harness("benchmark_config")
+    routes = [*earlier_routes, {"name": "later", "index": 123}]
+    message = (
+        f"quick:routes: index_routes[{len(routes) - 1}].index must be a string, got int"
+    )
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        module.parse_scenario_index_routes(
+            "quick:routes",
+            {"index_routes": routes},
+            list(module.DEFAULT_INDEXES),
+        )
+
+
+@pytest.mark.parametrize(
     ("routes", "message"),
     [
         (
@@ -3237,6 +3524,16 @@ indexes = "private"
 python_version = "3.11"
 requirements = []
 unsupported_reason = "not runnable"
+index_routes = "private"
+""",
+            "other:other: index_routes must be an array of tables, got str",
+        ),
+        (
+            """
+[other]
+python_version = "3.11"
+requirements = []
+unsupported_reason = "not runnable"
 indexes = "private"
 project_name = "demo-project"
 project_extras = ["all"]
@@ -3266,6 +3563,7 @@ vcs_allowed_repos = { "https://example.test/repo" = false }
         "vcs-policy-table",
         "vcs-scheme-table",
         "indexes",
+        "index-routes",
         "project-before-indexes",
         "vcs-repo-table",
     ),
@@ -3367,8 +3665,20 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
             "private",
             "example: indexes must be an array of tables, got str",
         ),
+        (
+            "index_routes",
+            "private",
+            "example: index_routes must be an array of tables, got str",
+        ),
     ],
-    ids=("pin", "policy", "scheme-table", "repo-table", "indexes"),
+    ids=(
+        "pin",
+        "policy",
+        "scheme-table",
+        "repo-table",
+        "indexes",
+        "index-routes",
+    ),
 )
 def test_profile_main_validates_schema_before_host_capture(
     monkeypatch: pytest.MonkeyPatch,
@@ -3431,9 +3741,27 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
             "serialization": "html",
         }
     ]
+    assert standard_execution.expected_input["index_routes"] == [
+        {"name": "Demo_Pkg", "index": "private"},
+        {"name": "Other.Package", "index": "private"},
+    ]
     assert (
         standard_execution.config.indexes[0].serialization is SimpleSerialization.HTML
     )
+    assert standard.index_routes_from_config(standard_execution.config) == [
+        IndexRoute("demo-pkg", "private"),
+        IndexRoute("other-package", "private"),
+    ]
+
+    identity = canary.canary_v2_identity(
+        canary.CanaryCase("quick:example", canary.ResolutionStrategy.LOWEST_DIRECT),
+        scenario,
+        canary.ResolutionStrategy.LOWEST_DIRECT,
+    )
+    assert identity.definition["index_routes"] == [
+        {"name": "Demo_Pkg", "index": "private"},
+        {"name": "Other.Package", "index": "private"},
+    ]
 
     assert standard_execution.expected_input["requirements"] == [
         "demo[feature]>=1",
@@ -3514,6 +3842,7 @@ def test_all_runners_reject_malformed_indexes() -> None:
         "python_version": "3.11",
         "requirements": [],
         "indexes": [{"name": False, "url": 123}],
+        "index_routes": "private",
     }
     host = _linux_host(standard)
     message = "example: indexes[0] name and url must be strings"
@@ -3531,6 +3860,114 @@ def test_all_runners_reject_malformed_indexes() -> None:
 
     with pytest.raises(TypeError, match=re.escape(message)):
         profile.build_inputs("example", scenario, host=host)
+
+
+def test_all_runners_reject_malformed_index_routes() -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "indexes": [{"name": "private", "url": "https://example.test/simple"}],
+        "index_routes": [{"name": "demo>=1", "index": "private"}],
+    }
+    host = _linux_host(standard)
+    message = (
+        "example: index_routes[0].name must be a valid distribution name, got 'demo>=1'"
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        _prepare_standard_scenario(standard, scenario, host)
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=host,
+        )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        profile.build_inputs("example", scenario, host=host)
+
+
+def test_all_runners_validate_index_routes_before_build_packages() -> None:
+    standard = _harness("scenarios")
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "index_routes": [{"name": "demo", "index": 123}],
+        "build_packages": "demo",
+    }
+    host = _linux_host(standard)
+    message = "example: index_routes[0].index must be a string, got int"
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        _prepare_standard_scenario(standard, scenario, host)
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=host,
+        )
+
+    with pytest.raises(TypeError, match=re.escape(message)):
+        profile.build_inputs("example", scenario, host=host)
+
+
+@pytest.mark.parametrize(
+    ("routes", "message"),
+    [
+        (
+            [
+                {"name": "Demo_Pkg", "index": "pypi"},
+                {"name": "demo-pkg", "index": "pypi"},
+            ],
+            "example: duplicate index route for 'demo-pkg'",
+        ),
+        (
+            [{"name": "demo", "index": "missing"}],
+            (
+                "example: index route for 'demo' names undeclared index 'missing'; "
+                "declared indexes are ['pypi']"
+            ),
+        ),
+    ],
+    ids=("duplicate", "undeclared-index"),
+)
+def test_canary_and_profile_validate_index_route_relationships_before_host_admission(
+    routes: list[dict[str, str]],
+    message: str,
+) -> None:
+    canary = _harness("canary")
+    profile = _harness("_profile_runner")
+    scenario = {
+        "python_version": "3.11",
+        "requirements": [],
+        "index_routes": routes,
+    }
+
+    class UnusedHost:
+        """Fail if index-route validation reaches target admission."""
+
+        def target_for(self, *_args: object, **_kwargs: object) -> object:
+            pytest.fail("index-route validation reached host admission")
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        canary._prepare_canary_execution(
+            scenario,
+            scenario_name="example",
+            resolution_override=None,
+            host=UnusedHost(),
+        )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        profile.build_inputs("example", scenario, host=UnusedHost())
 
 
 def test_profile_project_metadata_validation_precedes_host_admission() -> None:

@@ -38,6 +38,7 @@ from benchmark_config import (
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
     direct_packages_from_requirements,
+    parse_scenario_index_routes,
     parse_scenario_indexes,
     parse_scenario_project_metadata,
     parse_scenario_requirement_strings,
@@ -62,10 +63,7 @@ from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python.config import NabProjectConfig, index_routes_from_config
-from nab_python.fetch import (
-    FetchCoordinator,
-    IndexRoute,
-)
+from nab_python.fetch import FetchCoordinator
 from nab_python.provider import (
     BuildPolicy,
     ResolutionStrategy,
@@ -596,11 +594,21 @@ def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
         parse_vcs_allowed_schemes,
         parse_vcs_allowed_repos,
         parse_scenario_project_metadata,
-        parse_scenario_indexes,
     )
     for validate_field in field_validators:
         for scenario_name, scenario in found_scenarios:
             validate_field(scenario_name, scenario)
+
+    parsed_indexes = [
+        parse_scenario_indexes(scenario_name, scenario)
+        for scenario_name, scenario in found_scenarios
+    ]
+    for (scenario_name, scenario), indexes in zip(
+        found_scenarios,
+        parsed_indexes,
+        strict=True,
+    ):
+        parse_scenario_index_routes(scenario_name, scenario, indexes)
     return cases
 
 
@@ -737,13 +745,6 @@ def canary_v2_identity(
     return CanaryV2Identity(f"{stem}-{resolution.value}:{name}", definition)
 
 
-def _canary_index_routes(scenario: dict) -> list[IndexRoute]:
-    return [
-        IndexRoute(name=str(entry["name"]), index=str(entry["index"]))
-        for entry in scenario.get("index_routes", [])
-    ]
-
-
 def _prepare_canary_execution(
     scenario: dict,
     *,
@@ -760,6 +761,7 @@ def _prepare_canary_execution(
     vcs_config = parse_scenario_vcs_config(scenario_name, scenario)
     project_metadata = parse_scenario_project_metadata(scenario_name, scenario)
     indexes = parse_scenario_indexes(scenario_name, scenario)
+    index_routes = parse_scenario_index_routes(scenario_name, scenario, indexes)
     python_version = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
@@ -780,7 +782,6 @@ def _prepare_canary_execution(
         scenario_name=scenario_name,
         override=resolution_override,
     )
-    index_routes = _canary_index_routes(scenario)
 
     requires_matching_host = parse_requires_matching_host(
         scenario_name,

@@ -622,6 +622,53 @@ def test_selection_validates_fields_across_the_whole_selection(
         )
 
 
+def test_selection_validates_index_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenario = {
+        "requirements": [],
+        "indexes": [{"name": "private", "url": "https://example.test/simple"}],
+        "index_routes": [{"name": "demo>=1", "index": "private"}],
+    }
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+    message = (
+        "quick:example: index_routes[0].name must be a valid distribution name, "
+        "got 'demo>=1'"
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        module.select_scenarios([module.CanaryCase("quick:example", None)])
+
+
+def test_selection_validates_all_indexes_before_any_index_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenarios = {
+        "quick:first": {
+            "requirements": [],
+            "index_routes": "private",
+        },
+        "quick:second": {
+            "requirements": [],
+            "indexes": "private",
+        },
+    }
+    monkeypatch.setattr(module, "find_scenario", scenarios.get)
+
+    with pytest.raises(
+        TypeError,
+        match="quick:second: indexes must be an array of tables, got str",
+    ):
+        module.select_scenarios(
+            [
+                module.CanaryCase("quick:first", None),
+                module.CanaryCase("quick:second", None),
+            ]
+        )
+
+
 def test_empty_scenarios_list_exits_before_creating_results(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

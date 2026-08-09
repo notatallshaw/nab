@@ -40,6 +40,7 @@ from benchmark_config import (
     build_benchmark_config,
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
+    parse_scenario_index_routes,
     parse_scenario_indexes,
     parse_scenario_project_metadata,
     parse_scenario_requirement_strings,
@@ -583,7 +584,8 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
         parse_scenario_requirement_strings(row.logical_key, row.definition)
         parse_scenario_vcs_config(row.logical_key, row.definition)
         parse_scenario_project_metadata(row.logical_key, row.definition)
-        parse_scenario_indexes(row.logical_key, row.definition)
+        indexes = parse_scenario_indexes(row.logical_key, row.definition)
+        parse_scenario_index_routes(row.logical_key, row.definition, indexes)
         build_policy_overrides = parse_build_packages(row.name, row.definition)
         if "unsupported_reason" in row.definition:
             continue
@@ -1443,45 +1445,6 @@ def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
     return expected_input
 
 
-def parse_index_routes(
-    scenario_name: str,
-    scenario: dict,
-) -> list[IndexRoute]:
-    """Read the ``index_routes`` array of records from a scenario.
-
-    Each entry is a TOML inline table with keys ``name`` (the package
-    name) and ``index`` (the *name* of an entry in ``indexes``).  A route
-    carries no version scope and no marker. Entries are returned in
-    declaration order; ``build_benchmark_config`` rejects duplicate canonical
-    package names.
-    """
-    raw = scenario.get("index_routes", [])
-    if not isinstance(raw, list):
-        msg = (
-            f"{scenario_name}: index_routes must be a TOML array of"
-            f" tables, got {type(raw).__name__}"
-        )
-        raise TypeError(msg)
-    out: list[IndexRoute] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            msg = (
-                f"{scenario_name}: index_routes entries must be tables,"
-                f" got {type(entry).__name__}"
-            )
-            raise TypeError(msg)
-        try:
-            name = entry["name"]
-            index = entry["index"]
-        except KeyError as missing:
-            msg = (
-                f"{scenario_name}: index_routes entry missing required key {missing!s}"
-            )
-            raise ValueError(msg) from None
-        out.append(IndexRoute(name=str(name), index=str(index)))
-    return out
-
-
 def parse_marker_environment(
     scenario_name: str,
     scenario: dict,
@@ -1561,11 +1524,11 @@ def prepare_standard_execution(
     vcs_config = parse_scenario_vcs_config(scenario_name, scenario)
     project_metadata = parse_scenario_project_metadata(scenario_name, scenario)
     indexes = parse_scenario_indexes(scenario_name, scenario)
+    index_routes = parse_scenario_index_routes(scenario_name, scenario, indexes)
     python_version: str = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
     marker_environment = parse_marker_environment(scenario_name, scenario)
-    index_routes = parse_index_routes(scenario_name, scenario)
     build_policy_overrides = dict(parse_build_packages(scenario_name, scenario))
     if "unsupported_reason" not in scenario:
         validate_scenario_build_policy(

@@ -16,7 +16,7 @@ from typing_extensions import Self
 
 from nab_index.multi_index import IndexConfig
 from nab_index.serialization import SimpleSerialization
-from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
+from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from nab_python.target import ResolveTarget
 
 _CANARY = Path(__file__).resolve().parents[1] / "benchmarks" / "canary.py"
@@ -436,9 +436,7 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
             SimpleSerialization.HTML,
         ),
     )
-    assert module.index_routes_from_config(config) == [
-        module.IndexRoute("demo", "private")
-    ]
+    assert module.index_routes_from_config(config) == [IndexRoute("demo", "private")]
     assert len(config.package_overrides) == 1
     assert config.package_overrides[0].build_policy is module.BuildPolicy.BUILD_REMOTE
     assert config.resolution is module.ResolutionStrategy.LOWEST_DIRECT
@@ -676,6 +674,15 @@ def test_canary_main_records_v2_contract(
             {
                 "requirements": [],
                 "unsupported_reason": "test fixture",
+                "index_routes": "private",
+            },
+            False,
+            "quick:requests: index_routes must be an array of tables, got str",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
                 "vcs_allowed_repos": {"https://example.test/repo": False},
             },
             True,
@@ -693,6 +700,7 @@ def test_canary_main_records_v2_contract(
         "vcs-policy",
         "vcs-scheme-table",
         "indexes",
+        "index-routes",
         "default-vcs-repo-table",
     ),
 )
