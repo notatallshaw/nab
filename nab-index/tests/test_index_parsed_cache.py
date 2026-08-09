@@ -48,6 +48,8 @@ _T = TypeVar("_T")
 # feeds _parse_files; the cache maps both to the "pypi" index dir.
 _INDEX = "https://pypi.org/simple"
 _INDEX_NORM = "https://pypi.org/simple/"
+# The page a warm entry was fetched from, which its policy records.
+_PAGE_URL = f"{_INDEX_NORM}pkg/"
 
 _LISTING = {
     "meta": {"api-version": "1.0"},
@@ -397,7 +399,9 @@ class TestWritePathParsedBlob:
         cache = _cache(tmp_path)
         body = _LISTING_BYTES
         digest = cache.put_simple(
-            "pkg", body, CachePolicy(fetched_at=0, max_age=0, etag="e1")
+            "pkg",
+            body,
+            CachePolicy(fetched_at=0, max_age=0, etag="e1", page_url=_PAGE_URL),
         )
         old_files = _parse_files(json.loads(body), _INDEX_NORM, "pkg")
         old_blob = encode(old_files, digest)
@@ -417,6 +421,37 @@ class TestWritePathParsedBlob:
         assert cache.get_simple_parsed("pkg") == old_blob
         assert decode(old_blob, policy) == files
 
+    def test_revalidate_304_from_a_new_page_retires_the_blob(
+        self, tmp_path: Path
+    ) -> None:
+        """A moved page re-resolves relative entries, so the old blob is retired."""
+        cache = _cache(tmp_path)
+        digest = cache.put_simple(
+            "pkg",
+            _LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=0, etag="e1", page_url=_PAGE_URL),
+        )
+        old_blob = encode(_parse_files(_LISTING, _INDEX_NORM, "pkg"), digest)
+        cache.put_simple_parsed("pkg", old_blob)
+        moved = "https://mirror.example/simple/pkg/"
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=304, headers={"etag": "e1"}, url=moved)]
+        )
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        _run(client.get_files("pkg"))
+
+        result = cache.get_simple("pkg")
+        assert result is not None
+        new_body, policy = result
+        assert new_body == _LISTING_BYTES
+        assert policy.page_url == moved
+        assert policy.body_digest is None
+        # The blob is still on disk but no longer binds, so the next read
+        # rebuilds it against the new page rather than serving stale URLs.
+        assert cache.get_simple_parsed("pkg") == old_blob
+        assert decode(old_blob, policy) is None
+
 
 _PARSED = _parse_files(json.loads(_LISTING_BYTES), _INDEX_NORM, "pkg")
 
@@ -431,6 +466,7 @@ def _warm_bound(
         fetched_at=2_000_000_000 if fresh else 0,
         max_age=99999 if fresh else 0,
         etag="e",
+        page_url=_PAGE_URL,
     )
     digest = cache.put_simple("pkg", body, policy)
     files = _parse_files(json.loads(body), _INDEX_NORM, "pkg")

@@ -47,8 +47,11 @@ Each parsed blob is bound to the exact body it came from by a `body_digest`
 that the `.policy` also carries. On a hit the two digests are compared;
 they match only while the body is unchanged, so any body update
 invalidates the blob by construction and forces a rebuild from the raw
-body. A blob is also rebuilt when it was written by a different nab build
-or interpreter, or is corrupt. The raw body remains authoritative: the
+body. A revalidation that lands on a different page retires the blob too,
+since a relative entry resolves against the page URL and a move changes
+every file URL the records hold. A blob is also rebuilt when it was
+written by a different nab build or interpreter, or is corrupt. The raw
+body remains authoritative: the
 accelerator is only ever a derived copy, and a rebuild is a reparse of
 whatever body is on disk.
 

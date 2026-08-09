@@ -209,6 +209,18 @@ def _freshness_lifetime(response: HttpResponse) -> int:
     return _expires_lifetime(expires, _header(response, "date"))
 
 
+def _carried_digest(policy: CachePolicy, page_url: str) -> str | None:
+    """Return the body digest a 304 may carry forward, or ``None`` to retire it.
+
+    A 304 leaves the body alone, so the parsed blob bound to it still describes
+    that body, but only while the page it was parsed from is the same one: a
+    relative entry resolves against the page URL, so a move re-resolves every
+    file URL. Dropping the digest retires the blob, and the next read rebuilds
+    it against the new base.
+    """
+    return policy.body_digest if page_url == policy.page_url else None
+
+
 def read_fresh_parsed_listing(
     cache: CacheBackend, package: str, *, offline: bool
 ) -> list[WheelFile | SdistFile] | None:
@@ -546,9 +558,7 @@ class CachedAsyncSimpleClient:
                 ),
                 etag=_header(response, "etag") or policy.etag,
                 page_url=response.url,
-                # Body unchanged, so its digest carries forward and any parsed
-                # blob written for the old policy still binds; no reparse.
-                body_digest=policy.body_digest,
+                body_digest=_carried_digest(policy, response.url),
             )
             self._cache.refresh_simple_policy(package, new_policy)
             return self._parse_listing(body, package, response.url)
