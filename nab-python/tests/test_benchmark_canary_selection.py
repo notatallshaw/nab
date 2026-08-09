@@ -715,11 +715,12 @@ def test_selection_validates_all_indexes_before_any_index_routes(
 
 
 @pytest.mark.parametrize(
-    ("first", "second", "message"),
+    ("first", "second", "error", "message"),
     [
         (
             {"build_packages": "demo"},
             {"marker_environment": "Linux"},
+            TypeError,
             "quick:second: marker_environment must be a table of strings",
         ),
         (
@@ -728,15 +729,29 @@ def test_selection_validates_all_indexes_before_any_index_routes(
                 "build_packages": ["demo"],
             },
             {"build_packages": "demo"},
+            TypeError,
             ("quick:second: build_packages must be a list of package names, got str"),
         ),
+        (
+            {"build_packages": "demo"},
+            {"marker_environment": {"platform_codename": "Windows"}},
+            ValueError,
+            (
+                "quick:second: unknown marker_environment variables: ['platform_codename']"
+            ),
+        ),
     ],
-    ids=("markers-before-build", "build-shapes-before-compatibility"),
+    ids=(
+        "marker-shapes-before-build",
+        "build-shapes-before-compatibility",
+        "marker-names-before-build",
+    ),
 )
 def test_selection_validates_field_phases_across_the_whole_selection(
     monkeypatch: pytest.MonkeyPatch,
     first: dict[str, object],
     second: dict[str, object],
+    error: type[Exception],
     message: str,
 ) -> None:
     module = _harness()
@@ -746,7 +761,7 @@ def test_selection_validates_field_phases_across_the_whole_selection(
     }
     monkeypatch.setattr(module, "find_scenario", scenarios.get)
 
-    with pytest.raises(TypeError, match=re.escape(message)):
+    with pytest.raises(error, match=re.escape(message)):
         module.select_scenarios(
             [
                 module.CanaryCase("quick:first", None),
@@ -804,6 +819,26 @@ def test_selection_validates_unsupported_build_shape_but_not_compatibility(
         module.select_scenarios(selected)
 
 
+def test_selection_rejects_unknown_marker_variables_on_unsupported_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenario = {
+        "requirements": [],
+        "unsupported_reason": "not runnable",
+        "marker_environment": {"platform_codename": "Windows"},
+    }
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "quick:example: unknown marker_environment variables: ['platform_codename']"
+        ),
+    ):
+        module.select_scenarios([module.CanaryCase("quick:example", None)])
+
+
 @pytest.mark.parametrize(
     ("scenario", "message"),
     [
@@ -819,8 +854,15 @@ def test_selection_validates_unsupported_build_shape_but_not_compatibility(
             {"requirements": [], "requires_matching_host": "yes"},
             "requires_matching_host must be a boolean",
         ),
+        (
+            {
+                "requirements": [],
+                "marker_environment": {"platform_codename": "Windows"},
+            },
+            "unknown marker_environment variables: ['platform_codename']",
+        ),
     ],
-    ids=("build-packages", "resolution", "host-requirement"),
+    ids=("build-packages", "resolution", "host-requirement", "marker-variable"),
 )
 def test_selected_scenario_preflight_fails_before_host_and_output(
     tmp_path: Path,
