@@ -512,11 +512,10 @@ class Provider:
     # destabilised hard scenarios.
     PREFETCH_DEPTH: int = 1
 
-    # Once the first look-ahead candidate fails, the resolver walks
-    # versions one at a time via the abort-skip path.  Front-load
-    # metadata for the next K so the walk hits cache instead of one
-    # RTT per visit.  Only fires from _scan_candidates_pipelined, so
-    # scenarios that accept the first candidate pay nothing.
+    # Versions front-loaded at the top of the pipelined scan, so a walk
+    # that runs past the first ``PREFETCH_BATCH`` hits cache instead of one
+    # RTT per visit.  The scan only starts once the first candidate is
+    # rejected, so accepting that candidate costs nothing.
     DEEP_PREFETCH_COUNT: int = 64
 
     # Per-call cap on decision-aware look-ahead rejections so tight version
@@ -535,9 +534,7 @@ class Provider:
     #
     # Set low because the trigger is conservative: a unique
     # ``(blocker_pkg, blocker_version)`` repeating across every rejection
-    # is already a strong signal. Combined with the per-package skip
-    # below, subsequent calls for the same package skip look-ahead while
-    # the blocker decision is unchanged.
+    # is already a strong signal.
     _LOOKAHEAD_ABORT_THRESHOLD = 8
 
     # Max force-backtracks one blocker can drive per resolution.
@@ -806,14 +803,6 @@ class Provider:
         # Last NO_VERSIONS reason per package; consumed by resolve.py to
         # enrich ResolutionError messages.
         self._no_versions_reasons: dict[str, str] = {}
-
-        # Per-package record of "look-ahead aborted at this blocker decision".
-        # While the blocker is still decided to the recorded version, the next
-        # ``choose_version`` for this package skips look-ahead entirely and
-        # returns the first candidate; re-running the scan would just hit the
-        # same monolithic-rejection pattern and abort again.  Cleared per
-        # package when the blocker's decision changes (back-jump unblocks it).
-        self._lookahead_aborted: dict[str, tuple[str, Version]] = {}
 
         # Blocker packages queued for force back-track by the resolver after
         # the next ``choose_version`` returns.  Populated by the look-ahead
@@ -1300,10 +1289,6 @@ class Provider:
                 )
             return candidates[0] if candidates else None
 
-        skip = self._try_abort_skip(normalized, candidates[0])
-        if skip is not None:
-            return skip
-
         wheel_by_version = self._wheel_by_version(normalized, version_list)
         return self._run_full_scan(
             normalized, candidates, wheel_by_version, package, all_versions
@@ -1359,10 +1344,10 @@ class Provider:
 
         Runs the real ``choose_version`` over ``version_range`` so look-ahead
         rejections are honored, then rolls back the state it records: the queued
-        clauses and force-backtrack signal are drained, and the per-package abort
-        markers, force-backtrack budget, and no-versions reasons are restored to
-        their pre-probe values.  A failed-resolve attribution probe therefore
-        cannot alter a later decision.
+        clauses and force-backtrack signal are drained, and the force-backtrack
+        budget and no-versions reasons are restored to their pre-probe values.
+        A failed-resolve attribution probe therefore cannot alter a later
+        decision.
 
         The one exception is ``package``'s own no-versions reason.  When the
         un-narrowed range yields no version because a transitive conflict
@@ -1371,11 +1356,10 @@ class Provider:
         no-match the constraint-narrowed pass recorded.  The reason map only
         labels a ``NO_VERSIONS`` clause, so keeping it cannot alter a decision.
 
-        The probe also suppresses both look-ahead shortcuts, which could
-        otherwise report a version the decided blocker rejects: it hides the
-        abort markers (so neither a fresh abort nor a recorded skip fires) and
-        sets ``_probing_satisfiable`` to skip the abort and to keep checking
-        decisions past ``_BROAD_LA_REJECT_CAP``.
+        The probe also suppresses the two look-ahead shortcuts that could
+        otherwise report a version the decided blocker rejects:
+        ``_probing_satisfiable`` skips the abort and keeps checking decisions
+        past ``_BROAD_LA_REJECT_CAP``.
 
         The un-narrowed range spans versions the constraint clipped away, so
         look-ahead can reach one whose metadata raises a hard error the narrowed
@@ -1395,11 +1379,9 @@ class Provider:
         # Late import: config imports provider at module load.
         from .config import OverrideConflictError  # noqa: PLC0415
 
-        saved_aborted = dict(self._lookahead_aborted)
         saved_counts = dict(self._force_backtrack_counts)
         saved_reasons = dict(self._no_versions_reasons)
 
-        self._lookahead_aborted = {}
         self._probing_satisfiable = True
         try:
             return self.choose_version(package, version_range) is not None
@@ -1420,7 +1402,6 @@ class Provider:
             self._probing_satisfiable = False
             self.consume_pending_clauses()
             self.consume_force_backtrack_targets()
-            self._lookahead_aborted = saved_aborted
             self._force_backtrack_counts = saved_counts
 
             # Restore the snapshot but keep the probe's own blocker reason.
@@ -1428,29 +1409,6 @@ class Provider:
             self._no_versions_reasons = saved_reasons
             if probed_reason is not None:
                 self._no_versions_reasons[package] = probed_reason
-
-    def _try_abort_skip(self, normalized: str, first: Version) -> Version | None:
-        """Return the first candidate when a prior abort is still valid.
-
-        While the recorded blocker decision is unchanged, a re-run of
-        the full scan would just trip the abort again. A warm cache
-        hit returns directly; otherwise a non-decision look-ahead
-        guards against unreadable wheels. Returns None when no
-        recorded abort applies, or when the candidate fails the gate.
-        """
-        aborted = self._lookahead_aborted.get(normalized)
-        if aborted is None:
-            return None
-        blocker_pkg, blocker_version = aborted
-        if self.solution_decisions.get(blocker_pkg) != blocker_version:
-            del self._lookahead_aborted[normalized]
-            return None
-        if (normalized, first) in self.deps_cache:
-            return first
-        if self._look_ahead_ok(normalized, first, check_decisions=False):
-            self._flush_pending_blocks()
-            return first
-        return None
 
     def _run_full_scan(
         self,
@@ -1518,8 +1476,7 @@ class Provider:
         blocker on its own.  Sound because no clause is emitted by the
         abort path.
         """
-        # Front-load deep metadata before the scan: by the time the
-        # 8-batch trips the abort, the rest of the walk is in flight.
+        # Front-load deep metadata so a walk past the first batch hits cache.
         self.prefetch_walk_ahead(normalized)
 
         starts_iter = iter(range(0, len(remaining), self.PREFETCH_BATCH))
@@ -1588,17 +1545,15 @@ class Provider:
         return None, broad_rejections
 
     def _try_abort_lookahead(self, normalized: str) -> bool:
-        """Run the monolithic-rejection abort. Return True when fired.
+        """Run the monolithic-rejection abort. Return True when it fires.
 
-        Records the abort state, queues the blocker for force-backtrack
-        (up to the per-blocker cap), and returns True so the caller
-        falls back to its first candidate.
+        Firing queues the blocker for force-backtrack, up to the per-blocker
+        cap; the caller then falls back to its first candidate.
         """
         blocker = self._should_abort_lookahead(normalized)
         if blocker is None:
             return False
         self._discard_pending_decision_blocks(normalized)
-        self._lookahead_aborted[normalized] = blocker
         blocker_pkg, _ = blocker
         prior_fires = self._force_backtrack_counts.get(blocker_pkg, 0)
         if (

@@ -683,9 +683,9 @@ def prefetch_walk_ahead(
 ) -> None:
     """Submit metadata for the next ``deep_count`` wheels of ``normalized``.
 
-    Called when the scan is about to walk past its ``PREFETCH_BATCH``
-    window.  Front-loading the rest of the walk lets ``_try_abort_skip``
-    and any restart hit cache instead of one RTT per visit.
+    Called at the top of the pipelined scan, so a walk that runs past the
+    first ``PREFETCH_BATCH`` window hits cache instead of paying one RTT
+    per visit.
 
     Takes each version's artifact from :func:`wheel_by_version`, so the
     sidecar it warms is the one the read asks for.  Skips already-cached
