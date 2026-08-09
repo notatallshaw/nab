@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import io
 import json
 import logging
@@ -13,7 +14,7 @@ import zipfile
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import ClassVar, cast
+from typing import Any, ClassVar, cast
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -181,6 +182,28 @@ def _done_event() -> threading.Event:
     ev = threading.Event()
     ev.set()
     return ev
+
+
+def _write_local_wheel(path: Path, name: str, version: str) -> None:
+    """Write a wheel at ``path`` carrying nothing but its own METADATA."""
+    with zipfile.ZipFile(path, "w") as zf:
+        member = f"{name}-{version}.dist-info/METADATA"
+        zf.writestr(member, make_metadata(name, version))
+
+
+def _deny_zip_open(monkeypatch: pytest.MonkeyPatch, target: Path) -> None:
+    """Make opening ``target`` as a zip fail with EACCES.
+
+    A real chmod would not do: root ignores the mode bits and Windows has none.
+    """
+    original = zipfile.ZipFile
+
+    def denied(file: Any, *args: Any, **kwargs: Any) -> zipfile.ZipFile:
+        if file == target:
+            raise PermissionError(errno.EACCES, "Permission denied", str(target))
+        return original(file, *args, **kwargs)
+
+    monkeypatch.setattr(zipfile, "ZipFile", denied)
 
 
 def _make_sdist_targz(body: bytes = b"[project]\nname = 'pkg'\n") -> bytes:
@@ -2329,6 +2352,57 @@ class TestGetDependencies:
         assert "bar" in deps
         assert V("2.0") in deps["bar"]
         assert V("1.0") not in deps["bar"]
+
+    def test_unreadable_local_wheel_fails_instead_of_pinning_older(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unreadable local wheel fails the resolve, not just the version.
+
+        Look-ahead treats a ``MetadataError`` as a rejection, so folding the
+        read failure into one would drop 1.0 and answer with 0.9.
+        """
+        readable = tmp_path / "foo-0.9-py3-none-any.whl"
+        _write_local_wheel(readable, "foo", "0.9")
+        refused = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_local_wheel(refused, "foo", "1.0")
+        _deny_zip_open(monkeypatch, refused)
+
+        coordinator = make_coordinator(
+            [
+                make_wheel("0.9", has_metadata=False, local_path=readable),
+                make_wheel("1.0", has_metadata=False, local_path=refused),
+            ],
+            package="foo",
+        )
+        root_reqs = {"foo": SpecifierSet(">=0").to_range()}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+
+        with pytest.raises(UnreadableLocalIndexError, match="Permission denied"):
+            provider.choose_version("foo", root_reqs["foo"])
+
+    def test_unreadable_local_wheel_falls_back_to_sdist(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The version's own sdist still answers for an unreadable local wheel."""
+        wheel_path = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_local_wheel(wheel_path, "foo", "1.0")
+        _deny_zip_open(monkeypatch, wheel_path)
+
+        coordinator = make_coordinator(
+            [
+                make_wheel("1.0", has_metadata=False, local_path=wheel_path),
+                make_sdist("1.0"),
+            ],
+            package="foo",
+            sdist_pkg_info=(
+                "Metadata-Version: 2.2\nName: foo\nVersion: 1.0\n"
+                "Requires-Dist: baz>=3\n"
+            ),
+        )
+        provider = Provider(coordinator, target=_PY312)
+
+        deps = provider.get_dependencies("foo", V("1.0"))
+        assert "baz" in deps
 
     def test_local_wheel_with_mismatched_dist_info_rejected(
         self, tmp_path: Path

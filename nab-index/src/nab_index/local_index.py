@@ -483,8 +483,10 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
     (taken from its filename); a wheel with several top-level ``.dist-info``
     directories, or one naming a different distribution, raises
     :class:`UnsupportedWheelError` rather than reading another package's
-    metadata.  Returns ``None`` when the file is not a readable zip, its name
-    is not a wheel filename, or it carries no METADATA member.
+    metadata.  Returns ``None`` when the archive cannot be parsed, its name is
+    not a wheel filename, or it carries no METADATA member.  A wheel that
+    cannot be opened raises :class:`UnreadableLocalIndexError` instead, so a
+    permission or mount fault is not read as a wheel that declares nothing.
     """
     parsed = _parse_wheel_filename(wheel_path.name)
     if parsed is None:
@@ -495,9 +497,11 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
             if member is None:
                 return None
             return zf.read(member).decode("utf-8")
+    except OSError as exc:
+        msg = f"cannot read local wheel {wheel_path}: {exc}"
+        raise UnreadableLocalIndexError(msg) from exc
     except (
         zipfile.BadZipFile,
-        OSError,
         UnicodeDecodeError,
         zlib.error,
         lzma.LZMAError,

@@ -14,7 +14,11 @@ from urllib.parse import urlsplit
 
 from nab_index.client import SdistFile, WheelFile
 from nab_index.lazy_wheel import RangeOutcome
-from nab_index.local_index import UnsupportedWheelError, read_wheel_metadata
+from nab_index.local_index import (
+    UnreadableLocalIndexError,
+    UnsupportedWheelError,
+    read_wheel_metadata,
+)
 
 from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .._vcs_admission import admit_vcs_url
@@ -99,7 +103,7 @@ def resolve_metadata(
         msg = f"Version {version} of {package} not found in listing"
         raise MetadataError(msg)
 
-    metadata_text, from_sdist = _read_direct_wheel_metadata(
+    metadata_text, from_sdist, unreadable_wheel = _read_direct_wheel_metadata(
         provider, dist, normalized, ver_str
     )
 
@@ -125,6 +129,43 @@ def resolve_metadata(
     if metadata_text is not None:
         return (metadata_text, from_sdist)
 
+    raise _ladder_failure(
+        provider,
+        package,
+        normalized,
+        version,
+        sdist=sdist,
+        metadata_url=metadata_url,
+        unreadable_wheel=unreadable_wheel,
+    )
+
+
+def _ladder_failure(
+    provider: Provider,
+    package: str,
+    normalized: str,
+    version: Version,
+    *,
+    sdist: SdistFile | None,
+    metadata_url: str | None,
+    unreadable_wheel: UnreadableLocalIndexError | None,
+) -> Exception:
+    """Return the error for a version no rung of the ladder could answer.
+
+    An unreadable local wheel takes precedence, and is deliberately not a
+    :class:`~nab_python.provider.MetadataError`: look-ahead treats those as a
+    rejection, so the version would be dropped and an older release pinned
+    instead of the resolve failing.
+    """
+    # Late import: ``provider`` imports this module at module load.
+    from ..provider import MetadataError
+
+    if unreadable_wheel is not None:
+        return unreadable_wheel
+
+    index = provider.coordinator.index
+    ver_str = str(version)
+
     # Only the rung the ladder gave up on can name the reason: an earlier rung
     # skipped offline says nothing about what this one read.
     last_url = sdist.url if sdist is not None else metadata_url
@@ -139,7 +180,7 @@ def resolve_metadata(
         reason = "no PEP 658 metadata and no sdist available"
 
     msg = f"No metadata for {package}=={version}: {reason}"
-    raise MetadataError(msg)
+    return MetadataError(msg)
 
 
 def _report_offline_skip(
@@ -158,13 +199,16 @@ def _report_offline_skip(
 
 def _read_direct_wheel_metadata(
     provider: Provider, dist: DistFile | None, package: str, version: str
-) -> tuple[str | None, bool]:
+) -> tuple[str | None, bool, UnreadableLocalIndexError | None]:
     """Rungs 2 and 3: a PEP 658 sidecar read, then a local wheel read.
 
-    Returns ``(metadata_text, from_sdist)``; ``from_sdist`` is always ``False``
-    since both sources are wheel METADATA.  A recorded sidecar integrity error
-    is re-raised and fails the resolve; a contradictory local ``.dist-info``
-    reads back as ``None`` and the ladder steps on.
+    Returns ``(metadata_text, from_sdist, unreadable)``; ``from_sdist`` is
+    always ``False`` since both sources are wheel METADATA.  A recorded sidecar
+    integrity error is re-raised and fails the resolve; a contradictory local
+    ``.dist-info`` reads back as ``None`` and the ladder steps on.  A wheel
+    that cannot be opened comes back as ``unreadable`` rather than raising, so
+    the version's own sdist still gets a turn; the caller raises it when no
+    later rung answers.
     """
     index = provider.coordinator.index
     if isinstance(dist, WheelFile) and (url := dist.metadata_url) is not None:
@@ -175,14 +219,17 @@ def _read_direct_wheel_metadata(
         integrity_error = index.get_metadata_error(package, version, url)
         if integrity_error is not None:
             raise integrity_error
-        return index.get_metadata_with_origin(package, version, url)
+        text, from_sdist = index.get_metadata_with_origin(package, version, url)
+        return text, from_sdist, None
     if isinstance(dist, WheelFile) and dist.local_path is not None:
         try:
-            return read_wheel_metadata(dist.local_path), False
+            return read_wheel_metadata(dist.local_path), False, None
         except UnsupportedWheelError:
-            # A contradictory .dist-info is unusable, like an unreadable wheel.
-            return None, False
-    return None, False
+            # A contradictory .dist-info is unusable, like a corrupt archive.
+            return None, False, None
+        except UnreadableLocalIndexError as exc:
+            return None, False, exc
+    return None, False, None
 
 
 def _is_bare_remote_wheel(dist: DistFile | None) -> TypeGuard[WheelFile]:

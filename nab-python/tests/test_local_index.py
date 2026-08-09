@@ -85,6 +85,23 @@ def _swallow_is_file_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "is_file", is_file)
 
 
+def _deny_zip_open(monkeypatch: pytest.MonkeyPatch, target: Path) -> None:
+    """Make opening ``target`` as a zip fail with EACCES.
+
+    ``zipfile`` opens the path itself, so :func:`_deny_access` does not reach
+    it, and a real chmod would not do: root ignores the mode bits and Windows
+    has none.
+    """
+    original = zipfile.ZipFile
+
+    def denied(file: Any, *args: Any, **kwargs: Any) -> zipfile.ZipFile:
+        if file == target:
+            raise PermissionError(errno.EACCES, "Permission denied", str(target))
+        return original(file, *args, **kwargs)
+
+    monkeypatch.setattr(zipfile, "ZipFile", denied)
+
+
 def _write_wheel(
     path: Path,
     name: str,
@@ -1468,6 +1485,23 @@ class TestReadWheelMetadata:
 
     def test_returns_none_for_non_wheel_filename(self, tmp_path: Path) -> None:
         assert read_wheel_metadata(tmp_path / "notes.txt") is None
+
+    def test_unreadable_wheel_raises_index_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A wheel the process cannot open must raise, not read back as None.
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as zf:
+            zf.writestr(
+                "foo-1.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n",
+            )
+        _deny_zip_open(monkeypatch, wheel)
+
+        with pytest.raises(UnreadableLocalIndexError) as caught:
+            read_wheel_metadata(wheel)
+        assert str(wheel) in str(caught.value)
+        assert "Permission denied" in str(caught.value)
 
     def test_rejects_multiple_dist_info_dirs(self, tmp_path: Path) -> None:
         wheel = tmp_path / "foo-1.0-py3-none-any.whl"
