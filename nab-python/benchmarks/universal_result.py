@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+
+from benchmark_datetime import is_valid_datetime
 
 RESULT_SCHEMA_VERSION = 3
 MANIFEST_FILENAME = "_manifest.json"
@@ -140,16 +141,6 @@ def _valid_string_list(value: object, *, unique: bool = False) -> bool:
     )
 
 
-def _valid_datetime(value: object) -> bool:
-    if not isinstance(value, str) or not value:
-        return False
-    try:
-        datetime.fromisoformat(value)
-    except ValueError:
-        return False
-    return True
-
-
 def _valid_input(value: object, reason: object) -> bool:
     if not isinstance(value, dict):
         return False
@@ -183,7 +174,7 @@ def _valid_input(value: object, reason: object) -> bool:
         and isinstance(value["reason"], str)
         and reason == value["reason"]
         and ("constraints" not in value or _valid_string_list(value["constraints"]))
-        and ("datetime" not in value or _valid_datetime(value["datetime"]))
+        and ("datetime" not in value or is_valid_datetime(value["datetime"]))
     )
 
 

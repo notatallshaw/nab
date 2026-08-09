@@ -27,7 +27,6 @@ import sys
 import time
 from contextlib import contextmanager
 from dataclasses import replace
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -40,6 +39,7 @@ else:
     # nab pins py>=3.10 but the import fallback matches scenarios.py
     import tomli as tomllib  # type: ignore[no-redef] # pragma: no cover
 
+from benchmark_datetime import parse_datetime
 from universal_result import (
     MANIFEST_FILENAME,
     RESULT_SCHEMA_VERSION,
@@ -185,14 +185,6 @@ def get_git_source_state() -> dict[str, str | bool | None]:
         else None
     )
     return {"commit": commit, "dirty": dirty, "diff_hash": diff_hash}
-
-
-def parse_datetime(value: str) -> datetime:
-    """Parse an ISO 8601 datetime; default to UTC if naive."""
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
 
 
 def check_lock_consistency(result: ResolveResult) -> tuple[bool, list[str]]:
