@@ -32,7 +32,7 @@ import zlib
 from contextlib import contextmanager
 from email import message_from_string
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import build
 import pyproject_hooks
@@ -197,7 +197,18 @@ def _install_extra_requires(
     if not extra:
         return
 
-    # PEP 517 requires the hook to return a list of strings.
+    _validate_extra_requires(extra, backend=backend)
+
+    logger.debug("build backend asked for extras: %s", extra)
+    env.install(extra)
+
+
+def _validate_extra_requires(extra: list[Any], *, backend: str) -> None:
+    """Reject a hook result the build env cannot install.
+
+    PEP 517 requires strings, and the build env writes each one into the
+    UTF-8 pyproject its inner resolve reads.
+    """
     non_str = [item for item in extra if not isinstance(item, str)]
     if non_str:
         msg = (
@@ -206,8 +217,16 @@ def _install_extra_requires(
         )
         raise BuildBackendError(msg)
 
-    logger.debug("build backend asked for extras: %s", extra)
-    env.install(extra)
+    for item in extra:
+        try:
+            item.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            msg = (
+                f"build backend {backend!r} returned a build requirement from"
+                f" get_requires_for_build_wheel that cannot be encoded as"
+                f" UTF-8: {item!r}"
+            )
+            raise BuildBackendError(msg) from exc
 
 
 def _read_pyproject(source_dir: Path) -> dict:
