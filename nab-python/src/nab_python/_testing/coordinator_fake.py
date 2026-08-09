@@ -1,23 +1,28 @@
-"""Shared mock-coordinator builder for the nab-python test suite.
+"""In-memory fetch port for the nab-python test suite.
 
-A ``FetchCoordinator``-shaped :class:`unittest.mock.MagicMock` wrapped
-around a real :class:`~nab_python.fetch.InMemoryIndex`.  The mock's
-request methods write to the index and return an already-set
-:class:`threading.Event`, so the synchronous provider code under test
-sees fetches resolve immediately.
+:class:`FakeFetchPort` implements
+:class:`~nab_python.fetch_port.FetchPort` against a real
+:class:`~nab_python.store.InMemoryIndex`.  Its request methods write to that
+index and hand back an already-set :class:`threading.Event`, so the
+synchronous provider code under test sees every fetch resolve immediately.
 
-Unlike the real coordinator, the request methods take the published hashes
-as required arguments, so a caller that stops forwarding them fails.
+It is a class rather than a mock so that an unserved request cannot answer.  A
+mock hands back a truthy stand-in for any attribute, so a request nobody
+wired, a name no request has, and any arity at all read alike as a fetch that
+succeeded.
+
+Its request methods carry the port's signatures exactly, defaults included, so
+the provider under test calls the shape a host has to build.
 """
 
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from nab_index.multi_index import IndexConfig
-from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, InMemoryIndex
+from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
+from nab_python.store import InMemoryIndex
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -25,8 +30,21 @@ if TYPE_CHECKING:
     from nab_index.client import SdistFile, WheelFile
     from nab_index.lazy_wheel import RangeMetadataResult
 
-
 _MINIMAL_METADATA = "Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\n"
+
+_T = TypeVar("_T")
+
+REQUESTS = (
+    "request_listing",
+    "request_metadata",
+    "request_metadata_batch",
+    "request_range_metadata",
+    "request_sdist",
+    "request_sdist_archive",
+    "request_direct_archive",
+)
+"""The port's request methods, and the names :meth:`FakeFetchPort.calls_to`
+and :meth:`FakeFetchPort.override` accept."""
 
 
 def _done_event() -> threading.Event:
@@ -83,65 +101,16 @@ def _make_metadata_resolver(
     return _resolve
 
 
-def _wire_metadata_side_effects(
-    coordinator: MagicMock,
-    index: InMemoryIndex,
-    resolve_metadata: Callable[[str, str, str], str | None],
-) -> None:
-    """Attach ``request_listing``/``request_metadata``/batch side effects."""
-
-    def _request_listing(
-        _pkg: str,
-        *,
-        speculative: bool = False,  # noqa: ARG001 (mirrors the real keyword)
-    ) -> threading.Event:
-        return _done_event()
-
-    def _fetch_metadata(pkg: str, ver: str, url: str) -> None:
-        # The fetcher skips a sidecar the index already answers for.
-        if index.has_metadata(pkg, ver, url):
-            return
-        # Store even when the sidecar returns nothing: an empty fetch still
-        # marks the slot fetched, as real _fetch_metadata does.
-        text = resolve_metadata(pkg, ver, url)
-        index.store_metadata(pkg, ver, text, url)
-
-    def _request_metadata(
-        pkg: str, ver: str, url: str, _hash: tuple[str, str] | None
-    ) -> threading.Event:
-        _fetch_metadata(pkg, ver, url)
-        return _done_event()
-
-    def _request_metadata_batch(
-        items: list[tuple[str, str, str, tuple[str, str] | None]],
-    ) -> list[tuple[str, str, threading.Event]]:
-        results: list[tuple[str, str, threading.Event]] = []
-        for pkg, ver, url, _hash in items:
-            _fetch_metadata(pkg, ver, url)
-            results.append((pkg, ver, _done_event()))
-        return results
-
-    coordinator.request_listing.side_effect = _request_listing
-    coordinator.request_metadata.side_effect = _request_metadata
-    coordinator.request_metadata_batch.side_effect = _request_metadata_batch
-
-
-def _wire_sdist_side_effects(
-    coordinator: MagicMock,
+def _make_sdist_server(
     index: InMemoryIndex,
     *,
     sdist_pkg_info: str | None,
     sdist_pkg_info_by_version: Mapping[str, str | None] | None,
     sdist_pyproject_toml: str | None,
-) -> None:
-    """Attach the ``request_sdist`` side effect."""
+) -> Callable[[str, str], None]:
+    """Return the callable that writes an sdist fetch's result into ``index``."""
 
-    def _request_sdist(
-        pkg: str,
-        ver: str,
-        _url: str,
-        _hashes: tuple[tuple[str, str], ...],
-    ) -> threading.Event:
+    def _serve(pkg: str, ver: str) -> None:
         pkg_info = (
             sdist_pkg_info
             if sdist_pkg_info_by_version is None
@@ -149,56 +118,283 @@ def _wire_sdist_side_effects(
         )
 
         # ``store_sdist_metadata`` is always called; passing ``None``
-        # poisons the cache slot, matching the original test_provider
-        # helper's contract for sdist-fetch failures.
+        # poisons the cache slot, which is how an sdist-fetch failure reads.
         index.store_sdist_metadata(pkg, ver, pkg_info)
         if sdist_pyproject_toml is not None:
             index.store_sdist_pyproject(pkg, ver, sdist_pyproject_toml)
-        return _done_event()
 
-    coordinator.request_sdist.side_effect = _request_sdist
+    return _serve
 
 
-def _wire_range_side_effects(
-    coordinator: MagicMock,
+def _make_range_server(
     index: InMemoryIndex,
     *,
     range_result: RangeMetadataResult | None,
     range_error: BaseException | None,
     range_by_url: Mapping[str, RangeMetadataResult] | None,
-) -> None:
-    """Attach the ``request_range_metadata`` side effect.
+) -> Callable[[str, str, str], None]:
+    """Return the callable that writes a range read's result into ``index``.
 
     Mirrors the coordinator's ``_fetch_range_metadata`` handler: a recorded
-    ``range_error`` lands a per-wheel metadata error (the malformed-UTF-8
-    blob, the unserveable wheel URL), otherwise the read stores the recovered
-    METADATA or marks the read absent.  ``range_by_url`` selects a result per
-    wheel URL, which is how sibling sidecar-less wheels of one version are
-    given different dependencies; ``range_result`` is the single-result
-    shortcut.  With none set the request is a no-op that still returns a done
-    event, so a rung-4 read finds nothing and the ladder steps to the sdist
-    rung.
+    ``range_error`` lands a per-wheel metadata error, otherwise the read stores
+    the recovered METADATA or marks the read absent.  ``range_by_url`` selects a
+    result per wheel URL, which is how sibling sidecar-less wheels of one
+    version are given different dependencies; ``range_result`` is the
+    single-result shortcut.  With none set the read writes nothing, so rung 4
+    finds nothing and the ladder steps to the sdist rung.
     """
 
-    def _request_range_metadata(
-        pkg: str,
-        ver: str,
-        url: str,
-        _hashes: tuple[tuple[str, str], ...] = (),
-    ) -> threading.Event:
+    def _serve(pkg: str, ver: str, url: str) -> None:
         if range_error is not None:
             index.store_range_error(pkg, ver, url, range_error)
-            return _done_event()
+            return
         result = range_by_url.get(url) if range_by_url is not None else range_result
-        if result is not None:
-            index.store_range_outcome(pkg, ver, url, result.outcome)
-            if result.text is None:
-                index.store_range_absent(pkg, ver, url)
-            else:
-                index.store_range_metadata(pkg, ver, url, result.text)
+        if result is None:
+            return
+        index.store_range_outcome(pkg, ver, url, result.outcome)
+        if result.text is None:
+            index.store_range_absent(pkg, ver, url)
+        else:
+            index.store_range_metadata(pkg, ver, url, result.text)
+
+    return _serve
+
+
+def _make_archive_server(
+    index: InMemoryIndex,
+    *,
+    sdist_archive: bytes | None,
+    sdist_archive_error: BaseException | None,
+) -> Callable[[str, str], None]:
+    """Return the callable that writes an archive fetch's result into ``index``.
+
+    With neither keyword set it writes nothing, so a test that pre-loads the
+    bytes it wants served keeps them.
+    """
+
+    def _serve(pkg: str, ver: str) -> None:
+        if sdist_archive_error is not None:
+            index.store_sdist_archive_error(pkg, ver, sdist_archive_error)
+        elif sdist_archive is not None:
+            index.store_sdist_archive(pkg, ver, sdist_archive)
+
+    return _serve
+
+
+class FakeFetchPort:
+    """An in-memory :class:`~nab_python.fetch_port.FetchPort`.
+
+    Build one with :func:`make_coordinator` rather than directly: it assembles
+    the four servers out of the keywords a test sets.
+    """
+
+    def __init__(
+        self,
+        index: InMemoryIndex,
+        *,
+        serve_metadata: Callable[[str, str, str], str | None],
+        serve_sdist: Callable[[str, str], None],
+        serve_range: Callable[[str, str, str], None],
+        serve_archive: Callable[[str, str], None],
+    ) -> None:
+        """Wire the port to ``index`` and to one server per fetch kind."""
+        self.index = index
+        # Not on the port: nab's engine reads this off its own coordinator to
+        # label the index that served a package, and lock tests drive that.
+        self.indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
+        self.offline = False
+
+        self._serve_metadata = serve_metadata
+        self._serve_sdist = serve_sdist
+        self._serve_range = serve_range
+        self._serve_archive = serve_archive
+
+        self._calls: dict[str, list[tuple[object, ...]]] = {n: [] for n in REQUESTS}
+        self._overrides: dict[str, Callable[..., Any]] = {}
+
+    def calls_to(self, name: str) -> list[tuple[object, ...]]:
+        """Return the arguments of each call to request ``name``, oldest first."""
+        return list(self._calls[self._checked(name)])
+
+    def override(self, name: str, handler: Callable[..., Any]) -> None:
+        """Replace request ``name``'s behaviour; calls are still recorded."""
+        self._overrides[self._checked(name)] = handler
+
+    def reset(self) -> None:
+        """Forget every recorded call, keeping the overrides in place."""
+        for calls in self._calls.values():
+            calls.clear()
+
+    def _checked(self, name: str) -> str:
+        """Return ``name`` if it is one of the port's requests, else raise."""
+        if name not in self._calls:
+            msg = f"{name!r} is not a fetch request; expected one of {REQUESTS}"
+            raise KeyError(msg)
+        return name
+
+    def _handle(
+        self, name: str, args: tuple[object, ...], default: Callable[..., _T]
+    ) -> _T:
+        """Record the call to ``name``, then run its override or ``default``."""
+        self._calls[name].append(args)
+        handler = self._overrides.get(name, default)
+        return handler(*args)
+
+    def request_listing(
+        self, package: str, *, speculative: bool = False
+    ) -> threading.Event:
+        """Return a set event: listings are pre-loaded into the index."""
+        return self._handle("request_listing", (package, speculative), self._listing)
+
+    def request_metadata(
+        self,
+        package: str,
+        version: str,
+        url: str,
+        metadata_hash: tuple[str, str] | None = None,
+    ) -> threading.Event:
+        """Write the sidecar text configured for ``url`` and return a set event."""
+        return self._handle(
+            "request_metadata", (package, version, url, metadata_hash), self._metadata
+        )
+
+    def request_metadata_batch(
+        self, items: list[tuple[str, str, str, tuple[str, str] | None]]
+    ) -> list[tuple[str, str, threading.Event]]:
+        """Serve every item in ``items`` as :meth:`request_metadata` does."""
+        return self._handle("request_metadata_batch", (items,), self._metadata_batch)
+
+    def request_range_metadata(
+        self,
+        package: str,
+        version: str,
+        wheel_url: str,
+        wheel_hashes: tuple[tuple[str, str], ...] = (),
+    ) -> threading.Event:
+        """Write the configured range read for ``wheel_url`` and return a set event."""
+        return self._handle(
+            "request_range_metadata",
+            (package, version, wheel_url, wheel_hashes),
+            self._range_metadata,
+        )
+
+    def request_sdist(
+        self,
+        package: str,
+        version: str,
+        url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
+    ) -> threading.Event:
+        """Write the configured sdist PKG-INFO and return a set event."""
+        return self._handle(
+            "request_sdist", (package, version, url, sdist_hashes), self._sdist
+        )
+
+    def request_sdist_archive(
+        self,
+        package: str,
+        version: str,
+        url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
+    ) -> threading.Event:
+        """Write the configured archive bytes and return a set event."""
+        return self._handle(
+            "request_sdist_archive",
+            (package, version, url, sdist_hashes),
+            self._archive,
+        )
+
+    def request_direct_archive(
+        self, package: str, version: str, url: str
+    ) -> threading.Event:
+        """Write the configured archive bytes and return a set event.
+
+        The provider keys a declared archive by its digest, so ``version`` is
+        that digest rather than a release version.
+        """
+        return self._handle(
+            "request_direct_archive", (package, version, url), self._direct_archive
+        )
+
+    def _listing(self, package: str, speculative: bool) -> threading.Event:  # noqa: FBT001 - _handle calls this positionally
+        """Serve a listing request: the index already holds what was pre-loaded."""
+        del package, speculative
         return _done_event()
 
-    coordinator.request_range_metadata.side_effect = _request_range_metadata
+    def _fetch_metadata(self, package: str, version: str, url: str) -> None:
+        """Write one sidecar slot, as the fetcher's metadata handler does."""
+        # The fetcher skips a sidecar the index already answers for.
+        if self.index.has_metadata(package, version, url):
+            return
+        # Store even when the sidecar returns nothing: an empty fetch still
+        # marks the slot fetched.
+        self.index.store_metadata(
+            package, version, self._serve_metadata(package, version, url), url
+        )
+
+    def _metadata(
+        self,
+        package: str,
+        version: str,
+        url: str,
+        metadata_hash: tuple[str, str] | None,
+    ) -> threading.Event:
+        """Serve one sidecar request."""
+        del metadata_hash
+        self._fetch_metadata(package, version, url)
+        return _done_event()
+
+    def _metadata_batch(
+        self, items: list[tuple[str, str, str, tuple[str, str] | None]]
+    ) -> list[tuple[str, str, threading.Event]]:
+        """Serve a batch of sidecar requests, one result per item."""
+        results: list[tuple[str, str, threading.Event]] = []
+        for package, version, url, _hash in items:
+            self._fetch_metadata(package, version, url)
+            results.append((package, version, _done_event()))
+        return results
+
+    def _range_metadata(
+        self,
+        package: str,
+        version: str,
+        wheel_url: str,
+        wheel_hashes: tuple[tuple[str, str], ...],
+    ) -> threading.Event:
+        """Serve one range read."""
+        del wheel_hashes
+        self._serve_range(package, version, wheel_url)
+        return _done_event()
+
+    def _sdist(
+        self,
+        package: str,
+        version: str,
+        url: str,
+        sdist_hashes: tuple[tuple[str, str], ...],
+    ) -> threading.Event:
+        """Serve one sdist PKG-INFO request."""
+        del url, sdist_hashes
+        self._serve_sdist(package, version)
+        return _done_event()
+
+    def _archive(
+        self,
+        package: str,
+        version: str,
+        url: str,
+        sdist_hashes: tuple[tuple[str, str], ...],
+    ) -> threading.Event:
+        """Serve one sdist-archive request."""
+        del url, sdist_hashes
+        self._serve_archive(package, version)
+        return _done_event()
+
+    def _direct_archive(self, package: str, version: str, url: str) -> threading.Event:
+        """Serve one declared-archive request."""
+        del url
+        self._serve_archive(package, version)
+        return _done_event()
 
 
 def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-loads
@@ -216,8 +412,10 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     range_result: RangeMetadataResult | None = None,
     range_error: BaseException | None = None,
     range_by_url: Mapping[str, RangeMetadataResult] | None = None,
-) -> MagicMock:
-    """Build a mock :class:`FetchCoordinator` backed by an :class:`InMemoryIndex`.
+    sdist_archive: bytes | None = None,
+    sdist_archive_error: BaseException | None = None,
+) -> FakeFetchPort:
+    """Build a :class:`FakeFetchPort` backed by an :class:`InMemoryIndex`.
 
     Listing setup (one of):
 
@@ -227,7 +425,7 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     * ``listings``: pre-load each ``(package, wheels)`` pair.  Overrides
       ``wheels``/``package``.
 
-    Request side effects:
+    What each request then serves:
 
     * ``request_listing`` always returns a set event.
     * ``request_metadata`` and ``request_metadata_batch`` write
@@ -245,44 +443,44 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
       read when its text is ``None``), or lands ``range_error`` as a per-wheel
       metadata error.  ``range_by_url`` picks a result per wheel URL, so sibling
       sidecar-less wheels of one version get different dependencies;
-      ``range_result`` is the single-result shortcut.  With none it is a no-op,
-      so rung 4 finds nothing.
+      ``range_result`` is the single-result shortcut.  With none it writes
+      nothing, so rung 4 finds nothing.
+    * ``request_sdist_archive`` and ``request_direct_archive`` write
+      ``sdist_archive_error``, or ``sdist_archive`` as the fetched bytes.  With
+      neither they write nothing, which leaves whatever the test stored in the
+      index itself.
 
-    Call sites that need request side effects beyond what this helper
-    wires up (for example ``request_sdist_archive``) can reassign
-    ``.side_effect`` on the returned mock; the index is exposed at
-    ``coordinator.index`` for direct manipulation.  ``coordinator.indexes``
-    defaults to the single default-PyPI :class:`IndexConfig` list, and
-    ``coordinator.offline`` to False.
+    A test that needs something these keywords cannot express replaces one
+    request with :meth:`FakeFetchPort.override`, and reads back what the
+    provider asked for with :meth:`FakeFetchPort.calls_to`.
     """
     index = InMemoryIndex()
 
     _pre_populate_index(index, _resolve_listings(wheels, package, listings))
 
-    coordinator = MagicMock()
-    coordinator.index = index
-    coordinator.indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
-    coordinator.offline = False
-
-    resolve_metadata = _make_metadata_resolver(
-        metadata_text=metadata_text,
-        metadata_by_version=metadata_by_version,
-        metadata_by_url=metadata_by_url,
-        auto_metadata=auto_metadata,
-    )
-    _wire_metadata_side_effects(coordinator, index, resolve_metadata)
-    _wire_sdist_side_effects(
-        coordinator,
+    return FakeFetchPort(
         index,
-        sdist_pkg_info=sdist_pkg_info,
-        sdist_pkg_info_by_version=sdist_pkg_info_by_version,
-        sdist_pyproject_toml=sdist_pyproject_toml,
+        serve_metadata=_make_metadata_resolver(
+            metadata_text=metadata_text,
+            metadata_by_version=metadata_by_version,
+            metadata_by_url=metadata_by_url,
+            auto_metadata=auto_metadata,
+        ),
+        serve_sdist=_make_sdist_server(
+            index,
+            sdist_pkg_info=sdist_pkg_info,
+            sdist_pkg_info_by_version=sdist_pkg_info_by_version,
+            sdist_pyproject_toml=sdist_pyproject_toml,
+        ),
+        serve_range=_make_range_server(
+            index,
+            range_result=range_result,
+            range_error=range_error,
+            range_by_url=range_by_url,
+        ),
+        serve_archive=_make_archive_server(
+            index,
+            sdist_archive=sdist_archive,
+            sdist_archive_error=sdist_archive_error,
+        ),
     )
-    _wire_range_side_effects(
-        coordinator,
-        index,
-        range_result=range_result,
-        range_error=range_error,
-        range_by_url=range_by_url,
-    )
-    return coordinator

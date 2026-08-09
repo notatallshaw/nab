@@ -14,7 +14,7 @@ only.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NoReturn, cast
 
 import pytest
 
@@ -39,11 +39,17 @@ from nab_resolver.root import ROOT
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from unittest.mock import MagicMock
+
+    from nab_python._testing.coordinator_fake import FakeFetchPort
 
 V = Version
 
 _METADATA = "Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+
+
+def _refuse_fetch(*args: object) -> NoReturn:
+    """Fail the test rather than serve a fetch it should never have made."""
+    raise AssertionError("the provider fetched")
 
 
 def _wheel(package: str, version: str) -> WheelFile:
@@ -61,7 +67,7 @@ def _wheel(package: str, version: str) -> WheelFile:
 def _graph_coordinator(
     graph: dict[str, dict[str, list[str]]],
     unreadable: set[tuple[str, str]] | None = None,
-) -> MagicMock:
+) -> FakeFetchPort:
     """Coordinator for ``{package: {version: [Requires-Dist lines]}}``.
 
     Metadata is pre-stored per ``(package, version)`` so packages may
@@ -325,13 +331,9 @@ class TestSameDepsSpan:
 
     def test_span_never_fetches(self) -> None:
         provider = _deps_provider(_RUN_GRAPH, "p", ["0.5", "1.0", "2.0", "3.0", "4.0"])
-        coordinator = cast("MagicMock", provider.coordinator)
-        for method in (
-            coordinator.request_listing,
-            coordinator.request_metadata,
-            coordinator.request_metadata_batch,
-        ):
-            method.side_effect = AssertionError("widen_decision fetched")
+        coordinator = cast("FakeFetchPort", provider.coordinator)
+        for name in ("request_listing", "request_metadata", "request_metadata_batch"):
+            coordinator.override(name, _refuse_fetch)
         assert provider.widen_decision("p", V("2.0")) is not None
 
 
@@ -802,14 +804,12 @@ class TestNarrowForDisplay:
         coordinator = _graph_coordinator({"p": {"3.0": [], "2.0": [], "1.0": []}})
         provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.12.0"))
         provider.fetch_versions("p")
-        coordinator.request_listing.side_effect = AssertionError(
-            "narrow_for_display fetched a listing"
-        )
-        coordinator.request_listing.reset_mock()
+        coordinator.override("request_listing", _refuse_fetch)
+        coordinator.reset()
         constraint = SpecifierSet(">=1,<2").to_range()
         assert provider.narrow_for_display("ghost", constraint) is constraint
         provider.narrow_for_display("p", VersionRange.full(admit_arbitrary=False))
-        coordinator.request_listing.assert_not_called()
+        assert not coordinator.calls_to("request_listing")
 
 
 class TestFormatRange:

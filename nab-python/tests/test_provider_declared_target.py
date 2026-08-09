@@ -14,19 +14,17 @@ from __future__ import annotations
 import random
 import threading
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from nab_index.client import SdistFile, WheelFile
-from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
-from nab_python.fetch import InMemoryIndex
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
@@ -73,8 +71,8 @@ def _make_coordinator(
     wheels: Sequence[WheelFile | SdistFile],
     *,
     package: str = "pkg",
-) -> MagicMock:
-    """Mock FetchCoordinator with a pre-loaded listing for ``package``."""
+) -> FakeFetchPort:
+    """Fetch port with a pre-loaded listing for ``package``."""
     return make_coordinator(wheels, package=package, auto_metadata=True)
 
 
@@ -489,16 +487,9 @@ def _sdist(version: str, *, package: str = "pkg") -> SdistFile:
 
 def _index_with_files(
     files: Sequence[WheelFile | SdistFile], *, package: str = "pkg"
-) -> MagicMock:
-    """Coordinator stub whose listing is exactly ``files``."""
-    index = InMemoryIndex()
-    index.store_listing(package, files)
-    coordinator = MagicMock()
-    coordinator.index = index
-    coordinator.request_listing.side_effect = lambda _pkg, *, speculative=False: (
-        _done_event()
-    )
-    return coordinator
+) -> FakeFetchPort:
+    """Fetch port whose listing is exactly ``files``."""
+    return make_coordinator(files, package=package)
 
 
 class TestWheelTagFiltering:
@@ -1054,7 +1045,7 @@ dependencies = ["dep-from-static-pyproject"]
 
 def _wheel_and_sdist_targets(
     *, wheel_metadata: str = _WHEEL_METADATA
-) -> tuple[MagicMock, Provider, Provider]:
+) -> tuple[FakeFetchPort, Provider, Provider]:
     """Two targets over one (pkg, 1.0) published as a manylinux wheel and an sdist.
 
     The macOS target has no compatible wheel and takes the sdist path; the
@@ -1122,10 +1113,13 @@ class TestSharedMetadataSlot:
         coordinator, macos, _linux = _wheel_and_sdist_targets(
             wheel_metadata=_LEGACY_WHEEL_METADATA
         )
-        coordinator.request_metadata.side_effect = lambda *_args: _done_event()
-        coordinator.request_metadata_batch.side_effect = lambda items: [
-            (pkg, ver, _done_event()) for pkg, ver, _url, _hash in items
-        ]
+        coordinator.override("request_metadata", lambda *_args: _done_event())
+        coordinator.override(
+            "request_metadata_batch",
+            lambda items: [
+                (pkg, ver, _done_event()) for pkg, ver, _url, _hash in items
+            ],
+        )
 
         index = coordinator.index
         recorded_error = index.get_metadata_error
@@ -1161,7 +1155,7 @@ def _sidecar(wheel: WheelFile) -> str:
     return url
 
 
-def _sibling_wheel_targets() -> tuple[MagicMock, Provider, Provider]:
+def _sibling_wheel_targets() -> tuple[FakeFetchPort, Provider, Provider]:
     """Two targets over one version published as a Linux wheel and a Windows one.
 
     The two wheels declare different dependencies, so each target must read
@@ -1334,13 +1328,12 @@ class TestTwoInstallableSiblingWheels:
         provider = _both_installable([_PURE_WHEEL, _LINUX_WHEEL])
         provider.fetch_versions("pkg")
 
-        requested = provider.coordinator.request_metadata
-        assert [call.args[2] for call in requested.call_args_list] == [
-            _sidecar(_LINUX_WHEEL)
-        ]
+        port = cast("FakeFetchPort", provider.coordinator)
+        warmed = [url for _pkg, _ver, url, _hash in port.calls_to("request_metadata")]
+        assert warmed == [_sidecar(_LINUX_WHEEL)]
 
         assert set(provider.get_dependencies("pkg", Version("1.0"))) == {"linuxdep"}
-        assert requested.call_count == 1
+        assert len(port.calls_to("request_metadata")) == 1
 
     def test_the_walk_ahead_prefetch_warms_the_same_wheels_sidecar(self) -> None:
         """The deep prefetch keys on the same pick as the read.
@@ -1362,11 +1355,11 @@ class TestTwoInstallableSiblingWheels:
         )
         provider = Provider(coordinator, _LINUX_TARGET)
         provider.fetch_versions("pkg")
-        coordinator.reset_mock()
+        coordinator.reset()
 
         provider.prefetch_walk_ahead("pkg")
 
-        items = coordinator.request_metadata_batch.call_args[0][0]
+        items = coordinator.calls_to("request_metadata_batch")[-1][0]
         assert [url for _pkg, _ver, url, _hash in items] == [_sidecar(_LINUX_WHEEL)]
 
     def test_a_cheaper_sibling_does_not_answer_for_the_installed_wheel(self) -> None:

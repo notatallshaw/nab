@@ -14,8 +14,8 @@ import zipfile
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, cast
-from unittest.mock import MagicMock, patch
+from typing import Any, ClassVar, NoReturn, cast
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -47,7 +47,7 @@ from nab_python._provider.metadata_resolver import (
     pick_dist_for_metadata,
     target_dep_signature,
 )
-from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.markers import Marker
 from nab_python._vendor.packaging.ranges import VersionRange
@@ -65,7 +65,6 @@ from nab_python.fetch import (
     DEFAULT_INDEX_URL,
     FetchCoordinator,
     IndexRoute,
-    InMemoryIndex,
 )
 from nab_python.metadata import WheelMetadata
 from nab_python.provider import (
@@ -170,11 +169,11 @@ def make_sdist(
     )
 
 
-def _prefetched_batch_versions(coordinator: MagicMock) -> list[str]:
+def _prefetched_batch_versions(coordinator: FakeFetchPort) -> list[str]:
     """Versions of the one batch metadata prefetch, in submission order."""
-    coordinator.request_metadata_batch.assert_called_once()
-    items = coordinator.request_metadata_batch.call_args[0][0]
-    return [version for _package, version, _url, _hash in items]
+    batches = coordinator.calls_to("request_metadata_batch")
+    assert len(batches) == 1
+    return [version for _package, version, _url, _hash in batches[0][0]]
 
 
 def _done_event() -> threading.Event:
@@ -257,9 +256,9 @@ class TestPrefetchListings:
         """The prefetch cascade marks its listing requests speculative (S-CRIT)."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")
         provider = Provider(coordinator, target=_PY312)
-        coordinator.request_listing.reset_mock()
+        coordinator.reset()
         provider.prefetch_new_deps({"bar": SpecifierSet(">=1.0").to_range()})
-        coordinator.request_listing.assert_called_once_with("bar", speculative=True)
+        assert coordinator.calls_to("request_listing") == [("bar", True)]
 
 
 class TestSpeculativePrefetch:
@@ -272,8 +271,8 @@ class TestSpeculativePrefetch:
         )
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
-        coordinator.request_metadata.assert_called_once()
-        _package, version, _url, _hash = coordinator.request_metadata.call_args[0]
+        assert len(coordinator.calls_to("request_metadata")) == 1
+        _package, version, _url, _hash = coordinator.calls_to("request_metadata")[-1]
         assert version == "2.0"
 
     def test_get_dependencies_uses_speculative_future(self) -> None:
@@ -333,8 +332,8 @@ class TestSpeculativePrefetch:
         coordinator = make_coordinator([], package="foo")
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
-        coordinator.request_metadata.assert_not_called()
-        coordinator.request_metadata_batch.assert_not_called()
+        assert not coordinator.calls_to("request_metadata")
+        assert not coordinator.calls_to("request_metadata_batch")
 
     def test_no_prefetch_when_already_cached(self) -> None:
         """No speculative prefetch if deps are already cached."""
@@ -342,8 +341,8 @@ class TestSpeculativePrefetch:
         provider = Provider(coordinator)
         provider.deps_cache[("foo", V("1.0"))] = {}
         provider.fetch_versions("foo")
-        coordinator.request_metadata.assert_not_called()
-        coordinator.request_metadata_batch.assert_not_called()
+        assert not coordinator.calls_to("request_metadata")
+        assert not coordinator.calls_to("request_metadata_batch")
 
     def test_early_metadata_consumed_by_get_deps(self) -> None:
         """If metadata is already in the index, get_dependencies uses it."""
@@ -367,7 +366,7 @@ class TestSpeculativePrefetch:
         root_reqs = {"foo": SpecifierSet(">=5.0").to_range()}
         provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.fetch_versions("foo")
-        coordinator.request_metadata_batch.assert_not_called()
+        assert not coordinator.calls_to("request_metadata_batch")
 
     def test_non_best_version_fetches_synchronously(self) -> None:
         """Requesting a non-best version falls back to sync fetch."""
@@ -1431,7 +1430,7 @@ class TestNoVersionsReasons:
     def test_filtered_in_range_release_reports_the_filter(
         self,
         listing: list[WheelFile | SdistFile],
-        build: Callable[[MagicMock], Provider],
+        build: Callable[[FakeFetchPort], Provider],
     ) -> None:
         """An in-range release a filter dropped is not reported as no such version.
 
@@ -2314,7 +2313,7 @@ class TestGetDependencies:
             )
             return _done_event()
 
-        coordinator.request_sdist.side_effect = _poisoned_request_sdist
+        coordinator.override("request_sdist", _poisoned_request_sdist)
         provider = Provider(coordinator, target=_PY312)
         with pytest.raises(SdistHashMismatchError):
             provider.get_dependencies("foo", V("1.0"))
@@ -3184,14 +3183,14 @@ class TestLocalSources:
             '[project]\nname = "foo"\nversion = "1.2.3"\n',
         )
         coordinator = make_coordinator([], package="foo")
-        coordinator.request_listing.reset_mock()
+        coordinator.reset()
         Provider(
             coordinator,
             local_sources=[LocalSource("foo", str(tmp_path))],
             root_requirements={"foo": SpecifierSet("").to_range()},
             build_policy=BuildPolicy.NEVER,
         )
-        coordinator.request_listing.assert_not_called()
+        assert not coordinator.calls_to("request_listing")
 
     def test_prefetch_new_deps_skips_local_source(self, tmp_path: Path) -> None:
         """A transitive-dep prefetch must not hit PyPI for a local source."""
@@ -3206,9 +3205,9 @@ class TestLocalSources:
             local_sources=[LocalSource("foo", str(tmp_path))],
             build_policy=BuildPolicy.NEVER,
         )
-        coordinator.request_listing.reset_mock()
+        coordinator.reset()
         provider.prefetch_new_deps({"foo": SpecifierSet("").to_range()})
-        coordinator.request_listing.assert_not_called()
+        assert not coordinator.calls_to("request_listing")
 
     def test_local_source_reads_from_subdirectory(self, tmp_path: Path) -> None:
         """A local source with a subdirectory resolves the package there."""
@@ -3829,14 +3828,8 @@ class TestLookAhead:
 
         root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
 
-        index = InMemoryIndex()
-        index.store_listing("foo", wheels)
-
-        coordinator = MagicMock()
-        coordinator.index = index
-        coordinator.request_listing.side_effect = lambda pkg, *, speculative=False: (
-            _done_event()
-        )
+        coordinator = make_coordinator(wheels, package="foo")
+        index = coordinator.index
 
         call_count = [0]
 
@@ -3853,7 +3846,7 @@ class TestLookAhead:
             index.store_metadata(pkg, ver, text)
             return _done_event()
 
-        coordinator.request_metadata.side_effect = _request_metadata
+        coordinator.override("request_metadata", _request_metadata)
 
         def _request_metadata_batch(
             items: list[tuple[str, str, str, tuple[str, str] | None]],
@@ -3874,7 +3867,7 @@ class TestLookAhead:
                 results.append((pkg, ver, _done_event()))
             return results
 
-        coordinator.request_metadata_batch.side_effect = _request_metadata_batch
+        coordinator.override("request_metadata_batch", _request_metadata_batch)
 
         provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
 
@@ -5566,7 +5559,7 @@ class TestRequiresPythonMetadataGate:
     """
 
     @staticmethod
-    def _coordinator(requires_python: str | None) -> MagicMock:
+    def _coordinator(requires_python: str | None) -> FakeFetchPort:
         body = f"Requires-Python: {requires_python}\n" if requires_python else ""
         return make_coordinator(
             [make_wheel("1.0", requires_python=None)],
@@ -5658,7 +5651,7 @@ class TestForeignMetadataGate:
     """
 
     @staticmethod
-    def _coordinator(name: str, version: str = "1.0") -> MagicMock:
+    def _coordinator(name: str, version: str = "1.0") -> FakeFetchPort:
         return make_coordinator(
             [make_wheel("1.0")],
             package="foo",
@@ -5777,7 +5770,7 @@ class TestSkipFetch:
             ),
         )
         provider.get_dependencies("foo", V("1.0"))
-        coordinator.request_listing.assert_any_call("dep-a", speculative=True)
+        assert ("dep-a", True) in coordinator.calls_to("request_listing")
 
     def test_does_not_fire_for_requires_python_only(self) -> None:
         # A partial override (only requires-python) still needs the artifact
@@ -5896,8 +5889,8 @@ class TestSkipFetch:
             ),
         )
         provider.fetch_versions("pkg")
-        coordinator.request_metadata.assert_not_called()
-        coordinator.request_metadata_batch.assert_not_called()
+        assert not coordinator.calls_to("request_metadata")
+        assert not coordinator.calls_to("request_metadata_batch")
 
     def test_prefetch_walk_ahead_skips_complete_override(self) -> None:
         # The walk-ahead batch excludes a version whose complete override
@@ -5913,7 +5906,7 @@ class TestSkipFetch:
             ),
         )
         provider.fetch_versions("pkg")
-        coordinator.reset_mock()
+        coordinator.reset()
         provider.prefetch_walk_ahead("pkg")
         assert _prefetched_batch_versions(coordinator) == ["1.0"]
 
@@ -7157,7 +7150,7 @@ class TestExtrasPrereleaseAdmission:
 
     C_META = "Metadata-Version: 2.1\nName: c\nVersion: {v}\nProvides-Extra: extra\n\n"
 
-    def _coordinator_for_c(self) -> MagicMock:
+    def _coordinator_for_c(self) -> FakeFetchPort:
         listings = {"c": [make_wheel("2.0.0a1"), make_wheel("1.0.0")]}
         metadata = {v: self.C_META.format(v=v) for v in ("1.0.0", "2.0.0a1")}
         return make_coordinator(listings=listings, metadata_by_version=metadata)
@@ -7261,7 +7254,7 @@ class TestExtrasPrereleaseBaseRangeBlocks:
     )
     C_META_NO_X = "Metadata-Version: 2.1\nName: c\nVersion: {v}\n\n"
 
-    def _s2_coordinator(self, *, with_escape: bool) -> MagicMock:
+    def _s2_coordinator(self, *, with_escape: bool) -> FakeFetchPort:
         r_wheels = [make_wheel("2.0"), make_wheel("1.0")]
         if with_escape:
             r_wheels.append(make_wheel("0.5"))
@@ -7285,7 +7278,7 @@ class TestExtrasPrereleaseBaseRangeBlocks:
         return make_coordinator(listings=listings, metadata_by_version=metadata)
 
     def _resolve_r(
-        self, coordinator: MagicMock
+        self, coordinator: FakeFetchPort
     ) -> tuple[dict[str, Version], Resolver[str, Version]]:
         root_reqs = {"r": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(
@@ -7821,29 +7814,27 @@ class TestFetchVersionsNotInIndex:
     def test_listing_not_in_index_blocks_on_request(self) -> None:
         """When listing is not in the index, request_listing + wait is used."""
         wheels = [make_wheel("1.0")]
-        # Build a coordinator where get_listing returns None initially
-        # but request_listing populates the index.
-        index = InMemoryIndex()
+        # The listing is absent until request_listing populates the index.
+        coordinator = make_coordinator()
+        index = coordinator.index
 
-        coordinator = MagicMock()
-        coordinator.index = index
-
-        def _request_listing(pkg: str, *, speculative: bool = False) -> threading.Event:
+        def _request_listing(pkg: str, _speculative: bool) -> threading.Event:
             # Simulate the coordinator populating the index after request.
             index.store_listing(pkg, wheels)
             return _done_event()
 
-        coordinator.request_listing.side_effect = _request_listing
-        coordinator.request_metadata.side_effect = lambda p, v, u, h=None: _done_event()
-        coordinator.request_metadata_batch.side_effect = lambda items: [
-            (p, v, _done_event()) for p, v, u, h in items
-        ]
+        coordinator.override("request_listing", _request_listing)
+        coordinator.override("request_metadata", lambda p, v, u, h=None: _done_event())
+        coordinator.override(
+            "request_metadata_batch",
+            lambda items: [(p, v, _done_event()) for p, v, u, h in items],
+        )
 
         provider = Provider(coordinator)
         result = provider.fetch_versions("pkg")
         assert len(result) == 1
         assert result[0][0] == V("1.0")
-        coordinator.request_listing.assert_called_with("pkg")
+        assert coordinator.calls_to("request_listing")[-1] == ("pkg", False)
 
     def test_listing_fetch_error_reraised(self) -> None:
         """A recorded listing fetch error surfaces, not an empty listing."""
@@ -7887,9 +7878,9 @@ class TestSpeculativePrefetchBatchLimit:
         provider.deps_cache[("foo", V("2.0"))] = {}
         provider.fetch_versions("foo")
         # Only v1.0 should be in the batch.
-        call_args = coordinator.request_metadata_batch.call_args
-        assert call_args is not None
-        items = call_args[0][0]
+        batches = coordinator.calls_to("request_metadata_batch")
+        assert batches
+        items = batches[-1][0]
         assert all(ver == "1.0" for _, ver, _, _ in items)
 
 
@@ -7907,7 +7898,7 @@ class TestPrefetchWalkAhead:
         coordinator = make_coordinator([], package="foo")
         provider = Provider(coordinator)
         provider.prefetch_walk_ahead("foo")
-        coordinator.request_metadata_batch.assert_not_called()
+        assert not coordinator.calls_to("request_metadata_batch")
 
     def test_caps_at_deep_prefetch_count(self) -> None:
         """No more than ``DEEP_PREFETCH_COUNT`` distinct versions submitted."""
@@ -7915,9 +7906,9 @@ class TestPrefetchWalkAhead:
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
-        coordinator.reset_mock()
+        coordinator.reset()
         provider.prefetch_walk_ahead("foo")
-        items = coordinator.request_metadata_batch.call_args[0][0]
+        items = coordinator.calls_to("request_metadata_batch")[-1][0]
         # fetch_versions already prefetched the newest version; it fills a
         # window slot but is skipped as already-held.
         assert len(items) == provider.DEEP_PREFETCH_COUNT - 1
@@ -7938,9 +7929,9 @@ class TestPrefetchWalkAhead:
             direct_packages=frozenset({"foo"}),
         )
         provider.fetch_versions("foo")
-        coordinator.reset_mock()
+        coordinator.reset()
         provider.prefetch_walk_ahead("foo")
-        items = coordinator.request_metadata_batch.call_args[0][0]
+        items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         assert versions == [
             f"{i}.0" for i in range(1, provider.DEEP_PREFETCH_COUNT + 1)
@@ -7953,9 +7944,9 @@ class TestPrefetchWalkAhead:
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
         provider.deps_cache[("foo", V("2.0"))] = {}
-        coordinator.reset_mock()
+        coordinator.reset()
         provider.prefetch_walk_ahead("foo")
-        items = coordinator.request_metadata_batch.call_args[0][0]
+        items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         assert "2.0" not in versions
         # fetch_versions already prefetched the newest version.
@@ -7975,9 +7966,9 @@ class TestPrefetchWalkAhead:
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
-        coordinator.reset_mock()
+        coordinator.reset()
         provider.prefetch_walk_ahead("foo")
-        items = coordinator.request_metadata_batch.call_args[0][0]
+        items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         assert versions == ["2.0", "1.0"]
 
@@ -7991,9 +7982,9 @@ class TestPrefetchWalkAhead:
         two = make_wheel("2.0")
         assert two.metadata_url is not None
         coordinator.request_metadata("foo", "2.0", two.metadata_url, None)
-        coordinator.reset_mock()
+        coordinator.reset()
         provider.prefetch_walk_ahead("foo")
-        items = coordinator.request_metadata_batch.call_args[0][0]
+        items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         assert "2.0" not in versions
         assert "1.0" in versions
@@ -8012,9 +8003,9 @@ class TestPrefetchWalkAhead:
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
-        coordinator.reset_mock()
+        coordinator.reset()
         provider.prefetch_walk_ahead("foo")
-        items = coordinator.request_metadata_batch.call_args[0][0]
+        items = coordinator.calls_to("request_metadata_batch")[-1][0]
         assert any(
             ver == "1.0" and url.endswith(".whl.metadata") for _, ver, url, _ in items
         )
@@ -8028,9 +8019,9 @@ class TestPrefetchWalkAhead:
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
-        coordinator.reset_mock()
+        coordinator.reset()
         provider.prefetch_walk_ahead("foo")
-        items = coordinator.request_metadata_batch.call_args[0][0]
+        items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         assert versions == ["2.0"]
 
@@ -8043,9 +8034,9 @@ class TestPrefetchWalkAhead:
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
-        coordinator.reset_mock()
+        coordinator.reset()
         provider.prefetch_walk_ahead("foo")
-        items = coordinator.request_metadata_batch.call_args[0][0]
+        items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         assert versions == ["1.0"]
 
@@ -8055,9 +8046,9 @@ class TestPrefetchWalkAhead:
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
-        coordinator.reset_mock()
+        coordinator.reset()
         provider.prefetch_walk_ahead("foo")
-        coordinator.request_metadata_batch.assert_not_called()
+        assert not coordinator.calls_to("request_metadata_batch")
 
     def test_fires_when_pipelined_scan_engages(self) -> None:
         """Trip the look-ahead scan: walk_ahead fires before the 8-batch starts."""
@@ -8141,7 +8132,7 @@ class TestPickBestCandidateNone:
         provider = Provider(coordinator)
         with patch.object(provider, "pick_best_candidate", return_value=None):
             provider.speculative_prefetch("foo", [(V("1.0"), wheels[0])])
-        coordinator.request_metadata.assert_not_called()
+        assert not coordinator.calls_to("request_metadata")
 
 
 # The sidecar of ``make_wheel("1.0")``: the batch path reads the metadata
@@ -9048,10 +9039,12 @@ class TestEffectiveBuildPolicy:
         """
         from nab_python._vendor.packaging.version import Version as _Version
 
+        archive_bytes = b"sdist-archive-bytes"
         coordinator = make_coordinator(
             [make_sdist("1.0")],
             sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
             package="pkg",
+            sdist_archive=archive_bytes,
         )
         coordinator.offline = offline
         provider = Provider(
@@ -9065,18 +9058,6 @@ class TestEffectiveBuildPolicy:
         )
 
         provider.versions_cache["pkg"] = [(_Version("1.0"), make_sdist("1.0"))]
-        archive_bytes = b"sdist-archive-bytes"
-
-        def _request_archive(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            coordinator.index.store_sdist_archive(pkg, ver, archive_bytes)
-            return _done_event()
-
-        coordinator.request_sdist_archive.side_effect = _request_archive
 
         captured: dict[str, object] = {}
 
@@ -9543,19 +9524,8 @@ class TestStaticSdistMetadata:
         coordinator = make_coordinator(
             [make_sdist("1.0")],
             sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+            sdist_archive=b"sdist-archive",
         )
-        archive_bytes = b"sdist-archive"
-
-        def _request_archive(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            coordinator.index.store_sdist_archive(pkg, ver, archive_bytes)
-            return _done_event()
-
-        coordinator.request_sdist_archive.side_effect = _request_archive
 
         built = WheelMetadata(
             name="pkg",
@@ -9588,20 +9558,8 @@ class TestStaticSdistMetadata:
         coordinator = make_coordinator(
             [make_sdist("1.0")],
             sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+            sdist_archive_error=SdistHashMismatchError("sdist sha256 mismatch"),
         )
-
-        def _tampered_archive(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            coordinator.index.store_sdist_archive_error(
-                pkg, ver, SdistHashMismatchError("sdist sha256 mismatch")
-            )
-            return _done_event()
-
-        coordinator.request_sdist_archive.side_effect = _tampered_archive
 
         provider = Provider(
             coordinator,
@@ -9621,20 +9579,8 @@ class TestStaticSdistMetadata:
         coordinator = make_coordinator(
             [make_sdist("1.0")],
             sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+            sdist_archive_error=HttpError("503 Server Error fetching sdist archive"),
         )
-
-        def _unserved_archive(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            coordinator.index.store_sdist_archive_error(
-                pkg, ver, HttpError("503 Server Error fetching sdist archive")
-            )
-            return _done_event()
-
-        coordinator.request_sdist_archive.side_effect = _unserved_archive
 
         provider = Provider(
             coordinator,
@@ -9659,25 +9605,11 @@ class TestStaticSdistMetadata:
         coordinator = make_coordinator(
             [make_sdist("1.0")],
             sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+            sdist_archive_error=UnreadableLocalIndexError(
+                "cannot read local sdist /wheelhouse/pkg-1.0.tar.gz:"
+                " [Errno 13] Permission denied"
+            ),
         )
-
-        def _unreadable_archive(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            coordinator.index.store_sdist_archive_error(
-                pkg,
-                ver,
-                UnreadableLocalIndexError(
-                    "cannot read local sdist /wheelhouse/pkg-1.0.tar.gz:"
-                    " [Errno 13] Permission denied"
-                ),
-            )
-            return _done_event()
-
-        coordinator.request_sdist_archive.side_effect = _unreadable_archive
 
         provider = Provider(
             coordinator,
@@ -9698,18 +9630,8 @@ class TestStaticSdistMetadata:
         coordinator = make_coordinator(
             [make_sdist("1.0")],
             sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+            sdist_archive=b"sdist-archive-bytes",
         )
-
-        def _request_archive(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            coordinator.index.store_sdist_archive(pkg, ver, b"sdist-archive-bytes")
-            return _done_event()
-
-        coordinator.request_sdist_archive.side_effect = _request_archive
 
         def _naive_build(_path: object, **_kwargs: object) -> WheelMetadata:
             raise InvalidUploadTimeError(
@@ -9763,7 +9685,7 @@ class TestStaticSdistMetadata:
             coordinator.index.store_sdist_pyproject(pkg, ver, None)
             return _done_event()
 
-        coordinator.request_sdist.side_effect = _request_sdist
+        coordinator.override("request_sdist", _request_sdist)
 
         root_reqs = {"pkg": SpecifierSet(">=0").to_range()}
         provider = Provider(
@@ -9806,9 +9728,21 @@ class TestBuildRemoteFailureModes:
         overrides: tuple[PackageOverride, ...] = (),
         target: ResolveTarget = _PY312,
         build_config: NabProjectConfig | None = None,
+        sdist_archive: bytes | None = None,
+        sdist_archive_error: BaseException | None = None,
     ) -> Provider:
+        """A ``BUILD_REMOTE`` provider whose port serves the archive it is given.
+
+        With neither archive keyword the port writes nothing, which is how a
+        fetch that never produced bytes reads back.
+        """
         files = [make_sdist("1.0")] if with_sdist else [make_wheel("1.0")]
-        coordinator = make_coordinator(files, package="pkg")
+        coordinator = make_coordinator(
+            files,
+            package="pkg",
+            sdist_archive=sdist_archive,
+            sdist_archive_error=sdist_archive_error,
+        )
         return Provider(
             coordinator,
             target=target,
@@ -9826,21 +9760,10 @@ class TestBuildRemoteFailureModes:
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
     def test_archive_fetch_failure_raises(self) -> None:
+        """A fetch that produced no bytes skips the version."""
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _failed_fetch(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            provider.coordinator.index.store_sdist_archive(pkg, ver, None)
-            return _done_event()
-
-        cast(
-            "MagicMock", provider.coordinator
-        ).request_sdist_archive.side_effect = _failed_fetch
         with pytest.raises(UnsupportedSdistError, match="archive.*fetch.*failed"):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
@@ -9850,23 +9773,12 @@ class TestBuildRemoteFailureModes:
         The error must propagate, not degrade to ``UnsupportedSdistError``,
         which the resolve treats as a skippable version.
         """
-        provider = self._provider(with_sdist=True)
+        provider = self._provider(
+            with_sdist=True,
+            sdist_archive_error=SdistHashMismatchError("sdist sha256 mismatch"),
+        )
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _tampered_fetch(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            provider.coordinator.index.store_sdist_archive_error(
-                pkg, ver, SdistHashMismatchError("sdist sha256 mismatch")
-            )
-            return _done_event()
-
-        cast(
-            "MagicMock", provider.coordinator
-        ).request_sdist_archive.side_effect = _tampered_fetch
         with pytest.raises(SdistHashMismatchError):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
@@ -9904,21 +9816,9 @@ class TestBuildRemoteFailureModes:
     )
     def test_unreadable_archive_raises(self, data: bytes) -> None:
         """An unreadable archive raises the skippable ``UnsupportedSdistError``."""
-        provider = self._provider(with_sdist=True)
+        provider = self._provider(with_sdist=True, sdist_archive=data)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _fetch(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            provider.coordinator.index.store_sdist_archive(pkg, ver, data)
-            return _done_event()
-
-        cast(
-            "MagicMock", provider.coordinator
-        ).request_sdist_archive.side_effect = _fetch
         with pytest.raises(UnsupportedSdistError, match="could not be extracted"):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
@@ -9927,21 +9827,9 @@ class TestBuildRemoteFailureModes:
     ) -> None:
         from nab_python import build_backend
 
-        provider = self._provider(with_sdist=True)
+        provider = self._provider(with_sdist=True, sdist_archive=b"data")
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _ok_fetch(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
-            return _done_event()
-
-        cast(
-            "MagicMock", provider.coordinator
-        ).request_sdist_archive.side_effect = _ok_fetch
         monkeypatch.setattr(
             build_remote, "extract_sdist_archive", lambda _d, target: target
         )
@@ -9964,48 +9852,25 @@ class TestBuildRemoteFailureModes:
 
         monkeypatch.setattr("nab_python.resolve.resolve_for_targets", _no_network)
 
-        provider = self._provider(with_sdist=True, build_config=NabProjectConfig())
-        cast("MagicMock", provider.coordinator).offline = True
+        provider = self._provider(
+            with_sdist=True,
+            build_config=NabProjectConfig(),
+            sdist_archive=_DYNAMIC_SDIST_TARGZ,
+        )
+        cast("FakeFetchPort", provider.coordinator).offline = True
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
-
-        def _ok_fetch(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...] = (),
-        ) -> threading.Event:
-            provider.coordinator.index.store_sdist_archive(
-                pkg, ver, _DYNAMIC_SDIST_TARGZ
-            )
-            return _done_event()
-
-        cast(
-            "MagicMock", provider.coordinator
-        ).request_sdist_archive.side_effect = _ok_fetch
 
         with pytest.raises(UnsupportedSdistError, match="offline mode"):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
     def test_find_sdist_skips_non_matching_versions(self) -> None:
-        provider = self._provider(with_sdist=True)
+        provider = self._provider(with_sdist=True, sdist_archive=b"data")
         # Two versions, only 2.0 has an sdist.
         provider.versions_cache["pkg"] = [
             (V("1.0"), make_wheel("1.0")),
             (V("2.0"), make_sdist("2.0")),
         ]
 
-        def _ok_fetch(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
-            return _done_event()
-
-        cast(
-            "MagicMock", provider.coordinator
-        ).request_sdist_archive.side_effect = _ok_fetch
         # Asking for 1.0 (wheel-only) raises.
         with pytest.raises(UnsupportedSdistError, match="no sdist is available"):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
@@ -10018,21 +9883,14 @@ class TestBuildRemoteFailureModes:
         overrides: tuple[PackageOverride, ...] = (),
         target: ResolveTarget = _PY312,
     ) -> Provider:
-        provider = self._provider(with_sdist=True, overrides=overrides, target=target)
+        provider = self._provider(
+            with_sdist=True,
+            overrides=overrides,
+            target=target,
+            sdist_archive=b"data",
+        )
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
-        def _ok_fetch(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            provider.coordinator.index.store_sdist_archive(pkg, ver, b"data")
-            return _done_event()
-
-        cast(
-            "MagicMock", provider.coordinator
-        ).request_sdist_archive.side_effect = _ok_fetch
         monkeypatch.setattr(
             build_remote, "extract_sdist_archive", lambda _d, target: target
         )
@@ -10088,9 +9946,13 @@ class TestBuildRemoteFailureModes:
         )
 
         if cancel:
+
+            def interrupt_extraction(*args: object, **kwargs: object) -> NoReturn:
+                raise KeyboardInterrupt
+
             monkeypatch.setattr(
                 "nab_python.build_backend.extract_metadata",
-                MagicMock(side_effect=KeyboardInterrupt),
+                interrupt_extraction,
             )
 
             with pytest.raises(KeyboardInterrupt):
@@ -10217,6 +10079,7 @@ class TestBuildRemoteFailureModes:
         coordinator = make_coordinator(
             [make_sdist("1.0")],
             sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
+            sdist_archive=b"data",
         )
         provider = Provider(
             coordinator,
@@ -10225,16 +10088,6 @@ class TestBuildRemoteFailureModes:
             build_policy=BuildPolicy.BUILD_REMOTE,
         )
 
-        def _ok_fetch(
-            pkg: str,
-            ver: str,
-            _url: str,
-            _hashes: tuple[tuple[str, str], ...],
-        ) -> threading.Event:
-            coordinator.index.store_sdist_archive(pkg, ver, b"data")
-            return _done_event()
-
-        coordinator.request_sdist_archive.side_effect = _ok_fetch
         monkeypatch.setattr(
             build_remote, "extract_sdist_archive", lambda _d, target: target
         )
@@ -10524,7 +10377,7 @@ class TestConsultedMarkers:
     """
 
     @staticmethod
-    def _coordinator(requires_dist: str) -> MagicMock:
+    def _coordinator(requires_dist: str) -> FakeFetchPort:
         return make_coordinator(
             [make_wheel("1.0")],
             metadata_text=(
@@ -10704,8 +10557,8 @@ class TestSiblingMetadataDivergence:
                 "pkg",
                 self._V,
             )
-        coordinator.request_metadata.assert_not_called()
-        coordinator.request_range_metadata.assert_not_called()
+        assert not coordinator.calls_to("request_metadata")
+        assert not coordinator.calls_to("request_range_metadata")
 
     def test_agreeing_tie_siblings_no_crash(self) -> None:
         """Reordered, whitespace-different siblings project equal, so no crash.

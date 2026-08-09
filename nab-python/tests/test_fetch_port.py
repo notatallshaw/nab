@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
+from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python.fetch import FetchCoordinator
 from nab_python.fetch_port import FetchPort, Waitable
 
@@ -19,10 +20,8 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "nab_python"
 PROVIDER_SOURCES = (SRC / "provider.py", *sorted((SRC / "_provider").glob("*.py")))
 """The modules the census reads.
 
-A module outside this list can read the handle without the census seeing it, so
-the list is part of what the census asserts rather than a derived fact. Inside
-it the census is exact: it fails on any occurrence of the handle it cannot
-follow, so a read cannot hide behind an alias."""
+A module outside this list can read the handle unseen, so the list is part of
+what the census asserts."""
 
 
 def declared_members(protocol: type) -> frozenset[str]:
@@ -42,7 +41,7 @@ def is_the_handle(node: ast.expr) -> bool:
     """Whether ``node`` evaluates to the coordinator handle.
 
     Two spellings reach it: the constructor's parameter, and the ``.coordinator``
-    attribute the provider and its helpers read it back from.
+    attribute it is stored under.
     """
     if isinstance(node, ast.Name):
         return node.id == "coordinator"
@@ -63,10 +62,9 @@ def binding_of(node: ast.AST) -> tuple[ast.expr, Sequence[ast.expr]] | None:
 def followable_handles(module: ast.Module) -> set[int]:
     """The ``id()`` of every handle occurrence in ``module`` the walk can account for.
 
-    Two spellings qualify. The object of an attribute read is the census's own
-    input. ``self.coordinator = coordinator`` stores the handle under the name
-    the walk already looks for, so its reads stay visible; any other target
-    hides them.
+    A handle read as ``coordinator.<member>`` is the census's own input.
+    ``self.coordinator = coordinator`` stores it under the name the walk already
+    looks for, so its later reads stay visible; any other target hides them.
     """
     followable: set[int] = set()
     for node in ast.walk(module):
@@ -85,9 +83,8 @@ def followable_handles(module: ast.Module) -> set[int]:
 def members_read_from(path: Path) -> set[str]:
     """Every attribute name ``path`` reads off the coordinator handle.
 
-    Refuses any occurrence of the handle the walk cannot account for. An alias
-    can be spelled many ways, so rather than chase each one the census fails on
-    all of them and stays honest about what it saw.
+    Refuses any occurrence of the handle the walk cannot account for: an alias
+    has too many spellings to chase.
     """
     module = ast.parse(path.read_text(encoding="utf-8"))
     followable = followable_handles(module)
@@ -104,7 +101,7 @@ def members_read_from(path: Path) -> set[str]:
 
 
 def provider_census() -> set[str]:
-    """The port's surface as the provider actually uses it, read from source."""
+    """The port's surface as the provider uses it, read from source."""
     return set().union(*(members_read_from(path) for path in PROVIDER_SOURCES))
 
 
@@ -116,12 +113,7 @@ def coordinator() -> FetchCoordinator:
 
 class TestPortDeclaration:
     def test_declares_exactly_the_members_the_provider_uses(self) -> None:
-        """The port is a census, so recompute it rather than restate it here.
-
-        Asserting against a hand-written list would only catch drift in the
-        protocol. Walking the provider catches drift on either side: a member
-        the provider starts reading and a member it stops reading both fail.
-        """
+        """The port is a census, so recompute it rather than restate it here."""
         assert provider_census() == declared_members(FetchPort)
 
     @pytest.mark.parametrize(
@@ -137,7 +129,6 @@ class TestPortDeclaration:
     def test_the_census_refuses_a_handle_it_cannot_follow(
         self, tmp_path: Path, source: str
     ) -> None:
-        """An alias has too many spellings to chase, so the walk refuses each one."""
         path = tmp_path / "aliased.py"
         path.write_text(source, encoding="utf-8")
         with pytest.raises(AssertionError, match="hides the handle"):
@@ -154,6 +145,7 @@ class TestPortDeclaration:
 
     def test_waitable_declares_only_a_bare_wait(self) -> None:
         assert declared_members(Waitable) == {"wait"}
+
         assert parameter_shape(Waitable.wait) == [
             ("self", inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.empty)
         ]
@@ -162,25 +154,105 @@ class TestPortDeclaration:
         assert isinstance(threading.Event(), Waitable)
 
 
-class TestCoordinatorSatisfiesThePort:
-    def test_instance_check_passes(self, coordinator: FetchCoordinator) -> None:
-        assert isinstance(coordinator, FetchPort)
+class TestRequestSignatures:
+    """Both implementations take the port's parameters, defaults included.
 
+    ``isinstance`` on a runtime-checkable protocol tests only that the names are
+    present, and no type checker reads nab-python, so this is what holds either
+    implementation to the port. Defaults are part of it: a hash argument
+    required on one side only narrows the callable.
+    """
+
+    @pytest.mark.parametrize(
+        "implementation", [FetchCoordinator, FakeFetchPort], ids=["coordinator", "fake"]
+    )
     @pytest.mark.parametrize(
         "name",
         sorted(
             name for name in declared_members(FetchPort) if name.startswith("request_")
         ),
     )
-    def test_request_signature_matches(self, name: str) -> None:
-        """Defaults are compared too.
-
-        ``isinstance`` on a runtime-checkable protocol tests that the names are
-        present and nothing more, and no type checker reads nab-python, so this
-        is what holds the coordinator to the port. A hash argument defaulted on
-        one side only would let a caller drop integrity checking at every site
-        at once.
-        """
-        assert parameter_shape(getattr(FetchCoordinator, name)) == parameter_shape(
+    def test_matches_the_port(self, implementation: type, name: str) -> None:
+        assert parameter_shape(getattr(implementation, name)) == parameter_shape(
             getattr(FetchPort, name)
         )
+
+
+class TestCoordinatorSatisfiesThePort:
+    def test_instance_check_passes(self, coordinator: FetchCoordinator) -> None:
+        assert isinstance(coordinator, FetchPort)
+
+
+class TestFakeSatisfiesThePort:
+    def test_instance_check_passes(self) -> None:
+        assert isinstance(make_coordinator(), FetchPort)
+
+    def test_a_name_the_port_does_not_have_raises(self) -> None:
+        """A mock answers a name nobody defined; a class does not."""
+        port = make_coordinator()
+        with pytest.raises(AttributeError):
+            port.request_listings("pkg")  # type: ignore[attr-defined]
+
+    def test_an_archive_request_needs_its_arguments(self) -> None:
+        """A request that stores bytes must refuse a call that omits them."""
+        port = make_coordinator()
+
+        with pytest.raises(TypeError):
+            port.request_sdist_archive("pkg")  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            port.request_direct_archive("pkg")  # type: ignore[call-arg]
+
+    def test_a_request_hands_back_a_waitable(self) -> None:
+        assert isinstance(make_coordinator().request_listing("pkg"), Waitable)
+
+    def test_the_archive_requests_serve_what_they_were_given(self) -> None:
+        """Both archive requests land bytes in the index, not just a set event."""
+        port = make_coordinator(sdist_archive=b"archive-bytes")
+
+        port.request_sdist_archive("pkg", "1.0", "https://ex.com/pkg-1.0.tar.gz")
+        assert port.index.get_sdist_archive("pkg", "1.0") == b"archive-bytes"
+
+        digest = "a" * 64
+        port.request_direct_archive("pkg", digest, "https://ex.com/pkg-1.0.tar.gz")
+        assert port.index.get_sdist_archive("pkg", digest) == b"archive-bytes"
+
+
+class TestFakeCallRecord:
+    def test_calls_are_recorded_in_order(self) -> None:
+        port = make_coordinator()
+        port.request_listing("a")
+        port.request_listing("b")
+
+        assert port.calls_to("request_listing") == [("a", False), ("b", False)]
+
+    def test_reset_forgets_them(self) -> None:
+        port = make_coordinator()
+        port.request_listing("a")
+        port.reset()
+
+        assert not port.calls_to("request_listing")
+
+    def test_reset_keeps_the_overrides(self) -> None:
+        """A test installs an override, then resets so it counts only later calls."""
+        port = make_coordinator()
+        served = threading.Event()
+        port.override("request_listing", lambda _package, _speculative: served)
+        port.reset()
+
+        assert port.request_listing("a") is served
+
+    def test_an_override_replaces_the_answer_and_is_still_recorded(self) -> None:
+        port = make_coordinator()
+        served = threading.Event()
+        port.override("request_listing", lambda _package, _speculative: served)
+
+        assert port.request_listing("a") is served
+        assert port.calls_to("request_listing") == [("a", False)]
+
+    def test_reading_a_name_that_is_not_a_request_raises(self) -> None:
+        with pytest.raises(KeyError, match="not a fetch request"):
+            make_coordinator().calls_to("request_listings")
+
+    def test_overriding_a_name_that_is_not_a_request_raises(self) -> None:
+        with pytest.raises(KeyError, match="not a fetch request"):
+            make_coordinator().override("request_listings", threading.Event)

@@ -16,7 +16,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -26,7 +26,7 @@ from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
 from nab_python import resolve as resolve_mod
 from nab_python._provider import listing as listing_mod
-from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
@@ -121,8 +121,8 @@ def _make_sdist(version: str, *, package: str) -> SdistFile:
     )
 
 
-def _make_coordinator(listings: dict[str, list[WheelFile]]) -> MagicMock:
-    """Mock FetchCoordinator pre-loaded with each package's listing.
+def _make_coordinator(listings: dict[str, list[WheelFile]]) -> FakeFetchPort:
+    """Fetch port pre-loaded with each package's listing.
 
     Metadata fetches return minimal valid METADATA text for whatever
     name/version is requested so look-ahead in ``choose_version``
@@ -142,7 +142,7 @@ def _no_build(**kwargs: object) -> NabProjectConfig:
 
 
 def _settings(
-    coordinator: MagicMock,
+    coordinator: FakeFetchPort,
     config: NabProjectConfig | None = None,
     *,
     align: bool = True,
@@ -364,7 +364,7 @@ class TestConflictForkResolve:
     """End-to-end: forked resolves produce a lock that validates only
     once the conflict is declared (the datamodel-code-generator shape)."""
 
-    def _black_coordinator(self) -> MagicMock:
+    def _black_coordinator(self) -> FakeFetchPort:
         return _make_coordinator(
             {
                 "black": [
@@ -527,7 +527,7 @@ class TestConflictForkBaseNames:
     so a dep required by every member but not the base keeps its
     membership marker (the at_most_one over-install fix)."""
 
-    def _coordinator(self) -> MagicMock:
+    def _coordinator(self) -> FakeFetchPort:
         return _make_coordinator(
             {
                 "base": [_make_wheel("1.0", package="base")],
@@ -703,7 +703,7 @@ class TestTwoConflictSetsPartialInstall:
         "pkgb2": (),
     }
 
-    def _coordinator(self) -> MagicMock:
+    def _coordinator(self) -> FakeFetchPort:
         listings = {name: [_make_wheel("1.0", package=name)] for name in self._GRAPH}
         listings["shared"] = [
             _make_wheel(version, package="shared") for version in ("1.0", "2.0")
@@ -811,7 +811,7 @@ class TestDroppedRootMarkerWarnedOnce:
     """One mistaken root requirement is reported once per run, however
     many targets, forks and base passes read it."""
 
-    def _coordinator(self) -> MagicMock:
+    def _coordinator(self) -> FakeFetchPort:
         return _make_coordinator({"base": [_make_wheel("1.0", package="base")]})
 
     def _two_targets(self) -> list[ResolveTarget]:
@@ -916,7 +916,7 @@ class TestLowestDirectAcrossTargets:
     resolves first.
     """
 
-    def _coordinator(self) -> MagicMock:
+    def _coordinator(self) -> FakeFetchPort:
         return make_coordinator(
             listings={
                 "bar": [_make_wheel("5.0", package="bar")],
@@ -989,7 +989,7 @@ class TestMatrixPerTargetWheelDivergence:
     target reads the dependencies of the wheel it installs.
     """
 
-    def _coordinator(self) -> MagicMock:
+    def _coordinator(self) -> FakeFetchPort:
         linux_wheel = WheelFile(
             filename="pkg-1.0-cp311-cp311-manylinux_2_17_x86_64.whl",
             url="https://example.com/pkg-1.0-linux.whl",
@@ -1659,7 +1659,7 @@ class TestCutoffAndOverridePlumbing:
         '[project]\nname = "proj"\nversion = "0"\n[tool.nab]\nbuild-policy = "never"\n'
     )
 
-    def _coordinator(self) -> MagicMock:
+    def _coordinator(self) -> FakeFetchPort:
         """Two foo releases either side of March 2024, plus a bar to depend on."""
         return _make_coordinator(
             {
@@ -2073,7 +2073,7 @@ class TestResolveWithCoordinator:
             resolve_with_coordinator(coordinator, _one_target(), _reqs("pkg[missing]"))
 
     @staticmethod
-    def _extra_backtrack_coordinator() -> MagicMock:
+    def _extra_backtrack_coordinator() -> FakeFetchPort:
         """An index where only ``aa==3.0`` provides the ``y`` extra.
 
         ``aa[y]`` pulls in ``cc<3.0``, so a resolve that decides ``cc``
@@ -2121,7 +2121,7 @@ class TestResolveWithCoordinator:
         }
 
     @staticmethod
-    def _narrowed_base_coordinator() -> MagicMock:
+    def _narrowed_base_coordinator() -> FakeFetchPort:
         """An index where only ``aa==3.0`` provides the ``y`` extra.
 
         ``bb==2.0`` requires ``aa<3.0``, so a resolve that takes it
@@ -2187,7 +2187,7 @@ class TestResolveWithCoordinator:
         assert result.target_results[0].pins == {"pkg": Version("1.0")}
 
     @staticmethod
-    def _dropped_extra_coordinator() -> MagicMock:
+    def _dropped_extra_coordinator() -> FakeFetchPort:
         """An index whose newest ``aaa`` no longer declares the ``x`` extra.
 
         1.0 and 2.0 declare ``x`` and pull ``bbb`` through it; 3.0
@@ -2263,7 +2263,7 @@ class TestResolveWithCoordinator:
             )
 
     @staticmethod
-    def _transitive_proxy_coordinator(*, newest_dep: str = "") -> MagicMock:
+    def _transitive_proxy_coordinator(*, newest_dep: str = "") -> FakeFetchPort:
         """An index where ``ccc`` reaches ``aaa`` only through ``aaa[x]``.
 
         ``aaa`` 1.0 and 2.0 declare ``x`` and pull ``bbb`` through it; 3.0
@@ -2405,7 +2405,7 @@ class TestLocalVcsRequiresPython:
         return LocalSource("foo", str(tmp_path))
 
     def _resolve(
-        self, coordinator: MagicMock, matrix: Matrix, local: LocalSource
+        self, coordinator: FakeFetchPort, matrix: Matrix, local: LocalSource
     ) -> ResolveResult:
         return resolve_with_coordinator(
             coordinator,
@@ -2589,7 +2589,7 @@ class TestArchiveSourceAcrossTargets:
         assert 'version = "99.0"' in (legacy_tree / "pyproject.toml").read_text(
             encoding="utf-8"
         )
-        coord.request_direct_archive.assert_called_once()
+        assert len(coord.calls_to("request_direct_archive")) == 1
 
     def test_resolves_with_caching_off(self) -> None:
         """``nab lock --no-cache`` still extracts and pins the declared archive."""
@@ -2661,7 +2661,7 @@ class TestSharedListingFilter:
             hashes=(("sha256", "a" * 64),),
         )
 
-    def _coordinator(self, wheels: list[WheelFile]) -> MagicMock:
+    def _coordinator(self, wheels: list[WheelFile]) -> FakeFetchPort:
         return _make_coordinator({"pkg": wheels})
 
     def _targets(self, python: str) -> list[ResolveTarget]:
@@ -2771,7 +2771,7 @@ class TestMicroBoundaryNarrowing:
     """
 
     @staticmethod
-    def _coordinator(metadata: dict[str, str]) -> MagicMock:
+    def _coordinator(metadata: dict[str, str]) -> FakeFetchPort:
         listings = {
             name: [_make_wheel(version, package=name)]
             for name, version in (("foo", "1.0"), ("mid", "2.0"), ("top", "3.0"))
@@ -2980,7 +2980,7 @@ class TestMicroBoundaryNarrowing:
         assert result.success
         assert self._pins_by_label(result) == {"py310-linux_x86_64": {"foo"}}
 
-    def _fixpoint_coordinator(self) -> MagicMock:
+    def _fixpoint_coordinator(self) -> FakeFetchPort:
         return self._coordinator(
             {
                 "1.0": self._meta(
@@ -3120,7 +3120,7 @@ class TestMicroSliceAlignmentDirection:
         return head + "".join(f"Requires-Dist: {req}\n" for req in requires)
 
     @classmethod
-    def _coordinator(cls, *split_markers: str) -> MagicMock:
+    def _coordinator(cls, *split_markers: str) -> FakeFetchPort:
         """A graph whose ``foo`` splits every minor ``split_markers`` cuts.
 
         ``bar`` is the package under test: nothing in the split concerns it,

@@ -32,7 +32,7 @@ from nab_python._provider.priority import (
     CONFLICT_THRESHOLD,
     CULPRIT_DEMOTE_THRESHOLD,
 )
-from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
@@ -48,7 +48,6 @@ from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from unittest.mock import MagicMock
 
     from nab_index.client import SdistFile
     from nab_resolver.types import RangeProtocol
@@ -91,7 +90,7 @@ class _ScanRecordingProvider(Provider):
 
     def __init__(
         self,
-        coordinator: MagicMock,
+        coordinator: FakeFetchPort,
         decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
     ) -> None:
         super().__init__(coordinator, decision_order=decision_order)
@@ -120,7 +119,7 @@ class _ScanRecordingProvider(Provider):
 def _coordinator(
     arrivals: Mapping[str, Sequence[WheelFile | SdistFile]],
     resident: Mapping[str, Sequence[WheelFile | SdistFile]] | None = None,
-) -> MagicMock:
+) -> FakeFetchPort:
     """Coordinator whose index holds ``resident`` and queues ``arrivals``."""
     coordinator = make_coordinator(None)
     index = _ArrivesOnReadIndex(arrivals)
@@ -160,18 +159,17 @@ def _fetching_coordinator(
     pending: Mapping[str, Sequence[WheelFile | SdistFile]],
     *,
     metadata_by_url: Mapping[str, str | None] | None = None,
-) -> MagicMock:
+) -> FakeFetchPort:
     """Coordinator whose listings land only for a caller that waits.
 
     Only a caller that runs a whole resolve needs ``metadata_by_url``.
     """
-    coordinator = make_coordinator(metadata_by_url=metadata_by_url)
+    coordinator = make_coordinator(None, metadata_by_url=metadata_by_url)
     index = coordinator.index
-
-    def request_listing(package: str, *, speculative: bool = False) -> threading.Event:
-        return _LandsOnWait(index, package, pending[package])
-
-    coordinator.request_listing.side_effect = request_listing
+    coordinator.override(
+        "request_listing",
+        lambda package, _speculative: _LandsOnWait(index, package, pending[package]),
+    )
     return coordinator
 
 
@@ -435,7 +433,7 @@ class TestStableOrderIgnoresArrival:
 
         assert listing is not None
         assert [file.filename for file in listing] == ["foo-1.0-py3-none-any.whl"]
-        coordinator.request_listing.assert_not_called()
+        assert not coordinator.calls_to("request_listing")
 
     def test_a_failed_listing_is_not_requested_again(self) -> None:
         """A fetch that already failed has settled; asking again would not help."""
@@ -449,7 +447,7 @@ class TestStableOrderIgnoresArrival:
             provider.prioritize("foo", VersionRange.full(), {})[1] == _NO_LISTING_PRIOR
         )
         assert provider.is_ready("foo") is False
-        coordinator.request_listing.assert_not_called()
+        assert not coordinator.calls_to("request_listing")
 
     def test_a_listing_that_never_lands_leaves_the_package_in_flight(self) -> None:
         """One wait, then the sentinel: the scan must not spin on a dead fetch."""

@@ -17,8 +17,7 @@ import os
 import tarfile
 import textwrap
 import zlib
-from typing import TYPE_CHECKING
-from unittest.mock import MagicMock
+from typing import TYPE_CHECKING, NoReturn
 
 import httpx
 import pytest
@@ -32,6 +31,7 @@ from nab_index.subdir import subdirectory_escapes
 from nab_index.transport import HttpError
 from nab_python._provider import sources
 from nab_python._provider.sources import _fetch_archive_bytes
+from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
@@ -42,7 +42,7 @@ from nab_python.download import (
     download_lock,
     iter_artifacts,
 )
-from nab_python.fetch import FetchCoordinator, InMemoryIndex
+from nab_python.fetch import FetchCoordinator
 from nab_python.lockfile import ArchivePin, LockInput, TargetLock
 from nab_python.metadata import WheelMetadata
 from nab_python.provider import (
@@ -134,10 +134,8 @@ def _provider(
     *,
     build_policy: BuildPolicy = BuildPolicy.NEVER,
 ) -> Provider:
-    coordinator = MagicMock()
-    coordinator.index = InMemoryIndex()
     return Provider(
-        coordinator,
+        make_coordinator(),
         archive_sources=archive_sources,
         archive_cache_dir=cache_dir,
         build_policy=build_policy,
@@ -366,11 +364,9 @@ class TestArchiveIndexing:
         from nab_python.provider import LocalSource
 
         digest = "a" * 64
-        coordinator = MagicMock()
-        coordinator.index = InMemoryIndex()
         with pytest.raises(ValueError, match="duplicate source"):
             Provider(
-                coordinator,
+                make_coordinator(),
                 local_sources=[LocalSource(name="foo", path=str(tmp_path))],
                 archive_sources=[
                     ArchiveSource(
@@ -571,8 +567,8 @@ class TestArchiveMaterialize:
         assert dependency.read_text(encoding="utf-8") == "dep-one==1"
         assert dependency_alias.read_text(encoding="utf-8") == "dep-one==1"
         assert dependency.samefile(dependency_alias)
-        first.coordinator.request_direct_archive.assert_not_called()
-        second.coordinator.request_direct_archive.assert_not_called()
+        assert first.coordinator.calls_to("request_direct_archive") == []
+        assert second.coordinator.calls_to("request_direct_archive") == []
 
     @pytest.mark.parametrize(
         ("failure_target", "expected"),
@@ -607,9 +603,11 @@ class TestArchiveMaterialize:
         dependency = tree / "dependency.txt"
         dependency.write_text("dep-one==1", encoding="utf-8")
         os.link(dependency, tree / "dependency-alias.txt")
-        monkeypatch.setattr(
-            failure_target, MagicMock(side_effect=OSError("simulated copy failure"))
-        )
+
+        def fail_copy(*args: object, **kwargs: object) -> NoReturn:
+            raise OSError("simulated copy failure")
+
+        monkeypatch.setattr(failure_target, fail_copy)
 
         provider = _provider([source], cache, build_policy=BuildPolicy.BUILD_REMOTE)
         with pytest.raises(UnsupportedSdistError) as excinfo:
@@ -619,7 +617,7 @@ class TestArchiveMaterialize:
         assert "archive source 'foo'" in message
         assert expected in message
         assert "simulated copy failure" in message
-        provider.coordinator.request_direct_archive.assert_not_called()
+        assert provider.coordinator.calls_to("request_direct_archive") == []
 
     @requires_data_filter
     def test_every_verified_hash_is_recorded_for_reuse(self, tmp_path: Path) -> None:
@@ -644,7 +642,7 @@ class TestArchiveMaterialize:
         versions = second.fetch_versions("foo")
 
         assert str(versions[0][0]) == "1.0.0"
-        second.coordinator.request_direct_archive.assert_not_called()
+        assert not second.coordinator.calls_to("request_direct_archive")
 
     @requires_data_filter
     def test_partial_tree_never_visible_at_cache_path(
@@ -809,7 +807,7 @@ class TestArchiveChosenNames:
         # resolve is served from the cache.
         second = _archive_provider(data, cache)
         assert str(second.fetch_versions("foo")[0][0]) == "1.0.0"
-        second.coordinator.request_direct_archive.assert_not_called()
+        assert not second.coordinator.calls_to("request_direct_archive")
 
     @requires_data_filter
     def test_flat_archive_keeps_its_own_marker_named_file(self, tmp_path: Path) -> None:
@@ -844,7 +842,7 @@ class TestWarmArchiveCache:
         versions = provider.fetch_versions("foo")
 
         assert str(versions[0][0]) == "1.0.0"
-        provider.coordinator.request_direct_archive.assert_not_called()
+        assert not provider.coordinator.calls_to("request_direct_archive")
 
     def test_partial_tree_without_marker_is_not_served(self, tmp_path: Path) -> None:
         # Without the completion marker the tree is a crashed run's leftover,
@@ -1283,9 +1281,7 @@ class TestArchiveBuildPolicyLevels:
     """
 
     def _extract(self, policy: BuildPolicy, path: Path) -> WheelMetadata:
-        coordinator = MagicMock()
-        coordinator.index = InMemoryIndex()
-        provider = Provider(coordinator, build_policy=policy)
+        provider = Provider(make_coordinator(), build_policy=policy)
         return sources.extract_source_metadata(
             provider,
             path,

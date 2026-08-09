@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -24,9 +23,10 @@ from nab_index.vcs import (
     _split_repo_ref,
     prepare_clone,
 )
+from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
-from nab_python.fetch import FetchCoordinator, InMemoryIndex
+from nab_python.fetch import FetchCoordinator
 from nab_python.lockfile import VcsPin, build_target_lock
 from nab_python.metadata import WheelMetadata
 from nab_python.provider import (
@@ -852,11 +852,8 @@ class TestOfflineClone:
 
 
 class TestProviderVcsIntegration:
-    def coordinator(self) -> MagicMock:
-        coordinator = MagicMock()
-        coordinator.index = InMemoryIndex()
-        coordinator.offline = False
-        return coordinator
+    def coordinator(self) -> FakeFetchPort:
+        return make_coordinator()
 
     def test_declared_source_is_not_cloned_offline(
         self,

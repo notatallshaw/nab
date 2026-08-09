@@ -1,9 +1,8 @@
 """Property tests for the provider's wheel-tag filter.
 
 The provider implements `PEP 425`_'s wheel-tag compatibility algorithm
-and `PEP 517`_'s wheel-vs-sdist preference.  This file walks the
-relevant clauses paragraph by paragraph and adds a property test for
-each invariant the filter must preserve.
+and `PEP 517`_'s wheel-vs-sdist preference.  Each invariant the filter
+must preserve gets a property test.
 
 The oracle is built from the generated listing directly rather than
 from a second provider: the filter is the base provider's, so the only
@@ -16,14 +15,12 @@ one of the properties below.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
 from nab_index.client import SdistFile, WheelFile
-from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._vendor.packaging.version import Version
 from nab_python.provider import BuildPolicy, DistPolicy, Provider
 from nab_python.tags import PlatformSpec, TagSet
@@ -58,7 +55,7 @@ _PLATFORM_TAGS = (
 
 @st.composite
 def wheel_tags(draw: st.DrawFn) -> str:
-    """Generate a random ``cpXY-cpXY-<platform>`` or ``py3-none-any`` tag."""
+    """Generate a random ``cpXY-<abi>-<platform>`` tag."""
     py_minor = draw(st.sampled_from(("39", "310", "311", "312", "313")))
     abi = draw(st.sampled_from((f"cp{py_minor}", "abi3", "none")))
     plat = draw(st.sampled_from(_PLATFORM_TAGS))
@@ -97,8 +94,8 @@ def listing(draw: st.DrawFn) -> list[WheelFile | SdistFile]:
     return files
 
 
-def coordinator(files: list[WheelFile | SdistFile]) -> MagicMock:
-    """Build a coordinator stub that returns ``files`` for ``pkg``."""
+def coordinator(files: list[WheelFile | SdistFile]) -> FakeFetchPort:
+    """Build a fetch port that serves ``files`` as ``pkg``'s listing."""
     return make_coordinator(files, package="pkg")
 
 
@@ -106,8 +103,7 @@ class TestNoTargetIsNoFilter:
     """With no target the provider keeps every wheel.
 
     Nothing has said which machine the resolve is for, so there is no
-    tag set to filter by.  A regression here would silently narrow the
-    candidate set of a caller that declared no target.
+    tag set to filter by.
     """
 
     @given(files=listing())
@@ -125,9 +121,7 @@ class TestNoTargetIsNoFilter:
 class TestFilterOnlyRemoves:
     """The tag filter only removes entries; it never adds or rewrites.
 
-    Stated formally: the output is a subset of the input listing.  This
-    keeps another filter's verdict (a PEP 592 yanked version, an
-    admission filter) from being undone by the tag filter.
+    Another filter's verdict, such as a PEP 592 yank, therefore survives it.
     """
 
     @given(files=listing())
@@ -135,7 +129,6 @@ class TestFilterOnlyRemoves:
     def test_output_is_subset_of_input(
         self, files: list[WheelFile | SdistFile]
     ) -> None:
-        """The filter never adds entries; it only removes."""
         provider = Provider(
             coordinator(files),
             target=_LINUX_TARGET,
@@ -183,8 +176,6 @@ class TestVersionAdmissionPolicy:
     artifact remains.  A compatible wheel OR an sdist keeps the version
     alive at every ``BuildPolicy`` level; look-ahead, not this filter,
     rejects an unreadable sdist under ``BuildPolicy.NEVER``.
-
-    .. _PEP 517: https://peps.python.org/pep-0517/
     """
 
     @staticmethod
@@ -216,9 +207,7 @@ class TestVersionAdmissionPolicy:
     def test_never_policy_keeps_sdist_only_versions(
         self, files: list[WheelFile | SdistFile]
     ) -> None:
-        """Under NEVER, a version is admitted if a compatible wheel OR an sdist
-        exists; the look-ahead gate, not filter_distributions, rejects an
-        unbuildable sdist, so sdist-only versions stay available here."""
+        """Under NEVER, sdist-only versions still survive the filter."""
         provider = Provider(
             coordinator(files),
             target=_LINUX_TARGET,

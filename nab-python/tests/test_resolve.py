@@ -16,7 +16,7 @@ import respx
 from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.transport import HttpError
-from nab_python._testing.coordinator_fake import make_coordinator
+from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._vendor.packaging.markers import Marker, default_environment
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python._vendor.packaging.ranges import VersionRange
@@ -4161,7 +4161,7 @@ class TestLocalSourceExtrasMarkers:
         tmp_path: Path,
         root_body: str,
         members: dict[str, str],
-        coordinator: MagicMock,
+        coordinator: FakeFetchPort,
         python_version: str,
     ) -> ResolveResult:
         (tmp_path / "pyproject.toml").write_text(root_body, encoding="utf-8")
@@ -4290,7 +4290,7 @@ class TestLockDeclaresItsEnvironment:
     """
 
     @staticmethod
-    def _resolve(tmp_path: Path, body: str, coordinator: MagicMock) -> LockInput:
+    def _resolve(tmp_path: Path, body: str, coordinator: FakeFetchPort) -> LockInput:
         path = tmp_path / "pyproject.toml"
         path.write_text(body, encoding="utf-8")
         with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
@@ -4307,7 +4307,7 @@ class TestLockDeclaresItsEnvironment:
     )
 
     @staticmethod
-    def _coordinator(requires_dist: str = "") -> MagicMock:
+    def _coordinator(requires_dist: str = "") -> FakeFetchPort:
         return make_coordinator(
             _index_wheels("foo", "1.0"),
             package="foo",

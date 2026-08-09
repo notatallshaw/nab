@@ -3334,8 +3334,8 @@ class TestBuildTargetLock:
         provider.fetch_versions("pkg")
         deps = provider.get_dependencies("pkg", Version("2.0"))
         assert "dep-a" in deps
-        coordinator.request_metadata.assert_not_called()
-        coordinator.request_metadata_batch.assert_not_called()
+        assert not coordinator.calls_to("request_metadata")
+        assert not coordinator.calls_to("request_metadata_batch")
 
         lock = build_target_lock(provider, _HOST, {"pkg": Version("2.0")})
         text = write_lock(_lock_from(lock))
