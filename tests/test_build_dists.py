@@ -15,10 +15,9 @@ _spec.loader.exec_module(build_dists)
 
 
 def test_source_dir_maps_umbrella_to_root() -> None:
-    assert build_dists._source_dir("nab") == build_dists.REPO_ROOT
+    assert build_dists.source_dir("nab") == build_dists.REPO_ROOT
     assert (
-        build_dists._source_dir("nab-resolver")
-        == build_dists.REPO_ROOT / "nab-resolver"
+        build_dists.source_dir("nab-resolver") == build_dists.REPO_ROOT / "nab-resolver"
     )
 
 

@@ -57,7 +57,7 @@ def _run(
     return (result.stdout or "").strip() if capture else ""
 
 
-def _source_dir(package: str) -> Path:
+def source_dir(package: str) -> Path:
     """Return the source directory for a workspace package."""
     return REPO_ROOT if package == "nab" else REPO_ROOT / package
 
@@ -79,7 +79,7 @@ def build_all(outdir: Path, source_date_epoch: str) -> None:
                 "--no-isolation",
                 "--outdir",
                 str(outdir / package),
-                str(_source_dir(package)),
+                str(source_dir(package)),
             ],
             env=env,
         )
