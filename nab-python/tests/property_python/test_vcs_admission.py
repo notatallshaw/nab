@@ -28,7 +28,7 @@ Invariants:
 from __future__ import annotations
 
 import posixpath
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit
 
 import pytest
 from hypothesis import given
@@ -71,21 +71,18 @@ def _is_full_sha(ref: str) -> bool:
     return len(ref) == 40 and all(c in "0123456789abcdefABCDEF" for c in ref)
 
 
+ALLOWED_REPOS = [
+    "https://github.com/org",
+    "https://example.org/",
+    "ssh://git@github.com/org/repo.git",
+    "",
+]
+
 configs = st.builds(
     VcsConfig,
     policy=st.sampled_from([VcsPolicy.BLOCK, VcsPolicy.ALLOW]),
     allowed_schemes=st.frozensets(st.sampled_from(VALID_SCHEMES), max_size=5),
-    allowed_repos=st.lists(
-        st.sampled_from(
-            [
-                "https://github.com/org",
-                "https://example.org/",
-                "ssh://git@github.com/org/repo.git",
-                "",
-            ]
-        ),
-        max_size=2,
-    ).map(tuple),
+    allowed_repos=st.lists(st.sampled_from(ALLOWED_REPOS), max_size=2).map(tuple),
     require_pin=st.booleans(),
 )
 
@@ -139,6 +136,44 @@ def structured_urls(draw: st.DrawFn) -> str:
 
 
 @st.composite
+def boundary_cases(draw: st.DrawFn) -> tuple[str, VcsConfig]:
+    """A pinned URL continuing one ``allowed-repos`` entry, plus that config.
+
+    The candidate is built from the entry itself, since
+    ``structured_urls`` reaches the end of one only by chance: the drawn
+    tail is what the boundary rule has to judge, and the drawn login
+    sits in front of the authority.  A tail placed inside the authority
+    names a different host instead.
+    """
+    prefix = draw(st.sampled_from([entry for entry in ALLOWED_REPOS if entry]))
+    login = draw(st.sampled_from(["", "git@", "user:pw@"]))
+    tail = draw(
+        st.sampled_from(
+            ["", "\t", "\r", "\n", "?", "?x", "x", "/x", ".git", ".gitx", "#f"]
+        )
+    )
+    position = draw(st.sampled_from(["authority", "end"]))
+    require_pin = draw(st.booleans())
+
+    scheme, _, rest = prefix.partition("://")
+    if position == "authority":
+        authority, slash, path = rest.partition("/")
+        cut = len(authority) // 2
+        rest = f"{authority[:cut]}{tail}{authority[cut:]}{slash}{path}"
+    else:
+        rest = f"{rest}{tail}"
+
+    config = VcsConfig(
+        policy=VcsPolicy.ALLOW,
+        allowed_schemes=frozenset(VALID_SCHEMES),
+        allowed_repos=(prefix,),
+        require_pin=require_pin,
+    )
+
+    return (f"git+{scheme}://{login}{rest}@{SHA}", config)
+
+
+@st.composite
 def escaping_urls(draw: st.DrawFn) -> str:
     """A pinned URL whose path resolves one level above where it is written."""
     scheme = draw(st.sampled_from(VALID_SCHEMES))
@@ -156,11 +191,18 @@ def _decision(url: str, config: VcsConfig) -> tuple[str, str]:
 
 
 def _drop_login(url: str) -> str:
-    """Strip any authority ``user[:pass]@`` / ``git@`` from ``url``."""
-    parts = urlsplit(url)
-    if "@" not in parts.netloc:
+    """Strip any authority ``user[:pass]@`` / ``git@`` from ``url``.
+
+    Cuts the raw string, since a URL rebuilt from :func:`urlsplit` has
+    lost every tab, CR and LF and any empty ``?``.
+    """
+    if "@" not in urlsplit(url).netloc:
         return url
-    return urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[1]))
+
+    head, _, rest = url.partition("//")
+    delimiters = [i for i in (rest.find(char) for char in "/?#") if i != -1]
+    end = min(delimiters, default=len(rest))
+    return f"{head}//{rest[:end].rpartition('@')[2]}{rest[end:]}"
 
 
 def _git_would_rewrite(path: str) -> bool:
@@ -249,6 +291,16 @@ def test_total_partition_and_determinism_arbitrary_text(
 @PROPERTY_SETTINGS
 @given(url=structured_urls(), config=configs)
 def test_matches_documented_oracle(url: str, config: VcsConfig) -> None:
+    assert _decision(url, config)[0] == _oracle(url, config)
+
+
+@PROPERTY_SETTINGS
+@given(case=boundary_cases())
+def test_prefix_boundary_matches_documented_oracle(
+    case: tuple[str, VcsConfig],
+) -> None:
+    """The character ending an entry decides the match, credentials or not."""
+    url, config = case
     assert _decision(url, config)[0] == _oracle(url, config)
 
 
