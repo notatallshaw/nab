@@ -7,12 +7,13 @@ import logging
 import os
 import stat
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from nab_index.atomic import atomic_write_text
+from nab_index.atomic import atomic_write, atomic_write_text
 from nab_index.cache import (
     CACHE_VERSION_METADATA,
     CACHE_VERSION_SDIST,
@@ -392,6 +393,104 @@ class TestOnDiskCache:
                 CachePolicy(fetched_at=1, max_age=1, etag=None),
             )
         assert list(tmp_path.rglob("*.neg")) == []
+
+
+class TestUnwritableRoot:
+    """A root the process cannot write to degrades to no caching."""
+
+    def _cache(self, tmp_path: Path) -> OnDiskCache:
+        """Return a cache whose root is a regular file, so every store fails."""
+        root = tmp_path / "cache"
+        root.write_bytes(b"not a directory")
+        return OnDiskCache(root, "https://pypi.org/simple/")
+
+    def test_put_simple_does_not_raise(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        cache.put_simple("foo", b"{}", CachePolicy(fetched_at=1, max_age=1, etag=None))
+        assert cache.get_simple("foo") is None
+
+    def test_put_metadata_does_not_raise(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        cache.put_metadata("foo", METADATA_URLS[0], "Name: foo\n")
+        assert cache.get_metadata("foo", METADATA_URLS[0]) is None
+
+    def test_put_sdist_files_does_not_raise(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        cache.put_sdist_files("foo", "1.0", "Name: foo\n", None)
+        assert cache.get_sdist_files("foo", "1.0") is None
+
+    def test_refresh_simple_policy_does_not_raise(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        cache.refresh_simple_policy(
+            "foo", CachePolicy(fetched_at=2, max_age=1, etag=None)
+        )
+        assert cache.get_simple("foo") is None
+
+    def test_permission_denied_does_not_raise(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def denied(_path: Path, _data: bytes) -> None:
+            raise PermissionError(13, "Permission denied")
+
+        monkeypatch.setattr("nab_index.cache.atomic_write", denied)
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        cache.put_metadata("foo", METADATA_URLS[0], "Name: foo\n")
+        assert cache.get_metadata("foo", METADATA_URLS[0]) is None
+
+    def test_warns_once_per_cache(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._cache(tmp_path)
+        policy = CachePolicy(fetched_at=1, max_age=1, etag=None)
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            cache.put_simple("foo", b"{}", policy)
+            cache.put_metadata("foo", METADATA_URLS[0], "Name: foo\n")
+            cache.put_sdist_files("foo", "1.0", "Name: foo\n", None)
+        assert len(caplog.records) == 1
+        assert str(tmp_path / "cache") in caplog.records[0].getMessage()
+
+    def test_writable_root_does_not_warn(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            cache.put_simple(
+                "foo", b"{}", CachePolicy(fetched_at=1, max_age=1, etag=None)
+            )
+        assert caplog.records == []
+        assert cache.get_simple("foo") is not None
+
+    def test_dropped_body_write_keeps_the_old_policy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A body lost to ENOSPC must not be stamped with the new policy.
+
+        The small sidecar can land when the much larger body does not,
+        which would leave the old listing looking fresh under the new
+        body's ETag.
+        """
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+        old_policy = CachePolicy(fetched_at=0, max_age=600, etag="E1")
+        cache.put_simple("foo", b"OLD-LISTING", old_policy)
+
+        def fail_body(path: Path, data: bytes) -> None:
+            if path.suffix == ".json":
+                raise OSError(28, "No space left on device")
+            atomic_write(path, data)
+
+        monkeypatch.setattr("nab_index.cache.atomic_write", fail_body)
+        cache.put_simple(
+            "foo",
+            b"NEW-LISTING",
+            CachePolicy(fetched_at=int(time.time()), max_age=600, etag="E2"),
+        )
+
+        assert cache.get_simple("foo") == (b"OLD-LISTING", old_policy)
+
+    def test_bad_key_still_raises(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        with pytest.raises(ValueError, match="not a single path segment"):
+            cache.put_metadata("foo/../elsewhere", METADATA_URLS[0], "text")
 
 
 class TestNullCache:

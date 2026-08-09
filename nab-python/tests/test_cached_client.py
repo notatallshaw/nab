@@ -1330,6 +1330,24 @@ class TestGetFiles:
         files = asyncio.run(go())
         assert len(files) == 1
 
+    def test_unwritable_cache_root_still_serves_the_listing(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "cache"
+        root.write_bytes(b"not a directory")
+        cache = OnDiskCache(root, "https://pypi.org/simple/")
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES)])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        files = asyncio.run(go())
+        assert len(files) == 1
+
 
 class TestResponseAge:
     """An Age header counts toward the entry's age (RFC 9111 4.2.3).
@@ -2907,8 +2925,9 @@ class TestGetSdistFiles:
     ) -> None:
         """A crash while writing the entry must not leave a partial cache.
 
-        The first fetch fails as the single record is committed; the second
-        must still recover the full PKG-INFO plus pyproject.toml pair.
+        The first fetch's write is dropped as the single record is
+        committed; the second must still recover the full PKG-INFO and
+        pyproject.toml pair.
         """
         cache = _make_cache(tmp_path)
         marker = b"partial-write-marker"
@@ -2941,8 +2960,10 @@ class TestGetSdistFiles:
             finally:
                 await client.aclose()
 
-        with pytest.raises(OSError, match="simulated crash"):
-            asyncio.run(fetch())
+        first_pkg_info, first_pyproject = asyncio.run(fetch())
+        assert first_pkg_info is not None
+        assert first_pyproject is not None
+        assert cache.get_sdist_files("pkg", "1.0") is None
 
         fail["active"] = False
         pkg_info, recovered_pyproject = asyncio.run(fetch())
