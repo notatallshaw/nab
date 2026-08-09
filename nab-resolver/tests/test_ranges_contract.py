@@ -6,6 +6,11 @@ range from every classmethod and closes the result under every operator, then
 checks each one against a restatement of the invariant that does not share a
 line with the implementation.
 
+The same pool feeds a differential over the set predicates.  Its oracle is each
+predicate's set-algebra definition, written out below rather than called
+through ``Range``, so a fault in a helper the predicates share cannot move the
+expected answer along with the result.
+
 The rest pins what ``_normalize_intervals`` repairs, which is less than the
 invariant asks for, and what ``Range`` does with hand-built lists that break
 it.
@@ -24,6 +29,7 @@ from nab_resolver.ranges import (
     Range,
     _normalize_intervals,
 )
+from nab_resolver.types import RangeRelation
 
 VERSIONS = (1, 2, 3, 5, 8)
 """Version pool for the generated ranges.  The gaps make touching reachable."""
@@ -33,6 +39,32 @@ PROBES = tuple(range(10))
 
 SECOND_ROUND_SAMPLE = 60
 """How many first-round ranges get run through the operators a second time."""
+
+DIFFERENTIAL_POPULATION = 180
+"""How many distinct pool ranges the differential draws its pairs from.  Capping
+the count rather than striding the whole list is what bounds the work: pairing is
+quadratic, and a ``__hash__`` that stopped deduplicating would otherwise take the
+pool from a few hundred ranges to nineteen thousand."""
+
+WIDENING_CHANGES_THIS = (
+    "This input breaks the Range invariant, so set algebra does not decide it. "
+    "A change that makes the walks total over any interval list should update "
+    "this assertion rather than be reverted for failing it."
+)
+"""Failure message for the assertions that pin behaviour on illegal input."""
+
+OUT_OF_CONTRACT_LISTS: tuple[tuple[Interval, ...], ...] = (
+    ((5, True, 8, False), (1, True, 3, False)),
+    ((1, True, 5, False), (2, True, 8, False)),
+    ((1, True, 2, False), (2, True, 3, False)),
+    ((3, False, 3, False),),
+    ((5, True, 4, True),),
+    ((NEGATIVE_INFINITY, True, 3, False),),
+    ((1, True, POSITIVE_INFINITY, True),),
+    ((8, True, 9, False), (3, False, 3, False), (1, True, 2, True)),
+)
+"""One list per way the invariant can break: order, overlap, touch, empty,
+reversed, either inclusive infinity, and all of them at once."""
 
 
 def holds_no_version(interval: Interval) -> bool:
@@ -121,6 +153,46 @@ def distinct_pool_ranges() -> tuple[Range[int], ...]:
     return tuple(dict.fromkeys(public_surface_ranges()))
 
 
+@cache
+def differential_pairs() -> tuple[tuple[Range[int], Range[int]], ...]:
+    """Return every ordered pair from an even sample of the distinct pool ranges.
+
+    Deduplicating first is what makes the pairs worth running: the raw pool is
+    mostly repeats of the empty range and of single intervals, and the walks
+    can only part from set algebra on the multi-interval shapes.
+    """
+    distinct = distinct_pool_ranges()
+    stride = max(1, len(distinct) // DIFFERENTIAL_POPULATION)
+    sample = distinct[::stride][:DIFFERENTIAL_POPULATION]
+    return tuple((left, right) for left in sample for right in sample)
+
+
+def oracle_difference(left: Range[int], right: Range[int]) -> Range[int]:
+    """Return ``left - right`` by set algebra: meet ``left`` with the complement."""
+    return left & ~right
+
+
+def oracle_is_subset(left: Range[int], right: Range[int]) -> bool:
+    """Return whether ``left`` is a subset by set algebra: an empty difference."""
+    return (left & ~right).is_empty
+
+
+def oracle_is_disjoint(left: Range[int], right: Range[int]) -> bool:
+    """Return whether the two are disjoint by set algebra: an empty meet."""
+    return (left & right).is_empty
+
+
+def oracle_relation(left: Range[int], right: Range[int]) -> RangeRelation:
+    """Return the relation from the two oracle predicates, asking each in turn."""
+    if oracle_is_subset(left, right):
+        if oracle_is_disjoint(left, right):
+            return RangeRelation.EMPTY
+        return RangeRelation.SUBSET
+    if oracle_is_disjoint(left, right):
+        return RangeRelation.DISJOINT
+    return RangeRelation.OVERLAPPING
+
+
 class TestPublicSurfaceUpholdsTheInvariant:
     """Nothing reachable from the promised API produces a non-canonical list.
 
@@ -162,6 +234,81 @@ class TestPublicSurfaceUpholdsTheInvariant:
         assert invariant_violations(((5, True, 6, False), (1, True, 2, False)))
         assert invariant_violations(((1, True, 2, False), (2, True, 3, False)))
         assert invariant_violations(((1, True, 4, False), (2, True, 6, False)))
+
+
+class TestPredicatesMatchSetAlgebra:
+    """The one-pass walks answer what the set-algebra formulations answer.
+
+    Every pair comes from the census pool, so every input satisfies the
+    invariant the walks require.
+    """
+
+    def test_pairs_are_numerous_enough_to_mean_something(self) -> None:
+        """A thin pair set, or one of nothing but single intervals, agrees with anything.
+
+        The upper bound is the other half: pairing is quadratic, so it holds the
+        module to a bounded run even if the sample stops being deduplicated.
+        """
+        pairs = differential_pairs()
+
+        assert 30_000 < len(pairs) <= DIFFERENTIAL_POPULATION**2
+        assert max(len(left._intervals) for left, _ in pairs) >= 3
+
+    def test_is_subset(self) -> None:
+        mismatches = [
+            (left, right)
+            for left, right in differential_pairs()
+            if left.is_subset(right) != oracle_is_subset(left, right)
+        ]
+        assert not mismatches, mismatches[:3]
+
+    def test_is_disjoint(self) -> None:
+        mismatches = [
+            (left, right)
+            for left, right in differential_pairs()
+            if left.is_disjoint(right) != oracle_is_disjoint(left, right)
+        ]
+        assert not mismatches, mismatches[:3]
+
+    def test_difference(self) -> None:
+        mismatches = [
+            (left, right)
+            for left, right in differential_pairs()
+            if (left - right) != oracle_difference(left, right)
+        ]
+        assert not mismatches, mismatches[:3]
+
+    def test_relation(self) -> None:
+        mismatches = [
+            (left, right)
+            for left, right in differential_pairs()
+            if left.relation(right) is not oracle_relation(left, right)
+        ]
+        assert not mismatches, mismatches[:3]
+
+
+class TestPredicatesMatchMembership:
+    """A version one range holds and the other does not settles the predicate.
+
+    This shares no code with the oracle above, which is built from ``__and__``
+    and ``__invert__``; these read only ``__contains__``.
+    """
+
+    def test_a_version_only_left_holds_denies_is_subset(self) -> None:
+        for left, right in differential_pairs():
+            if any(probe in left and probe not in right for probe in PROBES):
+                assert not left.is_subset(right)
+
+    def test_a_version_both_hold_denies_is_disjoint(self) -> None:
+        for left, right in differential_pairs():
+            if any(probe in left and probe in right for probe in PROBES):
+                assert not left.is_disjoint(right)
+
+    def test_difference_holds_exactly_the_versions_only_left_holds(self) -> None:
+        for left, right in differential_pairs():
+            difference = left - right
+            for probe in PROBES:
+                assert (probe in difference) == (probe in left and probe not in right)
 
 
 class TestNormalizeIntervals:
@@ -264,3 +411,47 @@ class TestOutOfContractInputs:
         assert all(probe not in degenerate for probe in PROBES)
         assert not degenerate.is_empty
         assert bool(degenerate)
+
+    def test_touching_intervals_defeat_the_subset_walk(self) -> None:
+        """``[1, 3]`` sits inside ``[1, 2) | [2, 3]``, and the walk answers False.
+
+        The walk asks one interval of the right side to hold a whole interval
+        of the left, which matches coverage only when the right side leaves a
+        gap between its own intervals.
+        """
+        whole: Range[int] = Range(((1, True, 3, True),))
+        split: Range[int] = Range(((1, True, 2, False), (2, True, 3, True)))
+
+        assert oracle_is_subset(whole, split)
+        assert not whole.is_subset(split), WIDENING_CHANGES_THIS
+        assert whole.relation(split) is RangeRelation.OVERLAPPING, WIDENING_CHANGES_THIS
+
+    def test_an_inclusive_infinity_defeats_the_subset_walk(self) -> None:
+        """The walk compares a rebuilt tuple against the left interval, flags included."""
+        below_one: Range[int] = Range(((NEGATIVE_INFINITY, True, 1, False),))
+
+        assert oracle_is_subset(below_one, Range.full())
+        assert not below_one.is_subset(Range.full()), WIDENING_CHANGES_THIS
+
+    def test_an_empty_interval_defeats_the_relation_short_circuit(self) -> None:
+        """``relation`` reads ``is_empty`` off the interval count, not off the versions."""
+        degenerate: Range[int] = Range(((3, False, 3, False),))
+        other: Range[int] = Range(((1, True, 5, False),))
+
+        assert oracle_relation(degenerate, other) is RangeRelation.EMPTY
+        assert degenerate.relation(other) is RangeRelation.SUBSET, WIDENING_CHANGES_THIS
+
+
+class TestMembershipDoesNotNeedTheInvariant:
+    """``__contains__`` scans every interval, so it defines membership on any list.
+
+    That asymmetry is why the walks take a precondition and the scan does not.
+    """
+
+    def test_membership_decomposes_over_intervals(self) -> None:
+        """``v in Range(intervals)`` is ``v`` in any one of them, however they are ordered."""
+        for intervals in OUT_OF_CONTRACT_LISTS:
+            whole: Range[int] = Range(intervals)
+            parts: list[Range[int]] = [Range((interval,)) for interval in intervals]
+            for probe in PROBES:
+                assert (probe in whole) == any(probe in part for part in parts)
