@@ -385,7 +385,7 @@ class _ConcurrencyProbeTransport:
             await asyncio.sleep(0)
 
         self._in_flight -= 1
-        return _SidecarResponse(self._payloads[url])
+        return _SidecarResponse(self._payloads[url], url)
 
     async def aclose(self) -> None:
         return None
