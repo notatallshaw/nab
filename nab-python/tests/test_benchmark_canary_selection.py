@@ -478,6 +478,28 @@ def test_missing_scenario_exits_before_creating_results(
     assert not results_dir.exists()
 
 
+def test_selection_validates_requirement_lists_before_vcs_pin_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenarios = {
+        "quick:first": {"requirements": [], "vcs_require_pin": "false"},
+        "quick:second": {"requirements": "demo"},
+    }
+    monkeypatch.setattr(module, "find_scenario", scenarios.get)
+
+    with pytest.raises(
+        TypeError,
+        match="quick:second: requirements must be a list, got str",
+    ):
+        module.select_scenarios(
+            [
+                module.CanaryCase("quick:first", None),
+                module.CanaryCase("quick:second", None),
+            ]
+        )
+
+
 def test_empty_scenarios_list_exits_before_creating_results(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
