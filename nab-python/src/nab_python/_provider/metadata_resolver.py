@@ -47,8 +47,8 @@ if TYPE_CHECKING:
     from .._vendor.packaging.markers import Marker
     from .._vendor.packaging.requirements import Requirement
     from .._vendor.packaging.version import Version
-    from ..fetch import InMemoryIndex
     from ..provider import DistFile, Provider
+    from ..store import InMemoryIndex
     from ..tags import TagSet
     from ..target import ResolveTarget
 
@@ -654,7 +654,7 @@ def parse_and_cache_metadata(
     :class:`UnsupportedSdistError` under :class:`BuildPolicy.NEVER`.
 
     The parsed :class:`WheelMetadata` is shared via the
-    :class:`~nab_python.fetch.InMemoryIndex` so that universal-mode
+    :class:`~nab_python.store.InMemoryIndex` so that universal-mode
     resolves only run :func:`parse_metadata` once per
     ``(package, version)`` regardless of how many tuples ask for it.  The
     cache is keyed on ``metadata_text`` as well, so a tuple holding another
