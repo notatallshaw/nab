@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, NamedTuple
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from nab_index.multi_index import IndexConfig
     from nab_python.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
@@ -32,10 +33,13 @@ else:
     import tomli as tomllib  # type: ignore[no-redef]
 
 from benchmark_config import (
+    DEFAULT_INDEXES,
     DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS,
+    benchmark_index_settings,
     build_benchmark_config,
     build_benchmark_provider,
     build_benchmark_resolver_inputs,
+    parse_scenario_indexes,
     parse_scenario_project_metadata,
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
@@ -52,7 +56,6 @@ from benchmark_host import (
 )
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_index.multi_index import IndexConfig
 from nab_python._vcs_admission import admit_vcs_url
 from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.ranges import VersionRange
@@ -61,8 +64,6 @@ from nab_python._vendor.packaging.utils import canonicalize_name, is_normalized_
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig, index_routes_from_config
 from nab_python.fetch import (
-    DEFAULT_INDEX_NAME,
-    DEFAULT_INDEX_URL,
     FetchCoordinator,
     IndexRoute,
 )
@@ -85,9 +86,6 @@ STANDARD_MANIFEST_SCHEMA = 4
 _INAPPLICABLE_KEY_PREVIEW = 8
 _STANDARD_METADATA_FILENAMES = frozenset(
     {STANDARD_MANIFEST_FILENAME, "_provenance.json"}
-)
-DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
-    IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
 )
 STANDARD_STRATEGIES = (
     ResolutionStrategy.HIGHEST,
@@ -586,6 +584,7 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
         parse_scenario_requirement_strings(row.logical_key, row.definition)
         parse_scenario_vcs_config(row.logical_key, row.definition)
         parse_scenario_project_metadata(row.logical_key, row.definition)
+        parse_scenario_indexes(row.logical_key, row.definition)
         build_policy_overrides = parse_build_packages(row.name, row.definition)
         if "unsupported_reason" in row.definition:
             continue
@@ -1450,9 +1449,7 @@ def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
     if marker_environment:
         expected_input["marker_environment"] = dict(sorted(marker_environment.items()))
     if list(indexes) != list(DEFAULT_INDEXES):
-        expected_input["indexes"] = [
-            {"name": cfg.name, "url": cfg.url} for cfg in indexes
-        ]
+        expected_input["indexes"] = benchmark_index_settings(indexes)
     if index_routes:
         expected_input["index_routes"] = [
             {"name": o.name, "index": o.index} for o in index_routes
@@ -1502,39 +1499,6 @@ def parse_index_routes(
             )
             raise ValueError(msg) from None
         out.append(IndexRoute(name=str(name), index=str(index)))
-    return out
-
-
-def parse_indexes(scenario_name: str, scenario: dict) -> list[IndexConfig]:
-    """Read the ``indexes`` array; default to PyPI when missing.
-
-    Each entry is a TOML inline table with keys ``name`` and ``url``.
-    Order is significant.
-    """
-    raw = scenario.get("indexes")
-    if raw is None:
-        return list(DEFAULT_INDEXES)
-    if not isinstance(raw, list):
-        msg = (
-            f"{scenario_name}: indexes must be a TOML array of tables,"
-            f" got {type(raw).__name__}"
-        )
-        raise TypeError(msg)
-    out: list[IndexConfig] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            msg = (
-                f"{scenario_name}: indexes entries must be tables, got"
-                f" {type(entry).__name__}"
-            )
-            raise TypeError(msg)
-        try:
-            name = entry["name"]
-            url = entry["url"]
-        except KeyError as missing:
-            msg = f"{scenario_name}: indexes entry missing required key {missing!s}"
-            raise ValueError(msg) from None
-        out.append(IndexConfig(name=str(name), url=str(url)))
     return out
 
 
@@ -1616,11 +1580,11 @@ def prepare_standard_execution(
     requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
     vcs_config = parse_scenario_vcs_config(scenario_name, scenario)
     project_metadata = parse_scenario_project_metadata(scenario_name, scenario)
+    indexes = parse_scenario_indexes(scenario_name, scenario)
     python_version: str = scenario["python_version"]
     requirement_strings = requirement_inputs.requirements
     constraint_strings = requirement_inputs.constraints
     marker_environment = parse_marker_environment(scenario_name, scenario)
-    indexes = parse_indexes(scenario_name, scenario)
     index_routes = parse_index_routes(scenario_name, scenario)
     build_policy_overrides = dict(parse_build_packages(scenario_name, scenario))
     if "unsupported_reason" not in scenario:

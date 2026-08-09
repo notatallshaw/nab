@@ -14,6 +14,9 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from typing_extensions import Self
 
+from nab_index.multi_index import IndexConfig
+from nab_index.serialization import SimpleSerialization
+from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
 from nab_python.target import ResolveTarget
 
 pytestmark = pytest.mark.benchmark
@@ -387,7 +390,13 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
             "requirements": ["demo>=1"],
             "constraints": ["support<3"],
             "datetime": "2025-01-02 03:04:05",
-            "indexes": [{"name": "private", "url": "https://example.test/simple"}],
+            "indexes": [
+                {
+                    "name": "private",
+                    "url": "https://example.test/simple",
+                    "serialization": "html",
+                }
+            ],
             "index_routes": [{"name": "demo", "index": "private"}],
             "build_packages": ["demo"],
             "resolution": "lowest-direct",
@@ -423,7 +432,11 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
     config = kwargs["config"]
     assert config.uploaded_prior_to == module.parse_datetime("2025-01-02 03:04:05")
     assert config.indexes == (
-        module.IndexConfig("private", "https://example.test/simple"),
+        IndexConfig(
+            "private",
+            "https://example.test/simple",
+            SimpleSerialization.HTML,
+        ),
     )
     assert module.index_routes_from_config(config) == [
         module.IndexRoute("demo", "private")
@@ -493,7 +506,13 @@ def test_canary_configures_lowest_direct_roots(
     admission = host.target_for("3.11", {}, requires_matching_host=False)
     assert admission.target is not None
     config = module.build_benchmark_config(
-        indexes=module.DEFAULT_INDEXES,
+        indexes=(
+            IndexConfig(
+                DEFAULT_INDEX_NAME,
+                DEFAULT_INDEX_URL,
+                SimpleSerialization.HTML,
+            ),
+        ),
         resolution=module.ResolutionStrategy.LOWEST_DIRECT,
     )
     result = module.run_one(
@@ -518,7 +537,11 @@ def test_canary_configures_lowest_direct_roots(
 
     assert settings["direct_packages"] == ["other", "root"]
     assert settings["indexes"] == [
-        {"name": module.DEFAULT_INDEX_NAME, "url": module.DEFAULT_INDEX_URL}
+        {
+            "name": DEFAULT_INDEX_NAME,
+            "url": DEFAULT_INDEX_URL,
+            "serialization": "html",
+        }
     ]
     assert settings["target"]["marker_environment"]["python_version"] == "3.11"
     assert settings["target"]["wheel_tags_count"] > 0
@@ -652,6 +675,15 @@ def test_canary_main_records_v2_contract(
             {
                 "requirements": [],
                 "unsupported_reason": "test fixture",
+                "indexes": "private",
+            },
+            False,
+            "quick:requests: indexes must be an array of tables, got str",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
                 "vcs_allowed_repos": {"https://example.test/repo": False},
             },
             True,
@@ -668,6 +700,7 @@ def test_canary_main_records_v2_contract(
         "vcs-require-pin",
         "vcs-policy",
         "vcs-scheme-table",
+        "indexes",
         "default-vcs-repo-table",
     ),
 )
