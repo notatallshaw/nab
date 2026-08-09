@@ -26,7 +26,10 @@ if TYPE_CHECKING:
     from ..metadata import WheelMetadata
     from ..provider import ArchiveSource, LocalSource, Provider, VcsSource
 
-_EXTRACTED_MARKER = ".nab-extracted"
+# The archive names everything under _TREE_DIR, so the cache's own bookkeeping
+# sits beside that directory rather than inside it.
+_TREE_DIR = "tree"
+_COMPLETE_MARKER = ".nab-complete"
 _HASHES_MARKER = ".nab-hashes"
 
 
@@ -364,7 +367,7 @@ def _prepare_archive_tree(
     target = cache_dir / digest
 
     declared = set(request.hashes)
-    if (target / _EXTRACTED_MARKER).is_file() and declared <= _verified_hashes(target):
+    if (target / _COMPLETE_MARKER).is_file() and declared <= _verified_hashes(target):
         return _extracted_root(target), request
 
     data = _fetch_archive_bytes(provider, source, request)
@@ -435,6 +438,9 @@ def _extract_archive(
 ) -> Path:  # pragma: no cover (tar data filter; see materialize_archive_source)
     """Extract ``data`` under ``cache_dir`` keyed by ``digest``; return the root.
 
+    The archive's root is published at ``_TREE_DIR`` inside the entry, so no
+    name the archive chose reaches the entry's top level.
+
     ``verified`` names the hashes the caller checked ``data`` against, recorded
     beside the completion marker so a later resolve reuses the tree only for a
     declaration those hashes cover.
@@ -448,29 +454,33 @@ def _extract_archive(
     from ..provider import UnsupportedSdistError
 
     target = cache_dir / digest
-    marker = target / _EXTRACTED_MARKER
+    marker = target / _COMPLETE_MARKER
 
     if not marker.is_file():
         cache_dir.mkdir(parents=True, exist_ok=True)
         tmp = Path(tempfile.mkdtemp(dir=cache_dir, prefix=f"{digest}.", suffix=".tmp"))
 
         try:
+            unpacked = tmp / "unpacked"
+            unpacked.mkdir()
+
             try:
-                root = extract_sdist_archive(data, tmp)
+                root = extract_sdist_archive(data, unpacked)
             except ValueError as exc:
                 msg = f"archive could not be extracted: {exc}"
                 raise UnsupportedSdistError(msg) from exc
 
-            # An empty root name means a flat archive.  Compare against the
-            # resolved temp dir, since extract_sdist_archive resolves symlinks
-            # and relative cache dirs.
-            root_name = root.name if root != tmp.resolve() else ""
+            # A flat archive's root is the extraction dir itself, so the move
+            # takes that dir and leaves nothing behind to remove.
+            root.replace(tmp / _TREE_DIR)
+            with suppress(FileNotFoundError):
+                unpacked.rmdir()
 
             record = "\n".join(
                 f"{algorithm}={hex_digest}" for algorithm, hex_digest in verified
             )
             (tmp / _HASHES_MARKER).write_text(record, encoding="utf-8")
-            (tmp / _EXTRACTED_MARKER).write_text(root_name, encoding="utf-8")
+            (tmp / _COMPLETE_MARKER).touch()
 
             try:
                 tmp.rename(target)
@@ -494,12 +504,6 @@ def _extract_archive(
 
 
 def _extracted_root(target: Path) -> Path:
-    """Return the source root inside the extracted tree at ``target``.
-
-    An empty marker records a flat archive, whose root is the tree itself.
-    """
-    root_name = (target / _EXTRACTED_MARKER).read_text(encoding="utf-8").strip()
-
+    """Return the source root inside the extracted tree at ``target``."""
     # Resolve so the file URI works even for a relative cache dir.
-    base = target / root_name if root_name else target
-    return base.resolve()
+    return (target / _TREE_DIR).resolve()

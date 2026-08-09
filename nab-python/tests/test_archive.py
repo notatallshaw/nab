@@ -58,25 +58,38 @@ if TYPE_CHECKING:
     from nab_python.lockfile import PinShape
 
 
-def _make_sdist(name: str, version: str, pyproject: str) -> bytes:
-    """Return ``.tar.gz`` bytes for a one-file sdist rooted at name-version."""
+def _make_rooted_sdist(root: str, pyproject: str) -> bytes:
+    """Return ``.tar.gz`` bytes for a one-file sdist under the ``root`` directory.
+
+    ``root`` goes into the member name unchanged, so a test can give it any
+    name tarfile writes.
+    """
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         data = pyproject.encode("utf-8")
-        info = tarfile.TarInfo(f"{name}-{version}/pyproject.toml")
+        info = tarfile.TarInfo(f"{root}/pyproject.toml")
         info.size = len(data)
         tar.addfile(info, io.BytesIO(data))
     return buf.getvalue()
 
 
-def _make_flat_sdist(pyproject: str) -> bytes:
-    """Return ``.tar.gz`` bytes with pyproject.toml at the top level (no root dir)."""
+def _make_sdist(name: str, version: str, pyproject: str) -> bytes:
+    """Return ``.tar.gz`` bytes for a one-file sdist rooted at name-version."""
+    return _make_rooted_sdist(f"{name}-{version}", pyproject)
+
+
+def _make_flat_sdist(pyproject: str, *extra: tuple[str, bytes]) -> bytes:
+    """Return ``.tar.gz`` bytes with pyproject.toml at the top level (no root dir).
+
+    Each ``extra`` is one more top-level file as ``(name, body)``.
+    """
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        body = pyproject.encode("utf-8")
-        info = tarfile.TarInfo("pyproject.toml")
-        info.size = len(body)
-        tar.addfile(info, io.BytesIO(body))
+        members = (("pyproject.toml", pyproject.encode("utf-8")), *extra)
+        for member_name, body in members:
+            info = tarfile.TarInfo(member_name)
+            info.size = len(body)
+            tar.addfile(info, io.BytesIO(body))
     return buf.getvalue()
 
 
@@ -139,19 +152,28 @@ def _fetch_bytes(provider: Provider, source: ArchiveSource) -> bytes:
     return _fetch_archive_bytes(provider, source, ArchiveRequest.parse(source.url))
 
 
-def _warm_extracted_tree(cache: Path, digest: str, root: str) -> None:
+def _archive_provider(data: bytes, cache: Path) -> Provider:
+    """Return a provider that serves ``data`` as archive source "foo"."""
+    digest = hashlib.sha256(data).hexdigest()
+    source = ArchiveSource(
+        name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+    )
+    provider = _provider([source], cache)
+    provider.coordinator.index.store_sdist_archive("foo", digest, data)
+    return provider
+
+
+def _warm_extracted_tree(cache: Path, digest: str) -> None:
     """Write the extracted tree a prior resolve of ``digest`` leaves behind.
 
-    ``root`` is the archive's single root directory, or ``""`` for a flat
-    archive, as the completion marker records it.  The hash record names the
-    one sha256 that resolve verified.
+    The hash record names the one sha256 that resolve verified.
     """
     target = cache / digest
-    source_dir = target / root if root else target
-    source_dir.mkdir(parents=True)
-    (source_dir / "pyproject.toml").write_text(_PYPROJECT, encoding="utf-8")
+    tree = target / "tree"
+    tree.mkdir(parents=True)
+    (tree / "pyproject.toml").write_text(_PYPROJECT, encoding="utf-8")
     (target / ".nab-hashes").write_text(f"sha256={digest}", encoding="utf-8")
-    (target / ".nab-extracted").write_text(root, encoding="utf-8")
+    (target / ".nab-complete").touch()
 
 
 def _lock_input(pins: Mapping[str, PinShape]) -> LockInput:
@@ -497,8 +519,8 @@ class TestArchiveMaterialize:
 
         assert seen_mid_extract == [False]
         assert str(versions[0][0]) == "1.0.0"
-        assert (target / "foo-1.0.0" / "pyproject.toml").is_file()
-        assert (target / ".nab-extracted").read_text(encoding="utf-8") == "foo-1.0.0"
+        assert (target / "tree" / "pyproject.toml").is_file()
+        assert (target / ".nab-complete").is_file()
 
     @requires_data_filter
     def test_lost_publish_race_uses_the_finished_tree(
@@ -520,11 +542,8 @@ class TestArchiveMaterialize:
         def racing_extract(payload: bytes, target_dir: Path) -> Path:
             seen_mid_extract.append(target.exists())
             root = extract_sdist_archive(payload, target_dir)
-            winner = target / "foo-1.0.0"
-            winner.mkdir(parents=True, exist_ok=True)
-            (winner / "pyproject.toml").write_text(_PYPROJECT, encoding="utf-8")
-            (winner / "WINNER").write_text("", encoding="utf-8")
-            (target / ".nab-extracted").write_text("foo-1.0.0", encoding="utf-8")
+            _warm_extracted_tree(cache, digest)
+            (target / "tree" / "WINNER").write_text("", encoding="utf-8")
             return root
 
         monkeypatch.setattr(sources, "extract_sdist_archive", racing_extract)
@@ -535,7 +554,7 @@ class TestArchiveMaterialize:
 
         assert seen_mid_extract == [False]
         assert str(versions[0][0]) == "1.0.0"
-        assert (target / "foo-1.0.0" / "WINNER").is_file()
+        assert (target / "tree" / "WINNER").is_file()
         assert list(cache.iterdir()) == [target]
 
     @requires_data_filter
@@ -578,9 +597,9 @@ class TestArchiveMaterialize:
 
     @requires_data_filter
     def test_flat_archive_reuse_through_symlinked_cache(self, tmp_path: Path) -> None:
-        # When the cache dir resolves to a different path (a symlink component),
-        # a flat archive's reuse marker must still record "no root subdir", or the
-        # second resolve looks under a nonexistent <digest>/<digest> directory.
+        # The cache dir is reached through a symlink, so the extractor's root
+        # comes back resolved while the temp dir it moves into does not.  For a
+        # flat archive the whole extraction dir is what moves.
         real = tmp_path / "real"
         real.mkdir()
         link = tmp_path / "link"
@@ -602,6 +621,79 @@ class TestArchiveMaterialize:
         assert str(versions[0][0]) == "1.0.0"
 
 
+class TestArchiveChosenNames:
+    """The archive chooses every name inside its own tree.
+
+    Only the bytes are pinned, by the URL's hash, so the root directory can
+    carry any name tarfile decodes, including the cache's own marker names.
+    """
+
+    @requires_data_filter
+    @pytest.mark.parametrize(
+        "marker", [sources._COMPLETE_MARKER, sources._HASHES_MARKER]
+    )
+    def test_root_named_like_a_cache_marker_resolves(
+        self, marker: str, tmp_path: Path
+    ) -> None:
+        data = _make_rooted_sdist(marker, _PYPROJECT)
+        cache = tmp_path / "arch"
+        target = cache / hashlib.sha256(data).hexdigest()
+
+        versions = _archive_provider(data, cache).fetch_versions("foo")
+
+        assert str(versions[0][0]) == "1.0.0"
+        assert sorted(entry.name for entry in target.iterdir()) == [
+            ".nab-complete",
+            ".nab-hashes",
+            "tree",
+        ]
+
+    @requires_data_filter
+    def test_non_utf8_root_directory_name_resolves(self, tmp_path: Path) -> None:
+        # tarfile decodes a member name that is not valid UTF-8 with
+        # surrogateescape, so the root lands on disk holding a lone surrogate.
+        provider = _archive_provider(
+            _make_rooted_sdist("foo-1.0.0\udce9", _PYPROJECT), tmp_path / "arch"
+        )
+
+        versions = provider.fetch_versions("foo")
+
+        assert str(versions[0][0]) == "1.0.0"
+
+    @requires_data_filter
+    def test_root_name_with_trailing_space_survives_the_cache(
+        self, tmp_path: Path
+    ) -> None:
+        # The trailing space is part of the directory name, so that exact
+        # directory is what the extraction has to move into place.
+        data = _make_rooted_sdist("foo-1.0.0 ", _PYPROJECT)
+        cache = tmp_path / "arch"
+        _archive_provider(data, cache).fetch_versions("foo")
+
+        second = _archive_provider(data, cache)
+        versions = second.fetch_versions("foo")
+
+        assert str(versions[0][0]) == "1.0.0"
+        second.coordinator.request_direct_archive.assert_not_called()
+
+    @requires_data_filter
+    def test_flat_archive_keeps_its_own_marker_named_file(self, tmp_path: Path) -> None:
+        # A flat archive ships its files where the cache keeps its bookkeeping,
+        # so a file of the same name has to survive with the archive's bytes.
+        data = _make_flat_sdist(_PYPROJECT, (sources._HASHES_MARKER, b"shipped"))
+        digest = hashlib.sha256(data).hexdigest()
+        cache = tmp_path / "arch"
+        target = cache / digest
+
+        versions = _archive_provider(data, cache).fetch_versions("foo")
+
+        assert str(versions[0][0]) == "1.0.0"
+
+        assert (target / "tree" / sources._HASHES_MARKER).read_bytes() == b"shipped"
+        record = (target / sources._HASHES_MARKER).read_text(encoding="utf-8")
+        assert record == f"sha256={digest}"
+
+
 class TestWarmArchiveCache:
     """A digest already extracted is served from the cache, with no download."""
 
@@ -611,22 +703,7 @@ class TestWarmArchiveCache:
             name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
         )
         cache = tmp_path / "arch"
-        _warm_extracted_tree(cache, digest, "foo-1.0.0")
-        provider = _provider([source], cache)
-
-        versions = provider.fetch_versions("foo")
-
-        assert str(versions[0][0]) == "1.0.0"
-        provider.coordinator.request_direct_archive.assert_not_called()
-
-    def test_warm_flat_tree_is_served_without_a_fetch(self, tmp_path: Path) -> None:
-        # An empty marker records a flat archive, whose root is the tree itself.
-        digest = "c" * 64
-        source = ArchiveSource(
-            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
-        )
-        cache = tmp_path / "arch"
-        _warm_extracted_tree(cache, digest, "")
+        _warm_extracted_tree(cache, digest)
         provider = _provider([source], cache)
 
         versions = provider.fetch_versions("foo")
@@ -660,7 +737,7 @@ class TestWarmArchiveCache:
             url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}&sha512={'f' * 128}",
         )
         cache = tmp_path / "arch"
-        _warm_extracted_tree(cache, digest, "foo-1.0.0")
+        _warm_extracted_tree(cache, digest)
         provider = _provider([source], cache)
         provider.coordinator.index.store_sdist_archive("foo", digest, data)
 
@@ -675,7 +752,7 @@ class TestWarmArchiveCache:
             name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
         )
         cache = tmp_path / "arch"
-        _warm_extracted_tree(cache, digest, "foo-1.0.0")
+        _warm_extracted_tree(cache, digest)
         (cache / digest / ".nab-hashes").unlink()
         provider = _provider([source], cache)
 
@@ -692,7 +769,7 @@ class TestWarmArchiveCache:
         route = respx.get(url).mock(return_value=httpx.Response(200, content=data))
         source = ArchiveSource(name="foo", url=f"{url}#sha256={digest}")
         cache = tmp_path / "arch"
-        _warm_extracted_tree(cache, digest, "foo-1.0.0")
+        _warm_extracted_tree(cache, digest)
 
         with FetchCoordinator(
             transport=HttpxAsyncTransport(), offline=True
