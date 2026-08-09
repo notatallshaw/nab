@@ -25,6 +25,38 @@ _BENCHMARK = (
 if str(_BENCHMARK.parent) not in sys.path:
     sys.path.insert(0, str(_BENCHMARK.parent))
 _CLEAN_SOURCE = {"commit": "a" * 40, "dirty": False, "diff_hash": None}
+_WINDOWS_DEVICE_NAMES = (
+    "AUX",
+    "CON",
+    "NUL",
+    "PRN",
+    *(f"COM{number}" for number in range(1, 10)),
+    *(f"LPT{number}" for number in range(1, 10)),
+)
+_WINDOWS_DEVICE_NAMES_WITH_EXTENSIONS = (
+    "AuX.txt",
+    "cOn.lock",
+    "NuL.json",
+    "pRn.data",
+    "cOm1.json",
+    "COM9.txt",
+    "lPt1.lock",
+    "LPT9.data",
+)
+_PORTABLE_WINDOWS_DEVICE_NEAR_MISSES = (
+    "AUX1",
+    "CONSOLE",
+    "NULL",
+    "PRINTER",
+    "COM0",
+    "COM10",
+    "LPT0",
+    "LPT10",
+    "x.AUX",
+    "prefix.COM1",
+    "_AUX",
+    "COM1-file",
+)
 
 
 class _FakeCoordinator:
@@ -38,7 +70,7 @@ class _FakeCoordinator:
         pass
 
 
-def _universal_scenario(*platforms: str) -> dict:
+def _universal_scenario(*platforms: str) -> dict[str, object]:
     return {
         "python": ">=3.11,<3.12",
         "platforms": list(platforms),
@@ -709,6 +741,75 @@ def test_unknown_universal_setting_is_rejected() -> None:
         module.validate_scenario("example", {"parallel": True})
 
 
+@pytest.mark.parametrize(
+    ("name", "valid"),
+    [
+        ("a", True),
+        ("a" * 128, True),
+        ("a" * 129, False),
+        ("A.b-c_1", True),
+        ("_manifest", False),
+        ("_MANIFEST", False),
+        ("_manifest.json", True),
+        ("../escape", False),
+        (r"parent\child", False),
+        (".hidden", False),
+        ("-flag", False),
+        ("trailing.", False),
+        ("café", False),
+        *((name, False) for name in _WINDOWS_DEVICE_NAMES),
+        *((name, False) for name in _WINDOWS_DEVICE_NAMES_WITH_EXTENSIONS),
+        *((name, True) for name in _PORTABLE_WINDOWS_DEVICE_NEAR_MISSES),
+    ],
+)
+def test_universal_scenario_names_produce_portable_result_files(
+    name: str,
+    valid: bool,
+) -> None:
+    module = _harness()
+
+    assert module.is_portable_scenario_name(name) is valid
+
+
+@pytest.mark.parametrize(
+    ("name", "well_formed"),
+    [
+        ("example", True),
+        ("_manifest", False),
+        ("_manifest.json", True),
+    ],
+)
+def test_universal_result_contract_uses_portable_scenario_names(
+    name: str,
+    well_formed: bool,
+) -> None:
+    module = _harness()
+    data = _result_data(
+        {
+            "success": True,
+            "resolution_success": True,
+            "lock_consistent": True,
+            "timed_out": False,
+        }
+    )
+    data["input"]["scenario"] = name
+
+    assert module.result_is_well_formed(data) is well_formed
+
+
+def test_universal_scenario_names_cannot_collide_case_insensitively() -> None:
+    module = _harness()
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "universal scenario names collide on case-insensitive filesystems: "
+            "'Example' / 'example'"
+        ),
+    ):
+        module._validate_scenario_names(["Example", "example"])
+
+
 def test_duplicate_universal_platforms_are_rejected_in_declaration_order() -> None:
     module = _harness()
 
@@ -728,9 +829,31 @@ def test_duplicate_universal_platforms_are_rejected_in_declaration_order() -> No
         )
 
 
-def test_process_rejects_duplicate_platforms_before_network(
+@pytest.mark.parametrize(
+    ("scenario_name", "scenario", "message"),
+    [
+        (
+            "example",
+            _universal_scenario(
+                "linux_x86_64",
+                "macos_arm64",
+                "linux_x86_64",
+            ),
+            r"^example: platforms has duplicate entry: 'linux_x86_64'$",
+        ),
+        (
+            "_manifest",
+            _universal_scenario("linux_x86_64"),
+            r"^invalid universal scenario name\(s\): '_manifest'$",
+        ),
+    ],
+)
+def test_process_rejects_invalid_scenarios_before_network(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    scenario_name: str,
+    scenario: dict[str, object],
+    message: str,
 ) -> None:
     module = _harness()
 
@@ -740,17 +863,10 @@ def test_process_rejects_duplicate_platforms_before_network(
     monkeypatch.setattr(module, "Urllib3AsyncTransport", unexpected_transport)
     output_dir = tmp_path / "results"
 
-    with pytest.raises(
-        ValueError,
-        match=r"^example: platforms has duplicate entry: 'linux_x86_64'$",
-    ):
+    with pytest.raises(ValueError, match=message):
         module.process_scenario(
-            "example",
-            _universal_scenario(
-                "linux_x86_64",
-                "macos_arm64",
-                "linux_x86_64",
-            ),
+            scenario_name,
+            scenario,
             "commit",
             force=True,
             output_dir=output_dir,
@@ -822,6 +938,57 @@ requirements = ["baz"]
 
     assert processed == []
     assert not (results_dir / "label" / "universal").exists()
+
+
+def test_main_rejects_an_unselected_manifest_scenario_name_before_any_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenarios_dir = tmp_path / "scenarios"
+    scenarios_dir.mkdir()
+    (scenarios_dir / "universal.toml").write_text(
+        """[valid]
+python = ">=3.11,<3.12"
+platforms = ["linux_x86_64"]
+requirements = ["foo"]
+
+[_manifest]
+python = ">=3.11,<3.12"
+platforms = ["linux_x86_64"]
+requirements = ["bar"]
+
+[valid-after]
+python = ">=3.11,<3.12"
+platforms = ["macos_arm64"]
+requirements = ["baz"]
+"""
+    )
+    results_dir = tmp_path / "results"
+    processed: list[str] = []
+
+    def record_process(name: str, *_args: object, **_kwargs: object) -> bool:
+        processed.append(name)
+        return True
+
+    monkeypatch.setattr(module, "SCENARIOS_DIR", scenarios_dir)
+    monkeypatch.setattr(module, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(module, "get_git_source_state", lambda: _CLEAN_SOURCE)
+    monkeypatch.setattr(module, "process_scenario", record_process)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [str(_BENCHMARK), "--commit", "label", "--scenario", "valid"],
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"^invalid universal scenario name\(s\): '_manifest'$",
+    ):
+        module.main()
+
+    assert processed == []
+    assert not (results_dir / "label").exists()
 
 
 def test_main_exits_nonzero_for_unexpected_failure(
@@ -928,6 +1095,24 @@ def test_universal_scenarios_only_override_alignment_for_noalign_cases() -> None
     assert not any(
         scenario.get("align_across_tuples") is True for scenario in scenarios.values()
     )
+
+
+@pytest.mark.parametrize(
+    ("names", "valid"),
+    [
+        (["example"], True),
+        (["_manifest"], False),
+        (["_manifest.json"], True),
+        (["Example", "example"], False),
+    ],
+)
+def test_summary_requires_portable_distinct_scenario_names(
+    names: list[str],
+    valid: bool,
+) -> None:
+    module = _summary_harness()
+
+    assert module._valid_scenario_names(names) is valid
 
 
 @pytest.mark.parametrize(

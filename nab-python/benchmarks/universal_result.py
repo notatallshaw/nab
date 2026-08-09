@@ -9,6 +9,23 @@ from benchmark_datetime import is_valid_datetime
 RESULT_SCHEMA_VERSION = 3
 MANIFEST_FILENAME = "_manifest.json"
 
+_PORTABLE_COMPONENT_START = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+)
+_PORTABLE_COMPONENT_CHARS = _PORTABLE_COMPONENT_START | frozenset(".-")
+_MAX_SCENARIO_NAME_LENGTH = 128
+_MAX_STORAGE_COMPONENT_LENGTH = 255
+_WINDOWS_RESERVED_COMPONENTS = frozenset(
+    {
+        "aux",
+        "con",
+        "nul",
+        "prn",
+        *(f"com{number}" for number in range(1, 10)),
+        *(f"lpt{number}" for number in range(1, 10)),
+    }
+)
+
 _TOP_LEVEL_FIELDS = frozenset(
     {"input", "reason", "result", "merged_pins", "stats", "per_tuple"}
 )
@@ -96,6 +113,35 @@ _TUPLE_TOTALS = {
 }
 
 
+def _is_portable_path_component(value: str, *, max_length: int) -> bool:
+    """Return whether a value is one portable ASCII filename component."""
+    if (
+        not value
+        or len(value) > max_length
+        or value[0] not in _PORTABLE_COMPONENT_START
+        or value.endswith(".")
+        or any(character not in _PORTABLE_COMPONENT_CHARS for character in value)
+    ):
+        return False
+    windows_basename = value.partition(".")[0].casefold()
+    return windows_basename not in _WINDOWS_RESERVED_COMPONENTS
+
+
+def is_portable_scenario_name(value: object) -> bool:
+    """Return whether a scenario name can identify one universal result file."""
+    if not isinstance(value, str):
+        return False
+    result_filename = f"{value}.json"
+    return (
+        _is_portable_path_component(value, max_length=_MAX_SCENARIO_NAME_LENGTH)
+        and _is_portable_path_component(
+            result_filename,
+            max_length=_MAX_STORAGE_COMPONENT_LENGTH,
+        )
+        and result_filename.casefold() != MANIFEST_FILENAME.casefold()
+    )
+
+
 def _is_optional_bool(value: object) -> bool:
     return value is None or type(value) is bool
 
@@ -151,8 +197,7 @@ def _valid_input(value: object, reason: object) -> bool:
         return False
     return (
         value["benchmark_schema"] == RESULT_SCHEMA_VERSION
-        and isinstance(value["scenario"], str)
-        and bool(value["scenario"])
+        and is_portable_scenario_name(value["scenario"])
         and isinstance(value["commit"], str)
         and bool(value["commit"])
         and _valid_source(value["source"])
