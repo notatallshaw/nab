@@ -451,6 +451,21 @@ class CachedAsyncSimpleClient:
             )
         return None
 
+    def _store_parsed(
+        self, package: str, digest: str | None, files: list[WheelFile | SdistFile]
+    ) -> None:
+        """Write the parsed blob for ``files``, when there is one worth writing.
+
+        ``digest`` is ``None`` when the body write did not land, so no blob ever
+        claims to describe a body the store does not hold. A listing with no
+        records is skipped too: :meth:`_parsed_hit` declines a blob holding
+        none, so writing one would rebuild and rewrite it on every later read
+        without ever serving it.
+        """
+        if digest is None or not files:
+            return
+        self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
+
     def _rebuild_parsed(
         self,
         package: str,
@@ -465,15 +480,17 @@ class CachedAsyncSimpleClient:
         the next read hits. A policy that already carries a digest reuses it,
         sparing the body a rehash.
         """
+        # Nothing to store, so skip the rehash and the policy write too.
+        if not files:
+            return
+
         digest = policy.body_digest
         if digest is None:
             digest = hashlib.sha256(body).hexdigest()
-            self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
             self._cache.refresh_simple_policy(
                 package, replace(policy, body_digest=digest)
             )
-        else:
-            self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
+        self._store_parsed(package, digest, files)
 
     def _negative_policy(self, response: HttpResponse) -> CachePolicy:
         """Freshness policy for a name-level 404, clamped to the 600s cap."""
@@ -581,8 +598,7 @@ class CachedAsyncSimpleClient:
             page_url=response.url,
         )
         digest = self._cache.put_simple(package, new_body, new_policy)
-        if digest is not None:
-            self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
+        self._store_parsed(package, digest, files)
         return files
 
     async def _fetch_simple(self, package: str) -> list[WheelFile | SdistFile]:
@@ -605,8 +621,7 @@ class CachedAsyncSimpleClient:
             page_url=response.url,
         )
         digest = self._cache.put_simple(package, body, policy)
-        if digest is not None:
-            self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
+        self._store_parsed(package, digest, files)
         self._cache.drop_negative(package)
         return files
 

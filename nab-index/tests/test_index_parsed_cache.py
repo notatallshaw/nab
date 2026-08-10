@@ -348,8 +348,43 @@ class TestDroppedBodyWrite:
         assert decode(before, policy) is not None
 
 
+_UNREADABLE_LISTING_BYTES = json.dumps(
+    {
+        "meta": {"api-version": "1.0"},
+        "name": "pkg",
+        "files": [
+            {
+                "filename": "pkg-1.0.exe",
+                "url": "https://files.example.com/pkg-1.0.exe",
+                "hashes": {"sha256": "aa"},
+            }
+        ],
+    }
+).encode()
+
+
 class TestWritePathParsedBlob:
     """The resolve-path write points bind a parsed blob to the stored body."""
+
+    def test_listing_with_no_readable_files_writes_no_blob(
+        self, tmp_path: Path
+    ) -> None:
+        # A blob holding no records is declined on read, so writing one would
+        # rebuild and rewrite it on every warm resolve without ever serving it.
+        cache = _cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(_UNREADABLE_LISTING_BYTES)])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        assert _run(client.get_files("pkg")) == []
+        assert cache.get_simple_parsed("pkg") is None
+
+        stats = ParsedCacheStats()
+        warm = CachedAsyncSimpleClient(
+            _FakeTransport([]), cache, _INDEX, parsed_stats=stats
+        )
+        assert _run(warm.get_files("pkg")) == []
+        assert cache.get_simple_parsed("pkg") is None
+        assert (stats.hit, stats.miss, stats.rebuild) == (0, 1, 0)
 
     def test_fetch_writes_bound_parsed_blob(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
