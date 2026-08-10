@@ -24,6 +24,7 @@ import tarfile
 import zipfile
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from datetime import datetime, timezone
 from importlib.util import cache_from_source
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -66,10 +67,11 @@ from nab_python.lockfile import (
     TargetLock,
     WheelArtifact,
 )
-from nab_python.provider import BuildPolicy, DistPolicy, MissingExtraError
+from nab_python.provider import BuildPolicy, DistPolicy, LocalSource, MissingExtraError
 from nab_python.resolve import ResolveResult, TargetResult
 from nab_python.tags import PlatformSpec, TagSet
 from nab_python.target import ResolveTarget
+from nab_python.workspace import WorkspaceConfig
 from nab_resolver.errors import ResolutionError
 
 
@@ -1819,6 +1821,45 @@ class TestResolveAndDownload:
 
         assert env._resolve_and_download(wheel_dir) == []
         assert "python_version" not in captured
+
+    def test_inner_resolve_takes_indexes_cutoff_and_overrides_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The inner config forwards the indexes, the cutoff and both override tables.
+
+        Build deps come from the configured indexes alone, so the outer
+        run's constraints, dist policy, local sources and workspace do
+        not reach it.
+        """
+        cutoff = datetime(2026, 5, 1, tzinfo=timezone.utc)
+        index = IndexConfig("internal", "https://example.invalid/simple/")
+        package_override = pkg_override("hatchling", uploaded_prior_to=cutoff)
+        index_override = IndexOverride(uploaded_prior_to=cutoff)
+        env = NabBuildEnv(
+            requires=["hatchling"],
+            config=NabProjectConfig(
+                indexes=(index,),
+                uploaded_prior_to=cutoff,
+                package_overrides=(package_override,),
+                index_overrides={"internal": index_override},
+                constraints=("setuptools<70",),
+                dist_policy=DistPolicy.SDIST_ONLY,
+                local_sources=(LocalSource("plugin", str(tmp_path / "plugin")),),
+                workspace=WorkspaceConfig(members=("packages/plugin",)),
+            ),
+        )
+
+        inner = self._capture_inner_config(env, tmp_path, monkeypatch)
+
+        assert inner.indexes == (index,)
+        assert inner.uploaded_prior_to == cutoff
+        assert inner.package_overrides == (package_override,)
+        assert inner.index_overrides == {"internal": index_override}
+
+        assert inner.constraints == ()
+        assert inner.dist_policy is DistPolicy.WHEEL_OR_SDIST
+        assert inner.local_sources == ()
+        assert inner.workspace is None
 
     def test_url_build_requirement_wrapped(self, tmp_path: Path) -> None:
         """A direct-URL build requirement the inner resolve refuses is
