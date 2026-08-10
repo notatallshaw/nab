@@ -2049,6 +2049,61 @@ class TestErrorMessages:
         assert negative == "not a [1, +inf)"
 
 
+class TestFormatRangeHook:
+    """``format_range`` renders every constraint a report line shows.
+
+    A range type whose ``str`` is a debug representation supplies its own; the
+    default is ``str``, which reads well for :class:`Range`.
+    """
+
+    @staticmethod
+    def _shown(_constraint: object) -> str:
+        return "SHOWN"
+
+    @staticmethod
+    def _blank(_constraint: object) -> str:
+        return ""
+
+    def test_hook_renders_terms_on_both_sides_of_a_dependency(self) -> None:
+        dependency = Incompatibility(
+            [
+                Term("a", Range.at_least(1), positive=True),
+                Term("b", Range.at_least(3), positive=False),
+            ],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        assert (
+            format_error(dependency, format_range=self._shown)
+            == "because a SHOWN depends on b SHOWN"
+        )
+
+    def test_hook_renders_the_user_constraint_line(self) -> None:
+        constrained = Incompatibility(
+            [Term("a", Range.at_least(1), positive=True)],
+            cause=IncompatibilityCause.CONSTRAINT,
+            constraint_range=Range.less_than(2),
+        )
+        assert (
+            format_error(constrained, format_range=self._shown)
+            == "because the user constrained a SHOWN"
+        )
+
+    def test_a_range_rendered_as_nothing_leaves_no_trailing_space(self) -> None:
+        """An unconstrained range renders empty, so the name carries the line."""
+        term = Term("a", Range.at_least(1), positive=False)
+        assert format_term(term, self._blank) == "not a"
+
+        constrained = Incompatibility(
+            [Term("a", Range.at_least(1), positive=True)],
+            cause=IncompatibilityCause.CONSTRAINT,
+            constraint_range=Range.full(),
+        )
+        assert (
+            format_error(constrained, format_range=self._blank)
+            == "because the user constrained a"
+        )
+
+
 class TestFullRangeWording:
     """A term admitting every version reads as prose, not as an interval.
 

@@ -1731,9 +1731,9 @@ class TestNoVersionsReasons:
         # Nothing falls in this range, so the second ask has no blockers.
         assert provider.choose_version("foo", SpecifierSet(">=5.0").to_range()) is None
 
-        assert (
-            provider.get_no_versions_reason("foo")
-            == "every version in range was rejected: requires bar != 1.0"
+        assert provider.get_no_versions_reason("foo") == (
+            "every version in range was rejected:"
+            " requires bar in ==2.0 but solution has it at 1.0"
         )
 
     def test_sdist_only_under_dynamic_local_names_build_policy(self) -> None:
@@ -1824,8 +1824,8 @@ class TestNoVersionsReasons:
         assert result is None
         reason = provider.get_no_versions_reason("foo")
         assert reason is not None
-        assert "bar" in reason
-        assert "root has it in" in reason
+        assert "<VersionRange" not in reason
+        assert "requires bar in ==2.0 but root has it in ==1.0" in reason
 
     def test_range_block_rejection_names_the_blocker(self) -> None:
         """Same as above but the blocker is a positive-range constraint
@@ -1850,17 +1850,79 @@ class TestNoVersionsReasons:
             root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
         )
         pos_range = SpecifierSet("<2.0").to_range()
-        dep_range = SpecifierSet("==2.0").to_range()
         provider.solution_ranges["bar"] = pos_range
         result = provider.choose_version("foo", VersionRange.full())
         assert result is None
         reason = provider.get_no_versions_reason("foo")
         assert reason is not None
         # foo requires bar==2.0; the message must name that, not the solution range.
-        assert (
-            f"requires bar in {dep_range} but solution has it in {pos_range}" in reason
-        )
+        assert "<VersionRange" not in reason
+        assert "AFTER_LOCALS" not in reason
+        assert "requires bar in ==2.0 but solution has it in <2.0" in reason
         assert "disjoint with current solution range" not in reason
+
+    def test_post_release_pin_blocker_spells_both_sides_as_specifiers(self) -> None:
+        """``bar>2.0`` excludes 2.0's post releases, so it is disjoint with
+        ``==2.0.post1``.  Both sides read as the specifiers a user would write,
+        so the reader can see why they do not overlap.
+        """
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\n"
+                "Name: foo\n"
+                "Version: 1.0\n"
+                "Requires-Dist: bar>2.0\n"
+            ),
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
+        )
+        provider.solution_ranges["bar"] = SpecifierSet("==2.0.post1").to_range()
+        result = provider.choose_version("foo", VersionRange.full())
+        assert result is None
+        reason = provider.get_no_versions_reason("foo")
+        assert reason is not None
+        assert "requires bar in >2.0 but solution has it in ==2.0.post1" in reason
+
+    def test_decision_block_rejection_names_the_requirement(self) -> None:
+        """The decision-block diagnostic names the candidate's real
+        requirement, mirroring the range-block path.  ``foo`` 1.0 requires
+        ``bar==2.0`` and the resolver has already decided ``bar==1.0``, so
+        every ``foo`` candidate is rejected.  The message must name the
+        ``bar==2.0`` foo needs, not ``requires bar != 1.0`` (which wrongly
+        implies any bar other than 1.0 would satisfy foo).
+
+        The ranges are spelled out rather than interpolated, so the
+        assertion fails if the message ever prints the debug repr again.
+        """
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=(
+                "Metadata-Version: 2.1\n"
+                "Name: foo\n"
+                "Version: 1.0\n"
+                "Requires-Dist: bar==2.0\n"
+            ),
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
+        )
+        provider.solution_decisions["bar"] = V("1.0")
+        result = provider.choose_version("foo", VersionRange.full())
+        assert result is None
+        reason = provider.get_no_versions_reason("foo")
+        assert reason is not None
+        assert "<VersionRange" not in reason
+        assert "AFTER_LOCALS" not in reason
+        assert "requires bar in ==2.0 but solution has it at 1.0" in reason
+        assert "requires bar != 1.0" not in reason
 
 
 def _sdist_entry(version: str) -> dict[str, object]:
@@ -4325,6 +4387,57 @@ class TestDecisionLookAhead:
             resolver.resolve(dict(root_reqs))
 
         assert "exceeded" not in str(exc_info.value)
+
+    def test_full_resolve_report_spells_ranges_as_requirements(self) -> None:
+        """A real failure report spells a dependency the way a user wrote it.
+
+        The resolver runs with ``range_type=VersionRange``, which has no
+        ``__str__``, so without the hook a ``==V`` dependency shows the debug
+        repr and its internal ``AFTER_LOCALS`` boundary sentinel, and an
+        unconstrained root requirement shows ``(-inf, +inf)``.
+        """
+
+        def named_wheel(pkg: str, version: str) -> WheelFile:
+            return WheelFile(
+                filename=f"{pkg}-{version}-py3-none-any.whl",
+                url=f"https://example.com/{pkg}-{version}.whl",
+                version=version,
+                requires_python=None,
+                has_metadata=True,
+                upload_time=None,
+                local_path=None,
+            )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": [named_wheel("foo", "1.0")],
+                "app": [named_wheel("app", "3.0")],
+                "lib": [named_wheel("lib", "5.0"), named_wheel("lib", "9.0")],
+            },
+            metadata_by_version={
+                "1.0": make_metadata("foo", "1.0", "lib==9.0"),
+                "3.0": make_metadata("app", "3.0", "lib==5.0"),
+                "5.0": make_metadata("lib", "5.0"),
+                "9.0": make_metadata("lib", "9.0"),
+            },
+        )
+        root_reqs = {
+            "foo": VersionRange.full(admit_arbitrary=False),
+            "app": VersionRange.full(admit_arbitrary=False),
+        }
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        resolver = Resolver(
+            provider,
+            range_type=VersionRange,
+            root_version="0",
+            format_range=provider.format_range,
+        )
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(dict(root_reqs))
+
+        lines = str(exc_info.value).splitlines()
+        assert "because all versions of foo depend on lib ==9.0" in lines
+        assert "because your project depends on foo" in lines
 
 
 class TestLookAheadAbort:
