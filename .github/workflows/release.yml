@@ -41,6 +41,9 @@ jobs:
       - name: Install release toolchain
         run: pip install -r .github/requirements/pylock.release.toml
 
+      - name: Install the build backend
+        run: pip install -r .github/requirements/pylock.build.toml
+
       - name: Verify the tag matches the package versions
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}

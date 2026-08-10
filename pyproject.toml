@@ -115,15 +115,14 @@ release = [
     "tomlkit>=0.13",
     "tyro>=1.0",
     "build>=1.2",
-    "hatchling>=1.27",
     "twine>=6.1",
     "pypi-attestations>=0.0.21",
 ]
-# The dists nox session builds every distribution and installs it. It needs
-# build plus the hatchling backend, since it builds without isolation.
+# The dists nox session builds every distribution and installs it. It needs the
+# build frontend; the backend comes from pylock.build.toml, locked from
+# [build-system].requires, since the build runs without isolation.
 dists = [
     "build>=1.2",
-    "hatchling>=1.27",
 ]
 
 # `nab lock` config: universal mode resolves the full matrix in one

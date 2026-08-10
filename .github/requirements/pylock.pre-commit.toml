@@ -1085,7 +1085,7 @@ size = 10238
 sha256 = "25ad4e16390cd314347dd8f1de67a2ac538ae658ed4ab9db16029c07c188e97f"
 
 [tool.nab]
-nab-version = "0.0.12.dev0"
+nab-version = "0.0.13.dev0"
 created-at = 2026-07-31 17:59:04.850557+00:00
 command-line = [
     "nab",

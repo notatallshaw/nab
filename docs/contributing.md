@@ -68,6 +68,20 @@ pyright accepts can still fail the matrix. Reproduce a single cell with
 `nox -s "types(checker='mypy')"`; the trees are `TYPED_TREES` in
 `noxfile.py`.
 
+## The build backend
+
+nab builds its distributions with `--no-isolation`, so the backend has to be
+installed rather than fetched during the build. It is locked from
+`[build-system].requires`: `tasks/refresh-locks.sh` writes
+`.github/requirements/pylock.build.toml` with `nab lock --build-requirements`,
+and every path that builds installs it, the `dists` nox session, the release
+workflow and `hatch run release:build`.
+
+One lock serves all four packages, which holds only while they declare the
+same `[build-system]`. The refresh script checks that before it writes
+anything, and checks afterwards that the locks sharing an environment agree on
+the packages they share.
+
 ## Building the docs
 
 ```bash
