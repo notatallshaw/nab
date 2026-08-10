@@ -628,11 +628,12 @@ class Cell(NamedTuple):
 
 
 class Memo:
-    """One operation's scratch: the partitions and atom truths it re-reads.
+    """The partitions and atom truths a decision re-reads.
 
-    A decision run re-partitions one axis for overlapping atom sets and re-reads one
-    atom on one point across those partitions. Both are memoised here, and the
-    operation that creates this drops it, so nothing accumulates between calls.
+    A decision re-partitions one axis for overlapping atom sets and re-reads one
+    atom on one point across those partitions. Both are memoised here. One
+    decision makes its own unless the caller passes one to share; see
+    :class:`~packaging.markersets.DecisionStore` for the sharing contract.
     """
 
     __slots__ = ("partitions", "truths")
@@ -1229,7 +1230,9 @@ def is_empty(node: Formula, max_cells: int, store: Memo | None = None) -> bool:
     return next(cells, _MISSING) is _MISSING
 
 
-def witness(node: Formula, max_cells: int) -> dict[str, str | frozenset[str]] | None:
+def witness(
+    node: Formula, max_cells: int, store: Memo | None = None
+) -> dict[str, str | frozenset[str]] | None:
     """Return a concrete environment satisfying a tree, or ``None`` if none is found.
 
     The returned environment is verified against the tree before it is returned.
@@ -1240,7 +1243,7 @@ def witness(node: Formula, max_cells: int) -> dict[str, str | frozenset[str]] | 
     ``python_version`` and ``python_full_version`` share one axis, so those
     constraints can sit on different variables.
     """
-    for cell in _satisfying_cells(node, max_cells, Memo()):
+    for cell in _satisfying_cells(node, max_cells, Memo() if store is None else store):
         env = _materialize(cell)
         if evaluate_tree(node, env):
             return env
@@ -1618,7 +1621,9 @@ def _rows_equivalent(
     return True
 
 
-def universe_is_empty(universe: Formula, max_cells: int) -> bool:
+def universe_is_empty(
+    universe: Formula, max_cells: int, store: Memo | None = None
+) -> bool:
     """Whether a universe admits no environment, decided per row.
 
     A union is empty iff every top-level disjunct is, so each is tested alone,
@@ -1626,23 +1631,30 @@ def universe_is_empty(universe: Formula, max_cells: int) -> bool:
     """
     nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
     disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
-    store: Memo = Memo()
-    return all(is_empty(disjunct, max_cells, store) for disjunct in disjuncts)
+    shared = Memo() if store is None else store
+    return all(is_empty(disjunct, max_cells, shared) for disjunct in disjuncts)
 
 
 def equivalent_within_rows(
-    left: Formula, right: Formula, universe: Formula, max_cells: int
+    left: Formula,
+    right: Formula,
+    universe: Formula,
+    max_cells: int,
+    store: Memo | None = None,
 ) -> bool:
     """Whether two trees agree on every point of ``universe``, decided per row.
 
     The row-restricted dual of :func:`_equivalent_within`, deciding the same
     verdict but staying decidable on wide multi-platform universes. A universe of
     ``TRUE`` reduces it to plain global equivalence.
+
+    ``store`` is the caller's scratch when this decision is one of a run.
     """
     rows = _decompose_rows(universe)
     right_by_row = [restrict_tree(right, row.pins) for row in rows]
-    store: Memo = Memo()
-    return _rows_equivalent(left, rows, right_by_row, max_cells, store)
+    return _rows_equivalent(
+        left, rows, right_by_row, max_cells, Memo() if store is None else store
+    )
 
 
 def _dedupe(clauses: list[frozenset[Atom]]) -> list[frozenset[Atom]]:
@@ -1747,7 +1759,11 @@ def _canonical(clauses: list[frozenset[Atom]]) -> tuple:
 
 
 def simplify_within(
-    node: Formula, universe: Formula, max_cells: int, max_work: int
+    node: Formula,
+    universe: Formula,
+    max_cells: int,
+    max_work: int,
+    store: Memo | None = None,
 ) -> Formula:
     """Return the smallest tree equivalent to ``node`` on every point of ``universe``.
 
@@ -1768,7 +1784,8 @@ def simplify_within(
     original = _disjunction(clauses)
     rows = _decompose_rows(universe)
     original_by_row = [restrict_tree(original, row.pins) for row in rows]
-    store: Memo = Memo()
+    if store is None:
+        store = Memo()
     previous_work = getattr(_work_meter, "remaining", None)
     _work_meter.remaining = max_work
     try:

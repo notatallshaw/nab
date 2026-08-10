@@ -20,6 +20,8 @@ from packaging.markers import Marker
 from nab_python._vendor.packaging import _markersets as engine
 from nab_python._vendor.packaging.markersets import (
     _MAX_CELLS,
+    _MAX_WORK,
+    DecisionStore,
     IntractableMarkerSet,
     MarkerSet,
 )
@@ -615,9 +617,10 @@ def test_atoms_keep_no_truths_between_operations(
 ) -> None:
     """A second identical decision re-evaluates every atom truth.
 
-    The memo belongs to the operation, not to the atom, so an ``Atom`` that outlives
-    a decision carries nothing from it. A per-atom cache would make the repeat nearly
-    free, which is what this refuses.
+    The memo belongs to the decision, not to the atom, so an ``Atom`` that
+    outlives one carries nothing from it. A per-atom cache would make the
+    repeat nearly free, which is what this refuses; a caller wanting the reuse
+    passes a store instead.
     """
     universe = _row_universe()
     left = ms('python_version < "3.12"' + _SPREAD)
@@ -660,9 +663,9 @@ def test_partitions_do_not_outlive_one_operation(
 ) -> None:
     """A second identical decision pays for its partitions again.
 
-    The store belongs to one operation, so nothing carries between two of them.
-    A cache reaching further would make the repeat free, which is what this
-    refuses.
+    A decision handed no store makes its own, so nothing carries to the next.
+    Reuse is the caller's to ask for, not something the module keeps on its
+    own; :func:`test_a_shared_store_serves_the_next_decision` is the other half.
     """
     universe = _row_universe()
     left = ms('python_version < "3.12"' + _SPREAD)
@@ -675,3 +678,134 @@ def test_partitions_do_not_outlive_one_operation(
 
     assert first > 0
     assert partitions() == 2 * first
+
+
+def test_a_shared_store_serves_the_next_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A decision handed the previous one's store partitions no axis again.
+
+    The mirror of :func:`test_partitions_do_not_outlive_one_operation`: without a
+    store the repeat pays 5 partitions again, with one it pays none. An ignored
+    ``store`` argument leaves the two counts equal to that test's.
+    """
+    universe = _row_universe()
+    left = ms('python_version < "3.12"' + _SPREAD)
+    right = ms('python_version < "3.12" and sys_platform != "aix"' + _SPREAD)
+    store = DecisionStore()
+
+    partitions = _partition_counter(monkeypatch)
+    assert left.equivalent_within(right, universe, store=store) is True
+    first = partitions()
+    assert left.equivalent_within(right, universe, store=store) is True
+
+    assert first == 5
+    assert partitions() == first
+
+
+def test_a_shared_store_serves_the_next_decision_its_truths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A decision handed the previous one's store re-reads no stored atom truth.
+
+    Only restriction repeats, one read for each of the six rows' two operands,
+    against 156 for the decision itself.
+    """
+    universe = _row_universe()
+    left = ms('python_version < "3.12"' + _SPREAD)
+    right = ms('python_version < "3.12" and sys_platform != "aix"' + _SPREAD)
+    store = DecisionStore()
+
+    truths = _truth_counter(monkeypatch)
+    left.equivalent_within(right, universe, store=store)
+    first = truths()
+    left.equivalent_within(right, universe, store=store)
+
+    assert first == 156
+    assert truths() - first == 12
+
+
+def test_a_shared_store_serves_a_repeated_simplify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A simplify handed the previous one's store partitions no axis again.
+
+    Driven at the engine because :meth:`MarkerSet.simplify` guards the empty
+    universe on a store of its own, which the next test measures.
+    """
+    universe = _row_universe()
+    tree = engine.parse('python_version < "3.12"' + _SPREAD)
+    store = engine.Memo()
+
+    partitions = _partition_counter(monkeypatch)
+    engine.simplify_within(tree, universe._tree, _MAX_CELLS, _MAX_WORK, store)
+    first = partitions()
+    engine.simplify_within(tree, universe._tree, _MAX_CELLS, _MAX_WORK, store)
+
+    assert first > 0
+    assert partitions() == first
+
+
+def test_the_store_reaches_the_engine_from_simplify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The store :meth:`MarkerSet.simplify` is handed reaches every decision under it.
+
+    Including the empty-universe guard, so a repeat partitions nothing again.
+    :func:`test_simplify_keeps_its_partitions_to_one_call` measures the doubled
+    count when no store is passed.
+    """
+    universe = _row_universe()
+    marker = ms('python_version < "3.12"' + _SPREAD)
+    store = DecisionStore()
+
+    partitions = _partition_counter(monkeypatch)
+    marker.simplify(within=universe, store=store)
+    first = partitions()
+    marker.simplify(within=universe, store=store)
+
+    assert first > 0
+    assert partitions() == first
+
+
+def test_a_shared_store_answers_what_fresh_stores_answer() -> None:
+    """One store across a run of decisions answers as a fresh store per decision.
+
+    Soundness rather than speed: what a decision reads back was stored by a
+    decision over a different tree.
+    """
+    universe = _row_universe()
+    texts = [
+        'python_version < "3.12"' + _SPREAD,
+        'python_version >= "3.11" and sys_platform == "linux"',
+        'sys_platform == "linux" or sys_platform == "darwin"',
+        'python_version < "3.12" and sys_platform != "aix"' + _SPREAD,
+    ]
+    store = DecisionStore()
+
+    for text in texts:
+        marker = ms(text)
+        assert marker.simplify(within=universe, store=store).to_marker_string() == (
+            marker.simplify(within=universe).to_marker_string()
+        )
+        assert marker.equivalent_within(universe, universe, store=store) == (
+            marker.equivalent_within(universe, universe)
+        )
+        assert (marker & ~universe).witness(store=store) == (
+            marker & ~universe
+        ).witness()
+
+
+def test_a_warm_store_does_not_buy_work_budget() -> None:
+    """A stored partition is still charged to the running simplify's meter.
+
+    Skipping the charge on a store hit would leave a lock's later markers
+    decidable only because an earlier one paid for their axes.
+    """
+    within = _narrow_universe()
+    marker = engine.parse(_narrow_linux_span())
+    store = engine.Memo()
+
+    engine.simplify_within(marker, within._tree, _MAX_CELLS, _MAX_WORK, store)
+    with pytest.raises(IntractableMarkerSet, match="max_work"):
+        engine.simplify_within(marker, within._tree, _MAX_CELLS, 1, store)

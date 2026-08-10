@@ -48,6 +48,7 @@ _MAX_CELLS = 100_000
 _MAX_WORK = 100_000_000
 
 __all__ = [
+    "DecisionStore",
     "IntractableMarkerSet",
     "MarkerSet",
     "UnserializableMarkerSet",
@@ -81,6 +82,21 @@ def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
             raise IntractableMarkerSet(msg) from exc
 
     return wrapper
+
+
+DecisionStore = _markersets.Memo
+"""Scratch that several decisions can share.
+
+Each decision partitions the axes its atoms sit on and reads those atoms on
+the points of the resulting cells. Two decisions over the same universe
+mostly repeat that, so passing one store to both keeps the work; passing
+none is correct and starts each cold.
+
+Answers do not depend on it: the partitions and truths it holds are
+functions of their keys alone. It grows with the atoms it has read, and
+holds them, so give one to the decisions of a single piece of work and drop
+it after. Not safe to share across threads.
+"""
 
 
 class MarkerSet:
@@ -231,16 +247,20 @@ class MarkerSet:
         )
 
     @_bounded
-    def equivalent_within(self, other: MarkerSet, within: MarkerSet) -> bool:
+    def equivalent_within(
+        self, other: MarkerSet, within: MarkerSet, *, store: DecisionStore | None = None
+    ) -> bool:
         """Whether the two sets denote the same environments on every point of ``within``.
 
         The row-restricted counterpart of :meth:`equivalent`, deciding each of
         ``within``'s rows under its pins so it stays decidable on wide
         multi-platform universes. A universe of :meth:`full` reduces it to plain
         :meth:`equivalent`.
+
+        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
         """
         return _markersets.equivalent_within_rows(
-            self._tree, other._tree, within._tree, _MAX_CELLS
+            self._tree, other._tree, within._tree, _MAX_CELLS, store
         )
 
     # ---- restriction and projection
@@ -297,7 +317,9 @@ class MarkerSet:
         return _markersets.evaluate_tree(self._tree, env)
 
     @_bounded
-    def witness(self) -> dict[str, str | frozenset[str]] | None:
+    def witness(
+        self, *, store: DecisionStore | None = None
+    ) -> dict[str, str | frozenset[str]] | None:
         """Return a satisfying environment, or ``None`` when none is found.
 
         ``None`` is returned for the empty set. The search over ``contains``
@@ -306,18 +328,24 @@ class MarkerSet:
         or more ``contains`` atoms, or a mix) have no jointly realisable cell
         representative. ``python_version`` and ``python_full_version`` share one
         axis, so those constraints can sit on different variables.
+
+        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
         """
-        return _markersets.witness(self._tree, _MAX_CELLS)
+        return _markersets.witness(self._tree, _MAX_CELLS, store)
 
     # ---- simplification
 
     @_bounded
-    def simplify(self, *, within: MarkerSet) -> MarkerSet:
+    def simplify(
+        self, *, within: MarkerSet, store: DecisionStore | None = None
+    ) -> MarkerSet:
         """Return the smallest set equivalent to this one on every point of ``within``.
 
         ``within`` is the universe the result must agree with this set over: pass
         the union of a lock's declared environments for universe-aware
         simplification, or :meth:`full` for a context-free factoring.
+
+        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
 
         :raises ValueError: if ``within`` is the empty set, which makes every set
             vacuously equivalent.
@@ -325,11 +353,13 @@ class MarkerSet:
             cell budget, if the whole run exceeds the internal work budget, or
             if the marker nests past the stack.
         """
-        if _markersets.universe_is_empty(within._tree, _MAX_CELLS):
+        if _markersets.universe_is_empty(within._tree, _MAX_CELLS, store):
             msg = "within must not be the empty set"
             raise ValueError(msg)
         return self._wrap(
-            _markersets.simplify_within(self._tree, within._tree, _MAX_CELLS, _MAX_WORK)
+            _markersets.simplify_within(
+                self._tree, within._tree, _MAX_CELLS, _MAX_WORK, store
+            )
         )
 
     # ---- serialisation

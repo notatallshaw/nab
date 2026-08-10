@@ -1,9 +1,9 @@
 diff --git a/nab-python/src/nab_python/_vendor/packaging/_markersets.py b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
 new file mode 100644
-index 0000000..a4847ee
+index 0000000..72eee6b
 --- /dev/null
 +++ b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
-@@ -0,0 +1,1794 @@
+@@ -0,0 +1,1811 @@
 +"""Marker algebra engine: reason about PEP 508 markers as sets of environments.
 +
 +The private engine behind :class:`~packaging.markersets.MarkerSet`. Parses a
@@ -634,11 +634,12 @@ index 0000000..a4847ee
 +
 +
 +class Memo:
-+    """One operation's scratch: the partitions and atom truths it re-reads.
++    """The partitions and atom truths a decision re-reads.
 +
-+    A decision run re-partitions one axis for overlapping atom sets and re-reads one
-+    atom on one point across those partitions. Both are memoised here, and the
-+    operation that creates this drops it, so nothing accumulates between calls.
++    A decision re-partitions one axis for overlapping atom sets and re-reads one
++    atom on one point across those partitions. Both are memoised here. One
++    decision makes its own unless the caller passes one to share; see
++    :class:`~packaging.markersets.DecisionStore` for the sharing contract.
 +    """
 +
 +    __slots__ = ("partitions", "truths")
@@ -1235,7 +1236,9 @@ index 0000000..a4847ee
 +    return next(cells, _MISSING) is _MISSING
 +
 +
-+def witness(node: Formula, max_cells: int) -> dict[str, str | frozenset[str]] | None:
++def witness(
++    node: Formula, max_cells: int, store: Memo | None = None
++) -> dict[str, str | frozenset[str]] | None:
 +    """Return a concrete environment satisfying a tree, or ``None`` if none is found.
 +
 +    The returned environment is verified against the tree before it is returned.
@@ -1246,7 +1249,7 @@ index 0000000..a4847ee
 +    ``python_version`` and ``python_full_version`` share one axis, so those
 +    constraints can sit on different variables.
 +    """
-+    for cell in _satisfying_cells(node, max_cells, Memo()):
++    for cell in _satisfying_cells(node, max_cells, Memo() if store is None else store):
 +        env = _materialize(cell)
 +        if evaluate_tree(node, env):
 +            return env
@@ -1624,7 +1627,9 @@ index 0000000..a4847ee
 +    return True
 +
 +
-+def universe_is_empty(universe: Formula, max_cells: int) -> bool:
++def universe_is_empty(
++    universe: Formula, max_cells: int, store: Memo | None = None
++) -> bool:
 +    """Whether a universe admits no environment, decided per row.
 +
 +    A union is empty iff every top-level disjunct is, so each is tested alone,
@@ -1632,23 +1637,30 @@ index 0000000..a4847ee
 +    """
 +    nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
 +    disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
-+    store: Memo = Memo()
-+    return all(is_empty(disjunct, max_cells, store) for disjunct in disjuncts)
++    shared = Memo() if store is None else store
++    return all(is_empty(disjunct, max_cells, shared) for disjunct in disjuncts)
 +
 +
 +def equivalent_within_rows(
-+    left: Formula, right: Formula, universe: Formula, max_cells: int
++    left: Formula,
++    right: Formula,
++    universe: Formula,
++    max_cells: int,
++    store: Memo | None = None,
 +) -> bool:
 +    """Whether two trees agree on every point of ``universe``, decided per row.
 +
 +    The row-restricted dual of :func:`_equivalent_within`, deciding the same
 +    verdict but staying decidable on wide multi-platform universes. A universe of
 +    ``TRUE`` reduces it to plain global equivalence.
++
++    ``store`` is the caller's scratch when this decision is one of a run.
 +    """
 +    rows = _decompose_rows(universe)
 +    right_by_row = [restrict_tree(right, row.pins) for row in rows]
-+    store: Memo = Memo()
-+    return _rows_equivalent(left, rows, right_by_row, max_cells, store)
++    return _rows_equivalent(
++        left, rows, right_by_row, max_cells, Memo() if store is None else store
++    )
 +
 +
 +def _dedupe(clauses: list[frozenset[Atom]]) -> list[frozenset[Atom]]:
@@ -1753,7 +1765,11 @@ index 0000000..a4847ee
 +
 +
 +def simplify_within(
-+    node: Formula, universe: Formula, max_cells: int, max_work: int
++    node: Formula,
++    universe: Formula,
++    max_cells: int,
++    max_work: int,
++    store: Memo | None = None,
 +) -> Formula:
 +    """Return the smallest tree equivalent to ``node`` on every point of ``universe``.
 +
@@ -1774,7 +1790,8 @@ index 0000000..a4847ee
 +    original = _disjunction(clauses)
 +    rows = _decompose_rows(universe)
 +    original_by_row = [restrict_tree(original, row.pins) for row in rows]
-+    store: Memo = Memo()
++    if store is None:
++        store = Memo()
 +    previous_work = getattr(_work_meter, "remaining", None)
 +    _work_meter.remaining = max_work
 +    try:
@@ -1923,10 +1940,10 @@ index c78fd5d..0d7ee1d 100644
      """
 diff --git a/nab-python/src/nab_python/_vendor/packaging/markersets.py b/nab-python/src/nab_python/_vendor/packaging/markersets.py
 new file mode 100644
-index 0000000..3891398
+index 0000000..c9a2883
 --- /dev/null
 +++ b/nab-python/src/nab_python/_vendor/packaging/markersets.py
-@@ -0,0 +1,362 @@
+@@ -0,0 +1,392 @@
 +"""The public :class:`MarkerSet`: a marker's denotation as a set of environments.
 +
 +A :class:`MarkerSet` is the denotation of a PEP 508 marker as a set of
@@ -1977,6 +1994,7 @@ index 0000000..3891398
 +_MAX_WORK = 100_000_000
 +
 +__all__ = [
++    "DecisionStore",
 +    "IntractableMarkerSet",
 +    "MarkerSet",
 +    "UnserializableMarkerSet",
@@ -2010,6 +2028,21 @@ index 0000000..3891398
 +            raise IntractableMarkerSet(msg) from exc
 +
 +    return wrapper
++
++
++DecisionStore = _markersets.Memo
++"""Scratch that several decisions can share.
++
++Each decision partitions the axes its atoms sit on and reads those atoms on
++the points of the resulting cells. Two decisions over the same universe
++mostly repeat that, so passing one store to both keeps the work; passing
++none is correct and starts each cold.
++
++Answers do not depend on it: the partitions and truths it holds are
++functions of their keys alone. It grows with the atoms it has read, and
++holds them, so give one to the decisions of a single piece of work and drop
++it after. Not safe to share across threads.
++"""
 +
 +
 +class MarkerSet:
@@ -2160,16 +2193,20 @@ index 0000000..3891398
 +        )
 +
 +    @_bounded
-+    def equivalent_within(self, other: MarkerSet, within: MarkerSet) -> bool:
++    def equivalent_within(
++        self, other: MarkerSet, within: MarkerSet, *, store: DecisionStore | None = None
++    ) -> bool:
 +        """Whether the two sets denote the same environments on every point of ``within``.
 +
 +        The row-restricted counterpart of :meth:`equivalent`, deciding each of
 +        ``within``'s rows under its pins so it stays decidable on wide
 +        multi-platform universes. A universe of :meth:`full` reduces it to plain
 +        :meth:`equivalent`.
++
++        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
 +        """
 +        return _markersets.equivalent_within_rows(
-+            self._tree, other._tree, within._tree, _MAX_CELLS
++            self._tree, other._tree, within._tree, _MAX_CELLS, store
 +        )
 +
 +    # ---- restriction and projection
@@ -2226,7 +2263,9 @@ index 0000000..3891398
 +        return _markersets.evaluate_tree(self._tree, env)
 +
 +    @_bounded
-+    def witness(self) -> dict[str, str | frozenset[str]] | None:
++    def witness(
++        self, *, store: DecisionStore | None = None
++    ) -> dict[str, str | frozenset[str]] | None:
 +        """Return a satisfying environment, or ``None`` when none is found.
 +
 +        ``None`` is returned for the empty set. The search over ``contains``
@@ -2235,18 +2274,24 @@ index 0000000..3891398
 +        or more ``contains`` atoms, or a mix) have no jointly realisable cell
 +        representative. ``python_version`` and ``python_full_version`` share one
 +        axis, so those constraints can sit on different variables.
++
++        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
 +        """
-+        return _markersets.witness(self._tree, _MAX_CELLS)
++        return _markersets.witness(self._tree, _MAX_CELLS, store)
 +
 +    # ---- simplification
 +
 +    @_bounded
-+    def simplify(self, *, within: MarkerSet) -> MarkerSet:
++    def simplify(
++        self, *, within: MarkerSet, store: DecisionStore | None = None
++    ) -> MarkerSet:
 +        """Return the smallest set equivalent to this one on every point of ``within``.
 +
 +        ``within`` is the universe the result must agree with this set over: pass
 +        the union of a lock's declared environments for universe-aware
 +        simplification, or :meth:`full` for a context-free factoring.
++
++        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
 +
 +        :raises ValueError: if ``within`` is the empty set, which makes every set
 +            vacuously equivalent.
@@ -2254,11 +2299,13 @@ index 0000000..3891398
 +            cell budget, if the whole run exceeds the internal work budget, or
 +            if the marker nests past the stack.
 +        """
-+        if _markersets.universe_is_empty(within._tree, _MAX_CELLS):
++        if _markersets.universe_is_empty(within._tree, _MAX_CELLS, store):
 +            msg = "within must not be the empty set"
 +            raise ValueError(msg)
 +        return self._wrap(
-+            _markersets.simplify_within(self._tree, within._tree, _MAX_CELLS, _MAX_WORK)
++            _markersets.simplify_within(
++                self._tree, within._tree, _MAX_CELLS, _MAX_WORK, store
++            )
 +        )
 +
 +    # ---- serialisation
