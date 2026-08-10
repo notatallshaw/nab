@@ -112,10 +112,19 @@ def tests(session: nox.Session, workspace: str) -> None:
 @nox.session
 def benchmarks(session: nox.Session) -> None:
     """Run the benchmark-harness tests the workspace sessions deselect."""
-    # These cover scripts under nab-python/benchmarks, which no coverage gate
-    # owns, so this session only has to prove they still pass.
+    # These cover the scripts under nab-resolver/benchmarks and
+    # nab-python/benchmarks, which no coverage gate owns, so this session only
+    # has to prove they still pass.
     _install(session, TESTS_LOCK, ["nab-resolver", "nab-index", "nab-python"])
-    session.run("python", "-m", "pytest", "-m", "benchmark", "nab-python/tests")
+    session.run(
+        "python",
+        "-m",
+        "pytest",
+        "-m",
+        "benchmark",
+        "nab-resolver/tests",
+        "nab-python/tests",
+    )
 
 
 @nox.session

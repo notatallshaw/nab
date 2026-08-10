@@ -65,9 +65,9 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      # These cover nab-python/benchmarks, which is developer tooling rather
-      # than shipped code, so they run on the ends of the supported range
-      # instead of the full matrix. Windows earns its cell because the
+      # These cover the benchmarks directories, which are developer tooling
+      # rather than shipped code, so they run on the ends of the supported
+      # range instead of the full matrix. Windows earns its cell because the
       # harness builds output paths and the tests pin its device-name rules.
       matrix:
         include:
