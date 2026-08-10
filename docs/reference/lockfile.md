@@ -184,6 +184,42 @@ consumers rather than a group of the project's own, so `--groups` does
 not accept it; `[tool.nab].default-groups` does, which is how it stays
 in the default selection.
 
+### Naming the build requirements
+
+The same mechanism carries a project's `[build-system].requires`, so one
+lock pins both the environment the project runs in and the one it is
+built in:
+
+```toml
+[tool.nab]
+build-group = "build"
+```
+
+```toml
+dependency-groups = ["dev", "build"]
+
+[[packages]]
+name = "hatchling"
+version = "1.27.0"
+marker = "\"build\" in dependency_groups"
+```
+
+The name lands in `dependency-groups` and not in `default-groups`: an
+install that asks for no group is installing the project, not building
+it. Only the static list is read, so whatever a backend would add from
+`get_requires_for_build_wheel` is not covered. The name must be free of
+`[dependency-groups]` and of `base-group`. The requirements output
+formats carry no markers, so there the build requirements render as
+ordinary pins.
+
+The build requirements resolve in the same version space as the
+project's own, which is what a single lock can express: an installer
+reading it installs into one environment. A project whose backend needs
+a version its own dependencies exclude has no lock that can say so, and
+the resolve fails. `nab lock --build-requirements` is the way out, since
+a separate lock is a separate version space, which is also what PEP 517
+build isolation gives the build at install time.
+
 ### Portable paths
 
 A lockfile can reference content on disk: a `LocalPin`'s

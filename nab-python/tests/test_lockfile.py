@@ -2032,6 +2032,15 @@ class TestDependencyGroups:
         )
         assert lock_input.active_groups == ("docs", "default")
 
+    def test_active_groups_includes_the_build_group(self) -> None:
+        lock_input = LockInput(
+            targets=_one({"foo": _index_pin()}),
+            dependency_groups=("docs",),
+            base_group="default",
+            build_group="build",
+        )
+        assert lock_input.active_groups == ("docs", "default", "build")
+
     def test_group_names_normalized(self) -> None:
         text = write_lock(
             LockInput(

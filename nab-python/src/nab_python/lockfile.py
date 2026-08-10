@@ -449,6 +449,9 @@ class LockInput:
     base_group: str | None = None
     """``[tool.nab].base-group``: the group name the lock gives
     the project's own dependencies, or ``None`` to leave them unconditional."""
+    build_group: str | None = None
+    """``[tool.nab].build-group``: the group name the lock gives
+    ``[build-system].requires``, or ``None`` to leave them out of the lock."""
 
     @property
     def active_groups(self) -> tuple[str, ...]:
@@ -461,8 +464,9 @@ class LockInput:
         gives the project's own dependencies.
         """
         names = dict.fromkeys((*self.dependency_groups, *self.default_groups))
-        if self.base_group is not None:
-            names[self.base_group] = None
+        for named in (self.base_group, self.build_group):
+            if named is not None:
+                names[named] = None
         return tuple(names)
 
     @property

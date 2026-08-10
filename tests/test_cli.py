@@ -678,6 +678,41 @@ class TestLockCommandSpecific:
         assert "default-groups" not in written
         assert "dependency-groups" not in written
 
+    def test_build_group_reaches_the_lock(self, tmp_path: Path) -> None:
+        """The configured name is what the writer offers and gates on."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[build-system]\nrequires = ["foo"]\n'
+            '[tool.nab]\nbuild-group = "build"\n',
+        )
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_for_targets",
+            return_value=_stub_resolve_result(pins={"foo": V("1.0")}),
+        ):
+            lock(pyproject, output=out)
+        written = tomli.loads(out.read_text())
+        assert written["dependency-groups"] == ["build"]
+        assert "default-groups" not in written
+
+    def test_build_group_naming_a_declared_group_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The name for the build requirements is already a group's own."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[build-system]\nrequires = ["foo"]\n'
+            '[dependency-groups]\nbuild = ["foo"]\n'
+            '[tool.nab]\nbuild-group = "build"\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        err = capsys.readouterr().err
+        assert "build-group 'build' and [dependency-groups] 'build'" in err
+        assert "Traceback" not in err
+
     def test_build_requirements_locks_the_build_requires(self, tmp_path: Path) -> None:
         """End to end: the emitted lock holds the build requirement alone."""
         pyproject = _make_pyproject(
@@ -712,6 +747,7 @@ class TestLockCommandSpecific:
             {"all_extras": True},
             {"project_default_group": ("dev",)},
             {"project_base_group": "default"},
+            {"project_build_group": "build"},
         ],
     )
     def test_build_requirements_refuses_a_selection(
@@ -1824,6 +1860,16 @@ class TestProjectFlagErrors:
         assert "error: --project-requires-python: requires-python must be a" in err
         assert "[tool.nab]" not in err
 
+    def test_download_build_group_bad_value_names_the_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``--project-build-group`` reaches the registry from this command too."""
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            download(pyproject, output=tmp_path / "wheels", project_build_group="-no-")
+        assert exc.value.code == 1
+        assert "error: --project-build-group:" in capsys.readouterr().err
+
     def test_valid_override_threads_through(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
@@ -2206,6 +2252,25 @@ class TestLockCommandUniversal:
             )
 
         assert "--project-base-group 'dev' and" in capsys.readouterr().err
+
+    def test_the_build_group_flag_names_the_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The project file may not hold the value the run is refusing."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            '[build-system]\nrequires = ["foo"]\n'
+            '[dependency-groups]\ndev = ["foo"]\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(
+                pyproject,
+                output=tmp_path / "pylock.toml",
+                project_build_group="dev",
+            )
+
+        assert "--project-build-group 'dev' and" in capsys.readouterr().err
 
     def test_pylock_divergent_base_dep_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

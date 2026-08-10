@@ -4319,6 +4319,19 @@ class TestLockDeclaresItsEnvironment:
 _BASE_GROUP = '[tool.nab]\nbase-group = "default"\n'
 
 
+def _pylock_markers(pylock: Pylock) -> dict[str, str | None]:
+    """Each emitted package's marker text, or ``None`` where it carries none."""
+    return {
+        str(pkg.name): str(pkg.marker) if pkg.marker else None
+        for pkg in pylock.packages
+    }
+
+
+def _pylock_selected(pylock: Pylock, **kwargs: list[str]) -> set[str]:
+    """The package names an install with ``kwargs`` selected would receive."""
+    return {str(pkg.name) for pkg, _ in pylock.select(**kwargs)}
+
+
 class TestExtraAndGroupMembershipMarkers:
     """A selected extra or group gates the packages only it reaches.
 
@@ -4392,21 +4405,10 @@ class TestExtraAndGroupMembershipMarkers:
         pylock.validate()
         return pylock
 
-    @staticmethod
-    def _markers(pylock: Pylock) -> dict[str, str | None]:
-        return {
-            str(pkg.name): str(pkg.marker) if pkg.marker else None
-            for pkg in pylock.packages
-        }
-
-    @staticmethod
-    def _selected(pylock: Pylock, **kwargs: list[str]) -> set[str]:
-        return {str(pkg.name) for pkg, _ in pylock.select(**kwargs)}
-
     def test_extra_only_package_carries_extras_membership(self, tmp_path: Path) -> None:
         pylock = self._lock(tmp_path, extras=("cli",), groups=("dev",))
 
-        assert self._markers(pylock) == {
+        assert _pylock_markers(pylock) == {
             "core": None,
             "mydev": '"dev" in dependency_groups',
             "mytool": '"cli" in extras',
@@ -4419,10 +4421,10 @@ class TestExtraAndGroupMembershipMarkers:
         """The spec's default install context: no extras, no groups."""
         pylock = self._lock(tmp_path, extras=("cli",), groups=("dev",))
 
-        assert self._selected(pylock) == {"core"}
-        assert self._selected(pylock, extras=["cli"]) == {"core", "mytool", "subtool"}
-        assert self._selected(pylock, dependency_groups=["dev"]) == {"core", "mydev"}
-        assert self._selected(pylock, extras=["cli"], dependency_groups=["dev"]) == {
+        assert _pylock_selected(pylock) == {"core"}
+        assert _pylock_selected(pylock, extras=["cli"]) == {"core", "mytool", "subtool"}
+        assert _pylock_selected(pylock, dependency_groups=["dev"]) == {"core", "mydev"}
+        assert _pylock_selected(pylock, extras=["cli"], dependency_groups=["dev"]) == {
             "core",
             "mydev",
             "mytool",
@@ -4443,15 +4445,15 @@ class TestExtraAndGroupMembershipMarkers:
             tmp_path, extras=("cli",), groups=("dev",), root=self._ROOT + _BASE_GROUP
         )
 
-        assert self._markers(pylock) == {
+        assert _pylock_markers(pylock) == {
             "core": '"default" in dependency_groups',
             "mydev": '"dev" in dependency_groups',
             "mytool": '"cli" in extras',
             "subtool": '"cli" in extras',
         }
 
-        assert self._selected(pylock, dependency_groups=["dev"]) == {"mydev"}
-        assert self._selected(pylock, dependency_groups=["default", "dev"]) == {
+        assert _pylock_selected(pylock, dependency_groups=["dev"]) == {"mydev"}
+        assert _pylock_selected(pylock, dependency_groups=["default", "dev"]) == {
             "core",
             "mydev",
         }
@@ -4467,10 +4469,10 @@ class TestExtraAndGroupMembershipMarkers:
         root = self._ROOT.replace('dev = ["mydev"]', 'dev = ["mydev", "core"]')
         pylock = self._lock(tmp_path, groups=("dev",), root=root + _BASE_GROUP)
 
-        assert self._markers(pylock)["core"] == (
+        assert _pylock_markers(pylock)["core"] == (
             '"default" in dependency_groups or "dev" in dependency_groups'
         )
-        assert self._selected(pylock, dependency_groups=["dev"]) == {"core", "mydev"}
+        assert _pylock_selected(pylock, dependency_groups=["dev"]) == {"core", "mydev"}
 
     def test_package_reached_by_base_and_extra_is_unconditional(
         self, tmp_path: Path
@@ -4479,7 +4481,7 @@ class TestExtraAndGroupMembershipMarkers:
         root = self._ROOT.replace('cli = ["mytool"]', 'cli = ["mytool", "core"]')
         pylock = self._lock(tmp_path, extras=("cli",), root=root)
 
-        assert self._selected(pylock) == {"core"}
+        assert _pylock_selected(pylock) == {"core"}
 
     def test_default_group_still_installs_by_default(self, tmp_path: Path) -> None:
         """A ``default-groups`` member gates on the group but installs by default.
@@ -4493,8 +4495,8 @@ class TestExtraAndGroupMembershipMarkers:
         pylock = self._lock(tmp_path, root=root)
 
         assert pylock.default_groups == ("dev",)
-        assert self._selected(pylock) == {"core", "mydev"}
-        assert self._selected(pylock, dependency_groups=[]) == {"core"}
+        assert _pylock_selected(pylock) == {"core", "mydev"}
+        assert _pylock_selected(pylock, dependency_groups=[]) == {"core"}
 
     def test_declared_default_groups_replace_rather_than_extend(
         self, tmp_path: Path
@@ -4547,7 +4549,7 @@ class TestExtraAndGroupMembershipMarkers:
         pylock = self._lock(tmp_path, groups=("de_fault",), root=root + _BASE_GROUP)
 
         assert pylock.dependency_groups == ("de-fault", "default")
-        assert self._selected(pylock, dependency_groups=["de-fault"]) == {"mydev"}
+        assert _pylock_selected(pylock, dependency_groups=["de-fault"]) == {"mydev"}
 
     def test_no_group_offered_names_nothing(self, tmp_path: Path) -> None:
         """With no group to select, nothing needs a name for the project's own."""
@@ -4558,7 +4560,7 @@ class TestExtraAndGroupMembershipMarkers:
         pylock = self._lock(tmp_path, root=root)
 
         assert pylock.default_groups is None
-        assert self._markers(pylock) == {"core": None}
+        assert _pylock_markers(pylock) == {"core": None}
 
     def test_naming_them_gates_them_with_nothing_selected(self, tmp_path: Path) -> None:
         """The name means one thing whether or not the run selects a group.
@@ -4569,9 +4571,9 @@ class TestExtraAndGroupMembershipMarkers:
         """
         pylock = self._lock(tmp_path, root=self._ROOT + _BASE_GROUP)
 
-        assert self._markers(pylock) == {"core": '"default" in dependency_groups'}
-        assert self._selected(pylock) == {"core"}
-        assert self._selected(pylock, dependency_groups=[]) == set()
+        assert _pylock_markers(pylock) == {"core": '"default" in dependency_groups'}
+        assert _pylock_selected(pylock) == {"core"}
+        assert _pylock_selected(pylock, dependency_groups=[]) == set()
 
     def test_dynamic_project_dependencies_still_refuse(self, tmp_path: Path) -> None:
         """Setting the option does not open a path around the refusal.
@@ -4589,7 +4591,7 @@ class TestExtraAndGroupMembershipMarkers:
         pylock = self._lock(tmp_path)
 
         assert [pkg.marker for pkg in pylock.packages] == [None]
-        assert self._selected(pylock) == {"core"}
+        assert _pylock_selected(pylock) == {"core"}
 
     def test_marker_excluded_extra_requirement_is_not_locked(
         self, tmp_path: Path
@@ -4601,7 +4603,7 @@ class TestExtraAndGroupMembershipMarkers:
         )
         pylock = self._lock(tmp_path, extras=("cli",), root=root)
 
-        assert set(self._markers(pylock)) == {"core", "mytool", "subtool"}
+        assert set(_pylock_markers(pylock)) == {"core", "mytool", "subtool"}
 
     def test_extra_requiring_an_extra_of_a_base_package(self, tmp_path: Path) -> None:
         """``cli = ["core[fancy]"]``: core stays unconditional, fancy's dep is gated."""
@@ -4619,7 +4621,7 @@ class TestExtraAndGroupMembershipMarkers:
             },
         )
 
-        assert self._markers(pylock) == {"core": None, "subtool": '"cli" in extras'}
+        assert _pylock_markers(pylock) == {"core": None, "subtool": '"cli" in extras'}
 
     def test_matrix_gates_the_extra_on_every_target(self, tmp_path: Path) -> None:
         """A matrix folds the extra into every target, and gates it there too.
@@ -4635,7 +4637,7 @@ class TestExtraAndGroupMembershipMarkers:
         )
         pylock = self._lock(tmp_path, extras=("cli",), root=root)
 
-        assert self._markers(pylock) == {
+        assert _pylock_markers(pylock) == {
             "core": None,
             "mytool": '"cli" in extras',
             "subtool": '"cli" in extras',
@@ -4689,7 +4691,7 @@ class TestConflictMemberMembershipMarkers:
     def test_shared_package_names_both_selections_that_reach_it(
         self, tmp_path: Path
     ) -> None:
-        markers = TestExtraAndGroupMembershipMarkers._markers(self._lock(tmp_path))
+        markers = _pylock_markers(self._lock(tmp_path))
 
         assert markers["shared-lib"] == '"cpu" in extras or "docs" in extras'
         assert markers["sphinx"] == '"docs" in extras'
@@ -4700,7 +4702,7 @@ class TestConflictMemberMembershipMarkers:
     ) -> None:
         """``shared-lib`` is a direct requirement of the ``cpu`` extra."""
         pylock = self._lock(tmp_path)
-        selected = TestExtraAndGroupMembershipMarkers._selected
+        selected = _pylock_selected
 
         assert selected(pylock, extras=["cpu"]) == {"core", "cpu-only", "shared-lib"}
         assert selected(pylock, extras=["gpu"]) == {"core", "gpu-only"}
@@ -5008,3 +5010,215 @@ class TestBuildRequirementsConfig:
 
         assert pruned.constraints == ("urllib3<2",)
         assert pruned.requires_python == ">=3.10"
+
+
+class TestBuildGroup:
+    """``[tool.nab].build-group`` carries the build requirements in the lock."""
+
+    _PYPROJECT = (
+        '[project]\nname = "proj"\ndependencies = ["runtime-only"]\n'
+        '[build-system]\nrequires = ["hatchling"]\n'
+    )
+
+    @staticmethod
+    def _mocked_resolve(pyproject: Path, **kwargs: object) -> ResolveResult:
+        """Resolve ``pyproject`` against a provider that pins everything at 2.0."""
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_target_lock"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("2.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            return _resolved(
+                pyproject, _FAKE_TRANSPORT, python_version="3.12.0", **kwargs
+            )
+
+    def test_build_requires_join_the_resolve(self, tmp_path: Path) -> None:
+        """Naming a group puts the build requirements in the lock."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(self._PYPROJECT + '[tool.nab]\nbuild-group = "build"\n')
+
+        result = self._mocked_resolve(pyproject)
+
+        assert _pins(result) == {"runtime-only": V("2.0"), "hatchling": V("2.0")}
+
+    def test_unset_leaves_them_out(self, tmp_path: Path) -> None:
+        """A lock says nothing about how the project is built by default."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(self._PYPROJECT)
+
+        result = self._mocked_resolve(pyproject)
+
+        assert _pins(result) == {"runtime-only": V("2.0")}
+
+    def test_no_build_system_is_an_error(self, tmp_path: Path) -> None:
+        """Naming a group for requirements the project does not declare."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = []\n'
+            "[tool.nab]\n"
+            'build-group = "build"\n'
+        )
+
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"declares no \[build-system\]"
+        ):
+            self._mocked_resolve(pyproject)
+
+    def test_a_build_requirements_lock_drops_the_group(self, tmp_path: Path) -> None:
+        """Its roots already are the build requirements, so nothing gates them.
+
+        The pins are the same either way, so what the group would change is
+        the lock offering a name that gates nothing.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(self._PYPROJECT + '[tool.nab]\nbuild-group = "build"\n')
+        config = config_for_build_requirements(read_pyproject_config(pyproject))
+
+        result = self._mocked_resolve(pyproject, build_requirements=True)
+        lock_input = build_lock_input(result, config=config)
+
+        assert _pins(result) == {"hatchling": V("2.0")}
+        assert lock_input.build_group is None
+        assert lock_input.active_groups == ()
+
+    @patch("nab_python.resolve.resolve_with_coordinator")
+    def test_build_requires_join_every_conflict_fork(
+        self, mock_engine: MagicMock, tmp_path: Path
+    ) -> None:
+        """A project is built the same way whichever member is selected."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            self._PYPROJECT + "[dependency-groups]\n"
+            'cpu = ["torch-cpu"]\n'
+            'gpu = ["torch-gpu"]\n'
+            "[tool.nab]\n"
+            'build-group = "build"\n'
+            'conflicts = [[{ group = "cpu" }, { group = "gpu" }]]\n'
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda coordinator: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                groups=("cpu", "gpu"),
+                python_version="3.12.0",
+            )
+
+        forks = mock_engine.call_args.kwargs["forks"]
+        assert len(forks) == 2
+        for fork in forks:
+            assert "hatchling" in {r.name for r in fork.requirements}
+            assert ("group", "build") in fork.contexts.selectors
+
+    @patch("nab_python.resolve.resolve_with_coordinator")
+    def test_the_matrix_still_expands(
+        self, mock_engine: MagicMock, tmp_path: Path
+    ) -> None:
+        """A static requires list needs no interpreter to read, so it goes wide."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            self._PYPROJECT + "[tool.nab]\n"
+            'build-group = "build"\n'
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda coordinator: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            _resolved(pyproject, _FAKE_TRANSPORT)
+
+        targets = mock_engine.call_args.args[1]
+        assert [t.label for t in targets] == [
+            "py311-linux_x86_64",
+            "py312-linux_x86_64",
+        ]
+        (fork,) = mock_engine.call_args.kwargs["forks"]
+        assert [str(r) for r in fork.requirements] == ["runtime-only", "hatchling"]
+
+
+class TestBuildGroupMarkers:
+    """``build-group`` gates ``[build-system].requires`` end to end."""
+
+    _MEMBERS: ClassVar[dict[str, str]] = {
+        "core": '[project]\nname = "core"\nversion = "1.0"\n',
+        "mydev": '[project]\nname = "mydev"\nversion = "3.0"\n',
+        "builder": '[project]\nname = "builder"\nversion = "5.0"\n',
+    }
+
+    _ROOT = (
+        '[project]\nname = "app"\nversion = "1.0"\ndependencies = ["core"]\n'
+        '[dependency-groups]\ndev = ["mydev"]\n'
+        '[build-system]\nrequires = ["builder"]\n'
+        + "".join(
+            f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
+            for name in ("core", "mydev", "builder")
+        )
+    )
+
+    def _lock(
+        self, tmp_path: Path, *, tool: str, groups: tuple[str, ...] = ()
+    ) -> Pylock:
+        """Resolve and emit the root project, with ``tool`` appended to it."""
+        return TestExtraAndGroupMembershipMarkers._lock(
+            tmp_path,
+            groups=groups,
+            root=self._ROOT + tool,
+            members=self._MEMBERS,
+        )
+
+    def test_build_requirement_carries_the_group_membership(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the build group reaches it, so only its name gates it."""
+        pylock = self._lock(tmp_path, tool='[tool.nab]\nbuild-group = "build"\n')
+
+        assert _pylock_markers(pylock) == {
+            "core": None,
+            "builder": '"build" in dependency_groups',
+        }
+
+    def test_the_name_is_selectable_but_not_a_default(self, tmp_path: Path) -> None:
+        """An install that asks for no group is installing, not building."""
+        pylock = self._lock(tmp_path, tool='[tool.nab]\nbuild-group = "build"\n')
+
+        assert pylock.dependency_groups == ("build",)
+        assert pylock.default_groups is None
+
+        assert _pylock_selected(pylock) == {"core"}
+        assert _pylock_selected(pylock, dependency_groups=["build"]) == {
+            "core",
+            "builder",
+        }
+
+    def test_it_composes_with_a_named_base_group(self, tmp_path: Path) -> None:
+        """Both names are selectable, and neither drags in the other."""
+        pylock = self._lock(
+            tmp_path,
+            tool='[tool.nab]\nbase-group = "default"\nbuild-group = "build"\n',
+        )
+
+        assert pylock.dependency_groups == ("default", "build")
+        assert pylock.default_groups == ("default",)
+
+        assert _pylock_selected(pylock, dependency_groups=["build"]) == {"builder"}
+        assert _pylock_selected(pylock, dependency_groups=["default"]) == {"core"}
+
+    def test_a_selected_group_keeps_its_own_gate(self, tmp_path: Path) -> None:
+        """The build group is one selector among the run's own selection."""
+        pylock = self._lock(
+            tmp_path, tool='[tool.nab]\nbuild-group = "build"\n', groups=("dev",)
+        )
+
+        assert _pylock_markers(pylock)["mydev"] == '"dev" in dependency_groups'
+        assert _pylock_selected(pylock, dependency_groups=["dev"]) == {"core", "mydev"}

@@ -67,6 +67,7 @@ def config_command(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag
     project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     project_base_group: str | None = None,
+    project_build_group: str | None = None,
     include_rejected: bool = False,
 ) -> None:
     """Inspect the effective layered configuration.
@@ -112,6 +113,7 @@ def config_command(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag
         cli_constraint=project_constraint,
         cli_default_group=project_default_group,
         cli_base_group=project_base_group,
+        cli_build_group=project_build_group,
     )
 
     rejected: list[RejectedLayer] = []

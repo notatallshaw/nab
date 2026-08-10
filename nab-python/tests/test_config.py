@@ -912,6 +912,32 @@ class TestMainGroup:
         with pytest.raises(ConfigError, match="not a valid group name"):
             read_pyproject_config(path)
 
+    def test_build_group_is_normalised(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nbuild-group = "Build_Deps"\n')
+        assert read_pyproject_config(path).build_group == "build-deps"
+
+    def test_build_group_rejects_a_non_name(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nbuild-group = "-nope-"\n')
+        with pytest.raises(ConfigError, match="build-group '-nope-'"):
+            read_pyproject_config(path)
+
+    def test_build_group_rejects_a_declared_group_name(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[dependency-groups]\nbuild = ["pytest"]\n'
+            '[tool.nab]\nbuild-group = "build"\n',
+        )
+        with pytest.raises(ConfigError, match="build-group 'build' and"):
+            read_pyproject_config(path)
+
+    def test_build_group_rejects_the_base_group_name(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nbase-group = "shared"\nbuild-group = "Shared"\n',
+        )
+        with pytest.raises(ConfigError, match="build-group and base-group"):
+            read_pyproject_config(path)
+
 
 class TestRequiresPython:
     """``requires-python`` declares the supported range; it is not a target.

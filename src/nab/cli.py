@@ -322,6 +322,7 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
     cli_constraint: tuple[str, ...] = (),
     cli_default_group: tuple[str, ...] = (),
     cli_base_group: str | None = None,
+    cli_build_group: str | None = None,
 ) -> dict[str, object]:
     """Build the registry-keyed CLI override dict from the named flags.
 
@@ -349,6 +350,7 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
             "project_constraint": cli_constraint,
             "project_default_group": cli_default_group,
             "project_base_group": cli_base_group,
+            "project_build_group": cli_build_group,
         }
     )
 

@@ -344,6 +344,11 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
             groups=read_pyproject_groups(path),
             optional=read_pyproject_optional_dependencies(path),
             project_name=read_pyproject_name(path),
+            build_requires=(
+                read_pyproject_build_requires(path)
+                if config.build_group is not None
+                else []
+            ),
         )
     )
 
@@ -819,6 +824,7 @@ def build_lock_input(
         default_groups=effective.default_groups,
         conflicts=effective.conflicts,
         base_group=effective.base_group,
+        build_group=effective.build_group,
     )
 
 
@@ -913,6 +919,10 @@ class _ProjectTables:
     groups: Mapping[str, Sequence[str | Mapping[str, str]]]
     optional: Mapping[str, Sequence[str]]
     project_name: str | None
+    build_requires: list[Requirement] = field(default_factory=list)
+    """``[build-system].requires``, read only when ``[tool.nab].build-group``
+    names a group for them.  A ``--build-requirements`` resolve carries them
+    in ``dependencies`` instead and leaves this empty."""
 
 
 def _tables_for_build_requires(path: Path) -> _ProjectTables:
@@ -938,9 +948,17 @@ def config_for_build_requirements(config: NabProjectConfig) -> NabProjectConfig:
     ``base-group`` names the project's own dependencies, which a build
     lock holds none of.  Left in they fail the run rather than narrow it:
     :func:`_tables_for_build_requires` supplies no group or extra table
-    for them to resolve against.
+    for them to resolve against.  ``build-group`` goes too: a lock whose
+    roots already are the build requirements has no second context to
+    gate them behind.
     """
-    return replace(config, conflicts=(), default_groups=(), base_group=None)
+    return replace(
+        config,
+        conflicts=(),
+        default_groups=(),
+        base_group=None,
+        build_group=None,
+    )
 
 
 def _threaded_preferences(
@@ -1239,7 +1257,9 @@ def _plan_forks(
                 requirements=tuple(_fork_requirements(path, tables, fork)),
                 contexts=InstallContexts(
                     project=tuple(tables.dependencies),
-                    selectors=_selector_requirements(path, tables, fork),
+                    selectors=_selector_requirements(
+                        path, tables, fork, build_group=config.build_group
+                    ),
                     name_project=config.base_group is not None,
                 ),
             )
@@ -1255,7 +1275,11 @@ def _plan_forks(
 
 
 def _selector_requirements(
-    path: Path, tables: _ProjectTables, fork: ConflictFork
+    path: Path,
+    tables: _ProjectTables,
+    fork: ConflictFork,
+    *,
+    build_group: str | None,
 ) -> dict[tuple[str, str], tuple[Requirement, ...]]:
     """Split a fork's active extras and groups into one requirement list each.
 
@@ -1272,6 +1296,9 @@ def _selector_requirements(
     install.
     """
     selectors: dict[tuple[str, str], tuple[Requirement, ...]] = {}
+    if build_group is not None:
+        member = (ConflictKind.GROUP.value, build_group)
+        selectors[member] = tuple(tables.build_requires)
     for extra in fork.active_extras:
         member = (ConflictKind.EXTRA.value, str(canonicalize_name(extra)))
         selectors[member] = tuple(_extra_requirements(tables, [extra], path))
@@ -1291,6 +1318,7 @@ def _fork_requirements(
     rather than shared.
     """
     requirements = list(tables.dependencies)
+    requirements.extend(tables.build_requires)
     requirements.extend(_group_requirements(tables.groups, fork.active_groups, path))
     requirements.extend(_extra_requirements(tables, fork.active_extras, path))
     return requirements

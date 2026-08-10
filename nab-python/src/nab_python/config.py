@@ -436,6 +436,7 @@ class NabProjectConfig:
     constraints: tuple[str, ...] = ()
     default_groups: tuple[str, ...] = ()
     base_group: str | None = None
+    build_group: str | None = None
     # The project's declared Python support range: recorded as the lock's
     # top-level ``requires-python`` and checked against the resolve target.
     # It does not choose the target; ``environment`` does.
@@ -658,6 +659,9 @@ def read_pyproject_config(
         project_requires_python=project_requires_python,
     )
     _validate_base_group_is_free(effective["base-group"], path)
+    _validate_build_group_is_free(
+        effective["build-group"], effective["base-group"], path
+    )
     if discover_workspace:
         config = _apply_workspace_discovery(
             path, config, declared_in=effective["workspace"].origin.label
@@ -777,6 +781,7 @@ def _config_from_effective(
         constraints=effective["constraints"].value,
         default_groups=default_groups,
         base_group=effective["base-group"].value,
+        build_group=effective["build-group"].value,
         requires_python=requires_python,
         requires_python_source=requires_python_source,
         uploaded_prior_to=effective["uploaded-prior-to"].value,
@@ -1325,6 +1330,22 @@ def _parse_base_group(value: object) -> str | None:
     return str(canonical)
 
 
+def _parse_build_group(value: object) -> str | None:
+    """Parse ``[tool.nab].build-group`` as a PEP 735 group name.
+
+    Names the group a lock gives ``[build-system].requires``, so one lock
+    can describe the environment the project is built in as well as the
+    one it runs in.  Unset, a lock says nothing about how it is built.
+    """
+    raw = _parse_string_value("build-group", value)
+    try:
+        canonical = canonicalize_name(raw, validate=True)
+    except InvalidName as e:
+        msg = f"build-group {raw!r} is not a valid group name: {e}"
+        raise ConfigError(msg) from e
+    return str(canonical)
+
+
 def _parse_requires_python(value: object) -> str | None:
     """Parse ``[tool.nab].requires-python`` as a PEP 440 specifier.
 
@@ -1376,6 +1397,52 @@ def _validate_base_group_is_free(base_group: EffectiveValue, path: Path) -> None
         if base_group.origin.kind is SourceKind.CLI
         else "base-group"
     )
+    msg = (
+        f"{key} {name!r} and [dependency-groups] {names} are the same name;"
+        " one marker cannot mean both"
+    )
+    raise ConfigError(msg)
+
+
+def _validate_build_group_is_free(
+    build_group: EffectiveValue, base_group: EffectiveValue, path: Path
+) -> None:
+    """Reject a ``build-group`` some other group already answers to.
+
+    A declared ``[dependency-groups]`` name and ``base-group`` are both
+    already spoken for, and all three emit ``'name' in dependency_groups``.
+    Checked as the file is read, like :func:`_validate_base_group_is_free`.
+    """
+    name: str | None = build_group.value
+    if name is None:
+        return
+    key = (
+        "--project-build-group"
+        if build_group.origin.kind is SourceKind.CLI
+        else "build-group"
+    )
+    if name == base_group.value:
+        other = (
+            "--project-base-group"
+            if base_group.origin.kind is SourceKind.CLI
+            else "base-group"
+        )
+        msg = f"{key} and {other} are both {name!r}; one marker cannot mean both"
+        raise ConfigError(msg)
+
+    with path.open("rb") as f:
+        data = tomli.load(f)
+    groups = data.get("dependency-groups")
+    if not isinstance(groups, dict):
+        return
+    taken = sorted(
+        declared
+        for declared in groups
+        if isinstance(declared, str) and canonicalize_name(declared) == name
+    )
+    if not taken:
+        return
+    names = ", ".join(repr(declared) for declared in taken)
     msg = (
         f"{key} {name!r} and [dependency-groups] {names} are the same name;"
         " one marker cannot mean both"

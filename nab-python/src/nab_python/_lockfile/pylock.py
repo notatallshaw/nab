@@ -275,7 +275,9 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
             else None
         ),
         dependency_groups=_group_array(
-            lock_input.dependency_groups, lock_input.base_group
+            lock_input.dependency_groups,
+            lock_input.base_group,
+            lock_input.build_group,
         ),
         default_groups=_group_array(
             lock_input.default_groups,
@@ -315,21 +317,23 @@ def _name_base_group(lock_input: LockInput) -> LockInput:
 
 
 def _group_array(
-    groups: Sequence[str], base_group: str | None
+    groups: Sequence[str], *configured: str | None
 ) -> tuple[str, ...] | None:
     """Render one of the lock's group arrays, or ``None`` when it is empty.
 
-    ``base_group`` is appended when given.  It always joins
-    ``dependency-groups``, since an installer that offers only those
-    names would otherwise never reach it.  It joins ``default-groups``
-    only when the project declares none of its own: a declared
+    Every name is canonicalized here and deduplicated in order.  Which
+    arrays a ``configured`` name belongs in is the caller's decision:
+    ``build-group`` joins ``dependency-groups`` alone, and ``base-group``
+    joins it too, since an installer that offers only those names would
+    otherwise never reach it.  ``base-group`` joins ``default-groups``
+    only when the project declares none of its own, because a declared
     ``default-groups`` replaces the default selection rather than
-    extending it, so a project that wants its own dependencies installed
-    by default alongside a group names them there itself.
+    extending it.
     """
     names = dict.fromkeys(str(canonicalize_name(group)) for group in groups)
-    if base_group is not None:
-        names[str(canonicalize_name(base_group))] = None
+    for name in configured:
+        if name is not None:
+            names[str(canonicalize_name(name))] = None
     return tuple(names) or None
 
 

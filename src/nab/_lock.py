@@ -135,6 +135,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     project_base_group: str | None = None,
+    project_build_group: str | None = None,
     upgrade: bool = False,
     locked: bool = False,
 ) -> None:
@@ -203,6 +204,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
             all_extras=all_extras,
             default_group=project_default_group,
             base_group=project_base_group,
+            build_group=project_build_group,
         )
     overrides = _cli._cli_overrides(  # noqa: SLF001
         cli_resolution=project_resolution,
@@ -219,6 +221,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         cli_constraint=project_constraint,
         cli_default_group=project_default_group,
         cli_base_group=project_base_group,
+        cli_build_group=project_build_group,
     )
     project_overrides = _cli.project_config_overrides(overrides)
     _cli._project_cli_overrides_or_exit(project_overrides)  # noqa: SLF001
@@ -379,11 +382,13 @@ def _refuse_group_selection_with_build_requirements(
     all_extras: bool,
     default_group: tuple[str, ...],
     base_group: str | None,
+    build_group: str | None,
 ) -> None:
     """Exit 1 when a run names a selection a build-requirements lock has none of.
 
-    Refusing is what keeps the flags honest.  ``--project-default-group``
-    and ``--project-base-group`` would otherwise be dropped by
+    Refusing is what keeps the flags honest.  ``--project-default-group``,
+    ``--project-base-group`` and ``--project-build-group`` would otherwise
+    be dropped by
     :func:`~nab_python.resolve.config_for_build_requirements` after the run had
     already printed a reproducibility notice and recorded them in the lock,
     claiming an override that changed nothing.
@@ -395,6 +400,7 @@ def _refuse_group_selection_with_build_requirements(
         all_extras,
         bool(default_group),
         base_group is not None,
+        build_group is not None,
     )
     if not any(named):
         return
@@ -477,6 +483,7 @@ def _fast_fail_locked(
             dependency_groups=groups,
             default_groups=config.default_groups,
             base_group=config.base_group,
+            build_group=config.build_group,
             roots=roots,
             constraints=config.constraints,
             resolve_target=resolve_target,

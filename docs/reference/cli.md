@@ -74,17 +74,23 @@ Build requirements:
   requirements formats), which keeps it clear of the project's runtime
   lock. Nothing can be selected alongside it: `[build-system].requires`
   is one flat list, so `--groups`, `--all-groups`, `--extras`,
-  `--all-extras`, `--project-default-group` and `--project-base-group`
-  are all rejected, and `[tool.nab].default-groups`,
-  `[tool.nab].base-group` and `[tool.nab].conflicts` declared in the
-  project's files do not apply.
+  `--all-extras`, `--project-default-group`, `--project-base-group` and
+  `--project-build-group` are all rejected, and `[tool.nab].default-groups`,
+  `[tool.nab].base-group`, `[tool.nab].build-group` and
+  `[tool.nab].conflicts` declared in the project's files do not apply.
 * A project that declares no `[build-system]` is an error. nab does not
   fall back to the PEP 517 default backend, because pinning an implied
   `setuptools` would put a build requirement in the lock that the project
-  never declared.
-* Only the static list is read. `--build-requirements` never invokes the
-  project's own backend, so whatever that backend would add from
-  `get_requires_for_build_wheel` is not covered.
+  never declared. `[tool.nab].build-group`, which carries the build
+  requirements in the project's own lock instead of a separate one, is
+  the same.
+* Only the static list is read. Neither this flag nor `build-group`
+  invokes the project's own backend, so whatever that backend would add
+  from `get_requires_for_build_wheel` is not covered.
+* `[tool.nab].build-group` gates its packages on a marker, and the two
+  requirements formats have nowhere to put one, so they render the build
+  requirements as ordinary pins. Use `pylock` output, or this flag, when
+  the two sets have to stay apart.
 
 Workspace flags (see [Lock a workspace](../how-to/workspaces.md)):
 
@@ -162,7 +168,8 @@ A project option can be overridden for one run with a `--project-<key>`
 flag: `--project-resolution`, `--project-mode`, `--project-requires-python`,
 `--project-uploaded-prior-to`, `--project-dist-policy`,
 `--project-build-policy`, `--project-build-requires-depth`,
-`--project-decision-order`, `--project-base-group`, and the
+`--project-decision-order`, `--project-base-group`,
+`--project-build-group`, and the
 repeatable `--project-constraint` and `--project-default-group`. Every one
 of them replaces the file value outright; repeating `--project-constraint`
 builds up that run's whole constraint list rather than adding to the

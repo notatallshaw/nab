@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import tomli
 
 from nab.cli import app
 from nab_python._vendor.packaging.version import Version
@@ -217,6 +218,52 @@ def test_locked_build_lock_checks_its_own_default_file(
         )
 
     assert "Lockfile pylock.build.toml is up to date." in capsys.readouterr().err
+
+
+def test_a_lock_offering_a_build_group_is_up_to_date(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No run selects the build group, so its name must not read as drift."""
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+        '[build-system]\nrequires = ["foo"]\n'
+        '[tool.nab]\nbuild-group = "build"\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    assert tomli.loads(out.read_text())["dependency-groups"] == ["build"]
+
+    _run_locked(pyproject, out, _locked_mock(_result({"foo": "1.0"})))
+
+    assert "is up to date" in capsys.readouterr().err
+
+
+def test_a_renamed_build_group_is_out_of_date(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Renaming it renames a marker on every package it gates."""
+    body = (
+        '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+        '[build-system]\nrequires = ["foo"]\n'
+        "[tool.nab]\n"
+    )
+    pyproject = _write_pyproject(tmp_path, body + 'build-group = "build"\n')
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    pyproject.write_text(body + 'build-group = "builder"\n', encoding="utf-8")
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert "does not name 'builder' for the build requirements" in (
+        capsys.readouterr().err
+    )
+    mock.assert_not_called()
 
 
 def test_tightened_constraint_fires_without_resolving(

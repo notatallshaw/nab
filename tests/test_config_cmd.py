@@ -219,6 +219,15 @@ class TestConfigGet:
         assert _run_config(["get", "http-backend", *base]) == "urllib3\n"
         assert _run_config(["get", "max-concurrency", *base]) == "8\n"
 
+    def test_get_build_group_reads_the_cli_override(self, hermetic_roots: Path) -> None:
+        """``--project-build-group`` reaches the registry from this command too."""
+        _project(hermetic_roots)
+        base = ["get", "build-group", "--path", str(hermetic_roots / "pyproject.toml")]
+        assert _run_config(base) == "<none>\n"
+        assert _run_config([*base, "--project-build-group", "Build_Reqs"]) == (
+            "build-reqs\n"
+        )
+
     def test_get_reads_new_user_env_vars(
         self, hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

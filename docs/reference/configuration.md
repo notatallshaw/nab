@@ -37,6 +37,18 @@ default-groups = ["dev"]
 # declare it there too to keep it in the default selection.
 base-group = "base"
 
+# The group name a lock gives [build-system].requires, so one lock can
+# describe the environment the project is built in as well as the one it
+# runs in.  Unset, a lock says nothing about how the project is built.
+# Set it and those requirements are resolved alongside the project's own,
+# and a pylock gates them behind that name, which it records in
+# dependency-groups but not in default-groups: an install that asks for
+# no group is installing the project, not building it.  The requirements
+# output formats carry no markers, so there they render as ordinary
+# pins.  The name must not be one [dependency-groups] declares, nor the
+# base-group name.
+build-group = "build"
+
 # The Python range this project supports.  A declaration: it is
 # recorded in the lockfile and checked against the resolve target,
 # and it does not choose that target.  Falls back to
