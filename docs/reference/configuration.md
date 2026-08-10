@@ -590,6 +590,17 @@ issues, so fetching is not serialised.
 "Reproducibility" in the [lockfile reference](lockfile.md) for the
 conditions that remain.
 
+Decision order is not the only heuristic that picks among valid
+answers.  nab also looks ahead before it decides: for a package
+without extras it reads the candidate version's dependencies, and
+skips that version when they already contradict a root requirement or
+a version the resolve settled on elsewhere.  The look-ahead runs under
+both settings, and it reads the metadata and the decisions taken so
+far rather than what has arrived, so `stable` still gives one
+lockfile.  What it changes is the answer against a resolver that does
+not look ahead: the two can pin different versions of one project, and
+both satisfy every requirement.
+
 ## VCS policy
 
 `[tool.nab.vcs]` controls whether direct-URL VCS requirements
