@@ -26,7 +26,6 @@ from typing import (
     Any,
     Literal,
     TypeVar,
-    Union,
 )
 
 from ._ranges import (
@@ -59,7 +58,7 @@ if TYPE_CHECKING:
 __all__ = ["RangeRelation", "SortedOrder", "VersionRange"]
 
 T = TypeVar("T")
-UnparsedVersion = Union[Version, str]
+UnparsedVersion = Version | str
 UnparsedVersionVar = TypeVar("UnparsedVersionVar", bound=UnparsedVersion)
 SortedOrder = Literal["ascending", "descending"]
 

@@ -9,8 +9,9 @@ import operator
 import os
 import platform
 import sys
+from collections.abc import Callable
 from collections.abc import Set as AbstractSet
-from typing import TYPE_CHECKING, Callable, Literal, TypedDict, Union, cast
+from typing import TYPE_CHECKING, Literal, TypedDict, cast
 
 from ._parser import MarkerAtom, MarkerList, Op, Value, Variable
 from ._parser import parse_marker as _parse_marker
@@ -38,7 +39,7 @@ def __dir__() -> list[str]:
     return __all__
 
 
-Operator = Callable[[str, Union[str, AbstractSet[str]]], bool]
+Operator = Callable[[str, str | AbstractSet[str]], bool]
 EvaluateContext = Literal["metadata", "lock_file", "requirement"]
 """A ``typing.Literal`` enumerating valid marker evaluation contexts.
 
@@ -413,7 +414,7 @@ class Marker:
         try:
             self._markers = _normalize_extra_values(_parse_marker(marker))
             # The attribute `_markers` can be described in terms of a recursive type:
-            # MarkerList = List[Union[Tuple[Node, ...], str, MarkerList]]
+            # MarkerList = list[tuple[Node, ...] | str | MarkerList]
             #
             # For example, the following expression:
             # python_version > "3.6" or (python_version == "3.6" and os_name == "unix")

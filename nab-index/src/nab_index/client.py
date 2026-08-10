@@ -110,6 +110,19 @@ def _intern_name(name: str) -> NormalizedName:
     return canonicalize_name(name)
 
 
+def _tag_triple_is_parseable(tag_str: str) -> bool:
+    """Whether ``parse_tag`` would expand this ``python-abi-platform`` triple.
+
+    ``tag_str`` must carry exactly two dashes. Each field may be a PEP 425
+    compressed set with no empty member, and an interpreter names an
+    implementation and a version, so it is an identifier.
+    """
+    interpreters, abis, platforms = tag_str.split("-")
+    if not all(part.isidentifier() for part in interpreters.split(".")):
+        return False
+    return all("" not in field.split(".") for field in (abis, platforms))
+
+
 def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     """Parse a wheel filename per PEP 427.
 
@@ -123,10 +136,17 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     declaring ``2.0.0`` in its filename comes back as ``"2.0.0"``,
     not ``"2"``.
 
-    This reproduces :func:`packaging.utils.parse_wheel_filename`'s
-    name/version validation and its rejection of empty tag components,
-    but discards the ``frozenset[Tag]`` that the tag parser builds and
-    nab does not use.
+    This accepts what nab-python's vendored ``parse_wheel_filename`` accepts,
+    but discards the ``frozenset[Tag]`` the tag parser builds and nab does not
+    use. The vendored copy is the one to match, not the released ``packaging``
+    this package depends on, because the vendored tag parser ranks whatever is
+    admitted here; the two can differ on an empty project name, which releases
+    before 26.3 accept.
+
+    A build tag past that same digit limit is admitted rather than rejected:
+    ``parse_wheel_filename`` raises ``ValueError`` out of ``int()`` on one, but
+    nab reads a build tag only to sort by it and sorts an unconvertible run
+    lowest.
     """
     if not filename.endswith(".whl"):
         return None
@@ -151,16 +171,9 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
         dashes == _WHEEL_DASHES_WITH_BUILD and _BUILD_TAG_RE.match(parts[2]) is None
     )
 
-    # The tag triple is parts[-1]; no component of it may be empty, and every
-    # interpreter must be an identifier, which is the only per-tag check
-    # packaging's own parser makes.
-    interpreters, *rest = parts[-1].split("-")
-    empty_tag = any("" in component.split(".") for component in (interpreters, *rest))
-    bad_interpreter = any(
-        not interpreter.isidentifier() for interpreter in interpreters.split(".")
-    )
-
-    if bad_build or empty_tag or bad_interpreter:
+    # parts[-1] is the whole tag triple, so it carries the two dashes
+    # _tag_triple_is_parseable unpacks on.
+    if bad_build or not _tag_triple_is_parseable(parts[-1]):
         return None
 
     return (_intern_name(name_part), version)

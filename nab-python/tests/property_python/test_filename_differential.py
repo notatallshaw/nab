@@ -1,11 +1,16 @@
 """Differential property tests for :mod:`nab_index.client` filename parsing.
 
 ``_parse_wheel_filename`` reimplements
-:func:`packaging.utils.parse_wheel_filename` minus the tag-set parse, and
-its docstring promises the accepted filename set is unchanged.
-``_parse_sdist_filename`` wraps
-:func:`packaging.utils.parse_sdist_filename` but rejects ``.zip`` sdists.
-Upstream packaging is the oracle for both.
+:func:`packaging.utils.parse_wheel_filename` minus the tag-set parse, and must
+accept the same filenames. Its oracle is nab-python's vendored packaging,
+whose ``parse_tag`` ranks the wheel afterwards.
+
+``_parse_sdist_filename`` calls the ambient
+:func:`packaging.utils.parse_sdist_filename` and adds a ``.zip`` rejection,
+so the ambient copy is its oracle.
+
+A draw reaches any one filename shape only sometimes, so the rules are pinned
+by the corpus in ``nab-python/tests/test_simple_client_filenames.py``.
 """
 
 from __future__ import annotations
@@ -16,21 +21,19 @@ import sys
 import pytest
 from hypothesis import example, given
 from hypothesis import strategies as st
-from packaging.utils import (
-    InvalidSdistFilename,
-    InvalidWheelFilename,
-    parse_sdist_filename,
-    parse_wheel_filename,
-)
+from packaging.utils import InvalidSdistFilename, parse_sdist_filename
 
 from nab_index.client import _parse_sdist_filename, _parse_wheel_filename
+from nab_python._vendor.packaging.utils import (
+    InvalidWheelFilename,
+    parse_wheel_filename,
+)
 
 from .strategies import DEEP_SETTINGS
 
 pytestmark = pytest.mark.property
 
-# Name-ish components: word chars, dots, underscores, unicode word
-# characters, empties.
+# Name-ish components: ASCII word chars, dots, non-ASCII letters, empties.
 name_chars = st.sampled_from(
     [*string.ascii_letters, *string.digits, ".", "_", "é", "ß", "京"]
 )
@@ -100,7 +103,7 @@ def wheelish_filenames(draw: st.DrawFn) -> str:
         parts.append(draw(build_bits))
     parts.append(tag)
     stem = "-".join(parts)
-    # Occasionally perturb: drop or add a dash run.
+    # Two of the four draws perturb the dashes: drop the first, or prepend one.
     perturb = draw(st.integers(min_value=0, max_value=3))
     if perturb == 1:
         stem = stem.replace("-", "", 1)
@@ -110,7 +113,7 @@ def wheelish_filenames(draw: st.DrawFn) -> str:
 
 
 def oracle_wheel(filename: str) -> tuple[str, str] | None:
-    """Parse via upstream packaging; ``None`` when it rejects."""
+    """Parse via the vendored packaging; ``None`` when it rejects."""
     try:
         name, version, _build, _tags = parse_wheel_filename(filename)
     except InvalidWheelFilename:
@@ -119,7 +122,7 @@ def oracle_wheel(filename: str) -> tuple[str, str] | None:
 
 
 def oracle_sdist(filename: str) -> tuple[str, str] | None:
-    """Parse via upstream packaging; ``None`` for rejects and ``.zip``."""
+    """Parse via the ambient packaging; ``None`` for rejects and ``.zip``."""
     if filename.endswith(".zip"):
         return None
     try:
@@ -131,26 +134,16 @@ def oracle_sdist(filename: str) -> tuple[str, str] | None:
 
 @given(filename=wheelish_filenames())
 @DEEP_SETTINGS
-def test_wheel_parse_matches_upstream_structured(filename: str) -> None:
-    """Structured near-miss wheel filenames parse like upstream, or nab rejects.
-
-    nab's parser is intentionally stricter than upstream on malformed
-    filenames (an empty name or an empty tag component), so ``None`` where
-    upstream is lenient is acceptable; when nab does return a result it must
-    agree with upstream.
-    """
-    result = _parse_wheel_filename(filename)
-    if result is not None:
-        assert result == oracle_wheel(filename)
+def test_wheel_parse_matches_vendored_structured(filename: str) -> None:
+    """Structured near-miss wheel filenames parse exactly like the vendored parser."""
+    assert _parse_wheel_filename(filename) == oracle_wheel(filename)
 
 
 @given(filename=st.text(min_size=0, max_size=40))
 @DEEP_SETTINGS
-def test_wheel_parse_matches_upstream_fuzz(filename: str) -> None:
-    """Arbitrary text with a ``.whl`` suffix parses like upstream, or nab rejects."""
-    result = _parse_wheel_filename(filename + ".whl")
-    if result is not None:
-        assert result == oracle_wheel(filename + ".whl")
+def test_wheel_parse_matches_vendored_fuzz(filename: str) -> None:
+    """Arbitrary text with a ``.whl`` suffix parses exactly like the vendored parser."""
+    assert _parse_wheel_filename(filename + ".whl") == oracle_wheel(filename + ".whl")
 
 
 @example(filename=f"foo-{OVERSIZED_VERSION}-py3-none-any.whl")

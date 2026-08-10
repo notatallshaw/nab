@@ -1,9 +1,8 @@
 # Vendored `packaging` snapshot
 
-This directory is a copy of the `packaging` library, vendored so nab can use
-the public `VersionRange` API before a `packaging` release containing it is
-published to PyPI. The tree is pristine `pypa/packaging` at a pinned commit
-plus at most one checked-in patch, and nothing else.
+This directory is a copy of the `packaging` library, vendored because nab runs a
+fork of it. The tree is pristine `pypa/packaging` at a pinned commit plus at
+most one checked-in patch, and nothing else.
 
 ## Model
 
@@ -14,39 +13,32 @@ plus at most one checked-in patch, and nothing else.
   tree is byte-identical to upstream at the pin. The patch carries:
   - `ranges.py`: `VersionRange.from_bounds`, `snap_bounds`,
     `release_intervals`, and `relation` with its `RangeRelation` result type
-    and the member aliases the return paths bind;
-    an `assume_sorted` keyword on `filter` and the
-    `VersionRange._filter_sorted` it dispatches to; `is_subset` and
-    `is_disjoint` answered by a direct walk over the interval lists instead of
-    an intermediate range; the module-level helpers they need (`_relate_bounds`,
-    `_subset_bounds`, `_disjoint_bounds`, `_bisect_predicate`,
-    `_partition_indexes`, `_make_project`, `_check_order`, `_lattice_release`,
-    `_release_boundary_point`); the `RangeRelation` and `SortedOrder` `__all__`
-    entries; and the class-docstring lines naming them.
+    and the member aliases the return paths bind; an `assume_sorted` keyword
+    on `filter` and the `VersionRange._filter_sorted` it dispatches to;
+    `is_subset` and `is_disjoint` answered by a direct walk over the interval
+    lists instead of an intermediate range; the module-level helpers they need
+    (`_relate_bounds`, `_subset_bounds`, `_disjoint_bounds`,
+    `_bisect_predicate`, `_partition_indexes`, `_make_project`, `_check_order`,
+    `_lattice_release`, `_release_boundary_point`); the `RangeRelation` and
+    `SortedOrder` `__all__` entries; and the class-docstring lines naming them.
   - `_ranges.py`: an unbounded end canonicalizes its inclusivity, and
     `LowerBound.__gt__`, `LowerBound.__le__`, and `UpperBound.__gt__` are
     written out beside `functools.total_ordering`, which still derives the
     rest.
   - `markersets.py` and `_markersets.py`: the marker-algebra module and the
     private engine behind it, both new files, plus the `Marker.to_set`
-    accessor they need on `markers.py`.
-  - `_parser.py`: `Value.serialize` from pypa/packaging#1213, which merged
-    after the pin. A value containing a double quote is emitted single-quoted,
-    so `str(Marker)` stays parseable. Drop this hunk once the pin moves past
-    `5b583e3`.
+    accessor on `markers.py`.
 
   Upstream PRs are planned for the bound ordering, the direct subset and
   disjoint walks, `filter`'s `assume_sorted` fast path, and
-  `from_bounds`/`snap_bounds`/`release_intervals`.
-  `relation` is deliberately not proposed yet: most of its win is available
-  from the direct walks alone, and what is left depends on the interval shapes.
+  `from_bounds`/`snap_bounds`/`release_intervals`. `relation` is not proposed
+  yet: most of its win is available from the direct walks alone.
 - `tasks/vendor-packaging.sh` fetches `pypa/packaging` at the pin, replaces this
   package with the pristine `src/packaging/` tree plus the repo-root license
   texts, and reapplies the patch. `--check` rebuilds into a temp location and
-  fails if the committed tree has drifted. This file is nab's own and stays out
-  of both the rebuild and the comparison.
-- CI runs `tasks/vendor-packaging.sh --check`, so the committed tree is proven
-  to equal pristine-at-pin plus the patch on every push.
+  fails if the committed tree has drifted. PROVENANCE.md is nab's own and stays
+  out of both the rebuild and the comparison.
+- CI runs `tasks/vendor-packaging.sh --check` on pull requests and on main.
 
 ## Refreshing
 
@@ -61,8 +53,6 @@ plus at most one checked-in patch, and nothing else.
    verbatim. Never hand-edit the patch and never resolve a conflict inside it;
    it is generated output.
 4. Run `tasks/vendor-packaging.sh`, then the test suite.
-
-Two traps this order exists to avoid.
 
 Skipping the merge and diffing the old committed tree straight against the new
 pin looks like it works and is wrong: the diff then carries deletions for
@@ -80,6 +70,59 @@ surrounding context lines moved.
 The patch is the accumulated divergence and no single fork branch carries all
 of it, so never rebuild it from a branch.
 
+## Behaviour the current pin inherits
+
+The pin moved 34 commits, `58c6cd70` to `ef91ddbe`. The behaviour changes in
+that span reach beyond the files nab diverges in, so each was checked against
+nab's call sites.
+
+Reachable:
+
+- `parse_tag` refuses an interpreter component that is not a Python identifier,
+  and `parse_wheel_filename` reports that as `InvalidWheelFilename`. Its project
+  name anchors with `\Z` rather than `$`, so a name ending in a newline is
+  refused too. `nab_python.tags.wheel_tag_set` reads every wheel filename
+  through `parse_tag`, so `foo-1.0-3.7-none-any.whl` and
+  `foo-1.0-py3.7-none-any.whl` yield no tags. `nab_index` decides separately
+  which files are readable and was admitting those; its `_tag_triple_is_parseable`
+  now makes the same check, and `TestAdmittedWheelsCarryTags` holds the two
+  together across the next bump.
+- `_build/runner.py` reads a built wheel's name through `parse_wheel_filename`
+  without guarding it, so a backend emitting a filename the new rules refuse
+  raises instead of returning a name.
+
+Not reachable:
+
+- `$` to `\Z` end-anchoring in `_tokenizer.py`. Only a string ending in exactly
+  one newline changes outcome: `'foo>=1.0\n'` parsed before, raises now. nab
+  reads `Requires-Dist` through `email.parser`, which strips the line
+  terminator, and a folded header leaves the continuation's leading whitespace
+  after the newline, so no value ends in one.
+- `Requirement` raising `InvalidRequirement` where an invalid specifier used to
+  escape as `InvalidSpecifier`. Both derive from `ValueError`, which is what
+  every nab call site catches.
+- `cpython_tags` and `compatible_tags` no longer falling back to
+  `platform_tags()` when `platforms` is explicitly empty. nab passes
+  `_platform_tags_for_spec`, which returns at least one tag for every platform
+  id it knows.
+
+pypa/packaging#1213 merged `Value.serialize`'s quote handling in the form nab
+already carried, so the patch's `_parser.py` hunk is gone. It still does not
+re-escape a backslash, so a value holding one does not survive a `str()` round
+trip; pypa/packaging#1374 proposes the fix and this pin is behind it. Its
+`ValueError` on a value holding both quote characters is unreachable: nab never
+constructs a `Value`, and a parsed value cannot hold its own delimiter.
+
+`nab_index` used `[\w\d._]*` for the wheel name where the vendored copy has used
+`[\w._]+` since before the previous pin, so `-1.0-py3-none-any.whl` parsed to an
+empty project name in `nab_index` and was refused here. `nab_index` now carries
+the same pattern.
+
+On a build tag whose digit run passes CPython's int-from-string limit,
+`parse_wheel_filename` raises `ValueError` out of `int()` rather than returning
+or rejecting, so `nab_index` has no answer to match: it keeps the wheel, and
+`nab_python.tags` sorts an unconvertible build number lowest.
+
 ## License
 
 `packaging` is dual-licensed under the Apache License 2.0 and the 2-Clause BSD
@@ -87,21 +130,19 @@ License. The LICENSE files here are the upstream texts; nothing is relicensed.
 
 ## Why vendor instead of depending on it
 
-`packaging` now ships a public `VersionRange` class with set algebra
-(intersection, union, complement, difference), the `is_subset` / `is_superset`
-/ `is_disjoint` predicates, `is_empty`, `filter`, a `SpecifierSet.to_range()`
-factory that nab's PubGrub solver depends on, and the `to_specifier_set()`
-inverse that renders a range back as a specifier set. The class landed in
-`main` via https://github.com/pypa/packaging/pull/1267, the difference operator
-plus the relation predicates via https://github.com/pypa/packaging/pull/1298,
-and `to_specifier_set` via https://github.com/pypa/packaging/pull/1270. None of
-this has appeared in a PyPI release yet, so there is no version to pin in
-`pyproject.toml`. Vendoring is a temporary measure.
+`packaging` 26.3 ships `ranges.py` and `_ranges.py`, so the public
+`VersionRange` and the `SpecifierSet.to_range()` factory nab's PubGrub solver
+depends on are released. The patch above is not, and nab depends on every module
+in it.
 
 ## Removal plan
 
-Delete this directory and reinstate `packaging` as a normal dependency once a
-release containing the merged `VersionRange` class reaches PyPI:
+Vendoring ends when the patch is empty. Until then the pin moves forward and the
+patch shrinks as pieces land upstream. The marker-algebra modules are most of it
+and no upstream pull request proposes them.
+
+Once the patch is empty, delete this directory and reinstate `packaging` as a
+normal dependency:
 
 - Add `packaging>=<release>` back to `nab-python/pyproject.toml`
   `[project].dependencies`.

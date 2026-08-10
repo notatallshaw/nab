@@ -1,12 +1,11 @@
-"""Differential tests for nab_index's filename parsers.
+"""Corpus tests for nab_index's filename parsers.
 
-``_parse_wheel_filename`` reproduces packaging's name/version validation
-while skipping the discarded tag-set parse and interning the canonical
-version string and the canonical name. These tests assert it
-accepts/rejects exactly what packaging does and that the interners return
-byte-identical results to the uncached functions, so the optimization stays
-output-invariant even if packaging is re-vendored. Neither parser raises: a
-filename it cannot read comes back as ``None``.
+``_parse_wheel_filename`` skips the tag-set parse that
+:func:`packaging.utils.parse_wheel_filename` runs, and interns the canonical
+name and version. Its oracle is nab-python's vendored packaging, not the
+ambient one, because the vendored ``parse_tag`` ranks the wheel afterwards.
+
+Neither parser raises: a filename it cannot read comes back as ``None``.
 """
 
 from __future__ import annotations
@@ -14,11 +13,7 @@ from __future__ import annotations
 import sys
 
 import pytest
-from packaging.utils import (
-    InvalidWheelFilename,
-    canonicalize_name,
-    parse_wheel_filename,
-)
+from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
 from nab_index.client import (
@@ -26,6 +21,10 @@ from nab_index.client import (
     _intern_name,
     _parse_sdist_filename,
     _parse_wheel_filename,
+)
+from nab_python._vendor.packaging.utils import (
+    InvalidWheelFilename,
+    parse_wheel_filename,
 )
 
 # Version digit runs at and just past CPython's int-from-string limit.
@@ -58,6 +57,9 @@ CORPUS = [
     "foo-1.0-py3 -none-any.whl",
     "foo-1.0-0-none-any.whl",
     "foo-1.0-py2.0-none-any.whl",
+    "foo-1.0-py3.7-none-any.whl",
+    "foo-1.0-3.7-none-any.whl",
+    "foo-1.0-0-0-0.whl",
     # rejected: invalid version
     "foo-notaversion-py3-none-any.whl",
     # rejected: 5-dash build part not starting with a digit
@@ -65,7 +67,8 @@ CORPUS = [
 ]
 
 
-def _packaging_result(filename: str) -> tuple[str, str] | None:
+def _vendored_result(filename: str) -> tuple[str, str] | None:
+    """Parse via the vendored packaging; ``None`` when it rejects."""
     try:
         name, version, _build, _tags = parse_wheel_filename(filename)
     except InvalidWheelFilename:
@@ -74,8 +77,8 @@ def _packaging_result(filename: str) -> tuple[str, str] | None:
 
 
 @pytest.mark.parametrize("filename", CORPUS)
-def test_matches_packaging(filename: str) -> None:
-    assert _parse_wheel_filename(filename) == _packaging_result(filename)
+def test_matches_vendored_packaging(filename: str) -> None:
+    assert _parse_wheel_filename(filename) == _vendored_result(filename)
 
 
 EMPTY_TAG_COMPONENT = [
@@ -91,7 +94,64 @@ EMPTY_TAG_COMPONENT = [
 
 @pytest.mark.parametrize("filename", EMPTY_TAG_COMPONENT)
 def test_rejects_empty_tag_component(filename: str) -> None:
+    """The empty-component rule: the property differential reaches it only sometimes."""
     assert _parse_wheel_filename(filename) is None
+
+
+NON_IDENTIFIER_INTERPRETER = [
+    "foo-1.0-3.7-none-any.whl",
+    "foo-1.0-py3.7-none-any.whl",
+    "foo-1.0-0-0-0.whl",
+    "foo-1.0-py 3-none-any.whl",
+    "foo-1.0-1-3.7-none-any.whl",
+]
+
+
+@pytest.mark.parametrize("filename", NON_IDENTIFIER_INTERPRETER)
+def test_rejects_non_identifier_interpreter(filename: str) -> None:
+    """An interpreter names an implementation and a version, so it is an identifier.
+
+    A compressed set is rejected whole when one member is not, so ``py3.7``
+    sits here beside the bare ``3.7``.
+    """
+    assert _parse_wheel_filename(filename) is None
+
+
+NON_IDENTIFIER_ABI_OR_PLATFORM = [
+    "foo-1.0-py3-0-any.whl",
+    "foo-1.0-py3-none-0.whl",
+    "foo-1.0-py3-3.7-any.whl",
+]
+
+
+@pytest.mark.parametrize("filename", NON_IDENTIFIER_ABI_OR_PLATFORM)
+def test_accepts_non_identifier_abi_and_platform(filename: str) -> None:
+    """Only the interpreter field is held to the identifier rule."""
+    assert _parse_wheel_filename(filename) == _vendored_result(filename) is not None
+
+
+def test_rejects_empty_project_name() -> None:
+    assert _parse_wheel_filename("-1.0-py3-none-any.whl") is None
+
+
+def test_rejects_newline_terminated_project_name() -> None:
+    """The name pattern ends with ``\\Z``: ``$`` matches before a trailing newline."""
+    filename = "foo\n-1.0-py3-none-any.whl"
+    assert _parse_wheel_filename(filename) is None
+    with pytest.raises(InvalidWheelFilename):
+        parse_wheel_filename(filename)
+
+
+def test_admits_build_tag_packaging_cannot_convert() -> None:
+    """``parse_wheel_filename`` calls ``int()`` on the build number.
+
+    A digit run past CPython's limit raises there instead of rejecting. nab
+    keeps the wheel: it reads a build tag only to sort by it.
+    """
+    filename = f"foo-1.0-{OVERSIZED}-py3-none-any.whl"
+    assert _parse_wheel_filename(filename) == (canonicalize_name("foo"), "1.0")
+    with pytest.raises(ValueError, match="Exceeds the limit"):
+        parse_wheel_filename(filename)
 
 
 @pytest.mark.parametrize(

@@ -1,16 +1,17 @@
 """Differential property tests: nab wheel selection vs upstream ``packaging.tags``.
 
-:mod:`nab_python.tags` implements `PEP 425`_ wheel-tag preference on
-top of the vendored ``packaging.tags``.
-Each test here re-derives one layer with the upstream ``packaging``
-distribution as the oracle and requires agreement:
+:mod:`nab_python.tags` implements `PEP 425`_ wheel-tag preference on top of
+the vendored ``packaging.tags``. The differential classes below re-derive one
+layer each with the upstream ``packaging`` distribution as the oracle and
+require agreement:
 
 1. The tag order a :class:`TagSet` builds for a declared target must
    match the same order rebuilt with upstream
    ``cpython_tags``/``compatible_tags``.
 2. The vendored ``mac_platforms`` must match upstream for identical
    inputs.
-3. ``parse_tag`` must expand compressed tag sets identically.
+3. ``parse_tag`` must expand compressed tag sets identically, and
+   refuse the same strings.
 4. ``wheel_tag_set`` must agree with upstream
    ``parse_wheel_filename`` on every spec-valid filename.
 5. ``TagSet.pick`` must choose a wheel whose best upstream rank is
@@ -24,6 +25,8 @@ distribution as the oracle and requires agreement:
 
 from __future__ import annotations
 
+from types import ModuleType
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
@@ -32,7 +35,7 @@ from packaging import utils as upstream_utils
 from packaging.utils import BuildTag, InvalidWheelFilename
 from packaging.version import InvalidVersion
 
-from nab_index.client import WheelFile
+from nab_index.client import WheelFile, _parse_wheel_filename
 from nab_python._vendor.packaging import tags as vendored_tags
 from nab_python.tags import (
     _MACOS_TAG_FLOOR,
@@ -140,9 +143,9 @@ def _oracle_tags_in_order(
 
 class TestTagOrderMatchesUpstream:
     """``TagSet.for_spec`` defines the install-preference ranking every
-    wheel choice hangs off.  Rebuilding the same order with upstream
+    wheel choice uses. Rebuilding it with upstream
     ``cpython_tags``/``compatible_tags`` over the same platform list
-    must agree exactly: a divergence reorders wheel preference.
+    must agree exactly.
     """
 
     @given(
@@ -171,9 +174,8 @@ class TestTagOrderMatchesUpstream:
 
 
 class TestMacPlatformsMatchesUpstream:
-    """The vendored ``mac_platforms`` drives the macOS platform-tag
-    axis of every matrix tuple; it must yield the same tags in the
-    same order as upstream ``packaging.tags.mac_platforms``.
+    """The vendored ``mac_platforms`` must yield the same tags, in the same
+    order, as upstream ``packaging.tags.mac_platforms``.
     """
 
     @given(
@@ -193,40 +195,83 @@ class TestMacPlatformsMatchesUpstream:
 tag_part = st.text(alphabet="abcdefgh0123456789_", min_size=1, max_size=8)
 compressed = st.lists(tag_part, min_size=1, max_size=3, unique=True).map(".".join)
 
+# packaging requires every member of a compressed interpreter set to be an
+# identifier, a rule it added in 26.3 while nab-index still floors packaging at
+# 24.0. So the differential draws interpreters any oracle in that range accepts,
+# and TestParseTagRejects pins the rule.
+compressed_interpreters = st.lists(
+    tag_part.filter(str.isidentifier), min_size=1, max_size=3, unique=True
+).map(".".join)
+
+
+def _tag_expansion(
+    module: ModuleType, tag: str
+) -> frozenset[tuple[str, str, str]] | None:
+    """Expand ``tag`` to its triples, or ``None`` when ``module`` rejects it.
+
+    Each copy raises its own ``InvalidTag``, so a rejection has to fold into
+    the return value to be compared.
+    """
+    try:
+        raw = module.parse_tag(tag)
+    except ValueError:
+        return None
+    return frozenset((t.interpreter, t.abi, t.platform) for t in raw)
+
+
+@st.composite
+def tag_strings(draw: st.DrawFn) -> str:
+    """Draw a dash-joined tag string of three fields, or of one, two or four."""
+    count = 3 if draw(st.booleans()) else draw(st.sampled_from([1, 2, 4]))
+    fields = [draw(compressed_interpreters)]
+    fields += [draw(compressed) for _ in range(count - 1)]
+    return "-".join(fields)
+
 
 class TestParseTagMatchesUpstream:
     """`PEP 425`_ compressed tag sets expand to a cross product;
     vendored ``parse_tag`` must produce the same set as upstream for
-    any dotted tag string.
+    any dotted tag string, and refuse the same strings.
 
     .. _PEP 425: https://peps.python.org/pep-0425/#compressed-tag-sets
     """
 
-    @given(py=compressed, abi=compressed, plat=compressed)
+    @given(tag=tag_strings())
     @PROPERTY_SETTINGS
-    def test_parse_tag_matches_upstream(self, py: str, abi: str, plat: str) -> None:
-        """Vendored and upstream ``parse_tag`` agree, including on rejection.
+    def test_parse_tag_matches_upstream(self, tag: str) -> None:
+        assert _tag_expansion(vendored_tags, tag) == _tag_expansion(upstream_tags, tag)
 
-        Each side raises its own ``InvalidTag``, so a rejected tag becomes
-        ``None`` on both and the two still have to match.
-        """
-        s = f"{py}-{abi}-{plat}"
 
-        try:
-            got = {
-                (t.interpreter, t.abi, t.platform) for t in vendored_tags.parse_tag(s)
-            }
-        except vendored_tags.InvalidTag:
-            got = None
+class TestParseTagRejects:
+    """The validation the vendored ``parse_tag`` performs.
 
-        try:
-            expected = {
-                (t.interpreter, t.abi, t.platform) for t in upstream_tags.parse_tag(s)
-            }
-        except upstream_tags.InvalidTag:
-            expected = None
+    Pinned directly rather than differentially: an oracle older than 26.3
+    accepts what the vendored copy refuses.
+    """
 
-        assert got == expected
+    @pytest.mark.parametrize(
+        "tag",
+        ["3.7-none-any", "0-0-0", "py 3-none-any", "py3.7-none-any"],
+    )
+    def test_rejects_non_identifier_interpreter(self, tag: str) -> None:
+        """A compressed set is refused whole when one member is not an identifier."""
+        with pytest.raises(vendored_tags.InvalidTag):
+            vendored_tags.parse_tag(tag)
+
+    @pytest.mark.parametrize("tag", ["py3--any", "py3-none-", "py3-none-any."])
+    def test_rejects_empty_component(self, tag: str) -> None:
+        with pytest.raises(vendored_tags.InvalidTag):
+            vendored_tags.parse_tag(tag)
+
+    @pytest.mark.parametrize("tag", ["py3-none", "py3-none-any-extra"])
+    def test_rejects_wrong_component_count(self, tag: str) -> None:
+        with pytest.raises(vendored_tags.InvalidTag):
+            vendored_tags.parse_tag(tag)
+
+    @pytest.mark.parametrize("tag", ["py3-none-any", "py2.py3-none-any", "_-none-0"])
+    def test_accepts_identifier_interpreters(self, tag: str) -> None:
+        """Only the interpreter field is held to the identifier rule."""
+        assert vendored_tags.parse_tag(tag)
 
 
 name_strategy = st.text(alphabet="abcxyz0123456789_", min_size=1, max_size=8)
@@ -237,15 +282,19 @@ build_strategy = st.none() | st.integers(0, 99).map(str)
 
 
 @st.composite
-def wheel_filenames(draw: st.DrawFn) -> str:
-    """Generate a wheel filename with optional build tag and random tag parts."""
+def wheel_filenames(draw: st.DrawFn, interpreters: st.SearchStrategy[str]) -> str:
+    """Generate a wheel filename with optional build tag and random tag parts.
+
+    ``interpreters`` supplies the first tag field, letting a caller pick
+    spec-valid ones or the wider alphabet.
+    """
     name = draw(name_strategy)
     version = draw(version_strategy)
     build = draw(build_strategy)
     parts = [name, version]
     if build is not None:
         parts.append(build)
-    parts += [draw(compressed), draw(compressed), draw(compressed)]
+    parts += [draw(interpreters), draw(compressed), draw(compressed)]
     return "-".join(parts) + ".whl"
 
 
@@ -256,7 +305,7 @@ class TestWheelTagSetMatchesUpstream:
     of scope: nab is intentionally permissive there.
     """
 
-    @given(filename=wheel_filenames())
+    @given(filename=wheel_filenames(compressed_interpreters))
     @PROPERTY_SETTINGS
     def test_wheel_tag_set_matches_upstream_parse_wheel_filename(
         self, filename: str
@@ -271,6 +320,22 @@ class TestWheelTagSetMatchesUpstream:
         assert {(t.interpreter, t.abi, t.platform) for t in got} == {
             (t.interpreter, t.abi, t.platform) for t in expected
         }
+
+
+class TestAdmittedWheelsCarryTags:
+    """A wheel nab_index admits must be one ``nab_python.tags`` can rank.
+
+    nab_index applies its own copy of the tag rules and nab_python runs the
+    vendored ``parse_tag``, so re-vendoring a stricter one is how the two come
+    apart. The interpreter field draws the wide alphabet to reach that.
+    """
+
+    @given(filename=wheel_filenames(compressed))
+    @PROPERTY_SETTINGS
+    def test_readable_wheel_has_tags(self, filename: str) -> None:
+        if _parse_wheel_filename(filename) is None:
+            return
+        assert wheel_tag_set(filename) is not None
 
 
 def _wheel(filename: str) -> WheelFile:
@@ -324,12 +389,9 @@ def realistic_wheels(draw: st.DrawFn) -> WheelFile:
 
 class TestSelectWheelMinimizesUpstreamRank:
     """`PEP 425`_ preference: installers pick the wheel matching the
-    earliest tag in the compatibility order.  The selected wheel's
-    best tag rank, computed entirely with upstream packaging (parse
-    the filename's tags with upstream ``parse_tag``, rank against the
-    tuple's tag order rebuilt with upstream
-    ``cpython_tags``/``compatible_tags``), must equal the minimum
-    over all candidate wheels.
+    earliest tag in the compatibility order.  The selected wheel's best
+    rank, computed with upstream packaging throughout, must equal the
+    minimum over all candidate wheels.
 
     .. _PEP 425: https://peps.python.org/pep-0425/#use
     """
@@ -432,13 +494,11 @@ class TestBuildTagOrderMatchesUpstream:
 
 
 class TestAcceptedSpecNamesAPlatform:
-    """Every spec :class:`PlatformSpec` accepts names at least one platform tag.
+    """Every accepted :class:`PlatformSpec` names at least one platform tag.
 
     ``packaging.tags`` reads an empty ``platforms`` argument as "unset" and
-    falls back to the tags of the running host, so a spec that named no
-    platform tag would not resolve for the machine it declares: it would
-    resolve for nab's own.  The knob checks exist to make that unreachable,
-    and this is the invariant they buy.
+    falls back to the tags of the running host, so a spec naming no platform
+    tag would resolve for nab's own machine rather than the declared one.
     """
 
     @given(spec=specs)
