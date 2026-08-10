@@ -240,6 +240,33 @@ def test_a_lock_offering_a_build_group_is_up_to_date(
     assert "is up to date" in capsys.readouterr().err
 
 
+def test_a_tightened_build_requirement_fires_with_a_build_group(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The fast-fail tier sees the build side when build-group carries it."""
+    body = '[project]\nname = "proj"\ndependencies = ["bar"]\n[build-system]\n'
+    pyproject = _write_pyproject(
+        tmp_path,
+        body + 'requires = ["foo"]\n[tool.nab]\nbuild-group = "build"\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"bar": "1.0", "foo": "1.5"}))
+    capsys.readouterr()
+    pyproject.write_text(
+        body + 'requires = ["foo>=2.0"]\n[tool.nab]\nbuild-group = "build"\n',
+        encoding="utf-8",
+    )
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "[build-system].requires requires foo>=2.0 but the lock pins foo 1.5" in err
+    mock.assert_not_called()
+
+
 def test_a_renamed_build_group_is_out_of_date(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -482,6 +509,29 @@ def test_non_sticky_stale_falls_through_out_of_date(
 
     assert exc.value.code == 1
     assert "out of date" in capsys.readouterr().err
+    mock.assert_called_once()
+
+
+def test_a_stale_build_lock_names_the_build_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The post-resolve verdict must send the user to the file it just read."""
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\ndependencies = []\n'
+        '[build-system]\nrequires = ["foo>=1.0"]\n',
+    )
+    out = tmp_path / "pylock.build.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}), "--build-requirements")
+    capsys.readouterr()
+
+    mock = _locked_mock(_result({"foo": "2.0"}))
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--build-requirements")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "is out of date; re-run `nab lock --build-requirements` to update it" in err
     mock.assert_called_once()
 
 

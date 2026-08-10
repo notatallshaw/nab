@@ -194,8 +194,6 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     if locked and (format != "pylock" or _cli.is_stdout(output)):
         _cli.printer().error("--locked is only supported for pylock output to a file.")
         sys.exit(1)
-    if format == "pylock" and output is None:
-        output = _default_output_path(format, build_requirements=build_requirements)
     if build_requirements:
         _refuse_group_selection_with_build_requirements(
             groups=groups,
@@ -229,6 +227,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         path,
         output=output,
         format=format,
+        build_requirements=build_requirements,
         upgrade=upgrade,
         cli_overrides=project_overrides,
     )
@@ -311,7 +310,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     lock_input.provenance = provenance
 
     if locked:
-        _check_locked(lock_input, output=output)
+        _check_locked(lock_input, output=output, build_requirements=build_requirements)
         return
     _emit_or_exit(
         lambda: _emit(
@@ -411,6 +410,13 @@ def _refuse_group_selection_with_build_requirements(
     sys.exit(1)
 
 
+def _locked_target_path(output: Path | None, *, build_requirements: bool) -> Path:
+    """Return the file ``--locked`` reads and re-renders against."""
+    if output is not None:
+        return output
+    return _default_output_path("pylock", build_requirements=build_requirements)
+
+
 def _refresh_command(*, build_requirements: bool) -> str:
     """Return the command that would rewrite the lock ``--locked`` just read.
 
@@ -419,11 +425,6 @@ def _refresh_command(*, build_requirements: bool) -> str:
     the wrong file and leave the failure in place.
     """
     return "nab lock --build-requirements" if build_requirements else "nab lock"
-
-
-def _locked_target_path(output: Path | None) -> Path:
-    """Return the file ``--locked`` reads and re-renders against."""
-    return output if output is not None else _default_output_path("pylock")
 
 
 def _fast_fail_locked(
@@ -443,7 +444,7 @@ def _fast_fail_locked(
     checks.  On the first disqualification it prints the reason and exits
     non-zero; otherwise it returns and the full resolve runs.
     """
-    target = _locked_target_path(output)
+    target = _locked_target_path(output, build_requirements=build_requirements)
     refresh = _refresh_command(build_requirements=build_requirements)
 
     # A stat that failed is not an absent lock.
@@ -464,6 +465,7 @@ def _fast_fail_locked(
             default_groups=config.default_groups,
             base_group=config.base_group,
             build_requirements=build_requirements,
+            build_group=config.build_group,
         )
     except (
         InvalidProjectTableError,
@@ -537,6 +539,7 @@ def _active_root_requirements(
     default_groups: tuple[str, ...],
     base_group: str | None = None,
     build_requirements: bool = False,
+    build_group: str | None = None,
 ) -> list[RootRequirement]:
     """Collect this run's active direct requirements with their source clause.
 
@@ -546,7 +549,10 @@ def _active_root_requirements(
     undeclared name raises here too; its requirements are left to the resolve.
 
     A build-requirements run has one source and no selection, so
-    ``[build-system].requires`` stands alone.
+    ``[build-system].requires`` stands alone.  ``build_group`` names them
+    on a run that carries them alongside the project's own, and they are
+    appended as their own source rather than routed through the group
+    table, which does not hold the configured name.
     """
     if build_requirements:
         return [
@@ -584,10 +590,18 @@ def _active_root_requirements(
                 for req in requirements
             )
 
+    if build_group is not None:
+        roots.extend(
+            RootRequirement(requirement=req, source="[build-system].requires")
+            for req in read_pyproject_build_requires(path)
+        )
+
     return roots
 
 
-def _check_locked(lock_input: LockInput, *, output: Path | None) -> None:
+def _check_locked(
+    lock_input: LockInput, *, output: Path | None, build_requirements: bool
+) -> None:
     """Verify the committed pylock matches a fresh resolve, writing nothing.
 
     The resolve has already run; this renders the lock it would produce and
@@ -595,14 +609,15 @@ def _check_locked(lock_input: LockInput, *, output: Path | None) -> None:
     both, so only a real change to the locked packages fails.  The committed
     lock is never read back into the resolve.
     """
-    target = _locked_target_path(output)
+    target = _locked_target_path(output, build_requirements=build_requirements)
     new_text = _render_or_exit(lambda: render_lock(lock_input, lock_dir=target.parent))
     committed = _packages_only(target.read_text(encoding="utf-8"))
     if _packages_only(new_text) == committed:
         _cli.printer().done(f"Lockfile {target} is up to date.")
         return
+    refresh = _refresh_command(build_requirements=build_requirements)
     _cli.printer().error(
-        f"--locked: lockfile {target} is out of date; re-run `nab lock` to update it."
+        f"--locked: lockfile {target} is out of date; re-run `{refresh}` to update it."
     )
     sys.exit(1)
 
@@ -1091,6 +1106,7 @@ def _reused_lock_anchor(
     *,
     output: Path | None,
     format: str,  # noqa: A002 - shadows builtin by convention
+    build_requirements: bool = False,
     cli_overrides: Mapping[str, object] | None = None,
 ) -> tuple[datetime | None, datetime | None]:
     """Return ``(absolute_cutoff, prior_lock_anchor)`` for the re-lock anchor.
@@ -1110,8 +1126,8 @@ def _reused_lock_anchor(
         return absolute, None
     if _cli.is_stdout(output) or format != "pylock":
         return None, None
-    target = output if output is not None else _default_output_path(format)
-    return None, read_lockfile_anchor(target)
+    target = _default_output_path(format, build_requirements=build_requirements)
+    return None, read_lockfile_anchor(output if output is not None else target)
 
 
 def _determine_lock_anchor(
@@ -1119,6 +1135,7 @@ def _determine_lock_anchor(
     *,
     output: Path | None,
     format: str,  # noqa: A002 - shadows builtin by convention
+    build_requirements: bool = False,
     upgrade: bool,
     cli_overrides: Mapping[str, object] | None = None,
 ) -> datetime:
@@ -1136,6 +1153,7 @@ def _determine_lock_anchor(
         path,
         output=output,
         format=format,
+        build_requirements=build_requirements,
         cli_overrides=cli_overrides,
     )
     if upgrade:
