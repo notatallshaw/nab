@@ -72,11 +72,9 @@ def validate_marker_coverage(
 ) -> None:
     """Confirm the emitted rows cover every target the resolve ran.
 
-    For each distinct target reference the validator asks the algebra for a
-    point the union of rows does not admit (``reference & ~covered``); a
-    witness is a real interpreter the declaration would refuse.  References
-    are deduped by marker string, so a split minor's slices and conflict
-    forks sharing an environment are checked once.
+    Asks the algebra for a point the declared rows miss; a witness is a
+    real interpreter the declaration would refuse.  Targets on one platform
+    share a restriction, so they are asked as a single question.
 
     An empty ``environments`` returns early: an omitted field declares
     support for every environment, so it must not be read as the empty set.
@@ -91,21 +89,40 @@ def validate_marker_coverage(
     )
     covered = _project_implementation_version(covered, environments, targets)
 
+    for pins, references in _references_by_pins(targets).items():
+        # Complementing the whole matrix carries every row's atoms on every
+        # axis at once and overruns the cell budget.  Restricting first leaves
+        # a single-platform residual denoting the same set.
+        covered_here = covered.restrict(dict(pins))
+        asked = reduce(
+            MarkerSet.union,
+            (MarkerSet.from_marker(marker) for marker in references),
+            MarkerSet.empty(),
+        )
+        witness = (asked & ~covered_here).witness()
+        if witness is not None:
+            raise CoverageError(_coverage_message(witness))
+
+
+def _references_by_pins(
+    targets: Sequence[ResolveTarget],
+) -> dict[tuple[tuple[str, str], ...], list[str]]:
+    """Group the distinct target references by the platform axes they pin.
+
+    Targets differing only in Python version pin the same axes, so one
+    restricted union serves them all.  Deduped by marker string, so a split
+    minor's slices and the conflict forks of one environment count once.
+    """
+    grouped: dict[tuple[tuple[str, str], ...], list[str]] = {}
     seen: set[str] = set()
     for target in targets:
         marker = declared_range_marker(target)
         if marker in seen:
             continue
         seen.add(marker)
-        # Restrict the union to the reference's pinned axes before complementing.
-        # Complementing the whole matrix carries every row's atoms on every axis
-        # at once, overrunning the witness cell budget; restricting first leaves a
-        # single-platform, python-axis-only residual denoting the same set.
-        covered_here = covered.restrict(_reference_pins(target))
-        residual = MarkerSet.from_marker(marker) & ~covered_here
-        witness = residual.witness()
-        if witness is not None:
-            raise CoverageError(_coverage_message(witness))
+        key = tuple(sorted(_reference_pins(target).items()))
+        grouped.setdefault(key, []).append(marker)
+    return grouped
 
 
 def _project_implementation_version(
