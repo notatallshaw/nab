@@ -30,15 +30,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-LINUX_ENV = {
-    "python_version": "3.11",
-    "sys_platform": "linux",
-    "os_name": "posix",
-    "platform_machine": "x86_64",
-    "platform_system": "Linux",
-    "implementation_name": "cpython",
-}
-
 TARGET = ResolveTarget.for_declared(
     python_version="3.11", spec=PlatformSpec("linux_x86_64")
 )
@@ -198,7 +189,7 @@ class TestArtifactUrlFilenames:
                 dependency_groups=(),
                 default_groups=(),
                 roots=[RootRequirement(Requirement("torch"), "[project].dependencies")],
-                marker_env=LINUX_ENV,
+                resolve_target=TARGET,
             )
             is None
         )
@@ -223,7 +214,7 @@ class TestArtifactUrlFilenames:
                 dependency_groups=(),
                 default_groups=(),
                 roots=[RootRequirement(Requirement("spam"), "[project].dependencies")],
-                marker_env=LINUX_ENV,
+                resolve_target=TARGET,
             )
             is None
         )
@@ -275,7 +266,7 @@ class TestArtifactUrlFilenames:
                 dependency_groups=(),
                 default_groups=(),
                 roots=[RootRequirement(Requirement("torch"), "[project].dependencies")],
-                marker_env=LINUX_ENV,
+                resolve_target=TARGET,
             )
             is None
         )
@@ -309,7 +300,7 @@ class TestCheckLocked:
                 dependency_groups=(),
                 default_groups=(),
                 roots=[RootRequirement(Requirement("foo"), "[project].dependencies")],
-                marker_env=LINUX_ENV,
+                resolve_target=TARGET,
             )
             is None
         )
@@ -336,12 +327,12 @@ class TestCheckLocked:
                 dependency_groups=(),
                 default_groups=(),
                 roots=None,
-                marker_env=LINUX_ENV,
+                resolve_target=TARGET,
             )
             is None
         )
 
-    def test_marker_env_none_runs_envelope_only(self, tmp_path: Path) -> None:
+    def test_resolve_target_none_runs_envelope_only(self, tmp_path: Path) -> None:
         target = _write_lock(tmp_path / "pylock.toml", {"foo": _pin("foo", "1.0")})
         assert (
             check_locked(
@@ -351,7 +342,7 @@ class TestCheckLocked:
                 dependency_groups=(),
                 default_groups=(),
                 roots=[RootRequirement(Requirement("bar"), "[project].dependencies")],
-                marker_env=None,
+                resolve_target=None,
             )
             is None
         )
@@ -365,7 +356,7 @@ class TestCheckLocked:
             dependency_groups=(),
             default_groups=(),
             roots=[RootRequirement(Requirement("bar"), "[project].dependencies")],
-            marker_env=LINUX_ENV,
+            resolve_target=TARGET,
         )
         assert result is not None
         assert "no bar pin" in result.reason
@@ -380,7 +371,7 @@ class TestCheckLocked:
                 dependency_groups=(),
                 default_groups=(),
                 roots=[RootRequirement(Requirement("Bar"), "[project].dependencies")],
-                marker_env=LINUX_ENV,
+                resolve_target=TARGET,
                 exclude=frozenset({"bar"}),
             )
             is None
@@ -396,7 +387,7 @@ class TestCheckLocked:
             default_groups=(),
             roots=[],
             constraints=["foo>=2"],
-            marker_env=LINUX_ENV,
+            resolve_target=TARGET,
         )
         assert result is not None
         assert "constraint foo>=2" in result.reason
