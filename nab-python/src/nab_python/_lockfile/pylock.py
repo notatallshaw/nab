@@ -25,6 +25,7 @@ from nab_index.atomic import atomic_write_text
 from .._conflict_kind import MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.markers import Marker
 from .._vendor.packaging.markersets import (
+    DecisionStore,
     IntractableMarkerSet,
     MarkerSet,
     UnserializableMarkerSet,
@@ -223,7 +224,10 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
     base = (lock_dir if lock_dir is not None else Path.cwd()).resolve()
     exclusion_groups = conflict_exclusion_groups(lock_input.conflicts)
     universe = _emission_universe(lock_input)
-    package_records = _build_packages(lock_input, base, exclusion_groups, universe)
+    store = DecisionStore()
+    package_records = _build_packages(
+        lock_input, base, exclusion_groups, universe, store
+    )
     package_records.sort(key=_package_sort_key)
     validate_marker_disjointness(
         package_records,
@@ -236,6 +240,7 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
     validate_marker_coverage(
         [lock.target for lock in lock_input.targets.values()],
         environments=lock_input.environments,
+        store=store,
     )
     tool: dict[str, Any] | None = (
         {"nab": lock_input.provenance.to_block()}
@@ -462,7 +467,10 @@ def _emission_universe(lock_input: LockInput) -> MarkerSet:
 
 
 def _finalize_marker(
-    raw: Marker | None, within: MarkerSet, name: str = ""
+    raw: Marker | None,
+    within: MarkerSet,
+    name: str = "",
+    store: DecisionStore | None = None,
 ) -> Marker | None:
     """Return ``raw`` in its shortest form equivalent over ``within``.
 
@@ -481,14 +489,14 @@ def _finalize_marker(
     if raw is None:
         return None
     try:
-        simplified = MarkerSet.from_marker(raw).simplify(within=within)
+        simplified = MarkerSet.from_marker(raw).simplify(within=within, store=store)
         text = simplified.to_marker_string()
         rebuilt = None if text is None else Marker(text)
         emitted = (
             MarkerSet.full() if rebuilt is None else MarkerSet.from_marker(rebuilt)
         )
         shown = "no marker" if rebuilt is None else str(rebuilt)
-        sound = _sound_within_universe(raw, emitted, within)
+        sound = _sound_within_universe(raw, emitted, within, store)
     except (IntractableMarkerSet, UnserializableMarkerSet):
         return raw
     if not sound:
@@ -505,6 +513,7 @@ def _finalize_cached(
     within: MarkerSet,
     name: str,
     memo: dict[str, Marker | None],
+    store: DecisionStore,
 ) -> Marker | None:
     """:func:`_finalize_marker` memoised for the span of one lock.
 
@@ -516,18 +525,23 @@ def _finalize_cached(
         return None
     key = str(raw)
     if key not in memo:
-        memo[key] = _finalize_marker(raw, within, name)
+        memo[key] = _finalize_marker(raw, within, name, store)
     return memo[key]
 
 
-def _sound_within_universe(raw: Marker, emitted: MarkerSet, within: MarkerSet) -> bool:
+def _sound_within_universe(
+    raw: Marker,
+    emitted: MarkerSet,
+    within: MarkerSet,
+    store: DecisionStore | None = None,
+) -> bool:
     """Whether ``emitted`` and ``raw`` agree on every environment in ``within``.
 
     ``emitted`` is what the lock ships: the reparsed marker bytes, or
     :meth:`MarkerSet.full` when no marker field is emitted.  Decided per universe
     row, under the same budget as the operator it checks.
     """
-    return MarkerSet.from_marker(raw).equivalent_within(emitted, within)
+    return MarkerSet.from_marker(raw).equivalent_within(emitted, within, store=store)
 
 
 def _build_packages(
@@ -535,6 +549,7 @@ def _build_packages(
     lock_dir: Path,
     exclusion_groups: Sequence[AbstractSet[tuple[str, str]]],
     universe: MarkerSet,
+    store: DecisionStore,
 ) -> list[Package]:
     """Collapse the per-target pins into Package entries with markers.
 
@@ -625,7 +640,9 @@ def _build_packages(
                 axes,
                 projections,
             )
-            marker = _finalize_cached(marker, universe, canonical_name, shortened)
+            marker = _finalize_cached(
+                marker, universe, canonical_name, shortened, store
+            )
             out.append(
                 _pin_to_package(
                     _merge_pins_in_group(pins),

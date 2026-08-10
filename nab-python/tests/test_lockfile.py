@@ -6046,7 +6046,7 @@ class TestMarkerCoverage:
             validate_marker_coverage([linux, windows], environments=[self._row(linux)])
 
     def test_intractable_propagates(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def boom(self: MarkerSet) -> None:
+        def boom(self: MarkerSet, *, store: object | None = None) -> None:
             raise IntractableMarkerSet("patched")
 
         monkeypatch.setattr(MarkerSet, "witness", boom)

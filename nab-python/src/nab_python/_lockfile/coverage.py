@@ -21,7 +21,7 @@ from __future__ import annotations
 from functools import reduce
 from typing import TYPE_CHECKING
 
-from .._vendor.packaging.markersets import MarkerSet, variable_names
+from .._vendor.packaging.markersets import DecisionStore, MarkerSet, variable_names
 from ..target import UNBOUNDABLE_MARKER_VARIABLES, declared_range_marker
 
 if TYPE_CHECKING:
@@ -69,6 +69,7 @@ def validate_marker_coverage(
     targets: Sequence[ResolveTarget],
     *,
     environments: Sequence[Marker],
+    store: DecisionStore | None = None,
 ) -> None:
     """Confirm the emitted rows cover every target the resolve ran.
 
@@ -99,7 +100,7 @@ def validate_marker_coverage(
             (MarkerSet.from_marker(marker) for marker in references),
             MarkerSet.empty(),
         )
-        witness = (asked & ~covered_here).witness()
+        witness = (asked & ~covered_here).witness(store=store)
         if witness is not None:
             raise CoverageError(_coverage_message(witness))
 
