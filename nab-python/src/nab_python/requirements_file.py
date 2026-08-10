@@ -32,6 +32,7 @@ __all__ = [
     "parse_project_requirement",
     "parse_requirements",
     "raise_for_unsatisfiable",
+    "read_pyproject_build_requires",
     "read_pyproject_dependencies",
     "read_pyproject_groups",
     "read_pyproject_name",
@@ -168,6 +169,44 @@ def read_pyproject_dependencies(path: Path) -> list[Requirement]:
             raise InvalidProjectRequirementError(msg)
     dep_strings = require_string_list(project.get("dependencies", []), source)
     return parse_requirements(dep_strings, source)
+
+
+def read_pyproject_build_requires(path: Path) -> list[Requirement]:
+    """Read [build-system].requires from a pyproject.toml file (PEP 518).
+
+    A project that declares no ``[build-system]`` gets no fallback to the
+    PEP 517 default backend: pinning an implied ``setuptools`` would put a
+    build requirement in the lock that the project never asked for.
+    Absent ``[build-system]`` and a table without the mandatory
+    ``requires`` key both raise
+    :class:`InvalidProjectRequirementError`; a ``[build-system]`` that is
+    not a table raises :class:`InvalidProjectTableError`.
+
+    Only the static list is read.  What a backend adds from
+    ``get_requires_for_build_wheel`` is known only once that backend runs,
+    and nothing runs this project's own backend to find out.
+    """
+    with path.open("rb") as f:
+        data = tomli.load(f)
+
+    if "build-system" not in data:
+        msg = (
+            f"{path} declares no [build-system], so it has no build"
+            " requirements to lock"
+        )
+        raise InvalidProjectRequirementError(msg)
+
+    table = data["build-system"]
+    if not isinstance(table, dict):
+        msg = f"[build-system] must be a table, got {type(table).__name__}"
+        raise InvalidProjectTableError(msg)
+
+    source = "[build-system].requires"
+    if "requires" not in table:
+        msg = f"{source} is required by PEP 518 and {path} does not declare it"
+        raise InvalidProjectRequirementError(msg)
+
+    return parse_requirements(require_string_list(table["requires"], source), source)
 
 
 def read_pyproject_name(path: Path) -> str | None:

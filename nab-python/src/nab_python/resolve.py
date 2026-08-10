@@ -26,7 +26,7 @@ import tempfile
 import time
 from collections import defaultdict
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
@@ -75,6 +75,7 @@ from .requirements_file import (
     expand_group_includes,
     expand_self_extras,
     raise_for_unsatisfiable,
+    read_pyproject_build_requires,
     read_pyproject_dependencies,
     read_pyproject_groups,
     read_pyproject_name,
@@ -108,6 +109,7 @@ __all__ = [
     "TargetResult",
     "active_group_names",
     "build_lock_input",
+    "config_for_build_requirements",
     "resolve_for_targets",
     "resolve_with_coordinator",
 ]
@@ -296,6 +298,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
     python_version: str | None = None,
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
+    build_requirements: bool = False,
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressSink | None = None,
 ) -> ResolveResult:
@@ -313,6 +316,11 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
     ``[project.optional-dependencies]`` keys to fold in;
     ``resolution_strategy`` overrides ``config.resolution`` when set.
 
+    ``build_requirements`` resolves ``[build-system].requires`` instead of
+    the project's dependencies, for a lock of the environment the project
+    is built in rather than the one it runs in.  Neither ``groups`` nor
+    ``extras`` mean anything there, so passing either raises.
+
     A target that cannot be resolved is a failed :class:`TargetResult`,
     not an exception, so a matrix reports every target that failed rather
     than only the first.  Everything else (an unreadable pyproject, a
@@ -320,14 +328,23 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
     """
     if config is None:
         config = read_pyproject_config(path)
+    if build_requirements:
+        if groups or extras:
+            msg = "a build-requirements resolve has no groups or extras to select"
+            raise ValueError(msg)
+        config = config_for_build_requirements(config)
     config = with_python_override(config, python_version)
     targets = plan_targets(config)
 
-    tables = _ProjectTables(
-        dependencies=read_pyproject_dependencies(path),
-        groups=read_pyproject_groups(path),
-        optional=read_pyproject_optional_dependencies(path),
-        project_name=read_pyproject_name(path),
+    tables = (
+        _tables_for_build_requires(path)
+        if build_requirements
+        else _ProjectTables(
+            dependencies=read_pyproject_dependencies(path),
+            groups=read_pyproject_groups(path),
+            optional=read_pyproject_optional_dependencies(path),
+            project_name=read_pyproject_name(path),
+        )
     )
 
     # ``default-groups`` is project policy: every default install
@@ -896,6 +913,34 @@ class _ProjectTables:
     groups: Mapping[str, Sequence[str | Mapping[str, str]]]
     optional: Mapping[str, Sequence[str]]
     project_name: str | None
+
+
+def _tables_for_build_requires(path: Path) -> _ProjectTables:
+    """Read ``path`` as a project whose dependencies are its build requirements.
+
+    ``[build-system].requires`` is one flat list, so the group and extra
+    tables are empty, and the project name with them: it is read only to
+    expand self-referencing extras.
+    """
+    return _ProjectTables(
+        dependencies=read_pyproject_build_requires(path),
+        groups={},
+        optional={},
+        project_name=None,
+    )
+
+
+def config_for_build_requirements(config: NabProjectConfig) -> NabProjectConfig:
+    """Return ``config`` with the settings a build-requirements lock cannot use.
+
+    ``default-groups`` and the conflicts declared over groups and extras
+    describe a selection ``[build-system].requires`` does not have, and
+    ``base-group`` names the project's own dependencies, which a build
+    lock holds none of.  Left in they fail the run rather than narrow it:
+    :func:`_tables_for_build_requires` supplies no group or extra table
+    for them to resolve against.
+    """
+    return replace(config, conflicts=(), default_groups=(), base_group=None)
 
 
 def _threaded_preferences(

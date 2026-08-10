@@ -142,6 +142,83 @@ def test_tightened_direct_specifier_fires_without_resolving(
     assert out.read_bytes() == before
 
 
+def test_tightened_build_requirement_fires_without_resolving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--locked proves a build lock stale from [build-system].requires."""
+    body = '[project]\nname = "proj"\ndependencies = []\n'
+    pyproject = _write_pyproject(
+        tmp_path, body + '[build-system]\nrequires = ["foo"]\n'
+    )
+    out = tmp_path / "pylock.build.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.5"}), "--build-requirements")
+    capsys.readouterr()
+    pyproject.write_text(
+        body + '[build-system]\nrequires = ["foo>=2.0"]\n', encoding="utf-8"
+    )
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--build-requirements")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "[build-system].requires requires foo>=2.0 but the lock pins foo 1.5" in err
+    assert "re-run `nab lock --build-requirements` to update it" in err
+    mock.assert_not_called()
+
+
+def test_locked_build_lock_defaults_to_the_build_lock_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without --output, --build-requirements checks pylock.build.toml."""
+    monkeypatch.chdir(tmp_path)
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\ndependencies = []\n'
+        '[build-system]\nrequires = ["foo"]\n',
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        app.cli(
+            args=["lock", str(pyproject), "--locked", "--build-requirements"],
+            prog="nab",
+        )
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "no lockfile at pylock.build.toml" in err
+    assert "run `nab lock --build-requirements` first" in err
+
+
+def test_locked_build_lock_checks_its_own_default_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale pylock.toml alongside must not decide the build lock's verdict."""
+    monkeypatch.chdir(tmp_path)
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\ndependencies = ["bar"]\n'
+        '[build-system]\nrequires = ["foo"]\n',
+    )
+    _write_lock(pyproject, tmp_path / "pylock.toml", _result({"bar": "9.9"}))
+    _write_lock(
+        pyproject,
+        tmp_path / "pylock.build.toml",
+        _result({"foo": "1.0"}),
+        "--build-requirements",
+    )
+    capsys.readouterr()
+
+    with patch("nab.cli.resolve_for_targets", _locked_mock(_result({"foo": "1.0"}))):
+        app.cli(
+            args=["lock", str(pyproject), "--locked", "--build-requirements"],
+            prog="nab",
+        )
+
+    assert "Lockfile pylock.build.toml is up to date." in capsys.readouterr().err
+
+
 def test_tightened_constraint_fires_without_resolving(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

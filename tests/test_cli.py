@@ -32,6 +32,7 @@ from nab import _version as nab_version
 from nab import cli
 from nab._download import download
 from nab._lock import (
+    _BUILD_DEFAULT_OUTPUT,
     _determine_lock_anchor,
     _emit,
     _emit_pylock,
@@ -40,6 +41,7 @@ from nab._lock import (
     resolve_group_selection,
 )
 from nab.cli import (
+    _DEFAULT_OUTPUT,
     _default_cache_dir,
     _make_transport,
     _normalize_layered_bool_flags,
@@ -52,6 +54,7 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import ConfigError, read_pyproject_config
@@ -276,6 +279,13 @@ def _make_pyproject(tmp_path: Path, body: str = "") -> Path:
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(body or '[project]\ndependencies = ["foo"]\n')
     return pyproject
+
+
+# A well-formed project for tests that stub the resolve; neither list is read.
+_BUILD_SYSTEM_PROJECT = (
+    '[project]\nname = "proj"\ndependencies = ["runtime-only"]\n'
+    '[build-system]\nrequires = ["foo"]\n'
+)
 
 
 def _make_pylock_with_groups(tmp_path: Path) -> Path:
@@ -604,6 +614,119 @@ class TestLockCommandSpecific:
         text = (tmp_path / "requirements.txt").read_text()
         assert "foo==1.0" in text
         assert "--hash" not in text
+
+    def test_build_requirements_pylock_default_filename(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A build lock defaults clear of the runtime lock's name."""
+        monkeypatch.chdir(tmp_path)
+        pyproject = _make_pyproject(tmp_path, _BUILD_SYSTEM_PROJECT)
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
+            lock(pyproject, build_requirements=True)
+        assert (tmp_path / "pylock.build.toml").exists()
+        assert not (tmp_path / "pylock.toml").exists()
+
+    @pytest.mark.parametrize(
+        "lock_format", ["requirements", "requirements-without-hashes"]
+    )
+    def test_build_requirements_requirements_default_filename(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lock_format: str
+    ) -> None:
+        """Both requirements formats get their own default name."""
+        monkeypatch.chdir(tmp_path)
+        pyproject = _make_pyproject(tmp_path, _BUILD_SYSTEM_PROJECT)
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
+            lock(pyproject, format=lock_format, build_requirements=True)
+        assert (tmp_path / "build-requirements.txt").exists()
+        assert not (tmp_path / "requirements.txt").exists()
+
+    def test_every_format_has_a_build_default(self) -> None:
+        """A format added to one map alone would be a KeyError, not an error."""
+        assert _BUILD_DEFAULT_OUTPUT.keys() == _DEFAULT_OUTPUT.keys()
+
+    def test_build_lock_reuses_its_own_prior_anchor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The build lock's cutoff comes from the build lock, not pylock.toml."""
+        monkeypatch.chdir(tmp_path)
+        recorded = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        (tmp_path / "pylock.build.toml").write_text(
+            f"[tool.nab]\ncreated-at = {recorded.isoformat()}\n"
+        )
+        (tmp_path / "pylock.toml").write_text(
+            "[tool.nab]\ncreated-at = 2020-01-01T00:00:00+00:00\n"
+        )
+        pyproject = _make_pyproject(tmp_path, _BUILD_SYSTEM_PROJECT)
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
+            lock(pyproject, build_requirements=True)
+        written = tomli.loads((tmp_path / "pylock.build.toml").read_text())
+        assert written["tool"]["nab"]["created-at"] == recorded
+
+    def test_build_lock_records_no_group_selection(self, tmp_path: Path) -> None:
+        """The project's group settings describe a selection it does not have."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "proj"\ndependencies = ["runtime-only"]\n'
+            '[build-system]\nrequires = ["foo"]\n'
+            '[dependency-groups]\ndev = ["foo"]\n'
+            '[tool.nab]\ndefault-groups = ["dev"]\nbase-group = "default"\n',
+        )
+        out = tmp_path / "pylock.build.toml"
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
+            lock(pyproject, output=out, build_requirements=True)
+        written = tomli.loads(out.read_text())
+        assert "default-groups" not in written
+        assert "dependency-groups" not in written
+
+    def test_build_requirements_locks_the_build_requires(self, tmp_path: Path) -> None:
+        """End to end: the emitted lock holds the build requirement alone."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "proj"\ndependencies = ["runtime-only"]\n'
+            '[build-system]\nrequires = ["builder"]\n'
+            + "".join(
+                f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
+                for name in ("runtime-only", "builder")
+            ),
+        )
+        for name in ("runtime-only", "builder"):
+            member = tmp_path / name
+            member.mkdir()
+            (member / "pyproject.toml").write_text(
+                f'[project]\nname = "{name}"\nversion = "1.0"\n'
+            )
+        out = tmp_path / "pylock.build.toml"
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: make_coordinator([])
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            lock(pyproject, output=out, build_requirements=True, cache=False)
+        written = tomli.loads(out.read_text())
+        assert [pkg["name"] for pkg in written["packages"]] == ["builder"]
+
+    @pytest.mark.parametrize(
+        "selection",
+        [
+            {"groups": ("dev",)},
+            {"all_groups": True},
+            {"extras": ("gpu",)},
+            {"all_extras": True},
+            {"project_default_group": ("dev",)},
+            {"project_base_group": "default"},
+        ],
+    )
+    def test_build_requirements_refuses_a_selection(
+        self, tmp_path: Path, selection: dict[str, object]
+    ) -> None:
+        """[build-system].requires is one flat list with nothing to select."""
+        pyproject = _make_pyproject(tmp_path, _BUILD_SYSTEM_PROJECT)
+        err = io.StringIO()
+        with (
+            contextlib.redirect_stderr(err),
+            pytest.raises(SystemExit) as exc,
+        ):
+            lock(pyproject, build_requirements=True, **selection)
+        assert exc.value.code == 1
+        assert "no groups or extras to select" in err.getvalue()
 
     def test_requirements_writes_to_file(self, tmp_path: Path) -> None:
         """`requirements` format renders --hash lines."""
@@ -4457,7 +4580,7 @@ class TestEmitHelpers:
             targets={tup.label: _target_lock(tup, {"foo": V("1.0")})}
         )
         out = tmp_path / "pylock.toml"
-        _emit_pylock(lock_input, output=out)
+        _emit_pylock(lock_input, output=out, default_output=Path("pylock.toml"))
         text = out.read_text()
         assert 'lock-version = "1.0"' in text
 
@@ -4472,7 +4595,11 @@ class TestEmitHelpers:
                 second.label: _target_lock(second, {"foo": V("2.0")}),
             }
         )
-        _emit_pylock(lock_input, output=tmp_path / "pylock.toml")
+        _emit_pylock(
+            lock_input,
+            output=tmp_path / "pylock.toml",
+            default_output=Path("pylock.toml"),
+        )
         assert "(2 tuples)" in capsys.readouterr().err
 
 

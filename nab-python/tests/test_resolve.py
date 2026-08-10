@@ -24,7 +24,10 @@ from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     ConfigError,
+    ConflictKind,
+    ConflictMember,
     ConflictSelectionError,
+    ConflictSet,
     MatrixConfig,
     NabProjectConfig,
     ResolveMode,
@@ -58,6 +61,7 @@ from nab_python.resolve import (
     _ResolveObserver,
     _walk_no_versions_packages,
     build_lock_input,
+    config_for_build_requirements,
     resolve_for_targets,
 )
 from nab_python.tags import PlatformSpec
@@ -4842,3 +4846,165 @@ class TestProgressReporting:
         observer = _ResolveObserver(None)
         observer.on_decision("foo", V("1.0"), 3)
         observer.on_backjump(3, 1)
+
+
+class TestBuildRequirementsResolve:
+    """``build_requirements`` swaps the roots for ``[build-system].requires``."""
+
+    @staticmethod
+    def _mocked_resolve(pyproject: Path, **kwargs: object) -> ResolveResult:
+        """Resolve ``pyproject`` against a provider that pins everything at 2.0."""
+        with (
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+            patch("nab_python.resolve.Provider") as mock_provider_cls,
+            patch("nab_python.resolve.build_target_lock"),
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda s: s
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_provider = mock_provider_cls.return_value
+            mock_provider.choose_version.return_value = V("2.0")
+            mock_provider.get_dependencies.return_value = {}
+            mock_provider.prioritize.return_value = 1
+            return _resolved(
+                pyproject, _FAKE_TRANSPORT, python_version="3.12.0", **kwargs
+            )
+
+    def test_build_requires_replace_project_dependencies(self, tmp_path: Path) -> None:
+        """The project's own dependencies are not in a build lock."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["runtime-only"]\n'
+            '[build-system]\nrequires = ["hatchling"]\n'
+        )
+
+        result = self._mocked_resolve(pyproject, build_requirements=True)
+
+        assert _pins(result) == {"hatchling": V("2.0")}
+
+    def test_project_dependencies_are_locked_without_the_flag(
+        self, tmp_path: Path
+    ) -> None:
+        """The same project locks its runtime deps when the flag is off."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["runtime-only"]\n'
+            '[build-system]\nrequires = ["hatchling"]\n'
+        )
+
+        result = self._mocked_resolve(pyproject)
+
+        assert _pins(result) == {"runtime-only": V("2.0")}
+
+    def test_default_groups_do_not_reach_a_build_lock(self, tmp_path: Path) -> None:
+        """A project's default group describes its runtime, not its build."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = []\n'
+            '[build-system]\nrequires = ["hatchling"]\n'
+            "[dependency-groups]\n"
+            'dev = ["pytest"]\n'
+            "[tool.nab]\n"
+            'default-groups = ["dev"]\n'
+        )
+
+        result = self._mocked_resolve(pyproject, build_requirements=True)
+
+        assert _pins(result) == {"hatchling": V("2.0")}
+
+    def test_conflicts_over_absent_groups_do_not_refuse_the_run(
+        self, tmp_path: Path
+    ) -> None:
+        """Conflicts are declared over a selection a build lock does not have."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = []\n'
+            '[build-system]\nrequires = ["hatchling"]\n'
+            "[dependency-groups]\n"
+            'cpu = ["torch-cpu"]\n'
+            'gpu = ["torch-gpu"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ group = "cpu" }, { group = "gpu" }]]\n'
+        )
+
+        result = self._mocked_resolve(pyproject, build_requirements=True)
+
+        assert _pins(result) == {"hatchling": V("2.0")}
+
+    @patch("nab_python.resolve.resolve_with_coordinator")
+    def test_the_matrix_still_expands(
+        self, mock_engine: MagicMock, tmp_path: Path
+    ) -> None:
+        """A static requires list needs no interpreter to read, so it goes wide."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["runtime-only"]\n'
+            '[build-system]\nrequires = ["hatchling"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "[tool.nab.matrix]\n"
+            'python = ">=3.11,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+
+        resolve_for_targets(pyproject, _FAKE_TRANSPORT, build_requirements=True)
+
+        targets = mock_engine.call_args.args[1]
+        assert [t.label for t in targets] == [
+            "py311-linux_x86_64",
+            "py312-linux_x86_64",
+        ]
+        (fork,) = mock_engine.call_args.kwargs["forks"]
+        assert [str(r) for r in fork.requirements] == ["hatchling"]
+
+    def test_no_build_system_is_an_error(self, tmp_path: Path) -> None:
+        """The PEP 517 default backend is a fallback, not a thing to pin."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[project]\nname = "proj"\ndependencies = ["foo"]\n')
+
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"declares no \[build-system\]"
+        ):
+            self._mocked_resolve(pyproject, build_requirements=True)
+
+    @pytest.mark.parametrize("selection", [{"groups": ("dev",)}, {"extras": ("gpu",)}])
+    def test_a_selection_is_refused(
+        self, tmp_path: Path, selection: dict[str, tuple[str, ...]]
+    ) -> None:
+        """Neither groups nor extras mean anything to a build lock."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text('[build-system]\nrequires = ["hatchling"]\n')
+
+        with pytest.raises(ValueError, match="no groups or extras"):
+            self._mocked_resolve(pyproject, build_requirements=True, **selection)
+
+
+class TestBuildRequirementsConfig:
+    def test_drops_every_selection_setting(self) -> None:
+        """Nothing describing a group or extra survives into a build lock."""
+        config = NabProjectConfig(
+            default_groups=("dev",),
+            base_group="default",
+            conflicts=(
+                ConflictSet(
+                    members=(
+                        ConflictMember(kind=ConflictKind.GROUP, name="cpu"),
+                        ConflictMember(kind=ConflictKind.GROUP, name="gpu"),
+                    )
+                ),
+            ),
+        )
+
+        pruned = config_for_build_requirements(config)
+
+        assert pruned.default_groups == ()
+        assert pruned.base_group is None
+        assert pruned.conflicts == ()
+
+    def test_keeps_the_settings_a_resolve_still_needs(self) -> None:
+        """Constraints and the resolve window are not part of the selection."""
+        config = NabProjectConfig(constraints=("urllib3<2",), requires_python=">=3.10")
+
+        pruned = config_for_build_requirements(config)
+
+        assert pruned.constraints == ("urllib3<2",)
+        assert pruned.requires_python == ">=3.10"

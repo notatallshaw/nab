@@ -65,6 +65,27 @@ a `'X' in extras` or `'X' in dependency_groups` marker, so an
 installer given neither leaves it out; see
 [Lockfiles](lockfile.md).
 
+Build requirements:
+
+* `--build-requirements` locks the project's `[build-system].requires`
+  instead of its dependencies, so the lock describes the environment
+  the project is built in rather than the one it runs in. `--output`
+  defaults to `pylock.build.toml` (or `build-requirements.txt` for the
+  requirements formats), which keeps it clear of the project's runtime
+  lock. Nothing can be selected alongside it: `[build-system].requires`
+  is one flat list, so `--groups`, `--all-groups`, `--extras`,
+  `--all-extras`, `--project-default-group` and `--project-base-group`
+  are all rejected, and `[tool.nab].default-groups`,
+  `[tool.nab].base-group` and `[tool.nab].conflicts` declared in the
+  project's files do not apply.
+* A project that declares no `[build-system]` is an error. nab does not
+  fall back to the PEP 517 default backend, because pinning an implied
+  `setuptools` would put a build requirement in the lock that the project
+  never declared.
+* Only the static list is read. `--build-requirements` never invokes the
+  project's own backend, so whatever that backend would add from
+  `get_requires_for_build_wheel` is not covered.
+
 Workspace flags (see [Lock a workspace](../how-to/workspaces.md)):
 
 * `--workspace-discovery` (default) walks upward from the locked
@@ -81,7 +102,9 @@ Workspace flags (see [Lock a workspace](../how-to/workspaces.md)):
   --no-deps -e <member>`.
 
 `--output` defaults to `pylock.toml` for `pylock` and
-`requirements.txt` for the two requirements formats. Pass
+`requirements.txt` for the two requirements formats, or to
+`pylock.build.toml` and `build-requirements.txt` under
+`--build-requirements`. Pass
 `--output -` to write to stdout instead. A matrix has no default
 requirements file: no one file can carry every tuple's pins (see
 below), so the requirements formats print to stdout unless `--output`
@@ -351,7 +374,7 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | Code | Meaning |
 | ---- | ------- |
 | `0`  | Success. |
-| `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
+| `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
 | `130` | Interrupted with Ctrl-C. `nab` prints `error: interrupted` and exits. |
 
 [PEP 751]: https://peps.python.org/pep-0751/
