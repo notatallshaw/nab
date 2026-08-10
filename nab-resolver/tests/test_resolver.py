@@ -39,6 +39,7 @@ from nab_resolver.resolver import (
     ResolutionError,
     Resolver,
     ResolverObserver,
+    Solution,
 )
 from nab_resolver.root import ROOT
 from nab_resolver.types import (
@@ -576,6 +577,118 @@ class TestNoExtraPackages:
         result = Resolver(provider).resolve({"root": Range.singleton(1)})
         assert "pkg2" not in result
         assert result["pkg1"] == 1
+
+
+LogEntry = tuple[str, Any, Any]
+
+
+class CallLogProvider(DictProvider):
+    """DictProvider that appends the questions it is asked to a shared log."""
+
+    def __init__(
+        self,
+        packages: dict[str, dict[int, dict[str, Range]]],
+        log: list[LogEntry],
+    ) -> None:
+        super().__init__(packages)
+        self._log = log
+
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
+        chosen = super().choose_version(package, version_range)
+        self._log.append(("choose_version", package, chosen))
+        return chosen
+
+    def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
+        self._log.append(("get_dependencies", package, version))
+        return super().get_dependencies(package, version)
+
+
+class DecisionLogObserver(ResolverObserver[str, int]):
+    """Writes decisions into the provider's log so the two interleave."""
+
+    def __init__(self, log: list[LogEntry]) -> None:
+        self._log = log
+
+    def on_decision(self, package: str, version: int, level: int) -> None:
+        self._log.append(("decide", package, version))
+
+
+def record_resolve(
+    packages: dict[str, dict[int, dict[str, Range]]],
+    requirements: dict[str, Range],
+) -> tuple[list[LogEntry], Solution[str, int]]:
+    """Resolve, logging every version choice, decision and dependency question."""
+    log: list[LogEntry] = []
+    provider = CallLogProvider(packages, log)
+    solution = Resolver(provider, observer=DecisionLogObserver(log)).solve(requirements)
+    return log, solution
+
+
+class TestGetDependenciesCallingContract:
+    """``get_dependencies`` is asked right after each decision, then once per pin."""
+
+    def test_a_conflict_free_resolve_asks_once_per_decision_then_once_per_pin(
+        self,
+    ) -> None:
+        log, solution = record_resolve(
+            {
+                "root": {1: {"foo": Range.at_least(1)}},
+                "foo": {2: {"bar": Range.at_least(1)}, 1: {}},
+                "bar": {2: {}, 1: {}},
+            },
+            {"root": Range.singleton(1)},
+        )
+
+        assert log == [
+            ("choose_version", "root", 1),
+            ("decide", "root", 1),
+            ("get_dependencies", "root", 1),
+            ("choose_version", "foo", 2),
+            ("decide", "foo", 2),
+            ("get_dependencies", "foo", 2),
+            ("choose_version", "bar", 2),
+            ("decide", "bar", 2),
+            ("get_dependencies", "bar", 2),
+            ("get_dependencies", "root", 1),
+            ("get_dependencies", "foo", 2),
+            ("get_dependencies", "bar", 2),
+        ]
+        assert solution.pins == {"root": 1, "foo": 2, "bar": 2}
+
+    def test_a_backjump_asks_again_for_a_pair_already_answered(self) -> None:
+        """foo 2 is decided, undone, and foo 1 decided in its place.
+
+        ``bar`` offers no version, so it is never asked for dependencies.
+        """
+        log, solution = record_resolve(
+            {
+                "root": {1: {"foo": Range.full()}},
+                "foo": {2: {"bar": Range.at_least(5)}, 1: {}},
+                "bar": {1: {}},
+            },
+            {"root": Range.singleton(1)},
+        )
+
+        assert log == [
+            ("choose_version", "root", 1),
+            ("decide", "root", 1),
+            ("get_dependencies", "root", 1),
+            ("choose_version", "foo", 2),
+            ("decide", "foo", 2),
+            ("get_dependencies", "foo", 2),
+            ("choose_version", "bar", None),
+            ("choose_version", "root", 1),
+            ("decide", "root", 1),
+            ("get_dependencies", "root", 1),
+            ("choose_version", "foo", 1),
+            ("decide", "foo", 1),
+            ("get_dependencies", "foo", 1),
+            ("get_dependencies", "root", 1),
+            ("get_dependencies", "foo", 1),
+        ]
+        assert solution.pins == {"root": 1, "foo": 1}
 
 
 class TestPreference:
