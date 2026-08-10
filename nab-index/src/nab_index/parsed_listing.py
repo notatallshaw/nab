@@ -35,6 +35,8 @@ from typing import TYPE_CHECKING
 from .client import SdistFile, WheelFile
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from .cache import CachePolicy
 
 __all__ = ["corruption_reason", "decode", "encode"]
@@ -197,7 +199,7 @@ def _decode_row(row: object) -> WheelFile | SdistFile:
     raise _BadRowError
 
 
-def _decode_wheel(row: list[object]) -> WheelFile:
+def _decode_wheel(row: Sequence[object]) -> WheelFile:
     (
         _,
         filename,
@@ -223,7 +225,7 @@ def _decode_wheel(row: list[object]) -> WheelFile:
     )
 
 
-def _decode_sdist(row: list[object]) -> SdistFile:
+def _decode_sdist(row: Sequence[object]) -> SdistFile:
     _, filename, url, version, requires_python, upload_time, hashes, size = row
     return SdistFile(
         filename=_text(filename),
