@@ -897,7 +897,9 @@ class FetchCoordinator:
                 self.index.record_offline_metadata_miss(
                     req.package, req.version, req.url
                 )
-                self.index.store_metadata(req.package, req.version, None, req.url)
+                self.index.store_metadata(
+                    req.package, req.version, None, metadata_url=req.url
+                )
             else:
                 self.index.store_metadata_error(req.package, req.version, exc, req.url)
         elif req.kind is FetchKind.RANGE_METADATA:
@@ -1015,7 +1017,7 @@ class FetchCoordinator:
         text = await client.get_metadata_text(
             req.package, req.version, req.url, req.metadata_hash
         )
-        self.index.store_metadata(req.package, req.version, text, req.url)
+        self.index.store_metadata(req.package, req.version, text, metadata_url=req.url)
         logger.debug("fetched metadata: %s %s", req.package, req.version)
 
     async def _fetch_range_metadata(

@@ -1,18 +1,13 @@
 """In-memory fetch port for the nab-python test suite.
 
-:class:`FakeFetchPort` implements
-:class:`~nab_python.fetch_port.FetchPort` against a real
-:class:`~nab_python.store.InMemoryIndex`.  Its request methods write to that
-index and hand back an already-set :class:`threading.Event`, so the
-synchronous provider code under test sees every fetch resolve immediately.
+:class:`FakeFetchPort` implements :class:`~nab_python.fetch_port.FetchPort`
+against a real :class:`~nab_python.store.InMemoryIndex`.  Its request methods
+write to that index and hand back an already-set :class:`threading.Event`, so
+the synchronous provider code under test sees every fetch resolve immediately.
 
-It is a class rather than a mock so that an unserved request cannot answer.  A
-mock hands back a truthy stand-in for any attribute, so a request nobody
-wired, a name no request has, and any arity at all read alike as a fetch that
-succeeded.
-
-Its request methods carry the port's signatures exactly, defaults included, so
-the provider under test calls the shape a host has to build.
+It is a class rather than a mock so an unserved request cannot answer: a mock
+answers any attribute at any arity.  The request methods repeat the port's
+signatures exactly, defaults included.
 """
 
 from __future__ import annotations
@@ -85,7 +80,7 @@ def _make_metadata_resolver(
     metadata_by_url: Mapping[str, str | None] | None,
     auto_metadata: bool,
 ) -> Callable[[str, str, str], str | None]:
-    """Return a callable that picks metadata text for one sidecar."""
+    """Return the callable that picks metadata text for one sidecar."""
 
     def _resolve(pkg: str, ver: str, url: str) -> str | None:
         if metadata_by_url is not None:
@@ -117,8 +112,7 @@ def _make_sdist_server(
             else sdist_pkg_info_by_version.get(ver)
         )
 
-        # ``store_sdist_metadata`` is always called; passing ``None``
-        # poisons the cache slot, which is how an sdist-fetch failure reads.
+        # ``None`` marks the slot fetched, which is how a failed sdist reads.
         index.store_sdist_metadata(pkg, ver, pkg_info)
         if sdist_pyproject_toml is not None:
             index.store_sdist_pyproject(pkg, ver, sdist_pyproject_toml)
@@ -135,22 +129,18 @@ def _make_range_server(
 ) -> Callable[[str, str, str], None]:
     """Return the callable that writes a range read's result into ``index``.
 
-    Mirrors the coordinator's ``_fetch_range_metadata`` handler: a recorded
-    ``range_error`` lands a per-wheel metadata error, otherwise the read stores
-    the recovered METADATA or marks the read absent.  ``range_by_url`` selects a
-    result per wheel URL, which is how sibling sidecar-less wheels of one
-    version are given different dependencies; ``range_result`` is the
-    single-result shortcut.  With none set the read writes nothing, so rung 4
-    finds nothing and the ladder steps to the sdist rung.
+    Mirrors the coordinator's ``_fetch_range_metadata`` handler.
     """
 
     def _serve(pkg: str, ver: str, url: str) -> None:
         if range_error is not None:
             index.store_range_error(pkg, ver, url, range_error)
             return
+
         result = range_by_url.get(url) if range_by_url is not None else range_result
         if result is None:
             return
+
         index.store_range_outcome(pkg, ver, url, result.outcome)
         if result.text is None:
             index.store_range_absent(pkg, ver, url)
@@ -166,11 +156,7 @@ def _make_archive_server(
     sdist_archive: bytes | None,
     sdist_archive_error: BaseException | None,
 ) -> Callable[[str, str], None]:
-    """Return the callable that writes an archive fetch's result into ``index``.
-
-    With neither keyword set it writes nothing, so a test that pre-loads the
-    bytes it wants served keeps them.
-    """
+    """Return the callable that writes an archive fetch's result into ``index``."""
 
     def _serve(pkg: str, ver: str) -> None:
         if sdist_archive_error is not None:
@@ -199,8 +185,7 @@ class FakeFetchPort:
     ) -> None:
         """Wire the port to ``index`` and to one server per fetch kind."""
         self.index = index
-        # Not on the port: nab's engine reads this off its own coordinator to
-        # label the index that served a package, and lock tests drive that.
+        # Not on the port: the engine reads it off the coordinator.
         self.indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
         self.offline = False
 
@@ -326,10 +311,13 @@ class FakeFetchPort:
         # The fetcher skips a sidecar the index already answers for.
         if self.index.has_metadata(package, version, url):
             return
-        # Store even when the sidecar returns nothing: an empty fetch still
-        # marks the slot fetched.
+
+        # Storing ``None`` still marks the slot fetched.
         self.index.store_metadata(
-            package, version, self._serve_metadata(package, version, url), url
+            package,
+            version,
+            self._serve_metadata(package, version, url),
+            metadata_url=url,
         )
 
     def _metadata(
@@ -420,39 +408,34 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     Listing setup (one of):
 
     * ``wheels`` + ``package``: pre-load ``wheels`` under ``package``.
-      Passing ``None`` skips listing setup, e.g. for tests that only
-      need the coordinator handle.
+      Passing ``None`` skips listing setup.
     * ``listings``: pre-load each ``(package, wheels)`` pair.  Overrides
       ``wheels``/``package``.
 
     What each request then serves:
 
     * ``request_listing`` always returns a set event.
-    * ``request_metadata`` and ``request_metadata_batch`` write
-      ``metadata_text`` (or the entry from ``metadata_by_url``, or from
-      ``metadata_by_version``, or auto-generated minimal METADATA when
-      ``auto_metadata`` is true) under the requested sidecar URL, as the
-      fetcher does.  When nothing resolves, ``None`` lands in the sidecar
-      slot, so the fetched-but-empty slot reads back the way it would in
-      production.  ``metadata_by_url`` is how sibling wheels of one
-      version are given different dependencies.
-    * ``request_sdist`` writes ``sdist_pkg_info``, or the entry from
-      ``sdist_pkg_info_by_version`` when sdists of several versions each need
-      their own PKG-INFO, and, if not ``None``, ``sdist_pyproject_toml``.
+    * ``request_metadata`` and ``request_metadata_batch`` write the sidecar
+      text under the requested URL, as the fetcher does.  The first of
+      ``metadata_by_url``, ``metadata_by_version`` and ``metadata_text`` that
+      is set answers, even where its mapping holds no entry, and
+      ``auto_metadata`` fills in minimal METADATA when none is set.  A miss
+      lands ``None`` in the sidecar slot, marking it fetched and empty.
+    * ``request_sdist`` writes the entry from ``sdist_pkg_info_by_version``
+      when that is set, else ``sdist_pkg_info``, and ``sdist_pyproject_toml``
+      when it is not ``None``.
     * ``request_range_metadata`` records the recovered METADATA (or an absent
       read when its text is ``None``), or lands ``range_error`` as a per-wheel
-      metadata error.  ``range_by_url`` picks a result per wheel URL, so sibling
-      sidecar-less wheels of one version get different dependencies;
-      ``range_result`` is the single-result shortcut.  With none it writes
-      nothing, so rung 4 finds nothing.
+      metadata error.  ``range_by_url`` gives sibling sidecar-less wheels of
+      one version different dependencies; ``range_result`` answers every URL.
+      With none it writes nothing, so rung 4 finds nothing.
     * ``request_sdist_archive`` and ``request_direct_archive`` write
       ``sdist_archive_error``, or ``sdist_archive`` as the fetched bytes.  With
-      neither they write nothing, which leaves whatever the test stored in the
-      index itself.
+      neither they write nothing, leaving whatever the test stored in the index.
 
-    A test that needs something these keywords cannot express replaces one
-    request with :meth:`FakeFetchPort.override`, and reads back what the
-    provider asked for with :meth:`FakeFetchPort.calls_to`.
+    For a setup these keywords cannot express, replace one request with
+    :meth:`FakeFetchPort.override`, and read back the calls with
+    :meth:`FakeFetchPort.calls_to`.
     """
     index = InMemoryIndex()
 

@@ -1018,13 +1018,13 @@ class TestMatrixPerTargetWheelDivergence:
             "pkg",
             "1.0",
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: linuxdep\n\n",
-            linux_wheel.metadata_url,
+            metadata_url=linux_wheel.metadata_url,
         )
         coordinator.index.store_metadata(
             "pkg",
             "1.0",
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: windep\n\n",
-            win_wheel.metadata_url,
+            metadata_url=win_wheel.metadata_url,
         )
         return coordinator
 
@@ -2093,7 +2093,7 @@ class TestResolveWithCoordinator:
             "Metadata-Version: 2.1\nName: aa\nVersion: 3.0\n"
             "Provides-Extra: y\n"
             'Requires-Dist: cc<3.0; extra == "y"\n\n',
-            aa_wheels[-1].metadata_url,
+            metadata_url=aa_wheels[-1].metadata_url,
         )
         return coordinator
 
@@ -2138,13 +2138,13 @@ class TestResolveWithCoordinator:
             "aa",
             "3.0",
             "Metadata-Version: 2.1\nName: aa\nVersion: 3.0\nProvides-Extra: y\n\n",
-            aa_wheels[-1].metadata_url,
+            metadata_url=aa_wheels[-1].metadata_url,
         )
         coordinator.index.store_metadata(
             "bb",
             "2.0",
             "Metadata-Version: 2.1\nName: bb\nVersion: 2.0\nRequires-Dist: aa<3.0\n\n",
-            bb_wheels[-1].metadata_url,
+            metadata_url=bb_wheels[-1].metadata_url,
         )
         return coordinator
 
@@ -2205,7 +2205,7 @@ class TestResolveWithCoordinator:
                 f"Metadata-Version: 2.1\nName: aaa\nVersion: {wheel.version}\n"
                 "Provides-Extra: x\n"
                 'Requires-Dist: bbb; extra == "x"\n\n',
-                wheel.metadata_url,
+                metadata_url=wheel.metadata_url,
             )
         return coordinator
 
@@ -2287,21 +2287,21 @@ class TestResolveWithCoordinator:
                 f"Metadata-Version: 2.1\nName: aaa\nVersion: {wheel.version}\n"
                 "Provides-Extra: x\n"
                 'Requires-Dist: bbb; extra == "x"\n\n',
-                wheel.metadata_url,
+                metadata_url=wheel.metadata_url,
             )
 
         coordinator.index.store_metadata(
             "aaa",
             "3.0",
             f"Metadata-Version: 2.1\nName: aaa\nVersion: 3.0\n{newest_dep}\n",
-            aaa_wheels[-1].metadata_url,
+            metadata_url=aaa_wheels[-1].metadata_url,
         )
 
         coordinator.index.store_metadata(
             "ccc",
             "1.0",
             "Metadata-Version: 2.1\nName: ccc\nVersion: 1.0\nRequires-Dist: aaa[x]\n\n",
-            ccc_wheel.metadata_url,
+            metadata_url=ccc_wheel.metadata_url,
         )
         return coordinator
 

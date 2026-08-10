@@ -208,10 +208,10 @@ class TestConstraintProbeContainsHardError:
         wheel_b = _tie_wheel("py3-none-any")
         coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _tie_meta("alpha>=1"), wheel_a.metadata_url
+            "pkg", "1.0", _tie_meta("alpha>=1"), metadata_url=wheel_a.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _tie_meta("beta>=1"), wheel_b.metadata_url
+            "pkg", "1.0", _tie_meta("beta>=1"), metadata_url=wheel_b.metadata_url
         )
         root_reqs = {"pkg": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)

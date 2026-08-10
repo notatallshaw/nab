@@ -216,7 +216,7 @@ class TestInMemoryIndex:
         idx = InMemoryIndex()
         event, existed = idx.get_or_create_pending("metadata:foo:1.0:https://f/a.md")
         assert not existed
-        idx.store_metadata("foo", "1.0", "text", "https://f/a.md")
+        idx.store_metadata("foo", "1.0", "text", metadata_url="https://f/a.md")
         assert event.is_set()
         assert idx.get_metadata_with_origin("foo", "1.0", "https://f/a.md") == (
             "text",
@@ -227,17 +227,29 @@ class TestInMemoryIndex:
         linux_url = "https://f/linux.whl.metadata"
         win_url = "https://f/win.whl.metadata"
         idx = InMemoryIndex()
-        idx.store_metadata("foo", "1.0", "linux", linux_url)
+        idx.store_metadata("foo", "1.0", "linux", metadata_url=linux_url)
         assert idx.has_metadata("foo", "1.0", linux_url)
         assert not idx.has_metadata("foo", "1.0", win_url)
+
+    def test_a_positional_metadata_url_is_refused(self) -> None:
+        """A transposed store raises instead of writing the URL as the text.
+
+        ``data`` and ``metadata_url`` are both ``str | None``, so a positional
+        ``metadata_url`` would take a swapped call and store the URL.
+        """
+        url = "https://f/linux.whl.metadata"
+        idx = InMemoryIndex()
+        with pytest.raises(TypeError):
+            idx.store_metadata("foo", "1.0", url, "linux")  # type: ignore[call-arg]
+        assert not idx.has_metadata("foo", "1.0", url)
 
     def test_sibling_sidecars_keep_their_own_text(self) -> None:
         """Two wheels of one version can declare different dependencies."""
         linux_url = "https://f/linux.whl.metadata"
         win_url = "https://f/win.whl.metadata"
         idx = InMemoryIndex()
-        idx.store_metadata("foo", "1.0", "linux", linux_url)
-        idx.store_metadata("foo", "1.0", "win", win_url)
+        idx.store_metadata("foo", "1.0", "linux", metadata_url=linux_url)
+        idx.store_metadata("foo", "1.0", "win", metadata_url=win_url)
         assert idx.get_metadata("foo", "1.0", linux_url) == "linux"
         assert idx.get_metadata("foo", "1.0", win_url) == "win"
         assert idx.get_metadata("foo", "1.0") is None
@@ -269,7 +281,7 @@ class TestInMemoryIndex:
         """An empty sidecar slot does not shadow the version-level text."""
         url = "https://f/a.whl.metadata"
         idx = InMemoryIndex()
-        idx.store_metadata("foo", "1.0", None, url)
+        idx.store_metadata("foo", "1.0", None, metadata_url=url)
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
         assert idx.has_metadata("foo", "1.0", url)
         assert idx.get_metadata_with_origin("foo", "1.0", url) == ("PKG-INFO\n", True)
@@ -345,7 +357,7 @@ class TestInMemoryIndex:
         idx = InMemoryIndex()
         event, _ = idx.get_or_create_pending("metadata:foo:1.0:https://f/a.md")
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
-        idx.store_metadata("foo", "1.0", None, "https://f/a.md")
+        idx.store_metadata("foo", "1.0", None, metadata_url="https://f/a.md")
         assert event.is_set()
         assert idx.get_metadata("foo", "1.0") == "PKG-INFO\n"
         assert idx.metadata_from_sdist("foo", "1.0")

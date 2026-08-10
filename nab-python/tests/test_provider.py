@@ -8306,7 +8306,9 @@ class TestAwaitMetadataBatchEdgeCases:
         provider = Provider(coordinator, target=_PY312)
         with pytest.raises(UnsupportedSdistError):
             provider.get_dependencies("pkg", V("1.0"))
-        coordinator.index.store_metadata("pkg", "1.0", None, wheel.metadata_url)
+        coordinator.index.store_metadata(
+            "pkg", "1.0", None, metadata_url=wheel.metadata_url
+        )
 
         version_list = provider.fetch_versions("pkg")
         wheel_map = provider._wheel_by_version("pkg", version_list)
@@ -9716,9 +9718,9 @@ class _CleanupErrorTemporaryDirectory:
 class TestBuildRemoteFailureModes:
     """Failure paths in :func:`nab_python._provider.build_remote.build_remote_sdist`.
 
-    Every failure must surface as :class:`UnsupportedSdistError` so the
-    resolver's look-ahead can either skip the version or fold the
-    message into the eventual no-versions diagnostic.
+    A skippable failure surfaces as :class:`UnsupportedSdistError`, which
+    look-ahead either skips or folds into the eventual no-versions
+    diagnostic. An integrity failure propagates instead.
     """
 
     def _provider(
@@ -9733,8 +9735,7 @@ class TestBuildRemoteFailureModes:
     ) -> Provider:
         """A ``BUILD_REMOTE`` provider whose port serves the archive it is given.
 
-        With neither archive keyword the port writes nothing, which is how a
-        fetch that never produced bytes reads back.
+        With neither archive keyword the port writes nothing.
         """
         files = [make_sdist("1.0")] if with_sdist else [make_wheel("1.0")]
         coordinator = make_coordinator(
@@ -9760,7 +9761,7 @@ class TestBuildRemoteFailureModes:
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
     def test_archive_fetch_failure_raises(self) -> None:
-        """A fetch that produced no bytes skips the version."""
+        """A fetch that produced no bytes raises ``UnsupportedSdistError``."""
         provider = self._provider(with_sdist=True)
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
@@ -10522,10 +10523,16 @@ class TestSiblingMetadataDivergence:
         wheel_b = _sib_wheel("py3-none-any")
         coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("common>=1", "alpha>=1"), wheel_a.metadata_url
+            "pkg",
+            "1.0",
+            _sib_meta("common>=1", "alpha>=1"),
+            metadata_url=wheel_a.metadata_url,
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("common>=1", "beta>=1"), wheel_b.metadata_url
+            "pkg",
+            "1.0",
+            _sib_meta("common>=1", "beta>=1"),
+            metadata_url=wheel_b.metadata_url,
         )
         provider = Provider(coordinator, target=_LINUX311)
         with pytest.raises(SiblingMetadataDivergenceError) as exc:
@@ -10544,10 +10551,10 @@ class TestSiblingMetadataDivergence:
         wheel_b = _sib_wheel("py3-none-any")
         coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=wheel_a.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("beta>=1"), wheel_b.metadata_url
+            "pkg", "1.0", _sib_meta("beta>=1"), metadata_url=wheel_b.metadata_url
         )
         provider = Provider(coordinator, target=_LINUX311)
         with pytest.raises(SiblingMetadataDivergenceError):
@@ -10571,13 +10578,22 @@ class TestSiblingMetadataDivergence:
         wheel_c = _sib_wheel("cp311-cp311-manylinux_2_17_x86_64")
         coordinator = make_coordinator([wheel_a, wheel_b, wheel_c], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("common>=1", "alpha>=1"), wheel_a.metadata_url
+            "pkg",
+            "1.0",
+            _sib_meta("common>=1", "alpha>=1"),
+            metadata_url=wheel_a.metadata_url,
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1", "common>=1"), wheel_b.metadata_url
+            "pkg",
+            "1.0",
+            _sib_meta("alpha>=1", "common>=1"),
+            metadata_url=wheel_b.metadata_url,
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("common >= 1", "alpha >= 1"), wheel_c.metadata_url
+            "pkg",
+            "1.0",
+            _sib_meta("common >= 1", "alpha >= 1"),
+            metadata_url=wheel_c.metadata_url,
         )
         provider = Provider(coordinator, target=None)
         deps = provider.get_dependencies("pkg", self._V)
@@ -10593,13 +10609,13 @@ class TestSiblingMetadataDivergence:
             "pkg",
             "1.0",
             _sib_meta('alpha; python_version >= "3"'),
-            wheel_a.metadata_url,
+            metadata_url=wheel_a.metadata_url,
         )
         coordinator.index.store_metadata(
             "pkg",
             "1.0",
             _sib_meta('alpha; python_version >= "2"'),
-            wheel_b.metadata_url,
+            metadata_url=wheel_b.metadata_url,
         )
         provider = Provider(coordinator, target=_LINUX311)
         deps = provider.get_dependencies("pkg", self._V)
@@ -10611,10 +10627,10 @@ class TestSiblingMetadataDivergence:
         generic = _sib_wheel("py3-none-any")
         coordinator = make_coordinator([specific, generic], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("mldep>=1"), specific.metadata_url
+            "pkg", "1.0", _sib_meta("mldep>=1"), metadata_url=specific.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("gendep>=1"), generic.metadata_url
+            "pkg", "1.0", _sib_meta("gendep>=1"), metadata_url=generic.metadata_url
         )
         provider = Provider(coordinator, target=_LINUX311)
         deps = provider.get_dependencies("pkg", self._V)
@@ -10626,7 +10642,7 @@ class TestSiblingMetadataDivergence:
         wheel = _sib_wheel("py3-none-any")
         coordinator = make_coordinator([wheel], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), wheel.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=wheel.metadata_url
         )
         provider = Provider(coordinator, target=_LINUX311)
         deps = provider.get_dependencies("pkg", self._V)
@@ -10655,10 +10671,10 @@ class TestSiblingMetadataDivergence:
         wheel_b = _sib_wheel("cp311-cp311-macosx_11_0_arm64")
         coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=wheel_a.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("beta>=1"), wheel_b.metadata_url
+            "pkg", "1.0", _sib_meta("beta>=1"), metadata_url=wheel_b.metadata_url
         )
         provider = Provider(coordinator, target=None)
         with pytest.raises(SiblingMetadataDivergenceError) as exc:
@@ -10677,13 +10693,13 @@ class TestSiblingMetadataDivergence:
         wheel_b = _sib_wheel("py3-none-any")
         coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=wheel_a.metadata_url
         )
         coordinator.index.store_metadata(
             "pkg",
             "1.0",
             _sib_meta("beta>=1").replace("Name: pkg", "Name: other"),
-            wheel_b.metadata_url,
+            metadata_url=wheel_b.metadata_url,
         )
         provider = Provider(coordinator, target=_LINUX311)
         deps = provider.get_dependencies("pkg", self._V)
@@ -10696,7 +10712,7 @@ class TestSiblingMetadataDivergence:
         wheel_b = _sib_wheel("py3-none-any")
         coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=wheel_a.metadata_url
         )
         provider = Provider(coordinator, target=_LINUX311)
         metadata_resolver.check_sibling_metadata_divergence(
@@ -10709,9 +10725,11 @@ class TestSiblingMetadataDivergence:
         wheel_b = _sib_wheel("py3-none-any")
         coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=wheel_a.metadata_url
         )
-        coordinator.index.store_metadata("pkg", "1.0", None, wheel_b.metadata_url)
+        coordinator.index.store_metadata(
+            "pkg", "1.0", None, metadata_url=wheel_b.metadata_url
+        )
         coordinator.index.store_sdist_metadata("pkg", "1.0", _sib_meta("sdistdep>=1"))
         provider = Provider(coordinator, target=_LINUX311)
         metadata_resolver.check_sibling_metadata_divergence(
@@ -10724,10 +10742,10 @@ class TestSiblingMetadataDivergence:
         incompatible = _sib_wheel("cp311-cp311-win_amd64")
         coordinator = make_coordinator([pick, incompatible], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), pick.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=pick.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("beta>=1"), incompatible.metadata_url
+            "pkg", "1.0", _sib_meta("beta>=1"), metadata_url=incompatible.metadata_url
         )
         provider = Provider(coordinator, target=_LINUX311)
         metadata_resolver.check_sibling_metadata_divergence(
@@ -10752,7 +10770,7 @@ class TestSiblingMetadataDivergence:
             "1.0",
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
             "Requires-Python: >=3.8\nRequires-Dist: alpha>=1\n\n",
-            pick.metadata_url,
+            metadata_url=pick.metadata_url,
         )
         coordinator.index.store_metadata(
             "pkg",
@@ -10760,7 +10778,7 @@ class TestSiblingMetadataDivergence:
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
             "Requires-Python: >=3.11\nRequires-Dist: alpha>=1\n"
             "Requires-Dist: beta>=1\n\n",
-            incompatible.metadata_url,
+            metadata_url=incompatible.metadata_url,
         )
         provider = Provider(coordinator, target=target)
         deps = provider.get_dependencies("pkg", self._V)
@@ -10777,8 +10795,12 @@ class TestSiblingMetadataDivergence:
             'gamma; extra == "x"',
             provides_extra=("x",),
         )
-        coordinator.index.store_metadata("pkg", "1.0", md, wheel_a.metadata_url)
-        coordinator.index.store_metadata("pkg", "1.0", md, wheel_b.metadata_url)
+        coordinator.index.store_metadata(
+            "pkg", "1.0", md, metadata_url=wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg", "1.0", md, metadata_url=wheel_b.metadata_url
+        )
         provider = Provider(coordinator, target=_LINUX311)
         metadata_resolver.check_sibling_metadata_divergence(
             provider, [(self._V, wheel_a), (self._V, wheel_b)], "pkg", self._V
@@ -10794,9 +10816,11 @@ class TestSiblingMetadataDivergence:
         bare = _sib_wheel("py3-none-any", has_metadata=False)
         coordinator = make_coordinator([sidecar, bare], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), sidecar.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=sidecar.metadata_url
         )
-        coordinator.index.store_metadata("pkg", "1.0", _sib_meta("beta>=1"), bare.url)
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("beta>=1"), metadata_url=bare.url
+        )
         provider = Provider(coordinator, target=_LINUX311)
         with pytest.raises(SiblingMetadataDivergenceError) as exc:
             metadata_resolver.check_sibling_metadata_divergence(
@@ -10815,13 +10839,13 @@ class TestSiblingMetadataDivergence:
             "pkg",
             "1.0",
             _sib_meta('alpha; extra == "x"', provides_extra=("x",)),
-            wheel_a.metadata_url,
+            metadata_url=wheel_a.metadata_url,
         )
         coordinator.index.store_metadata(
             "pkg",
             "1.0",
             _sib_meta('beta; extra == "x"', provides_extra=("x",)),
-            wheel_b.metadata_url,
+            metadata_url=wheel_b.metadata_url,
         )
         provider = Provider(coordinator, target=_LINUX311)
         with pytest.raises(SiblingMetadataDivergenceError) as exc:
@@ -10836,13 +10860,13 @@ class TestSiblingMetadataDivergence:
         wheel_b = _sib_wheel("py3-none-any")
         coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("dep>=1"), wheel_a.metadata_url
+            "pkg", "1.0", _sib_meta("dep>=1"), metadata_url=wheel_a.metadata_url
         )
         coordinator.index.store_metadata(
             "pkg",
             "1.0",
             _sib_meta("dep @ https://example.com/dep-1.0-py3-none-any.whl"),
-            wheel_b.metadata_url,
+            metadata_url=wheel_b.metadata_url,
         )
         provider = Provider(coordinator, target=_LINUX311)
         with pytest.raises(SiblingMetadataDivergenceError) as exc:
@@ -10866,14 +10890,14 @@ class TestSiblingMetadataDivergence:
             "1.0",
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
             "Requires-Python: >=2.7\nRequires-Dist: common>=1\n\n",
-            wheel_a.metadata_url,
+            metadata_url=wheel_a.metadata_url,
         )
         coordinator.index.store_metadata(
             "pkg",
             "1.0",
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
             "Requires-Python: >=3.6\nRequires-Dist: common>=1\n\n",
-            wheel_b.metadata_url,
+            metadata_url=wheel_b.metadata_url,
         )
         provider = Provider(coordinator, target=_LINUX311)
         deps = provider.get_dependencies("pkg", self._V)
@@ -10890,10 +10914,13 @@ class TestSiblingMetadataDivergence:
         wheel_b = _sib_wheel("py3-none-any")
         coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=wheel_a.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", "Metadata-Version: 2.1\nName: pkg\n\n", wheel_b.metadata_url
+            "pkg",
+            "1.0",
+            "Metadata-Version: 2.1\nName: pkg\n\n",
+            metadata_url=wheel_b.metadata_url,
         )
         provider = Provider(coordinator, target=_LINUX311)
         deps = provider.get_dependencies("pkg", self._V)
@@ -10930,7 +10957,7 @@ class TestSiblingMetadataDivergence:
         coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
 
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=wheel_a.metadata_url
         )
         coordinator.index.store_metadata(
             "pkg",
@@ -10938,7 +10965,7 @@ class TestSiblingMetadataDivergence:
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
             + sibling_fields.format(oversized=oversized)
             + "\n",
-            wheel_b.metadata_url,
+            metadata_url=wheel_b.metadata_url,
         )
 
         provider = Provider(coordinator, target=_LINUX311)
@@ -10959,13 +10986,13 @@ class TestSiblingMetadataDivergence:
             "pkg",
             "1.0",
             _sib_meta("alpha>=1", provides_extra=("x",)),
-            wheel_a.metadata_url,
+            metadata_url=wheel_a.metadata_url,
         )
         coordinator.index.store_metadata(
             "pkg",
             "1.0",
             _sib_meta("alpha>=1", provides_extra=("y",)),
-            wheel_b.metadata_url,
+            metadata_url=wheel_b.metadata_url,
         )
         provider = Provider(
             coordinator,
@@ -10993,7 +11020,7 @@ class TestSiblingMetadataDivergence:
             "1.0",
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
             "Requires-Python: >=3.8\nRequires-Dist: alpha>=1\n\n",
-            pick.metadata_url,
+            metadata_url=pick.metadata_url,
         )
         coordinator.index.store_metadata(
             "pkg",
@@ -11001,7 +11028,7 @@ class TestSiblingMetadataDivergence:
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
             "Requires-Python: >=3.11\nRequires-Dist: alpha>=1\n"
             "Requires-Dist: beta>=1\n\n",
-            sibling.metadata_url,
+            metadata_url=sibling.metadata_url,
         )
         provider = Provider(
             coordinator,
@@ -11023,10 +11050,10 @@ class TestSiblingMetadataDivergence:
         wheel_b = _sib_wheel("py3-none-any")
         coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=wheel_a.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("beta>=1"), wheel_b.metadata_url
+            "pkg", "1.0", _sib_meta("beta>=1"), metadata_url=wheel_b.metadata_url
         )
         with pytest.raises(SiblingMetadataDivergenceError):
             resolve_with_coordinator(
@@ -11051,12 +11078,14 @@ class TestSiblingMetadataDivergence:
         )
         coordinator = make_coordinator([wheel_a, wheel_b, clean], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+            "pkg", "1.0", _sib_meta("alpha>=1"), metadata_url=wheel_a.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _sib_meta("beta>=1"), wheel_b.metadata_url
+            "pkg", "1.0", _sib_meta("beta>=1"), metadata_url=wheel_b.metadata_url
         )
-        coordinator.index.store_metadata("pkg", "0.9", _sib_meta(), clean.metadata_url)
+        coordinator.index.store_metadata(
+            "pkg", "0.9", _sib_meta(), metadata_url=clean.metadata_url
+        )
         with pytest.raises(SiblingMetadataDivergenceError):
             resolve_with_coordinator(
                 coordinator,
@@ -11130,10 +11159,13 @@ class TestNoTagAxisPythonNarrowing:
         coordinator = make_coordinator([cp27, cp35, cp37], package="pkg")
         for wheel in (cp27, cp37):
             coordinator.index.store_metadata(
-                "pkg", "1.0", _split_meta("common>=1"), wheel.metadata_url
+                "pkg", "1.0", _split_meta("common>=1"), metadata_url=wheel.metadata_url
             )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _split_meta("common>=1", "numpy"), cp35.metadata_url
+            "pkg",
+            "1.0",
+            _split_meta("common>=1", "numpy"),
+            metadata_url=cp35.metadata_url,
         )
         provider = Provider(coordinator, target=_overlay_target())
         deps = provider.get_dependencies("pkg", self._V)
@@ -11150,10 +11182,13 @@ class TestNoTagAxisPythonNarrowing:
         macos = _split_wheel("cp37-none-macosx_10_9_x86_64")
         coordinator = make_coordinator([linux, macos], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _split_meta("common>=1"), linux.metadata_url
+            "pkg", "1.0", _split_meta("common>=1"), metadata_url=linux.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _split_meta("common>=1", "numpy"), macos.metadata_url
+            "pkg",
+            "1.0",
+            _split_meta("common>=1", "numpy"),
+            metadata_url=macos.metadata_url,
         )
         provider = Provider(coordinator, target=_overlay_target())
         with pytest.raises(SiblingMetadataDivergenceError) as exc:
@@ -11172,13 +11207,13 @@ class TestNoTagAxisPythonNarrowing:
         cp37 = _split_wheel("cp37-cp37m-manylinux1_x86_64")
         coordinator = make_coordinator([cp27, cp35, cp37], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _split_meta("py27dep>=1"), cp27.metadata_url
+            "pkg", "1.0", _split_meta("py27dep>=1"), metadata_url=cp27.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _split_meta("py35dep>=1"), cp35.metadata_url
+            "pkg", "1.0", _split_meta("py35dep>=1"), metadata_url=cp35.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _split_meta("py37dep>=1"), cp37.metadata_url
+            "pkg", "1.0", _split_meta("py37dep>=1"), metadata_url=cp37.metadata_url
         )
         provider = Provider(coordinator, target=_overlay_target())
         assert (
@@ -11204,10 +11239,12 @@ class TestNoTagAxisPythonNarrowing:
         cp35 = _split_wheel("cp35-cp35m-manylinux1_x86_64")
         cp37 = _split_wheel("cp37-cp37m-manylinux1_x86_64")
         coordinator = make_coordinator([cp27, cp35, cp37], package="pkg")
-        coordinator.index.store_metadata("pkg", "1.0", _split_meta(), cp37.metadata_url)
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _split_meta(), metadata_url=cp37.metadata_url
+        )
         for wheel in (cp27, cp35):
             coordinator.index.store_metadata(
-                "pkg", "1.0", _split_meta("numpy"), wheel.metadata_url
+                "pkg", "1.0", _split_meta("numpy"), metadata_url=wheel.metadata_url
             )
         result = resolve_with_coordinator(
             coordinator,
@@ -11244,10 +11281,13 @@ class TestNoTagAxisPythonNarrowing:
         cp35 = _split_wheel("cp35-cp35m-manylinux1_x86_64")
         coordinator = make_coordinator([cp27, cp35], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _split_meta("common>=1"), cp27.metadata_url
+            "pkg", "1.0", _split_meta("common>=1"), metadata_url=cp27.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _split_meta("common>=1", "numpy"), cp35.metadata_url
+            "pkg",
+            "1.0",
+            _split_meta("common>=1", "numpy"),
+            metadata_url=cp35.metadata_url,
         )
         provider = Provider(coordinator, target=_overlay_target())
         with pytest.raises(SiblingMetadataDivergenceError) as exc:
@@ -11260,10 +11300,13 @@ class TestNoTagAxisPythonNarrowing:
         abi3 = _split_wheel("cp35-abi3-manylinux1_x86_64")
         coordinator = make_coordinator([pick, abi3], package="pkg")
         coordinator.index.store_metadata(
-            "pkg", "1.0", _split_meta("common>=1"), pick.metadata_url
+            "pkg", "1.0", _split_meta("common>=1"), metadata_url=pick.metadata_url
         )
         coordinator.index.store_metadata(
-            "pkg", "1.0", _split_meta("common>=1", "numpy"), abi3.metadata_url
+            "pkg",
+            "1.0",
+            _split_meta("common>=1", "numpy"),
+            metadata_url=abi3.metadata_url,
         )
         provider = Provider(coordinator, target=_overlay_target())
         with pytest.raises(SiblingMetadataDivergenceError) as exc:
