@@ -945,6 +945,106 @@ class TestMainGroup:
         with pytest.raises(ConfigError, match="build-group 'build' and"):
             read_pyproject_config(path)
 
+    def test_a_base_group_conflicting_with_a_default_group_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """An install given no selection would otherwise get neither side."""
+        path = write(
+            tmp_path,
+            "[dependency-groups]\ndev = []\n"
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'default-groups = ["dev"]\n'
+            'conflicts = [[{ group = "main" }, { group = "dev" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="would install neither"):
+            read_pyproject_config(path)
+
+    def test_two_default_groups_still_report_themselves(self, tmp_path: Path) -> None:
+        """base-group being set does not make every clash its fault."""
+        path = write(
+            tmp_path,
+            "[dependency-groups]\na = []\nb = []\n"
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'default-groups = ["a", "b"]\n'
+            'conflicts = [[{ group = "a" }, { group = "b" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="which are declared") as info:
+            read_pyproject_config(path)
+        assert "base-group" not in str(info.value)
+
+    def test_an_exclusive_set_of_configured_names_is_allowed(
+        self, tmp_path: Path
+    ) -> None:
+        """Only at-least-one is refused; the exclusive policies are the point."""
+        for policy in ("at-most-one", "exactly-one"):
+            path = write(
+                tmp_path,
+                "[build-system]\nrequires = []\n"
+                "[tool.nab]\n"
+                'base-group = "main"\n'
+                'build-group = "build"\n'
+                "conflicts = [{ members = ["
+                '{ group = "main" }, { group = "build" }],'
+                f' policy = "{policy}" }}]\n',
+            )
+            assert read_pyproject_config(path).build_group == "build"
+
+    def test_a_main_build_conflict_is_not_a_default_clash(self, tmp_path: Path) -> None:
+        """build-group is never a default, so the pair can be declared."""
+        path = write(
+            tmp_path,
+            "[build-system]\nrequires = []\n"
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'build-group = "build"\n'
+            'conflicts = [[{ group = "main" }, { group = "build" }]]\n',
+        )
+        assert read_pyproject_config(path).base_group == "main"
+
+    def test_an_at_least_one_set_naming_a_configured_group_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """A configured member cannot be deselected, so the minimum is free."""
+        path = write(
+            tmp_path,
+            "[dependency-groups]\ndev = []\n"
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'conflicts = [{ members = [{ group = "main" }, { group = "dev" }],'
+            ' policy = "at-least-one" }]\n',
+        )
+        with pytest.raises(ConfigError, match="decides nothing"):
+            read_pyproject_config(path)
+
+    def test_a_base_group_conflicting_with_an_extra_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """An extra installs on top of the project's own dependencies."""
+        path = write(
+            tmp_path,
+            '[project.optional-dependencies]\ncli = ["clitool"]\n'
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'conflicts = [[{ group = "main" }, { extra = "cli" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="nothing could install that extra"):
+            read_pyproject_config(path)
+
+    def test_a_build_group_may_conflict_with_an_extra(self, tmp_path: Path) -> None:
+        """The project's dependencies stay in every fork of that set."""
+        path = write(
+            tmp_path,
+            '[project.optional-dependencies]\ncli = ["clitool"]\n'
+            "[build-system]\nrequires = []\n"
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'build-group = "build"\n'
+            'conflicts = [[{ group = "build" }, { extra = "cli" }]]\n',
+        )
+        assert read_pyproject_config(path).build_group == "build"
+
     def test_build_group_rejects_the_base_group_name(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,

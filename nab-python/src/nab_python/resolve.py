@@ -52,6 +52,7 @@ from .config import (
     ConflictSelectionError,
     ConflictSet,
     NabProjectConfig,
+    configured_group_names,
     conflict_forks,
     index_cache_floors_from_config,
     index_routes_from_config,
@@ -176,10 +177,13 @@ class InstallContexts:
     it shares with another active selection names both members and
     installs for either.
 
+    ``project`` is the project's own dependencies *as this fork resolved
+    them*, empty in a fork a declared conflict excluded them from.
+
     ``name_project`` is set when ``[tool.nab].base-group`` names the
-    project's own dependencies.  They are then walked even with nothing
-    selected, since the name has to mean the same thing in every lock it
-    appears in.
+    project's own dependencies.  It is a lock-wide fact rather than a
+    per-fork one: the name has to mean the same thing in every lock it
+    appears in, so the roots are walked even with nothing selected.
     """
 
     project: tuple[Requirement, ...] = ()
@@ -190,13 +194,26 @@ class InstallContexts:
 
 
 @dataclass(frozen=True, slots=True)
+class _ConfiguredContext:
+    """An install context ``[tool.nab]`` configures rather than a run selects.
+
+    ``name`` is ``None`` for the project's own dependencies when no
+    ``base-group`` names them.  Unnamed they cannot be a conflict member,
+    so every fork carries them.
+    """
+
+    name: str | None
+    requirements: tuple[Requirement, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ResolveFork:
     """A conflict fork's resolver input: a selection and its requirements.
 
     ``selection`` is the conflicting members active in this fork, empty
     for an unforked resolve; ``requirements`` are the requirements folded
-    for it (the project's dependencies plus the groups and extras the
-    selection activates).  Each fork runs against every target, with its
+    for it: the configured contexts this fork carries plus the groups and
+    extras the selection activates.  Each fork runs against every target, with its
     ``selection`` stamped onto each so the pins land under a distinct
     label and a membership-gated marker.
 
@@ -925,6 +942,40 @@ class _ProjectTables:
     in ``dependencies`` instead and leaves this empty."""
 
 
+def _configured_contexts(
+    config: NabProjectConfig, tables: _ProjectTables
+) -> tuple[_ConfiguredContext, tuple[_ConfiguredContext, ...]]:
+    """Split the configured install contexts into the project's and the rest.
+
+    The project's own dependencies are always a context, named or not.  The
+    build requirements are one only when ``build-group`` names them, which
+    is also the only time they were read.
+    """
+    project = _ConfiguredContext(config.base_group, tuple(tables.dependencies))
+    selectors = (
+        (_ConfiguredContext(config.build_group, tuple(tables.build_requires)),)
+        if config.build_group is not None
+        else ()
+    )
+    return project, selectors
+
+
+def _carried_by(
+    fork: ConflictFork,
+    project: _ConfiguredContext,
+    selectors: Sequence[_ConfiguredContext],
+) -> tuple[tuple[Requirement, ...], tuple[_ConfiguredContext, ...]]:
+    """Return the configured contexts ``fork`` resolves, project first.
+
+    An unnamed context cannot be a conflict member, so every fork carries
+    it; a named one is carried only by the fork that chose it.
+    """
+    carried = tuple(c for c in selectors if c.name in fork.active_configured)
+    if project.name is None or project.name in fork.active_configured:
+        return project.requirements, carried
+    return (), carried
+
+
 def _tables_for_build_requires(path: Path) -> _ProjectTables:
     """Read ``path`` as a project whose dependencies are its build requirements.
 
@@ -1214,19 +1265,21 @@ def _plan_forks(
     The second element is the no-member requirement list, needed only
     when the plan actually forked; see :func:`resolve_with_coordinator`.
     """
+    configured = configured_group_names(config)
+    project_context, selector_contexts = _configured_contexts(config, tables)
     if config.conflicts:
         _validate_conflict_members_exist(
-            config.conflicts, tables.optional, tables.groups
+            config.conflicts, tables.optional, tables.groups, configured
         )
         _check_conflict_minimums(
             config.conflicts,
             tables,
             extras,
-            expand_group_includes(tables.groups, groups),
+            [*expand_group_includes(tables.groups, groups), *configured],
             targets,
         )
 
-    plan = conflict_forks(extras, groups, config.conflicts)
+    plan = conflict_forks(extras, groups, config.conflicts, configured)
     forks: list[ResolveFork] = []
     # Forks of an extra-based conflict share a group selection, so the
     # (group, group) -> target scan runs once per distinct one.
@@ -1237,7 +1290,7 @@ def _plan_forks(
                 config.conflicts,
                 tables,
                 fork.active_extras,
-                fork.active_groups,
+                (*fork.active_groups, *fork.active_configured),
                 targets,
             )
 
@@ -1251,14 +1304,19 @@ def _plan_forks(
                 targets,
             )
 
+        project, carried = _carried_by(fork, project_context, selector_contexts)
         forks.append(
             ResolveFork(
                 selection=fork.selection,
-                requirements=tuple(_fork_requirements(path, tables, fork)),
+                requirements=tuple(
+                    _fork_requirements(
+                        path, tables, fork, project=project, selectors=carried
+                    )
+                ),
                 contexts=InstallContexts(
-                    project=tuple(tables.dependencies),
+                    project=project,
                     selectors=_selector_requirements(
-                        path, tables, fork, build_group=config.build_group
+                        path, tables, fork, contexts=carried
                     ),
                     name_project=config.base_group is not None,
                 ),
@@ -1270,7 +1328,13 @@ def _plan_forks(
     # requirements are resolved too.
     base_requirements = None
     if len(plan) > 1:
-        base_requirements = _fork_requirements(path, tables, _base_fork(plan[0]))
+        base_fork = _base_fork(plan[0])
+        base_project, base_carried = _carried_by(
+            base_fork, project_context, selector_contexts
+        )
+        base_requirements = _fork_requirements(
+            path, tables, base_fork, project=base_project, selectors=base_carried
+        )
     return forks, base_requirements
 
 
@@ -1279,7 +1343,7 @@ def _selector_requirements(
     tables: _ProjectTables,
     fork: ConflictFork,
     *,
-    build_group: str | None,
+    contexts: Sequence[_ConfiguredContext],
 ) -> dict[tuple[str, str], tuple[Requirement, ...]]:
     """Split a fork's active extras and groups into one requirement list each.
 
@@ -1294,11 +1358,14 @@ def _selector_requirements(
     seeds ``dependency_groups`` from ``default-groups`` when the
     installer selects none, so the gate still holds for a default
     install.
+
+    A configured context is a selector no run selects, and only a fork
+    that carries it gets one: a fork that did not resolve the build
+    requirements must not claim an install context it never walked.
     """
     selectors: dict[tuple[str, str], tuple[Requirement, ...]] = {}
-    if build_group is not None:
-        member = (ConflictKind.GROUP.value, build_group)
-        selectors[member] = tuple(tables.build_requires)
+    for context in contexts:
+        selectors[(ConflictKind.GROUP.value, context.name)] = context.requirements
     for extra in fork.active_extras:
         member = (ConflictKind.EXTRA.value, str(canonicalize_name(extra)))
         selectors[member] = tuple(_extra_requirements(tables, [extra], path))
@@ -1309,16 +1376,24 @@ def _selector_requirements(
 
 
 def _fork_requirements(
-    path: Path, tables: _ProjectTables, fork: ConflictFork
+    path: Path,
+    tables: _ProjectTables,
+    fork: ConflictFork,
+    *,
+    project: Sequence[Requirement],
+    selectors: Sequence[_ConfiguredContext],
 ) -> list[Requirement]:
-    """Fold one fork's active groups and extras onto the project deps.
+    """Fold one fork's contexts, groups and extras into one requirement list.
 
     Each fork resolves a different slice of the selection (one member per
     engaged conflict set), so its requirement list is built separately
-    rather than shared.
+    rather than shared.  ``project`` and ``selectors`` are the configured
+    contexts this fork carries, empty where a declared conflict put one in
+    another fork.
     """
-    requirements = list(tables.dependencies)
-    requirements.extend(tables.build_requires)
+    requirements = list(project)
+    for context in selectors:
+        requirements.extend(context.requirements)
     requirements.extend(_group_requirements(tables.groups, fork.active_groups, path))
     requirements.extend(_extra_requirements(tables, fork.active_extras, path))
     return requirements
@@ -1343,8 +1418,16 @@ def _base_fork(reference: ConflictFork) -> ConflictFork:
         for g in reference.active_groups
         if (ConflictKind.GROUP.value, g) not in chosen
     )
+    rest_configured = tuple(
+        g
+        for g in reference.active_configured
+        if (ConflictKind.GROUP.value, g) not in chosen
+    )
     return ConflictFork(
-        selection=(), active_extras=rest_extras, active_groups=rest_groups
+        selection=(),
+        active_extras=rest_extras,
+        active_groups=rest_groups,
+        active_configured=rest_configured,
     )
 
 
@@ -1403,6 +1486,7 @@ def _validate_conflict_members_exist(
     conflicts: Sequence[ConflictSet],
     optional: Mapping[str, Sequence[str]],
     groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    configured_groups: Sequence[str] = (),
 ) -> None:
     """Raise when a declared conflict names an extra/group the project lacks.
 
@@ -1411,7 +1495,9 @@ def _validate_conflict_members_exist(
     canonicalisation, matching the loaders.
     """
     known_extras = {canonicalize_name(name) for name in optional}
-    known_groups = {canonicalize_name(name) for name in groups}
+    known_groups = {canonicalize_name(name) for name in groups} | {
+        canonicalize_name(name) for name in configured_groups
+    }
     unknown: list[str] = []
     for conflict_set in conflicts:
         for member in conflict_set.members:
@@ -1422,7 +1508,8 @@ def _validate_conflict_members_exist(
         joined = ", ".join(unknown)
         msg = (
             f"[tool.nab].conflicts names {joined}, which the project does not"
-            " declare in [project.optional-dependencies] or [dependency-groups]"
+            " declare in [project.optional-dependencies] or [dependency-groups],"
+            " and which is not [tool.nab].base-group or [tool.nab].build-group"
         )
         raise ConfigError(msg)
 

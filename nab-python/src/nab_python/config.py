@@ -101,6 +101,7 @@ __all__ = [
     "OverrideConflictError",
     "PackageOverride",
     "ResolveMode",
+    "configured_group_names",
     "conflict_exclusion_groups",
     "conflict_forks",
     "conflict_member_groups",
@@ -279,15 +280,20 @@ class ConflictFork:
     """One fork of a conflict-driven universal resolve.
 
     ``selection`` is the active conflicting members as ``(kind, name)``
-    pairs.  ``active_extras`` and ``active_groups`` are the full extra
-    and group selections this fork resolves with: the non-conflicting
-    selections plus this fork's chosen members.  An unforked resolve is
-    a single fork with an empty ``selection``.
+    pairs.  ``active_extras`` and ``active_groups`` are the selections
+    this fork resolves with, the non-conflicting ones plus its own chosen
+    members, and hold only names the project declares.  A name
+    ``[tool.nab]`` configures is on ``active_configured`` instead.  An
+    unforked resolve is a single fork with an empty ``selection``.
     """
 
     selection: tuple[tuple[str, str], ...]
     active_extras: tuple[str, ...]
     active_groups: tuple[str, ...]
+    active_configured: tuple[str, ...] = ()
+    """The configured group names (``base-group``, ``build-group``) this
+    fork carries.  Their requirements come from a pyproject table rather
+    than from ``[dependency-groups]``."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -369,6 +375,7 @@ def conflict_forks(
     selected_extras: Sequence[str],
     selected_groups: Sequence[str],
     conflicts: Sequence[ConflictSet],
+    configured_groups: Sequence[str] = (),
 ) -> list[ConflictFork]:
     """Split a selection into one fork per mutually-exclusive combination.
 
@@ -381,14 +388,24 @@ def conflict_forks(
     in every fork.  With no engaged set the result is a single unforked
     fork carrying the whole selection.
 
+    A declared group is active when the selection names it.  A
+    ``configured_groups`` name is active whenever it is set, since the
+    context it names is part of every resolve rather than something a run
+    asks for, so a set naming one engages on every run.  Those names come
+    back on :attr:`ConflictFork.active_configured` rather than
+    ``active_groups``, which stays what the ``[dependency-groups]`` loader
+    can resolve.
+
     Names compare and emit canonicalised; the extra and group loaders
     normalise on lookup, so a canonical active set resolves the same
     requirements the user's spelling would.
     """
     base_extras = [canonicalize_name(e) for e in selected_extras]
     base_groups = [canonicalize_name(g) for g in selected_groups]
+    configured = list(dict.fromkeys(canonicalize_name(g) for g in configured_groups))
+    configured_set = set(configured)
     extra_set = set(base_extras)
-    group_set = set(base_groups)
+    group_set = set(base_groups) | configured_set
 
     # Collect the engaged sets (2+ selected members) and the members to
     # drop from the shared base; each engaged set becomes a fork axis.
@@ -409,20 +426,31 @@ def conflict_forks(
             target.add(member.name)
 
     if not engaged:
-        return [ConflictFork((), tuple(base_extras), tuple(base_groups))]
+        return [
+            ConflictFork(
+                selection=(),
+                active_extras=tuple(base_extras),
+                active_groups=tuple(base_groups),
+                active_configured=tuple(configured),
+            )
+        ]
 
     # One fork per choice of a single member from each engaged set.
     rest_extras = [e for e in base_extras if e not in drop_extras]
     rest_groups = [g for g in base_groups if g not in drop_groups]
+    rest_configured = [g for g in configured if g not in drop_groups]
     forks: list[ConflictFork] = []
     for combo in itertools.product(*engaged):
         chosen_extras = [m.name for m in combo if m.kind is ConflictKind.EXTRA]
-        chosen_groups = [m.name for m in combo if m.kind is ConflictKind.GROUP]
+        chosen = [m.name for m in combo if m.kind is ConflictKind.GROUP]
+        chosen_groups = [g for g in chosen if g not in configured_set]
+        chosen_configured = [g for g in chosen if g in configured_set]
         forks.append(
             ConflictFork(
                 selection=tuple(sorted((m.kind.value, m.name) for m in combo)),
                 active_extras=tuple(rest_extras + chosen_extras),
                 active_groups=tuple(rest_groups + chosen_groups),
+                active_configured=tuple(rest_configured + chosen_configured),
             )
         )
     return forks
@@ -482,6 +510,19 @@ class NabProjectConfig:
     # ``local_sources``, which also carries explicit
     # ``[[tool.nab.local-sources]]`` entries.
     workspace_member_names: frozenset[str] = field(default_factory=frozenset)
+
+
+def configured_group_names(config: NabProjectConfig) -> tuple[str, ...]:
+    """Return the group names active by configuration rather than by selection.
+
+    ``base-group`` names the project's own dependencies and ``build-group``
+    its build requirements; neither is ever in a run's selection, so every
+    caller that has to treat them as active asks here rather than naming
+    the two fields itself.
+    """
+    return tuple(
+        name for name in (config.base_group, config.build_group) if name is not None
+    )
 
 
 class ConflictSelectionError(ConfigError):
@@ -769,7 +810,12 @@ def _config_from_effective(
 
     default_groups = effective["default-groups"].value
     conflicts = effective["conflicts"].value
-    _validate_default_groups_against_conflicts(default_groups, conflicts)
+    _validate_default_groups_against_conflicts(
+        default_groups, conflicts, effective["base-group"].value
+    )
+    _validate_configured_conflict_sets(
+        conflicts, effective["base-group"].value, effective["build-group"].value
+    )
 
     local_sources = effective["local-sources"].value
     vcs_sources = effective["vcs-sources"].value
@@ -2979,28 +3025,112 @@ def _check_conflict_member_uniqueness(sets: Sequence[ConflictSet]) -> None:
 def _validate_default_groups_against_conflicts(
     default_groups: Sequence[str],
     conflicts: Sequence[ConflictSet],
+    base_group: str | None = None,
 ) -> None:
-    """Reject default-groups that co-activate an exclusive conflict set.
+    """Reject a default install that co-activates an exclusive conflict set.
 
     A default install activates every default group with no user
     selection, but the emit-time disjointness validator prunes any
     context that activates two members of an exclusive set, so it never
-    enumerates that install.  Two default groups in the same at-most-one
-    or exactly-one set would silently violate the declared conflict;
-    catch it at parse time.
+    enumerates that install.  Two members co-active by default would
+    silently violate the declared conflict; catch it at parse time.
+
+    ``base_group`` counts as a default: PEP 751 seeds ``dependency_groups``
+    from ``default-groups``, and the lock puts that name there so an
+    install asking for nothing still gets the project's own dependencies.
     """
+    configured = None if base_group is None else canonicalize_name(base_group)
     active = {canonicalize_name(g) for g in default_groups}
+    if configured is not None:
+        active.add(configured)
+
     for group in conflict_exclusion_groups(conflicts):
         co_active = sorted(
             name
             for kind, name in group
             if kind == ConflictKind.GROUP.value and name in active
         )
-        if len(co_active) >= _MIN_ENGAGED_MEMBERS:
+        if len(co_active) < _MIN_ENGAGED_MEMBERS:
+            continue
+
+        if configured in co_active:
+            others = ", ".join(repr(name) for name in co_active if name != configured)
+            msg = (
+                f"default-groups activates {others}, and base-group"
+                f" {base_group!r} names the project's own dependencies, which"
+                " every default install activates too; they are declared"
+                " mutually exclusive in [tool.nab].conflicts, so an installer"
+                " given no selection would install neither"
+            )
+        else:
             joined = ", ".join(repr(name) for name in co_active)
             msg = (
                 f"default-groups activates {joined}, which are declared"
                 " mutually exclusive in [tool.nab].conflicts"
+            )
+        raise ConfigError(msg)
+
+
+def _validate_configured_conflict_sets(
+    conflicts: Sequence[ConflictSet],
+    base_group: str | None,
+    build_group: str | None,
+) -> None:
+    """Reject the conflict sets a configured group name cannot mean.
+
+    A configured member is active on every run, so an at-least-one set
+    holding one can never fail and decides nothing.  A declaration that
+    decides nothing reads as one that took effect, so it is refused
+    rather than left to sit.
+
+    An exclusive set pairing ``base-group`` with an extra is worse than
+    inert.  A PEP 621 extra installs on top of the project's own
+    dependencies, and the extras axis never deselects a default group, so
+    the fork that chooses the extra describes an install context no
+    installer can produce.  ``build-group`` pairs with an extra fine: the
+    project's dependencies stay in every fork of that set.
+    """
+    names = {
+        canonicalize_name(name)
+        for name in (base_group, build_group)
+        if name is not None
+    }
+    for conflict_set in conflicts:
+        members = conflict_set.members
+        if conflict_set.policy is ConflictPolicy.AT_LEAST_ONE:
+            inert = sorted(
+                member.name
+                for member in members
+                if member.kind is ConflictKind.GROUP and member.name in names
+            )
+            if inert:
+                joined = ", ".join(repr(name) for name in inert)
+                msg = (
+                    f"[tool.nab].conflicts declares {joined} in an at-least-one"
+                    " set, but a group named by base-group or build-group is"
+                    " active on every run, so the set can never fail and"
+                    " decides nothing"
+                )
+                raise ConfigError(msg)
+            continue
+
+        if base_group is None:
+            continue
+        canonical_base = canonicalize_name(base_group)
+        holds_main = any(
+            member.kind is ConflictKind.GROUP and member.name == canonical_base
+            for member in members
+        )
+        extras = sorted(
+            member.name for member in members if member.kind is ConflictKind.EXTRA
+        )
+        if holds_main and extras:
+            joined = ", ".join(repr(name) for name in extras)
+            msg = (
+                f"[tool.nab].conflicts declares base-group {base_group!r}"
+                f" mutually exclusive with the extra {joined}, but an extra"
+                " installs on top of the project's own dependencies and never"
+                " deselects them, so nothing could install that extra"
             )
             raise ConfigError(msg)
 

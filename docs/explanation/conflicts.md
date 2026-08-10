@@ -13,7 +13,9 @@ Declaring the conflict tells nab to keep them apart.
 
 Conflicts live in `[tool.nab].conflicts`. Each entry is a set of
 members that are mutually exclusive with each other. A member is an
-extra or a dependency group:
+extra, a dependency group, or one of the groups `[tool.nab]` names
+itself: `base-group` for the project's own dependencies and
+`build-group` for its `[build-system].requires`.
 
 ```toml
 [tool.nab]
@@ -63,6 +65,64 @@ Declaring conflicts in the workspace root does not propagate to a
 `nab lock packages/<member>/pyproject.toml`; each member declares
 its own. See [Lock a workspace](../how-to/workspaces.md) for the full
 list of keys that flow vs stay local.
+
+## Conflicting the build requirements
+
+`[tool.nab].build-group` puts a project's `[build-system].requires` in
+the same lock as its dependencies, resolved in one version space. A
+backend that needs a version the project's own dependencies exclude
+therefore fails to resolve. Declaring the two mutually exclusive splits
+them:
+
+```toml
+[project]
+dependencies = ["packaging<24"]
+
+[build-system]
+requires = ["hatchling", "packaging>=24"]
+
+[tool.nab]
+base-group = "base"
+build-group = "build"
+conflicts = [[{ group = "base" }, { group = "build" }]]
+```
+
+Each side now resolves on its own and gets its own pins, disjoint on the
+group clause, which is what PEP 517 build isolation gives the build at
+install time. `base-group` must be set: it is what makes the project's
+own dependencies a named context that can be one side of a conflict.
+
+Conflicting `build-group` against an ordinary group instead, say
+`[[{ group = "build" }, { group = "dev" }]]`, separates the build
+requirements from that group but not from the project's dependencies,
+which stay in every fork.
+
+A configured name is active on every run rather than selected, so a set
+holding only configured names engages always: every `nab lock` for that
+project forks, and `at-most-one` and `exactly-one` say the same thing
+there. An `at-least-one` set that names either of them is refused, since
+a group that is always active means the set can never fail.
+
+A member belongs to at most one set, so putting the build requirements
+in a set with both the project's dependencies and `dev` is one
+three-member declaration, and it makes all three mutually exclusive:
+
+```toml
+conflicts = [[{ group = "base" }, { group = "build" }, { group = "dev" }]]
+```
+
+That forks three ways when the run selects `dev`, and two otherwise,
+since a set forks only over the members the selection activates. With
+`dev` selected, an install choosing it gets that group without the
+project's own dependencies. Declare two sets instead if
+`dev` should install alongside them, remembering that `build` can be in
+only one of them.
+
+> [!NOTE]
+> `base-group` is in the lock's `default-groups`, so an install that
+> selects no group gets the project's own dependencies, and one that
+> selects `build` gets the build side in their place. An installer that
+> cannot select a group from a lock gets the defaults.
 
 ## Forking co-selected members
 

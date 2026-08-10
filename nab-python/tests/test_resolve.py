@@ -48,6 +48,7 @@ from nab_python.requirements_file import (
     read_pyproject_optional_dependencies,
 )
 from nab_python.resolve import (
+    ResolveFork,
     ResolveResult,
     _augment_resolution_error,
     _build_resolver_inputs,
@@ -5224,3 +5225,363 @@ class TestBuildGroupMarkers:
 
         assert _pylock_markers(pylock)["mydev"] == '"dev" in dependency_groups'
         assert _pylock_selected(pylock, dependency_groups=["dev"]) == {"mydev"}
+
+
+class TestConfiguredGroupConflicts:
+    """A conflict may name ``base-group`` or ``build-group``, which forks."""
+
+    _ROOT = (
+        '[project]\nname = "proj"\nversion = "1.0"\n'
+        'dependencies = ["packaging<24", "requests"]\n'
+        '[build-system]\nrequires = ["setuptools>=70", "packaging>=24"]\n'
+        "[dependency-groups]\n"
+        'dev = ["pytest"]\n'
+        "[tool.nab]\n"
+        'base-group = "main"\n'
+        'build-group = "build"\n'
+    )
+
+    _CONFLICT = 'conflicts = [[{ group = "main" }, { group = "build" }]]\n'
+
+    @staticmethod
+    def _planned(pyproject: Path, **kwargs: object) -> MagicMock:
+        """Resolve far enough to capture the fork plan, without an index."""
+        with (
+            patch("nab_python.resolve.resolve_with_coordinator") as mock_engine,
+            patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
+        ):
+            mock_coord_cls.return_value.__enter__ = lambda coordinator: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            resolve_for_targets(
+                pyproject, _FAKE_TRANSPORT, python_version="3.12.0", **kwargs
+            )
+        return mock_engine
+
+    def _forks(self, tmp_path: Path, tool: str, **kwargs: object) -> list[ResolveFork]:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(self._ROOT + tool)
+        return self._planned(pyproject, **kwargs).call_args.kwargs["forks"]
+
+    def test_the_two_sides_resolve_separately(self, tmp_path: Path) -> None:
+        """Each fork carries one context, so neither constrains the other."""
+        forks = self._forks(tmp_path, self._CONFLICT)
+
+        assert [f.selection for f in forks] == [
+            (("group", "main"),),
+            (("group", "build"),),
+        ]
+        assert [str(r) for r in forks[0].requirements] == ["packaging<24", "requests"]
+        assert [str(r) for r in forks[1].requirements] == [
+            "setuptools>=70",
+            "packaging>=24",
+        ]
+
+    def test_each_fork_claims_only_the_context_it_walked(self, tmp_path: Path) -> None:
+        """A fork that never resolved the build requirements has no gate for them."""
+        main_fork, build_fork = self._forks(tmp_path, self._CONFLICT)
+
+        assert [str(r) for r in main_fork.contexts.project] == [
+            "packaging<24",
+            "requests",
+        ]
+        assert ("group", "build") not in main_fork.contexts.selectors
+
+        assert build_fork.contexts.project == ()
+        assert ("group", "build") in build_fork.contexts.selectors
+
+    def test_the_base_pass_carries_neither_side(self, tmp_path: Path) -> None:
+        """With both contexts conflicted, no dependency is a base dependency.
+
+        That is what lets the two forks pin one package differently: a
+        divergence is only refused for a package the base pass named.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(self._ROOT + self._CONFLICT)
+
+        engine = self._planned(pyproject)
+
+        assert engine.call_args.kwargs["base_requirements"] == []
+
+    def test_without_the_conflict_both_sides_share_one_resolve(
+        self, tmp_path: Path
+    ) -> None:
+        """The default is co-resolution, which is what one version space means."""
+        (fork,) = self._forks(tmp_path, "")
+
+        assert fork.selection == ()
+        assert [str(r) for r in fork.requirements] == [
+            "packaging<24",
+            "requests",
+            "setuptools>=70",
+            "packaging>=24",
+        ]
+
+    def test_a_build_group_may_conflict_with_a_declared_group(
+        self, tmp_path: Path
+    ) -> None:
+        """The request's other half: build against any other dependency group."""
+        forks = self._forks(
+            tmp_path,
+            'conflicts = [[{ group = "build" }, { group = "dev" }]]\n',
+            groups=("dev",),
+        )
+
+        assert [f.selection for f in forks] == [
+            (("group", "build"),),
+            (("group", "dev"),),
+        ]
+        build_fork, dev_fork = forks
+        assert "setuptools>=70" in {str(r) for r in build_fork.requirements}
+        assert "pytest" not in {str(r) for r in build_fork.requirements}
+        assert "pytest" in {str(r) for r in dev_fork.requirements}
+        assert "setuptools>=70" not in {str(r) for r in dev_fork.requirements}
+
+    def test_the_project_dependencies_stay_in_every_fork_of_that_set(
+        self, tmp_path: Path
+    ) -> None:
+        """Only conflicting base-group moves the project's own dependencies."""
+        forks = self._forks(
+            tmp_path,
+            'conflicts = [[{ group = "build" }, { group = "dev" }]]\n',
+            groups=("dev",),
+        )
+
+        for fork in forks:
+            assert "packaging<24" in {str(r) for r in fork.requirements}
+
+    def test_a_three_member_set_forks_three_ways(self, tmp_path: Path) -> None:
+        """The spelling the docs give for conflicting all three at once."""
+        forks = self._forks(
+            tmp_path,
+            'conflicts = [[{ group = "main" }, { group = "build" },'
+            ' { group = "dev" }]]\n',
+            groups=("dev",),
+        )
+
+        assert [f.selection for f in forks] == [
+            (("group", "main"),),
+            (("group", "build"),),
+            (("group", "dev"),),
+        ]
+        assert forks[2].contexts.project == ()
+
+    def test_an_exactly_one_set_is_satisfied_by_a_configured_member(
+        self, tmp_path: Path
+    ) -> None:
+        """A configured member counts towards the minimum without being selected."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            self._ROOT + "conflicts = [{ members = ["
+            '{ group = "main" }, { group = "build" }],'
+            ' policy = "exactly-one" }]\n'
+        )
+
+        forks = self._planned(pyproject).call_args.kwargs["forks"]
+
+        assert [f.selection for f in forks] == [
+            (("group", "main"),),
+            (("group", "build"),),
+        ]
+
+    def test_an_umbrella_group_reaching_a_conflicted_member_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """A fork can only carry a member the run selected directly.
+
+        The umbrella reaches ``dev`` without naming it, so this fork would
+        carry the project's own dependencies and ``dev`` together, which
+        the declaration says cannot happen.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\nversion = "1.0"\ndependencies = ["core"]\n'
+            "[dependency-groups]\n"
+            'dev = ["mydev"]\n'
+            'all = [{ include-group = "dev" }]\n'
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'conflicts = [[{ group = "main" }, { group = "dev" }]]\n'
+        )
+
+        with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
+            self._planned(pyproject, groups=("all",))
+
+    def test_a_near_miss_for_a_configured_name_still_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """Widening the known names must not let an inert member through."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            self._ROOT
+            + 'conflicts = [[{ group = "build-tools" }, { group = "dev" }]]\n'
+        )
+
+        with pytest.raises(ConfigError, match="build-tools"):
+            self._planned(pyproject, groups=("dev",))
+
+    def test_an_unset_configured_name_is_not_known(self, tmp_path: Path) -> None:
+        """``build`` names nothing when build-group is unset."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\nversion = "1.0"\ndependencies = []\n'
+            "[dependency-groups]\n"
+            'dev = ["pytest"]\n'
+            "[tool.nab]\n"
+            'conflicts = [[{ group = "build" }, { group = "dev" }]]\n'
+        )
+
+        with pytest.raises(ConfigError, match="group 'build'"):
+            self._planned(pyproject, groups=("dev",))
+
+
+class TestConfiguredGroupConflictMarkers:
+    """A declared main/build conflict emits one lock with two version spaces."""
+
+    _MEMBERS: ClassVar[dict[str, str]] = {
+        "core": '[project]\nname = "core"\nversion = "1.0"\n',
+        "builder": '[project]\nname = "builder"\nversion = "5.0"\n',
+    }
+
+    _ROOT = (
+        '[project]\nname = "app"\nversion = "1.0"\ndependencies = ["core"]\n'
+        '[build-system]\nrequires = ["builder"]\n'
+        "[tool.nab]\n"
+        'base-group = "main"\n'
+        'build-group = "build"\n'
+        'conflicts = [[{ group = "main" }, { group = "build" }]]\n'
+        + "".join(
+            f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
+            for name in ("core", "builder")
+        )
+    )
+
+    def _lock(self, tmp_path: Path) -> Pylock:
+        return TestExtraAndGroupMembershipMarkers._lock(
+            tmp_path, root=self._ROOT, members=self._MEMBERS
+        )
+
+    def test_each_side_gates_on_its_own_name_and_negates_the_other(
+        self, tmp_path: Path
+    ) -> None:
+        """Naming both is what keeps a co-selecting installer to the overlap."""
+        markers = _pylock_markers(self._lock(tmp_path))
+
+        assert markers["core"] is not None
+        assert '"main" in dependency_groups' in markers["core"]
+        assert '"build" not in dependency_groups' in markers["core"]
+
+        assert markers["builder"] is not None
+        assert '"build" in dependency_groups' in markers["builder"]
+        assert '"main" not in dependency_groups' in markers["builder"]
+
+    def test_an_installer_gets_one_side_or_the_other(self, tmp_path: Path) -> None:
+        """The point of the declaration: the two never install together."""
+        pylock = self._lock(tmp_path)
+
+        assert _pylock_selected(pylock) == {"core"}
+        assert _pylock_selected(pylock, dependency_groups=["main"]) == {"core"}
+        assert _pylock_selected(pylock, dependency_groups=["build"]) == {"builder"}
+
+        # Asking for both is the context the declaration says cannot exist,
+        # and each side's negation is what leaves it holding neither.
+        assert _pylock_selected(pylock, dependency_groups=["main", "build"]) == set()
+
+    def test_the_lock_offers_both_names(self, tmp_path: Path) -> None:
+        """Only the project's own dependencies are a default install."""
+        pylock = self._lock(tmp_path)
+
+        assert pylock.dependency_groups == ("main", "build")
+        assert pylock.default_groups == ("main",)
+
+
+class TestConfiguredGroupConflictDivergentPins:
+    """The case the declaration exists for: one package, two pins, one lock."""
+
+    _ROOT = (
+        '[project]\nname = "app"\nversion = "1.0"\n'
+        'dependencies = ["packaging<24"]\n'
+        '[build-system]\nrequires = ["packaging>=24"]\n'
+        "[tool.nab]\n"
+        'base-group = "main"\n'
+        'build-group = "build"\n'
+    )
+
+    _CONFLICT = 'conflicts = [[{ group = "main" }, { group = "build" }]]\n'
+
+    @staticmethod
+    def _wheel(version: str) -> WheelFile:
+        return WheelFile(
+            filename=f"packaging-{version}-py3-none-any.whl",
+            url=f"https://example.com/packaging-{version}.whl",
+            version=version,
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+            hashes=(("sha256", "a" * 64),),
+        )
+
+    def _resolved_lock(self, tmp_path: Path, tool: str) -> Pylock:
+        """Resolve against an index carrying both versions, and emit the lock."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(self._ROOT + tool)
+        coordinator = make_coordinator(
+            [self._wheel("23.2"), self._wheel("24.2")],
+            package="packaging",
+            auto_metadata=True,
+        )
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            config = read_pyproject_config(pyproject)
+            result = _resolved(pyproject, _FAKE_TRANSPORT, config=config)
+        pylock = build_pylock(
+            build_lock_input(result, config=config), lock_dir=tmp_path
+        )
+        pylock.validate()
+        return pylock
+
+    def test_without_the_conflict_one_version_space_cannot_hold_both(
+        self, tmp_path: Path
+    ) -> None:
+        """Co-resolution is the default, and this project has no solution."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(self._ROOT)
+        coordinator = make_coordinator(
+            [self._wheel("23.2"), self._wheel("24.2")],
+            package="packaging",
+            auto_metadata=True,
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError):
+                _resolved(pyproject, _FAKE_TRANSPORT)
+
+    def test_the_conflict_gives_each_side_its_own_pin(self, tmp_path: Path) -> None:
+        """Two entries for one name, disjoint on the group clause."""
+        pylock = self._resolved_lock(tmp_path, self._CONFLICT)
+
+        entries = sorted(
+            (str(pkg.version), str(pkg.marker))
+            for pkg in pylock.packages
+            if str(pkg.name) == "packaging"
+        )
+        assert len(entries) == 2
+
+        runtime, build = entries
+        assert runtime[0] == "23.2"
+        assert '"main" in dependency_groups' in runtime[1]
+        assert build[0] == "24.2"
+        assert '"build" in dependency_groups' in build[1]
+
+    def test_an_installer_gets_the_right_one(self, tmp_path: Path) -> None:
+        """The two sides never install together, which is what was declared."""
+        pylock = self._resolved_lock(tmp_path, self._CONFLICT)
+
+        def versions(**kwargs: list[str]) -> set[str]:
+            return {str(pkg.version) for pkg, _ in pylock.select(**kwargs)}
+
+        assert versions() == {"23.2"}
+        assert versions(dependency_groups=["main"]) == {"23.2"}
+        assert versions(dependency_groups=["build"]) == {"24.2"}

@@ -221,12 +221,16 @@ requirements output formats carry no markers, so there the build
 requirements render as ordinary pins.
 
 The build requirements resolve in the same version space as the
-project's own, which is what a single lock can express: an installer
-reading it installs into one environment. A project whose backend needs
-a version its own dependencies exclude has no lock that can say so, and
-the resolve fails. `nab lock --build-requirements` is the way out, since
-a separate lock is a separate version space, which is also what PEP 517
-build isolation gives the build at install time.
+project's own, since one install context is all a shared marker can
+describe. A project whose backend needs a version its own dependencies
+exclude declares the two mutually exclusive; the resolve then forks and
+each side gets its own pins under disjoint markers. See
+[Conflicting extras and groups](../explanation/conflicts.md).
+
+`nab lock --build-requirements` writes the build side to a file of its
+own instead. That is what a consumer needs when it cannot select groups
+at all, which covers the requirements output formats and today's pylock
+installers.
 
 ### Portable paths
 

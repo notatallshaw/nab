@@ -48,7 +48,9 @@ base-group = "base"
 # pins.  The name must not be one [dependency-groups] declares, nor the
 # base-group name, and base-group must be set: unnamed, the project's
 # own dependencies carry no marker and come with every group, so nothing
-# could ask for the build requirements alone.
+# could ask for the build requirements alone.  Either name may be a
+# [tool.nab].conflicts member, which forks the resolve so each side gets
+# its own pins.
 build-group = "build"
 
 # The Python range this project supports.  A declaration: it is

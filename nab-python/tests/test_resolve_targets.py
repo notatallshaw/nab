@@ -195,6 +195,46 @@ class TestConflictForks:
         assert forks[0].active_extras == ("docs",)
         assert forks[0].active_groups == ("dev",)
 
+    def test_a_configured_name_is_active_without_being_selected(self) -> None:
+        """A configured group is active whenever it is set, so its set engages."""
+        forks = conflict_forks(
+            (), (), (_group_set("main", "build"),), ("main", "build")
+        )
+
+        assert [f.selection for f in forks] == [
+            (("group", "main"),),
+            (("group", "build"),),
+        ]
+        assert [f.active_configured for f in forks] == [("main",), ("build",)]
+        assert [f.active_groups for f in forks] == [(), ()]
+
+    def test_configured_names_stay_out_of_the_unforked_group_list(self) -> None:
+        """``active_groups`` stays what the [dependency-groups] loader can read."""
+        forks = conflict_forks((), ("dev",), (), ("main", "build"))
+
+        assert len(forks) == 1
+        assert forks[0].active_groups == ("dev",)
+        assert forks[0].active_configured == ("main", "build")
+
+    def test_a_configured_name_in_a_dormant_set_is_still_carried(self) -> None:
+        """The set does not engage, so every fork keeps both configured names."""
+        forks = conflict_forks((), (), (_group_set("main", "dev"),), ("main", "build"))
+
+        assert len(forks) == 1
+        assert forks[0].selection == ()
+        assert forks[0].active_configured == ("main", "build")
+
+    def test_a_configured_and_a_declared_name_fork_together(self) -> None:
+        """Selecting the declared member engages the set the configured one is in."""
+        forks = conflict_forks((), ("dev",), (_group_set("build", "dev"),), ("build",))
+
+        assert [f.selection for f in forks] == [
+            (("group", "build"),),
+            (("group", "dev"),),
+        ]
+        assert [f.active_configured for f in forks] == [("build",), ()]
+        assert [f.active_groups for f in forks] == [(), ("dev",)]
+
     def test_single_selected_member_does_not_engage(self) -> None:
         # Only cpu selected, gpu absent: no conflict, no fork.
         forks = conflict_forks(("cpu",), (), (_extra_set("cpu", "gpu"),))
