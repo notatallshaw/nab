@@ -1556,6 +1556,48 @@ class TestEnvironment:
         assert target.implementation == "pypy"
         assert target.platform_id == "macos_arm64"
 
+    def test_environment_zero_micro_pins_whole(self, tmp_path: Path) -> None:
+        """A ``python = "3.12.0"`` environment names one micro, resolved whole."""
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\npython = "3.12.0"\n'
+            'platform = "linux_x86_64"\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        (target,) = plan_targets(read_pyproject_config(path))
+        assert not target.is_minor_interval
+        assert not target.admits_requires_python(SpecifierSet(">=3.12.5"))
+
+    def test_environment_bare_minor_is_an_interval(self, tmp_path: Path) -> None:
+        """A ``python = "3.12"`` environment is a bare minor, resolved as a range."""
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\npython = "3.12"\n'
+            'platform = "linux_x86_64"\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        (target,) = plan_targets(read_pyproject_config(path))
+        assert target.is_minor_interval
+        assert target.admits_requires_python(SpecifierSet(">=3.12.5"))
+
+    def test_environment_no_platform_zero_micro_pins_whole(
+        self, tmp_path: Path
+    ) -> None:
+        """A ``python = "3.12.0"`` with no platform still names one whole micro."""
+        path = write(tmp_path, '[tool.nab.environment]\npython = "3.12.0"\n')
+        (target,) = plan_targets(read_pyproject_config(path))
+        assert not target.is_minor_interval
+        assert not target.admits_requires_python(SpecifierSet(">=3.12.5"))
+
+    def test_environment_no_platform_bare_minor_is_an_interval(
+        self, tmp_path: Path
+    ) -> None:
+        """A ``python = "3.12"`` with no platform is a bare-minor interval."""
+        path = write(tmp_path, '[tool.nab.environment]\npython = "3.12"\n')
+        (target,) = plan_targets(read_pyproject_config(path))
+        assert target.is_minor_interval
+        assert target.admits_requires_python(SpecifierSet(">=3.12.5"))
+
     def test_windows_arm64_bare_id_declares_a_target(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,

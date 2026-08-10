@@ -213,6 +213,22 @@ class TestForHostPython:
                 "not-a-version", env_source=_host_env, tags_source=_host_tags
             )
 
+    def test_zero_micro_pins_whole(self) -> None:
+        """A ``3.13.0`` target names one micro, resolved whole."""
+        target = ResolveTarget.for_host_python(
+            "3.13.0", env_source=_host_env, tags_source=_host_tags
+        )
+        assert not target.is_minor_interval
+        assert not target.admits_requires_python(SpecifierSet(">=3.13.5"))
+
+    def test_bare_minor_is_an_interval(self) -> None:
+        """A bare ``3.13`` target is a micro interval off its ``.0`` floor."""
+        target = ResolveTarget.for_host_python(
+            "3.13", env_source=_host_env, tags_source=_host_tags
+        )
+        assert target.is_minor_interval
+        assert target.admits_requires_python(SpecifierSet(">=3.13.5"))
+
     def test_live_sources_smoke(self) -> None:
         """The default sources are the running interpreter's."""
         target = ResolveTarget.for_host_python("3.10")
@@ -316,6 +332,17 @@ class TestAdmitsRequiresPython:
         )
         assert not target.is_minor_interval
         assert target.admits_requires_python(SpecifierSet(">=3.13.2"))
+        assert not target.admits_requires_python(SpecifierSet(">=3.13.5"))
+
+    def test_a_python_patches_zero_micro_is_whole(self) -> None:
+        """A ``.0`` pin is a concrete deployment micro, not a bare minor floor."""
+        target = ResolveTarget.for_declared(
+            python_version="3.13",
+            spec=PlatformSpec("linux_x86_64"),
+            python_full_version="3.13.0",
+        )
+        assert not target.is_minor_interval
+        assert target.admits_requires_python(SpecifierSet(">=3.13.0"))
         assert not target.admits_requires_python(SpecifierSet(">=3.13.5"))
 
     def test_every_slice_of_a_split_minor_agrees(self) -> None:

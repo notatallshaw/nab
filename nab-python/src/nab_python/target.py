@@ -742,6 +742,11 @@ class ResolveTarget:
     platform_spec: PlatformSpec | None = field(default=None, compare=False)
     multi_implementation: bool = field(default=False, compare=False)
     tags_faithful: bool = field(default=True, compare=False)
+    # python_full_version was pinned to a concrete micro (a matrix python-patches
+    # value or a declared patch level), not synthesized as a bare minor's ``.0``
+    # floor.  A pinned ``X.Y.0`` equals that floor by value, so only this flag
+    # tells the two apart.
+    concrete_micro: bool = field(default=False, compare=False)
     # The python_full_version clauses bounding this target's micro slice, set
     # by :func:`slices_from_points` when a consulted marker splits the minor.
     # Empty for an ordinary target.  Appended to
@@ -799,8 +804,12 @@ class ResolveTarget:
         minor carries ``micro_clauses`` and still stands for every interpreter
         its bounds admit, so it too is an interval answering Requires-Python at
         the same whole minor.
+
+        A pinned ``X.Y.0`` reads as the synthetic floor by string alone, so the
+        concrete-micro flag, not the value, decides: a python-patches pin is
+        whole even when its micro is ``.0``.
         """
-        if self.host_faithful:
+        if self.host_faithful or self.concrete_micro:
             return False
         if self.micro_clauses:
             return True
@@ -1025,6 +1034,10 @@ class ResolveTarget:
         over, and only the python axis (``python_version``,
         ``python_full_version``, and the tags' interpreter/abi) moves.
         This is what pip's ``--python-version`` targets.
+
+        A bare minor ("3.10") resolves as a micro interval off its ``.0``
+        floor; a named patch level ("3.10.5", "3.13.0") is one concrete
+        micro resolved whole, so an ``X.Y.0`` pin is not the synthetic floor.
         """
         env = host_environment(env_source)
         apply_python_axis_overlay(env, python_axis_environment(python))
@@ -1034,6 +1047,7 @@ class ResolveTarget:
             marker_env=env,
             tags=TagSet.for_host_python(python, tags_source=tags_source),
             host_faithful=False,
+            concrete_micro=len(Version(python).release) >= _PYTHON_FULL_VERSION_PARTS,
         )
 
     @classmethod
@@ -1067,6 +1081,7 @@ class ResolveTarget:
             host_faithful=False,
             platform_spec=spec,
             multi_implementation=multi_implementation,
+            concrete_micro=python_full_version is not None,
         )
 
 

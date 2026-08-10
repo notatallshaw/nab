@@ -139,6 +139,10 @@ _PEP508_MARKER_VARIABLES = frozenset(
 # Marker variables whose values must parse as PEP 440 versions.
 _VERSION_MARKER_VARIABLES = frozenset({"python_version", "python_full_version"})
 
+# Release-component count of a bare ``major.minor`` python declaration; more
+# parts name a concrete patch level.
+_PYTHON_MINOR_PARTS = 2
+
 # How a ``requires-python`` declaration is named back to the user.  The
 # [tool.nab] key stays bare because the CLI's error prefix already names that
 # table; the [project] fallback has to name its own.
@@ -988,11 +992,16 @@ def _declared_target(environment: EnvironmentConfig) -> ResolveTarget:
         environment, (axis["python_version"],) if environment.python else ()
     )
 
+    # More than major.minor ("3.10.5", "3.12.0", or the host's release) names a
+    # concrete micro, resolved whole.  A bare minor ("3.12") gets a synthetic
+    # .0 floor and resolves as a micro interval.
+    pinned_micro = len(Version(python).release) > _PYTHON_MINOR_PARTS
+
     return ResolveTarget.for_declared(
         python_version=axis["python_version"],
         spec=environment.platform,
         implementation=implementation,
-        python_full_version=axis["python_full_version"],
+        python_full_version=axis["python_full_version"] if pinned_micro else None,
     )
 
 
