@@ -19,13 +19,15 @@ from nab_python.resolve import ResolveResult, TargetResult
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
 
-pytestmark = pytest.mark.benchmark
+# universal_scenarios.py and universal_summary.py import their siblings by bare name.
+pytestmark = [
+    pytest.mark.benchmark,
+    pytest.mark.usefixtures("benchmark_import_path"),
+]
 
 _BENCHMARK = (
-    Path(__file__).resolve().parents[1] / "benchmarks" / "universal_scenarios.py"
+    Path(__file__).resolve().parents[2] / "benchmarks" / "universal_scenarios.py"
 )
-if str(_BENCHMARK.parent) not in sys.path:
-    sys.path.insert(0, str(_BENCHMARK.parent))
 _CLEAN_SOURCE = {"commit": "a" * 40, "dirty": False, "diff_hash": None}
 _WINDOWS_DEVICE_NAMES = (
     "AUX",
@@ -605,16 +607,20 @@ def test_lock_inconsistency_fails_and_pins_are_retained(
 
     data = json.loads((tmp_path / "commit" / "universal" / "example.json").read_text())
     assert accepted is False
+
     assert data["input"]["benchmark_schema"] == module.RESULT_SCHEMA_VERSION
     assert data["input"]["scenario"] == "example"
     assert data["input"]["source"] == _CLEAN_SOURCE
+
     assert data["input"]["build_policy"] == "never"
     assert data["input"]["dist_policy"] == "wheel-or-sdist"
     assert data["input"]["trust_unverified_sdist_deps"] is False
     assert data["input"]["skip_on_fail"] is False
     assert data["input"]["reason"] == ""
+
     assert data["result"]["resolution_success"] is True
     assert data["result"]["success"] is False
+
     assert data["per_tuple"][0]["pins"] == {"foo": "1.0"}
     assert data["merged_pins"] == {"foo": [{"version": "1.0", "target": target.label}]}
 
@@ -672,12 +678,15 @@ def test_skip_on_fail_does_not_accept_post_resolution_errors(
 
     data = json.loads((tmp_path / "commit" / "universal" / "example.json").read_text())
     assert accepted is False
+
     assert data["result"]["resolution_success"] is True
     assert data["result"]["expected_failure"] is False
     assert data["result"]["timed_out"] is False
     assert data["result"]["error"] == "RuntimeError: projection crashed"
+
     assert data["stats"]["tuples_total"] == 1
     assert data["stats"]["tuples_recorded"] == 1
+
     assert data["per_tuple"][0]["pins"] == {"foo": "1.0"}
     assert data["merged_pins"] == {"foo": [{"version": "1.0", "target": target.label}]}
 

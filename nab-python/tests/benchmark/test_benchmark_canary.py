@@ -19,9 +19,13 @@ from nab_index.serialization import SimpleSerialization
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from nab_python.target import ResolveTarget
 
-pytestmark = pytest.mark.benchmark
+# canary.py imports its siblings by bare name.
+pytestmark = [
+    pytest.mark.benchmark,
+    pytest.mark.usefixtures("benchmark_import_path"),
+]
 
-_CANARY = Path(__file__).resolve().parents[1] / "benchmarks" / "canary.py"
+_CANARY = Path(__file__).resolve().parents[2] / "benchmarks" / "canary.py"
 
 
 def _harness() -> ModuleType:
@@ -29,12 +33,7 @@ def _harness() -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    benchmark_dir = str(_CANARY.parent)
-    sys.path.insert(0, benchmark_dir)
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.remove(benchmark_dir)
+    spec.loader.exec_module(module)
     return module
 
 
@@ -425,10 +424,12 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
 
     assert len(calls) == 3
     assert calls[1:] == [calls[0], calls[0]]
+
     args, kwargs = calls[0]
     requirements, constraints = args
     assert set(requirements) == {"demo"}
     assert set(constraints) == {"support"}
+
     config = kwargs["config"]
     assert config.uploaded_prior_to == module.parse_datetime("2025-01-02 03:04:05")
     assert config.indexes == (
@@ -439,10 +440,12 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
         ),
     )
     assert module.index_routes_from_config(config) == [IndexRoute("demo", "private")]
+
     assert len(config.package_overrides) == 1
     assert config.package_overrides[0].build_policy is module.BuildPolicy.BUILD_REMOTE
     assert config.resolution is module.ResolutionStrategy.LOWEST_DIRECT
     assert config.trust_unverified_sdist_deps is True
+
     assert kwargs["target"].marker_env["python_version"] == "3.11"
     assert kwargs["host"] is host
 
@@ -832,9 +835,11 @@ def test_canary_main_preserves_v2_lowest_identity_and_effective_settings(
     expected_input_hash = module.scenario_input_hash(
         "quick-lowest:example", expected_input
     )
+
     assert record["contract_version"] == 2
     assert record["scenario"] == "quick-lowest:example"
     assert record["input"] == expected_input
+
     assert record["input_hash"] == expected_input_hash
     assert record["effective_settings"] == settings
     assert record["execution_hash"] == module.scenario_execution_hash(

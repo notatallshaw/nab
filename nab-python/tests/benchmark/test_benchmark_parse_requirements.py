@@ -2,8 +2,8 @@
 
 A scenario may list a package both pinned and with a bare extra, e.g.
 ``inmanta-core==6.0.0`` followed by ``inmanta-core[pytest-inmanta-extensions]``.
-The harness must keep the pin (as pip and uv do), not let the later bare
-requirement widen the range back to any version.
+The harness must keep the pin, as pip and uv do, not let the bare requirement
+widen it back.
 
 It must also enter a requirement's extras in a fixed order, so a multi-extra
 root seeds the resolver the same way in every process.
@@ -26,9 +26,13 @@ from nab_python._vendor.packaging.version import Version
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-pytestmark = pytest.mark.benchmark
+# scenarios.py and canary.py import their siblings by bare name.
+pytestmark = [
+    pytest.mark.benchmark,
+    pytest.mark.usefixtures("benchmark_import_path"),
+]
 
-_BENCH = Path(__file__).resolve().parents[1] / "benchmarks"
+_BENCH = Path(__file__).resolve().parents[2] / "benchmarks"
 
 
 def _harness(name: str) -> ModuleType:

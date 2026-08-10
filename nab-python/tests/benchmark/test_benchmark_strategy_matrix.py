@@ -5,7 +5,6 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-import sys
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from copy import deepcopy
@@ -27,9 +26,13 @@ from nab_python._vendor.packaging.version import Version
 from nab_python.fetch import IndexRoute
 from nab_python.target import ResolveTarget
 
-pytestmark = pytest.mark.benchmark
+# The runner scripts loaded here import their siblings by bare name.
+pytestmark = [
+    pytest.mark.benchmark,
+    pytest.mark.usefixtures("benchmark_import_path"),
+]
 
-_BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
+_BENCHMARKS = Path(__file__).resolve().parents[2] / "benchmarks"
 _STANDARD_FILES = 14
 _STANDARD_SCENARIOS = 553
 _RUNNABLE_SCENARIOS = 529
@@ -437,11 +440,7 @@ def _harness(name: str) -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    sys.path.insert(0, str(_BENCHMARKS))
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.path.remove(str(_BENCHMARKS))
+    spec.loader.exec_module(module)
     return module
 
 
@@ -3926,6 +3925,7 @@ def test_force_replaces_only_the_standard_result_namespace(
     assert (run_dir / "quick" / "example.json").is_file()
     assert not (run_dir / "quick-lowest").exists()
     assert not (run_dir / "quick-lowest-direct").exists()
+
     assert (universal / "fixture.json").read_text() == "{}\n"
     assert provenance.read_text() == "{}\n"
 
@@ -4955,6 +4955,7 @@ def test_vcs_policy_matches_across_parser_and_runners(
     assert standard_execution.config.vcs.policy is expected_policy
     assert canary_execution.config.vcs.policy is expected_policy
     assert profile_inputs["config"].vcs.policy is expected_policy
+
     assert scenario == original
 
 

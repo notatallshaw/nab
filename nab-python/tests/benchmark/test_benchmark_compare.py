@@ -12,7 +12,7 @@ import pytest
 
 pytestmark = pytest.mark.benchmark
 
-_BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
+_BENCHMARKS = Path(__file__).resolve().parents[2] / "benchmarks"
 _STRATEGIES = ("highest", "lowest", "lowest-direct")
 _COMPLETED_LOGICAL = ("cases:done",)
 _UNSUPPORTED_LOGICAL = ("cases:nope",)

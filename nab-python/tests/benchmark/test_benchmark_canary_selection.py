@@ -10,9 +10,13 @@ from types import ModuleType
 
 import pytest
 
-pytestmark = pytest.mark.benchmark
+# canary.py imports its siblings by bare name.
+pytestmark = [
+    pytest.mark.benchmark,
+    pytest.mark.usefixtures("benchmark_import_path"),
+]
 
-_CANARY = Path(__file__).resolve().parents[1] / "benchmarks" / "canary.py"
+_CANARY = Path(__file__).resolve().parents[2] / "benchmarks" / "canary.py"
 _EXPECTED_CANARY_CASES = 19
 _EXPECTED_V2_INPUT_HASHES = {
     "uv-lowest:boto3-urllib3-transient": "ad435caf32fab80e8454ccdd649197d94c39cf034c9d28d3bc2c36bac0005275",

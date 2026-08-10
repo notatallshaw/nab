@@ -28,9 +28,9 @@ _BENCHMARKS = Path(__file__).resolve().parents[1] / "benchmarks"
 def _harness() -> ModuleType:
     """Load the benchmark script by path and keep one copy for the session.
 
-    The benchmarks directory is deliberately not a package, so there is no import
-    path to reach it by. Caching in sys.modules keeps every test working against
-    the same module object, which is what makes monkeypatching it stick.
+    The benchmarks directory is not a package. Caching in sys.modules keeps
+    every test working against the same module object, so monkeypatching it
+    sticks.
     """
     name = "_nab_deterministic_smoke"
     existing = sys.modules.get(name)
