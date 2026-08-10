@@ -2162,6 +2162,83 @@ class TestErrorMessages:
         assert negative == "not a [1, +inf)"
 
 
+class WideningProvider(DictProvider):
+    """Widens every decision to the full range, narrowing it back at display time.
+
+    The narrowing has to change the report, or a render that skipped the hook
+    would look the same.
+    """
+
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        return Range.full()
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        return Range.singleton(1) if package == "foo" else constraint
+
+
+def bracketed(constraint: object) -> str:
+    """Render a constraint unlike ``str`` does, to tell the two renders apart."""
+    return f"<{constraint}>"
+
+
+# foo and bar each depend on a half of baz the other rules out.
+CONFLICTING: dict[str, dict[int, dict[str, Range]]] = {
+    "root": {1: {"foo": Range.full(), "bar": Range.full()}},
+    "foo": {1: {"baz": Range.at_least(2)}},
+    "bar": {1: {"baz": Range.less_than(2)}},
+    "baz": {2: {}, 1: {}},
+}
+
+
+class TestResolutionErrorMessageContract:
+    """What ``str(error)`` is, and the two raise sites where it is something else."""
+
+    def test_message_is_the_report_the_display_hooks_produce(self) -> None:
+        provider = WideningProvider(CONFLICTING)
+        resolver = Resolver(provider, format_range=bracketed)
+
+        with pytest.raises(ResolutionError) as excinfo:
+            resolver.resolve({"root": Range.singleton(1)})
+
+        error = excinfo.value
+        assert error.incompatibility is not None
+        assert str(error) == format_error(
+            error.incompatibility,
+            narrow=provider.narrow_for_display,
+            format_range=bracketed,
+        )
+
+        # Neither hook is optional: leaving either out gives a different report.
+        assert str(error) != format_error(
+            error.incompatibility, narrow=provider.narrow_for_display
+        )
+        assert str(error) != format_error(error.incompatibility, format_range=bracketed)
+
+    def test_the_iteration_limit_carries_no_derivation(self) -> None:
+        resolver = Resolver(DictProvider(CONFLICTING), max_iterations=1)
+
+        with pytest.raises(ResolutionError) as excinfo:
+            resolver.resolve({"root": Range.singleton(1)})
+
+        assert excinfo.value.incompatibility is None
+        assert str(excinfo.value) == "Resolution exceeded 1 iterations"
+
+    @pytest.mark.timeout(STALL_TIMEOUT_SECONDS)
+    def test_a_stalled_conflict_loop_reports_the_bug_not_the_derivation(self) -> None:
+        solution, stalled = stalled_solution(padding=0)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution = solution
+
+        with pytest.raises(ResolutionError) as excinfo:
+            conflict_resolution(resolver, stalled)
+
+        error = excinfo.value
+        assert error.incompatibility is not None
+        assert str(error) != format_error(error.incompatibility)
+
+
 class TestFormatRangeHook:
     """``format_range`` renders every constraint a report line shows.
 
