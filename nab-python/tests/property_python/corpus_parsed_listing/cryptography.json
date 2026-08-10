@@ -1,0 +1,279 @@
+{
+"files": [
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "cryptography-0.1.tar.gz",
+"hashes": {
+"sha256": "daabc24469daea5697f623dce531ab81c54476b8213af32431cb03330937bcfb"
+},
+"provenance": null,
+"requires-python": null,
+"size": 13369774,
+"upload-time": "2014-01-08T23:17:39.968124Z",
+"url": "https://files.pythonhosted.org/packages/42/ba/ce099c780821ddf9036479e25e7a886adccce07b28936bf56944c1b687a9/cryptography-0.1.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "52d43d8b59b787085526ec4b37c4ff0163e4a7d72000ed0503441db2cd769fc9"
+},
+"data-dist-info-metadata": {
+"sha256": "52d43d8b59b787085526ec4b37c4ff0163e4a7d72000ed0503441db2cd769fc9"
+},
+"filename": "cryptography-0.2-cp26-none-win32.whl",
+"hashes": {
+"sha256": "1aa4b09689bfb3c715552ad66d1fdc8674c6088ff33e4887b9733407acc522be"
+},
+"provenance": null,
+"requires-python": null,
+"size": 150530,
+"upload-time": "2014-02-20T19:50:45.930652Z",
+"url": "https://files.pythonhosted.org/packages/e0/27/780a077a22469e7dc3588e19c5544c295c5c8f012525848b07ac4c3f5d4f/cryptography-0.2-cp26-none-win32.whl",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "52d43d8b59b787085526ec4b37c4ff0163e4a7d72000ed0503441db2cd769fc9"
+},
+"data-dist-info-metadata": {
+"sha256": "52d43d8b59b787085526ec4b37c4ff0163e4a7d72000ed0503441db2cd769fc9"
+},
+"filename": "cryptography-0.2-cp27-none-win32.whl",
+"hashes": {
+"sha256": "daca72f4006893e5a6de689217cbfe6dada407ffcb9213f14892614b7c7e7622"
+},
+"provenance": null,
+"requires-python": null,
+"size": 149737,
+"upload-time": "2014-02-20T19:50:49.598999Z",
+"url": "https://files.pythonhosted.org/packages/c6/42/eaab2bf95dc6fb215bc0a6eb3f751c4aba091c69ea88a01b8d634410b420/cryptography-0.2-cp27-none-win32.whl",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "0315aeeca27a2ca7d5df197acda2ab8ad78118c3ef959278668f1e7b7350b3d8"
+},
+"data-dist-info-metadata": {
+"sha256": "0315aeeca27a2ca7d5df197acda2ab8ad78118c3ef959278668f1e7b7350b3d8"
+},
+"filename": "cryptography-0.2-cp32-none-win32.whl",
+"hashes": {
+"sha256": "2fa32c697f9ea8e4c513329782f76acb707bf498b2311c59d97e2bc2f1d96d26"
+},
+"provenance": null,
+"requires-python": null,
+"size": 149776,
+"upload-time": "2014-02-20T19:50:51.164367Z",
+"url": "https://files.pythonhosted.org/packages/23/f0/95d1b3786083afe5bb2c1e1af8b74cd02e75816a79c50d97f3d566ccf52b/cryptography-0.2-cp32-none-win32.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "cryptography-0.2.tar.gz",
+"hashes": {
+"sha256": "603bbaca2aec11157917470c750cc051e432a7278f94ac936c2cf9d5f4add791"
+},
+"provenance": null,
+"requires-python": null,
+"size": 13772788,
+"upload-time": "2014-02-20T19:47:16.051747Z",
+"url": "https://files.pythonhosted.org/packages/03/f8/697762ae5c6b1cc4ea6a672c4960ca5f15d1eb518c53dc179d93b682bf48/cryptography-0.2.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "cryptography-0.2.1.tar.gz",
+"hashes": {
+"sha256": "5b4b93a9841364396ac75ee3f0f4550752821df5a89078c1e16a716339ba39a3"
+},
+"provenance": null,
+"requires-python": null,
+"size": 13772304,
+"upload-time": "2014-02-22T21:46:59.095545Z",
+"url": "https://files.pythonhosted.org/packages/5b/ad/bb54a553dfecc78396fc1d10db71991cae57d51b095a50ac2c2bf6c9841b/cryptography-0.2.1.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "1c1665f22cfdf93583182c40b22f3e9a7d3aba5e6699290320d36a6cc0417a30"
+},
+"data-dist-info-metadata": {
+"sha256": "1c1665f22cfdf93583182c40b22f3e9a7d3aba5e6699290320d36a6cc0417a30"
+},
+"filename": "cryptography-37.0.3-cp36-abi3-macosx_10_10_universal2.whl",
+"hashes": {
+"sha256": "d10413d493e98075060d3e62e5826de372912ea653ccc948f3c41b21ddca087f"
+},
+"provenance": null,
+"requires-python": ">=3.6",
+"size": 5390913,
+"upload-time": "2022-06-21T19:07:43.947575Z",
+"url": "https://files.pythonhosted.org/packages/72/63/84d4e37500d16fffacb6f21371b298c90e50941df59ca25d86b37e5a9ff2/cryptography-37.0.3-cp36-abi3-macosx_10_10_universal2.whl",
+"yanked": "Regression in OpenSSL."
+},
+{
+"core-metadata": {
+"sha256": "1c1665f22cfdf93583182c40b22f3e9a7d3aba5e6699290320d36a6cc0417a30"
+},
+"data-dist-info-metadata": {
+"sha256": "1c1665f22cfdf93583182c40b22f3e9a7d3aba5e6699290320d36a6cc0417a30"
+},
+"filename": "cryptography-37.0.3-cp36-abi3-macosx_10_10_x86_64.whl",
+"hashes": {
+"sha256": "cd64147ff16506632893ceb2569624b48c84daa3ba4d89695f7c7bc24188eee9"
+},
+"provenance": null,
+"requires-python": ">=3.6",
+"size": 2849832,
+"upload-time": "2022-06-21T19:07:48.146409Z",
+"url": "https://files.pythonhosted.org/packages/bc/1c/749a63d4650bb757cbc651c1834b771ac199e4e73e2b9ed45fb061207dbe/cryptography-37.0.3-cp36-abi3-macosx_10_10_x86_64.whl",
+"yanked": "Regression in OpenSSL."
+},
+{
+"core-metadata": {
+"sha256": "5ea10916d6eb38c956e65230f0ae6fbe65c8b478defa98e84b7e5ce2e74f1d12"
+},
+"data-dist-info-metadata": {
+"sha256": "5ea10916d6eb38c956e65230f0ae6fbe65c8b478defa98e84b7e5ce2e74f1d12"
+},
+"filename": "cryptography-37.0.3-cp36-abi3-manylinux_2_12_x86_64.manylinux2010_x86_64.whl",
+"hashes": {
+"sha256": "17c74f7d9e9e9bb7e84521243695c1b4bdc3a0e44ca764e6bcf8f05f3de3d0df"
+},
+"provenance": null,
+"requires-python": ">=3.6",
+"size": 4071104,
+"upload-time": "2022-06-21T19:08:26.187118Z",
+"url": "https://files.pythonhosted.org/packages/4f/c6/ac849d61022cd9df7062b7bf6b286e99a1cfc9608c0e802443fa34c5f1dd/cryptography-37.0.3-cp36-abi3-manylinux_2_12_x86_64.manylinux2010_x86_64.whl",
+"yanked": "Regression in OpenSSL."
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "cryptography-37.0.3.tar.gz",
+"hashes": {
+"sha256": "ae430d51c67ac638dfbb42edf56c669ca9c74744f4d225ad11c6f3d355858187"
+},
+"provenance": null,
+"requires-python": ">=3.6",
+"size": 585915,
+"upload-time": "2022-06-21T19:07:26.902461Z",
+"url": "https://files.pythonhosted.org/packages/67/82/9dd8ef695c7f928b25927e8956f73bdba09a752a51871678f320c498c535/cryptography-37.0.3.tar.gz",
+"yanked": "Regression in OpenSSL."
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "cryptography-38.0.2.tar.gz",
+"hashes": {
+"sha256": "7a022ec87c7a8bdad99f516a4ee6ffcb3a2bc31487577f9eccbc9b2edb1a8fd4"
+},
+"provenance": null,
+"requires-python": ">=3.6",
+"size": 599757,
+"upload-time": "2022-10-11T18:59:25.523280Z",
+"url": "https://files.pythonhosted.org/packages/63/82/a6e21842f2e31b3874f01c112093b8bf8af119f5ed999bbd667a81de720b/cryptography-38.0.2.tar.gz",
+"yanked": "Regression in OpenSSL."
+},
+{
+"core-metadata": {
+"sha256": "a5fc7717195892a05eeefab6e1a17af2a77086ab74c046d8f9faa2631703d725"
+},
+"data-dist-info-metadata": {
+"sha256": "a5fc7717195892a05eeefab6e1a17af2a77086ab74c046d8f9faa2631703d725"
+},
+"filename": "cryptography-45.0.0-cp311-abi3-macosx_10_9_universal2.whl",
+"hashes": {
+"sha256": "fe8f72b57fd19977f8bae45731d20cb7fd3d6978bbdc377e40f436663871745a"
+},
+"provenance": "https://pypi.org/integrity/cryptography/45.0.0/cryptography-45.0.0-cp311-abi3-macosx_10_9_universal2.whl/provenance",
+"requires-python": "!=3.9.0,!=3.9.1,>=3.7",
+"size": 6801440,
+"upload-time": "2025-05-17T16:16:52.995911Z",
+"url": "https://files.pythonhosted.org/packages/31/20/2608edb02aafe57047a247a6dc92f2f4eaa43acc9e94b195e17a7dbd72b6/cryptography-45.0.0-cp311-abi3-macosx_10_9_universal2.whl",
+"yanked": true
+},
+{
+"core-metadata": {
+"sha256": "a5fc7717195892a05eeefab6e1a17af2a77086ab74c046d8f9faa2631703d725"
+},
+"data-dist-info-metadata": {
+"sha256": "a5fc7717195892a05eeefab6e1a17af2a77086ab74c046d8f9faa2631703d725"
+},
+"filename": "cryptography-45.0.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+"hashes": {
+"sha256": "6f339738295a936790cea83026b14cbb4cbf8fff7826033228a3a12f87fbb02e"
+},
+"provenance": "https://pypi.org/integrity/cryptography/45.0.0/cryptography-45.0.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl/provenance",
+"requires-python": "!=3.9.0,!=3.9.1,>=3.7",
+"size": 4033046,
+"upload-time": "2025-05-17T16:16:54.859839Z",
+"url": "https://files.pythonhosted.org/packages/31/1b/8e43b277f3093406a2206685af0693f6d86d680d5549ce3f41cda6c18b76/cryptography-45.0.0-cp311-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+"yanked": true
+},
+{
+"core-metadata": {
+"sha256": "a5fc7717195892a05eeefab6e1a17af2a77086ab74c046d8f9faa2631703d725"
+},
+"data-dist-info-metadata": {
+"sha256": "a5fc7717195892a05eeefab6e1a17af2a77086ab74c046d8f9faa2631703d725"
+},
+"filename": "cryptography-45.0.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+"hashes": {
+"sha256": "1adf4d43a6045da6b6625b77a790e8958c0326c5c4f2cd5cff72c4a7dff78972"
+},
+"provenance": "https://pypi.org/integrity/cryptography/45.0.0/cryptography-45.0.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl/provenance",
+"requires-python": "!=3.9.0,!=3.9.1,>=3.7",
+"size": 4245176,
+"upload-time": "2025-05-17T16:16:56.487235Z",
+"url": "https://files.pythonhosted.org/packages/c0/99/d5a64105d18be6805c3aba2e25b686e557a2ee2aed28f0d23554c2244ed6/cryptography-45.0.0-cp311-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+"yanked": true
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "cryptography-45.0.0.tar.gz",
+"hashes": {
+"sha256": "775ea405c16356e9d1646fa55393ea031737301041bfe849fbab9d9d88773756"
+},
+"provenance": "https://pypi.org/integrity/cryptography/45.0.0/cryptography-45.0.0.tar.gz/provenance",
+"requires-python": "!=3.9.0,!=3.9.1,>=3.7",
+"size": 743817,
+"upload-time": "2025-05-17T16:18:04.642614Z",
+"url": "https://files.pythonhosted.org/packages/52/ca/dbd1dbb68769fe3972b2333b67a102f1c768c8ac42c31f36eaee4f37657d/cryptography-45.0.0.tar.gz",
+"yanked": true
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "cryptography-48.0.1.tar.gz",
+"hashes": {
+"sha256": "266f4ee051abb2f725b74ef8072b521ce1feacf685a3364fa6a6b45548db791a"
+},
+"provenance": "https://pypi.org/integrity/cryptography/48.0.1/cryptography-48.0.1.tar.gz/provenance",
+"requires-python": "!=3.9.0,!=3.9.1,>=3.9",
+"size": 832989,
+"upload-time": "2026-06-09T22:32:31.800173Z",
+"url": "https://files.pythonhosted.org/packages/12/45/870e7f4bef50e5f53b9f51d4428aee5290eedf58ba443f16b1ebb7ab8e66/cryptography-48.0.1.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "cryptography-49.0.0.tar.gz",
+"hashes": {
+"sha256": "f89660a348f4f78a92366240a61404e337586ef7f5909a2fef59ca88ef505493"
+},
+"provenance": "https://pypi.org/integrity/cryptography/49.0.0/cryptography-49.0.0.tar.gz/provenance",
+"requires-python": "!=3.9.0,!=3.9.1,>=3.9",
+"size": 854345,
+"upload-time": "2026-06-12T20:02:30.512482Z",
+"url": "https://files.pythonhosted.org/packages/1f/99/d1c90d6041656cc6ee229dc99cd67fd0cd5aec3c5f7d72fffc27cc750054/cryptography-49.0.0.tar.gz",
+"yanked": false
+}
+],
+"name": "cryptography"
+}

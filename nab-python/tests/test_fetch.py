@@ -21,7 +21,7 @@ import httpx
 import pytest
 import respx
 
-from nab_index.cache import NullCache, OfflineError, OnDiskCache
+from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import CachedAsyncSimpleClient
 from nab_index.client import (
     MalformedSimpleResponseError,
@@ -34,14 +34,17 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.lazy_wheel import RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
+from nab_index.parsed_listing import encode as encode_parsed
 from nab_index.serialization import SimpleSerialization
-from nab_index.transport import HttpError
+from nab_index.transport import HttpError, HttpResponse
 from nab_python.fetch import (
+    _WARM_SYNC_MIN_BLOB_BYTES,
     FetchCoordinator,
     FetchKind,
     FetchRequest,
     IndexRoute,
     InMemoryIndex,
+    WarmSyncStats,
     _resolve_routes,
 )
 
@@ -53,8 +56,15 @@ def no_retries(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _coord(**kwargs: object) -> FetchCoordinator:
-    """Build a FetchCoordinator wired to httpx so respx can mock it."""
-    return FetchCoordinator(transport=HttpxAsyncTransport(), **kwargs)  # type: ignore[arg-type]
+    """Build a FetchCoordinator wired to httpx so respx can mock it.
+
+    The overlap gate defaults off (threshold 0) so the serve-mechanism tests
+    exercise the sync path independent of the blob-size gate, which has its own
+    dedicated tests.
+    """
+    coord = FetchCoordinator(transport=HttpxAsyncTransport(), **kwargs)  # type: ignore[arg-type]
+    coord._warm_sync_min_blob_bytes = 0
+    return coord
 
 
 def _wait_until(predicate: Callable[[], bool], timeout: float = 5) -> bool:
@@ -747,6 +757,63 @@ class TestFetchCoordinator:
 
         # The newest PREFETCH_METADATA_COUNT wheels, not all 15.
         assert derived == [f"pkg-{n}.0-py3-none-any.whl" for n in range(6, 16)]
+
+    def test_prefetch_after_listing_enqueues_newest_batch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The extracted tail picks the newest N, one wheel per version."""
+
+        def _wheel(version: str, *, has_meta: bool = True) -> WheelFile:
+            return WheelFile(
+                filename=f"pkg-{version}-py3-none-any.whl",
+                url=f"https://f.com/pkg-{version}-py3-none-any.whl",
+                version=version,
+                requires_python=None,
+                has_metadata=has_meta,
+                upload_time=None,
+                metadata_hash=("sha256", f"h{version}") if has_meta else None,
+            )
+
+        # Oldest-first, more versions than PREFETCH_METADATA_COUNT, plus a
+        # second wheel for one version (first-with-sidecar wins), a
+        # sidecar-less wheel, and an sdist that the tail must skip.
+        files: list[WheelFile | SdistFile] = []
+        for n in range(1, 16):
+            files.append(_wheel(f"{n}.0"))
+        files.append(_wheel("15.0"))  # duplicate version, must not re-enqueue
+        files.append(_wheel("16.0", has_meta=False))  # no sidecar, skipped
+        files.append(
+            SdistFile(
+                filename="pkg-17.0.tar.gz",
+                url="https://f.com/pkg-17.0.tar.gz",
+                version="17.0",
+                requires_python=None,
+                upload_time=None,
+            )
+        )
+
+        calls: list[tuple[object, ...]] = []
+
+        def _spy(*args: object, **kwargs: object) -> threading.Event:
+            calls.append(args)
+            done = threading.Event()
+            done.set()
+            return done
+
+        coord = _coord()
+        monkeypatch.setattr(coord, "request_metadata", _spy)
+        coord._prefetch_metadata_after_listing("pkg", files)
+
+        expected = [
+            (
+                "pkg",
+                f"{n}.0",
+                f"https://f.com/pkg-{n}.0-py3-none-any.whl.metadata",
+                ("sha256", f"h{n}.0"),
+            )
+            for n in range(6, 16)
+        ]
+        assert calls == expected
 
     @respx.mock
     def test_listing_entry_with_unsplittable_url_is_dropped(self) -> None:
@@ -2481,6 +2548,47 @@ class TestMultiIndexCoordinator:
         finally:
             coord.shutdown()
 
+    def test_parsed_cache_stats_shared_across_index_clients(
+        self, tmp_path: Path
+    ) -> None:
+        """Every per-index client shares the coordinator's parsed-cache sink."""
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            cache_dir=tmp_path / "cache",
+            indexes=[
+                IndexConfig("pypi", "https://pypi.org/simple/"),
+                IndexConfig("alt", "https://alt.example/"),
+            ],
+        )
+        try:
+            client = coord._build_client()
+            assert isinstance(client, MultiIndexClient)
+            stats = coord.parsed_cache_stats
+            subclients = list(client._clients.values())
+            for sub in subclients:
+                assert isinstance(sub, CachedAsyncSimpleClient)
+                assert sub._parsed_stats is stats
+            # Increments through the separate index clients total on one sink.
+            subclients[0]._parsed_stats.hit += 1
+            subclients[1]._parsed_stats.miss += 1
+            assert (stats.hit, stats.miss, stats.rebuild) == (1, 1, 0)
+        finally:
+            coord.shutdown()
+
+    def test_parsed_cache_stats_shared_on_single_index(self, tmp_path: Path) -> None:
+        """A single-index client shares the coordinator's sink too."""
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),
+            cache_dir=tmp_path,
+            indexes=[IndexConfig("custom", "https://custom.example/")],
+        )
+        try:
+            client = coord._build_client()
+            assert isinstance(client, CachedAsyncSimpleClient)
+            assert client._parsed_stats is coord.parsed_cache_stats
+        finally:
+            coord.shutdown()
+
 
 _SIBLING_LINUX = "foo-1.0-cp311-cp311-manylinux_2_17_x86_64.whl"
 _SIBLING_WIN = "foo-1.0-cp311-cp311-win_amd64.whl"
@@ -2895,3 +3003,741 @@ class TestRangeMetadataCoordinator:
         assert event.is_set()
         assert coord.index.get_metadata("widget", "1.0", _RANGE_URL) is None
         assert coord.index.get_metadata_error("widget", "1.0", _RANGE_URL) is None
+
+
+_PYPI = "https://pypi.org/simple/"
+
+
+class _RaiseOnGetTransport:
+    """A transport whose ``get`` raises: proves a warm hit touches no network."""
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> HttpResponse:
+        msg = f"unexpected network fetch: {url}"
+        raise HttpError(msg)
+
+    async def aclose(self) -> None:
+        return None
+
+
+def _sync_sdist(version: str = "1.0", name: str = "pkg") -> SdistFile:
+    """A minimal SdistFile for warm parsed-listing round trips."""
+    return SdistFile(
+        filename=f"{name}-{version}.tar.gz",
+        url=f"https://f.example/{name}-{version}.tar.gz",
+        version=version,
+        requires_python=None,
+        upload_time=None,
+    )
+
+
+def _sync_wheel(version: str = "1.0", name: str = "pkg") -> WheelFile:
+    """A minimal sidecar-bearing WheelFile for warm-hit prefetch round trips."""
+    return WheelFile(
+        filename=f"{name}-{version}-py3-none-any.whl",
+        url=f"https://f.example/{name}-{version}-py3-none-any.whl",
+        version=version,
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+        metadata_hash=None,
+    )
+
+
+def _warm_parsed(
+    cache: OnDiskCache,
+    package: str,
+    files: Sequence[WheelFile | SdistFile],
+    *,
+    body: bytes | None = None,
+    fresh: bool = True,
+    blob: bool = True,
+    digest_override: str | None = None,
+) -> None:
+    """Write a policy sidecar, raw body, and parsed blob for ``package``.
+
+    ``fresh`` controls the freshness window; ``blob`` omits the parsed blob;
+    ``digest_override`` binds the blob to a foreign body so ``decode`` misses.
+    """
+    if body is None:
+        body = json.dumps(LISTING_JSON).encode()
+    now = int(time.time())
+    if fresh:
+        policy = CachePolicy(fetched_at=now, max_age=3600, etag="x")
+    else:
+        policy = CachePolicy(fetched_at=now - 10_000, max_age=1, etag="x")
+    digest = cache.put_simple(package, body, policy)
+    if blob:
+        bound = digest_override if digest_override is not None else digest
+        cache.put_simple_parsed(package, encode_parsed(list(files), bound))
+
+
+def _spy_submit(coord: FetchCoordinator) -> list[object]:
+    """Record every ``_submit`` item, still delegating to the real submit."""
+    calls: list[object] = []
+    original = coord._submit
+
+    def wrapper(item: object) -> None:
+        calls.append(item)
+        original(item)  # type: ignore[arg-type]
+
+    coord._submit = wrapper  # type: ignore[method-assign]
+    return calls
+
+
+def _listing_submits(calls: Sequence[object]) -> list[object]:
+    """The recorded submits that are LISTING requests."""
+    return [
+        item
+        for item in calls
+        if isinstance(item, FetchRequest) and item.kind is FetchKind.LISTING
+    ]
+
+
+class TestWarmSyncListingPath:
+    """The synchronous warm-hit fast path for ``request_listing`` (C5, S-ALL)."""
+
+    def test_eligibility_gate_single_index_ondisk(self, tmp_path: Path) -> None:
+        """The gate is on for a single non-file index over an OnDiskCache."""
+        coord = _coord(cache_dir=tmp_path)
+        try:
+            assert coord._sync_listing_enabled is True
+        finally:
+            coord.shutdown()
+
+    def test_eligibility_off_for_null_cache(self) -> None:
+        coord = _coord()
+        try:
+            assert coord._sync_listing_enabled is False
+        finally:
+            coord.shutdown()
+
+    def test_eligibility_off_for_multi_index(self, tmp_path: Path) -> None:
+        coord = _coord(
+            cache_dir=tmp_path,
+            indexes=[
+                IndexConfig("pypi", _PYPI),
+                IndexConfig("alt", "https://alt.example/"),
+            ],
+        )
+        try:
+            assert coord._sync_listing_enabled is False
+        finally:
+            coord.shutdown()
+
+    def test_eligibility_off_for_file_index(self, tmp_path: Path) -> None:
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        coord = _coord(
+            cache_dir=tmp_path / "cache",
+            indexes=[IndexConfig("local", wheelhouse.as_uri())],
+        )
+        try:
+            assert coord._sync_listing_enabled is False
+        finally:
+            coord.shutdown()
+
+    def test_eligibility_off_for_bare_file_url(self, tmp_path: Path) -> None:
+        """The other RFC 8089 spelling is a file index too, so the gate is off."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        coord = _coord(
+            cache_dir=tmp_path / "cache",
+            indexes=[IndexConfig("local", f"file:{wheelhouse}")],
+        )
+        try:
+            assert coord._sync_listing_enabled is False
+        finally:
+            coord.shutdown()
+
+    def test_probe_cache_matches_a_pinned_serializations_dir(
+        self, tmp_path: Path
+    ) -> None:
+        """The probe reads the serialization-partitioned dir the client writes."""
+        cfg = IndexConfig("pypi", _PYPI, serialization=SimpleSerialization.HTML)
+        coord = _coord(cache_dir=tmp_path, indexes=[cfg])
+        try:
+            pinned = OnDiskCache(tmp_path, _PYPI, serialization=cfg.serialization)
+            _warm_parsed(pinned, "pkg", [_sync_sdist("1.0")])
+            assert coord._sync_listing_enabled is True
+            assert coord._try_listing_sync("pkg") is not None
+        finally:
+            coord.shutdown()
+
+    def test_probe_ignores_the_unpinned_dir_under_a_pin(self, tmp_path: Path) -> None:
+        """A negotiated entry never answers for an index pinned to one form."""
+        cfg = IndexConfig("pypi", _PYPI, serialization=SimpleSerialization.HTML)
+        coord = _coord(cache_dir=tmp_path, indexes=[cfg])
+        try:
+            _warm_parsed(OnDiskCache(tmp_path, _PYPI), "pkg", [_sync_sdist("1.0")])
+            assert coord._try_listing_sync("pkg") is None
+        finally:
+            coord.shutdown()
+
+    def test_eligibility_off_for_routed(self, tmp_path: Path) -> None:
+        coord = _coord(
+            cache_dir=tmp_path,
+            index_routes=[IndexRoute(name="pkg", index="pypi")],
+        )
+        try:
+            assert coord._sync_listing_enabled is False
+        finally:
+            coord.shutdown()
+
+    @respx.mock
+    def test_warm_hit_serves_without_listing_fetch(self, tmp_path: Path) -> None:
+        """A fresh parsed hit is served inline: no LISTING submit, prefetch fired."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0"), _sync_sdist("2.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        prefetched: list[tuple[str, object]] = []
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._prefetch_metadata_after_listing = (  # type: ignore[method-assign]
+                lambda package, records: prefetched.append((package, list(records)))
+            )
+            calls = _spy_submit(coord)
+            event = coord.request_listing("pkg")
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert coord.index.get_listing_index("pkg") == "pypi"
+            assert _listing_submits(calls) == []
+            assert coord.warm_sync_stats.listing_hits == 1
+            assert coord.warm_sync_stats.listing_declines == 0
+            coord.shutdown()
+            assert prefetched == [("pkg", files)]
+
+    @respx.mock
+    def test_warm_hit_fires_progress_hook(self, tmp_path: Path) -> None:
+        """A sync hit ticks ``on_fetch`` once, matching the async path's count."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")])
+
+        ticks: list[int] = []
+        with _coord(cache_dir=tmp_path, on_fetch=lambda: ticks.append(1)) as coord:
+            coord.request_listing("pkg")
+            coord.shutdown()
+            assert ticks == [1]
+            assert coord.warm_sync_stats.listing_hits == 1
+
+    @respx.mock
+    def test_warm_hit_no_network(self, tmp_path: Path) -> None:
+        """A warm hit touches no transport at all."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        coord = FetchCoordinator(
+            transport=_RaiseOnGetTransport(),  # type: ignore[arg-type]
+            cache_dir=tmp_path,
+        )
+        coord._warm_sync_min_blob_bytes = 0
+        with coord:
+            coord._prefetch_metadata_after_listing = (  # type: ignore[method-assign]
+                lambda package, records: None
+            )
+            event = coord.request_listing("pkg")
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert not coord._crashed
+
+    @respx.mock
+    def test_preexisting_pending_joins_without_probe(self, tmp_path: Path) -> None:
+        """A pending key joins the existing event: no probe, store, or submit."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")])
+
+        with _coord(cache_dir=tmp_path) as coord:
+            probed: list[str] = []
+
+            def _probe(package: str) -> None:
+                probed.append(package)
+
+            coord._try_listing_sync = _probe  # type: ignore[method-assign]
+            calls = _spy_submit(coord)
+            pending, _ = coord.index.get_or_create_pending("listing:pkg")
+
+            event = coord.request_listing("pkg")
+
+            assert event is pending.event
+            assert probed == []
+            assert _listing_submits(calls) == []
+            assert coord.index.get_listing("pkg") is None
+            assert coord.warm_sync_stats.listing_hits == 0
+            assert coord.warm_sync_stats.listing_declines == 0
+
+    @respx.mock
+    def test_decline_stale_online(self, tmp_path: Path) -> None:
+        """A stale entry online declines to async and revalidates."""
+        respx.get(f"{_PYPI}pkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON, headers={"etag": "v2"})
+        )
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")], fresh=False)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert coord.index.get_listing("pkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_stale_online == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+            assert coord.warm_sync_stats.listing_hits == 0
+
+    @respx.mock
+    def test_decline_no_policy_cold(self, tmp_path: Path) -> None:
+        """A cold cache has no policy: decline to async fetch."""
+        respx.get(f"{_PYPI}pkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON)
+        )
+        with _coord(cache_dir=tmp_path) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert coord.index.get_listing("pkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_no_policy == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+
+    @respx.mock
+    def test_decline_no_blob(self, tmp_path: Path) -> None:
+        """A fresh policy with no parsed blob declines; async rebuilds from body."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "testpkg", [_sync_sdist("1.0")], blob=False)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("testpkg").wait(timeout=5)
+
+            assert coord.index.get_listing("testpkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_no_blob == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+
+    def test_gate_default_threshold(self, tmp_path: Path) -> None:
+        """A fresh coordinator carries the module default blob-size threshold."""
+        coord = FetchCoordinator(
+            transport=HttpxAsyncTransport(),  # type: ignore[arg-type]
+            cache_dir=tmp_path,
+        )
+        try:
+            assert coord._warm_sync_min_blob_bytes == _WARM_SYNC_MIN_BLOB_BYTES
+        finally:
+            coord.shutdown()
+
+    def test_gate_admits_when_sync_disabled(self) -> None:
+        """The gate admits (defers to the eligibility gate) when sync is off."""
+        coord = _coord()
+        try:
+            assert coord._sync_listing_enabled is False
+            assert coord._overlap_gate_admits("pkg") is True
+        finally:
+            coord.shutdown()
+
+    @respx.mock
+    def test_gate_declines_small_blob_to_async(self, tmp_path: Path) -> None:
+        """A parsed blob below the threshold declines to the async path."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")])
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._warm_sync_min_blob_bytes = 10**9
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert coord.index.get_listing("pkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.listing_hits == 0
+            assert coord.warm_sync_stats.declined_small_blob == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+
+    @respx.mock
+    def test_gate_admits_blob_at_threshold(self, tmp_path: Path) -> None:
+        """A parsed blob at or above the threshold serves inline."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        _warm_parsed(cache, "pkg", files)
+        size = cache.get_simple_parsed_size("pkg")
+        assert size is not None
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._warm_sync_min_blob_bytes = size
+            calls = _spy_submit(coord)
+            event = coord.request_listing("pkg")
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert _listing_submits(calls) == []
+            assert coord.warm_sync_stats.listing_hits == 1
+            assert coord.warm_sync_stats.declined_small_blob == 0
+
+    @respx.mock
+    def test_gate_admits_when_blob_size_unknown(self, tmp_path: Path) -> None:
+        """A missing blob has no size, so the gate admits and _try declines."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")], blob=False)
+        assert cache.get_simple_parsed_size("pkg") is None
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._warm_sync_min_blob_bytes = 10**9
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert coord.warm_sync_stats.declined_small_blob == 0
+            assert coord.warm_sync_stats.declined_no_blob == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+
+    @respx.mock
+    def test_decline_digest_mismatch(self, tmp_path: Path) -> None:
+        """A blob bound to a foreign body declines; the sync path never rebuilds."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(
+            cache,
+            "testpkg",
+            [_sync_sdist("1.0")],
+            digest_override="0" * 64,
+        )
+
+        with _coord(cache_dir=tmp_path) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("testpkg").wait(timeout=5)
+
+            assert coord.index.get_listing("testpkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_no_blob == 1
+            assert not coord._crashed
+
+    @respx.mock
+    def test_decline_multi_index(self, tmp_path: Path) -> None:
+        """A multi-index config is ineligible; it declines to async."""
+        respx.get(f"{_PYPI}pkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON)
+        )
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")])
+
+        with _coord(
+            cache_dir=tmp_path,
+            indexes=[
+                IndexConfig("pypi", _PYPI),
+                IndexConfig("alt", "https://alt.example/"),
+            ],
+        ) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_ineligible == 1
+            assert coord.warm_sync_stats.listing_declines == 1
+
+    @respx.mock
+    def test_decline_file_index(self, tmp_path: Path) -> None:
+        """A file:// index is ineligible; it declines to the local async path."""
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        with _coord(
+            cache_dir=tmp_path / "cache",
+            indexes=[IndexConfig("local", wheelhouse.as_uri())],
+        ) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_ineligible == 1
+
+    @respx.mock
+    def test_decline_null_cache(self) -> None:
+        """No cache dir means a NullCache: ineligible, declines to async."""
+        respx.get(f"{_PYPI}pkg/").mock(
+            return_value=httpx.Response(200, json=LISTING_JSON)
+        )
+        with _coord() as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert coord.index.get_listing("pkg") is not None
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_ineligible == 1
+
+    @respx.mock
+    def test_decline_offline_cold_stores_empty(self, tmp_path: Path) -> None:
+        """Offline with a cold cache declines (no policy) and records empty."""
+        with _coord(cache_dir=tmp_path, offline=True) as coord:
+            calls = _spy_submit(coord)
+            coord.request_listing("missing").wait(timeout=5)
+
+            assert coord.index.get_listing("missing") == []
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.declined_no_policy == 1
+            assert not coord._crashed
+
+    def test_start_resets_stats(self, tmp_path: Path) -> None:
+        """``start`` zeroes the warm-sync counters for a reused coordinator."""
+        coord = _coord(cache_dir=tmp_path)
+        try:
+            coord.start()
+            coord._warm_sync_stats.listing_hits = 7
+            coord._warm_sync_stats.declined_no_blob = 3
+            coord.shutdown()
+            coord.start()
+            assert coord.warm_sync_stats == WarmSyncStats()
+        finally:
+            coord.shutdown()
+
+    @respx.mock
+    def test_speculative_skips_probe_and_routes_async(self, tmp_path: Path) -> None:
+        """A speculative call skips the sync probe and dispatches async.
+
+        S-CRIT keeps speculative listing reads on the fetcher thread so their
+        read+parse work overlaps resolver CPU; only blocking critical-path
+        callers serve the warm cache inline.
+        """
+        cache = OnDiskCache(tmp_path, _PYPI)
+        _warm_parsed(cache, "pkg", [_sync_sdist("1.0")])
+
+        with _coord(cache_dir=tmp_path) as coord:
+            probed: list[str] = []
+            coord._try_listing_sync = probed.append  # type: ignore[method-assign]
+            calls = _spy_submit(coord)
+
+            coord.request_listing("pkg", speculative=True).wait(timeout=5)
+
+            assert probed == []
+            assert len(_listing_submits(calls)) == 1
+            assert coord.warm_sync_stats.listing_hits == 0
+            assert coord.warm_sync_stats.listing_declines == 0
+
+    @respx.mock
+    def test_default_call_serves_synchronously(self, tmp_path: Path) -> None:
+        """The default (critical-path) call still serves the warm cache inline."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._prefetch_metadata_after_listing = (  # type: ignore[method-assign]
+                lambda package, records: None
+            )
+            calls = _spy_submit(coord)
+
+            event = coord.request_listing("pkg")
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert _listing_submits(calls) == []
+            assert coord.warm_sync_stats.listing_hits == 1
+
+    def test_skew_reader_never_serves_torn_pair(self, tmp_path: Path) -> None:
+        """Interleaved writer/reader: every non-None probe is a bound pair."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files_a: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        files_b: list[WheelFile | SdistFile] = [_sync_sdist("2.0")]
+        _warm_parsed(cache, "pkg", files_a)
+
+        coord = _coord(cache_dir=tmp_path)
+        stop = threading.Event()
+        errors: list[BaseException] = []
+        results: list[object] = []
+
+        def writer() -> None:
+            toggle = False
+            while not stop.is_set():
+                try:
+                    if toggle:
+                        _warm_parsed(cache, "pkg", files_b)
+                        _warm_parsed(cache, "pkg", files_a, blob=False)
+                    else:
+                        _warm_parsed(cache, "pkg", files_a)
+                        _warm_parsed(cache, "pkg", files_b, blob=False)
+                except PermissionError:
+                    # Windows refuses os.replace onto a file the reader has open;
+                    # retry. Production single-flight keeps a sync read and a
+                    # fetcher write off the same file, so this race is harness-only.
+                    continue
+                toggle = not toggle
+
+        def reader() -> None:
+            try:
+                for _ in range(3000):
+                    results.append(coord._try_listing_sync("pkg"))
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        try:
+            w = threading.Thread(target=writer)
+            r = threading.Thread(target=reader)
+            w.start()
+            r.start()
+            r.join(timeout=30)
+            stop.set()
+            w.join(timeout=5)
+
+            assert not errors
+            for value in results:
+                assert value is None or value in (files_a, files_b)
+        finally:
+            stop.set()
+            coord.shutdown()
+
+
+class TestWarmSyncTailOffload:
+    """The post-listing tail runs on the fetcher loop, not the caller thread."""
+
+    @respx.mock
+    def test_sync_hit_runs_tail_off_the_caller_thread(self, tmp_path: Path) -> None:
+        """The newest-N selection walk executes on the fetcher thread only."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_wheel("1.0"), _sync_wheel("2.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            fetcher_ident = coord._thread.ident
+            caller_ident = threading.get_ident()
+
+            tail_idents: list[int | None] = []
+            done = threading.Event()
+            original = coord._prefetch_metadata_after_listing
+
+            def _record(package: str, records: object) -> None:
+                tail_idents.append(threading.get_ident())
+                original(package, records)  # type: ignore[arg-type]
+                done.set()
+
+            coord._prefetch_metadata_after_listing = _record  # type: ignore[method-assign]
+
+            meta_idents: list[int] = []
+
+            def _spy_meta(*args: object, **kwargs: object) -> threading.Event:
+                meta_idents.append(threading.get_ident())
+                ev = threading.Event()
+                ev.set()
+                return ev
+
+            coord.request_metadata = _spy_meta  # type: ignore[method-assign]
+
+            calls = _spy_submit(coord)
+            event = coord.request_listing("pkg")
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert _listing_submits(calls) == []
+            assert done.wait(timeout=5)
+
+            assert tail_idents == [fetcher_ident]
+            assert fetcher_ident != caller_ident
+            assert meta_idents
+            assert all(ident == fetcher_ident for ident in meta_idents)
+            assert caller_ident not in meta_idents
+
+    @respx.mock
+    def test_offloaded_tail_prefetches_metadata(self, tmp_path: Path) -> None:
+        """The offloaded tail enqueues the newest-N metadata and it lands."""
+        respx.get(url__regex=r".*\.whl\.metadata$").mock(
+            return_value=httpx.Response(200, text="Metadata-Version: 2.1\n")
+        )
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_wheel("1.0"), _sync_wheel("2.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        with _coord(cache_dir=tmp_path) as coord:
+            done = threading.Event()
+            original = coord._prefetch_metadata_after_listing
+
+            def _wrap(package: str, records: object) -> None:
+                original(package, records)  # type: ignore[arg-type]
+                done.set()
+
+            coord._prefetch_metadata_after_listing = _wrap  # type: ignore[method-assign]
+            calls = _spy_submit(coord)
+
+            coord.request_listing("pkg")
+            assert done.wait(timeout=5)
+
+            meta_submits = {
+                (item.package, item.version, item.url)
+                for item in calls
+                if isinstance(item, FetchRequest) and item.kind is FetchKind.METADATA
+            }
+            assert meta_submits == {
+                ("pkg", "1.0", "https://f.example/pkg-1.0-py3-none-any.whl.metadata"),
+                ("pkg", "2.0", "https://f.example/pkg-2.0-py3-none-any.whl.metadata"),
+            }
+
+            for version in ("1.0", "2.0"):
+                sidecar = f"https://f.example/pkg-{version}-py3-none-any.whl.metadata"
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline and not coord.index.has_metadata(
+                    "pkg", version, sidecar
+                ):
+                    time.sleep(0.01)
+                assert coord.index.has_metadata("pkg", version, sidecar)
+
+    @respx.mock
+    def test_dead_loop_runs_tail_inline(self, tmp_path: Path) -> None:
+        """No live loop: the tail is a last-resort inline run on the caller."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        # An unstarted coordinator has no loop, so _post_to_loop declines.
+        coord = _coord(cache_dir=tmp_path)
+        caller_ident = threading.get_ident()
+        idents: list[int] = []
+        coord._prefetch_metadata_after_listing = (  # type: ignore[method-assign]
+            lambda package, records: idents.append(threading.get_ident())
+        )
+        try:
+            event = coord.request_listing("pkg")
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+            assert idents == [caller_ident]
+            assert coord.warm_sync_stats.listing_hits == 1
+            assert not coord._crashed
+        finally:
+            coord.shutdown()
+
+    def test_post_to_loop_false_on_closed_loop(self, tmp_path: Path) -> None:
+        """A closed loop makes call_soon_threadsafe raise; the post declines."""
+        coord = _coord(cache_dir=tmp_path)
+        loop = asyncio.new_event_loop()
+        loop.close()
+        coord._loop = loop
+        try:
+            assert coord._post_to_loop(lambda: None) is False
+        finally:
+            coord._loop = None
+            coord.shutdown()
+
+    @respx.mock
+    def test_offloaded_tail_exception_logged_and_listing_survives(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A raising tail logs WARNING and leaves the served listing intact."""
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        _warm_parsed(cache, "pkg", files)
+
+        ran = threading.Event()
+
+        def _boom(package: str, records: object) -> None:
+            ran.set()
+            raise RuntimeError("boom")
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._prefetch_metadata_after_listing = _boom  # type: ignore[method-assign]
+            with caplog.at_level(logging.WARNING):
+                event = coord.request_listing("pkg")
+                assert ran.wait(timeout=5)
+                coord.shutdown()
+
+            assert event.is_set()
+            assert coord.index.get_listing("pkg") == files
+
+        assert any(
+            "listing prefetch tail failed" in record.getMessage()
+            for record in caplog.records
+        )

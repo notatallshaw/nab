@@ -495,7 +495,9 @@ def _index_with_files(
     index.store_listing(package, files)
     coordinator = MagicMock()
     coordinator.index = index
-    coordinator.request_listing.side_effect = lambda _pkg: _done_event()
+    coordinator.request_listing.side_effect = lambda _pkg, *, speculative=False: (
+        _done_event()
+    )
     return coordinator
 
 

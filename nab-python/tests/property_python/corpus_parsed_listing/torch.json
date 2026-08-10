@@ -1,0 +1,113 @@
+{
+"files": [
+{
+"core-metadata": {
+"sha256": "9e56aeb89beba280dae8f65a29cefbe1be7a0e7f61849a43b9e4e9c0fa40d6f8"
+},
+"data-dist-info-metadata": {
+"sha256": "9e56aeb89beba280dae8f65a29cefbe1be7a0e7f61849a43b9e4e9c0fa40d6f8"
+},
+"filename": "torch-1.0.0-cp27-cp27m-manylinux1_x86_64.whl",
+"hashes": {
+"sha256": "4aadc7124afc431ac6a227a05dc8eff417b6fd8f90fc6c44d514ddfca9a6b474"
+},
+"provenance": null,
+"requires-python": null,
+"size": 591763257,
+"upload-time": "2018-12-07T18:56:01.203127Z",
+"url": "https://files.pythonhosted.org/packages/fb/d7/71b982339efc4fff3c622c6fefecddfd3e0b35b60c5f822872d5b806bb71/torch-1.0.0-cp27-cp27m-manylinux1_x86_64.whl",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "9e56aeb89beba280dae8f65a29cefbe1be7a0e7f61849a43b9e4e9c0fa40d6f8"
+},
+"data-dist-info-metadata": {
+"sha256": "9e56aeb89beba280dae8f65a29cefbe1be7a0e7f61849a43b9e4e9c0fa40d6f8"
+},
+"filename": "torch-1.0.0-cp27-cp27mu-manylinux1_x86_64.whl",
+"hashes": {
+"sha256": "cb92ac65fcc7685fa6c5920b24101182dcb706d841fc6154ada604f749b615e3"
+},
+"provenance": null,
+"requires-python": null,
+"size": 591762613,
+"upload-time": "2018-12-07T18:57:12.698669Z",
+"url": "https://files.pythonhosted.org/packages/56/92/419c6959c0c427909994f019c039bf963354fe50153fa3a41094782b3a43/torch-1.0.0-cp27-cp27mu-manylinux1_x86_64.whl",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "9e56aeb89beba280dae8f65a29cefbe1be7a0e7f61849a43b9e4e9c0fa40d6f8"
+},
+"data-dist-info-metadata": {
+"sha256": "9e56aeb89beba280dae8f65a29cefbe1be7a0e7f61849a43b9e4e9c0fa40d6f8"
+},
+"filename": "torch-1.0.0-cp27-none-macosx_10_6_x86_64.whl",
+"hashes": {
+"sha256": "53e12607830ccb1e5fc4076aafe19bdbbc380799793fbaad696714b72859bde6"
+},
+"provenance": null,
+"requires-python": null,
+"size": 61422362,
+"upload-time": "2018-12-07T19:01:12.954492Z",
+"url": "https://files.pythonhosted.org/packages/9a/c0/af73b96a2b91c25945895491208fdf248d26b4606eabcb82472298e851bd/torch-1.0.0-cp27-none-macosx_10_6_x86_64.whl",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "127fb7e854e1c383debd1af010e23804a4b4c454acedf7e9ce95ddff83fb21a2"
+},
+"data-dist-info-metadata": {
+"sha256": "127fb7e854e1c383debd1af010e23804a4b4c454acedf7e9ce95ddff83fb21a2"
+},
+"filename": "torch-1.3.0-cp27-cp27m-manylinux1_x86_64.whl",
+"hashes": {
+"sha256": "7499fbc00ebbb04b6a6cc77ba7055b3b93460da87139dd8aeb357c5446a44cf8"
+},
+"provenance": null,
+"requires-python": ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*",
+"size": 773117432,
+"upload-time": "2019-10-10T15:16:45.285815Z",
+"url": "https://files.pythonhosted.org/packages/f9/89/84740770505a7a6f83fc18d992c9e53c981c998d2514b4171bd8a28b5b77/torch-1.3.0-cp27-cp27m-manylinux1_x86_64.whl",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "127fb7e854e1c383debd1af010e23804a4b4c454acedf7e9ce95ddff83fb21a2"
+},
+"data-dist-info-metadata": {
+"sha256": "127fb7e854e1c383debd1af010e23804a4b4c454acedf7e9ce95ddff83fb21a2"
+},
+"filename": "torch-1.3.0-cp27-cp27mu-manylinux1_x86_64.whl",
+"hashes": {
+"sha256": "93e3542d57d413d4bbd75f34ce06b7a2840da3a258e3ce20c751b31a6c24189f"
+},
+"provenance": null,
+"requires-python": ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*",
+"size": 773093123,
+"upload-time": "2019-10-10T15:18:05.958132Z",
+"url": "https://files.pythonhosted.org/packages/2f/e9/90851b92b606c4fdd13fa971dd0d47e500736ee9e56fd94570341f08700c/torch-1.3.0-cp27-cp27mu-manylinux1_x86_64.whl",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "1e1e455102eaee13cdb5a3cee8a30422f09cb1af3a5f4385be799cd996775353"
+},
+"data-dist-info-metadata": {
+"sha256": "1e1e455102eaee13cdb5a3cee8a30422f09cb1af3a5f4385be799cd996775353"
+},
+"filename": "torch-1.3.0-cp35-cp35m-manylinux1_x86_64.whl",
+"hashes": {
+"sha256": "aec5245b459427bd4acea092bacbd6794bebaf65488caf931833a76cfbf9c5fa"
+},
+"provenance": null,
+"requires-python": ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*",
+"size": 773105252,
+"upload-time": "2019-10-10T15:19:25.232858Z",
+"url": "https://files.pythonhosted.org/packages/da/b5/94ce035094590a56758037dce2160b147fcb2965860b9c22580b5e7047d6/torch-1.3.0-cp35-cp35m-manylinux1_x86_64.whl",
+"yanked": false
+}
+],
+"name": "torch"
+}

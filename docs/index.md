@@ -15,8 +15,9 @@ installer you trust.
 * Looking something up: the reference covers the
   [`[tool.nab]` keys](reference/configuration.md), the
   [CLI](reference/cli.md), the
-  [lockfile formats](reference/lockfile.md), and the
-  [build policy](reference/build-policy.md).
+  [lockfile formats](reference/lockfile.md), the
+  [build policy](reference/build-policy.md), and the
+  [on-disk cache](reference/cache.md).
 * Want to know how something works: the explanations cover
   [universal resolution](explanation/universal.md) and
   [conflicting extras and groups](explanation/conflicts.md).
@@ -47,6 +48,7 @@ reference/cli
 reference/configuration
 reference/lockfile
 reference/build-policy
+reference/cache
 ```
 
 ```{toctree}

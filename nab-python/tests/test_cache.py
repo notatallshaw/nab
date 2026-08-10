@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import stat
 import subprocess
 import time
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -204,13 +206,17 @@ class TestOnDiskCache:
 
     def test_simple_round_trip(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
+        body = b'{"files": []}'
         policy = CachePolicy(fetched_at=1000, max_age=600, etag="abc")
-        cache.put_simple("foo", b'{"files": []}', policy)
+        cache.put_simple("foo", body, policy)
         result = cache.get_simple("foo")
         assert result is not None
-        body, got_policy = result
-        assert body == b'{"files": []}'
-        assert got_policy == policy
+        got_body, got_policy = result
+        assert got_body == body
+        # put_simple stamps the body digest into the stored policy.
+        assert got_policy == replace(
+            policy, body_digest=hashlib.sha256(body).hexdigest()
+        )
 
     def test_simple_layout_uses_pypi_dirname(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
@@ -471,7 +477,7 @@ class TestUnwritableRoot:
         """
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
         old_policy = CachePolicy(fetched_at=0, max_age=600, etag="E1")
-        cache.put_simple("foo", b"OLD-LISTING", old_policy)
+        old_digest = cache.put_simple("foo", b"OLD-LISTING", old_policy)
 
         def fail_body(path: Path, data: bytes) -> None:
             if path.suffix == ".json":
@@ -485,7 +491,33 @@ class TestUnwritableRoot:
             CachePolicy(fetched_at=int(time.time()), max_age=600, etag="E2"),
         )
 
-        assert cache.get_simple("foo") == (b"OLD-LISTING", old_policy)
+        stored = replace(old_policy, body_digest=old_digest)
+        assert cache.get_simple("foo") == (b"OLD-LISTING", stored)
+
+    def test_dropped_policy_write_hands_back_no_digest(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A body that lands without its sidecar binds no parsed blob.
+
+        The caller keys its parsed blob on the returned digest, so a stored
+        body whose policy never landed has to come back as no digest at all.
+        """
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple/")
+
+        def fail_policy(path: Path, data: bytes) -> None:
+            if path.suffix == ".policy":
+                raise OSError(28, "No space left on device")
+            atomic_write(path, data)
+
+        monkeypatch.setattr("nab_index.cache.atomic_write", fail_policy)
+        digest = cache.put_simple(
+            "foo",
+            b"LISTING",
+            CachePolicy(fetched_at=int(time.time()), max_age=600, etag="E1"),
+        )
+
+        assert digest is None
+        assert cache.get_simple("foo") is None
 
     def test_bad_key_still_raises(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
@@ -499,7 +531,8 @@ class TestNullCache:
         assert cache.get_simple("foo") is None
         assert cache.get_metadata("foo", METADATA_URLS[0]) is None
         assert cache.get_sdist_files("foo", "1.0") is None
-        # Puts must be no-ops with no return value.
+        # Puts store nothing, so put_simple hands back no digest and the caller
+        # builds no parsed blob for a body this backend does not hold.
         policy = CachePolicy(fetched_at=0, max_age=0, etag=None)
         assert cache.put_simple("foo", b"", policy) is None
         assert cache.refresh_simple_policy("foo", policy) is None

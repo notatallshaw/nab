@@ -22,7 +22,11 @@ from urllib.parse import urlsplit
 from packaging.utils import canonicalize_name as canonicalize_name_boundary
 
 from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
-from nab_index.cached_client import CachedAsyncSimpleClient
+from nab_index.cached_client import (
+    CachedAsyncSimpleClient,
+    ParsedCacheStats,
+    read_fresh_parsed_listing,
+)
 from nab_index.client import SdistFile, WheelFile
 from nab_index.lazy_wheel import RangeCapabilityMemo, RangeOutcome
 from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
@@ -45,6 +49,7 @@ __all__ = [
     "FetchRequest",
     "InMemoryIndex",
     "IndexRoute",
+    "WarmSyncStats",
 ]
 
 
@@ -54,6 +59,12 @@ DEFAULT_INDEX_URL = "https://pypi.org/simple/"
 # Maximum time the main thread waits for the fetcher thread to drain
 # its queue and exit on :meth:`FetchCoordinator.shutdown`.
 _COORDINATOR_JOIN_TIMEOUT_SECONDS = 10
+
+# A warm listing whose parsed blob is smaller than this is declined to the
+# async path instead of served inline: serving a small blob inline exposes
+# main-thread selection work with no round trip to offset it, while a large
+# blob's materialize dominates that overhead.
+_WARM_SYNC_MIN_BLOB_BYTES = 64 * 1024
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -110,6 +121,26 @@ class FetchRequest:
     metadata_hash: tuple[str, str] | None = None
     sdist_hashes: tuple[tuple[str, str], ...] = ()
     wheel_hashes: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass
+class WarmSyncStats:
+    """Counters for the synchronous warm-hit listing path.
+
+    A sync hit bumps ``listing_hits``; a decline bumps ``listing_declines`` and
+    one reason sub-counter, then runs the async path. Written only from the main
+    resolver thread, so the counters need no lock.
+    """
+
+    listing_hits: int = 0
+    listing_declines: int = 0
+    declined_ineligible: int = 0
+    declined_no_policy: int = 0
+    declined_stale_online: int = 0
+    # No blob, or one the read helper would not serve: a foreign build, a
+    # non-binding digest, corruption, or a blob holding no records.
+    declined_no_blob: int = 0
+    declined_small_blob: int = 0
 
 
 @dataclass
@@ -770,12 +801,27 @@ class FetchCoordinator:
         if cache_backend is not None:
             self._cache: CacheBackend = cache_backend
         elif cache_dir is not None:
-            self._cache = OnDiskCache(cache_dir, indexes[0].url)
+            # Serialization-partitioned like the per-index backend
+            # _build_index_client builds, so the warm-sync probe reads the same
+            # directory the fetcher's client writes.
+            self._cache = OnDiskCache(
+                cache_dir, indexes[0].url, serialization=indexes[0].serialization
+            )
         else:
             self._cache = NullCache()
         self._cache_dir = cache_dir
         self._index_routes = list(index_routes or [])
         self._index_cache_floors = dict(index_cache_floors or {})
+        # The sync warm-hit path serves one shape only: a single non-file index
+        # over an OnDiskCache, unrouted, so the serving index is always
+        # indexes[0] and the probe reads the same backend the fetcher's client
+        # reads. Everything else declines to the async path.
+        self._sync_listing_enabled = (
+            len(self.indexes) == 1
+            and not self._index_routes
+            and not is_file_url(self.indexes[0].url)
+            and isinstance(self._cache, OnDiskCache)
+        )
         # Progress hook: fired once per successful listing fetch, from the
         # fetcher thread.  ``None`` when nothing is watching (the common case).
         self._on_fetch = on_fetch
@@ -784,6 +830,12 @@ class FetchCoordinator:
         # loop in _async_fetcher so each run starts with empty per-netloc state;
         # built here too so the attribute is always a real memo for typing.
         self._range_memo = RangeCapabilityMemo()
+        # Shared per-run parsed-listing cache counters, injected into every
+        # index client the same way; rebuilt on the fetcher loop so each run
+        # starts at zero.
+        self._parsed_cache_stats = ParsedCacheStats()
+        self._warm_sync_stats = WarmSyncStats()
+        self._warm_sync_min_blob_bytes = _WARM_SYNC_MIN_BLOB_BYTES
         self._thread: threading.Thread | None = None
         self._started = False
         self._crashed = False
@@ -806,11 +858,27 @@ class FetchCoordinator:
         """Shut the fetcher thread down on context exit."""
         self.shutdown()
 
+    @property
+    def parsed_cache_stats(self) -> ParsedCacheStats:
+        """Parsed-listing cache counters for this run, shared by every index client.
+
+        Read after a run to confirm a warm resolve serves parsed blobs. The sink
+        is rebuilt at the start of each fetcher loop, so the counts reflect the
+        most recent run.
+        """
+        return self._parsed_cache_stats
+
+    @property
+    def warm_sync_stats(self) -> WarmSyncStats:
+        """Synchronous warm-hit listing counters, reset at each ``start()``."""
+        return self._warm_sync_stats
+
     def start(self) -> None:
         """Start the fetcher thread (idempotent)."""
         if self._started:
             return
         self._started = True
+        self._warm_sync_stats = WarmSyncStats()
         self._thread = threading.Thread(
             target=self._run_loop,
             daemon=True,
@@ -850,6 +918,22 @@ class FetchCoordinator:
             # call_soon_threadsafe raises RuntimeError once the loop is closed.
             self._refuse(item)
 
+    def _post_to_loop(self, callback: Callable[..., object], *args: object) -> bool:
+        """Hand ``callback`` to the fetcher loop from any thread.
+
+        Returns ``False`` when there is no live loop (never started, or closed
+        between the read and the post) so the caller can run the work inline.
+        """
+        loop = self._loop
+        if loop is None:
+            return False
+        try:
+            loop.call_soon_threadsafe(callback, *args)
+        except RuntimeError:
+            # call_soon_threadsafe raises RuntimeError once the loop is closed.
+            return False
+        return True
+
     def _refuse(self, item: _QueueItem) -> None:
         """Record a failure for each request in ``item``, unblocking waiters."""
         # None is the shutdown sentinel; it has no waiters.
@@ -888,8 +972,58 @@ class FetchCoordinator:
         msg = f"Fetcher thread crashed: {self._crash_error}"
         raise RuntimeError(msg)
 
-    def request_listing(self, package: str) -> threading.Event:
-        """Request a listing fetch; return an event set when the result lands."""
+    def _try_listing_sync(self, package: str) -> list[WheelFile | SdistFile] | None:
+        """Read a fresh parsed listing on the caller's thread, or ``None``.
+
+        ``read_fresh_parsed_listing`` never raises, so the caller's pending is
+        never stranded. On a decline the policy is re-read to attribute a reason
+        counter rather than threading it out of the pure helper.
+        """
+        stats = self._warm_sync_stats
+        if not self._sync_listing_enabled:
+            stats.declined_ineligible += 1
+            return None
+        records = read_fresh_parsed_listing(self._cache, package, offline=self._offline)
+        if records is not None:
+            return records
+        policy = self._cache.get_simple_policy(package)
+        if policy is None:
+            stats.declined_no_policy += 1
+        elif not (policy.is_fresh() or self._offline):
+            stats.declined_stale_online += 1
+        else:
+            stats.declined_no_blob += 1
+        return None
+
+    def _overlap_gate_admits(self, package: str) -> bool:
+        """Whether a warm listing may be served inline, or must go async.
+
+        A parsed blob below ``_WARM_SYNC_MIN_BLOB_BYTES`` declines to the async
+        path. A blob whose size cannot be stat'd, or a run where the sync path is
+        disabled, is admitted and left to ``_try_listing_sync`` to classify.
+        """
+        if not self._sync_listing_enabled:
+            return True
+        size = self._cache.get_simple_parsed_size(package)
+        if size is None:
+            return True
+        return size >= self._warm_sync_min_blob_bytes
+
+    def request_listing(
+        self, package: str, *, speculative: bool = False
+    ) -> threading.Event:
+        """Request a listing fetch; return an event set when the result lands.
+
+        The single-flight pending is claimed first: an existing pending means
+        another party owns fulfillment, so its event is joined and the cache is
+        never probed. Only the pending's creator probes; a fresh parsed hit is
+        served inline, and every other outcome declines to the async fetch, which
+        owns every cache write and self-heal.
+
+        ``speculative`` callers skip the sync probe and dispatch async, so their
+        read work overlaps resolver CPU on the fetcher thread; only blocking
+        critical-path callers serve inline.
+        """
         self._check_alive()
         if self.index.get_listing(package) is not None:
             done = threading.Event()
@@ -897,8 +1031,25 @@ class FetchCoordinator:
             return done
         key = f"listing:{package}"
         pending, existed = self.index.get_or_create_pending(key)
-        if not existed:
-            self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
+        if existed:
+            return pending.event
+        if not speculative:
+            if self._overlap_gate_admits(package):
+                records = self._try_listing_sync(package)
+                if records is not None:
+                    # Store the serving index before store_listing fires the
+                    # pending, matching the async path's ordering. The tail runs
+                    # on the fetcher loop, or inline when the loop is gone.
+                    self.index.store_listing_index(package, self.indexes[0].name)
+                    self.index.store_listing(package, records)
+                    self._warm_sync_stats.listing_hits += 1
+                    if not self._post_to_loop(self._run_listing_tail, package, records):
+                        self._run_listing_tail(package, records)
+                    return pending.event
+            else:
+                self._warm_sync_stats.declined_small_blob += 1
+            self._warm_sync_stats.listing_declines += 1
+        self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
         return pending.event
 
     def request_metadata(
@@ -1148,12 +1299,16 @@ class FetchCoordinator:
             range_memo=self._range_memo,
             serialization=cfg.serialization,
             min_fresh_seconds=self._index_cache_floors.get(cfg.name),
+            parsed_stats=self._parsed_cache_stats,
         )
 
     async def _async_fetcher(self) -> None:
         # Fresh per-run memo, owned on this single loop thread, injected into
         # every client _build_client constructs below.
         self._range_memo = RangeCapabilityMemo()
+        # Fresh per-run parsed-listing counters, injected the same way, so a
+        # reused coordinator starts each run at zero.
+        self._parsed_cache_stats = ParsedCacheStats()
 
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         sem = asyncio.Semaphore(self._max_concurrency)
@@ -1358,10 +1513,16 @@ class FetchCoordinator:
         logger.debug("fetched listing: %s (%d files)", req.package, len(files))
         if self._on_fetch is not None:
             self._on_fetch()
+        self._prefetch_metadata_after_listing(req.package, files)
 
-        # Auto-prefetch metadata for the newest candidates (files are
-        # oldest-first). One wheel per version: the first with a sidecar is the
-        # one the provider picks for that version's metadata.
+    def _prefetch_metadata_after_listing(
+        self, package: str, files: Sequence[WheelFile | SdistFile]
+    ) -> None:
+        """Enqueue metadata for the newest candidates of a stored listing.
+
+        Files are oldest-first. One wheel per version: the first with a sidecar
+        is the one the provider picks for that version's metadata.
+        """
         first_wheel: dict[str, WheelFile] = {}
         for f in files:
             if isinstance(f, WheelFile) and f.has_metadata:
@@ -1371,7 +1532,23 @@ class FetchCoordinator:
         for w in newest:
             url = w.metadata_url
             assert url is not None
-            self.request_metadata(req.package, w.version, url, w.metadata_hash)
+            self.request_metadata(package, w.version, url, w.metadata_hash)
+
+    def _run_listing_tail(
+        self, package: str, records: Sequence[WheelFile | SdistFile]
+    ) -> None:
+        """Run the post-listing tail on the fetcher loop: tick then prefetch.
+
+        Mirrors the tail of the async ``_fetch_listing``. A failure is swallowed
+        rather than turned into a listing error: the pending has already fired,
+        so the served listing must not be overwritten.
+        """
+        try:
+            if self._on_fetch is not None:
+                self._on_fetch()
+            self._prefetch_metadata_after_listing(package, records)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("listing prefetch tail failed: %s: %s", package, exc)
 
     def _record_serving_index(
         self,

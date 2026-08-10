@@ -1,0 +1,143 @@
+{
+"files": [
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "botocore-0.4.1.tar.gz",
+"hashes": {
+"sha256": "c065be45a1990e4417e8b11241089024e9e515e0d512a3eb5663e5391000f2ab"
+},
+"provenance": null,
+"requires-python": null,
+"size": 290635,
+"upload-time": "2012-12-21T18:16:05.356034Z",
+"url": "https://files.pythonhosted.org/packages/cd/b5/075b83c387db4def32b34296b6398ea4be02c15c54d8fb16a1c3dd03cd98/botocore-0.4.1.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "botocore-0.4.2.tar.gz",
+"hashes": {
+"sha256": "05bcc1ba175b55728fd0a0edf69177c1a08a64f404a25a5ec9e82e4da462b505"
+},
+"provenance": null,
+"requires-python": null,
+"size": 293044,
+"upload-time": "2013-01-03T22:44:15.748642Z",
+"url": "https://files.pythonhosted.org/packages/77/96/d28ab7976f3e9eef8ee76486bdd033d88bc084d8b05d1a8f4a494274c590/botocore-0.4.2.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "botocore-0.5.0.tar.gz",
+"hashes": {
+"sha256": "eec7542c5667e70bf02433ca99caf3f72c729def8af50b36e028e53831eb4489"
+},
+"provenance": null,
+"requires-python": null,
+"size": 298038,
+"upload-time": "2013-01-26T00:11:13.830640Z",
+"url": "https://files.pythonhosted.org/packages/1a/8e/e32cca3851a219cb94b91623d2f10cd9b77e9c672b1a17ccad7eb6f36728/botocore-0.5.0.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "f492c1af47bf4464ba656ffdea8a0ff9cc2959c7076a3a18f6f4adc92aed4597"
+},
+"data-dist-info-metadata": {
+"sha256": "f492c1af47bf4464ba656ffdea8a0ff9cc2959c7076a3a18f6f4adc92aed4597"
+},
+"filename": "botocore-1.43.34-py3-none-any.whl",
+"hashes": {
+"sha256": "238a0269f33c5914b9343900b44767e783b3e8b6dcb6e065eac8b4495601c5df"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 15277590,
+"upload-time": "2026-06-19T19:33:24.562801Z",
+"url": "https://files.pythonhosted.org/packages/d5/ea/dc5aab38e2b3f63380810465fab92c836e9e8bce458eba4a8a896f25e1d2/botocore-1.43.34-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "botocore-1.43.34.tar.gz",
+"hashes": {
+"sha256": "ccc973cf30c6445b30afe5760f6dc949a80f1f862cb23d9c45747f2c814ece77"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 15591382,
+"upload-time": "2026-06-19T19:33:28.561936Z",
+"url": "https://files.pythonhosted.org/packages/3c/0d/559cdceb9f6acea6b91404970b7973e28a4434fa8a70eb1416b0af478d86/botocore-1.43.34.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "fc658e179e6dcd75aba3225d4d079d1644e142476628a64ffab8ac5964fcbd2b"
+},
+"data-dist-info-metadata": {
+"sha256": "fc658e179e6dcd75aba3225d4d079d1644e142476628a64ffab8ac5964fcbd2b"
+},
+"filename": "botocore-1.43.35-py3-none-any.whl",
+"hashes": {
+"sha256": "51c5893b5404b74012edde03bbd9c199c4bd7ffa35ddad173d0835efa7de281b"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 15313659,
+"upload-time": "2026-06-22T20:26:22.017156Z",
+"url": "https://files.pythonhosted.org/packages/82/6c/5807aca5a873714144beb69ed5adc04bcdb8e9496be6bf7b72a76a6c9773/botocore-1.43.35-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "botocore-1.43.35.tar.gz",
+"hashes": {
+"sha256": "ea16aaad7db67b5af67719e9da3302474af97a7fdf27161c2ecb30adb3570d50"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 15625607,
+"upload-time": "2026-06-22T20:26:26.637836Z",
+"url": "https://files.pythonhosted.org/packages/17/d8/28177fef65f6ef8c7fdd5b44024254816961578ce8925bc336229e236cdc/botocore-1.43.35.tar.gz",
+"yanked": false
+},
+{
+"core-metadata": {
+"sha256": "f07de9279ce4c7b0791a7751e55882b6ea051d69fe1e3c6dd14449743fc3c27e"
+},
+"data-dist-info-metadata": {
+"sha256": "f07de9279ce4c7b0791a7751e55882b6ea051d69fe1e3c6dd14449743fc3c27e"
+},
+"filename": "botocore-1.43.36-py3-none-any.whl",
+"hashes": {
+"sha256": "3c65fdc39ed01d8dfde1e961b34038aed03c459f8ddf80717a12ac006475e49d"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 15313630,
+"upload-time": "2026-06-23T02:46:59.327185Z",
+"url": "https://files.pythonhosted.org/packages/5c/19/934f81592527a3f7f9b943c893e334c721a4644948642bc33885d584e9ec/botocore-1.43.36-py3-none-any.whl",
+"yanked": false
+},
+{
+"core-metadata": false,
+"data-dist-info-metadata": false,
+"filename": "botocore-1.43.36.tar.gz",
+"hashes": {
+"sha256": "4cae47d1b2d426316b85a0087d9e69e048f13bc003b5177d74639fe9dfd28205"
+},
+"provenance": null,
+"requires-python": ">=3.10",
+"size": 15625488,
+"upload-time": "2026-06-23T02:47:03.192168Z",
+"url": "https://files.pythonhosted.org/packages/7c/37/da9e7f6ca73ac73afd7f0bb7f238aa5daba35c081e98d7f48a7c399599c0/botocore-1.43.36.tar.gz",
+"yanked": false
+}
+],
+"name": "botocore"
+}
