@@ -183,7 +183,7 @@ class TestReadFreshParsedListing:
         cache.put_simple_parsed("pkg", encode(files, "f" * 64))
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
-    @pytest.mark.parametrize("blob", [b"\xff\xfe not marshal", b"", b"\x00\x01\x02"])
+    @pytest.mark.parametrize("blob", [b"\xff\xfe not json", b"", b"\x00\x01\x02"])
     def test_corrupt_blob_returns_none(self, tmp_path: Path, blob: bytes) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache)
@@ -256,7 +256,7 @@ class TestIdenticalByConstruction:
     ) -> None:
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache)
-        cache.put_simple_parsed("pkg", b"not marshal")
+        cache.put_simple_parsed("pkg", b"not json")
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
         client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX)
         assert _run(client.get_files("pkg")) == files

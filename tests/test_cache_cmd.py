@@ -285,11 +285,11 @@ class TestCacheVerify:
         root = tmp_path / "cache"
         _populate(root)
         parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
-        parsed_path.write_bytes(b"not marshal data")
+        parsed_path.write_bytes(b"not json data")
         _run_cache(["verify", "--cache-dir", str(root)])
         err = capsys.readouterr().err
         assert str(parsed_path) in err
-        assert "marshal" in err
+        assert "not valid JSON" in err
 
     def test_does_not_read_through_symlinked_bucket(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

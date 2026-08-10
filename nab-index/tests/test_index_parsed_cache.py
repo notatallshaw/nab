@@ -15,7 +15,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import marshal
 from collections.abc import Coroutine, Mapping
 from pathlib import Path
 from typing import Any, TypeVar
@@ -220,7 +219,7 @@ class TestGetSimplePolicy:
 class TestReadCacheEntryParsed:
     def test_valid_parsed_is_clean(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
-        cache.put_simple_parsed("foo", marshal.dumps((1, 0, (3, 14), 0)))
+        cache.put_simple_parsed("foo", encode(_PARSED, "a" * 64))
         path = (
             tmp_path
             / f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}"
@@ -238,7 +237,7 @@ class TestReadCacheEntryParsed:
             / "foo.parsed"
         )
         path.parent.mkdir(parents=True)
-        path.write_bytes(b"\xff\xfe not marshal")
+        path.write_bytes(b"\xff\xfe not json")
         assert cache.read_cache_entry(path) is not None
 
 
@@ -475,15 +474,14 @@ def _warm_bound(
 
 
 def _tamper_header(blob: bytes, index: int, value: object) -> bytes:
-    header, body = marshal.loads(blob)  # noqa: S302
-    header = list(header)
+    header, rows = json.loads(blob)
     header[index] = value
-    return marshal.dumps((tuple(header), body))
+    return json.dumps([header, rows]).encode()
 
 
-def _tamper_body(blob: bytes, value: object) -> bytes:
-    header, _body = marshal.loads(blob)  # noqa: S302
-    return marshal.dumps((header, value))
+def _tamper_rows(blob: bytes, value: object) -> bytes:
+    header, _rows = json.loads(blob)
+    return json.dumps([header, value]).encode()
 
 
 class TestReadPathParsedHit:
@@ -561,7 +559,6 @@ class TestReadPathRebuild:
         [
             ("format", 99),
             ("codec", 99),
-            ("interp", (2, 0)),
             ("key_scheme", 99),
         ],
     )
@@ -574,7 +571,7 @@ class TestReadPathRebuild:
     ) -> None:
         cache = _cache(tmp_path)
         files, digest = _warm_bound(cache)
-        index = ["format", "codec", "interp", "key_scheme"].index(field)
+        index = ["format", "codec", "key_scheme"].index(field)
         tampered = _tamper_header(encode(files, digest), index, value)
         cache.put_simple_parsed("pkg", tampered)
         transport = _FakeTransport([])
@@ -591,7 +588,7 @@ class TestReadPathRebuild:
         # The rebuilt blob is now well-formed and hits.
         assert decode(cache.get_simple_parsed("pkg"), policy) == files
 
-    @pytest.mark.parametrize("blob", [b"\xff\xfe not marshal", b"", b"\x00\x01\x02"])
+    @pytest.mark.parametrize("blob", [b"\xff\xfe not json", b"", b"\x00\x01\x02"])
     def test_garbage_blob_warns_and_reparses(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture, blob: bytes
     ) -> None:
@@ -628,17 +625,17 @@ class TestReadPathRebuild:
         assert "Corrupt parsed-listing" in caplog.text
 
     @pytest.mark.parametrize(
-        "body",
-        [(), ([], [], [0]), ([("short",)], [], [0])],
+        "rows",
+        ["not-a-list", [[]], [["short"]], [[0, "only-a-filename"]]],
     )
-    def test_body_corrupt_blob_warns_and_reparses(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, body: object
+    def test_row_corrupt_blob_warns_and_reparses(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, rows: object
     ) -> None:
-        # A blob whose header matches this build and digest but whose body was
+        # A blob whose header matches this build and digest but whose rows were
         # mangled on disk self-heals to a logged rebuild, never crashing.
         cache = _cache(tmp_path)
         files, digest = _warm_bound(cache)
-        cache.put_simple_parsed("pkg", _tamper_body(encode(files, digest), body))
+        cache.put_simple_parsed("pkg", _tamper_rows(encode(files, digest), rows))
         transport = _FakeTransport([])
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
 
@@ -814,24 +811,24 @@ class TestReadPathRevalidate:
 
 class TestParsedCorruptionReason:
     def test_garbage_is_corrupt(self) -> None:
-        assert corruption_reason(b"not marshal") is not None
+        assert corruption_reason(b"not json") is not None
 
     def test_truncated_is_corrupt(self) -> None:
         blob = encode(_PARSED, "a" * 64)
         assert corruption_reason(blob[: len(blob) // 2]) is not None
 
     def test_wrong_top_shape_is_corrupt(self) -> None:
-        assert corruption_reason(marshal.dumps((1, 2, 3))) is not None
+        assert corruption_reason(json.dumps([1, 2, 3]).encode()) is not None
 
     def test_wrong_header_shape_is_corrupt(self) -> None:
-        assert corruption_reason(marshal.dumps(("bad", "body"))) is not None
+        assert corruption_reason(json.dumps(["bad", "rows"]).encode()) is not None
 
     @pytest.mark.parametrize(
-        "body",
-        [(), ([], [], [0]), ([("short",)], [], [0])],
+        "rows",
+        ["not-a-list", [[]], [["short"]], [[0, "only-a-filename"]]],
     )
-    def test_wrong_body_shape_is_corrupt(self, body: object) -> None:
-        tampered = _tamper_body(encode(_PARSED, "a" * 64), body)
+    def test_wrong_row_shape_is_corrupt(self, rows: object) -> None:
+        tampered = _tamper_rows(encode(_PARSED, "a" * 64), rows)
         assert corruption_reason(tampered) is not None
 
     def test_well_formed_blob_is_clean(self) -> None:
@@ -842,10 +839,10 @@ class TestParsedCorruptionReason:
         tampered = _tamper_header(encode(_PARSED, "a" * 64), 0, 99)
         assert corruption_reason(tampered) is None
 
-    def test_foreign_build_with_wrong_body_is_clean(self) -> None:
-        # A future build may bump the codec and write a body shape this build
+    def test_foreign_build_with_wrong_rows_is_clean(self) -> None:
+        # A future build may bump the codec and write a row shape this build
         # never wrote; that is benign version skew, not on-disk corruption.
-        tampered = _tamper_body(_tamper_header(encode(_PARSED, "a" * 64), 1, 99), ())
+        tampered = _tamper_rows(_tamper_header(encode(_PARSED, "a" * 64), 1, 99), [])
         assert corruption_reason(tampered) is None
 
 
@@ -898,7 +895,7 @@ class TestParsedCacheStats:
     def test_corrupt_blob_counts_a_rebuild(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache)
-        cache.put_simple_parsed("pkg", b"not marshal")
+        cache.put_simple_parsed("pkg", b"not json")
         stats = ParsedCacheStats()
         client = CachedAsyncSimpleClient(
             _FakeTransport([]), cache, _INDEX, parsed_stats=stats

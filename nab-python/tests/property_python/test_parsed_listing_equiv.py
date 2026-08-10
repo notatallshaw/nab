@@ -18,8 +18,8 @@ This harness discharges that contract two ways:
   large AI-stack body, torch).
 
 Plus the miss semantics: a body-digest mismatch, a header field mismatch
-(format / codec / interp / key_scheme), and a truncated or garbage blob all
-decode to ``None`` so the read path rebuilds from the raw body.
+(format / codec / key_scheme), and a truncated or garbage blob all decode to
+``None`` so the read path rebuilds from the raw body.
 """
 
 from __future__ import annotations
@@ -27,8 +27,6 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-import marshal
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -237,12 +235,11 @@ def _sample_blob() -> tuple[bytes, CachePolicy]:
 
 
 def _retamper(header_index: int, value: object) -> tuple[bytes, CachePolicy]:
-    """Re-marshal a valid blob with one header field replaced."""
+    """Re-encode a valid blob with one header field replaced."""
     blob, policy = _sample_blob()
-    header, body = marshal.loads(blob)  # noqa: S302
-    header = list(header)
+    header, rows = json.loads(blob)
     header[header_index] = value
-    return marshal.dumps((tuple(header), body)), policy
+    return json.dumps([header, rows]).encode(), policy
 
 
 def test_digest_mismatch_decodes_to_none() -> None:
@@ -269,35 +266,38 @@ def test_codec_mismatch_decodes_to_none() -> None:
     assert decode(blob, policy) is None
 
 
-def test_interp_mismatch_decodes_to_none() -> None:
-    other = (sys.version_info[0], sys.version_info[1] + 1)
-    blob, policy = _retamper(2, other)
-    assert decode(blob, policy) is None
-
-
 def test_key_scheme_mismatch_decodes_to_none() -> None:
-    blob, policy = _retamper(3, 7)
+    blob, policy = _retamper(2, 7)
     assert decode(blob, policy) is None
+
+
+def test_blob_carries_no_interpreter_tag() -> None:
+    """The wire form is portable, so a blob written anywhere decodes here."""
+    blob, policy = _sample_blob()
+    header, _rows = json.loads(blob)
+    assert not any(isinstance(field, list) for field in header)
+    assert decode(blob, policy) is not None
 
 
 @pytest.mark.parametrize(
     "blob",
     [
         b"",
-        b"not-marshal-bytes",
-        marshal.dumps(42),
-        marshal.dumps((1, 2, 3)),
-        marshal.dumps(("shorthdr", "body")),
+        b"not-json-bytes",
+        b"\xff\xfe not utf-8",
+        json.dumps(42).encode(),
+        json.dumps([1, 2, 3]).encode(),
+        json.dumps(["shorthdr", "rows"]).encode(),
     ],
 )
 def test_garbage_blob_decodes_to_none(blob: bytes) -> None:
-    """Truncated, non-marshal, or wrong-shaped blobs are misses, not crashes."""
+    """Truncated, non-JSON, or wrong-shaped blobs are misses, not crashes."""
     _, policy = _sample_blob()
     assert decode(blob, policy) is None
 
 
 def test_truncated_blob_decodes_to_none() -> None:
-    """A valid blob cut short raises inside marshal and is treated as a miss."""
+    """A valid blob cut short raises inside json and is treated as a miss."""
     blob, policy = _sample_blob()
     assert decode(blob[: len(blob) // 2], policy) is None
 

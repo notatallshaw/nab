@@ -39,9 +39,9 @@ answered from cache, offline included.
 ## Parsed-listing accelerator
 
 Turning a listing body into records means a JSON decode plus wheel and
-sdist filename parsing, the bulk of a warm resolve's work. The
-`simple-parsed-v0/` bucket stores those records so a warm hit rehydrates
-them and never reads the large raw body.
+sdist filename parsing, which a warm resolve would otherwise repeat on
+every run. The `simple-parsed-v0/` bucket stores those records so a warm
+hit rehydrates them and never reads the large raw body.
 
 Each parsed blob is bound to the exact body it came from by a `body_digest`
 that the `.policy` also carries. On a hit the two digests are compared;
@@ -50,10 +50,14 @@ invalidates the blob by construction and forces a rebuild from the raw
 body. A revalidation that lands on a different page retires the blob too,
 since a relative entry resolves against the page URL and a move changes
 every file URL the records hold. A blob is also rebuilt when it was
-written by a different nab build or interpreter, or is corrupt. The raw
-body remains authoritative: the
-accelerator is only ever a derived copy, and a rebuild is a reparse of
-whatever body is on disk.
+written by a different nab build, or is corrupt. The raw body remains
+authoritative: the accelerator is only ever a derived copy, and a rebuild
+is a reparse of whatever body is on disk.
+
+Blobs are stored as JSON, so one entry serves every interpreter sharing
+the cache. A listing nab reads no files from gets no blob, since an empty
+one could never be served: only the raw body records whether the page held
+formats nab cannot read.
 
 ## Verifying and clearing
 

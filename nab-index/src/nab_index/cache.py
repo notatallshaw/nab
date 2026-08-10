@@ -39,7 +39,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import marshal
 import os
 import shutil
 import stat
@@ -50,6 +49,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
 from .atomic import atomic_write
+from .parsed_listing import corruption_reason as _parsed_corruption
 from .serialization import SimpleSerialization
 
 if TYPE_CHECKING:
@@ -498,8 +498,8 @@ class OnDiskCache:
         Parses by suffix, matching each kind's read path: ``.policy`` and
         ``.neg`` decode as a policy, ``.metadata`` as UTF-8, ``.json`` as
         JSON (an sdist record also carries its two fields), ``.parsed`` as a
-        marshal blob. Any other suffix is not a nab entry and is reported
-        clean.
+        parsed-listing blob. Any other suffix is not a nab entry and is
+        reported clean.
         """
         try:
             raw = path.read_bytes()
@@ -568,13 +568,9 @@ def _read_metadata_reason(raw: bytes) -> str | None:
 
 def _read_parsed_reason(raw: bytes) -> str | None:
     # Structural decodability only; the digest binding retires a stale-but-valid
-    # blob at read time, so verify does not check it. marshal builds only
-    # builtins, so a garbage blob raises rather than running anything.
-    try:
-        marshal.loads(raw)  # noqa: S302
-    except (ValueError, EOFError, TypeError):
-        return "not valid marshal data"
-    return None
+    # blob at read time, so verify does not check it. The codec owns the check so
+    # verify and the read path agree on what counts as corrupt.
+    return _parsed_corruption(raw)
 
 
 def _encode_policy(policy: CachePolicy) -> bytes:

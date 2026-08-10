@@ -5,32 +5,32 @@ resolve skips ``json.loads`` and wheel/sdist filename parsing. This module
 owns the record<->bytes translation; :class:`~nab_index.cache.OnDiskCache`
 treats the blob as opaque and knows nothing about record shapes.
 
-Wire form (``marshal.dumps`` of ``(header, body)``):
+Wire form (UTF-8 JSON of ``[header, rows]``):
 
-* header ``(format, codec, interp, key_scheme, body_digest)`` is checked
-  before anything is trusted. A reader on a different ``format``, ``codec``,
-  interpreter minor (``interp``), or ``key_scheme`` treats the entry as a miss
-  and rebuilds, so a cache written by an older build self-heals instead of
-  misdecoding. ``body_digest`` binds the blob to the raw body it was parsed
-  from; :func:`decode` rejects a blob whose digest does not equal the policy's,
-  so a raw-body update invalidates the derived form.
-* body splits the surviving wheel and sdist records into two lists plus an
-  ``order`` vector of small ints that reproduces the interleaved survivor order,
-  keeping a downstream stable-sort tie-break identical. Each record is a flat
-  tuple of its fields; ``requires_python`` and hash-algorithm names are
-  re-interned on decode via ``sys.intern`` so the round trip reproduces the
+* header ``[format, codec, key_scheme, body_digest]`` is checked before
+  anything is trusted. A reader on a different ``format``, ``codec``, or
+  ``key_scheme`` treats the entry as a miss and rebuilds, so a cache written by
+  an older build self-heals instead of misdecoding. ``body_digest`` binds the
+  blob to the raw body it was parsed from; :func:`decode` rejects a blob whose
+  digest does not equal the policy's, so a raw-body update invalidates the
+  derived form.
+* rows hold one entry per surviving record, in the order the wire parse
+  returned them, so a downstream stable-sort tie-break stays identical. Each
+  row is a flat list tagged wheel or sdist by its first element. Every field is
+  type-checked on the way back, and ``requires_python`` and hash-algorithm
+  names are re-interned via ``sys.intern`` so the round trip reproduces the
   dedup the wire parse builds.
 
-``marshal`` builds only builtins, so a garbage blob raises on load rather than
-running anything, and :func:`decode` reports a miss. The blob is
-interpreter-specific, which the ``interp`` header tag guards.
+The blob is portable: one entry serves every interpreter that shares the cache,
+and a body this module will not parse is a miss, never an exception reaching
+the caller.
 """
 
 from __future__ import annotations
 
-import marshal
+import json
 import sys
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from .client import SdistFile, WheelFile
 
@@ -42,51 +42,22 @@ __all__ = ["corruption_reason", "decode", "encode"]
 # Record-shape version, redundant with the bucket suffix but guards against a
 # stale-shape blob surfacing under the current bucket.
 FORMAT_VERSION = 0
-# Serialization variant that wrote the body, so a future codec switch
-# self-heals rather than misdecodes: 1 == flat per-record tuples (shipped),
-# 2 reserved for a string-deduplicated table.
-CODEC_M1 = 1
-CODEC_M2 = 2
-CODEC = CODEC_M1
+# Serialization variant that wrote the rows, so a future codec switch
+# self-heals rather than misdecodes.
+CODEC = 1
 # Version sort-key scheme the rows carry; 0 == no precomputed keys. A later
-# scheme bumps this and self-heals via a reparse: it appends its own columns to
-# the record tuples, and scheme 0 appends nothing.
-KEY_SCHEME_NONE = 0
-KEY_SCHEME = KEY_SCHEME_NONE
-
-# marshal is interpreter-specific; a reader on a different minor version misses.
-_INTERP = sys.version_info[:2]
+# scheme bumps this and self-heals via a reparse.
+KEY_SCHEME = 0
 
 _TOP_LEN = 2
-_HEADER_LEN = 5
+_HEADER_LEN = 4
+_PAIR_LEN = 2
 _TAG_WHEEL = 0
 _TAG_SDIST = 1
 
-# Field types the encoder wrote; the row is cast to these after the structural
-# gate so the decoded fields flow typed into the record constructors.
-_WheelRow = tuple[
-    str,
-    str,
-    str,
-    "str | None",
-    bool,
-    "str | None",
-    tuple[tuple[str, str], ...],
-    "int | None",
-    "tuple[str, str] | None",
-]
-_SdistRow = tuple[
-    str,
-    str,
-    str,
-    "str | None",
-    "str | None",
-    tuple[tuple[str, str], ...],
-    "int | None",
-]
-# The body's three columns as marshal hands them back, before any of it is
-# trusted; the rows reach their field types in the per-record decoders.
-_Body = tuple[list[tuple[object, ...]], list[tuple[object, ...]], list[object]]
+
+class _BadRowError(ValueError):
+    """A row whose tag, arity, or field types are not what this codec wrote."""
 
 
 def encode(files: list[WheelFile | SdistFile], body_digest: str) -> bytes:
@@ -98,14 +69,12 @@ def encode(files: list[WheelFile | SdistFile], body_digest: str) -> bytes:
     remote body) and ``metadata_url`` is a derived property, so neither rides
     the wire.
     """
-    wheel_rows: list[tuple[object, ...]] = []
-    sdist_rows: list[tuple[object, ...]] = []
-    order: list[int] = []
+    rows: list[list[object]] = []
     for record in files:
         if isinstance(record, WheelFile):
-            order.append(_TAG_WHEEL)
-            wheel_rows.append(
-                (
+            rows.append(
+                [
+                    _TAG_WHEEL,
                     record.filename,
                     record.url,
                     record.version,
@@ -115,12 +84,12 @@ def encode(files: list[WheelFile | SdistFile], body_digest: str) -> bytes:
                     record.hashes,
                     record.size,
                     record.metadata_hash,
-                )
+                ]
             )
         else:
-            order.append(_TAG_SDIST)
-            sdist_rows.append(
-                (
+            rows.append(
+                [
+                    _TAG_SDIST,
                     record.filename,
                     record.url,
                     record.version,
@@ -128,10 +97,12 @@ def encode(files: list[WheelFile | SdistFile], body_digest: str) -> bytes:
                     record.upload_time,
                     record.hashes,
                     record.size,
-                )
+                ]
             )
-    header = (FORMAT_VERSION, CODEC, _INTERP, KEY_SCHEME, body_digest)
-    return marshal.dumps((header, (wheel_rows, sdist_rows, order)))
+    header = [FORMAT_VERSION, CODEC, KEY_SCHEME, body_digest]
+    return json.dumps(
+        [header, rows], ensure_ascii=False, separators=(",", ":")
+    ).encode()
 
 
 def decode(blob: bytes, policy: CachePolicy) -> list[WheelFile | SdistFile] | None:
@@ -139,35 +110,34 @@ def decode(blob: bytes, policy: CachePolicy) -> list[WheelFile | SdistFile] | No
 
     Returns ``None`` (treat as a cache miss and rebuild from the raw body) when
     the blob does not decode, is the wrong shape, was written by a different
-    build (``format`` / ``codec`` / ``interp`` / ``key_scheme``), or is not
-    bound to ``policy``'s body (``body_digest``).  Otherwise rehydrates the
-    records, re-interning ``requires_python`` and hash-algorithm names so
-    string identity matches a fresh parse.
+    build (``format`` / ``codec`` / ``key_scheme``), or is not bound to
+    ``policy``'s body (``body_digest``).  Otherwise rehydrates the records,
+    re-interning ``requires_python`` and hash-algorithm names so string identity
+    matches a fresh parse.
     """
     try:
-        loaded = marshal.loads(blob)  # noqa: S302
-    except (ValueError, EOFError, TypeError):
+        loaded = json.loads(blob)
+    except ValueError:
         return None
-    if not (isinstance(loaded, tuple) and len(loaded) == _TOP_LEN):
+    if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
         return None
-    header, body = loaded
-    if not (isinstance(header, tuple) and len(header) == _HEADER_LEN):
+    header, rows = loaded
+    if not (isinstance(header, list) and len(header) == _HEADER_LEN):
         return None
-    format_, codec, interp, key_scheme, body_digest = header
+    format_, codec, key_scheme, body_digest = header
     if (
         format_ != FORMAT_VERSION
         or codec != CODEC
-        or interp != _INTERP
         or key_scheme != KEY_SCHEME
         or policy.body_digest is None
         or body_digest != policy.body_digest
     ):
         return None
-    # A blob whose header matches this build but whose body is the wrong shape
-    # must rebuild, not crash the resolve; the body decode is untrusted too.
+    # A blob whose header matches this build but whose rows are the wrong shape
+    # must rebuild, not crash the resolve; the rows are untrusted too.
     try:
-        return _decode_body(body)
-    except (ValueError, TypeError, StopIteration):
+        return _decode_rows(rows)
+    except (ValueError, TypeError):
         return None
 
 
@@ -175,71 +145,61 @@ def corruption_reason(blob: bytes) -> str | None:
     """Return a reason if ``blob`` is structurally corrupt, else ``None``.
 
     Distinguishes genuine corruption (garbage or truncated bytes, or a
-    same-build blob whose body is the wrong shape) from a benign miss, where the
-    header names a different build or binds a different body. The read path warns
-    only on the former. The body-shape check runs only once the header names this
+    same-build blob whose rows are the wrong shape) from a benign miss, where
+    the header names a different build or binds a different body. The read path
+    warns only on the former. The row check runs only once the header names this
     exact build, since a foreign build may have written a shape this one never
     did; checking it earlier would misreport version skew as corruption. This is
     a second pass used only to gate that warning; :func:`decode` returns ``None``
     for every miss reason alike.
     """
     try:
-        loaded = marshal.loads(blob)  # noqa: S302
-    except (ValueError, EOFError, TypeError):
-        return "not valid marshal data"
-    if not (isinstance(loaded, tuple) and len(loaded) == _TOP_LEN):
+        loaded = json.loads(blob)
+    except ValueError:
+        return "not valid JSON"
+    if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
         return "unexpected top-level shape"
-    header, body = loaded
-    if not (isinstance(header, tuple) and len(header) == _HEADER_LEN):
+    header, rows = loaded
+    if not (isinstance(header, list) and len(header) == _HEADER_LEN):
         return "unexpected header shape"
-    format_, codec, interp, key_scheme, _body_digest = header
-    if (
-        format_ != FORMAT_VERSION
-        or codec != CODEC
-        or interp != _INTERP
-        or key_scheme != KEY_SCHEME
-    ):
+    format_, codec, key_scheme, _body_digest = header
+    if format_ != FORMAT_VERSION or codec != CODEC or key_scheme != KEY_SCHEME:
         # A different-build header is benign version skew, not corruption; its
-        # body may be a shape this build never wrote. A same-build body_digest
+        # rows may be a shape this build never wrote. A same-build body_digest
         # mismatch decodes cleanly below and returns None silently.
         return None
-    # A same-build header over a wrong-shape body is genuine on-disk corruption.
     try:
-        _decode_body(body)
-    except (ValueError, TypeError, StopIteration):
-        return "unexpected body shape"
+        _decode_rows(rows)
+    except (ValueError, TypeError):
+        return "unexpected row shape"
     return None
 
 
-def _decode_body(body: _Body) -> list[WheelFile | SdistFile]:
-    wheel_rows, sdist_rows, order = body
-    wheels = iter(wheel_rows)
-    sdists = iter(sdist_rows)
-    out: list[WheelFile | SdistFile] = []
-    for tag in order:
-        if tag == _TAG_WHEEL:
-            out.append(_decode_wheel(next(wheels)))
-        else:
-            out.append(_decode_sdist(next(sdists)))
-    return out
+def _decode_rows(rows: object) -> list[WheelFile | SdistFile]:
+    """Rehydrate every row, raising :class:`_BadRowError` on the first bad one."""
+    if not isinstance(rows, list):
+        raise _BadRowError
+    return [_decode_row(row) for row in rows]
 
 
-def _intern_hashes(
-    hashes: tuple[tuple[str, str], ...],
-) -> tuple[tuple[str, str], ...]:
-    # Algo names are a tiny fixed vocabulary the wire parse interns; re-intern
-    # on decode so repeated ("sha256", ...) share one object, digests do not.
-    return tuple((sys.intern(algo), digest) for algo, digest in hashes)
+def _decode_row(row: object) -> WheelFile | SdistFile:
+    """Rehydrate one row, dispatching on the tag its first element carries."""
+    if not isinstance(row, list) or not row:
+        raise _BadRowError
+    tag = row[0]
+    # bool is a subclass of int, so ``True == _TAG_SDIST`` without this.
+    if type(tag) is not int:
+        raise _BadRowError
+    if tag == _TAG_WHEEL:
+        return _decode_wheel(row)
+    if tag == _TAG_SDIST:
+        return _decode_sdist(row)
+    raise _BadRowError
 
 
-def _intern_optional(value: str | None) -> str | None:
-    # requires_python is interned on the wire path; re-intern so the dedup
-    # survives the round trip, leaving None untouched.
-    return None if value is None else sys.intern(value)
-
-
-def _decode_wheel(row: tuple[object, ...]) -> WheelFile:
+def _decode_wheel(row: list[object]) -> WheelFile:
     (
+        _,
         filename,
         url,
         version,
@@ -249,30 +209,79 @@ def _decode_wheel(row: tuple[object, ...]) -> WheelFile:
         hashes,
         size,
         metadata_hash,
-    ) = cast("_WheelRow", row)
+    ) = row
     return WheelFile(
-        filename=filename,
-        url=url,
-        version=version,
-        requires_python=_intern_optional(requires_python),
-        has_metadata=has_metadata,
-        upload_time=upload_time,
-        hashes=_intern_hashes(hashes),
-        size=size,
-        metadata_hash=metadata_hash,
+        filename=_text(filename),
+        url=_text(url),
+        version=_text(version),
+        requires_python=_interned_or_none(requires_python),
+        has_metadata=_flag(has_metadata),
+        upload_time=_text_or_none(upload_time),
+        hashes=_hashes(hashes),
+        size=_count_or_none(size),
+        metadata_hash=_pair_or_none(metadata_hash),
     )
 
 
-def _decode_sdist(row: tuple[object, ...]) -> SdistFile:
-    filename, url, version, requires_python, upload_time, hashes, size = cast(
-        "_SdistRow", row
-    )
+def _decode_sdist(row: list[object]) -> SdistFile:
+    _, filename, url, version, requires_python, upload_time, hashes, size = row
     return SdistFile(
-        filename=filename,
-        url=url,
-        version=version,
-        requires_python=_intern_optional(requires_python),
-        upload_time=upload_time,
-        hashes=_intern_hashes(hashes),
-        size=size,
+        filename=_text(filename),
+        url=_text(url),
+        version=_text(version),
+        requires_python=_interned_or_none(requires_python),
+        upload_time=_text_or_none(upload_time),
+        hashes=_hashes(hashes),
+        size=_count_or_none(size),
     )
+
+
+# JSON hands back only its own types, so an exact type check is enough to keep a
+# hand-written or corrupt blob from reaching a record's fields. ``type() is``
+# rather than ``isinstance`` because ``bool`` is a subclass of ``int`` and the
+# two are not interchangeable in a record.
+def _text(value: object) -> str:
+    if type(value) is not str:
+        raise _BadRowError
+    return value
+
+
+def _text_or_none(value: object) -> str | None:
+    return None if value is None else _text(value)
+
+
+def _interned_or_none(value: object) -> str | None:
+    # JSON builds a fresh string per occurrence, so interning here is what
+    # reproduces the dedup the wire parse leaves behind.
+    return None if value is None else sys.intern(_text(value))
+
+
+def _flag(value: object) -> bool:
+    if type(value) is not bool:
+        raise _BadRowError
+    return value
+
+
+def _count_or_none(value: object) -> int | None:
+    if value is None:
+        return None
+    if type(value) is not int:
+        raise _BadRowError
+    return value
+
+
+def _pair(value: object) -> tuple[str, str]:
+    if not isinstance(value, list) or len(value) != _PAIR_LEN:
+        raise _BadRowError
+    return (_text(value[0]), _text(value[1]))
+
+
+def _pair_or_none(value: object) -> tuple[str, str] | None:
+    return None if value is None else _pair(value)
+
+
+def _hashes(value: object) -> tuple[tuple[str, str], ...]:
+    """Return the hash pairs with algorithm names interned."""
+    if not isinstance(value, list):
+        raise _BadRowError
+    return tuple((sys.intern(algo), digest) for algo, digest in map(_pair, value))
