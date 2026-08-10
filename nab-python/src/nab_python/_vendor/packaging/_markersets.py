@@ -1655,6 +1655,49 @@ def _dedupe(clauses: list[frozenset[Atom]]) -> list[frozenset[Atom]]:
     return out
 
 
+def _rows_within(
+    left: Formula,
+    rows: Sequence[_Row],
+    right_by_row: Sequence[Formula],
+    max_cells: int,
+    store: Memo,
+) -> bool:
+    """Whether ``left`` stays inside the constant right on every row.
+
+    One direction of :func:`_rows_equivalent`, for a caller that only
+    widens its candidate: the other direction held before the change,
+    and widening cannot lose it.
+    """
+    for row, right in zip(rows, right_by_row, strict=True):
+        left_r = restrict_tree(left, row.pins)
+        if not is_empty(
+            make_and((left_r, row.bound, make_not(right))), max_cells, store
+        ):
+            return False
+    return True
+
+
+def _rows_cover(
+    left: Formula,
+    rows: Sequence[_Row],
+    right_by_row: Sequence[Formula],
+    max_cells: int,
+    store: Memo,
+) -> bool:
+    """Whether ``left`` still reaches everything the constant right does.
+
+    The other direction, for a caller that only narrows its candidate:
+    narrowing cannot start reaching further than the original did.
+    """
+    for row, right in zip(rows, right_by_row, strict=True):
+        left_r = restrict_tree(left, row.pins)
+        if not is_empty(
+            make_and((right, row.bound, make_not(left_r))), max_cells, store
+        ):
+            return False
+    return True
+
+
 def _drop_clauses(
     clauses: list[frozenset[Atom]],
     rows: Sequence[_Row],
@@ -1662,12 +1705,15 @@ def _drop_clauses(
     max_cells: int,
     store: Memo,
 ) -> list[frozenset[Atom]]:
+    """Drop every clause the rest of the disjunction already covers.
+
+    Removing one only narrows the candidate, so it cannot start reaching
+    past the original and only the cover direction can break.
+    """
     kept = list(clauses)
     for clause in sorted(clauses, key=_clause_key):
         trial = [other for other in kept if other != clause]
-        if _rows_equivalent(
-            _disjunction(trial), rows, original_by_row, max_cells, store
-        ):
+        if _rows_cover(_disjunction(trial), rows, original_by_row, max_cells, store):
             kept = trial
     return kept
 
@@ -1679,12 +1725,19 @@ def _drop_atoms(
     max_cells: int,
     store: Memo,
 ) -> list[frozenset[Atom]]:
+    """Drop every atom its clause does not need to stay within the original.
+
+    Removing one only widens that clause, so the disjunction still covers
+    the original and only the widened clause can reach past it.  Testing
+    the clause alone rather than the whole disjunction is what keeps a
+    wide universe cheap: the others are unchanged and already within.
+    """
     working = [set(clause) for clause in clauses]
     for clause in working:
         for atom in sorted(clause, key=_atom_key):
             clause.discard(atom)
-            trial = _disjunction(frozenset(current) for current in working)
-            if not _rows_equivalent(trial, rows, original_by_row, max_cells, store):
+            widened = _clause_formula(frozenset(clause))
+            if not _rows_within(widened, rows, original_by_row, max_cells, store):
                 clause.add(atom)
     return [frozenset(clause) for clause in working]
 
