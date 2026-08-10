@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import sys
 import threading
+from functools import lru_cache
 from itertools import pairwise, product
 from typing import TYPE_CHECKING, NamedTuple, cast
 
@@ -111,7 +112,16 @@ def is_pure_version(variable: str) -> bool:
     return DOMAIN_REGISTRY[variable] == DOMAIN_VERSION
 
 
+@lru_cache(maxsize=8192)
 def _apply(lhs: str, op: str, rhs: str, key: str) -> bool:
+    """Evaluate one atom against one point, memoised on the four strings.
+
+    A decision re-reads the same atom on the same point across the cells of
+    one axis, and the operations of one lock re-read the same few hundred
+    pairs thousands of times.  ``Memo`` spans a single operation, so it
+    cannot see that; this key is four strings and holds no reference to any
+    tree or atom, so caching it across operations keeps nothing alive.
+    """
     return _eval_op(lhs, Op(op), rhs, key=key)
 
 
