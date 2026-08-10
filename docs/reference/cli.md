@@ -72,7 +72,7 @@ Build requirements:
   the project is built in rather than the one it runs in. `--output`
   defaults to `pylock.build.toml` (or `build-requirements.txt` for the
   requirements formats), which keeps it clear of the project's runtime
-  lock. Nothing can be selected alongside it: `[build-system].requires`
+  lock, and `--locked` then checks that file. Nothing can be selected alongside it: `[build-system].requires`
   is one flat list, so `--groups`, `--all-groups`, `--extras`,
   `--all-extras`, `--project-default-group`, `--project-base-group` and
   `--project-build-group` are all rejected, and `[tool.nab].default-groups`,
@@ -83,7 +83,8 @@ Build requirements:
   `setuptools` would put a build requirement in the lock that the project
   never declared. `[tool.nab].build-group`, which carries the build
   requirements in the project's own lock instead of a separate one, is
-  the same.
+  the same, and it requires `[tool.nab].base-group` so the two sets can
+  be asked for separately.
 * Only the static list is read. Neither this flag nor `build-group`
   invokes the project's own backend, so whatever that backend would add
   from `get_requires_for_build_wheel` is not covered.
@@ -184,8 +185,9 @@ change or is missing, so CI can assert the lock is current. It covers
 `pylock` output to a file in single-environment mode.
 
 When a mismatch is provable from the inputs alone, a changed direct
-dependency, a narrowed `requires-python`, a changed extra or group, or a
-tightened constraint, `--locked` fails fast with that reason before
+dependency, a changed `[build-system].requires` under `build-group`, a
+narrowed `requires-python`, a changed extra or group, or a tightened
+constraint, `--locked` fails fast with that reason before
 resolving. Otherwise it runs the full re-resolve, and only that comparison
 reports the lock up to date: nab is non-sticky, so a lock can satisfy every
 input yet be stale once a newer admissible version exists.

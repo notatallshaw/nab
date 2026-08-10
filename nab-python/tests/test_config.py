@@ -913,19 +913,34 @@ class TestMainGroup:
             read_pyproject_config(path)
 
     def test_build_group_is_normalised(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\nbuild-group = "Build_Deps"\n')
+        path = write(
+            tmp_path, '[tool.nab]\nbase-group = "main"\nbuild-group = "Build_Deps"\n'
+        )
         assert read_pyproject_config(path).build_group == "build-deps"
 
     def test_build_group_rejects_a_non_name(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\nbuild-group = "-nope-"\n')
+        path = write(
+            tmp_path, '[tool.nab]\nbase-group = "main"\nbuild-group = "-nope-"\n'
+        )
         with pytest.raises(ConfigError, match="build-group '-nope-'"):
             read_pyproject_config(path)
+
+    def test_build_group_without_a_base_group_is_refused(self, tmp_path: Path) -> None:
+        """Unnamed, the project's own dependencies come with every group."""
+        path = write(tmp_path, '[tool.nab]\nbuild-group = "build"\n')
+        with pytest.raises(ConfigError, match="but base-group is unset"):
+            read_pyproject_config(path)
+
+    def test_a_base_group_alone_is_fine(self, tmp_path: Path) -> None:
+        """The dependency runs one way: naming the rest needs no build group."""
+        path = write(tmp_path, '[tool.nab]\nbase-group = "main"\n')
+        assert read_pyproject_config(path).base_group == "main"
 
     def test_build_group_rejects_a_declared_group_name(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
             '[dependency-groups]\nbuild = ["pytest"]\n'
-            '[tool.nab]\nbuild-group = "build"\n',
+            '[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
         )
         with pytest.raises(ConfigError, match="build-group 'build' and"):
             read_pyproject_config(path)

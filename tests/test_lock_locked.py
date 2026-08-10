@@ -228,12 +228,12 @@ def test_a_lock_offering_a_build_group_is_up_to_date(
         tmp_path,
         '[project]\nname = "proj"\ndependencies = ["foo"]\n'
         '[build-system]\nrequires = ["foo"]\n'
-        '[tool.nab]\nbuild-group = "build"\n',
+        '[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
     )
     out = tmp_path / "pylock.toml"
     _write_lock(pyproject, out, _result({"foo": "1.0"}))
     capsys.readouterr()
-    assert tomli.loads(out.read_text())["dependency-groups"] == ["build"]
+    assert tomli.loads(out.read_text())["dependency-groups"] == ["main", "build"]
 
     _run_locked(pyproject, out, _locked_mock(_result({"foo": "1.0"})))
 
@@ -247,13 +247,16 @@ def test_a_tightened_build_requirement_fires_with_a_build_group(
     body = '[project]\nname = "proj"\ndependencies = ["bar"]\n[build-system]\n'
     pyproject = _write_pyproject(
         tmp_path,
-        body + 'requires = ["foo"]\n[tool.nab]\nbuild-group = "build"\n',
+        body
+        + 'requires = ["foo"]\n[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
     )
     out = tmp_path / "pylock.toml"
     _write_lock(pyproject, out, _result({"bar": "1.0", "foo": "1.5"}))
     capsys.readouterr()
     pyproject.write_text(
-        body + 'requires = ["foo>=2.0"]\n[tool.nab]\nbuild-group = "build"\n',
+        body
+        + 'requires = ["foo>=2.0"]\n'
+        + '[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
         encoding="utf-8",
     )
 
@@ -276,11 +279,15 @@ def test_a_renamed_build_group_is_out_of_date(
         '[build-system]\nrequires = ["foo"]\n'
         "[tool.nab]\n"
     )
-    pyproject = _write_pyproject(tmp_path, body + 'build-group = "build"\n')
+    pyproject = _write_pyproject(
+        tmp_path, body + 'base-group = "main"\nbuild-group = "build"\n'
+    )
     out = tmp_path / "pylock.toml"
     _write_lock(pyproject, out, _result({"foo": "1.0"}))
     capsys.readouterr()
-    pyproject.write_text(body + 'build-group = "builder"\n', encoding="utf-8")
+    pyproject.write_text(
+        body + 'base-group = "main"\nbuild-group = "builder"\n', encoding="utf-8"
+    )
 
     mock = _locked_mock()
     with pytest.raises(SystemExit) as exc:

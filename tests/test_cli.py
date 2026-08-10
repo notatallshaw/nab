@@ -684,7 +684,7 @@ class TestLockCommandSpecific:
             tmp_path,
             '[project]\nname = "proj"\ndependencies = ["foo"]\n'
             '[build-system]\nrequires = ["foo"]\n'
-            '[tool.nab]\nbuild-group = "build"\n',
+            '[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
         )
         out = tmp_path / "pylock.toml"
         with patch(
@@ -693,8 +693,8 @@ class TestLockCommandSpecific:
         ):
             lock(pyproject, output=out)
         written = tomli.loads(out.read_text())
-        assert written["dependency-groups"] == ["build"]
-        assert "default-groups" not in written
+        assert written["dependency-groups"] == ["main", "build"]
+        assert written["default-groups"] == ["main"]
 
     def test_build_group_naming_a_declared_group_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -705,7 +705,7 @@ class TestLockCommandSpecific:
             '[project]\nname = "proj"\ndependencies = ["foo"]\n'
             '[build-system]\nrequires = ["foo"]\n'
             '[dependency-groups]\nbuild = ["foo"]\n'
-            '[tool.nab]\nbuild-group = "build"\n',
+            '[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
         )
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject, output=tmp_path / "pylock.toml")
@@ -2261,7 +2261,8 @@ class TestLockCommandUniversal:
             tmp_path,
             '[project]\ndependencies = ["foo"]\n'
             '[build-system]\nrequires = ["foo"]\n'
-            '[dependency-groups]\ndev = ["foo"]\n',
+            '[dependency-groups]\ndev = ["foo"]\n'
+            '[tool.nab]\nbase-group = "main"\n',
         )
         with pytest.raises(SystemExit, match="1"):
             lock(

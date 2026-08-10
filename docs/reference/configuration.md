@@ -46,7 +46,9 @@ base-group = "base"
 # no group is installing the project, not building it.  The requirements
 # output formats carry no markers, so there they render as ordinary
 # pins.  The name must not be one [dependency-groups] declares, nor the
-# base-group name.
+# base-group name, and base-group must be set: unnamed, the project's
+# own dependencies carry no marker and come with every group, so nothing
+# could ask for the build requirements alone.
 build-group = "build"
 
 # The Python range this project supports.  A declaration: it is

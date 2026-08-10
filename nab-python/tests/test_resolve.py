@@ -4510,7 +4510,7 @@ class TestExtraAndGroupMembershipMarkers:
         replaced = self._lock(tmp_path, root=root + 'base-group = "base"\n')
 
         assert replaced.default_groups == ("dev",)
-        assert self._selected(replaced) == {"mydev"}
+        assert _pylock_selected(replaced) == {"mydev"}
 
     def test_naming_the_base_group_in_default_groups_keeps_it(
         self, tmp_path: Path
@@ -4520,7 +4520,7 @@ class TestExtraAndGroupMembershipMarkers:
         pylock = self._lock(tmp_path, root=root + 'base-group = "base"\n')
 
         assert pylock.default_groups == ("dev", "base")
-        assert self._selected(pylock) == {"core", "mydev"}
+        assert _pylock_selected(pylock) == {"core", "mydev"}
 
     def test_selecting_the_base_group_by_name_refuses(self, tmp_path: Path) -> None:
         """It is project policy, not a per-run selection.
@@ -5012,6 +5012,11 @@ class TestBuildRequirementsConfig:
         assert pruned.requires_python == ">=3.10"
 
 
+_BOTH_GROUPS = '[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n'
+"""Naming the build requirements needs a name for the rest, or they would
+install alongside every group."""
+
+
 class TestBuildGroup:
     """``[tool.nab].build-group`` carries the build requirements in the lock."""
 
@@ -5041,7 +5046,7 @@ class TestBuildGroup:
     def test_build_requires_join_the_resolve(self, tmp_path: Path) -> None:
         """Naming a group puts the build requirements in the lock."""
         pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(self._PYPROJECT + '[tool.nab]\nbuild-group = "build"\n')
+        pyproject.write_text(self._PYPROJECT + _BOTH_GROUPS)
 
         result = self._mocked_resolve(pyproject)
 
@@ -5062,6 +5067,7 @@ class TestBuildGroup:
         pyproject.write_text(
             '[project]\nname = "proj"\ndependencies = []\n'
             "[tool.nab]\n"
+            'base-group = "main"\n'
             'build-group = "build"\n'
         )
 
@@ -5077,7 +5083,7 @@ class TestBuildGroup:
         the lock offering a name that gates nothing.
         """
         pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(self._PYPROJECT + '[tool.nab]\nbuild-group = "build"\n')
+        pyproject.write_text(self._PYPROJECT + _BOTH_GROUPS)
         config = config_for_build_requirements(read_pyproject_config(pyproject))
 
         result = self._mocked_resolve(pyproject, build_requirements=True)
@@ -5098,6 +5104,7 @@ class TestBuildGroup:
             'cpu = ["torch-cpu"]\n'
             'gpu = ["torch-gpu"]\n'
             "[tool.nab]\n"
+            'base-group = "main"\n'
             'build-group = "build"\n'
             'conflicts = [[{ group = "cpu" }, { group = "gpu" }]]\n'
         )
@@ -5126,6 +5133,7 @@ class TestBuildGroup:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             self._PYPROJECT + "[tool.nab]\n"
+            'base-group = "main"\n'
             'build-group = "build"\n'
             'mode = "universal"\n'
             "[tool.nab.matrix]\n"
@@ -5177,48 +5185,42 @@ class TestBuildGroupMarkers:
             members=self._MEMBERS,
         )
 
-    def test_build_requirement_carries_the_group_membership(
-        self, tmp_path: Path
-    ) -> None:
-        """Only the build group reaches it, so only its name gates it."""
-        pylock = self._lock(tmp_path, tool='[tool.nab]\nbuild-group = "build"\n')
+    def test_each_side_gates_on_its_own_name(self, tmp_path: Path) -> None:
+        """Only the build group reaches the build requirement."""
+        pylock = self._lock(tmp_path, tool=_BOTH_GROUPS)
 
         assert _pylock_markers(pylock) == {
-            "core": None,
+            "core": '"main" in dependency_groups',
             "builder": '"build" in dependency_groups',
         }
 
-    def test_the_name_is_selectable_but_not_a_default(self, tmp_path: Path) -> None:
+    def test_the_build_name_is_selectable_but_not_a_default(
+        self, tmp_path: Path
+    ) -> None:
         """An install that asks for no group is installing, not building."""
-        pylock = self._lock(tmp_path, tool='[tool.nab]\nbuild-group = "build"\n')
+        pylock = self._lock(tmp_path, tool=_BOTH_GROUPS)
 
-        assert pylock.dependency_groups == ("build",)
-        assert pylock.default_groups is None
+        assert pylock.dependency_groups == ("main", "build")
+        assert pylock.default_groups == ("main",)
 
         assert _pylock_selected(pylock) == {"core"}
-        assert _pylock_selected(pylock, dependency_groups=["build"]) == {
+
+    def test_the_build_requirements_can_be_asked_for_alone(
+        self, tmp_path: Path
+    ) -> None:
+        """Naming the rest is what makes the build side selectable on its own."""
+        pylock = self._lock(tmp_path, tool=_BOTH_GROUPS)
+
+        assert _pylock_selected(pylock, dependency_groups=["build"]) == {"builder"}
+        assert _pylock_selected(pylock, dependency_groups=["main"]) == {"core"}
+        assert _pylock_selected(pylock, dependency_groups=["main", "build"]) == {
             "core",
             "builder",
         }
 
-    def test_it_composes_with_a_named_base_group(self, tmp_path: Path) -> None:
-        """Both names are selectable, and neither drags in the other."""
-        pylock = self._lock(
-            tmp_path,
-            tool='[tool.nab]\nbase-group = "default"\nbuild-group = "build"\n',
-        )
-
-        assert pylock.dependency_groups == ("default", "build")
-        assert pylock.default_groups == ("default",)
-
-        assert _pylock_selected(pylock, dependency_groups=["build"]) == {"builder"}
-        assert _pylock_selected(pylock, dependency_groups=["default"]) == {"core"}
-
     def test_a_selected_group_keeps_its_own_gate(self, tmp_path: Path) -> None:
         """The build group is one selector among the run's own selection."""
-        pylock = self._lock(
-            tmp_path, tool='[tool.nab]\nbuild-group = "build"\n', groups=("dev",)
-        )
+        pylock = self._lock(tmp_path, tool=_BOTH_GROUPS, groups=("dev",))
 
         assert _pylock_markers(pylock)["mydev"] == '"dev" in dependency_groups'
-        assert _pylock_selected(pylock, dependency_groups=["dev"]) == {"core", "mydev"}
+        assert _pylock_selected(pylock, dependency_groups=["dev"]) == {"mydev"}

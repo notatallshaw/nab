@@ -192,25 +192,33 @@ built in:
 
 ```toml
 [tool.nab]
+base-group = "default"
 build-group = "build"
 ```
 
 ```toml
-dependency-groups = ["dev", "build"]
+dependency-groups = ["dev", "default", "build"]
+default-groups = ["default"]
 
 [[packages]]
 name = "hatchling"
-version = "1.27.0"
+version = "1.31.0"
 marker = "\"build\" in dependency_groups"
 ```
 
-The name lands in `dependency-groups` and not in `default-groups`: an
-install that asks for no group is installing the project, not building
+The build name lands in `dependency-groups` and not in `default-groups`:
+an install that asks for no group is installing the project, not building
 it. Only the static list is read, so whatever a backend would add from
-`get_requires_for_build_wheel` is not covered. The name must be free of
-`[dependency-groups]` and of `base-group`. The requirements output
-formats carry no markers, so there the build requirements render as
-ordinary pins.
+`get_requires_for_build_wheel` is not covered.
+
+`base-group` must be set alongside it, as above. Without a name of their own the
+project's own dependencies carry no marker, so they install under every
+selection and asking for the build group returns them too, which leaves
+no way to install the build requirements alone. With both named, an
+install that wants them together selects both groups. The name must also
+be free of `[dependency-groups]` and of `base-group` itself. The
+requirements output formats carry no markers, so there the build
+requirements render as ordinary pins.
 
 The build requirements resolve in the same version space as the
 project's own, which is what a single lock can express: an installer

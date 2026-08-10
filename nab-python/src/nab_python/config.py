@@ -659,6 +659,9 @@ def read_pyproject_config(
         project_requires_python=project_requires_python,
     )
     _validate_base_group_is_free(effective["base-group"], path)
+    _validate_build_group_has_a_base_group(
+        effective["build-group"], effective["base-group"]
+    )
     _validate_build_group_is_free(
         effective["build-group"], effective["base-group"], path
     )
@@ -1400,6 +1403,33 @@ def _validate_base_group_is_free(base_group: EffectiveValue, path: Path) -> None
     msg = (
         f"{key} {name!r} and [dependency-groups] {names} are the same name;"
         " one marker cannot mean both"
+    )
+    raise ConfigError(msg)
+
+
+def _validate_build_group_has_a_base_group(
+    build_group: EffectiveValue, base_group: EffectiveValue
+) -> None:
+    """Reject a ``build-group`` without a ``base-group`` to answer for the rest.
+
+    Unnamed, the project's own dependencies carry no marker and install
+    under every selection, so asking for the build group returns them too
+    and nothing can install the build requirements alone, which is the
+    reason to name them.  Naming both costs nothing: an install that wants
+    them together selects both groups.
+    """
+    if build_group.value is None or base_group.value is not None:
+        return
+    key = (
+        "--project-build-group"
+        if build_group.origin.kind is SourceKind.CLI
+        else "build-group"
+    )
+    msg = (
+        f"{key} is {build_group.value!r}, but base-group is unset, so the"
+        " project's own dependencies carry no marker and install alongside"
+        " every group; set base-group to name them, or drop build-group and"
+        " use nab lock --build-requirements for a separate lock"
     )
     raise ConfigError(msg)
 
