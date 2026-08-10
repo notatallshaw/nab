@@ -133,9 +133,9 @@ class TestInMemoryIndex:
 
     def test_offline_listing_miss_fires_listing_pending(self) -> None:
         idx = InMemoryIndex()
-        pending, _ = idx.get_or_create_pending("listing:foo")
+        event, _ = idx.get_or_create_pending("listing:foo")
         idx.store_listing("foo", [], offline_miss=True)
-        assert pending.event.is_set()
+        assert event.is_set()
 
     def test_metadata_roundtrip(self) -> None:
         idx = InMemoryIndex()
@@ -190,11 +190,11 @@ class TestInMemoryIndex:
 
     def test_store_metadata_error_fires_metadata_pending(self) -> None:
         idx = InMemoryIndex()
-        pending, _ = idx.get_or_create_pending("metadata:foo:1.0:https://f/a.metadata")
+        event, _ = idx.get_or_create_pending("metadata:foo:1.0:https://f/a.metadata")
         idx.store_metadata_error(
             "foo", "1.0", MetadataHashMismatchError("bad"), "https://f/a.metadata"
         )
-        assert pending.event.is_set()
+        assert event.is_set()
 
     def test_store_metadata_error_without_pending(self) -> None:
         idx = InMemoryIndex()
@@ -204,21 +204,24 @@ class TestInMemoryIndex:
 
     def test_pending_event_set_on_listing(self) -> None:
         idx = InMemoryIndex()
-        pending, existed = idx.get_or_create_pending("listing:foo")
+        event, existed = idx.get_or_create_pending("listing:foo")
         assert not existed
-        assert not pending.event.is_set()
+        assert not event.is_set()
         wheels = [_make_wheel("foo")]
         idx.store_listing("foo", wheels)
-        assert pending.event.is_set()
-        assert pending.result == wheels
+        assert event.is_set()
+        assert idx.get_listing("foo") == wheels
 
     def test_pending_event_set_on_metadata(self) -> None:
         idx = InMemoryIndex()
-        pending, existed = idx.get_or_create_pending("metadata:foo:1.0:https://f/a.md")
+        event, existed = idx.get_or_create_pending("metadata:foo:1.0:https://f/a.md")
         assert not existed
         idx.store_metadata("foo", "1.0", "text", "https://f/a.md")
-        assert pending.event.is_set()
-        assert pending.result == "text"
+        assert event.is_set()
+        assert idx.get_metadata_with_origin("foo", "1.0", "https://f/a.md") == (
+            "text",
+            False,
+        )
 
     def test_sidecar_slot_answers_only_for_its_own_artifact(self) -> None:
         linux_url = "https://f/linux.whl.metadata"
@@ -293,18 +296,18 @@ class TestInMemoryIndex:
 
     def test_get_or_create_existing(self) -> None:
         idx = InMemoryIndex()
-        p1, existed1 = idx.get_or_create_pending("key")
-        p2, existed2 = idx.get_or_create_pending("key")
+        first, existed1 = idx.get_or_create_pending("key")
+        second, existed2 = idx.get_or_create_pending("key")
         assert not existed1
         assert existed2
-        assert p1 is p2
+        assert first is second
 
     def test_store_sdist_metadata_fires_sdist_pending(self) -> None:
         idx = InMemoryIndex()
-        pending, _ = idx.get_or_create_pending("sdist:foo:1.0")
-        assert not pending.event.is_set()
+        event, _ = idx.get_or_create_pending("sdist:foo:1.0")
+        assert not event.is_set()
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
-        assert pending.event.is_set()
+        assert event.is_set()
         assert idx.get_metadata("foo", "1.0") == "PKG-INFO\n"
 
     def test_store_sdist_metadata_without_pending(self) -> None:
@@ -315,11 +318,11 @@ class TestInMemoryIndex:
 
     def test_store_sdist_metadata_error_fires_sdist_pending(self) -> None:
         idx = InMemoryIndex()
-        pending, _ = idx.get_or_create_pending("sdist:foo:1.0")
-        assert not pending.event.is_set()
+        event, _ = idx.get_or_create_pending("sdist:foo:1.0")
+        assert not event.is_set()
         err = SdistHashMismatchError("boom")
         idx.store_sdist_metadata_error("foo", "1.0", err)
-        assert pending.event.is_set()
+        assert event.is_set()
         assert idx.get_metadata_error("foo", "1.0") is err
         assert idx.get_metadata("foo", "1.0") is None
 
@@ -340,10 +343,10 @@ class TestInMemoryIndex:
     def test_metadata_none_keeps_stored_sdist_pkg_info(self) -> None:
         """A failed sidecar fetch must not erase stored sdist PKG-INFO."""
         idx = InMemoryIndex()
-        pending, _ = idx.get_or_create_pending("metadata:foo:1.0:https://f/a.md")
+        event, _ = idx.get_or_create_pending("metadata:foo:1.0:https://f/a.md")
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO\n")
         idx.store_metadata("foo", "1.0", None, "https://f/a.md")
-        assert pending.event.is_set()
+        assert event.is_set()
         assert idx.get_metadata("foo", "1.0") == "PKG-INFO\n"
         assert idx.metadata_from_sdist("foo", "1.0")
         # The sidecar that resolved to nothing reads the kept text.
@@ -361,11 +364,10 @@ class TestInMemoryIndex:
 
     def test_sdist_archive_pending_event_fires(self) -> None:
         idx = InMemoryIndex()
-        pending, _ = idx.get_or_create_pending("sdist-archive:foo:1.0")
-        assert not pending.event.is_set()
+        event, _ = idx.get_or_create_pending("sdist-archive:foo:1.0")
+        assert not event.is_set()
         idx.store_sdist_archive("foo", "1.0", b"bytes")
-        assert pending.event.is_set()
-        assert pending.result == b"bytes"
+        assert event.is_set()
         assert idx.get_sdist_archive("foo", "1.0") == b"bytes"
 
     def test_sdist_archive_without_pending(self) -> None:
@@ -375,11 +377,11 @@ class TestInMemoryIndex:
 
     def test_store_sdist_archive_error_fires_pending(self) -> None:
         idx = InMemoryIndex()
-        pending, _ = idx.get_or_create_pending("sdist-archive:foo:1.0")
-        assert not pending.event.is_set()
+        event, _ = idx.get_or_create_pending("sdist-archive:foo:1.0")
+        assert not event.is_set()
         err = SdistHashMismatchError("boom")
         idx.store_sdist_archive_error("foo", "1.0", err)
-        assert pending.event.is_set()
+        assert event.is_set()
         assert idx.get_sdist_archive_error("foo", "1.0") is err
         assert idx.get_sdist_archive("foo", "1.0") is None
 
@@ -581,9 +583,9 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, json=LISTING_JSON)
         )
         with _coord() as coord:
-            pending, _ = coord.index.get_or_create_pending("listing:testpkg")
+            claimed, _ = coord.index.get_or_create_pending("listing:testpkg")
             event = coord.request_listing("testpkg")
-            assert event is pending.event
+            assert event is claimed
             assert route.call_count == 0
 
     @respx.mock
@@ -991,7 +993,7 @@ class TestFetchCoordinator:
             # queue the request directly: request_metadata would short-circuit
             # on the stored PKG-INFO, but a prefetch already in flight lands
             url = "https://files.example.com/pkg-1.0.whl.metadata"
-            pending, _ = coord.index.get_or_create_pending(f"metadata:pkg:1.0:{url}")
+            claimed, _ = coord.index.get_or_create_pending(f"metadata:pkg:1.0:{url}")
             coord._submit(
                 FetchRequest(
                     kind=FetchKind.METADATA,
@@ -1001,7 +1003,7 @@ class TestFetchCoordinator:
                 )
             )
 
-            assert pending.event.wait(timeout=5)
+            assert claimed.wait(timeout=5)
             assert not coord._crashed
             assert "Name: pkg" in (coord.index.get_metadata("pkg", "1.0") or "")
             assert coord.index.metadata_from_sdist("pkg", "1.0")
@@ -1431,14 +1433,14 @@ class TestFetchCoordinator:
         """Second request_metadata for the same key reuses the pending."""
         respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="meta"))
         with _coord() as coord:
-            pending, _ = coord.index.get_or_create_pending(
+            claimed, _ = coord.index.get_or_create_pending(
                 "metadata:pkg:1.0:https://f.com/m"
             )
             event = coord.request_metadata("pkg", "1.0", "https://f.com/m")
 
             # Deduplicating means handing back the pending's own event. Nothing
             # was submitted for it, so nothing ever sets it.
-            assert event is pending.event
+            assert event is claimed
             assert not event.is_set()
 
     @respx.mock
@@ -1639,10 +1641,10 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, content=buf.getvalue())
         )
         with _coord() as coord:
-            pending, _ = coord.index.get_or_create_pending("sdist:pkg:1.0")
+            claimed, _ = coord.index.get_or_create_pending("sdist:pkg:1.0")
             event = coord.request_sdist("pkg", "1.0", "https://f.com/pkg-1.0.tar.gz")
 
-            assert event is pending.event
+            assert event is claimed
             assert not event.is_set()
 
     @respx.mock
@@ -1705,12 +1707,12 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, content=b"archive"),
         )
         with _coord() as coord:
-            pending, _ = coord.index.get_or_create_pending("sdist-archive:pkg:1.0")
+            claimed, _ = coord.index.get_or_create_pending("sdist-archive:pkg:1.0")
             event = coord.request_sdist_archive(
                 "pkg", "1.0", "https://f.com/pkg-1.0.tar.gz"
             )
 
-            assert event is pending.event
+            assert event is claimed
             assert not event.is_set()
 
     @respx.mock
@@ -1731,10 +1733,10 @@ class TestFetchCoordinator:
         archive = tmp_path / "pkg-1.0.tar.gz"
         archive.write_bytes(b"archive")
         with _coord() as coord:
-            pending, _ = coord.index.get_or_create_pending("sdist-archive:pkg:digest")
+            claimed, _ = coord.index.get_or_create_pending("sdist-archive:pkg:digest")
             event = coord.request_direct_archive("pkg", "digest", archive.as_uri())
 
-            assert event is pending.event
+            assert event is claimed
             assert coord.index.get_sdist_archive("pkg", "digest") is None
 
     def test_offline_direct_archive_records_the_offline_error(self) -> None:
@@ -1806,7 +1808,7 @@ class TestFetchCoordinator:
         """Batch request skips items with existing pending."""
         respx.get(url__regex=r".*").mock(return_value=httpx.Response(200, text="meta"))
         with _coord() as coord:
-            pending, _ = coord.index.get_or_create_pending(
+            claimed, _ = coord.index.get_or_create_pending(
                 "metadata:a:1.0:https://f.com/a"
             )
             results = coord.request_metadata_batch(
@@ -1817,7 +1819,7 @@ class TestFetchCoordinator:
             )
             events = {package: event for package, _version, event in results}
 
-            assert events["a"] is pending.event
+            assert events["a"] is claimed
             assert not events["a"].is_set()
 
             # The item without a pending is still fetched.
@@ -2801,9 +2803,9 @@ class TestRangeMetadataIndex:
     def test_store_range_metadata_fires_pending(self) -> None:
         idx = InMemoryIndex()
         key = f"range:widget:1.0:{_RANGE_URL_A}"
-        pending, _ = idx.get_or_create_pending(key)
+        event, _ = idx.get_or_create_pending(key)
         idx.store_range_metadata("widget", "1.0", _RANGE_URL_A, "META")
-        assert pending.event.is_set()
+        assert event.is_set()
         assert idx.get_metadata("widget", "1.0", _RANGE_URL_A) == "META"
         assert not idx.metadata_from_sdist("widget", "1.0")
 
@@ -2822,9 +2824,9 @@ class TestRangeMetadataIndex:
     def test_store_range_absent_fires_pending_without_slot(self) -> None:
         idx = InMemoryIndex()
         key = f"range:widget:1.0:{_RANGE_URL_A}"
-        pending, _ = idx.get_or_create_pending(key)
+        event, _ = idx.get_or_create_pending(key)
         idx.store_range_absent("widget", "1.0", _RANGE_URL_A)
-        assert pending.event.is_set()
+        assert event.is_set()
         assert idx.get_metadata("widget", "1.0", _RANGE_URL_A) is None
 
     def test_store_range_absent_without_pending(self) -> None:
@@ -2835,10 +2837,10 @@ class TestRangeMetadataIndex:
     def test_store_range_error_fires_pending_and_records(self) -> None:
         idx = InMemoryIndex()
         key = f"range:widget:1.0:{_RANGE_URL_A}"
-        pending, _ = idx.get_or_create_pending(key)
+        event, _ = idx.get_or_create_pending(key)
         error = MalformedSimpleResponseError("bad")
         idx.store_range_error("widget", "1.0", _RANGE_URL_A, error)
-        assert pending.event.is_set()
+        assert event.is_set()
         assert idx.get_metadata_error("widget", "1.0", _RANGE_URL_A) is error
         assert idx.get_metadata("widget", "1.0", _RANGE_URL_A) is None
 
@@ -3258,11 +3260,11 @@ class TestWarmSyncListingPath:
 
             coord._try_listing_sync = _probe  # type: ignore[method-assign]
             calls = _spy_submit(coord)
-            pending, _ = coord.index.get_or_create_pending("listing:pkg")
+            claimed, _ = coord.index.get_or_create_pending("listing:pkg")
 
             event = coord.request_listing("pkg")
 
-            assert event is pending.event
+            assert event is claimed
             assert probed == []
             assert _listing_submits(calls) == []
             assert coord.index.get_listing("pkg") is None

@@ -27,7 +27,6 @@ __all__ = [
 @dataclass
 class _Pending:
     event: threading.Event = field(default_factory=threading.Event)
-    result: Any = None
 
 
 def metadata_pending_key(package: str, version: str, metadata_url: str | None) -> str:
@@ -138,7 +137,6 @@ class InMemoryIndex:
                 self._unreadable_only_listings.add(package)
             pending = self._pending.get(key)
         if pending is not None:
-            pending.result = materialised
             pending.event.set()
 
     def is_offline_listing_miss(self, package: str) -> bool:
@@ -288,7 +286,6 @@ class InMemoryIndex:
             self._write_metadata_slot(slot, data, from_sdist=False)
             pending = self._pending.get(key)
         if pending is not None:
-            pending.result = data
             pending.event.set()
 
     def store_metadata_error(
@@ -375,7 +372,6 @@ class InMemoryIndex:
             self._write_metadata_slot((package, version, None), data, from_sdist=True)
             pending = self._pending.get(key)
         if pending is not None:
-            pending.result = data
             pending.event.set()
 
     def store_sdist_metadata_error(
@@ -425,7 +421,6 @@ class InMemoryIndex:
             )
             pending = self._pending.get(key)
         if pending is not None:
-            pending.result = data
             pending.event.set()
 
     def store_range_absent(self, package: str, version: str, wheel_url: str) -> None:
@@ -501,7 +496,6 @@ class InMemoryIndex:
             self._sdist_archives[(package, version)] = data
             pending = self._pending.get(key)
         if pending is not None:
-            pending.result = data
             pending.event.set()
 
     def get_sdist_archive(self, package: str, version: str) -> bytes | None:
@@ -533,14 +527,19 @@ class InMemoryIndex:
         with self._lock:
             return self._sdist_archive_errors.get((package, version))
 
-    def get_or_create_pending(self, key: str) -> tuple[_Pending, bool]:
-        """Return (pending, already_existed)."""
+    def get_or_create_pending(self, key: str) -> tuple[threading.Event, bool]:
+        """Return ``key``'s waitable event, and whether it already existed.
+
+        One fetch is asked for by the speculative prefetch, by the scan batch
+        and by the read, so a later caller is handed the first caller's event
+        and waits on the request already in flight.
+        """
         with self._lock:
             if key in self._pending:
-                return self._pending[key], True
+                return self._pending[key].event, True
             pending = _Pending()
             self._pending[key] = pending
-            return pending, False
+            return pending.event, False
 
     def get_parsed_metadata(
         self, package: str, version: str, source_text: str

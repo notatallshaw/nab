@@ -462,9 +462,9 @@ class FetchCoordinator:
             done.set()
             return done
         key = f"listing:{package}"
-        pending, existed = self.index.get_or_create_pending(key)
+        event, existed = self.index.get_or_create_pending(key)
         if existed:
-            return pending.event
+            return event
         if not speculative:
             if self._overlap_gate_admits(package):
                 records = self._try_listing_sync(package)
@@ -477,12 +477,12 @@ class FetchCoordinator:
                     self._warm_sync_stats.listing_hits += 1
                     if not self._post_to_loop(self._run_listing_tail, package, records):
                         self._run_listing_tail(package, records)
-                    return pending.event
+                    return event
             else:
                 self._warm_sync_stats.declined_small_blob += 1
             self._warm_sync_stats.listing_declines += 1
         self._submit(FetchRequest(kind=FetchKind.LISTING, package=package))
-        return pending.event
+        return event
 
     def request_metadata(
         self,
@@ -498,7 +498,7 @@ class FetchCoordinator:
             done.set()
             return done
         key = metadata_pending_key(package, version, url)
-        pending, existed = self.index.get_or_create_pending(key)
+        event, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
                 FetchRequest(
@@ -509,7 +509,7 @@ class FetchCoordinator:
                     metadata_hash=metadata_hash,
                 )
             )
-        return pending.event
+        return event
 
     def request_range_metadata(
         self,
@@ -531,7 +531,7 @@ class FetchCoordinator:
         """
         self._check_alive()
         key = range_pending_key(package, version, wheel_url)
-        pending, existed = self.index.get_or_create_pending(key)
+        event, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
                 FetchRequest(
@@ -542,7 +542,7 @@ class FetchCoordinator:
                     wheel_hashes=wheel_hashes,
                 )
             )
-        return pending.event
+        return event
 
     def request_sdist(
         self,
@@ -560,7 +560,7 @@ class FetchCoordinator:
         """
         self._check_alive()
         key = f"sdist:{package}:{version}"
-        pending, existed = self.index.get_or_create_pending(key)
+        event, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
                 FetchRequest(
@@ -571,7 +571,7 @@ class FetchCoordinator:
                     sdist_hashes=sdist_hashes,
                 )
             )
-        return pending.event
+        return event
 
     def request_sdist_archive(
         self,
@@ -591,7 +591,7 @@ class FetchCoordinator:
         """
         self._check_alive()
         key = f"sdist-archive:{package}:{version}"
-        pending, existed = self.index.get_or_create_pending(key)
+        event, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
                 FetchRequest(
@@ -602,7 +602,7 @@ class FetchCoordinator:
                     sdist_hashes=sdist_hashes,
                 )
             )
-        return pending.event
+        return event
 
     def request_direct_archive(
         self,
@@ -619,7 +619,7 @@ class FetchCoordinator:
         """
         self._check_alive()
         key = f"sdist-archive:{package}:{version}"
-        pending, existed = self.index.get_or_create_pending(key)
+        event, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
                 FetchRequest(
@@ -629,7 +629,7 @@ class FetchCoordinator:
                     url=url,
                 )
             )
-        return pending.event
+        return event
 
     def request_metadata_batch(
         self, items: list[tuple[str, str, str, tuple[str, str] | None]]
@@ -650,7 +650,7 @@ class FetchCoordinator:
                 results.append((package, version, done))
                 continue
             key = metadata_pending_key(package, version, url)
-            pending, existed = self.index.get_or_create_pending(key)
+            event, existed = self.index.get_or_create_pending(key)
             if not existed:
                 batch.append(
                     FetchRequest(
@@ -661,7 +661,7 @@ class FetchCoordinator:
                         metadata_hash=metadata_hash,
                     )
                 )
-            results.append((package, version, pending.event))
+            results.append((package, version, event))
         if batch:
             self._submit(batch)
         return results
