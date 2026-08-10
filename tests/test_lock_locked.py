@@ -1,8 +1,10 @@
 """Flow tests for the fast-fail tier in ``nab lock --locked``.
 
-Each case drives the real CLI with ``nab.cli.resolve_for_targets`` mocked
-and a committed pylock on disk.  Whether the resolver was called shows
+Each case drives the real CLI against a committed pylock on disk.  Most mock
+``nab.cli.resolve_for_targets``, so whether the resolver was called shows
 whether the tier fired: a disqualifier never calls it, a fall-through does.
+The invalid-invocation cases keep the real resolve, to pin the error it
+reports when the tier defers.
 """
 
 from __future__ import annotations
@@ -93,6 +95,28 @@ def _run_locked(pyproject: Path, out: Path, mock: MagicMock, *extra: str) -> Non
         )
 
 
+def _run_locked_unmocked(pyproject: Path, out: Path, *extra: str) -> None:
+    """Drive ``--locked`` against the real resolve, to pin what it reports.
+
+    Runs offline with the cache off: these cases fail while reading the
+    project, before the resolve would reach an index.
+    """
+    app.cli(
+        args=[
+            "lock",
+            str(pyproject),
+            "--output",
+            str(out),
+            "--locked",
+            "--offline",
+            "True",
+            "--no-cache",
+            *extra,
+        ],
+        prog="nab",
+    )
+
+
 # --- fire cases: the resolver is never called ---
 
 
@@ -139,6 +163,33 @@ def test_tightened_constraint_fires_without_resolving(
         "the constraint foo<3 is violated by the pinned foo 3.1"
         in capsys.readouterr().err
     )
+    mock.assert_not_called()
+
+
+def test_added_declared_default_group_fires_without_resolving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = (
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo"]\n'
+        "[dependency-groups]\n"
+        'test = ["bb"]\n'
+    )
+    pyproject = _write_pyproject(tmp_path, body)
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    pyproject.write_text(
+        f'{body}[tool.nab]\ndefault-groups = ["test"]\n', encoding="utf-8"
+    )
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "built with default-groups {} but this run selects {test}" in err
+    assert "is out of date" in err
     mock.assert_not_called()
 
 
@@ -435,6 +486,133 @@ def test_conflict_fork_duplicate_pins_fall_through(
     err = capsys.readouterr().err
     assert "the lock pins foo" not in err
     mock.assert_called_once()
+
+
+# --- invalid invocation: the tier defers and the resolve reports why ---
+
+
+def test_undeclared_group_reports_the_group_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo"]\n'
+        "[dependency-groups]\n"
+        'test = ["bb"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        _run_locked_unmocked(pyproject, out, "--groups", "dev")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Dependency group 'dev' not found" in err
+    assert "is out of date" not in err
+    assert "re-run `nab lock`" not in err
+
+
+def test_undeclared_default_group_reports_the_group_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = (
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo"]\n'
+        "[dependency-groups]\n"
+        'test = ["bb"]\n'
+    )
+    pyproject = _write_pyproject(tmp_path, body)
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    pyproject.write_text(
+        f'{body}[tool.nab]\ndefault-groups = ["dev"]\n', encoding="utf-8"
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _run_locked_unmocked(pyproject, out)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Dependency group 'dev' not found" in err
+    assert "is out of date" not in err
+    assert "re-run `nab lock`" not in err
+
+
+def test_undeclared_project_default_group_reports_the_group_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo"]\n'
+        "[dependency-groups]\n"
+        'test = ["bb"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        _run_locked_unmocked(pyproject, out, "--project-default-group", "dev")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "Dependency group 'dev' not found" in err
+    assert "is out of date" not in err
+    assert "re-run `nab lock`" not in err
+
+
+def test_undeclared_extra_reports_the_extra_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo"]\n'
+        "[project.optional-dependencies]\n"
+        'x = ["bb"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        _run_locked_unmocked(pyproject, out, "--extras", "typo")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert (
+        "extra 'typo' is not declared in [project.optional-dependencies];"
+        " defined: ['x']" in err
+    )
+    assert "is out of date" not in err
+    assert "re-run `nab lock`" not in err
+
+
+def test_unreadable_requirement_with_changed_envelope_reports_the_parse_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo"]\n'
+        "[project.optional-dependencies]\n"
+        'x = ["bb"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}), "--extras", "x")
+    capsys.readouterr()
+    pyproject.write_text(
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo (=="]\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _run_locked_unmocked(pyproject, out)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "[project].dependencies" in err
+    assert "is out of date" not in err
 
 
 # --- precondition cases: no resolve runs ---
