@@ -165,26 +165,18 @@ def _oversized_numeric(text: str) -> bool:
 # ---------------------------------------------------------------------------- atoms
 
 
-# A value atom's denotation is memoised per atom, so the cache lives and dies
-# with the atom's tree. The bound stops a long-lived atom evaluated against
-# ever-new points from accumulating them. The oversized-value guards run
-# uncached before any ``holds`` call, so a warm cache never bypasses them.
-_HOLDS_CACHE_LIMIT = 1024
-
-
 class Atom:
     """A normalised leaf whose ``holds`` gives its denotation on one point.
 
-    Immutable once constructed, apart from two private caches minted lazily. A
-    value atom memoises ``holds`` per point text, since decisions re-evaluate
-    the same points across cell partitions; a version atom mints its pool
-    entries once. Equality and hashing run off a field tuple precomputed at
-    construction; the caches never take part.
+    Immutable once constructed, apart from the version pool a version atom mints
+    lazily from its own literal. Equality and hashing run off a field tuple
+    precomputed at construction. A decision re-reads the same atom on the same point
+    across partitions of one axis; that memo belongs to the operation, not here, so
+    ``holds`` recomputes.
     """
 
     __slots__ = (
         "_hash",
-        "_holds_cache",
         "_key",
         "_pool_entries",
         "derive_mm",
@@ -208,7 +200,6 @@ class Atom:
 
     _key: tuple[str, str, str, str, str, bool, bool, bool]
     _hash: int
-    _holds_cache: dict[str, bool]
     _pool_entries: tuple[tuple[Version, str], ...] | None
 
     def __init__(
@@ -233,7 +224,6 @@ class Atom:
         self.derive_mm = derive_mm
         self._key = (kind, variable, origin, op, literal, swapped, positive, derive_mm)
         self._hash = hash(self._key)
-        self._holds_cache = {}
         self._pool_entries = None
 
     def __eq__(self, other: object) -> bool:
@@ -269,14 +259,7 @@ class Atom:
     def holds(self, point: object) -> bool:
         """Return the atom's truth on one point of its axis."""
         if self.kind == AXIS_VALUE:
-            text = str(point)
-            cache = self._holds_cache
-            if text in cache:
-                return cache[text]
-            result = _holds_value(self, text)
-            if len(cache) < _HOLDS_CACHE_LIMIT:
-                cache[text] = result
-            return result
+            return _holds_value(self, str(point))
         if self.kind == AXIS_SET:
             member = self.literal in point  # type: ignore[operator]
             return member if self.positive else not member
@@ -644,6 +627,32 @@ class Cell(NamedTuple):
     vector: tuple[bool, ...]
 
 
+class Memo:
+    """One operation's scratch: the partitions and atom truths it re-reads.
+
+    A decision run re-partitions one axis for overlapping atom sets and re-reads one
+    atom on one point across those partitions. Both are memoised here, and the
+    operation that creates this drops it, so nothing accumulates between calls.
+    """
+
+    __slots__ = ("partitions", "truths")
+
+    def __init__(self) -> None:
+        self.partitions: dict[tuple, list[Cell]] = {}
+        self.truths: dict[tuple[Atom, str], bool] = {}
+
+
+def _truth(atom: Atom, point: object, memo: Memo) -> bool:
+    """Return an atom's truth on one point, memoised for the operation's span."""
+    if atom.kind != AXIS_VALUE:
+        return atom.holds(point)
+    key = (atom, str(point))
+    hit = memo.truths.get(key)
+    if hit is None:
+        hit = memo.truths[key] = atom.holds(point)
+    return hit
+
+
 def _substring_cost(text: str) -> int:
     """Return the iteration count of the quadratic substring loop over ``text``."""
     n = len(text)
@@ -930,7 +939,7 @@ def _value_candidates(
 
 
 def _reduce_cells(
-    points: Iterable[object], atoms: Sequence[Atom], max_cells: int
+    points: Iterable[object], atoms: Sequence[Atom], max_cells: int, memo: Memo
 ) -> list[Cell]:
     points = list(points)
 
@@ -944,7 +953,7 @@ def _reduce_cells(
 
     representatives: dict[tuple, object] = {}
     for point in points:
-        vector = tuple(atom.holds(point) for atom in atoms)
+        vector = tuple(_truth(atom, point, memo) for atom in atoms)
         representatives.setdefault(vector, point)
         # Every one of the 2**len(atoms) truth vectors now has a representative;
         # the remaining points can only repeat one.
@@ -964,15 +973,15 @@ def _mentioned_names(atoms: Sequence[Atom]) -> list[str]:
 
 
 def partition_value_axis(
-    variable: str, atoms: Sequence[Atom], max_cells: int
+    variable: str, atoms: Sequence[Atom], max_cells: int, memo: Memo
 ) -> list[Cell]:
     """Cells of a version/string value axis."""
     return _reduce_cells(
-        _value_candidates(variable, atoms, max_cells), atoms, max_cells
+        _value_candidates(variable, atoms, max_cells), atoms, max_cells, memo
     )
 
 
-def partition_set_axis(atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
+def partition_set_axis(atoms: Sequence[Atom], max_cells: int, memo: Memo) -> list[Cell]:
     """Cells of a set axis: the powerset over the mentioned names (guarded)."""
     names = _mentioned_names(atoms)
     count = len(names)
@@ -983,27 +992,26 @@ def partition_set_axis(atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
         frozenset(names[i] for i in range(count) if mask & (1 << i))
         for mask in range(1 << count)
     ]
-    return _reduce_cells(subsets, atoms, max_cells)
+    return _reduce_cells(subsets, atoms, max_cells, memo)
 
 
-def partition_boolean_axis(atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
+def partition_boolean_axis(
+    atoms: Sequence[Atom], max_cells: int, memo: Memo
+) -> list[Cell]:
     """Cells of an opaque boolean (contains) axis: the two truth values."""
-    return _reduce_cells((False, True), atoms, max_cells)
+    return _reduce_cells((False, True), atoms, max_cells, memo)
 
 
-def _partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
+def _partition_axis(
+    axis: tuple, atoms: Sequence[Atom], max_cells: int, memo: Memo
+) -> list[Cell]:
     kind = axis[0]
     if kind == AXIS_VALUE:
-        return partition_value_axis(axis[1], atoms, max_cells)
+        return partition_value_axis(axis[1], atoms, max_cells, memo)
     if kind == AXIS_SET:
-        return partition_set_axis(atoms, max_cells)
-    return partition_boolean_axis(atoms, max_cells)
+        return partition_set_axis(atoms, max_cells, memo)
+    return partition_boolean_axis(atoms, max_cells, memo)
 
-
-# One simplify re-partitions the same axes with the same atoms over and over.
-# The cache lives only for that span and is thread-local, so a concurrent
-# simplify never shares a store.
-_partition_cache = threading.local()
 
 # ``max_cells`` bounds one decision, and the greedy fixpoint issues one per
 # clause and per atom per universe row, so the meter is what bounds the run:
@@ -1024,16 +1032,22 @@ def charge_work(units: int) -> None:
         raise IntractableMarkerSet(msg)
 
 
-def partition_axis(axis: tuple, atoms: Sequence[Atom], max_cells: int) -> list[Cell]:
-    """Partition one axis's domain into cells on which every atom is constant."""
-    store: dict | None = getattr(_partition_cache, "store", None)
-    if store is None:
-        return _partition_axis(axis, atoms, max_cells)
+def partition_axis(
+    axis: tuple, atoms: Sequence[Atom], max_cells: int, store: Memo
+) -> list[Cell]:
+    """Partition one axis's domain into cells on which every atom is constant.
+
+    ``store`` memoises the partition for the span of one operation; its owner decides
+    that span, and this keeps no state of its own.
+
+    The atoms are keyed in order, not as a set: :class:`Cell` vectors are aligned
+    positionally with the list a partition was built for.
+    """
     key = (axis, tuple(atoms), max_cells)
-    cached = store.get(key)
+    cached = store.partitions.get(key)
     if cached is None:
-        cached = _partition_axis(axis, atoms, max_cells)
-        store[key] = cached
+        cached = _partition_axis(axis, atoms, max_cells, store)
+        store.partitions[key] = cached
     return cached
 
 
@@ -1168,7 +1182,7 @@ def _eval_cell(node: Formula, truth: Mapping[Atom, bool]) -> bool:
 
 
 def _satisfying_cells(
-    node: Formula, max_cells: int
+    node: Formula, max_cells: int, store: Memo
 ) -> Iterator[dict[tuple[str, ...], Cell]]:
     atoms = collect_atoms(node)
     grouped = _atoms_by_axis(atoms)
@@ -1180,7 +1194,7 @@ def _satisfying_cells(
     axes = list(grouped)
     atomlists = [grouped[axis] for axis in axes]
     partitions = [
-        partition_axis(axis, atoms, max_cells)
+        partition_axis(axis, atoms, max_cells, store)
         for axis, atoms in zip(axes, atomlists, strict=True)
     ]
 
@@ -1204,9 +1218,15 @@ def _satisfying_cells(
             yield dict(zip(axes, combo, strict=True))
 
 
-def is_empty(node: Formula, max_cells: int) -> bool:
-    """Whether a tree denotes the empty set."""
-    return next(_satisfying_cells(node, max_cells), _MISSING) is _MISSING
+def is_empty(node: Formula, max_cells: int, store: Memo | None = None) -> bool:
+    """Whether a tree denotes the empty set.
+
+    ``store`` is the caller's partition memo when this decision is one of a run
+    over related trees; a lone decision partitions each axis once either way and
+    passes nothing.
+    """
+    cells = _satisfying_cells(node, max_cells, Memo() if store is None else store)
+    return next(cells, _MISSING) is _MISSING
 
 
 def witness(node: Formula, max_cells: int) -> dict[str, str | frozenset[str]] | None:
@@ -1220,7 +1240,7 @@ def witness(node: Formula, max_cells: int) -> dict[str, str | frozenset[str]] | 
     ``python_version`` and ``python_full_version`` share one axis, so those
     constraints can sit on different variables.
     """
-    for cell in _satisfying_cells(node, max_cells):
+    for cell in _satisfying_cells(node, max_cells, Memo()):
         env = _materialize(cell)
         if evaluate_tree(node, env):
             return env
@@ -1513,9 +1533,10 @@ def _equivalent_within(
     so it overruns ``max_cells`` on a wide multi-platform universe.
     :func:`equivalent_within_rows` decides the same verdict per row instead.
     """
+    store: Memo = Memo()
     return is_empty(
-        make_and((left, universe, make_not(right))), max_cells
-    ) and is_empty(make_and((right, universe, make_not(left))), max_cells)
+        make_and((left, universe, make_not(right))), max_cells, store
+    ) and is_empty(make_and((right, universe, make_not(left))), max_cells, store)
 
 
 class _Row(NamedTuple):
@@ -1576,17 +1597,23 @@ def _rows_equivalent(
     rows: Sequence[_Row],
     right_by_row: Sequence[Formula],
     max_cells: int,
+    store: Memo,
 ) -> bool:
     """Whether ``left`` agrees with the per-row restriction of the constant right.
 
     Restricting each operand to a row's pins complements over that row's residual
-    rather than the whole-matrix product.
+    rather than the whole-matrix product.  The rows of one universe differ on few
+    axes, so ``store`` carries each axis's partition across them.
     """
     for row, right in zip(rows, right_by_row, strict=True):
         left_r = restrict_tree(left, row.pins)
-        if not is_empty(make_and((left_r, row.bound, make_not(right))), max_cells):
+        if not is_empty(
+            make_and((left_r, row.bound, make_not(right))), max_cells, store
+        ):
             return False
-        if not is_empty(make_and((right, row.bound, make_not(left_r))), max_cells):
+        if not is_empty(
+            make_and((right, row.bound, make_not(left_r))), max_cells, store
+        ):
             return False
     return True
 
@@ -1599,7 +1626,8 @@ def universe_is_empty(universe: Formula, max_cells: int) -> bool:
     """
     nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
     disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
-    return all(is_empty(disjunct, max_cells) for disjunct in disjuncts)
+    store: Memo = Memo()
+    return all(is_empty(disjunct, max_cells, store) for disjunct in disjuncts)
 
 
 def equivalent_within_rows(
@@ -1613,7 +1641,8 @@ def equivalent_within_rows(
     """
     rows = _decompose_rows(universe)
     right_by_row = [restrict_tree(right, row.pins) for row in rows]
-    return _rows_equivalent(left, rows, right_by_row, max_cells)
+    store: Memo = Memo()
+    return _rows_equivalent(left, rows, right_by_row, max_cells, store)
 
 
 def _dedupe(clauses: list[frozenset[Atom]]) -> list[frozenset[Atom]]:
@@ -1631,11 +1660,14 @@ def _drop_clauses(
     rows: Sequence[_Row],
     original_by_row: Sequence[Formula],
     max_cells: int,
+    store: Memo,
 ) -> list[frozenset[Atom]]:
     kept = list(clauses)
     for clause in sorted(clauses, key=_clause_key):
         trial = [other for other in kept if other != clause]
-        if _rows_equivalent(_disjunction(trial), rows, original_by_row, max_cells):
+        if _rows_equivalent(
+            _disjunction(trial), rows, original_by_row, max_cells, store
+        ):
             kept = trial
     return kept
 
@@ -1645,13 +1677,14 @@ def _drop_atoms(
     rows: Sequence[_Row],
     original_by_row: Sequence[Formula],
     max_cells: int,
+    store: Memo,
 ) -> list[frozenset[Atom]]:
     working = [set(clause) for clause in clauses]
     for clause in working:
         for atom in sorted(clause, key=_atom_key):
             clause.discard(atom)
             trial = _disjunction(frozenset(current) for current in working)
-            if not _rows_equivalent(trial, rows, original_by_row, max_cells):
+            if not _rows_equivalent(trial, rows, original_by_row, max_cells, store):
                 clause.add(atom)
     return [frozenset(clause) for clause in working]
 
@@ -1682,19 +1715,19 @@ def simplify_within(
     original = _disjunction(clauses)
     rows = _decompose_rows(universe)
     original_by_row = [restrict_tree(original, row.pins) for row in rows]
-    previous_store = getattr(_partition_cache, "store", None)
+    store: Memo = Memo()
     previous_work = getattr(_work_meter, "remaining", None)
-    _partition_cache.store = {}
     _work_meter.remaining = max_work
     try:
         while True:
             before = _canonical(clauses)
-            clauses = _drop_clauses(clauses, rows, original_by_row, max_cells)
-            clauses = _dedupe(_drop_atoms(clauses, rows, original_by_row, max_cells))
+            clauses = _drop_clauses(clauses, rows, original_by_row, max_cells, store)
+            clauses = _dedupe(
+                _drop_atoms(clauses, rows, original_by_row, max_cells, store)
+            )
             if _canonical(clauses) == before:
                 break
     finally:
-        _partition_cache.store = previous_store
         _work_meter.remaining = previous_work
     if not clauses:
         return FALSE

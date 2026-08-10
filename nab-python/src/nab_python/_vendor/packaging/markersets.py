@@ -216,13 +216,18 @@ class MarkerSet:
         """Whether the two sets denote the same environments.
 
         The semantic equality ``==`` cannot cheaply provide, so it is a method.
+
+        Both containments read the same two trees, so they share one partition memo.
         """
+        store = _markersets.Memo()
         return _markersets.is_empty(
             _markersets.make_and((self._tree, _markersets.make_not(other._tree))),
             _MAX_CELLS,
+            store,
         ) and _markersets.is_empty(
             _markersets.make_and((other._tree, _markersets.make_not(self._tree))),
             _MAX_CELLS,
+            store,
         )
 
     @_bounded
@@ -324,9 +329,7 @@ class MarkerSet:
             msg = "within must not be the empty set"
             raise ValueError(msg)
         return self._wrap(
-            _markersets.simplify_within(
-                self._tree, within._tree, _MAX_CELLS, _MAX_WORK
-            )
+            _markersets.simplify_within(self._tree, within._tree, _MAX_CELLS, _MAX_WORK)
         )
 
     # ---- serialisation
