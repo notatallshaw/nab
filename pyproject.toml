@@ -50,13 +50,15 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.sdist]
 only-include = ["src/nab", "tests", "conftest.py"]
 
-# These cover repo-level tooling and manifests, not the shipped CLI, and they
-# read files the sdist does not carry, so they stay out of it. (hatchling
-# always ships pyproject.toml, hatch.toml, and .gitignore itself.)
+# These read files the sdist does not carry (docs/, tasks/, the noxfile, the
+# workflows, the sibling workspaces), so they stay out of it;
+# tests/test_sdist_manifest.py keeps this list and the suite in step.
+# (hatchling always ships pyproject.toml, hatch.toml, and .gitignore itself.)
 exclude = [
     "tests/test_build_dists.py",
     "tests/test_check_boundaries.py",
     "tests/test_classifiers.py",
+    "tests/test_cli_docs.py",
     "tests/test_contributing_docs.py",
     "tests/test_embedding_docs.py",
     "tests/test_release.py",
