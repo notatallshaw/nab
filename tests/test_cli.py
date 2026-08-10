@@ -4014,22 +4014,41 @@ class TestLockedFlag:
         assert not out.exists()
 
     def test_local_source_paths_do_not_false_mismatch(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        # A relative local-source path is emitted relative to the lock dir on
-        # both passes, so an unchanged project stays up to date.
-        (tmp_path / "vendor").mkdir()
+        """A local-source path is relativized against the lock dir on both passes.
+
+        The resolve is real, since a local source needs no index.  The lock
+        goes in a subdirectory while the cwd stays at the project root, so a
+        check pass relativizing against the cwd would render ``vendor`` where
+        the committed lock holds ``../vendor`` and call a current lock stale.
+        """
+        vendor = tmp_path / "vendor"
+        vendor.mkdir()
+        (vendor / "pyproject.toml").write_text(
+            '[project]\nname = "foo"\nversion = "1.0"\ndependencies = []\n'
+        )
+
         pyproject = _make_pyproject(
             tmp_path,
-            '[project]\ndependencies = ["foo"]\n'
+            '[project]\nname = "root"\nversion = "0"\ndependencies = ["foo"]\n'
             "[[tool.nab.local-sources]]\n"
             'name = "foo"\npath = "vendor"\n',
         )
-        out = tmp_path / "pylock.toml"
-        result = _stub_resolve_result(pins={"foo": V("1.0")})
-        self._write_lock(pyproject, out, result)
+
+        out = tmp_path / "sub" / "pylock.toml"
+        out.parent.mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        lock(pyproject, output=out, offline=True, cache=False)
+        packages = tomli.loads(out.read_text())["packages"]
+        assert [package["directory"]["path"] for package in packages] == ["../vendor"]
+
         capsys.readouterr()
-        self._run_locked(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
+        lock(pyproject, output=out, offline=True, cache=False, locked=True)
         assert "is up to date" in capsys.readouterr().err
 
 
