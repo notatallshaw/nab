@@ -31,3 +31,8 @@ Changelog = "https://github.com/notatallshaw/nab/releases"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Benchmarks are development tooling, not part of the shipped package, so the
+# sdist carries only the source and tests.
+[tool.hatch.build.targets.sdist]
+exclude = ["/benchmarks"]
