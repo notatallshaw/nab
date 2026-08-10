@@ -468,7 +468,7 @@ class TestFormatErrorNarrow:
             "because root 1 depends on foo\n"
             "so root 1\n"
             "because your project depends on root 1\n"
-            "so <root> 1"
+            "so your project's requirements cannot be satisfied"
         )
 
 

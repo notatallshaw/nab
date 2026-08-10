@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from .root import ROOT
 from .types import IncompatibilityCause, PackageType, Term, VersionType
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
     from .types import Incompatibility
 
@@ -276,6 +277,19 @@ def _render_line(
             f"{term.package} {incompatibility.constraint_range}"
         )
 
+    return _render_prefix_line(cause, terms)
+
+
+def _render_prefix_line(
+    cause: IncompatibilityCause, terms: Sequence[Term[Any, Any]]
+) -> str:
+    """Render a clause that has no attribution form as a prefix and a body."""
+    # The virtual root is always selected, so naming it says nothing; a line
+    # holding nothing else is the conclusion.
+    stated = [term for term in terms if term.package is not ROOT]
+    if not stated:
+        return "so your project's requirements cannot be satisfied"
+
     prefix = {
         IncompatibilityCause.ROOT: "because root requires",
         IncompatibilityCause.DEPENDENCY: "because",
@@ -283,7 +297,7 @@ def _render_line(
         IncompatibilityCause.DERIVED: "so",
     }.get(cause, "")
     render = _format_requirement if cause in _REQUIREMENT_PREFIX_CAUSES else format_term
-    body = " and ".join(render(term) for term in terms)
+    body = " and ".join(render(term) for term in stated)
 
     if cause is IncompatibilityCause.NO_VERSIONS:
         return f"{prefix} {body} are available"
