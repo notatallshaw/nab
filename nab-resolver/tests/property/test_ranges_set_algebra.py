@@ -62,6 +62,38 @@ class TestSingleton:
         assert (version + 1) not in singleton
 
 
+class TestFromVersions:
+    """``from_versions`` builds the canonical range over a finite version set.
+
+    The oracles are a Python ``set`` and a sorted interval tuple, not a
+    fold of ``singleton`` with ``|``, so a fault in the union machinery
+    cannot cancel out against the constructor.
+    """
+
+    @given(versions=st.lists(st.sampled_from(VERSION_RANGE), max_size=8))
+    @DEEP_SETTINGS
+    def test_contains_exactly_the_given_versions(self, versions: list[int]) -> None:
+        """``v in from_versions(vs)`` iff ``v`` appears in ``vs``."""
+        built = Range.from_versions(versions)
+        wanted = set(versions)
+        for version in VERSION_RANGE:
+            assert (version in built) == (version in wanted)
+
+    @given(versions=st.lists(st.sampled_from(VERSION_RANGE), max_size=8))
+    @DEEP_SETTINGS
+    def test_intervals_are_the_distinct_versions_in_order(
+        self, versions: list[int]
+    ) -> None:
+        """One inclusive singleton per distinct version, ascending.
+
+        Membership alone would let an unsorted or repeating interval list
+        through, and equality and hashing both read that list.
+        """
+        assert Range.from_versions(versions)._intervals == tuple(
+            (version, True, version, True) for version in sorted(set(versions))
+        )
+
+
 class TestComplement:
     """The complement of ``R`` is ``Universe \\ R``: it contains exactly
     those versions ``v`` for which ``v not in R``.
