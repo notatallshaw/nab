@@ -59,8 +59,8 @@ def format_error(
     return "\n".join(lines) if lines else "Resolution impossible"
 
 
-# DEPENDENCY/ROOT clauses always have two terms (parent + dependency);
-# synthetic single-term test clauses fall through to the prefix renderer.
+# DEPENDENCY/ROOT clauses have two terms (parent + dependency); a
+# self-dependency merges them into one.
 _ATTRIBUTION_CLAUSE_TERMS = 2
 
 # Prefixes that name the package themselves ("no versions of a"), so their
@@ -241,6 +241,31 @@ def _narrowed_away(
     return found
 
 
+def _dependency_pair(
+    incompatibility: Incompatibility[Any, Any], terms: Sequence[Term[Any, Any]]
+) -> tuple[Term[Any, Any], Term[Any, Any]] | None:
+    """Return the parent and dependency terms of a DEPENDENCY clause, else None.
+
+    ``terms`` are the clause's terms as the line renders them, which is not
+    ``incompatibility.terms`` once narrowing has been applied.  A package
+    depending on itself merges the two terms into one, so the dependency side
+    is rebuilt from the range the clause carries.
+    """
+    if incompatibility.cause is not IncompatibilityCause.DEPENDENCY:
+        return None
+
+    if len(terms) == _ATTRIBUTION_CLAUSE_TERMS:
+        parent, dependency = terms
+        return parent, dependency
+
+    dependency_range = incompatibility.dependency_range
+    if len(terms) != 1 or dependency_range is None:
+        return None
+
+    (parent,) = terms
+    return parent, Term(parent.package, dependency_range, positive=False)
+
+
 def _render_line(
     incompatibility: Incompatibility[Any, Any],
     narrow: _NarrowFn | None,
@@ -254,12 +279,9 @@ def _render_line(
     if narrow is not None and cause is not IncompatibilityCause.NO_VERSIONS:
         terms = [_narrow_positive(term, narrow) for term in terms]
 
-    # Attribution form for the two standard two-term clauses.
-    if (
-        cause is IncompatibilityCause.DEPENDENCY
-        and len(terms) == _ATTRIBUTION_CLAUSE_TERMS
-    ):
-        parent, dep = terms
+    attributed = _dependency_pair(incompatibility, terms)
+    if attributed is not None:
+        parent, dep = attributed
         plural = _is_full(parent)
         # A negative dep term holds the parent's required range (negate to
         # show it); a positive dep term holds a version the parent forbids.

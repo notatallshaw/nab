@@ -536,12 +536,20 @@ class TestSelfDependency:
     def test_self_dep_excluding_own_version_unsat(self) -> None:
         """The only version foo@1 depends on foo==2, which doesn't exist.
 
-        Must fail with an unsat proof, not by hitting max_iterations.
+        Must fail with an unsat proof, not by hitting max_iterations, and the
+        proof must name the self-dependency edge the merged term cannot state.
         """
         provider = DictProvider({"foo": {1: {"foo": Range.singleton(2)}}})
         resolver = Resolver(provider, max_iterations=100)
-        with pytest.raises(ResolutionError, match="because"):
+        with pytest.raises(ResolutionError) as exc_info:
             resolver.resolve({"foo": Range.full()})
+        assert str(exc_info.value).splitlines() == [
+            "because no versions of foo (-inf, 1) | (1, +inf) are available",
+            "because foo 1 depends on foo 2",
+            "so all versions of foo",
+            "because your project depends on foo",
+            "so your project's requirements cannot be satisfied",
+        ]
 
     def test_self_dep_containing_own_version_is_vacuous(self) -> None:
         """foo@1 depends on foo=={1}: satisfied by itself, resolves."""
@@ -552,8 +560,9 @@ class TestSelfDependency:
     def test_self_dep_empty_range_unsat(self) -> None:
         """foo@1 depends on foo in the empty range: unsatisfiable."""
         provider = DictProvider({"foo": {1: {"foo": Range.empty()}}})
-        with pytest.raises(ResolutionError, match="because"):
+        with pytest.raises(ResolutionError) as exc_info:
             Resolver(provider).resolve({"foo": Range.full()})
+        assert "because foo 1 depends on foo <empty>" in str(exc_info.value)
 
 
 class TestNoExtraPackages:
@@ -2070,6 +2079,25 @@ class TestErrorMessages:
         )
         message = format_error(clause)
         assert message == "because foo 2 depends on bar [3, +inf)"
+
+    def test_self_dependency_clause_names_the_edge(self) -> None:
+        """A self-dependency clause names the range its merged term cannot hold."""
+        clause = Incompatibility(
+            [Term("foo", Range.singleton(2), positive=True)],
+            cause=IncompatibilityCause.DEPENDENCY,
+            dependency_range=Range.at_least(3),
+        )
+        message = format_error(clause)
+        assert message == "because foo 2 depends on foo [3, +inf)"
+
+    def test_dependency_clause_without_a_range_reads_as_a_prefix(self) -> None:
+        """A one-term clause carrying no range names no dependency edge."""
+        clause = Incompatibility(
+            [Term("foo", Range.singleton(2), positive=True)],
+            cause=IncompatibilityCause.DEPENDENCY,
+        )
+        message = format_error(clause)
+        assert message == "because foo 2"
 
     def test_positive_dependency_term_reads_as_incompatible(self) -> None:
         """A both-positive DEPENDENCY clause reads as an incompatibility.
