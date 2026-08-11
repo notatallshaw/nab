@@ -1349,6 +1349,35 @@ class TestGetFiles:
         files = asyncio.run(go())
         assert len(files) == 1
 
+    def test_unwritable_parsed_bucket_still_serves_a_warm_listing(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A refused blob write still serves the listing from the cached body.
+
+        A fresh body with no blob beside it rebuilds one on every read, so the
+        refusal repeats and the run warns about it once.
+        """
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", LISTING_BYTES, _fresh_policy())
+
+        bucket = tmp_path / f"simple-parsed-{cache_mod.CACHE_VERSION_SIMPLE_PARSED}"
+        bucket.write_bytes(b"not a directory")
+
+        async def go() -> tuple[list, list]:
+            client = CachedAsyncSimpleClient(_FakeTransport(), cache)
+            try:
+                return (await client.get_files("pkg"), await client.get_files("pkg"))
+            finally:
+                await client.aclose()
+
+        with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
+            first, second = asyncio.run(go())
+
+        assert [f.filename for f in first] == ["pkg-1.0-py3-none-any.whl"]
+        assert [f.filename for f in second] == [f.filename for f in first]
+
+        assert len(_cached_warnings(caplog)) == 1
+
 
 class TestResponseAge:
     """An Age header counts toward the entry's age (RFC 9111 4.2.3).
