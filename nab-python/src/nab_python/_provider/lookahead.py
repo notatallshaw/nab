@@ -176,6 +176,16 @@ def _membership_widened(
     return accumulated.union.complement()
 
 
+def reset_pending_blocks(provider: Provider) -> None:
+    """Drop the rejections queued so far without flushing them into clauses."""
+    provider.pending_blocks = defaultdict(list)
+    provider.pending_decision_dep_ranges = defaultdict(DepRangeUnion.zero)
+    provider.pending_range_blocks = defaultdict(list)
+    provider.pending_range_dep_ranges = defaultdict(DepRangeUnion.zero)
+    provider.pending_root_blocks = defaultdict(list)
+    provider.pending_metadata_blocks = defaultdict(dict)
+
+
 def flush_pending_blocks(provider: Provider) -> None:
     """Convert queued rejections into incompatibilities.
 
@@ -230,8 +240,6 @@ def flush_pending_blocks(provider: Provider) -> None:
                 cause=IncompatibilityCause.DEPENDENCY,
             )
         )
-    provider.pending_blocks = defaultdict(list)
-    provider.pending_decision_dep_ranges = defaultdict(DepRangeUnion.zero)
 
     # Range-keyed rejections: the blocker term starts from the positive range.
     for (
@@ -263,8 +271,6 @@ def flush_pending_blocks(provider: Provider) -> None:
                 cause=IncompatibilityCause.DEPENDENCY,
             )
         )
-    provider.pending_range_blocks = defaultdict(list)
-    provider.pending_range_dep_ranges = defaultdict(DepRangeUnion.zero)
 
     # Permanent rejections: a root requirement is fixed for the whole resolve,
     # and a version whose metadata will not read is unusable in every state.
@@ -284,5 +290,4 @@ def flush_pending_blocks(provider: Provider) -> None:
             )
         )
 
-    provider.pending_root_blocks = defaultdict(list)
-    provider.pending_metadata_blocks = defaultdict(dict)
+    reset_pending_blocks(provider)

@@ -1362,10 +1362,10 @@ class Provider:
 
         Runs the real ``choose_version`` over ``version_range`` so look-ahead
         rejections are honored, then rolls back the state it records: the queued
-        clauses and force-backtrack signal are drained, and the force-backtrack
-        budget and no-versions reasons are restored to their pre-probe values.
-        A failed-resolve attribution probe therefore cannot alter a later
-        decision.
+        clauses, the force-backtrack signal, and the pending look-ahead blocks
+        are dropped, and the force-backtrack budget and no-versions reasons are
+        restored to their pre-probe values.  A failed-resolve attribution probe
+        therefore cannot alter a later decision.
 
         The one exception is ``package``'s own no-versions reason.  When the
         un-narrowed range yields no version because a transitive conflict
@@ -1420,6 +1420,7 @@ class Provider:
             self._probing_satisfiable = False
             self.consume_pending_clauses()
             self.consume_force_backtrack_targets()
+            _lookahead.reset_pending_blocks(self)
             self._force_backtrack_counts = saved_counts
 
             # Restore the snapshot but keep the probe's own blocker reason.
