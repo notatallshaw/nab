@@ -322,6 +322,10 @@ class Incompatibility(Generic[PackageType, VersionType]):
     clause. The clause's term carries the requirement range that backtracking
     needs, so the user's constraint is kept here for the message.
 
+    ``dependency_range`` holds the required range for a ``DEPENDENCY`` clause
+    of a package on itself, whose two terms merge into one because a clause
+    holds at most one term per package.
+
     ``origin`` holds the caller's :class:`RootRequirement` origin for a
     ``ROOT`` clause, opaque to the resolver and never read by it.
 
@@ -333,6 +337,7 @@ class Incompatibility(Generic[PackageType, VersionType]):
         "cause_left",
         "cause_right",
         "constraint_range",
+        "dependency_range",
         "origin",
         "terms",
     )
@@ -345,6 +350,7 @@ class Incompatibility(Generic[PackageType, VersionType]):
         cause_right: Incompatibility[PackageType, VersionType] | None = None,
         constraint_range: RangeProtocol[VersionType] | None = None,
         origin: Any = None,
+        dependency_range: RangeProtocol[VersionType] | None = None,
     ) -> None:
         """Create an incompatibility with terms and a cause."""
         self.terms = terms
@@ -353,6 +359,7 @@ class Incompatibility(Generic[PackageType, VersionType]):
         self.cause_right = cause_right
         self.constraint_range = constraint_range
         self.origin = origin
+        self.dependency_range = dependency_range
 
     @override
     def __repr__(self) -> str:

@@ -616,8 +616,13 @@ class Resolver(Generic[PackageType, VersionType]):
                     Term(next_package, parent_range, positive=True),
                     Term(dependency_package, dependency_range, positive=False),
                 ]
+
+            # The merged term drops the required range, so the clause carries
+            # it for the report.
             incompatibility = Incompatibility(
-                terms, cause=IncompatibilityCause.DEPENDENCY
+                terms,
+                cause=IncompatibilityCause.DEPENDENCY,
+                dependency_range=None if cross_package else dependency_range,
             )
             incompat_index.add_incompatibility(self, incompatibility)
 
