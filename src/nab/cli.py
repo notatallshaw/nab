@@ -374,6 +374,27 @@ def project_config_overrides(
     return {key: value for key, value in cli_overrides.items() if key in project_keys}
 
 
+def project_override_arguments(cli_overrides: Mapping[str, object]) -> list[str]:
+    """Return the CLI tokens that re-apply this run's ``--project-*`` overrides.
+
+    Takes the raw map :func:`_cli_overrides` built, not the config subset, so
+    ``resolution`` is carried too: it shapes the resolve without entering the
+    merged config.  A repeatable flag is emitted once per element.
+    """
+    arguments: list[str] = []
+    for spec in OPTIONS:
+        flag = spec.cli_flag
+        if spec.scope is not Scope.PROJECT or flag is None:
+            continue
+        value = cli_overrides.get(spec.key)
+        if value is None:
+            continue
+        items = value if isinstance(value, tuple) else (value,)
+        for item in items:
+            arguments += [flag, str(item)]
+    return arguments
+
+
 def _layered_run_settings(
     path: Path, cli_overrides: Mapping[str, object]
 ) -> tuple[RunSettings, Mapping[str, EffectiveValue]]:

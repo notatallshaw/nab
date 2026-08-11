@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import tomli
 
+from nab._lock import _join_command, _join_for_cmd, _quote_for_cmd
 from nab.cli import app
 from nab_python._vendor.packaging.version import Version
 from nab_python.lockfile import (
@@ -118,6 +119,15 @@ def _run_locked_unmocked(pyproject: Path, out: Path, *extra: str) -> None:
     )
 
 
+def _remedy(*arguments: str) -> str:
+    """Return the command text a --locked failure names for this ``nab lock`` run.
+
+    Joined the way the message is, so a case lists arguments instead of one
+    platform's quoting.
+    """
+    return _join_command(["nab", "lock", *arguments])
+
+
 # --- fire cases: the resolver is never called ---
 
 
@@ -165,7 +175,8 @@ def test_tightened_build_requirement_fires_without_resolving(
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "[build-system].requires requires foo>=2.0 but the lock pins foo 1.5" in err
-    assert "re-run `nab lock --build-requirements` to update it" in err
+    remedy = _remedy(str(pyproject), "--output", str(out), "--build-requirements")
+    assert f"re-run `{remedy}` to update it" in err
     mock.assert_not_called()
 
 
@@ -189,7 +200,7 @@ def test_locked_build_lock_defaults_to_the_build_lock_path(
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "no lockfile at pylock.build.toml" in err
-    assert "run `nab lock --build-requirements` first" in err
+    assert f"run `{_remedy(str(pyproject), '--build-requirements')}` first" in err
 
 
 def test_locked_build_lock_checks_its_own_default_file(
@@ -538,7 +549,8 @@ def test_a_stale_build_lock_names_the_build_command(
 
     assert exc.value.code == 1
     err = capsys.readouterr().err
-    assert "is out of date; re-run `nab lock --build-requirements` to update it" in err
+    remedy = _remedy(str(pyproject), "--output", str(out), "--build-requirements")
+    assert f"is out of date; re-run `{remedy}` to update it" in err
     mock.assert_called_once()
 
 
@@ -756,7 +768,7 @@ def test_undeclared_group_reports_the_group_error(
     err = capsys.readouterr().err
     assert "Dependency group 'dev' not found" in err
     assert "is out of date" not in err
-    assert "re-run `nab lock`" not in err
+    assert "re-run `nab lock" not in err
 
 
 def test_undeclared_default_group_reports_the_group_error(
@@ -782,7 +794,7 @@ def test_undeclared_default_group_reports_the_group_error(
     err = capsys.readouterr().err
     assert "Dependency group 'dev' not found" in err
     assert "is out of date" not in err
-    assert "re-run `nab lock`" not in err
+    assert "re-run `nab lock" not in err
 
 
 def test_undeclared_project_default_group_reports_the_group_error(
@@ -805,7 +817,7 @@ def test_undeclared_project_default_group_reports_the_group_error(
     err = capsys.readouterr().err
     assert "Dependency group 'dev' not found" in err
     assert "is out of date" not in err
-    assert "re-run `nab lock`" not in err
+    assert "re-run `nab lock" not in err
 
 
 def test_undeclared_extra_reports_the_extra_error(
@@ -831,7 +843,7 @@ def test_undeclared_extra_reports_the_extra_error(
         " defined: ['x']" in err
     )
     assert "is out of date" not in err
-    assert "re-run `nab lock`" not in err
+    assert "re-run `nab lock" not in err
 
 
 def test_missing_build_system_reports_the_project_error(
@@ -849,7 +861,7 @@ def test_missing_build_system_reports_the_project_error(
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "declares no [build-system]" in err
-    assert "run `nab lock --build-requirements` first" not in err
+    assert "run `nab lock" not in err
 
 
 def test_unreadable_requirement_with_changed_envelope_reports_the_parse_error(
@@ -995,3 +1007,162 @@ def test_unsearchable_parent_precondition(
     assert "cannot read lockfile" in err
     assert "Permission denied" in err
     mock.assert_not_called()
+
+
+# --- remedy cases: the failure names the run that rewrites the file ---
+
+
+def test_remedy_keeps_the_extras_selection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Bare `nab lock` would rewrite the lock without the extra it was built for."""
+    body = (
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n'
+        "[project.optional-dependencies]\n"
+    )
+    pyproject = _write_pyproject(tmp_path, body + 'gpu = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.5"}), "--extras", "gpu")
+    capsys.readouterr()
+    pyproject.write_text(body + 'gpu = ["foo>=2.0"]\n', encoding="utf-8")
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--extras", "gpu")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "the 'gpu' extra requires foo>=2.0 but the lock pins foo 1.5" in err
+    remedy = _remedy(str(pyproject), "--output", str(out), "--extras", "gpu")
+    assert f"re-run `{remedy}` to update it" in err
+    mock.assert_not_called()
+
+
+def test_remedy_names_a_custom_output_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lock kept off the default path must not send the user to ./pylock.toml."""
+    monkeypatch.chdir(tmp_path)
+    _write_pyproject(tmp_path, '[project]\nname = "proj"\ndependencies = []\n')
+    out = Path("locks/pylock.toml")
+
+    with pytest.raises(SystemExit) as exc:
+        app.cli(args=["lock", "--output", str(out), "--locked"], prog="nab")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    remedy = _remedy("--output", str(out))
+    assert f"no lockfile at {out} to check; run `{remedy}` first." in err
+
+
+def test_remedy_carries_every_run_shaping_flag(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anything that decides what the lock holds belongs in the remedy.
+
+    Driving the CLI with the same arguments the remedy renders proves tyro
+    still accepts them, multi-value ``--groups``/``--extras`` included: a
+    parse failure would exit 2 with a usage error instead of the remedy.
+    """
+    monkeypatch.chdir(tmp_path)
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n'
+        "[project.optional-dependencies]\n"
+        'cpu = ["foo"]\ngpu = ["foo"]\n'
+        "[dependency-groups]\n"
+        'dev = ["bar"]\ntest = ["bar"]\n',
+    )
+    out = Path("locks/pylock.toml")
+
+    refresh = [
+        str(pyproject),
+        *["--output", str(out)],
+        *["--python", "3.12"],
+        *["--groups", "dev", "test"],
+        *["--extras", "cpu", "gpu"],
+        *["--offline", "True"],
+        "--no-workspace-discovery",
+        "--no-emit-workspace",
+        *["--project-resolution", "lowest"],
+        *["--project-constraint", "foo<2"],
+        *["--project-constraint", "bar<3"],
+        *["--project-requires-python", ">=3.9"],
+        "--upgrade",
+    ]
+
+    with pytest.raises(SystemExit) as exc:
+        app.cli(args=["lock", *refresh, "--locked"], prog="nab")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert f"no lockfile at {out} to check; run `{_remedy(*refresh)}` first." in err
+
+
+def test_remedy_for_a_default_run_stays_bare(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that shapes nothing gets the short command, not its own defaults."""
+    monkeypatch.chdir(tmp_path)
+    _write_pyproject(tmp_path, '[project]\nname = "proj"\ndependencies = []\n')
+
+    with pytest.raises(SystemExit) as exc:
+        app.cli(args=["lock", "--locked"], prog="nab")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "no lockfile at pylock.toml to check; run `nab lock` first." in err
+
+
+def test_following_the_remedy_makes_the_check_pass(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Running the printed remedy makes the next --locked check pass."""
+    monkeypatch.chdir(tmp_path)
+    body = (
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n'
+        "[project.optional-dependencies]\n"
+    )
+    pyproject = _write_pyproject(tmp_path, body + 'gpu = ["foo"]\n')
+    out = tmp_path / "locks" / "pylock.toml"
+    out.parent.mkdir()
+    _write_lock(pyproject, out, _result({"foo": "1.5"}), "--extras", "gpu")
+    pyproject.write_text(body + 'gpu = ["foo>=2.0"]\n', encoding="utf-8")
+    capsys.readouterr()
+    refresh = [str(pyproject), "--output", str(out), "--extras", "gpu"]
+
+    with pytest.raises(SystemExit):
+        _run_locked(
+            pyproject, out, _locked_mock(_result({"foo": "2.0"})), "--extras", "gpu"
+        )
+
+    assert f"re-run `{_remedy(*refresh)}` to update it" in capsys.readouterr().err
+
+    with patch("nab.cli.resolve_for_targets", _locked_mock(_result({"foo": "2.0"}))):
+        app.cli(args=["lock", *refresh], prog="nab")
+    capsys.readouterr()
+
+    _run_locked(
+        pyproject, out, _locked_mock(_result({"foo": "2.0"})), "--extras", "gpu"
+    )
+
+    assert f"Lockfile {out} is up to date." in capsys.readouterr().err
+
+
+def test_the_windows_remedy_quotes_what_cmd_reads_as_syntax() -> None:
+    """A cmd.exe remedy wraps what the shell would otherwise read as syntax.
+
+    ``<`` is the case that forces the choice: cmd reads it as a redirect
+    unless it sits inside double quotes, and ``--project-constraint foo<2``
+    is a remedy that carries one.
+    """
+    assert _quote_for_cmd(r"C:\proj\pyproject.toml") == r"C:\proj\pyproject.toml"
+
+    assert _quote_for_cmd(r"C:\Program Files\proj") == r'"C:\Program Files\proj"'
+    assert _quote_for_cmd("foo<2") == '"foo<2"'
+    assert _quote_for_cmd("") == '""'
+    assert _quote_for_cmd('foo; sys_platform == "win32"') == (
+        '"foo; sys_platform == ""win32"""'
+    )
+
+    assert _join_for_cmd(["nab", "lock", "--extras", "gpu"]) == "nab lock --extras gpu"
