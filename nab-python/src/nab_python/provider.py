@@ -493,10 +493,10 @@ class Provider:
     and neither filter runs, since nothing has said which machine the
     resolve targets.
 
-    ``constraints`` are the user's version bounds, keyed as the resolver
-    keys packages, so an extras proxy carries its base's bound under its
-    own ``name[extra]`` key.  The provider reads them when deciding
-    whether a missing root extra is worth reporting.
+    ``constraints`` are the user's version bounds, keyed by package name;
+    a lookup under an extras proxy's ``name[extra]`` key answers with the
+    base's bound.  The provider reads them when deciding whether a missing
+    root extra is worth reporting.
 
     ``preferences`` are versions another resolve already decided, tried
     first when they are usable here.  A multi-target resolve passes the

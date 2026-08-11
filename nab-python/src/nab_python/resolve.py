@@ -25,6 +25,7 @@ import logging
 import tempfile
 import time
 from collections import defaultdict
+from collections.abc import Mapping
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -95,7 +96,7 @@ from .target import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Iterator, Sequence
 
     from nab_index.transport import AsyncHttpTransport
 
@@ -1073,17 +1074,16 @@ def _resolve_one_target(
             environment=environment,
             warned=settings.warned_root_markers,
         )
-        resolver_constraints = _build_resolver_inputs(
+        constraint_ranges = _build_resolver_inputs(
             constraints,
             config,
             environment=environment,
             kind="constraint",
             warned=settings.warned_root_markers,
         ).ranges
+        resolver_constraints = _ProxyConstraints(constraint_ranges)
     except ResolutionError as exc:
         return TargetResult(target=target, success=False, error=exc)
-
-    _extend_constraints_to_proxies(resolver_constraints, root_extras)
 
     source_root = settings.source_root
     provider = Provider(
@@ -1914,22 +1914,31 @@ def _build_resolver_inputs(
     return _ResolverInputs(roots, resolver_requirements, root_extras)
 
 
-def _extend_constraints_to_proxies(
-    constraints: dict[str, VersionRange],
-    root_extras: set[tuple[str, str]],
-) -> None:
-    """Copy each base package's constraint onto its extras proxies.
+class _ProxyConstraints(Mapping[str, VersionRange]):
+    """The user's constraints, where an extras proxy's key reads its base's bound.
 
-    The resolver keys constraints by the package it is deciding, and an
+    The resolver keys a constraint by the package it is deciding, and an
     extras proxy decides under its own ``name[extra]`` key, so the base's
-    constraint does not otherwise reach it.  Sharing the key also keeps
-    the proxy on the constraint-attribution path, so a constraint that
-    leaves it nothing is named in the failure.
+    bound would not otherwise reach it.  Answering under both keys also
+    lets a failure blame the constraint that left the proxy nothing,
+    rather than the proxy's listing.
+
+    Iteration lists only the keys the user wrote, so a proxy key answers a
+    lookup but is never enumerated.
     """
-    for name, extra in root_extras:
-        constraint = constraints.get(name)
-        if constraint is not None:
-            constraints[join_extra(name, extra)] = constraint
+
+    def __init__(self, ranges: Mapping[str, VersionRange]) -> None:
+        self._ranges = ranges
+
+    def __getitem__(self, package: str) -> VersionRange:
+        # Constraints may not carry extras, so a proxy has no bound of its own.
+        return self._ranges[split_extra(package)[0]]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._ranges)
+
+    def __len__(self) -> int:
+        return len(self._ranges)
 
 
 def _raise_for_source_python(
