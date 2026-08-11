@@ -71,9 +71,6 @@ class Assignment(Generic[PackageType, VersionType]):
     cum_negative: RangeProtocol[VersionType] | None = None
     """Latest negative accumulated range for the package as of this entry."""
 
-    package_index: int = 0
-    """Position in the package's own assignment trail."""
-
 
 class PartialSolution(Generic[PackageType, VersionType]):
     """Tracks the resolver's current partial solution as a decision trail.
@@ -193,7 +190,6 @@ class PartialSolution(Generic[PackageType, VersionType]):
         self._refresh_effective_range(package)
         self._undecided.discard(package)
 
-        package_entries = self._assignments_by_package[package]
         assignment = Assignment(
             package=package,
             accumulated_range=exact_range,
@@ -204,10 +200,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
             positive=True,
             cum_positive=exact_range,
             cum_negative=self._negative_ranges.get(package),
-            package_index=len(package_entries),
         )
         self._assignments.append(assignment)
-        package_entries.append(assignment)
+        self._assignments_by_package[package].append(assignment)
 
     def derive(
         self,
@@ -240,7 +235,6 @@ class PartialSolution(Generic[PackageType, VersionType]):
 
         self._refresh_effective_range(package)
 
-        package_entries = self._assignments_by_package[package]
         assignment = Assignment(
             package=package,
             accumulated_range=new_range,
@@ -251,10 +245,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
             positive=positive,
             cum_positive=self._positive_ranges.get(package),
             cum_negative=self._negative_ranges.get(package),
-            package_index=len(package_entries),
         )
         self._assignments.append(assignment)
-        package_entries.append(assignment)
+        self._assignments_by_package[package].append(assignment)
 
     def backtrack(self, target_level: int) -> None:
         """Remove all assignments above target_level.
