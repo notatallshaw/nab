@@ -244,3 +244,30 @@ class TestValidateSpecifierVersions:
         """``===`` is included: ``to_range`` converts its literal too."""
         with pytest.raises(ValueError, match="Exceeds the limit"):
             validate_specifier_versions(SpecifierSet(spec))
+
+
+class TestOversizedClauseVersions:
+    """A clause version past the int-from-string limit fails at parse time.
+
+    ``SpecifierSet`` and ``Requirement`` both accept one, converting it only
+    when something compares against it, so ``parse_metadata`` forces the
+    conversion and the field fails where it is read.
+    """
+
+    def test_oversized_requires_python_raises(self) -> None:
+        """Requires-Python fails under its own guard, which names the field."""
+        text = (
+            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+            f"Requires-Python: >=3.{_OVERSIZED}\n"
+        )
+        with pytest.raises(ValueError, match="invalid Requires-Python"):
+            parse_metadata(text)
+
+    def test_oversized_requires_dist_raises(self) -> None:
+        """A dep clause fails with the raw ``int()`` conversion error."""
+        text = (
+            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+            f"Requires-Dist: click>=8.{_OVERSIZED}\n"
+        )
+        with pytest.raises(ValueError, match="Exceeds the limit"):
+            parse_metadata(text)
