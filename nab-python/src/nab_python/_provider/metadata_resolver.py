@@ -927,10 +927,9 @@ def target_dep_signature(
     here.  ``Requires-Python`` is left out: it gates admission, not the
     dependency edges a lock records.
 
-    Unlike :func:`cache_deps_from_metadata` this never raises: a direct-URL dep
-    is bucketed instead of routed through :func:`refuse_url_dep`, since the pick
-    already refused its own URL deps, so a sibling's URL dep is a divergence to
-    report.
+    Unlike :func:`cache_deps_from_metadata`, a direct-URL dep is bucketed rather
+    than routed through :func:`refuse_url_dep`: the pick already refused its own
+    URL deps, so a sibling's URL dep is a divergence to report.
     """
     metadata = effective_metadata(provider, cache_key, metadata)
     provided_extras: set[str] = {canonicalize_name(e) for e in metadata.provides_extra}
@@ -1003,16 +1002,13 @@ def check_sibling_metadata_divergence(
     for sibling in wheels:
         if sibling is pick or not _wheels_tie(tags, pick_key, sibling.filename):
             continue
-        sibling_metadata = _tie_sibling_metadata(
-            provider, index, normalized, version, sibling
-        )
-        if sibling_metadata is None:
+        sibling_sig = _tie_sibling_signature(provider, index, sig_key, sibling)
+        if sibling_sig is None:
             continue
         if pick_sig is None:
             pick_sig = target_dep_signature(
                 provider, sig_key, parse_metadata(pick_text)
             )
-        sibling_sig = target_dep_signature(provider, sig_key, sibling_metadata)
         if sibling_sig == pick_sig:
             continue
         labels = _divergent_dep_labels(pick_sig, sibling_sig)
@@ -1023,6 +1019,29 @@ def check_sibling_metadata_divergence(
             f" per-package dependencies override to resolve this version."
         )
         raise SiblingMetadataDivergenceError(msg)
+
+
+def _tie_sibling_signature(
+    provider: Provider,
+    index: InMemoryIndex,
+    sig_key: tuple[str, Version],
+    sibling: WheelFile,
+) -> TargetDepSignature | None:
+    """Project a tie sibling's own metadata, or None to skip the sibling.
+
+    Skipped for the reasons :func:`_tie_sibling_metadata` lists, and when a
+    marker's version will not convert: a marker holds its version as a string
+    until it is evaluated against an environment, so it fails here instead of
+    at the parse.
+    """
+    package, version = sig_key
+    metadata = _tie_sibling_metadata(provider, index, package, version, sibling)
+    if metadata is None:
+        return None
+    try:
+        return target_dep_signature(provider, sig_key, metadata)
+    except ValueError:
+        return None
 
 
 def _tie_sibling_metadata(

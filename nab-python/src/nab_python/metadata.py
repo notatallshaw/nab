@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import tomli
 
 from ._vendor.packaging.requirements import Requirement
-from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.version import InvalidVersion, Version
 
 if TYPE_CHECKING:
@@ -135,8 +135,12 @@ def _parse_requirement_cached(req_str: str) -> Requirement:
     across many wheels in a dependency graph.  ``Requirement`` exposes
     only read operations (specifier, marker, extras, name) so sharing
     parsed objects is safe.
+
+    Raises ``ValueError`` when the string does not parse or a clause
+    version will not convert.
     """
     req = Requirement(req_str)
+    validate_specifier_versions(req.specifier)
     if req.marker is not None:
         req.marker = _intern_marker(req.marker)
     return req
@@ -192,10 +196,11 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
     if requires_python_str:
         try:
             requires_python = SpecifierSet(requires_python_str)
-        except InvalidSpecifier as exc:
+            validate_specifier_versions(requires_python)
+        except ValueError as exc:
             # A malformed Requires-Python is invalid metadata; raise rather
             # than silently drop the field, matching the Name/Version checks
-            # above. The resolve boundary turns this into a rejected candidate.
+            # above.
             err = (
                 f"METADATA for {name}=={version_str} has an invalid "
                 f"Requires-Python: {requires_python_str!r}"

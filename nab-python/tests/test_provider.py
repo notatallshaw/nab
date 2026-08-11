@@ -10948,6 +10948,51 @@ class TestSiblingMetadataDivergence:
         deps = provider.get_dependencies("pkg", self._V)
         assert "alpha" in deps
 
+    @pytest.mark.parametrize(
+        "sibling_fields",
+        [
+            pytest.param(
+                "Requires-Python: >=3.{oversized}\nRequires-Dist: beta>=1\n",
+                id="requires-python",
+            ),
+            pytest.param("Requires-Dist: beta>=1.{oversized}\n", id="requires-dist"),
+            pytest.param(
+                'Requires-Dist: beta>=1; python_full_version >= "3.{oversized}"\n',
+                id="marker",
+            ),
+        ],
+    )
+    def test_oversized_sibling_clause_version_skipped(
+        self, sibling_fields: str
+    ) -> None:
+        """A tie sibling whose clause version will not convert is skipped too.
+
+        A digit run past the int-from-string limit gets past the specifier and
+        marker constructors alike and raises only when something compares it,
+        which for a marker is during the sibling's projection.  The sibling is
+        dropped like any other invalid candidate instead of aborting the
+        resolve.
+        """
+        oversized = "9" * (sys.get_int_max_str_digits() + 1)
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("alpha>=1"), wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+            + sibling_fields.format(oversized=oversized)
+            + "\n",
+            wheel_b.metadata_url,
+        )
+
+        provider = Provider(coordinator, target=_LINUX311)
+        assert sorted(provider.get_dependencies("pkg", self._V)) == ["alpha"]
+
     def test_provides_extra_override_folds_divergence(self) -> None:
         """A provides-extra override is applied to both siblings before compare.
 
