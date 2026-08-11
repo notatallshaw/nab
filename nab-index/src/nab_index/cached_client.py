@@ -303,6 +303,7 @@ class CachedAsyncSimpleClient:
         self._parsed_stats = (
             parsed_stats if parsed_stats is not None else ParsedCacheStats()
         )
+        self._parsed_store_failed = False
 
     async def aclose(self) -> None:
         """Close the underlying transport."""
@@ -461,10 +462,22 @@ class CachedAsyncSimpleClient:
         records is skipped too: :meth:`_parsed_hit` declines a blob holding
         none, so writing one would rebuild and rewrite it on every later read
         without ever serving it.
+
+        A refused write is dropped: the blob only accelerates a read the raw
+        body already answers. Only the first refusal warns.
         """
         if digest is None or not files:
             return
-        self._cache.put_simple_parsed(package, _encode_parsed(files, digest))
+
+        blob = _encode_parsed(files, digest)
+        try:
+            self._cache.put_simple_parsed(package, blob)
+        except OSError as exc:
+            if not self._parsed_store_failed:
+                self._parsed_store_failed = True
+                logger.warning(
+                    "cannot store parsed listings for %s: %s", self._index_url, exc
+                )
 
     def _rebuild_parsed(
         self,

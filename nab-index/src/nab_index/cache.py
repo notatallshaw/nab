@@ -194,6 +194,7 @@ class OnDiskCache:
 
     Stores are best-effort: a write the filesystem refuses is dropped,
     just as an entry that cannot be read is a miss.
+    :meth:`put_simple_parsed` raises instead.
     """
 
     def __init__(
@@ -358,7 +359,10 @@ class OnDiskCache:
             return None
 
     def put_simple_parsed(self, package: str, blob: bytes) -> None:
-        """Write the opaque parsed-listing blob for ``package`` atomically."""
+        """Write the opaque parsed-listing blob for ``package`` atomically.
+
+        A refused write raises ``OSError``.
+        """
         _atomic_write(self._parsed_path(package), blob)
 
     def get_metadata(self, package: str, metadata_url: str) -> str | None:
