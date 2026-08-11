@@ -1142,6 +1142,25 @@ class TestPep503Directory:
         assert result[0].hashes == (("sha256", digest),)
         assert "#" not in result[0].url
 
+    @pytest.mark.parametrize("control", ["\t", "\r", "\n"], ids=["tab", "cr", "lf"])
+    def test_pep503_control_character_on_https_href(
+        self, tmp_path: Path, control: str
+    ) -> None:
+        """The wheel and its metadata sidecar name one file."""
+        body = (
+            f'<a href="https://example.com/a{control}b/foo-1.0-py3-none-any.whl"'
+            ' data-core-metadata="true">foo</a>'
+        )
+        stripped = "https://example.com/ab/foo-1.0-py3-none-any.whl"
+
+        self._make_index(tmp_path, body)
+        client = LocalIndexClient(tmp_path.as_uri())
+        (wheel,) = run(client.get_files("foo"))
+
+        assert isinstance(wheel, WheelFile)
+        assert wheel.url == stripped
+        assert wheel.metadata_url == f"{stripped}.metadata"
+
     def test_pep503_hash_fragment_on_file_href(self, tmp_path: Path) -> None:
         wheel_path = tmp_path / "foo" / "foo-1.0-py3-none-any.whl"
         wheel_path.parent.mkdir()

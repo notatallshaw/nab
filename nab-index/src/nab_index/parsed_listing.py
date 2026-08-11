@@ -41,9 +41,11 @@ if TYPE_CHECKING:
 
 __all__ = ["corruption_reason", "decode", "encode"]
 
-# Record-shape version, redundant with the bucket suffix but guards against a
-# stale-shape blob surfacing under the current bucket.
-FORMAT_VERSION = 0
+# Record version, redundant with the bucket suffix but guards against a stale
+# blob surfacing under the current bucket. Bump it when the row shape changes
+# or when the same body parses to different records: ``body_digest`` pins only
+# the input.
+FORMAT_VERSION = 1
 # Serialization variant that wrote the rows, so a future codec switch
 # self-heals rather than misdecodes.
 CODEC = 1

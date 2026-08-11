@@ -503,15 +503,19 @@ def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
     PEP 691 allows a relative ``url``, which resolves against the package
     page.  ``urlsplit`` raises on a netloc it cannot parse, such as an
     unbalanced bracket in an IPv6 host.
+
+    ``urlsplit`` deletes a tab, CR or LF anywhere in a URL, so the split
+    round trip stores the URL a later parse of the record would yield.
     """
     try:
-        if raw_url.startswith(("https://", "http://")):
-            # Split only to reject a host urllib cannot parse; urljoin
-            # would hand back this same string.
-            urlsplit(raw_url)
-            return raw_url
-
-        return urljoin(base_url, raw_url)
+        # urljoin resolves a same-scheme URL against the base, which would
+        # hand ``https:///pkg.whl`` the base's authority.
+        absolute = (
+            raw_url
+            if raw_url.startswith(("https://", "http://"))
+            else urljoin(base_url, raw_url)
+        )
+        return urlunsplit(urlsplit(absolute))
     except ValueError:
         return None
 
