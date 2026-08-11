@@ -561,7 +561,8 @@ class CachedAsyncSimpleClient:
     ) -> list[WheelFile | SdistFile]:
         url = f"{self._index_url}{package}/"
         headers = {"Accept": simple_accept_header(self._serialization)}
-        if policy.etag is not None:
+        # httpx raises on a non-ASCII header value.
+        if policy.etag is not None and policy.etag.isascii():
             headers["If-None-Match"] = policy.etag
         response = await self._transport.get(url, headers=headers)
         if response.status_code == _HTTP_NOT_MODIFIED:

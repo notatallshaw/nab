@@ -150,6 +150,25 @@ def _make_cache(tmp_path: Path) -> OnDiskCache:
     return OnDiskCache(tmp_path, "https://pypi.org/simple/")
 
 
+class _MemoryPolicyCache(OnDiskCache):
+    """Cache that returns policies from memory, skipping the sidecar codec."""
+
+    def __init__(self, root: Path) -> None:
+        super().__init__(root, "https://pypi.org/simple/")
+        self._policies: dict[str, CachePolicy] = {}
+
+    def put_simple(self, package: str, body: bytes, policy: CachePolicy) -> str | None:
+        digest = super().put_simple(package, body, policy)
+        self._policies[package] = replace(policy, body_digest=digest)
+        return digest
+
+    def get_simple(self, package: str) -> tuple[bytes, CachePolicy] | None:
+        entry = super().get_simple(package)
+        if entry is None:
+            return None
+        return entry[0], self._policies.get(package, entry[1])
+
+
 def _build_tarball(members: list[tuple[str, bytes]]) -> bytes:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
@@ -1126,6 +1145,48 @@ class TestGetFiles:
                 await client.aclose()
 
         asyncio.run(go())
+        sent = transport.calls[0][1]
+        assert sent is not None
+        assert "If-None-Match" not in sent
+
+    def test_stale_revalidates_non_ascii_etag_unconditionally(
+        self, tmp_path: Path
+    ) -> None:
+        """An entity tag holding obs-text cannot go back in a request header."""
+        cache = _make_cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=1, etag='"é"'),
+        )
+        transport = _FakeTransport(
+            [_FakeResponse(LISTING_BYTES, headers={"etag": '"é"'})]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+
+        sent = transport.calls[0][1]
+        assert sent is not None
+        assert "If-None-Match" not in sent
+
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        assert cached[1].etag is None
+
+    def test_stale_skips_non_ascii_etag_kept_by_backend(self, tmp_path: Path) -> None:
+        """A backend that keeps the tag on read still must not send it."""
+        cache = _MemoryPolicyCache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=1, etag='"é"'),
+        )
+        transport = _FakeTransport(
+            [_FakeResponse(LISTING_BYTES, headers={"etag": '"ok"'})]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+
         sent = transport.calls[0][1]
         assert sent is not None
         assert "If-None-Match" not in sent
