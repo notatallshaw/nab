@@ -142,3 +142,24 @@ def test_sdist_entry_with_unsplittable_url_is_skipped() -> None:
     }
     files = _parse_files({"files": [entry, _good_file()]}, _INDEX, "foo")
     assert [f.filename for f in files] == ["foo-1.0-py3-none-any.whl"]
+
+
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        pytest.param(
+            "https://example.com/foo/foo-2.0-py3-none-any.whl?sig=\ud800",
+            id="absolute",
+        ),
+        pytest.param("../pool/foo-2.0-py3-none-any.whl?sig=\ud800", id="relative"),
+    ],
+)
+def test_entry_with_no_utf8_url_is_skipped(bad_url: str) -> None:
+    """Only the entry whose URL holds an unpaired surrogate is dropped.
+
+    ``json.loads`` accepts a lone ``\\udXXX`` escape, so a listing can serve
+    one, but there is no byte form to request it with.
+    """
+    entry = {"filename": "foo-2.0-py3-none-any.whl", "url": bad_url}
+    files = _parse_files({"files": [entry, _good_file()]}, _INDEX, "foo")
+    assert [f.filename for f in files] == ["foo-1.0-py3-none-any.whl"]
