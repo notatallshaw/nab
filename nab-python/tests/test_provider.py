@@ -9722,6 +9722,21 @@ class TestStaticSdistMetadata:
         assert chosen == V("1.0")
 
 
+class _CleanupErrorTemporaryDirectory:
+    """Raise ``PermissionError`` unless cleanup errors are ignored."""
+
+    def __init__(self, *, prefix: str, ignore_cleanup_errors: bool = False) -> None:
+        self.name = f"/tmp/{prefix}in-use"
+        self._ignore_cleanup_errors = ignore_cleanup_errors
+
+    def __enter__(self) -> str:
+        return self.name
+
+    def __exit__(self, *_args: object) -> None:
+        if not self._ignore_cleanup_errors:
+            raise PermissionError("build source is still in use")
+
+
 class TestBuildRemoteFailureModes:
     """Failure paths in :func:`nab_python._provider.build_remote.build_remote_sdist`.
 
@@ -9999,6 +10014,35 @@ class TestBuildRemoteFailureModes:
         provider = self._build_into(monkeypatch, built)
         result = build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
         assert result is built
+
+    @pytest.mark.parametrize("cancel", [False, True], ids=["success", "cancel"])
+    def test_cleanup_error_does_not_replace_result_or_cancellation(
+        self, monkeypatch: pytest.MonkeyPatch, *, cancel: bool
+    ) -> None:
+        built = WheelMetadata(
+            name="pkg",
+            version=V("1.0"),
+            requires_python=None,
+            requires_dist=[],
+            provides_extra=[],
+        )
+        provider = self._build_into(monkeypatch, built)
+        monkeypatch.setattr(
+            build_remote.tempfile,
+            "TemporaryDirectory",
+            _CleanupErrorTemporaryDirectory,
+        )
+
+        if cancel:
+            monkeypatch.setattr(
+                "nab_python.build_backend.extract_metadata",
+                MagicMock(side_effect=KeyboardInterrupt),
+            )
+
+            with pytest.raises(KeyboardInterrupt):
+                build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+        else:
+            assert build_remote.build_remote_sdist(provider, "pkg", V("1.0")) is built
 
     def test_built_requires_python_no_target_skips_check(
         self, monkeypatch: pytest.MonkeyPatch
