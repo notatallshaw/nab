@@ -40,6 +40,7 @@ from ._vcs_admission import (
     VcsPolicy,
 )
 from ._vendor.packaging.ranges import VersionRange
+from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from .metadata import WheelMetadata
 from .target import host_environment
@@ -475,6 +476,51 @@ def _unset_if_none(value: object) -> object:
     if value is None:
         return _UNSET
     return value
+
+
+# Past this many exclusions the requirement reads worse than the range it states.
+_MAX_EXCLUSIONS = 3
+
+
+def _requirement_over_listing(
+    constraint: VersionRange,
+    universe: Sequence[Version],
+    selected: Sequence[Version],
+) -> VersionRange | None:
+    """Return the requirement admitting exactly ``selected`` out of ``universe``.
+
+    Bounds ``selected`` on each side ``constraint`` is bounded, then excludes
+    by name every other listed version those bounds admit.  Built out of
+    specifiers, so it has a spelling to render.
+
+    ``None`` when a bound carries a local segment, which an ordering specifier
+    does not accept, or when the span holds more than ``_MAX_EXCLUSIONS``
+    versions to exclude.
+    """
+    clauses: list[str] = []
+    if not VersionRange.from_bounds(None, selected[0]).is_subset(constraint):
+        clauses.append(f">={selected[0]}")
+    if not VersionRange.from_bounds(selected[-1], None).is_subset(constraint):
+        clauses.append(f"<={selected[-1]}")
+
+    try:
+        bounded = SpecifierSet(",".join(clauses)).to_range()
+    except InvalidSpecifier:
+        return None
+
+    chosen = set(selected)
+    holes: list[Version] = []
+    for version in universe:
+        if version in bounded and version not in chosen:
+            holes.append(version)
+            if len(holes) > _MAX_EXCLUSIONS:
+                return None
+
+    if not holes:
+        return bounded
+
+    clauses.extend(f"!={hole}" for hole in holes)
+    return SpecifierSet(",".join(clauses)).to_range()
 
 
 class Provider:
@@ -2019,10 +2065,16 @@ class Provider:
     ) -> RangeProtocol[Version]:
         """Map a possibly-widened ``constraint`` back onto listed versions.
 
-        A constraint containing every listed version is promoted to the full
-        range rather than snapped, so it reads as "any version".  An empty
-        universe never promotes: that would widen a constraint no version
-        satisfies.
+        Returns a requirement admitting the same listed versions as
+        ``constraint``, built out of specifiers so :meth:`format_range` has a
+        spelling to print.  Where no short requirement states those versions,
+        ``constraint`` stands if it spells, and is snapped onto the listing if
+        it does not.
+
+        A constraint containing every listed version becomes the full range,
+        so it reads as "any version".  One containing none is returned
+        unchanged, as is any constraint under an empty listing: promoting
+        there would widen a constraint no version satisfies.
 
         Render-time only and cache-only: the ROOT sentinel (a non-str
         package) and packages whose listing is not cached return
@@ -2035,14 +2087,19 @@ class Provider:
         if version_list is None:
             return constraint
         assert isinstance(constraint, VersionRange)
+
         universe = self._ascending_versions(normalized, version_list)
-        if (
-            universe
-            and universe[-1] in constraint
-            and all(version in constraint for version in universe)
-        ):
+        selected = [version for version in universe if version in constraint]
+        if not selected:
+            return constraint
+        if len(selected) == len(universe):
             return VersionRange.full(admit_arbitrary=False)
-        return constraint.snap_bounds(universe)
+
+        spelled = _requirement_over_listing(constraint, universe, selected)
+        if spelled is not None:
+            return spelled
+        has_spelling = constraint.to_specifier_set() is not None
+        return constraint if has_spelling else constraint.snap_bounds(universe)
 
     def format_range(self, constraint: RangeProtocol[Version]) -> str:
         """Render ``constraint`` for a failure report.
