@@ -11,6 +11,10 @@ resolve.
 What the probe contains is bounded by what the error says.  A fault of the one
 version is contained; a transient transport failure, which names the moment and
 not the version, still escapes and aborts.
+
+An aborted scan never reaches its flush, so the probe also has to drop the
+rejections it queued before the error, or the next package's scan turns them
+into incompatibilities.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ from nab_python._vendor.packaging.version import Version
 from nab_python.provider import Provider
 from nab_python.target import ResolveTarget
 from nab_resolver.resolver import Resolver
+from nab_resolver.types import Incompatibility
 
 V = Version
 _PY312 = ResolveTarget.for_host_python("3.12.0")
@@ -61,6 +66,12 @@ def _tie_wheel(tag: str) -> WheelFile:
 
 def _tie_meta(requires_dist: str) -> str:
     return f"Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: {requires_dist}\n\n"
+
+
+def _leftover_clauses(provider: Provider) -> list[Incompatibility[str, Version]]:
+    """Return the clauses a later ``choose_version`` flush would hand the resolver."""
+    provider._flush_pending_blocks()
+    return provider.consume_pending_clauses()
 
 
 class TestConstraintProbeContainsHardError:
@@ -208,3 +219,75 @@ class TestConstraintProbeContainsHardError:
         found = provider.has_satisfying_version("pkg", VersionRange.full())
 
         assert found is False
+
+
+class TestConstraintProbeDropsItsRejections:
+    def test_decision_rejection_before_a_hard_error_is_dropped(self) -> None:
+        """A candidate rejected before the error leaves no clause behind.
+
+        ``foo==3.0`` needs ``bar<2`` against a decided ``bar==2.0``, so the
+        scan queues a decision block and moves on to ``foo==2.0``, whose
+        sidecar fails its hash.  The error skips the flush that would have
+        emptied the queue, so the probe has to drop it.
+        """
+        listings = {
+            "foo": [_wheel("foo", "3.0"), _wheel("foo", "2.0")],
+            "bar": [_wheel("bar", "2.0")],
+        }
+        metadata = {
+            "3.0": (
+                "Metadata-Version: 2.1\nName: foo\nVersion: 3.0\n"
+                "Requires-Dist: bar<2\n\n"
+            )
+        }
+
+        coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
+        coordinator.index.store_metadata_error(
+            "foo", "2.0", MetadataHashMismatchError("metadata sha256 mismatch")
+        )
+
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        provider.receive_partial_solution_hint({}, {"bar": V("2.0")})
+
+        assert provider.has_satisfying_version("foo", VersionRange.full()) is False
+
+        assert _leftover_clauses(provider) == []
+
+    def test_root_and_metadata_rejections_before_a_hard_error_are_dropped(self) -> None:
+        """The permanent-rejection tables are dropped as well.
+
+        ``foo==3.0`` needs ``bar<2`` against the root requirement ``bar>=2``
+        and ``foo==2.5`` has no readable metadata, so the scan queues a root
+        block and a metadata block before ``foo==2.0`` raises.  Flushed, those
+        two would ban every ``foo`` above ``2.0`` for the rest of the resolve.
+        """
+        listings = {
+            "foo": [
+                _wheel("foo", "3.0"),
+                _wheel("foo", "2.5", has_metadata=False),
+                _wheel("foo", "2.0"),
+            ],
+            "bar": [_wheel("bar", "2.0")],
+        }
+        metadata = {
+            "3.0": (
+                "Metadata-Version: 2.1\nName: foo\nVersion: 3.0\n"
+                "Requires-Dist: bar<2\n\n"
+            )
+        }
+
+        coordinator = make_coordinator(listings=listings, metadata_by_version=metadata)
+        coordinator.index.store_metadata_error(
+            "foo", "2.0", MetadataHashMismatchError("metadata sha256 mismatch")
+        )
+
+        root_reqs = {
+            "foo": VersionRange.full(admit_arbitrary=False),
+            "bar": SpecifierSet(">=2").to_range(),
+        }
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+
+        assert provider.has_satisfying_version("foo", VersionRange.full()) is False
+
+        assert _leftover_clauses(provider) == []
