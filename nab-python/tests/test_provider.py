@@ -9196,11 +9196,12 @@ class TestStaticSdistMetadata:
             provider.get_dependencies("pkg", V("1.0"))
 
     def test_pyproject_marks_optional_dependencies_dynamic(self) -> None:
-        """Pyproject with optional-dependencies in dynamic also falls through."""
+        """Optional-dependencies in dynamic blocks even a static dependencies list."""
         pyproject = (
             "[project]\n"
             'name = "pkg"\n'
             'version = "1.0"\n'
+            "dependencies = ['dep-a>=1.0']\n"
             "dynamic = ['optional-dependencies']\n"
         )
         coordinator = make_coordinator(

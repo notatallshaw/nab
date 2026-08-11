@@ -23,14 +23,18 @@ rather than enabling builds for the whole graph.
 Static metadata only, from any source:
 
 * Wheels: always fine; their `METADATA` is static by definition.
-* PEP 643 (Metadata 2.2+) sdists: fine; the resolver reads the
-  static `Requires-Dist` lines from `PKG-INFO`.
-* Sdists whose `PKG-INFO` declares `Dynamic: Requires-Dist`: nab
-  falls back to reading `[project].dependencies` from the
-  bundled `pyproject.toml` when the field is not listed under
-  `[project].dynamic`.  Anything beyond that is skipped at
-  look-ahead and surfaces as a no-version diagnostic if no
-  candidate ultimately works.
+* PEP 643 (Metadata 2.2+) sdists: fine when `Dynamic:` lists
+  neither `Requires-Dist` nor `Provides-Extra`; the resolver reads
+  the static `Requires-Dist` lines from `PKG-INFO`.
+* Every other sdist, whether it lists one of those fields under
+  `Dynamic:` or predates Metadata 2.2: nab falls back to the
+  bundled `pyproject.toml`, reading `[project].dependencies` and
+  `[project].optional-dependencies` when `[project].dynamic`
+  lists neither.  Anything beyond that is skipped at look-ahead
+  and surfaces as a no-version diagnostic if no candidate works.
+  Setting `trust-unverified-deps` in the `dist-policy` table
+  trusts a pre-2.2 `PKG-INFO` instead; see the
+  [configuration reference](configuration.md).
 * Local checkouts declared via `[[tool.nab.local-sources]]`:
   the directory's `pyproject.toml` is read statically.  A missing
   or malformed `[project]`, or a `dynamic` list covering
@@ -69,9 +73,9 @@ sdists.  On top of `build-local`:
 * Archive sources declared via `[[tool.nab.archive-sources]]` with
   dynamic deps have the backend invoked on the extracted tree; the
   bytes are network-fetched, so they count as remote.
-* PyPI sdists whose `PKG-INFO` is dynamic and which have no
-  static `pyproject.toml` fallback are downloaded, extracted to a
-  temp directory, and built.
+* PyPI sdists are downloaded, extracted to a temp directory, and
+  built when their `PKG-INFO` deps are not PEP 643 static and the
+  bundled `pyproject.toml` offers no static fallback.
 
 A backend failure on any of these surfaces as
 `UnsupportedSdistError`; for a PyPI sdist the resolver skips that
