@@ -20,14 +20,13 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nab_index.client import SdistFile, WheelFile, extract_sdist_archive
+from nab_index.client import extract_sdist_archive
 
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
+from .metadata_resolver import find_sdist
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
     from .._vendor.packaging.version import Version
     from ..metadata import WheelMetadata
     from ..provider import Provider
@@ -57,7 +56,7 @@ def build_remote_sdist(
 
     canonical = canonicalize_name(package)
     versions = provider.versions_cache.get(canonical, [])
-    sdist = _find_sdist(versions, version)
+    sdist = find_sdist(versions, version)
     if sdist is None:
         msg = (
             f"{package}=={version} build-remote requested but no sdist"
@@ -124,13 +123,3 @@ def build_remote_sdist(
         )
         raise UnsupportedSdistError(msg)
     return built
-
-
-def _find_sdist(
-    versions: Sequence[tuple[Version, WheelFile | SdistFile]],
-    version: Version,
-) -> SdistFile | None:
-    for v, d in versions:
-        if v == version and isinstance(d, SdistFile):
-            return d
-    return None

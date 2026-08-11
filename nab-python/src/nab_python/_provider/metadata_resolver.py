@@ -414,7 +414,7 @@ def resolve_dynamic_sdist(
     :func:`nab_python._provider.lookahead.look_ahead_ok` and surfaces the
     accumulated reasons if no candidate ultimately works.
     """
-    # Late import: ``provider`` imports this module at module load.
+    # Late imports: both modules import this one at module load.
     from ..provider import BuildPolicy, UnsupportedSdistError
     from .build_remote import build_remote_sdist
 
