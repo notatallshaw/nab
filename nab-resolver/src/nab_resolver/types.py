@@ -279,6 +279,10 @@ class IncompatibilityState(enum.Enum):
     """Result of evaluating an incompatibility against the partial solution."""
 
     CONFLICT = enum.auto()
+    """Every term is satisfied."""
+
+    CONTRADICTED = enum.auto()
+    """At least one term is contradicted, so the clause already holds."""
 
 
 class IncompatibilityCause(enum.Enum):

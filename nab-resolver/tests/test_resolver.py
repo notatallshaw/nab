@@ -15,6 +15,7 @@ from nab_resolver.conflict import (
     conflict_resolution,
     find_most_recent_satisfier,
     is_terminal_incompatibility,
+    maybe_restart,
     recompute_previous_level,
     try_force_resolution_step,
     update_culprit_counts,
@@ -45,6 +46,7 @@ from nab_resolver.root import ROOT
 from nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
+    IncompatibilityState,
     RangeProtocol,
     RootRequirement,
     SetRelation,
@@ -3007,3 +3009,179 @@ class TestRelationCache:
 
         key = (True, resolver.solution.get("foo"), term.constraint)
         assert resolver.relation_cache == {key: result}
+
+
+class LowestVersionProvider(DictProvider):
+    """Provider that picks the lowest matching version rather than the highest."""
+
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
+        for version in reversed(self._get_versions(package)):
+            if version in version_range:
+                return version
+        return None
+
+
+def climbing_packages(count: int) -> dict[str, dict[int, dict[str, Range]]]:
+    """Package data whose lowest-first resolve tries every version of ``a``.
+
+    Version ``i`` of ``a`` needs ``b`` at exactly ``i`` and only the last ``b``
+    exists, so each attempt adds a dependency clause and both packages' clause
+    lists grow with the search.
+    """
+    return {
+        "a": {
+            version: {"b": Range.singleton(version)} for version in range(1, count + 1)
+        },
+        "b": {count: {}},
+    }
+
+
+class StampAuditor(ResolverObserver[str, int]):
+    """Collects clauses a live stamp claims are contradicted but are not.
+
+    A stale stamp is invisible from outside the solver, because propagation
+    skips the clause instead of evaluating it.  An assignment is what leaves
+    one behind, so the audit runs on each derivation.
+    """
+
+    def __init__(self, resolver: Resolver[str, int]) -> None:
+        self._resolver = resolver
+        self.stale: list[Incompatibility[str, int]] = []
+
+    def on_derivation(
+        self,
+        package: str,
+        *,
+        positive: bool,
+        cause: Incompatibility[str, int],
+    ) -> None:
+        del package, positive, cause
+        resolver = self._resolver
+        epoch = resolver.solution.contradiction_epoch
+
+        for index, stamp in enumerate(resolver.clause_contradicted_at):
+            if stamp != epoch:
+                continue
+            clause = resolver.incompatibilities[index]
+            if (
+                propagate.evaluate_incompatibility(resolver, clause)
+                is not IncompatibilityState.CONTRADICTED
+            ):
+                self.stale.append(clause)
+
+
+class TestSettledClauseSkip:
+    """Cover the skip stamp unit propagation keeps for each clause."""
+
+    def test_a_settled_clause_is_not_re_evaluated_before_a_rollback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One contradicted term settles a clause for the rest of the epoch."""
+        evaluate = propagate.evaluate_incompatibility
+        settled: set[tuple[int, Incompatibility[str, int]]] = set()
+        repeats: list[Incompatibility[str, int]] = []
+
+        def record(
+            resolver: Resolver[str, int], incompatibility: Incompatibility[str, int]
+        ) -> IncompatibilityState | Term[str, int] | None:
+            """Note any clause evaluated twice in the epoch that settled it."""
+            key = (resolver.solution.contradiction_epoch, incompatibility)
+            if key in settled:
+                repeats.append(incompatibility)
+
+            result = evaluate(resolver, incompatibility)
+            if result is IncompatibilityState.CONTRADICTED:
+                settled.add(key)
+            return result
+
+        monkeypatch.setattr(propagate, "evaluate_incompatibility", record)
+        resolver = Resolver(LowestVersionProvider(climbing_packages(20)))
+
+        assert resolver.resolve({"a": Range.full()}) == {"a": 20, "b": 20}
+        assert repeats == [], f"{len(repeats)} settled clauses were re-evaluated"
+
+    def test_a_skipped_clause_is_still_contradicted(self) -> None:
+        """Emptying a package's range must retire the stamps on its clauses.
+
+        ``b`` has no versions at all, so propagation excludes every version of
+        it while clauses naming ``b`` already carry a stamp.
+        """
+        provider = DictProvider(
+            {"a": {1: {"b": Range.full()}, 2: {"b": Range.at_least(1)}}, "b": {}}
+        )
+        resolver = Resolver(provider)
+        auditor = StampAuditor(resolver)
+        resolver.observer = auditor
+
+        with pytest.raises(ResolutionError):
+            resolver.resolve({"a": Range.full()})
+
+        assert auditor.stale == []
+
+    def test_an_emptied_range_retires_stamps_within_one_propagation(self) -> None:
+        """A range emptied mid-propagation retires the stamps taken before it.
+
+        ``p`` carries only exclusions, so one more exclusion empties it and the
+        clause stamped earlier in the same pass stops being contradicted.  No
+        rollback happens in between, so propagation has to notice within the
+        call and derive from that clause after all.
+        """
+        setup_cause = Incompatibility(
+            [Term("p", Range.at_least(5))], cause=IncompatibilityCause.NO_VERSIONS
+        )
+        stamped = Incompatibility(
+            [Term("x", Range.singleton(1)), Term("p", Range.at_least(10))],
+            cause=IncompatibilityCause.DERIVED,
+        )
+        empties_p = Incompatibility(
+            [Term("x", Range.singleton(1)), Term("p", Range.less_than(5))],
+            cause=IncompatibilityCause.DERIVED,
+        )
+
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        solution = resolver.solution
+        solution.derive("p", Range.at_least(5), positive=False, cause=setup_cause)
+        solution.decide("x", 1)
+
+        add_incompatibility(resolver, stamped)
+        add_incompatibility(resolver, empties_p)
+
+        assert propagate.unit_propagation(resolver, "x") is None
+
+        causes = [entry.cause for entry in solution.assignments_for("p")]
+        assert any(cause is stamped for cause in causes)
+
+    def test_a_second_resolve_starts_from_clean_stamps(self) -> None:
+        """A finished resolve's stamps must not survive into the next one.
+
+        The epoch restarts at zero, so a leftover stamp would read as current
+        against a clause list it no longer lines up with.
+        """
+        provider = DictProvider(
+            {
+                "a": {1: {"b": Range.singleton(1)}, 2: {"b": Range.singleton(2)}},
+                "b": {1: {}, 2: {}},
+                "c": {1: {"b": Range.singleton(9)}},
+            }
+        )
+        resolver = Resolver(provider)
+        assert resolver.resolve({"a": Range.full()}) == {"a": 2, "b": 2}
+
+        with pytest.raises(ResolutionError):
+            resolver.resolve({"c": Range.full()})
+
+        assert len(resolver.clause_contradicted_at) == len(resolver.incompatibilities)
+
+    def test_a_restart_continues_the_contradiction_epoch(self) -> None:
+        """A restart drops the whole trail, so stamps taken before it go stale."""
+        resolver: Resolver[str, int] = Resolver(DictProvider({"a": {1: {}}}))
+        resolver.solution.backtrack(0)
+        before = resolver.solution.contradiction_epoch
+        resolver.stats.package_conflict_counts["a"] = 5
+
+        _, _, restarted = maybe_restart(resolver, 5, 3)
+
+        assert restarted
+        assert resolver.solution.contradiction_epoch > before

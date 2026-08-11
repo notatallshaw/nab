@@ -332,3 +332,40 @@ class TestDecisionMap:
         ps.decide("bar", 1)
         assert "foo" in ps.undecided_packages()
         assert "bar" not in ps.undecided_packages()
+
+
+class TestContradictionEpoch:
+    def test_a_narrowing_that_leaves_versions_holds_the_epoch(self) -> None:
+        """Only a rollback un-contradicts a term while ranges keep versions."""
+        ps = PartialSolution()
+        inc = Incompatibility(
+            [Term("bar", Range.at_least(5))],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        )
+
+        assert ps.contradiction_epoch == 0
+
+        ps.decide("foo", 5)
+        ps.derive("bar", Range.at_least(5), positive=False, cause=inc)
+        assert ps.contradiction_epoch == 0
+
+        ps.backtrack(0)
+        assert ps.contradiction_epoch == 1
+
+    def test_an_emptied_range_advances_the_epoch(self) -> None:
+        """An empty range reads as satisfied on either polarity."""
+        ps = PartialSolution()
+        inc = Incompatibility(
+            [Term("bar", Range.singleton(1))],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        )
+        ps.derive("bar", Range.singleton(1), positive=True, cause=inc)
+
+        assert ps.contradiction_epoch == 0
+
+        ps.derive("bar", Range.singleton(1), positive=False, cause=inc)
+
+        effective = ps.get("bar")
+        assert effective is not None
+        assert effective.is_empty
+        assert ps.contradiction_epoch == 1

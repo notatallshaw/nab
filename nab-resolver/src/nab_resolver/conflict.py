@@ -476,7 +476,10 @@ def maybe_restart(
         return restart_threshold, restarts_remaining, False
 
     resolver.stats.restarts += 1
-    resolver.solution = PartialSolution(range_type=resolver.range_type)
+    resolver.solution = PartialSolution(
+        range_type=resolver.range_type,
+        contradiction_epoch=resolver.solution.contradiction_epoch + 1,
+    )
     resolver.solution.decide(ROOT, resolver.root_version)
     resolver.pending_targeted_backtrack.clear()
     resolver.stats.targeted_backtracks = 0

@@ -452,6 +452,11 @@ class Resolver(Generic[PackageType, VersionType]):
             list
         )
 
+        # Per clause, the contradiction epoch in which one of its terms was
+        # last seen contradicted; unit propagation skips a clause whose stamp
+        # is still current.
+        self.clause_contradicted_at: list[int] = []
+
         # Keyed by (package, dep_package, dep_constraint, dep_positive); used
         # to merge mergeable dependency clauses (pubgrub-rs's merge_dependents).
         self.dependency_index: dict[Any, int] = {}
@@ -648,6 +653,7 @@ class Resolver(Generic[PackageType, VersionType]):
         """Reset solver state for a new resolution."""
         self.incompatibilities.clear()
         self.package_to_incompatibilities.clear()
+        self.clause_contradicted_at.clear()
         self.dependency_index.clear()
         self.solution = PartialSolution(range_type=self.range_type)
         self.stats = ResolverStats()
