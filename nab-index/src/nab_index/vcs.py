@@ -296,7 +296,6 @@ def _resolve_sha(
             ls_remote_args,
             check=True,
             capture_output=True,
-            text=True,
             env=_git_env(),
             timeout=_LS_REMOTE_TIMEOUT_SECONDS,
         )
@@ -308,7 +307,18 @@ def _resolve_sha(
         msg = f"git ls-remote {request.repo_url} {target}: {exc}"
         raise VcsCloneError(msg) from exc
 
-    lines = proc.stdout.strip().splitlines()
+    # Ref names are byte strings, so the answer need not be text.  Refuse the
+    # whole of it rather than pin a SHA from output that cannot be read.
+    try:
+        stdout = proc.stdout.decode()
+    except UnicodeDecodeError as exc:
+        msg = (
+            f"git ls-remote {request.repo_url} {target}:"
+            " matched a ref name that is not valid UTF-8"
+        )
+        raise VcsCloneError(msg) from exc
+
+    lines = stdout.strip().splitlines()
     if not lines:
         msg = f"no ref {target!r} found at {request.repo_url}"
         raise VcsCloneError(msg)
