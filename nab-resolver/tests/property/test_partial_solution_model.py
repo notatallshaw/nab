@@ -7,7 +7,7 @@ constraint shapes, are applied in lockstep to the real class and to
 :class:`ModelPS`, then every public query is compared:
 
 - trail bookkeeping (levels monotone non-decreasing, decision count
-  equals ``decision_level``, ``trail_index``/``package_index`` match);
+  equals ``decision_level``, ``trail_index`` matches trail position);
 - state queries (``get`` membership, ``decisions``,
   ``undecided_packages``, ``has_positive_constraint``);
 - the binary-search ``satisfier``;
@@ -53,11 +53,10 @@ def _check_trail_invariants(ps: PartialSolution[str, int], model: ModelPS) -> No
     )
     for i, a in enumerate(trail):
         assert a.trail_index == i
+
     for pkg in PROBE_PACKAGES:
         entries = list(ps.assignments_for(pkg))
         assert entries == [a for a in trail if a.package == pkg]
-        for j, a in enumerate(entries):
-            assert a.package_index == j
 
 
 def _check_state(ps: PartialSolution[str, int], model: ModelPS) -> None:
@@ -118,8 +117,8 @@ def test_satisfier_matches_model(
                     f"satisfier missing for {term!r}, model index {idx}"
                 )
                 assert impl is entries[idx], (
-                    f"satisfier mismatch for {term!r}: impl index "
-                    f"{impl.package_index}, model index {idx}"
+                    f"satisfier mismatch for {term!r}: impl trail index "
+                    f"{impl.trail_index}, expected {entries[idx].trail_index}"
                 )
 
 
