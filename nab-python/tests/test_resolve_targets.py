@@ -22,6 +22,7 @@ import pytest
 
 from nab_index import vcs as vcs_mod
 from nab_index.client import SdistFile, WheelFile
+from nab_index.multi_index import IndexConfig
 from nab_python import resolve as resolve_mod
 from nab_python._provider import listing as listing_mod
 from nab_python._testing.coordinator_fake import make_coordinator
@@ -38,6 +39,7 @@ from nab_python.config import (
     conflict_forks,
     read_pyproject_config,
 )
+from nab_python.fetch import DEFAULT_INDEX_URL
 from nab_python.lockfile import (
     DisjointnessError,
     IndexPin,
@@ -1913,6 +1915,43 @@ class TestBuildLockInput:
                 ' and platform_machine == "x86_64"'
             )
         ]
+
+
+class TestServingIndexInLock:
+    """A resolve records each pin's index URL from the coordinator's indexes."""
+
+    def test_pin_records_the_index_that_served_it(self) -> None:
+        """``foo`` is served by a private index, ``bar`` by the default one."""
+        internal_url = "https://internal.example/simple/"
+        coordinator = _make_coordinator(
+            {
+                "foo": [_make_wheel("1.0", package="foo")],
+                "bar": [_make_wheel("1.0", package="bar")],
+            }
+        )
+
+        # A resolve that never passed its indexes on would still record PyPI
+        # for every pin, so one listing has to come from a second index.
+        coordinator.indexes = [
+            *coordinator.indexes,
+            IndexConfig("internal", internal_url),
+        ]
+        coordinator.index.store_listing_index("foo", "internal")
+
+        result = resolve_with_coordinator(
+            coordinator, _one_target(), _reqs("foo", "bar"), config=_no_build()
+        )
+
+        assert result.success
+        lock = result.target_results[0].lock
+        assert lock is not None
+
+        foo_pin, bar_pin = lock.pins["foo"], lock.pins["bar"]
+        assert isinstance(foo_pin, IndexPin)
+        assert isinstance(bar_pin, IndexPin)
+
+        assert foo_pin.index == internal_url
+        assert bar_pin.index == DEFAULT_INDEX_URL
 
 
 class TestResolveWithCoordinator:
