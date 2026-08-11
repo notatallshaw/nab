@@ -4747,6 +4747,33 @@ def test_lock_input_ignores_vcs_policy() -> None:
     assert "foo" in allow.targets[_HOST.label].pins
 
 
+# app[cli] activates plugin[fast], which activates speedup.
+_EXTRA_CHAIN_METADATA = {
+    "app": """\
+Metadata-Version: 2.4
+Name: app
+Version: 1.0
+Provides-Extra: cli
+Requires-Dist: plugin[fast]; extra == "cli"
+
+""",
+    "plugin": """\
+Metadata-Version: 2.4
+Name: plugin
+Version: 1.0
+Provides-Extra: fast
+Requires-Dist: speedup; extra == "fast"
+
+""",
+    "speedup": """\
+Metadata-Version: 2.4
+Name: speedup
+Version: 1.0
+
+""",
+}
+
+
 class TestDependencyGraph:
     def test_base_deps_filtered_to_locked(self) -> None:
         provider = _FakeProvider(
@@ -4829,6 +4856,41 @@ class TestDependencyGraph:
         assert lock.dependencies == {"mypkg": ("graphviz-lib", "otel-lib")}
         # Both transitive deps arrive through extras, so neither is a base
         # edge and mypkg has no base dependencies.
+        assert lock.base_dependencies == {}
+
+    def test_resolve_records_transitive_extra_edges(self) -> None:
+        """A resolve of ``app[cli]`` locks the edges of every extra it activates.
+
+        ``plugin[fast]`` is activated by app, not by the root requirement, so its
+        ``speedup`` edge is recorded only if the resolve reports that nested key.
+        """
+        wheels = {
+            name: _tag_wheel("py3-none-any", package=name)
+            for name in _EXTRA_CHAIN_METADATA
+        }
+
+        metadata_by_url: dict[str, str] = {}
+        for name, text in _EXTRA_CHAIN_METADATA.items():
+            sidecar = wheels[name].metadata_url
+            assert sidecar is not None
+            metadata_by_url[sidecar] = text
+
+        result = resolve_with_coordinator(
+            make_coordinator(
+                listings={name: [wheel] for name, wheel in wheels.items()},
+                metadata_by_url=metadata_by_url,
+            ),
+            [_HOST],
+            [Requirement("app[cli]")],
+            config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+        )
+        assert result.success
+
+        lock = result.target_results[0].lock
+        assert lock is not None
+        assert lock.dependencies == {"app": ("plugin",), "plugin": ("speedup",)}
+
+        # Both edges are conditional on an extra, so neither is a base edge.
         assert lock.base_dependencies == {}
 
     def test_emitted_as_pep751_dependencies(self) -> None:
