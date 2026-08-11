@@ -18,6 +18,9 @@ The graphs are layered, so ``pkg0`` may only require ``pkg1`` and later.  That
 keeps them acyclic and leaves solvability decided by the version pins alone.
 Each graph also asks for a later package under a ceiling, which is what gives
 the scan a root requirement to reject against rather than only a decision.
+
+A fixed graph separately exercises decision-aware look-ahead through the real
+resolver.
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from nab_python.provider import Provider
 from nab_python.target import ResolveTarget
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
+from nab_resolver.types import Incompatibility
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -50,7 +54,7 @@ SEEDS = 300
 
 
 class _Graph(NamedTuple):
-    """One generated graph: what the resolve asks for and what the index holds."""
+    """One graph: what the resolve asks for and what the index holds."""
 
     root_requirements: dict[str, VersionRange]
     listings: dict[str, list[WheelFile]]
@@ -139,21 +143,36 @@ def _build_graph(seed: int) -> _Graph:
 
 
 class _CountingProvider(Provider):
-    """The provider under test, keeping a tally of its root-requirement rejections.
+    """Count root rejections and clauses supported by the resolver's decisions.
 
-    A flush empties the pending tables, so the count has to be taken as they go
-    out.  Counting is all this adds; the resolve is the real one.
+    Root-rejection tables empty on flush, so they are counted before that call.
+    Decision-backed clauses are counted where the resolver consumes them.
     """
 
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self.root_rejections = 0
+        self.decision_backed_clauses = 0
 
     def _flush_pending_blocks(self) -> None:
         self.root_rejections += sum(
             len(versions) for versions in self.pending_root_blocks.values()
         )
         super()._flush_pending_blocks()
+
+    def consume_pending_clauses(self) -> list[Incompatibility[str, Version]]:
+        """Drain clauses and count those supported by a current decision."""
+        clauses = super().consume_pending_clauses()
+        for clause in clauses:
+            if len(clause.terms) != 2:
+                continue
+            if any(
+                term.package in self.solution_decisions
+                and self.solution_decisions[term.package] in term.constraint
+                for term in clause.terms
+            ):
+                self.decision_backed_clauses += 1
+        return clauses
 
 
 class _NoLookAheadProvider(_CountingProvider):
@@ -170,12 +189,14 @@ class _Run(NamedTuple):
 
     ``pins`` is None when the graph is unsolvable.  ``rejections`` counts every
     candidate the scan skipped, ``root_rejections`` only those it skipped on a
-    root requirement.
+    root requirement, and ``decision_backed_clauses`` those whose terms contain
+    a current decision.
     """
 
     pins: dict[str, Version] | None
     rejections: int
     root_rejections: int
+    decision_backed_clauses: int
 
 
 def _resolve(graph: _Graph, provider_type: type[_CountingProvider]) -> _Run:
@@ -192,7 +213,56 @@ def _resolve(graph: _Graph, provider_type: type[_CountingProvider]) -> _Run:
         pins = resolver.resolve(dict(graph.root_requirements))
     except ResolutionError:
         pins = None
-    return _Run(pins, provider.stats.look_ahead_rejections, provider.root_rejections)
+    return _Run(
+        pins,
+        provider.stats.look_ahead_rejections,
+        provider.root_rejections,
+        provider.decision_backed_clauses,
+    )
+
+
+def _decision_rejection_graph() -> _Graph:
+    """Build a graph that decides leaf 3.0 before scanning app."""
+    versions_by_package = {
+        "app": ("2.0", "1.0"),
+        "bridge": ("1.0",),
+        "leaf": ("3.0", "2.0"),
+    }
+    requirements_by_candidate = {
+        ("app", "2.0"): ["leaf==2.0"],
+        ("bridge", "1.0"): ["leaf==3.0"],
+    }
+
+    return _Graph(
+        root_requirements={
+            "app": VersionRange.full(admit_arbitrary=False),
+            "bridge": SpecifierSet("==1.0").to_range(),
+        },
+        listings={
+            package: [_wheel(package, version) for version in package_versions]
+            for package, package_versions in versions_by_package.items()
+        },
+        metadata_by_url={
+            _sidecar_url(package, version): _metadata(
+                package,
+                version,
+                requirements_by_candidate.get((package, version), []),
+            )
+            for package, package_versions in versions_by_package.items()
+            for version in package_versions
+        },
+    )
+
+
+def test_real_resolve_consumes_decision_backed_look_ahead_clause() -> None:
+    run = _resolve(_decision_rejection_graph(), _CountingProvider)
+
+    assert run.pins == {
+        "app": Version("1.0"),
+        "bridge": Version("1.0"),
+        "leaf": Version("3.0"),
+    }
+    assert run.decision_backed_clauses > 0
 
 
 def _declared_requirements(
