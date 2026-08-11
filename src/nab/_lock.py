@@ -447,13 +447,6 @@ def _fast_fail_locked(
     target = _locked_target_path(output, build_requirements=build_requirements)
     refresh = _refresh_command(build_requirements=build_requirements)
 
-    # A stat that failed is not an absent lock.
-    if path_state(target) is PathState.ABSENT:
-        _cli.printer().error(
-            f"--locked: no lockfile at {target} to check; run `{refresh}` first."
-        )
-        sys.exit(1)
-
     # A run whose own requirements cannot be read or evaluated is not the
     # lock's fault, so leave the error to the resolve rather than reporting a
     # stale lock.
@@ -474,6 +467,13 @@ def _fast_fail_locked(
         UnevaluableMarkerError,
     ):
         return
+
+    # A stat that failed is not an absent lock.
+    if path_state(target) is PathState.ABSENT:
+        _cli.printer().error(
+            f"--locked: no lockfile at {target} to check; run `{refresh}` first."
+        )
+        sys.exit(1)
 
     resolve_target = _locked_resolve_target(config, python=python)
 

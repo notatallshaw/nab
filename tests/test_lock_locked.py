@@ -834,6 +834,24 @@ def test_undeclared_extra_reports_the_extra_error(
     assert "re-run `nab lock`" not in err
 
 
+def test_missing_build_system_reports_the_project_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n',
+    )
+    out = tmp_path / "pylock.build.toml"
+
+    with pytest.raises(SystemExit) as exc:
+        _run_locked_unmocked(pyproject, out, "--build-requirements")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "declares no [build-system]" in err
+    assert "run `nab lock --build-requirements` first" not in err
+
+
 def test_unreadable_requirement_with_changed_envelope_reports_the_parse_error(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
