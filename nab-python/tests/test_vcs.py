@@ -219,7 +219,7 @@ class TestResolveSha:
         recorded: list[list[str]] = []
 
         class FakeProc:
-            stdout = f"{sha}\trefs/heads/main\n"
+            stdout = f"{sha}\trefs/heads/main\n".encode()
 
         def fake_run(cmd: list[str], **_kwargs: object) -> FakeProc:
             recorded.append(cmd)
@@ -235,7 +235,7 @@ class TestResolveSha:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         class EmptyProc:
-            stdout = ""
+            stdout = b""
 
         def fake_run(cmd: list[str], **_kwargs: object) -> EmptyProc:
             return EmptyProc()
@@ -250,7 +250,7 @@ class TestResolveSha:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         class WeirdProc:
-            stdout = "garbage\trefs/heads/main\n"
+            stdout = b"garbage\trefs/heads/main\n"
 
         def fake_run(cmd: list[str], **_kwargs: object) -> WeirdProc:
             return WeirdProc()
@@ -295,12 +295,40 @@ class TestResolveShaAnnotatedTag:
             lines = [f"{tag_object}\trefs/tags/v1"]
             if any(arg.endswith("^{}") for arg in cmd):
                 lines.append(f"{commit}\trefs/tags/v1^{{}}")
-            return type("P", (), {"stdout": "\n".join(lines) + "\n"})()
+            return type("P", (), {"stdout": ("\n".join(lines) + "\n").encode()})()
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         req = VcsRequest("git", "https://x", "v1", "")
         assert _resolve_sha(req, require_pin=False) == commit
         assert "v1^{}" in queried
+
+
+class TestResolveShaNonUtf8Ref:
+    """ls-remote output that is not valid UTF-8 raises a VcsCloneError.
+
+    ``git ls-remote repo <ref>`` advertises every ref whose tail matches
+    the pattern at a slash boundary, and ref names are byte strings, so an
+    ordinary request can come back with a line naming some other ref.
+    """
+
+    def test_non_utf8_ref_name_raises(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sibling = "a" * 40
+        wanted = "b" * 40
+
+        def fake_run(cmd: list[str], **_kwargs: object) -> object:
+            lines = [
+                f"{sibling}\trefs/heads/".encode() + b"\xff/main",
+                f"{wanted}\trefs/heads/main".encode(),
+            ]
+            return type("P", (), {"stdout": b"\n".join(lines) + b"\n"})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "https://x", "main", "")
+        with pytest.raises(VcsCloneError, match="not valid UTF-8"):
+            _resolve_sha(req, require_pin=False)
 
 
 class TestStalledRemote:
@@ -659,7 +687,7 @@ class TestAmbientGitEnvironment:
             env = kwargs["env"]
             assert isinstance(env, dict)
             seen.extend(name for name in env if name.startswith("GIT_"))
-            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n"})()
+            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n".encode()})()
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         req = VcsRequest("git", "https://example/repo.git", "main", "")
@@ -790,7 +818,7 @@ class TestOfflineClone:
 
         def fake_run(cmd: list[str], **_kwargs: object) -> object:
             assert cmd[:2] == ["git", "ls-remote"]
-            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n"})()
+            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n".encode()})()
 
         monkeypatch.setattr(subprocess, "run", fake_run)
         req = VcsRequest("git", (tmp_path / "repo").as_uri(), "main", "")
@@ -935,7 +963,7 @@ class TestProviderVcsIntegration:
 
         def fake_run(cmd: list[str], **_kwargs: object) -> object:
             assert cmd[:2] == ["git", "ls-remote"]
-            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n"})()
+            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n".encode()})()
 
         monkeypatch.setattr(subprocess, "run", fake_run)
 
