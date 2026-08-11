@@ -3460,6 +3460,50 @@ class TestAugmentResolutionError:
             " requires b in ==1.0 but root has it in >=2"
         ) in diagnostics
 
+    def test_derivation_renders_readable_ranges(self, tmp_path: Path) -> None:
+        """The derivation states ranges as requirements, like the diagnostics do.
+
+        ``a`` and ``b`` pin ``c`` at different versions, so the term the report
+        carries for ``b`` is the widened complement of ``b``'s pin.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["a", "b"]\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "a": _index_wheels("a", "7.0"),
+                "b": _index_wheels("b", "8.0"),
+                "c": _index_wheels("c", "1.0", "2.0"),
+            },
+            metadata_by_version={
+                "7.0": _metadata("a", "7.0", "c==1.0"),
+                "8.0": _metadata("b", "8.0", "c==2.0"),
+                "1.0": _metadata("c", "1.0"),
+                "2.0": _metadata("c", "2.0"),
+            },
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        derivation = str(info.value).split("Diagnostics:")[0]
+        assert derivation.splitlines() == [
+            "because all versions of a depend on c ==1.0",
+            "because all versions of b are incompatible with c <=1.0",
+            "so all versions of a and all versions of b",
+            "because your project depends on b",
+            "so all versions of a",
+            "because your project depends on a",
+            "so your project's requirements cannot be satisfied",
+            "",
+        ]
+
 
 class TestConflictingRootRequirements:
     def test_both_requirements_are_named(self, tmp_path: Path) -> None:

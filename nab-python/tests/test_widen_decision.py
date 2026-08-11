@@ -93,6 +93,11 @@ def _listing_provider(package: str, versions: list[str]) -> Provider:
     return provider
 
 
+def _descending_listing(count: int) -> list[str]:
+    """``count`` versions, ``1.0`` up to ``1.<count - 1>``, newest first."""
+    return [f"1.{index}" for index in reversed(range(count))]
+
+
 def _deps_provider(
     graph: dict[str, dict[str, list[str]]],
     package: str,
@@ -570,6 +575,63 @@ class TestNarrowForDisplay:
         provider.versions_cache["empty"] = []
         constraint = SpecifierSet(">=1,<2").to_range()
         assert provider.narrow_for_display("empty", constraint) == constraint
+
+    def test_range_no_listed_version_satisfies_is_unchanged(self) -> None:
+        """With nothing listed to state it over, the constraint stands."""
+        provider = _listing_provider("p", ["1.0"])
+        constraint = SpecifierSet(">=5").to_range()
+        assert provider.narrow_for_display("p", constraint) is constraint
+
+    def test_narrowed_pin_complement_reads_as_a_requirement(self) -> None:
+        """The complement of a pin reads as a requirement.
+
+        Snapping it onto the listing lands on bounds no specifier set spells.
+        """
+        provider = _listing_provider("p", ["2.0", "1.0"])
+        constraint = SpecifierSet("==2.0").to_range().complement()
+        snapped = constraint.snap_bounds([V("1.0"), V("2.0")])
+        assert snapped.to_specifier_set() is None
+
+        narrowed = provider.narrow_for_display("p", constraint)
+        assert provider.format_range(narrowed) == "<=1.0"
+
+    def test_narrowing_keeps_an_unbounded_side_unbounded(self) -> None:
+        """Neither side is stated when the constraint reaches past the listing."""
+        provider = _listing_provider("p", ["3.0", "2.0", "1.0"])
+        narrowed = provider.narrow_for_display("p", SpecifierSet("!=2.0").to_range())
+        assert provider.format_range(narrowed) == "!=2.0"
+
+    def test_narrowing_states_the_versions_the_span_would_admit(self) -> None:
+        """A listed version inside the stated span is excluded by name."""
+        provider = _listing_provider("p", ["4.0", "3.0", "2.0", "1.0"])
+        constraint = SpecifierSet(">=1.0,<=3.0,!=2.0").to_range()
+        narrowed = provider.narrow_for_display("p", constraint)
+        assert provider.format_range(narrowed) == "!=2.0,<=3.0,>=1.0"
+
+    def test_local_version_bound_keeps_the_constraint(self) -> None:
+        """An ordering specifier takes no local segment, so the term stands."""
+        provider = _listing_provider("p", ["2.0", "1.0+cuda"])
+        narrowed = provider.narrow_for_display("p", SpecifierSet("<2.0").to_range())
+        assert provider.format_range(narrowed) == "<2.0"
+
+    def test_narrowing_states_a_few_holes_by_name(self) -> None:
+        """Several listed versions inside the span are each excluded by name."""
+        provider = _listing_provider("p", _descending_listing(30))
+        window = SpecifierSet(">=1.5,<=1.20").to_range()
+        constraint = window - SpecifierSet(">=1.10,<=1.12").to_range()
+        narrowed = provider.narrow_for_display("p", constraint)
+        assert provider.format_range(narrowed) == "!=1.10,!=1.11,!=1.12,<=1.20,>=1.5"
+
+    def test_narrowing_a_span_full_of_holes_falls_back_to_snapping(self) -> None:
+        """Past a handful of holes the exclusions run longer than the range."""
+        provider = _listing_provider("p", _descending_listing(30))
+        window = SpecifierSet(">=1.5,<=1.20").to_range()
+        constraint = window - SpecifierSet(">=1.10,<=1.13").to_range()
+        narrowed = provider.narrow_for_display("p", constraint)
+        assert (
+            provider.format_range(narrowed)
+            == "<VersionRange '[1.5, 1.9] | [1.14, 1.20]'>"
+        )
 
     def test_availability_line_keeps_its_range(self) -> None:
         """``a`` is rejected only against pinned ``c``, so the line keeps its range.
