@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import errno
 import lzma
+import os
 import re
 import stat
 import sys
@@ -227,6 +228,9 @@ def _scan_pep503_directory(
 ) -> tuple[list[WheelFile | SdistFile], bool]:
     """Parse ``<package>/index.html`` and return file records.
 
+    ``package_dir`` has to be absolute, because the page's URI is the base
+    for its relative links.
+
     The second element says the page linked a file in a format nab does
     not read, which tells a page of ``.zip`` sdists from an empty one.
     """
@@ -241,7 +245,10 @@ def _scan_pep503_directory(
         raise MalformedLocalListingError(msg) from exc
 
     anchors, base_href = read_page(text)
-    base_url = (package_dir.resolve() / "index.html").as_uri()
+
+    # RFC 3986 section 5.1.3: the base is the URI the page was read from, not
+    # its realpath.
+    base_url = index_html.as_uri()
     if base_href is not None:
         # A base href every relative anchor resolves against, so one that
         # cannot be parsed leaves the whole page's targets unknown. Fail
@@ -566,11 +573,14 @@ class LocalIndexClient:
     """
 
     def __init__(self, index_url: str) -> None:
-        """Hold the resolved root path for ``index_url``.
+        """Hold the absolute root path for ``index_url``.
 
         A ``file:`` URL may be cwd-relative; artefact URLs have to be absolute.
+        Dropping the dot segments must not follow symlinks, so a page keeps the
+        path it was reached by.
         """
-        self._root = parse_file_url(index_url).resolve()
+        root = parse_file_url(index_url)
+        self._root = Path(os.path.abspath(root))  # noqa: PTH100
         self._unreadable_only: set[str] = set()
 
     async def aclose(self) -> None:
