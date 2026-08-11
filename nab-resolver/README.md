@@ -11,7 +11,8 @@ It has no runtime dependencies: the standard library is all it needs.
 ## When to use it
 
 Use `nab-resolver` when you are building some kind of package
-resolver, Python or otherwise.
+resolver, Python or otherwise.  There is a worked example in the docs:
+<https://nab.readthedocs.io/en/stable/how-to/embed-the-resolver.html>
 
 ## The public API
 

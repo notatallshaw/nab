@@ -111,7 +111,16 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
     def get_dependencies(
         self, package: PackageType, version: VersionType
     ) -> Mapping[PackageType, RangeProtocol[VersionType]]:
-        """Return ``{dependency_package: required_range}`` for this version."""
+        """Return ``{dependency_package: required_range}`` for this version.
+
+        Asked only about a version ``choose_version`` returned, immediately
+        after that decision is recorded.  The virtual root sentinel is never
+        passed.
+
+        The same pair is asked more than once: a backjump that re-decides a
+        version asks again, and building the final :class:`Solution` asks once
+        per pin.  Cache by package and version.
+        """
         ...
 
     def begin_decision_scan(self) -> None:

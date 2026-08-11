@@ -39,6 +39,7 @@ from nab_resolver.resolver import (
     ResolutionError,
     Resolver,
     ResolverObserver,
+    Solution,
 )
 from nab_resolver.root import ROOT
 from nab_resolver.types import (
@@ -576,6 +577,118 @@ class TestNoExtraPackages:
         result = Resolver(provider).resolve({"root": Range.singleton(1)})
         assert "pkg2" not in result
         assert result["pkg1"] == 1
+
+
+LogEntry = tuple[str, Any, Any]
+
+
+class CallLogProvider(DictProvider):
+    """DictProvider that appends the questions it is asked to a shared log."""
+
+    def __init__(
+        self,
+        packages: dict[str, dict[int, dict[str, Range]]],
+        log: list[LogEntry],
+    ) -> None:
+        super().__init__(packages)
+        self._log = log
+
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
+        chosen = super().choose_version(package, version_range)
+        self._log.append(("choose_version", package, chosen))
+        return chosen
+
+    def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
+        self._log.append(("get_dependencies", package, version))
+        return super().get_dependencies(package, version)
+
+
+class DecisionLogObserver(ResolverObserver[str, int]):
+    """Writes decisions into the provider's log so the two interleave."""
+
+    def __init__(self, log: list[LogEntry]) -> None:
+        self._log = log
+
+    def on_decision(self, package: str, version: int, level: int) -> None:
+        self._log.append(("decide", package, version))
+
+
+def record_resolve(
+    packages: dict[str, dict[int, dict[str, Range]]],
+    requirements: dict[str, Range],
+) -> tuple[list[LogEntry], Solution[str, int]]:
+    """Resolve, logging every version choice, decision and dependency question."""
+    log: list[LogEntry] = []
+    provider = CallLogProvider(packages, log)
+    solution = Resolver(provider, observer=DecisionLogObserver(log)).solve(requirements)
+    return log, solution
+
+
+class TestGetDependenciesCallingContract:
+    """``get_dependencies`` is asked right after each decision, then once per pin."""
+
+    def test_a_conflict_free_resolve_asks_once_per_decision_then_once_per_pin(
+        self,
+    ) -> None:
+        log, solution = record_resolve(
+            {
+                "root": {1: {"foo": Range.at_least(1)}},
+                "foo": {2: {"bar": Range.at_least(1)}, 1: {}},
+                "bar": {2: {}, 1: {}},
+            },
+            {"root": Range.singleton(1)},
+        )
+
+        assert log == [
+            ("choose_version", "root", 1),
+            ("decide", "root", 1),
+            ("get_dependencies", "root", 1),
+            ("choose_version", "foo", 2),
+            ("decide", "foo", 2),
+            ("get_dependencies", "foo", 2),
+            ("choose_version", "bar", 2),
+            ("decide", "bar", 2),
+            ("get_dependencies", "bar", 2),
+            ("get_dependencies", "root", 1),
+            ("get_dependencies", "foo", 2),
+            ("get_dependencies", "bar", 2),
+        ]
+        assert solution.pins == {"root": 1, "foo": 2, "bar": 2}
+
+    def test_a_backjump_asks_again_for_a_pair_already_answered(self) -> None:
+        """foo 2 is decided, undone, and foo 1 decided in its place.
+
+        ``bar`` offers no version, so it is never asked for dependencies.
+        """
+        log, solution = record_resolve(
+            {
+                "root": {1: {"foo": Range.full()}},
+                "foo": {2: {"bar": Range.at_least(5)}, 1: {}},
+                "bar": {1: {}},
+            },
+            {"root": Range.singleton(1)},
+        )
+
+        assert log == [
+            ("choose_version", "root", 1),
+            ("decide", "root", 1),
+            ("get_dependencies", "root", 1),
+            ("choose_version", "foo", 2),
+            ("decide", "foo", 2),
+            ("get_dependencies", "foo", 2),
+            ("choose_version", "bar", None),
+            ("choose_version", "root", 1),
+            ("decide", "root", 1),
+            ("get_dependencies", "root", 1),
+            ("choose_version", "foo", 1),
+            ("decide", "foo", 1),
+            ("get_dependencies", "foo", 1),
+            ("get_dependencies", "root", 1),
+            ("get_dependencies", "foo", 1),
+        ]
+        assert solution.pins == {"root": 1, "foo": 1}
 
 
 class TestPreference:
@@ -2047,6 +2160,83 @@ class TestErrorMessages:
         negative = format_term(Term("a", Range.at_least(1), positive=False))
         assert positive == "a [1, +inf)"
         assert negative == "not a [1, +inf)"
+
+
+class WideningProvider(DictProvider):
+    """Widens every decision to the full range, narrowing it back at display time.
+
+    The narrowing has to change the report, or a render that skipped the hook
+    would look the same.
+    """
+
+    def widen_decision(self, package: str, version: int) -> RangeProtocol[int] | None:
+        return Range.full()
+
+    def narrow_for_display(
+        self, package: str, constraint: RangeProtocol[int]
+    ) -> RangeProtocol[int]:
+        return Range.singleton(1) if package == "foo" else constraint
+
+
+def bracketed(constraint: object) -> str:
+    """Render a constraint unlike ``str`` does, to tell the two renders apart."""
+    return f"<{constraint}>"
+
+
+# foo and bar each depend on a half of baz the other rules out.
+CONFLICTING: dict[str, dict[int, dict[str, Range]]] = {
+    "root": {1: {"foo": Range.full(), "bar": Range.full()}},
+    "foo": {1: {"baz": Range.at_least(2)}},
+    "bar": {1: {"baz": Range.less_than(2)}},
+    "baz": {2: {}, 1: {}},
+}
+
+
+class TestResolutionErrorMessageContract:
+    """What ``str(error)`` is, and the two raise sites where it is something else."""
+
+    def test_message_is_the_report_the_display_hooks_produce(self) -> None:
+        provider = WideningProvider(CONFLICTING)
+        resolver = Resolver(provider, format_range=bracketed)
+
+        with pytest.raises(ResolutionError) as excinfo:
+            resolver.resolve({"root": Range.singleton(1)})
+
+        error = excinfo.value
+        assert error.incompatibility is not None
+        assert str(error) == format_error(
+            error.incompatibility,
+            narrow=provider.narrow_for_display,
+            format_range=bracketed,
+        )
+
+        # Neither hook is optional: leaving either out gives a different report.
+        assert str(error) != format_error(
+            error.incompatibility, narrow=provider.narrow_for_display
+        )
+        assert str(error) != format_error(error.incompatibility, format_range=bracketed)
+
+    def test_the_iteration_limit_carries_no_derivation(self) -> None:
+        resolver = Resolver(DictProvider(CONFLICTING), max_iterations=1)
+
+        with pytest.raises(ResolutionError) as excinfo:
+            resolver.resolve({"root": Range.singleton(1)})
+
+        assert excinfo.value.incompatibility is None
+        assert str(excinfo.value) == "Resolution exceeded 1 iterations"
+
+    @pytest.mark.timeout(STALL_TIMEOUT_SECONDS)
+    def test_a_stalled_conflict_loop_reports_the_bug_not_the_derivation(self) -> None:
+        solution, stalled = stalled_solution(padding=0)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution = solution
+
+        with pytest.raises(ResolutionError) as excinfo:
+            conflict_resolution(resolver, stalled)
+
+        error = excinfo.value
+        assert error.incompatibility is not None
+        assert str(error) != format_error(error.incompatibility)
 
 
 class TestFormatRangeHook:
