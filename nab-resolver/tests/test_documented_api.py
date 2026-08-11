@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import importlib
 import re
+import subprocess
+import sys
 from pathlib import Path
 from types import ModuleType
 
@@ -24,6 +26,18 @@ _ROW = re.compile(r"(?P<indent> *)(?P<module>nab_resolver\.\w+) {2,}(?P<names>\S
 _NAME_LIST = re.compile(r"\w+(?:, *\w+)*,?")
 
 ROW_SHAPE = "nab_resolver.<module><spaces><Name>[, <Name>...]"
+
+_PACKAGE_ROOT_PROBE = """
+import sys
+
+import nab_resolver
+
+bound = sorted(name for name in vars(nab_resolver) if not name.startswith("_"))
+assert bound == [], f"bound names: {bound}"
+
+loaded = sorted(name for name in sys.modules if name.startswith("nab_resolver."))
+assert loaded == [], f"imported submodules: {loaded}"
+"""
 
 
 def _split_names(text: str) -> list[str]:
@@ -142,3 +156,10 @@ def test_package_root_exports_nothing() -> None:
     }
 
     assert bound == set(), f"the package root must re-export nothing, found: {bound}"
+
+
+def test_package_root_import_binds_no_names_and_loads_no_submodules() -> None:
+    """Inspect the root import in a fresh interpreter."""
+    subprocess.run(  # noqa: S603
+        [sys.executable, "-c", _PACKAGE_ROOT_PROBE], check=True
+    )
