@@ -76,6 +76,7 @@ from nab_python.resolve import (
     TargetResult,
     _build_resolver_inputs,
     _EngineSettings,
+    _ProxyConstraints,
     _resolve_one_target,
     _run_pass,
     build_lock_input,
@@ -1253,6 +1254,21 @@ class TestBuildResolverInputs:
             )
 
 
+class TestProxyConstraints:
+    """``_ProxyConstraints`` answers an extras proxy with its base's bound."""
+
+    def test_a_proxy_key_reads_the_base_bound(self) -> None:
+        """``aaa[x]`` reads ``aaa``'s bound; an unconstrained base has none."""
+        bound = Requirement("aaa<3.0").specifier.to_range()
+        constraints = _ProxyConstraints({"aaa": bound})
+
+        assert constraints["aaa[x]"] == bound
+        assert constraints.get("bbb[x]") is None
+
+        # Iteration stays over the keys the user wrote.
+        assert dict(constraints) == {"aaa": bound}
+
+
 class TestSelfRefMarker:
     """The extras flatten must keep a self-ref's marker so the per-target
     parse drops its dep on the targets the marker excludes."""
@@ -2108,6 +2124,115 @@ class TestResolveWithCoordinator:
                 _reqs("aaa[x]"),
                 config=NabProjectConfig(constraints=("aaa==3.0",)),
             )
+
+    @staticmethod
+    def _transitive_proxy_coordinator(*, newest_dep: str = "") -> MagicMock:
+        """An index where ``ccc`` reaches ``aaa`` only through ``aaa[x]``.
+
+        ``aaa`` 1.0 and 2.0 declare ``x`` and pull ``bbb`` through it; 3.0
+        declares no extras and appends ``newest_dep`` to its METADATA.
+        """
+        aaa_wheels = [_make_wheel(v, package="aaa") for v in ("1.0", "2.0", "3.0")]
+        ccc_wheel = _make_wheel("1.0", package="ccc")
+        coordinator = make_coordinator(
+            listings={
+                "aaa": aaa_wheels,
+                "bbb": [_make_wheel("1.0", package="bbb")],
+                "ccc": [ccc_wheel],
+            },
+            auto_metadata=True,
+        )
+
+        for wheel in aaa_wheels[:-1]:
+            coordinator.index.store_metadata(
+                "aaa",
+                wheel.version,
+                f"Metadata-Version: 2.1\nName: aaa\nVersion: {wheel.version}\n"
+                "Provides-Extra: x\n"
+                'Requires-Dist: bbb; extra == "x"\n\n',
+                wheel.metadata_url,
+            )
+
+        coordinator.index.store_metadata(
+            "aaa",
+            "3.0",
+            f"Metadata-Version: 2.1\nName: aaa\nVersion: 3.0\n{newest_dep}\n",
+            aaa_wheels[-1].metadata_url,
+        )
+
+        coordinator.index.store_metadata(
+            "ccc",
+            "1.0",
+            "Metadata-Version: 2.1\nName: ccc\nVersion: 1.0\nRequires-Dist: aaa[x]\n\n",
+            ccc_wheel.metadata_url,
+        )
+        return coordinator
+
+    def test_constraint_bounds_a_transitive_extras_proxy(self) -> None:
+        """A constraint bounds a proxy that arrived through a dependency.
+
+        3.0 is out of bounds, so the resolve must not read its metadata:
+        the direct-URL dependency it declares would be refused and abort
+        the resolve.
+        """
+        result = resolve_with_coordinator(
+            self._transitive_proxy_coordinator(
+                newest_dep="Requires-Dist: zzz @ https://example.com/zzz-1.0.zip\n"
+            ),
+            _one_target(),
+            _reqs("ccc"),
+            config=NabProjectConfig(constraints=("aaa<3.0",)),
+        )
+        assert result.success
+        assert result.target_results[0].pins == {
+            "aaa": Version("2.0"),
+            "bbb": Version("1.0"),
+            "ccc": Version("1.0"),
+        }
+
+    def test_constraint_keeps_a_transitive_proxy_off_the_missing_extra(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The bound is applied before the proxy checks ``Provides-Extra``.
+
+        3.0 drops the extra, and warning about it would name a version
+        the lock cannot contain.
+        """
+        with caplog.at_level(logging.WARNING):
+            result = resolve_with_coordinator(
+                self._transitive_proxy_coordinator(),
+                _one_target(),
+                _reqs("ccc"),
+                config=NabProjectConfig(constraints=("aaa<3.0",)),
+            )
+
+        assert result.success
+        assert result.target_results[0].pins == {
+            "aaa": Version("2.0"),
+            "bbb": Version("1.0"),
+            "ccc": Version("1.0"),
+        }
+
+        assert [r.getMessage() for r in caplog.records if "aaa" in r.getMessage()] == []
+
+    def test_constraint_that_empties_a_transitive_proxy_is_blamed(self) -> None:
+        """The failure names the constraint, not the proxy's listing.
+
+        Three versions of ``aaa`` exist, so blaming ``aaa[x]``'s own
+        listing would be wrong.
+        """
+        result = resolve_with_coordinator(
+            self._transitive_proxy_coordinator(),
+            _one_target(),
+            _reqs("ccc"),
+            config=NabProjectConfig(constraints=("aaa<0.5",)),
+        )
+        assert not result.success
+
+        message = str(result.target_results[0].error)
+        assert "the user constrained aaa[x]" in message
+        assert "0.5" in message
+        assert "no versions of aaa[x]" not in message
 
     def test_resolution_strategy_overrides_the_config(self) -> None:
         """An explicit strategy wins over the config's ``resolution``."""
