@@ -25,7 +25,9 @@ constraints = ["urllib3<2"]
 # and pinned into the lock.  The names are also recorded in the
 # lockfile's default-groups array.  Two members of the same
 # at-most-one or exactly-one set in [tool.nab].conflicts cannot
-# both be defaults.
+# both be defaults.  A --groups selection that adds a second
+# member of such a set to a default forks the run into one
+# resolve per member.
 default-groups = ["dev"]
 
 # The group name a lock gives the project's own [project.dependencies],

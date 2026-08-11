@@ -3569,12 +3569,86 @@ def _doc_section(text: str, heading: str) -> str:
     return text.partition(f"\n{heading}\n")[2].partition("\n## ")[0]
 
 
+def _doc_paragraph(text: str, needle: str) -> str:
+    """The blank-line-delimited paragraph of ``text`` that contains ``needle``."""
+    for paragraph in text.split("\n\n"):
+        if needle in paragraph:
+            return paragraph
+
+    msg = f"no paragraph containing {needle!r}"
+    raise AssertionError(msg)
+
+
 def _names_flag(text: str, flag: str) -> bool:
     """Whether ``text`` names ``flag``, its ``--no-`` form, or a covering wildcard."""
     forms = [flag, f"--no-{flag.removeprefix('--')}"]
     if flag.startswith("--project-"):
         forms.append("--project-*")
     return any(re.search(rf"`{re.escape(form)}(?![\w-])", text) for form in forms)
+
+
+class TestCliReferenceSelectionShape:
+    """The reference's selection paragraph matches how many resolves a selection runs.
+
+    ``--extras`` and ``--groups`` union into one resolve until they select
+    two members of a declared conflict set, which forks the run.
+    """
+
+    _EXTRAS = (
+        '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
+        "[project.optional-dependencies]\n"
+        "cpu = []\n"
+        "gpu = []\n"
+    )
+
+    _CONFLICT = '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+
+    def _emitted_labels(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], body: str
+    ) -> list[str]:
+        """The ``# label`` headers ``nab lock --extras cpu gpu`` prints for ``body``.
+
+        The requirements formats label one block per emitted target and omit
+        the header when there is only one, so for these single-target
+        specific-mode locks the headers count the forks.
+        """
+        pyproject = _make_pyproject(tmp_path, body)
+        lock(
+            pyproject,
+            cache_dir=tmp_path / "cache",
+            offline=True,
+            extras=("cpu", "gpu"),
+            format="requirements-without-hashes",
+            output=Path("-"),
+        )
+        printed = capsys.readouterr().out
+        return [line for line in printed.splitlines() if line.startswith("# ")]
+
+    def _selection_paragraph(self) -> str:
+        """The ``nab lock`` paragraph that states what a selection resolves to."""
+        text = _doc_section(
+            _CLI_REFERENCE_DOC.read_text(encoding="utf-8"), "## `nab lock`"
+        )
+        return _doc_paragraph(text, "union resolve")
+
+    def test_selection_alone_is_one_union_resolve(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Two extras with no conflict declared resolve once, as the page says."""
+        assert self._emitted_labels(tmp_path, capsys, self._EXTRAS) == []
+
+        assert "single union resolve" in self._selection_paragraph()
+
+    def test_co_selected_conflict_members_fork_the_resolve(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Declaring the same two extras exclusive resolves each separately."""
+        labels = self._emitted_labels(tmp_path, capsys, self._EXTRAS + self._CONFLICT)
+        assert labels == ["# host-extra-cpu", "# host-extra-gpu"]
+
+        paragraph = self._selection_paragraph()
+        assert "`[tool.nab].conflicts`" in paragraph
+        assert "../explanation/conflicts.md" in paragraph
 
 
 class TestCliReferenceFlagCoverage:

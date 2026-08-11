@@ -887,6 +887,12 @@ class TestDefaultGroups:
         comment = default_groups_doc_comment().lower()
         assert any(word in comment for word in ("resolve", "activat")), comment
 
+    def test_doc_notes_the_conflict_fork(self) -> None:
+        # A default that --groups joins to another member of its conflict
+        # set forks rather than unions, so "every resolve" needs the caveat.
+        comment = default_groups_doc_comment()
+        assert "forks" in comment, comment
+
 
 class TestMainGroup:
     """``base-group`` names the project's own dependencies in a lock."""

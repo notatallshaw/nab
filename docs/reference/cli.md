@@ -59,8 +59,14 @@ Extras selection:
   array.
 * `--all-extras` selects every declared extra.
 
-Both `--groups` and `--extras` produce a single union resolve. A
-package that only a selected extra or group reaches is emitted with
+Both `--groups` and `--extras` produce a single union resolve, unless
+two or more members of a mutually exclusive `[tool.nab].conflicts` set
+are active, either because the selection names them or because they are
+the groups `base-group` and `build-group` name, which are active on
+every run. The run then forks into one resolve per choice of member;
+see [Conflicting extras and groups](../explanation/conflicts.md).
+
+A package that only a selected extra or group reaches is emitted with
 a `'X' in extras` or `'X' in dependency_groups` marker, so an
 installer given neither leaves it out; see
 [Lockfiles](lockfile.md).
