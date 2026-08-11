@@ -714,6 +714,24 @@ class TestEncodePolicy:
         assert entry is not None
         assert entry[1].page_url is None
 
+    def test_non_ascii_etag_is_not_stored(self) -> None:
+        policy = CachePolicy(fetched_at=10, max_age=20, etag='"é"')
+        assert json.loads(_encode_policy(policy))["etag"] is None
+
+    @pytest.mark.parametrize("etag", ['"é"', 123, []])
+    def test_unusable_etag_is_dropped(self, tmp_path: Path, etag: object) -> None:
+        cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
+        cache.put_simple("foo", b"{}", _FRESH)
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
+        path.write_bytes(
+            json.dumps({"fetched_at": 1, "max_age": 600, "etag": etag}).encode()
+        )
+
+        entry = cache.get_simple("foo")
+
+        assert entry is not None
+        assert entry[1].etag is None
+
 
 class TestReadCacheEntry:
     def _cache(self, tmp_path: Path) -> OnDiskCache:

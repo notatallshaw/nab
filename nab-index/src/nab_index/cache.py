@@ -103,6 +103,9 @@ class CachePolicy:
     ``fetched_at`` is the start of the freshness window: when nab received the
     response, less any Age a relaying shared cache reported.
 
+    ``etag`` is the entity tag to revalidate with. A non-ASCII tag is dropped,
+    since nab cannot send it back.
+
     ``page_url`` is the URL the stored body was retrieved from, the base its
     relative entries resolve against. It is ``None`` for the negative
     sentinel, which has no body, and for an entry cached without it.
@@ -577,7 +580,7 @@ def _encode_policy(policy: CachePolicy) -> bytes:
     doc: dict[str, object] = {
         "fetched_at": policy.fetched_at,
         "max_age": policy.max_age,
-        "etag": policy.etag,
+        "etag": _policy_etag(policy.etag),
         "page_url": policy.page_url,
     }
     # Emit only when set so an older policy or a bodyless negative entry keeps
@@ -592,13 +595,22 @@ def _policy_page_url(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _policy_etag(value: object) -> str | None:
+    """Entity tag from a policy, or None when it cannot be sent back.
+
+    RFC 9110 8.8.3 admits obs-text in an entity-tag, and httpx raises on a
+    non-ASCII request header value.
+    """
+    return value if isinstance(value, str) and value.isascii() else None
+
+
 def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
     try:
         doc = json.loads(policy_bytes)
         return CachePolicy(
             fetched_at=int(doc["fetched_at"]),
             max_age=int(doc["max_age"]),
-            etag=doc.get("etag"),
+            etag=_policy_etag(doc.get("etag")),
             page_url=_policy_page_url(doc.get("page_url")),
             body_digest=doc.get("body_digest"),
         )
