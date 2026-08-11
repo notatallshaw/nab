@@ -887,6 +887,178 @@ class TestDefaultGroups:
         comment = default_groups_doc_comment().lower()
         assert any(word in comment for word in ("resolve", "activat")), comment
 
+    def test_doc_notes_the_conflict_fork(self) -> None:
+        # A default that --groups joins to another member of its conflict
+        # set forks rather than unions, so "every resolve" needs the caveat.
+        comment = default_groups_doc_comment()
+        assert "forks" in comment, comment
+
+
+class TestMainGroup:
+    """``base-group`` names the project's own dependencies in a lock."""
+
+    def test_base_group_is_normalised(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nbase-group = "Runtime_Deps"\n')
+        assert read_pyproject_config(path).base_group == "runtime-deps"
+
+    def test_base_group_names_every_declaration_it_collides_with(
+        self, tmp_path: Path
+    ) -> None:
+        """Two spellings of one group name, so the message reads in order."""
+        path = write(
+            tmp_path,
+            "[dependency-groups]\nDefault = []\nDEFAULT = []\n"
+            '[tool.nab]\nbase-group = "default"\n',
+        )
+        with pytest.raises(ConfigError, match="'DEFAULT', 'Default' are the same"):
+            read_pyproject_config(path)
+
+    def test_base_group_rejects_a_non_name(self, tmp_path: Path) -> None:
+        path = write(tmp_path, '[tool.nab]\nbase-group = "-nope-"\n')
+        with pytest.raises(ConfigError, match="not a valid group name"):
+            read_pyproject_config(path)
+
+    def test_build_group_is_normalised(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, '[tool.nab]\nbase-group = "main"\nbuild-group = "Build_Deps"\n'
+        )
+        assert read_pyproject_config(path).build_group == "build-deps"
+
+    def test_build_group_rejects_a_non_name(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path, '[tool.nab]\nbase-group = "main"\nbuild-group = "-nope-"\n'
+        )
+        with pytest.raises(ConfigError, match="build-group '-nope-'"):
+            read_pyproject_config(path)
+
+    def test_build_group_without_a_base_group_is_refused(self, tmp_path: Path) -> None:
+        """Unnamed, the project's own dependencies come with every group."""
+        path = write(tmp_path, '[tool.nab]\nbuild-group = "build"\n')
+        with pytest.raises(ConfigError, match="but base-group is unset"):
+            read_pyproject_config(path)
+
+    def test_a_base_group_alone_is_fine(self, tmp_path: Path) -> None:
+        """The dependency runs one way: naming the rest needs no build group."""
+        path = write(tmp_path, '[tool.nab]\nbase-group = "main"\n')
+        assert read_pyproject_config(path).base_group == "main"
+
+    def test_build_group_rejects_a_declared_group_name(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[dependency-groups]\nbuild = ["pytest"]\n'
+            '[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
+        )
+        with pytest.raises(ConfigError, match="build-group 'build' and"):
+            read_pyproject_config(path)
+
+    def test_a_base_group_conflicting_with_a_default_group_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """An install given no selection would otherwise get neither side."""
+        path = write(
+            tmp_path,
+            "[dependency-groups]\ndev = []\n"
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'default-groups = ["dev"]\n'
+            'conflicts = [[{ group = "main" }, { group = "dev" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="would install neither"):
+            read_pyproject_config(path)
+
+    def test_two_default_groups_still_report_themselves(self, tmp_path: Path) -> None:
+        """base-group being set does not make every clash its fault."""
+        path = write(
+            tmp_path,
+            "[dependency-groups]\na = []\nb = []\n"
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'default-groups = ["a", "b"]\n'
+            'conflicts = [[{ group = "a" }, { group = "b" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="which are declared") as info:
+            read_pyproject_config(path)
+        assert "base-group" not in str(info.value)
+
+    def test_an_exclusive_set_of_configured_names_is_allowed(
+        self, tmp_path: Path
+    ) -> None:
+        """Only at-least-one is refused; the exclusive policies are the point."""
+        for policy in ("at-most-one", "exactly-one"):
+            path = write(
+                tmp_path,
+                "[build-system]\nrequires = []\n"
+                "[tool.nab]\n"
+                'base-group = "main"\n'
+                'build-group = "build"\n'
+                "conflicts = [{ members = ["
+                '{ group = "main" }, { group = "build" }],'
+                f' policy = "{policy}" }}]\n',
+            )
+            assert read_pyproject_config(path).build_group == "build"
+
+    def test_a_main_build_conflict_is_not_a_default_clash(self, tmp_path: Path) -> None:
+        """build-group is never a default, so the pair can be declared."""
+        path = write(
+            tmp_path,
+            "[build-system]\nrequires = []\n"
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'build-group = "build"\n'
+            'conflicts = [[{ group = "main" }, { group = "build" }]]\n',
+        )
+        assert read_pyproject_config(path).base_group == "main"
+
+    def test_an_at_least_one_set_naming_a_configured_group_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """A configured member cannot be deselected, so the minimum is free."""
+        path = write(
+            tmp_path,
+            "[dependency-groups]\ndev = []\n"
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'conflicts = [{ members = [{ group = "main" }, { group = "dev" }],'
+            ' policy = "at-least-one" }]\n',
+        )
+        with pytest.raises(ConfigError, match="decides nothing"):
+            read_pyproject_config(path)
+
+    def test_a_base_group_conflicting_with_an_extra_is_refused(
+        self, tmp_path: Path
+    ) -> None:
+        """An extra installs on top of the project's own dependencies."""
+        path = write(
+            tmp_path,
+            '[project.optional-dependencies]\ncli = ["clitool"]\n'
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'conflicts = [[{ group = "main" }, { extra = "cli" }]]\n',
+        )
+        with pytest.raises(ConfigError, match="nothing could install that extra"):
+            read_pyproject_config(path)
+
+    def test_a_build_group_may_conflict_with_an_extra(self, tmp_path: Path) -> None:
+        """The project's dependencies stay in every fork of that set."""
+        path = write(
+            tmp_path,
+            '[project.optional-dependencies]\ncli = ["clitool"]\n'
+            "[build-system]\nrequires = []\n"
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'build-group = "build"\n'
+            'conflicts = [[{ group = "build" }, { extra = "cli" }]]\n',
+        )
+        assert read_pyproject_config(path).build_group == "build"
+
+    def test_build_group_rejects_the_base_group_name(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab]\nbase-group = "shared"\nbuild-group = "Shared"\n',
+        )
+        with pytest.raises(ConfigError, match="build-group and base-group"):
+            read_pyproject_config(path)
+
 
 class TestRequiresPython:
     """``requires-python`` declares the supported range; it is not a target.
@@ -4779,6 +4951,60 @@ class TestWorkspaceDiscoveryIntegration:
         )
         config = read_pyproject_config(member)
         assert config.build_policy is BuildPolicy.BUILD_LOCAL
+
+    def test_discovery_carries_members_and_not_the_root_base_group(
+        self, tmp_path: Path
+    ) -> None:
+        """A member takes the root's sources, never the name it gives its own.
+
+        Discovery reads the root's ``members`` list and nothing else from
+        it, so the two files each name their own dependencies.
+        """
+        member = self._ws(tmp_path)
+        root = tmp_path / "pyproject.toml"
+        root.write_text(
+            root.read_text(encoding="utf-8") + '[tool.nab]\nbase-group = "root"\n',
+            encoding="utf-8",
+        )
+
+        assert read_pyproject_config(root).base_group == "root"
+
+        config = read_pyproject_config(member)
+        assert config.base_group is None
+        assert config.local_sources == (
+            LocalSource(name="alpha", path=str(member.parent), editable=True),
+        )
+
+    def test_a_member_group_may_take_the_root_base_group_name(
+        self, tmp_path: Path
+    ) -> None:
+        """A member's groups are not selectable in the root's lock.
+
+        They are in a different marker namespace, so the name the root
+        gives its own dependencies does not collide with them.  The same
+        name on the member's own file does.
+        """
+        member = self._ws(tmp_path)
+        member.write_text(
+            member.read_text(encoding="utf-8")
+            + '[dependency-groups]\nroot = ["iniconfig"]\n',
+            encoding="utf-8",
+        )
+        root = tmp_path / "pyproject.toml"
+        root.write_text(
+            root.read_text(encoding="utf-8") + '[tool.nab]\nbase-group = "root"\n',
+            encoding="utf-8",
+        )
+
+        assert read_pyproject_config(root).base_group == "root"
+        assert read_pyproject_config(member).base_group is None
+
+        member.write_text(
+            member.read_text(encoding="utf-8") + '[tool.nab]\nbase-group = "root"\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigError, match=r"^base-group 'root' and"):
+            read_pyproject_config(member)
 
     def test_no_discovery_skips_walk(self, tmp_path: Path) -> None:
         member = self._ws(tmp_path)

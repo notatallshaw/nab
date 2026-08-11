@@ -57,6 +57,7 @@ def envelope(
     extras: tuple[str, ...] = (),
     dependency_groups: tuple[str, ...] = (),
     default_groups: tuple[str, ...] = (),
+    base_group: str | None = None,
 ) -> LockDisqualification | None:
     return check_envelope(
         committed,
@@ -64,6 +65,7 @@ def envelope(
         extras=extras,
         dependency_groups=dependency_groups,
         default_groups=default_groups,
+        base_group=base_group,
     )
 
 
@@ -186,6 +188,55 @@ def test_default_groups_removed_fires() -> None:
 def test_default_groups_reordered_does_not_fire() -> None:
     committed = make_pylock(default_groups=("main", "extra"))
     assert envelope(committed, default_groups=("extra", "main")) is None
+
+
+def test_the_named_base_group_does_not_fire() -> None:
+    """The writer adds it to both arrays and no run selects it."""
+    committed = make_pylock(
+        dependency_groups=("dev", "default"),
+        default_groups=("main", "default"),
+    )
+    assert (
+        envelope(
+            committed,
+            dependency_groups=("dev",),
+            default_groups=("main",),
+            base_group="default",
+        )
+        is None
+    )
+
+
+def test_the_name_is_looked_for_in_dependency_groups() -> None:
+    """``default-groups`` alone is a lock no installer can activate it from."""
+    committed = make_pylock(dependency_groups=("dev",), default_groups=("default",))
+    result = envelope(committed, dependency_groups=("dev",), base_group="default")
+    assert result is not None
+    assert "does not name 'default'" in result.reason
+
+
+def test_a_lock_predating_the_option_fires_on_the_missing_name() -> None:
+    """A lock written before ``base-group`` was set names no group at all."""
+    committed = make_pylock(dependency_groups=None, default_groups=None)
+    result = envelope(committed, default_groups=("test",), base_group="default")
+    assert result is not None
+    assert "does not name 'default'" in result.reason
+
+
+def test_a_lock_naming_a_different_base_group_fires() -> None:
+    """The option was renamed since, so the committed name is stale."""
+    committed = make_pylock(
+        dependency_groups=("dev", "default"),
+        default_groups=("main", "default"),
+    )
+    result = envelope(
+        committed,
+        dependency_groups=("dev",),
+        default_groups=("main",),
+        base_group="default-1",
+    )
+    assert result is not None
+    assert "does not name 'default-1'" in result.reason
 
 
 def test_all_envelope_fields_matching_returns_none() -> None:

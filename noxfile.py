@@ -30,6 +30,7 @@ nox.options.default_venv_backend = "venv"
 TESTS_LOCK = ".github/requirements/pylock.tests.toml"
 TYPES_LOCK = ".github/requirements/pylock.types.toml"
 DISTS_LOCK = ".github/requirements/pylock.dists.toml"
+BUILD_LOCK = ".github/requirements/pylock.build.toml"
 
 # workspace -> (editable packages, pytest paths, coverage-gated packages).
 # nab-index rides with the python workspace: nab-python is its only consumer
@@ -134,4 +135,7 @@ def dists(session: nox.Session) -> None:
     # subprocess and installs it into its own throwaway venv.
     session.install("--upgrade", "pip>=26.1")
     session.install("-r", DISTS_LOCK)
+    # The build runs with --no-isolation, so the backend comes from the lock
+    # of [build-system].requires rather than from a hand-listed group.
+    session.install("-r", BUILD_LOCK)
     session.run("python", "tasks/check_dists.py")

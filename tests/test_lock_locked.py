@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import tomli
 
 from nab.cli import app
 from nab_python._vendor.packaging.version import Version
@@ -140,6 +141,163 @@ def test_tightened_direct_specifier_fires_without_resolving(
     assert "is out of date" in err
     mock.assert_not_called()
     assert out.read_bytes() == before
+
+
+def test_tightened_build_requirement_fires_without_resolving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--locked proves a build lock stale from [build-system].requires."""
+    body = '[project]\nname = "proj"\ndependencies = []\n'
+    pyproject = _write_pyproject(
+        tmp_path, body + '[build-system]\nrequires = ["foo"]\n'
+    )
+    out = tmp_path / "pylock.build.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.5"}), "--build-requirements")
+    capsys.readouterr()
+    pyproject.write_text(
+        body + '[build-system]\nrequires = ["foo>=2.0"]\n', encoding="utf-8"
+    )
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--build-requirements")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "[build-system].requires requires foo>=2.0 but the lock pins foo 1.5" in err
+    assert "re-run `nab lock --build-requirements` to update it" in err
+    mock.assert_not_called()
+
+
+def test_locked_build_lock_defaults_to_the_build_lock_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without --output, --build-requirements checks pylock.build.toml."""
+    monkeypatch.chdir(tmp_path)
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\ndependencies = []\n'
+        '[build-system]\nrequires = ["foo"]\n',
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        app.cli(
+            args=["lock", str(pyproject), "--locked", "--build-requirements"],
+            prog="nab",
+        )
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "no lockfile at pylock.build.toml" in err
+    assert "run `nab lock --build-requirements` first" in err
+
+
+def test_locked_build_lock_checks_its_own_default_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale pylock.toml alongside must not decide the build lock's verdict."""
+    monkeypatch.chdir(tmp_path)
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\ndependencies = ["bar"]\n'
+        '[build-system]\nrequires = ["foo"]\n',
+    )
+    _write_lock(pyproject, tmp_path / "pylock.toml", _result({"bar": "9.9"}))
+    _write_lock(
+        pyproject,
+        tmp_path / "pylock.build.toml",
+        _result({"foo": "1.0"}),
+        "--build-requirements",
+    )
+    capsys.readouterr()
+
+    with patch("nab.cli.resolve_for_targets", _locked_mock(_result({"foo": "1.0"}))):
+        app.cli(
+            args=["lock", str(pyproject), "--locked", "--build-requirements"],
+            prog="nab",
+        )
+
+    assert "Lockfile pylock.build.toml is up to date." in capsys.readouterr().err
+
+
+def test_a_lock_offering_a_build_group_is_up_to_date(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No run selects the build group, so its name must not read as drift."""
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+        '[build-system]\nrequires = ["foo"]\n'
+        '[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    assert tomli.loads(out.read_text())["dependency-groups"] == ["main", "build"]
+
+    _run_locked(pyproject, out, _locked_mock(_result({"foo": "1.0"})))
+
+    assert "is up to date" in capsys.readouterr().err
+
+
+def test_a_tightened_build_requirement_fires_with_a_build_group(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The fast-fail tier sees the build side when build-group carries it."""
+    body = '[project]\nname = "proj"\ndependencies = ["bar"]\n[build-system]\n'
+    pyproject = _write_pyproject(
+        tmp_path,
+        body
+        + 'requires = ["foo"]\n[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"bar": "1.0", "foo": "1.5"}))
+    capsys.readouterr()
+    pyproject.write_text(
+        body
+        + 'requires = ["foo>=2.0"]\n'
+        + '[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
+        encoding="utf-8",
+    )
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "[build-system].requires requires foo>=2.0 but the lock pins foo 1.5" in err
+    mock.assert_not_called()
+
+
+def test_a_renamed_build_group_is_out_of_date(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Renaming it renames a marker on every package it gates."""
+    body = (
+        '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+        '[build-system]\nrequires = ["foo"]\n'
+        "[tool.nab]\n"
+    )
+    pyproject = _write_pyproject(
+        tmp_path, body + 'base-group = "main"\nbuild-group = "build"\n'
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    pyproject.write_text(
+        body + 'base-group = "main"\nbuild-group = "builder"\n', encoding="utf-8"
+    )
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert "does not name 'builder' for the build requirements" in (
+        capsys.readouterr().err
+    )
+    mock.assert_not_called()
 
 
 def test_tightened_constraint_fires_without_resolving(
@@ -358,6 +516,29 @@ def test_non_sticky_stale_falls_through_out_of_date(
 
     assert exc.value.code == 1
     assert "out of date" in capsys.readouterr().err
+    mock.assert_called_once()
+
+
+def test_a_stale_build_lock_names_the_build_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The post-resolve verdict must send the user to the file it just read."""
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\ndependencies = []\n'
+        '[build-system]\nrequires = ["foo>=1.0"]\n',
+    )
+    out = tmp_path / "pylock.build.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}), "--build-requirements")
+    capsys.readouterr()
+
+    mock = _locked_mock(_result({"foo": "2.0"}))
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--build-requirements")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "is out of date; re-run `nab lock --build-requirements` to update it" in err
     mock.assert_called_once()
 
 

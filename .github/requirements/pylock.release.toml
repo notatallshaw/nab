@@ -888,38 +888,6 @@ size = 35604
 sha256 = "80f13f623413e6b197ae73bb10bf4eb0908faf509ad8362c5edeb0be7fd450b4"
 
 [[packages]]
-name = "hatchling"
-version = "1.31.0"
-marker = "\"release\" in dependency_groups"
-requires-python = ">=3.10"
-dependencies = [
-    { name = "packaging" },
-    { name = "pathspec" },
-    { name = "pluggy" },
-    { name = "tomli" },
-    { name = "trove-classifiers" },
-]
-index = "https://pypi.org/simple/"
-
-[packages.sdist]
-name = "hatchling-1.31.0.tar.gz"
-upload-time = 2026-07-08 01:48:32.237659+00:00
-url = "https://files.pythonhosted.org/packages/25/e2/dfa73fe78f773018dcaebc6d09b819bc10d328ff5a6b4a66efa1e3d71f52/hatchling-1.31.0.tar.gz"
-size = 57208
-
-[packages.sdist.hashes]
-sha256 = "6b48ad4068a482ed7239b3a8215bc55b47aad3345d58dfc94e553c5d2d46211b"
-
-[[packages.wheels]]
-name = "hatchling-1.31.0-py3-none-any.whl"
-upload-time = 2026-07-08 01:48:31.024633+00:00
-url = "https://files.pythonhosted.org/packages/64/e2/2c0af0a52d16be74a4f194564fcdc417521ed863e9b65e4bc9052dacba6f/hatchling-1.31.0-py3-none-any.whl"
-size = 77747
-
-[packages.wheels.hashes]
-sha256 = "aac80bec8b6fe35e8480f1c335be8910fa210a0e6f735a139be205dadcacb544"
-
-[[packages]]
 name = "id"
 version = "1.6.1"
 marker = "\"release\" in dependency_groups"
@@ -1347,31 +1315,6 @@ size = 100195
 sha256 = "5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"
 
 [[packages]]
-name = "pathspec"
-version = "1.1.1"
-marker = "\"release\" in dependency_groups"
-requires-python = ">=3.9"
-index = "https://pypi.org/simple/"
-
-[packages.sdist]
-name = "pathspec-1.1.1.tar.gz"
-upload-time = 2026-04-27 01:46:08.907631+00:00
-url = "https://files.pythonhosted.org/packages/5a/82/42f767fc1c1143d6fd36efb827202a2d997a375e160a71eb2888a925aac1/pathspec-1.1.1.tar.gz"
-size = 135180
-
-[packages.sdist.hashes]
-sha256 = "17db5ecd524104a120e173814c90367a96a98d07c45b2e10c2f3919fff91bf5a"
-
-[[packages.wheels]]
-name = "pathspec-1.1.1-py3-none-any.whl"
-upload-time = 2026-04-27 01:46:07.060850+00:00
-url = "https://files.pythonhosted.org/packages/f1/d9/7fb5aa316bc299258e68c73ba3bddbc499654a07f151cba08f6153988714/pathspec-1.1.1-py3-none-any.whl"
-size = 57328
-
-[packages.wheels.hashes]
-sha256 = "a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189"
-
-[[packages]]
 name = "platformdirs"
 version = "4.11.0"
 marker = "\"release\" in dependency_groups"
@@ -1395,31 +1338,6 @@ size = 23247
 
 [packages.wheels.hashes]
 sha256 = "360ccded2b7fce0af0ff80cc8f5942a1c5d99b0e856033acb030bfc634709e74"
-
-[[packages]]
-name = "pluggy"
-version = "1.6.0"
-marker = "\"release\" in dependency_groups"
-requires-python = ">=3.9"
-index = "https://pypi.org/simple/"
-
-[packages.sdist]
-name = "pluggy-1.6.0.tar.gz"
-upload-time = 2025-05-15 12:30:07.975376+00:00
-url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz"
-size = 69412
-
-[packages.sdist.hashes]
-sha256 = "7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3"
-
-[[packages.wheels]]
-name = "pluggy-1.6.0-py3-none-any.whl"
-upload-time = 2025-05-15 12:30:06.134003+00:00
-url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl"
-size = 20538
-
-[packages.wheels.hashes]
-sha256 = "e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746"
 
 [[packages]]
 name = "pyasn1"
@@ -2552,30 +2470,6 @@ size = 49449
 sha256 = "177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304"
 
 [[packages]]
-name = "trove-classifiers"
-version = "2026.6.1.19"
-marker = "\"release\" in dependency_groups"
-index = "https://pypi.org/simple/"
-
-[packages.sdist]
-name = "trove_classifiers-2026.6.1.19.tar.gz"
-upload-time = 2026-06-01 19:41:34.649417+00:00
-url = "https://files.pythonhosted.org/packages/c2/e3/7ca82ee24c82d344584abd5b8637b3bd056f2900226e8d82fc22f1184b92/trove_classifiers-2026.6.1.19.tar.gz"
-size = 17059
-
-[packages.sdist.hashes]
-sha256 = "c5132b4b61a829d11cfbd2d72e97f20a45ed6edb95e45c5efdeb5e00836b2745"
-
-[[packages.wheels]]
-name = "trove_classifiers-2026.6.1.19-py3-none-any.whl"
-upload-time = 2026-06-01 19:41:33.434069+00:00
-url = "https://files.pythonhosted.org/packages/7c/a4/81502f486f01db95bc8320646a8a12511f5e556cb63d5e224d91816605c4/trove_classifiers-2026.6.1.19-py3-none-any.whl"
-size = 14211
-
-[packages.wheels.hashes]
-sha256 = "ab4c4ec93cc4a4e7815fa759906e05e6bb3f2fbd92ea0f897288c6a43efd15b3"
-
-[[packages]]
 name = "truststore"
 version = "0.10.4"
 requires-python = ">=3.10"
@@ -2822,7 +2716,7 @@ size = 10238
 sha256 = "25ad4e16390cd314347dd8f1de67a2ac538ae658ed4ab9db16029c07c188e97f"
 
 [tool.nab]
-nab-version = "0.0.12.dev0"
+nab-version = "0.0.13.dev0"
 created-at = 2026-07-31 17:59:10.332748+00:00
 command-line = [
     "nab",

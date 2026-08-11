@@ -549,6 +549,24 @@ def _parse_default_groups(value: Any, where: str) -> tuple[str, ...]:
     return _delegate(lambda: _impl("default-groups", value))
 
 
+def _parse_base_group(value: Any, where: str) -> str | None:
+    del where
+    from .config import (  # noqa: PLC0415 (config import cycle)
+        _parse_base_group as _impl,
+    )
+
+    return _delegate(lambda: _impl(value))
+
+
+def _parse_build_group(value: Any, where: str) -> str | None:
+    del where
+    from .config import (  # noqa: PLC0415 (config import cycle)
+        _parse_build_group as _impl,
+    )
+
+    return _delegate(lambda: _impl(value))
+
+
 def _parse_indexes(value: Any, where: str) -> tuple[IndexConfig, ...]:
     # One file's array-of-tables: config._parse_indexes validates shape,
     # keys, and the same-name check into IndexConfig entries.
@@ -872,6 +890,28 @@ OPTIONS: tuple[OptionSpec, ...] = (
         cli_param="project_default_group",
         parse=_parse_default_groups,
         render=_render_string_tuple,
+    ),
+    OptionSpec(
+        key="base-group",
+        scope=Scope.PROJECT,
+        type_label="group",
+        default=None,
+        env_var=None,
+        cli_flag="--project-base-group",
+        cli_param="project_base_group",
+        parse=_parse_base_group,
+        render=lambda v: "<none>" if v is None else v,
+    ),
+    OptionSpec(
+        key="build-group",
+        scope=Scope.PROJECT,
+        type_label="group",
+        default=None,
+        env_var=None,
+        cli_flag="--project-build-group",
+        cli_param="project_build_group",
+        parse=_parse_build_group,
+        render=lambda v: "<none>" if v is None else v,
     ),
     OptionSpec(
         key="requires-python",

@@ -26,7 +26,7 @@ import tempfile
 import time
 from collections import defaultdict
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
@@ -52,6 +52,7 @@ from .config import (
     ConflictSelectionError,
     ConflictSet,
     NabProjectConfig,
+    configured_group_names,
     conflict_forks,
     index_cache_floors_from_config,
     index_routes_from_config,
@@ -75,6 +76,7 @@ from .requirements_file import (
     expand_group_includes,
     expand_self_extras,
     raise_for_unsatisfiable,
+    read_pyproject_build_requires,
     read_pyproject_dependencies,
     read_pyproject_groups,
     read_pyproject_name,
@@ -106,7 +108,9 @@ __all__ = [
     "ResolveFork",
     "ResolveResult",
     "TargetResult",
+    "active_group_names",
     "build_lock_input",
+    "config_for_build_requirements",
     "resolve_for_targets",
     "resolve_with_coordinator",
 ]
@@ -165,19 +169,41 @@ class InstallContexts:
     ``project`` is the project's own dependencies, and ``selectors``
     holds one requirement list per active extra and group, keyed by its
     ``(kind, name)`` member.  The lock writer walks the resolved graph
-    from each of them, so a package only a selection reaches is gated on
-    it (see :attr:`~nab_python.lockfile.TargetLock.package_gates`) and a
-    default install leaves it out.
+    from each of them, so each package is gated on the contexts that
+    reach it (see :attr:`~nab_python.lockfile.TargetLock.package_gates`)
+    and a default install leaves out what only a selection brings.
 
     The fork's own ``selection`` is one of those selectors, so a package
     it shares with another active selection names both members and
     installs for either.
+
+    ``project`` is the project's own dependencies *as this fork resolved
+    them*, empty in a fork a declared conflict excluded them from.
+
+    ``name_project`` is set when ``[tool.nab].base-group`` names the
+    project's own dependencies.  It is a lock-wide fact rather than a
+    per-fork one: the name has to mean the same thing in every lock it
+    appears in, so the roots are walked even with nothing selected.
     """
 
     project: tuple[Requirement, ...] = ()
     selectors: Mapping[tuple[str, str], tuple[Requirement, ...]] = field(
         default_factory=dict
     )
+    name_project: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _ConfiguredContext:
+    """An install context ``[tool.nab]`` configures rather than a run selects.
+
+    ``name`` is ``None`` for the project's own dependencies when no
+    ``base-group`` names them.  Unnamed they cannot be a conflict member,
+    so every fork carries them.
+    """
+
+    name: str | None
+    requirements: tuple[Requirement, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,8 +212,8 @@ class ResolveFork:
 
     ``selection`` is the conflicting members active in this fork, empty
     for an unforked resolve; ``requirements`` are the requirements folded
-    for it (the project's dependencies plus the groups and extras the
-    selection activates).  Each fork runs against every target, with its
+    for it: the configured contexts this fork carries plus the groups and
+    extras the selection activates.  Each fork runs against every target, with its
     ``selection`` stamped onto each so the pins land under a distinct
     label and a membership-gated marker.
 
@@ -289,6 +315,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
     python_version: str | None = None,
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
+    build_requirements: bool = False,
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressSink | None = None,
 ) -> ResolveResult:
@@ -306,6 +333,11 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
     ``[project.optional-dependencies]`` keys to fold in;
     ``resolution_strategy`` overrides ``config.resolution`` when set.
 
+    ``build_requirements`` resolves ``[build-system].requires`` instead of
+    the project's dependencies, for a lock of the environment the project
+    is built in rather than the one it runs in.  Neither ``groups`` nor
+    ``extras`` mean anything there, so passing either raises.
+
     A target that cannot be resolved is a failed :class:`TargetResult`,
     not an exception, so a matrix reports every target that failed rather
     than only the first.  Everything else (an unreadable pyproject, a
@@ -313,21 +345,37 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
     """
     if config is None:
         config = read_pyproject_config(path)
+    if build_requirements:
+        if groups or extras:
+            msg = "a build-requirements resolve has no groups or extras to select"
+            raise ValueError(msg)
+        config = config_for_build_requirements(config)
     config = with_python_override(config, python_version)
     targets = plan_targets(config)
 
-    tables = _ProjectTables(
-        dependencies=read_pyproject_dependencies(path),
-        groups=read_pyproject_groups(path),
-        optional=read_pyproject_optional_dependencies(path),
-        project_name=read_pyproject_name(path),
+    tables = (
+        _tables_for_build_requires(path)
+        if build_requirements
+        else _ProjectTables(
+            dependencies=read_pyproject_dependencies(path),
+            groups=read_pyproject_groups(path),
+            optional=read_pyproject_optional_dependencies(path),
+            project_name=read_pyproject_name(path),
+            build_requires=(
+                read_pyproject_build_requires(path)
+                if config.build_group is not None
+                else []
+            ),
+        )
     )
 
     # ``default-groups`` is project policy: every default install
     # activates them, so the conflict checks, the fork plan, and the
     # resolves all fold them into the active group set alongside the CLI
     # selection.
-    effective_groups = tuple(dict.fromkeys((*groups, *config.default_groups)))
+    effective_groups = active_group_names(
+        groups, config.default_groups, config.base_group
+    )
 
     forks, base_requirements = _plan_forks(
         path,
@@ -719,6 +767,28 @@ def _base_pass(
     return results, env_base_names
 
 
+def active_group_names(
+    groups: Sequence[str],
+    default_groups: Sequence[str],
+    base_group: str | None,
+) -> tuple[str, ...]:
+    """Return the ``[dependency-groups]`` names this run activates, in order.
+
+    ``base-group`` may be named in ``default-groups`` to keep the
+    project's own dependencies in the default selection.  Its
+    requirements are ``[project].dependencies``, which are roots already,
+    so it is dropped here rather than looked up as a declared group.
+    ``groups`` is this run's ``--groups`` selection and keeps the name, so
+    selecting a group the project does not declare still raises.
+    """
+    policy = tuple(
+        name
+        for name in default_groups
+        if base_group is None or canonicalize_name(name) != base_group
+    )
+    return tuple(dict.fromkeys((*groups, *policy)))
+
+
 def build_lock_input(
     result: ResolveResult,
     *,
@@ -736,8 +806,9 @@ def build_lock_input(
     ``result.success`` first.
 
     ``extras`` and ``dependency_groups`` are this run's selection, which
-    the lock records at the top level;  ``default-groups`` and the
-    declared conflicts are project policy and come from ``config``.
+    the lock records at the top level;  ``default-groups``, the declared
+    conflicts, and ``base-group`` are project policy and come from
+    ``config``.
     """
     effective = config if config is not None else NabProjectConfig()
     targets: dict[str, TargetLock] = {}
@@ -769,6 +840,8 @@ def build_lock_input(
         dependency_groups=tuple(dependency_groups),
         default_groups=effective.default_groups,
         conflicts=effective.conflicts,
+        base_group=effective.base_group,
+        build_group=effective.build_group,
     )
 
 
@@ -863,6 +936,80 @@ class _ProjectTables:
     groups: Mapping[str, Sequence[str | Mapping[str, str]]]
     optional: Mapping[str, Sequence[str]]
     project_name: str | None
+    build_requires: list[Requirement] = field(default_factory=list)
+    """``[build-system].requires``, read only when ``[tool.nab].build-group``
+    names a group for them.  A ``--build-requirements`` resolve carries them
+    in ``dependencies`` instead and leaves this empty."""
+
+
+def _configured_contexts(
+    config: NabProjectConfig, tables: _ProjectTables
+) -> tuple[_ConfiguredContext, tuple[_ConfiguredContext, ...]]:
+    """Split the configured install contexts into the project's and the rest.
+
+    The project's own dependencies are always a context, named or not.  The
+    build requirements are one only when ``build-group`` names them, which
+    is also the only time they were read.
+    """
+    project = _ConfiguredContext(config.base_group, tuple(tables.dependencies))
+    selectors = (
+        (_ConfiguredContext(config.build_group, tuple(tables.build_requires)),)
+        if config.build_group is not None
+        else ()
+    )
+    return project, selectors
+
+
+def _carried_by(
+    fork: ConflictFork,
+    project: _ConfiguredContext,
+    selectors: Sequence[_ConfiguredContext],
+) -> tuple[tuple[Requirement, ...], tuple[_ConfiguredContext, ...]]:
+    """Return the configured contexts ``fork`` resolves, project first.
+
+    An unnamed context cannot be a conflict member, so every fork carries
+    it; a named one is carried only by the fork that chose it.
+    """
+    carried = tuple(c for c in selectors if c.name in fork.active_configured)
+    if project.name is None or project.name in fork.active_configured:
+        return project.requirements, carried
+    return (), carried
+
+
+def _tables_for_build_requires(path: Path) -> _ProjectTables:
+    """Read ``path`` as a project whose dependencies are its build requirements.
+
+    ``[build-system].requires`` is one flat list, so the group and extra
+    tables are empty, and the project name with them: it is read only to
+    expand self-referencing extras.
+    """
+    return _ProjectTables(
+        dependencies=read_pyproject_build_requires(path),
+        groups={},
+        optional={},
+        project_name=None,
+    )
+
+
+def config_for_build_requirements(config: NabProjectConfig) -> NabProjectConfig:
+    """Return ``config`` with the settings a build-requirements lock cannot use.
+
+    ``default-groups`` and the conflicts declared over groups and extras
+    describe a selection ``[build-system].requires`` does not have, and
+    ``base-group`` names the project's own dependencies, which a build
+    lock holds none of.  Left in they fail the run rather than narrow it:
+    :func:`_tables_for_build_requires` supplies no group or extra table
+    for them to resolve against.  ``build-group`` goes too: a lock whose
+    roots already are the build requirements has no second context to
+    gate them behind.
+    """
+    return replace(
+        config,
+        conflicts=(),
+        default_groups=(),
+        base_group=None,
+        build_group=None,
+    )
 
 
 def _threaded_preferences(
@@ -1026,12 +1173,13 @@ def _install_context_roots(
 ) -> tuple[frozenset[str] | None, dict[tuple[str, str], frozenset[str]] | None]:
     """Return the lock writer's install-context roots for one target.
 
-    ``(None, None)`` when there is no selection to attribute packages to,
-    which leaves every package unconditional.  A requirement whose marker
-    this target's environment fails is dropped, exactly as the resolve
-    dropped it, so it gates nothing.
+    ``(None, None)`` when nothing needs attributing, which leaves every
+    package unconditional: no selection to name, and no name for the
+    project's own dependencies either.  A requirement whose marker this
+    target's environment fails is dropped, exactly as the resolve dropped
+    it, so it gates nothing.
     """
-    if contexts is None or not contexts.selectors:
+    if contexts is None or not (contexts.selectors or contexts.name_project):
         return None, None
     return (
         _root_keys(contexts.project, environment),
@@ -1117,19 +1265,21 @@ def _plan_forks(
     The second element is the no-member requirement list, needed only
     when the plan actually forked; see :func:`resolve_with_coordinator`.
     """
+    configured = configured_group_names(config)
+    project_context, selector_contexts = _configured_contexts(config, tables)
     if config.conflicts:
         _validate_conflict_members_exist(
-            config.conflicts, tables.optional, tables.groups
+            config.conflicts, tables.optional, tables.groups, configured
         )
         _check_conflict_minimums(
             config.conflicts,
             tables,
             extras,
-            expand_group_includes(tables.groups, groups),
+            [*expand_group_includes(tables.groups, groups), *configured],
             targets,
         )
 
-    plan = conflict_forks(extras, groups, config.conflicts)
+    plan = conflict_forks(extras, groups, config.conflicts, configured)
     forks: list[ResolveFork] = []
     # Forks of an extra-based conflict share a group selection, so the
     # (group, group) -> target scan runs once per distinct one.
@@ -1140,7 +1290,7 @@ def _plan_forks(
                 config.conflicts,
                 tables,
                 fork.active_extras,
-                fork.active_groups,
+                (*fork.active_groups, *fork.active_configured),
                 targets,
             )
 
@@ -1154,13 +1304,21 @@ def _plan_forks(
                 targets,
             )
 
+        project, carried = _carried_by(fork, project_context, selector_contexts)
         forks.append(
             ResolveFork(
                 selection=fork.selection,
-                requirements=tuple(_fork_requirements(path, tables, fork)),
+                requirements=tuple(
+                    _fork_requirements(
+                        path, tables, fork, project=project, selectors=carried
+                    )
+                ),
                 contexts=InstallContexts(
-                    project=tuple(tables.dependencies),
-                    selectors=_selector_requirements(path, tables, fork),
+                    project=project,
+                    selectors=_selector_requirements(
+                        path, tables, fork, contexts=carried
+                    ),
+                    name_project=config.base_group is not None,
                 ),
             )
         )
@@ -1170,12 +1328,22 @@ def _plan_forks(
     # requirements are resolved too.
     base_requirements = None
     if len(plan) > 1:
-        base_requirements = _fork_requirements(path, tables, _base_fork(plan[0]))
+        base_fork = _base_fork(plan[0])
+        base_project, base_carried = _carried_by(
+            base_fork, project_context, selector_contexts
+        )
+        base_requirements = _fork_requirements(
+            path, tables, base_fork, project=base_project, selectors=base_carried
+        )
     return forks, base_requirements
 
 
 def _selector_requirements(
-    path: Path, tables: _ProjectTables, fork: ConflictFork
+    path: Path,
+    tables: _ProjectTables,
+    fork: ConflictFork,
+    *,
+    contexts: Sequence[_ConfiguredContext],
 ) -> dict[tuple[str, str], tuple[Requirement, ...]]:
     """Split a fork's active extras and groups into one requirement list each.
 
@@ -1190,8 +1358,14 @@ def _selector_requirements(
     seeds ``dependency_groups`` from ``default-groups`` when the
     installer selects none, so the gate still holds for a default
     install.
+
+    A configured context is a selector no run selects, and only a fork
+    that carries it gets one: a fork that did not resolve the build
+    requirements must not claim an install context it never walked.
     """
     selectors: dict[tuple[str, str], tuple[Requirement, ...]] = {}
+    for context in contexts:
+        selectors[(ConflictKind.GROUP.value, context.name)] = context.requirements
     for extra in fork.active_extras:
         member = (ConflictKind.EXTRA.value, str(canonicalize_name(extra)))
         selectors[member] = tuple(_extra_requirements(tables, [extra], path))
@@ -1202,15 +1376,24 @@ def _selector_requirements(
 
 
 def _fork_requirements(
-    path: Path, tables: _ProjectTables, fork: ConflictFork
+    path: Path,
+    tables: _ProjectTables,
+    fork: ConflictFork,
+    *,
+    project: Sequence[Requirement],
+    selectors: Sequence[_ConfiguredContext],
 ) -> list[Requirement]:
-    """Fold one fork's active groups and extras onto the project deps.
+    """Fold one fork's contexts, groups and extras into one requirement list.
 
     Each fork resolves a different slice of the selection (one member per
     engaged conflict set), so its requirement list is built separately
-    rather than shared.
+    rather than shared.  ``project`` and ``selectors`` are the configured
+    contexts this fork carries, empty where a declared conflict put one in
+    another fork.
     """
-    requirements = list(tables.dependencies)
+    requirements = list(project)
+    for context in selectors:
+        requirements.extend(context.requirements)
     requirements.extend(_group_requirements(tables.groups, fork.active_groups, path))
     requirements.extend(_extra_requirements(tables, fork.active_extras, path))
     return requirements
@@ -1235,8 +1418,16 @@ def _base_fork(reference: ConflictFork) -> ConflictFork:
         for g in reference.active_groups
         if (ConflictKind.GROUP.value, g) not in chosen
     )
+    rest_configured = tuple(
+        g
+        for g in reference.active_configured
+        if (ConflictKind.GROUP.value, g) not in chosen
+    )
     return ConflictFork(
-        selection=(), active_extras=rest_extras, active_groups=rest_groups
+        selection=(),
+        active_extras=rest_extras,
+        active_groups=rest_groups,
+        active_configured=rest_configured,
     )
 
 
@@ -1295,6 +1486,7 @@ def _validate_conflict_members_exist(
     conflicts: Sequence[ConflictSet],
     optional: Mapping[str, Sequence[str]],
     groups: Mapping[str, Sequence[str | Mapping[str, str]]],
+    configured_groups: Sequence[str] = (),
 ) -> None:
     """Raise when a declared conflict names an extra/group the project lacks.
 
@@ -1303,7 +1495,9 @@ def _validate_conflict_members_exist(
     canonicalisation, matching the loaders.
     """
     known_extras = {canonicalize_name(name) for name in optional}
-    known_groups = {canonicalize_name(name) for name in groups}
+    known_groups = {canonicalize_name(name) for name in groups} | {
+        canonicalize_name(name) for name in configured_groups
+    }
     unknown: list[str] = []
     for conflict_set in conflicts:
         for member in conflict_set.members:
@@ -1314,7 +1508,8 @@ def _validate_conflict_members_exist(
         joined = ", ".join(unknown)
         msg = (
             f"[tool.nab].conflicts names {joined}, which the project does not"
-            " declare in [project.optional-dependencies] or [dependency-groups]"
+            " declare in [project.optional-dependencies] or [dependency-groups],"
+            " and which is not [tool.nab].base-group or [tool.nab].build-group"
         )
         raise ConfigError(msg)
 

@@ -25,6 +25,7 @@ from ._lockfile.builder import (
     read_lockfile_packages,
 )
 from ._lockfile.disjointness import DisjointnessError
+from ._lockfile.groups import BASE_MEMBER
 from ._lockfile.pylock import (
     DivergentBaseDependencyError,
     build_pylock,
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ACCEPTED_HASH_ALGORITHMS",
+    "BASE_MEMBER",
     "LOCK_VERSION",
     "ArchivePin",
     "DisjointnessError",
@@ -371,14 +373,16 @@ class TargetLock:
     handed a projection of them, so a lock entry and the environment it
     was resolved for cannot drift apart.
 
-    ``package_gates`` maps a package this target locked to the selected
-    extras and groups that reach it while the project's own dependencies
-    do not, as ``(kind, name)`` members, including the conflict fork's
-    own selection.  The writer emits each one as a
-    ``'name' in extras`` / ``'name' in dependency_groups`` clause on that
-    package's marker, so a default install (no extras, the default
-    groups) leaves it out.  A package the project's dependencies reach is
-    absent from the map and stays unconditional.
+    ``package_gates`` maps a package this target locked to every install
+    context that reaches it, as ``(kind, name)`` members: each selected
+    extra and group, including the conflict fork's own selection, and
+    :data:`BASE_MEMBER` for the project's own dependencies, which the
+    writer renames to ``[tool.nab].base-group``.  The writer disjoins
+    them into ``'name' in extras`` / ``'name' in dependency_groups``
+    clauses on that package's marker.  With no ``base-group`` set there
+    is no name to give the project's own dependencies, so the writer
+    drops the gate of every package they reach and it stays
+    unconditional.
     """
 
     target: ResolveTarget
@@ -442,6 +446,12 @@ class LockInput:
     """Declared ``[tool.nab].conflicts``.  Prunes the disjointness
     validator's install-context universe so a per-fork lock (one entry
     per mutually-exclusive extra/group) validates."""
+    base_group: str | None = None
+    """``[tool.nab].base-group``: the group name the lock gives
+    the project's own dependencies, or ``None`` to leave them unconditional."""
+    build_group: str | None = None
+    """``[tool.nab].build-group``: the group name the lock gives
+    ``[build-system].requires``, or ``None`` to leave them out of the lock."""
 
     @property
     def active_groups(self) -> tuple[str, ...]:
@@ -450,9 +460,14 @@ class LockInput:
         PEP 751 keeps the ``default-groups`` names out of
         ``dependency-groups``, and an installer that selects nothing
         still activates the defaults, so the group axis of an install
-        context is the union of the two arrays.
+        context is the union of the two arrays, plus the name the lock
+        gives the project's own dependencies.
         """
-        return tuple(dict.fromkeys((*self.dependency_groups, *self.default_groups)))
+        names = dict.fromkeys((*self.dependency_groups, *self.default_groups))
+        for named in (self.base_group, self.build_group):
+            if named is not None:
+                names[named] = None
+        return tuple(names)
 
     @property
     def marker_envs(self) -> dict[str, Mapping[str, str]]:

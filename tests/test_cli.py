@@ -32,6 +32,7 @@ from nab import _version as nab_version
 from nab import cli
 from nab._download import download
 from nab._lock import (
+    _BUILD_DEFAULT_OUTPUT,
     _determine_lock_anchor,
     _emit,
     _emit_pylock,
@@ -40,6 +41,7 @@ from nab._lock import (
     resolve_group_selection,
 )
 from nab.cli import (
+    _DEFAULT_OUTPUT,
     _default_cache_dir,
     _make_transport,
     _normalize_layered_bool_flags,
@@ -52,6 +54,7 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.pylock import Pylock
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import ConfigError, read_pyproject_config
@@ -276,6 +279,13 @@ def _make_pyproject(tmp_path: Path, body: str = "") -> Path:
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(body or '[project]\ndependencies = ["foo"]\n')
     return pyproject
+
+
+# A well-formed project for tests that stub the resolve; neither list is read.
+_BUILD_SYSTEM_PROJECT = (
+    '[project]\nname = "proj"\ndependencies = ["runtime-only"]\n'
+    '[build-system]\nrequires = ["foo"]\n'
+)
 
 
 def _make_pylock_with_groups(tmp_path: Path) -> Path:
@@ -604,6 +614,155 @@ class TestLockCommandSpecific:
         text = (tmp_path / "requirements.txt").read_text()
         assert "foo==1.0" in text
         assert "--hash" not in text
+
+    def test_build_requirements_pylock_default_filename(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A build lock defaults clear of the runtime lock's name."""
+        monkeypatch.chdir(tmp_path)
+        pyproject = _make_pyproject(tmp_path, _BUILD_SYSTEM_PROJECT)
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
+            lock(pyproject, build_requirements=True)
+        assert (tmp_path / "pylock.build.toml").exists()
+        assert not (tmp_path / "pylock.toml").exists()
+
+    @pytest.mark.parametrize(
+        "lock_format", ["requirements", "requirements-without-hashes"]
+    )
+    def test_build_requirements_requirements_default_filename(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lock_format: str
+    ) -> None:
+        """Both requirements formats get their own default name."""
+        monkeypatch.chdir(tmp_path)
+        pyproject = _make_pyproject(tmp_path, _BUILD_SYSTEM_PROJECT)
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
+            lock(pyproject, format=lock_format, build_requirements=True)
+        assert (tmp_path / "build-requirements.txt").exists()
+        assert not (tmp_path / "requirements.txt").exists()
+
+    def test_every_format_has_a_build_default(self) -> None:
+        """A format added to one map alone would be a KeyError, not an error."""
+        assert _BUILD_DEFAULT_OUTPUT.keys() == _DEFAULT_OUTPUT.keys()
+
+    def test_build_lock_reuses_its_own_prior_anchor(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The build lock's cutoff comes from the build lock, not pylock.toml."""
+        monkeypatch.chdir(tmp_path)
+        recorded = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        (tmp_path / "pylock.build.toml").write_text(
+            f"[tool.nab]\ncreated-at = {recorded.isoformat()}\n"
+        )
+        (tmp_path / "pylock.toml").write_text(
+            "[tool.nab]\ncreated-at = 2020-01-01T00:00:00+00:00\n"
+        )
+        pyproject = _make_pyproject(tmp_path, _BUILD_SYSTEM_PROJECT)
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
+            lock(pyproject, build_requirements=True)
+        written = tomli.loads((tmp_path / "pylock.build.toml").read_text())
+        assert written["tool"]["nab"]["created-at"] == recorded
+
+    def test_build_lock_records_no_group_selection(self, tmp_path: Path) -> None:
+        """The project's group settings describe a selection it does not have."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "proj"\ndependencies = ["runtime-only"]\n'
+            '[build-system]\nrequires = ["foo"]\n'
+            '[dependency-groups]\ndev = ["foo"]\n'
+            '[tool.nab]\ndefault-groups = ["dev"]\nbase-group = "default"\n',
+        )
+        out = tmp_path / "pylock.build.toml"
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
+            lock(pyproject, output=out, build_requirements=True)
+        written = tomli.loads(out.read_text())
+        assert "default-groups" not in written
+        assert "dependency-groups" not in written
+
+    def test_build_group_reaches_the_lock(self, tmp_path: Path) -> None:
+        """The configured name is what the writer offers and gates on."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[build-system]\nrequires = ["foo"]\n'
+            '[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
+        )
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab.cli.resolve_for_targets",
+            return_value=_stub_resolve_result(pins={"foo": V("1.0")}),
+        ):
+            lock(pyproject, output=out)
+        written = tomli.loads(out.read_text())
+        assert written["dependency-groups"] == ["main", "build"]
+        assert written["default-groups"] == ["main"]
+
+    def test_build_group_naming_a_declared_group_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The name for the build requirements is already a group's own."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[build-system]\nrequires = ["foo"]\n'
+            '[dependency-groups]\nbuild = ["foo"]\n'
+            '[tool.nab]\nbase-group = "main"\nbuild-group = "build"\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        err = capsys.readouterr().err
+        assert "build-group 'build' and [dependency-groups] 'build'" in err
+        assert "Traceback" not in err
+
+    def test_build_requirements_locks_the_build_requires(self, tmp_path: Path) -> None:
+        """End to end: the emitted lock holds the build requirement alone."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "proj"\ndependencies = ["runtime-only"]\n'
+            '[build-system]\nrequires = ["builder"]\n'
+            + "".join(
+                f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
+                for name in ("runtime-only", "builder")
+            ),
+        )
+        for name in ("runtime-only", "builder"):
+            member = tmp_path / name
+            member.mkdir()
+            (member / "pyproject.toml").write_text(
+                f'[project]\nname = "{name}"\nversion = "1.0"\n'
+            )
+        out = tmp_path / "pylock.build.toml"
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: make_coordinator([])
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            lock(pyproject, output=out, build_requirements=True, cache=False)
+        written = tomli.loads(out.read_text())
+        assert [pkg["name"] for pkg in written["packages"]] == ["builder"]
+
+    @pytest.mark.parametrize(
+        "selection",
+        [
+            {"groups": ("dev",)},
+            {"all_groups": True},
+            {"extras": ("gpu",)},
+            {"all_extras": True},
+            {"project_default_group": ("dev",)},
+            {"project_base_group": "default"},
+            {"project_build_group": "build"},
+        ],
+    )
+    def test_build_requirements_refuses_a_selection(
+        self, tmp_path: Path, selection: dict[str, object]
+    ) -> None:
+        """[build-system].requires is one flat list with nothing to select."""
+        pyproject = _make_pyproject(tmp_path, _BUILD_SYSTEM_PROJECT)
+        err = io.StringIO()
+        with (
+            contextlib.redirect_stderr(err),
+            pytest.raises(SystemExit) as exc,
+        ):
+            lock(pyproject, build_requirements=True, **selection)
+        assert exc.value.code == 1
+        assert "no groups or extras to select" in err.getvalue()
 
     def test_requirements_writes_to_file(self, tmp_path: Path) -> None:
         """`requirements` format renders --hash lines."""
@@ -1701,6 +1860,16 @@ class TestProjectFlagErrors:
         assert "error: --project-requires-python: requires-python must be a" in err
         assert "[tool.nab]" not in err
 
+    def test_download_build_group_bad_value_names_the_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``--project-build-group`` reaches the registry from this command too."""
+        pyproject = _make_pyproject(tmp_path)
+        with pytest.raises(SystemExit) as exc:
+            download(pyproject, output=tmp_path / "wheels", project_build_group="-no-")
+        assert exc.value.code == 1
+        assert "error: --project-build-group:" in capsys.readouterr().err
+
     def test_valid_override_threads_through(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
@@ -2044,6 +2213,65 @@ class TestLockCommandUniversal:
             lock(pyproject, output=tmp_path / "pylock.toml")
         err = capsys.readouterr().err
         assert f"error: {hint}\n" in err
+
+    def test_base_group_naming_a_declared_group_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The configured name is already a group of the project's own.
+
+        Refused as the config is read, so nothing here has to stand in
+        for a resolve.
+        """
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            '[dependency-groups]\ndev = ["foo"]\ndefault = ["foo"]\n'
+            '[tool.nab]\nbase-group = "default"\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=tmp_path / "pylock.toml", groups=("dev",))
+        err = capsys.readouterr().err
+        assert "error: in [tool.nab]: base-group 'default' and" in err
+        assert "--project-base-group" not in err
+        assert "Traceback" not in err
+
+    def test_the_flag_naming_a_declared_group_names_the_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The project file may not hold the value the run is refusing."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n[dependency-groups]\ndev = ["foo"]\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(
+                pyproject,
+                output=tmp_path / "pylock.toml",
+                groups=("dev",),
+                project_base_group="dev",
+            )
+
+        assert "--project-base-group 'dev' and" in capsys.readouterr().err
+
+    def test_the_build_group_flag_names_the_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The project file may not hold the value the run is refusing."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            '[build-system]\nrequires = ["foo"]\n'
+            '[dependency-groups]\ndev = ["foo"]\n'
+            '[tool.nab]\nbase-group = "main"\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(
+                pyproject,
+                output=tmp_path / "pylock.toml",
+                project_build_group="dev",
+            )
+
+        assert "--project-build-group 'dev' and" in capsys.readouterr().err
 
     def test_pylock_divergent_base_dep_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -3341,12 +3569,86 @@ def _doc_section(text: str, heading: str) -> str:
     return text.partition(f"\n{heading}\n")[2].partition("\n## ")[0]
 
 
+def _doc_paragraph(text: str, needle: str) -> str:
+    """The blank-line-delimited paragraph of ``text`` that contains ``needle``."""
+    for paragraph in text.split("\n\n"):
+        if needle in paragraph:
+            return paragraph
+
+    msg = f"no paragraph containing {needle!r}"
+    raise AssertionError(msg)
+
+
 def _names_flag(text: str, flag: str) -> bool:
     """Whether ``text`` names ``flag``, its ``--no-`` form, or a covering wildcard."""
     forms = [flag, f"--no-{flag.removeprefix('--')}"]
     if flag.startswith("--project-"):
         forms.append("--project-*")
     return any(re.search(rf"`{re.escape(form)}(?![\w-])", text) for form in forms)
+
+
+class TestCliReferenceSelectionShape:
+    """The reference's selection paragraph matches how many resolves a selection runs.
+
+    ``--extras`` and ``--groups`` union into one resolve until they select
+    two members of a declared conflict set, which forks the run.
+    """
+
+    _EXTRAS = (
+        '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
+        "[project.optional-dependencies]\n"
+        "cpu = []\n"
+        "gpu = []\n"
+    )
+
+    _CONFLICT = '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
+
+    def _emitted_labels(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], body: str
+    ) -> list[str]:
+        """The ``# label`` headers ``nab lock --extras cpu gpu`` prints for ``body``.
+
+        The requirements formats label one block per emitted target and omit
+        the header when there is only one, so for these single-target
+        specific-mode locks the headers count the forks.
+        """
+        pyproject = _make_pyproject(tmp_path, body)
+        lock(
+            pyproject,
+            cache_dir=tmp_path / "cache",
+            offline=True,
+            extras=("cpu", "gpu"),
+            format="requirements-without-hashes",
+            output=Path("-"),
+        )
+        printed = capsys.readouterr().out
+        return [line for line in printed.splitlines() if line.startswith("# ")]
+
+    def _selection_paragraph(self) -> str:
+        """The ``nab lock`` paragraph that states what a selection resolves to."""
+        text = _doc_section(
+            _CLI_REFERENCE_DOC.read_text(encoding="utf-8"), "## `nab lock`"
+        )
+        return _doc_paragraph(text, "union resolve")
+
+    def test_selection_alone_is_one_union_resolve(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Two extras with no conflict declared resolve once, as the page says."""
+        assert self._emitted_labels(tmp_path, capsys, self._EXTRAS) == []
+
+        assert "single union resolve" in self._selection_paragraph()
+
+    def test_co_selected_conflict_members_fork_the_resolve(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Declaring the same two extras exclusive resolves each separately."""
+        labels = self._emitted_labels(tmp_path, capsys, self._EXTRAS + self._CONFLICT)
+        assert labels == ["# host-extra-cpu", "# host-extra-gpu"]
+
+        paragraph = self._selection_paragraph()
+        assert "`[tool.nab].conflicts`" in paragraph
+        assert "../explanation/conflicts.md" in paragraph
 
 
 class TestCliReferenceFlagCoverage:
@@ -3815,6 +4117,55 @@ class TestLockedFlag:
         self._run_locked(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         assert "is up to date" in capsys.readouterr().err
         assert out.read_bytes() == before
+
+    def test_lock_offering_groups_is_up_to_date(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The name lands in ``default-groups`` while no run selects it.
+
+        A checker comparing that array as it stands would call every lock
+        that names the project's own dependencies out of date.
+        """
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n[dependency-groups]\ndev = ["foo"]\n'
+            '[tool.nab]\nbase-group = "default"\n',
+        )
+        out = tmp_path / "pylock.toml"
+        result = _stub_resolve_result(pins={"foo": V("1.0")})
+        self._write_lock(pyproject, out, result, "--groups", "dev")
+        capsys.readouterr()
+        assert "default" in tomli.loads(out.read_text())["default-groups"]
+
+        self._run_locked(pyproject, out, result, "--groups", "dev")
+        assert "is up to date" in capsys.readouterr().err
+
+    def test_a_renamed_base_group_is_out_of_date(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Renaming the group renames a marker on every package it gates.
+
+        Nothing else about the lock changes, so only the name the writer
+        would now use can tell the checker it is stale.
+        """
+        body = (
+            '[project]\ndependencies = ["foo"]\n'
+            '[dependency-groups]\ndev = ["foo"]\n'
+            "[tool.nab]\n"
+        )
+        pyproject = _make_pyproject(tmp_path, body + 'base-group = "default"\n')
+        out = tmp_path / "pylock.toml"
+        result = _stub_resolve_result(pins={"foo": V("1.0")})
+        self._write_lock(pyproject, out, result, "--groups", "dev")
+        capsys.readouterr()
+        assert tomli.loads(out.read_text())["default-groups"] == ["default"]
+
+        pyproject.write_text(body + 'base-group = "base"\n', encoding="utf-8")
+        with pytest.raises(SystemExit) as exc:
+            self._run_locked(pyproject, out, result, "--groups", "dev")
+
+        assert exc.value.code == 1
+        assert "out of date" in capsys.readouterr().err
 
     def test_out_of_date_version_exits_one_without_writing(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -4369,7 +4720,7 @@ class TestEmitHelpers:
             targets={tup.label: _target_lock(tup, {"foo": V("1.0")})}
         )
         out = tmp_path / "pylock.toml"
-        _emit_pylock(lock_input, output=out)
+        _emit_pylock(lock_input, output=out, default_output=Path("pylock.toml"))
         text = out.read_text()
         assert 'lock-version = "1.0"' in text
 
@@ -4384,7 +4735,11 @@ class TestEmitHelpers:
                 second.label: _target_lock(second, {"foo": V("2.0")}),
             }
         )
-        _emit_pylock(lock_input, output=tmp_path / "pylock.toml")
+        _emit_pylock(
+            lock_input,
+            output=tmp_path / "pylock.toml",
+            default_output=Path("pylock.toml"),
+        )
         assert "(2 tuples)" in capsys.readouterr().err
 
 

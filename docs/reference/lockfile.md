@@ -120,13 +120,14 @@ version = "3.0.0"
 marker = "\"dev\" in dependency_groups"
 ```
 
-Reachability is what decides: a package the project's own
-dependencies pull in is unconditional even when a selected extra
-also asks for it, and a package that two selections reach disjoins
-both (`"cli" in extras or "dev" in dependency_groups`). A group
-named in `[tool.nab].default-groups` still installs by default,
-because PEP 751 seeds `dependency_groups` from `default-groups`
-when the installer is given no group selection.
+Reachability is what decides: unless `base-group` names them (below), a
+package the project's own dependencies pull in is unconditional even
+when a selected extra also asks for it, and a package that two
+selections reach disjoins both
+(`"cli" in extras or "dev" in dependency_groups`).
+A group named in `[tool.nab].default-groups` still installs by
+default, because PEP 751 seeds `dependency_groups` from
+`default-groups` when the installer is given no group selection.
 
 The gate is a property of the install context, not of the platform.
 A matrix folds the selection into every target, so an extra that
@@ -139,6 +140,97 @@ shape the pins of the packages it shares with the project. A
 conflict between two selections is a resolution failure, not two
 lockfiles, unless it is declared; see
 [Conflicting extras and groups](../explanation/conflicts.md).
+
+### Naming the project's own dependencies
+
+A package with no marker installs under every selection, so the project's
+own dependencies come with every group, and a lock offering groups cannot
+be asked for one group alone. Naming them fixes that:
+
+```toml
+[tool.nab]
+base-group = "base"
+```
+
+The lock carries that name in both group arrays and gates those packages
+on it:
+
+```toml
+dependency-groups = ["dev", "base"]
+default-groups = ["base"]
+
+[[packages]]
+name = "core"
+version = "1.0.0"
+marker = "\"base\" in dependency_groups"
+```
+
+An installer given no group selection still gets them, because PEP 751
+seeds `dependency_groups` from `default-groups`. One asked for `dev`
+alone gets that group and nothing else. One that asks for an empty group
+list gets no group at all, not even the project's own. A package both
+they and a group reach names both.
+
+The name joins `default-groups` only when the project declares none of
+its own. A declared `[tool.nab].default-groups` replaces the default
+selection rather than extending it, so a project that wants its
+dependencies installed alongside a group names them there too:
+`default-groups = ["dev", "base"]`.
+
+Unset, which is the default, they carry no marker. The name must not be
+one the project already declares in `[dependency-groups]`, since a
+marker naming it could not mean both. It is a name for the lock's
+consumers rather than a group of the project's own, so `--groups` does
+not accept it; `[tool.nab].default-groups` does, which is how it stays
+in the default selection.
+
+### Naming the build requirements
+
+The same mechanism carries a project's `[build-system].requires`, so one
+lock pins both the environment the project runs in and the one it is
+built in:
+
+```toml
+[tool.nab]
+base-group = "default"
+build-group = "build"
+```
+
+```toml
+dependency-groups = ["dev", "default", "build"]
+default-groups = ["default"]
+
+[[packages]]
+name = "hatchling"
+version = "1.31.0"
+marker = "\"build\" in dependency_groups"
+```
+
+The build name lands in `dependency-groups` and not in `default-groups`:
+an install that asks for no group is installing the project, not building
+it. Only the static list is read, so whatever a backend would add from
+`get_requires_for_build_wheel` is not covered.
+
+`base-group` must be set alongside it, as above. Without a name of their own the
+project's own dependencies carry no marker, so they install under every
+selection and asking for the build group returns them too, which leaves
+no way to install the build requirements alone. With both named, an
+install that wants them together selects both groups. The name must also
+be free of `[dependency-groups]` and of `base-group` itself. The
+requirements output formats carry no markers, so there the build
+requirements render as ordinary pins.
+
+The build requirements resolve in the same version space as the
+project's own, since one install context is all a shared marker can
+describe. A project whose backend needs a version its own dependencies
+exclude declares the two mutually exclusive; the resolve then forks and
+each side gets its own pins under disjoint markers. See
+[Conflicting extras and groups](../explanation/conflicts.md).
+
+`nab lock --build-requirements` writes the build side to a file of its
+own instead. That is what a consumer needs when it cannot select groups
+at all, which covers the requirements output formats and today's pylock
+installers.
 
 ### Portable paths
 

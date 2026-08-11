@@ -9,6 +9,7 @@ import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import ClassVar
@@ -55,6 +56,7 @@ from nab_python.config import (
     conflict_member_groups,
 )
 from nab_python.lockfile import (
+    BASE_MEMBER,
     LOCK_VERSION,
     ArchivePin,
     DisjointnessError,
@@ -868,6 +870,120 @@ class TestConflictForkBaseDepMarkers:
         pylock = build_pylock(self._lock_input())
         universal = next(p for p in pylock.packages if str(p.name) == "universal")
         assert universal.marker is None
+
+    def test_base_dep_of_a_fork_gates_on_the_base_group(self) -> None:
+        """A fork's base deps take the base group, and only it.
+
+        The conflict members stay out of the clause: the package installs
+        whichever of them the installer picks, and when it picks none.
+        """
+        base = self._lock_input()
+        lock_input = replace(
+            base,
+            targets={
+                label: replace(
+                    lock,
+                    package_gates=dict.fromkeys(lock.pins, (BASE_MEMBER,)),
+                )
+                for label, lock in base.targets.items()
+            },
+            dependency_groups=("dev",),
+            base_group="default",
+        )
+        pylock = build_pylock(lock_input)
+        base_marker = next(
+            p.marker for p in pylock.packages if str(p.name) == "basepkg"
+        )
+
+        assert base_marker is not None
+        assert "in extras" not in str(base_marker)
+
+        linux = self._LINUX.env_with_membership()
+        assert not base_marker.evaluate(linux)
+        assert base_marker.evaluate({**linux, "dependency_groups": {"default"}})
+
+    def test_a_fork_reaching_a_base_dep_by_extra_keeps_the_shared_gate(self) -> None:
+        """One fork also reaching it through an extra must not narrow it.
+
+        The forks then disagree on the gate, but both still name the main
+        group, and a base dep is in every fork, so it installs under that
+        group with no member selected.
+        """
+        base = self._lock_input()
+        extra_reaches = {(("extra", "cpu"),): (("extra", "cli"), BASE_MEMBER)}
+        lock_input = replace(
+            base,
+            targets={
+                label: replace(
+                    lock,
+                    package_gates={
+                        pin: extra_reaches.get(lock.target.selection, (BASE_MEMBER,))
+                        for pin in lock.pins
+                    },
+                )
+                for label, lock in base.targets.items()
+            },
+            extras=("cpu", "gpu", "cli"),
+            base_group="default",
+        )
+        pylock = build_pylock(lock_input)
+        base_marker = next(
+            p.marker for p in pylock.packages if str(p.name) == "basepkg"
+        )
+
+        assert base_marker is not None
+        linux = self._LINUX.env_with_membership()
+        assert base_marker.evaluate({**linux, "dependency_groups": {"default"}})
+        assert base_marker.evaluate(
+            {**linux, "extras": {"cli", "cpu"}, "dependency_groups": set()}
+        )
+        assert not base_marker.evaluate(
+            {**linux, "extras": {"cli", "gpu"}, "dependency_groups": set()}
+        )
+
+    def test_forks_sharing_no_gate_member_stay_fork_conditional(self) -> None:
+        """Nothing holds across every fork, so there is no shared part.
+
+        Each fork reaches the package through a selection of its own, and
+        an install context that picks no member reaches it through
+        neither.
+        """
+        base = self._lock_input()
+        by_fork = {
+            self._CPU: (("extra", "cli"),),
+            self._GPU: (("group", "dev"),),
+        }
+        lock_input = replace(
+            base,
+            targets={
+                label: replace(
+                    lock,
+                    package_gates=dict.fromkeys(
+                        lock.pins, by_fork[lock.target.selection]
+                    ),
+                )
+                for label, lock in base.targets.items()
+            },
+            extras=("cpu", "gpu", "cli"),
+            dependency_groups=("dev",),
+            base_group="default",
+        )
+        pylock = build_pylock(lock_input)
+        base_marker = next(
+            p.marker for p in pylock.packages if str(p.name) == "basepkg"
+        )
+
+        assert base_marker is not None
+        linux = self._LINUX.env_with_membership()
+        assert base_marker.evaluate(
+            {**linux, "extras": {"cli", "cpu"}, "dependency_groups": set()}
+        )
+        assert base_marker.evaluate(
+            {**linux, "extras": {"gpu"}, "dependency_groups": {"dev"}}
+        )
+        assert not base_marker.evaluate(
+            {**linux, "extras": {"cli"}, "dependency_groups": {"dev", "default"}}
+        )
 
 
 class TestConflictForkGateMerge:
@@ -1846,6 +1962,54 @@ class TestDependencyGroups:
         assert data["dependency-groups"] == ["dev", "docs"]
         assert data["default-groups"] == ["dev"]
 
+    def test_a_declared_default_groups_is_not_extended(self) -> None:
+        """The base name joins ``default-groups`` only when none is declared.
+
+        A declared ``default-groups`` replaces the default selection, so
+        a project that wants its own dependencies installed alongside a
+        group names them there itself.
+        """
+        text = write_lock(
+            LockInput(
+                targets=_one({"foo": _index_pin()}),
+                default_groups=("dev",),
+                base_group="base",
+            )
+        )
+        data = tomllib.loads(text)
+        assert data["dependency-groups"] == ["base"]
+        assert data["default-groups"] == ["dev"]
+
+    def test_naming_it_in_default_groups_installs_it_by_default(self) -> None:
+        """Named there, it is back in the default selection."""
+        text = write_lock(
+            LockInput(
+                targets=_one({"foo": _index_pin()}),
+                default_groups=("dev", "base"),
+                base_group="base",
+            )
+        )
+        data = tomllib.loads(text)
+        assert tomllib.loads(text)["default-groups"] == ["dev", "base"]
+        assert data["dependency-groups"] == ["base"]
+
+    def test_base_group_joins_both_arrays(self) -> None:
+        """An installer may read the offered groups from either array.
+
+        Naming it in ``default-groups`` alone leaves one that reads
+        ``dependency-groups`` with nothing to activate.
+        """
+        text = write_lock(
+            LockInput(
+                targets=_one({"foo": _index_pin()}),
+                dependency_groups=("dev",),
+                base_group="default",
+            )
+        )
+        data = tomllib.loads(text)
+        assert data["dependency-groups"] == ["dev", "default"]
+        assert data["default-groups"] == ["default"]
+
     def test_omits_arrays_when_empty(self) -> None:
         text = write_lock(LockInput(targets=_one({"foo": _index_pin()})))
         data = tomllib.loads(text)
@@ -1859,6 +2023,23 @@ class TestDependencyGroups:
             default_groups=("dev", "lint"),
         )
         assert lock_input.active_groups == ("docs", "dev", "lint")
+
+    def test_active_groups_includes_the_base_group(self) -> None:
+        lock_input = LockInput(
+            targets=_one({"foo": _index_pin()}),
+            dependency_groups=("docs",),
+            base_group="default",
+        )
+        assert lock_input.active_groups == ("docs", "default")
+
+    def test_active_groups_includes_the_build_group(self) -> None:
+        lock_input = LockInput(
+            targets=_one({"foo": _index_pin()}),
+            dependency_groups=("docs",),
+            base_group="default",
+            build_group="build",
+        )
+        assert lock_input.active_groups == ("docs", "default", "build")
 
     def test_group_names_normalized(self) -> None:
         text = write_lock(
@@ -4711,6 +4892,94 @@ class TestDependencyGraph:
         assert by_name["foo"]["dependencies"] == [{"name": "bar"}, {"name": "baz"}]
 
 
+class TestMainGroupAcrossTargets:
+    """One package, reached by the project on one target and a group on another.
+
+    The gate is per target, so each environment contributes its own
+    clause.  Pairing every environment with every gate instead would
+    install the package on Windows for a default install.
+    """
+
+    _LINUX: ClassVar[ResolveTarget] = _target(platform="linux_x86_64")
+    _WINDOWS: ClassVar[ResolveTarget] = _target(platform="windows_amd64")
+
+    def test_each_target_carries_its_own_gate(self) -> None:
+        pin = {"iniconfig": _index_pin(name="iniconfig")}
+        targets = {
+            self._LINUX.label: TargetLock(
+                target=self._LINUX,
+                pins=pin,
+                package_gates={"iniconfig": (BASE_MEMBER,)},
+            ),
+            self._WINDOWS.label: TargetLock(
+                target=self._WINDOWS,
+                pins=pin,
+                package_gates={"iniconfig": (("group", "dev"),)},
+            ),
+        }
+        pylock = build_pylock(
+            LockInput(targets=targets, dependency_groups=("dev",), base_group="default")
+        )
+        (package,) = pylock.packages
+        assert package.marker is not None
+
+        def installs(target: ResolveTarget, group: str) -> bool:
+            assert package.marker is not None
+            return package.marker.evaluate(
+                {
+                    **target.marker_env,
+                    "extras": frozenset(),
+                    "dependency_groups": frozenset({group}),
+                }
+            )
+
+        assert installs(self._LINUX, "default")
+        assert installs(self._WINDOWS, "dev")
+
+        assert not installs(self._LINUX, "dev")
+        assert not installs(self._WINDOWS, "default")
+
+    def test_one_gate_over_several_environments_binds_them_all(self) -> None:
+        """The gate holds over the disjunction, not over its first clause.
+
+        Two targets share a gate and two more lock nothing, so the gate's
+        environments come out as an ``or``.  Conjoining the gate without
+        parenthesising them would leave the second environment ungated.
+        """
+        gated = (_target(), _target(python_version="3.12", platform="windows_amd64"))
+        ungated = (
+            _target(platform="windows_amd64"),
+            _target(python_version="3.12"),
+        )
+        pin = {"iniconfig": _index_pin(name="iniconfig")}
+        targets = {
+            **{
+                target.label: TargetLock(
+                    target=target,
+                    pins=pin,
+                    package_gates={"iniconfig": (BASE_MEMBER,)},
+                )
+                for target in gated
+            },
+            **{
+                target.label: TargetLock(target=target, pins={}, package_gates={})
+                for target in ungated
+            },
+        }
+        pylock = build_pylock(LockInput(targets=targets, base_group="default"))
+        (package,) = pylock.packages
+        assert package.marker is not None
+
+        for target in gated:
+            env = {**target.marker_env, "extras": frozenset()}
+            assert package.marker.evaluate(
+                {**env, "dependency_groups": frozenset({"default"})}
+            )
+            assert not package.marker.evaluate(
+                {**env, "dependency_groups": frozenset()}
+            )
+
+
 class TestMembershipGates:
     """Only-an-extra / only-a-group packages carry a membership marker.
 
@@ -4750,6 +5019,7 @@ class TestMembershipGates:
             selector_roots={("extra", "cli"): frozenset({"mytool"})},
         )
         assert lock.package_gates == {
+            "core": (BASE_MEMBER,),
             "mytool": (("extra", "cli"),),
             "subtool": (("extra", "cli"),),
         }
@@ -4797,8 +5067,9 @@ class TestMembershipGates:
     def test_extras_proxy_gates_only_what_the_extra_adds(self) -> None:
         """The project requires ``foo``; the extra requires ``foo[fancy]``.
 
-        ``foo`` itself installs unconditionally; only what ``fancy``
-        adds on top of it is gated.
+        ``foo`` is the project's own, so it carries the base member the
+        extra's proxy adds to; only what ``fancy`` brings is the extra's
+        alone.
         """
         provider = self._provider(
             ("foo", "fancy-lib"),
@@ -4817,9 +5088,12 @@ class TestMembershipGates:
             base_roots=frozenset({"foo"}),
             selector_roots={("extra", "cli"): frozenset({"foo", "foo[fancy]"})},
         )
-        assert lock.package_gates == {"fancy-lib": (("extra", "cli"),)}
+        assert lock.package_gates == {
+            "foo": (("extra", "cli"), BASE_MEMBER),
+            "fancy-lib": (("extra", "cli"),),
+        }
 
-    def test_base_dependency_reached_through_a_cycle_is_not_gated(self) -> None:
+    def test_base_dependency_reached_through_a_cycle_is_gated_as_base(self) -> None:
         """A dependency cycle in the base closure terminates the walk."""
         provider = self._provider(
             ("core", "loop", "mytool"),
@@ -4836,7 +5110,11 @@ class TestMembershipGates:
             base_roots=frozenset({"core"}),
             selector_roots={("extra", "cli"): frozenset({"mytool"})},
         )
-        assert lock.package_gates == {"mytool": (("extra", "cli"),)}
+        assert lock.package_gates == {
+            "core": (("extra", "cli"), BASE_MEMBER),
+            "loop": (("extra", "cli"), BASE_MEMBER),
+            "mytool": (("extra", "cli"),),
+        }
 
     def test_unpinned_dependency_is_skipped(self) -> None:
         """A dep name the resolve did not pin cannot be gated."""
@@ -4853,11 +5131,21 @@ class TestMembershipGates:
         )
         assert set(lock.package_gates) == {"mytool"}
 
-    def test_no_selection_leaves_the_map_empty(self) -> None:
+    def test_base_roots_alone_still_record_the_base_member(self) -> None:
+        """Given base roots and no selector, the base reach is still recorded.
+
+        The writer needs it whenever the lock names the project's own
+        dependencies, which it can do with no group selected at all.
+        """
         provider = self._provider(("core",), deps_cache={("core", Version("1.0")): {}})
         lock = build_target_lock(
             provider, _HOST, {"core": Version("1.0")}, base_roots=frozenset({"core"})
         )
+        assert lock.package_gates == {"core": (BASE_MEMBER,)}
+
+    def test_no_roots_at_all_leave_the_map_empty(self) -> None:
+        provider = self._provider(("core",), deps_cache={("core", Version("1.0")): {}})
+        lock = build_target_lock(provider, _HOST, {"core": Version("1.0")})
         assert lock.package_gates == {}
 
     def test_selector_roots_without_base_roots_are_refused(self) -> None:

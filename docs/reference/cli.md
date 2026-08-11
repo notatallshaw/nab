@@ -47,7 +47,8 @@ Dependency-group selection (PEP 735):
   group names land in the lockfile's top-level
   `dependency-groups` array. The separate `default-groups` array
   records the `[tool.nab].default-groups` project setting, not
-  this run's selection.
+  this run's selection, plus the group named by
+  `[tool.nab].base-group` when it is set.
 * `--all-groups` selects every group defined in the project.
 
 Extras selection:
@@ -58,11 +59,45 @@ Extras selection:
   array.
 * `--all-extras` selects every declared extra.
 
-Both `--groups` and `--extras` produce a single union resolve. A
-package that only a selected extra or group reaches is emitted with
+Both `--groups` and `--extras` produce a single union resolve, unless
+two or more members of a mutually exclusive `[tool.nab].conflicts` set
+are active, either because the selection names them or because they are
+the groups `base-group` and `build-group` name, which are active on
+every run. The run then forks into one resolve per choice of member;
+see [Conflicting extras and groups](../explanation/conflicts.md).
+
+A package that only a selected extra or group reaches is emitted with
 a `'X' in extras` or `'X' in dependency_groups` marker, so an
 installer given neither leaves it out; see
 [Lockfiles](lockfile.md).
+
+Build requirements:
+
+* `--build-requirements` locks the project's `[build-system].requires`
+  instead of its dependencies, so the lock describes the environment
+  the project is built in rather than the one it runs in. `--output`
+  defaults to `pylock.build.toml` (or `build-requirements.txt` for the
+  requirements formats), which keeps it clear of the project's runtime
+  lock, and `--locked` then checks that file. Nothing can be selected alongside it: `[build-system].requires`
+  is one flat list, so `--groups`, `--all-groups`, `--extras`,
+  `--all-extras`, `--project-default-group`, `--project-base-group` and
+  `--project-build-group` are all rejected, and `[tool.nab].default-groups`,
+  `[tool.nab].base-group`, `[tool.nab].build-group` and
+  `[tool.nab].conflicts` declared in the project's files do not apply.
+* A project that declares no `[build-system]` is an error. nab does not
+  fall back to the PEP 517 default backend, because pinning an implied
+  `setuptools` would put a build requirement in the lock that the project
+  never declared. `[tool.nab].build-group`, which carries the build
+  requirements in the project's own lock instead of a separate one, is
+  the same, and it requires `[tool.nab].base-group` so the two sets can
+  be asked for separately.
+* Only the static list is read. Neither this flag nor `build-group`
+  invokes the project's own backend, so whatever that backend would add
+  from `get_requires_for_build_wheel` is not covered.
+* `[tool.nab].build-group` gates its packages on a marker, and the two
+  requirements formats have nowhere to put one, so they render the build
+  requirements as ordinary pins. Use `pylock` output, or this flag, when
+  the two sets have to stay apart.
 
 Workspace flags (see [Lock a workspace](../how-to/workspaces.md)):
 
@@ -80,7 +115,9 @@ Workspace flags (see [Lock a workspace](../how-to/workspaces.md)):
   --no-deps -e <member>`.
 
 `--output` defaults to `pylock.toml` for `pylock` and
-`requirements.txt` for the two requirements formats. Pass
+`requirements.txt` for the two requirements formats, or to
+`pylock.build.toml` and `build-requirements.txt` under
+`--build-requirements`. Pass
 `--output -` to write to stdout instead. A matrix has no default
 requirements file: no one file can carry every tuple's pins (see
 below), so the requirements formats print to stdout unless `--output`
@@ -138,11 +175,12 @@ A project option can be overridden for one run with a `--project-<key>`
 flag: `--project-resolution`, `--project-mode`, `--project-requires-python`,
 `--project-uploaded-prior-to`, `--project-dist-policy`,
 `--project-build-policy`, `--project-build-requires-depth`,
-`--project-decision-order`, and the repeatable
-`--project-constraint` and `--project-default-group`. Every one
+`--project-decision-order`, `--project-base-group`,
+`--project-build-group`, and the
+repeatable `--project-constraint` and `--project-default-group`. Every one
 of them replaces the file value outright; repeating `--project-constraint`
 builds up that run's whole constraint list rather than adding to the
-declared one. Each changes the resolved set, so passing one prints a
+declared one. Each changes what the run writes, so passing one prints a
 reproducibility notice on stderr and records the override in the
 lockfile's `[tool.nab]` block, since the lock no longer derives from the
 committed files alone.
@@ -153,8 +191,9 @@ change or is missing, so CI can assert the lock is current. It covers
 `pylock` output to a file in single-environment mode.
 
 When a mismatch is provable from the inputs alone, a changed direct
-dependency, a narrowed `requires-python`, a changed extra or group, or a
-tightened constraint, `--locked` fails fast with that reason before
+dependency, a changed `[build-system].requires` under `build-group`, a
+narrowed `requires-python`, a changed extra or group, or a tightened
+constraint, `--locked` fails fast with that reason before
 resolving. Otherwise it runs the full re-resolve, and only that comparison
 reports the lock up to date: nab is non-sticky, so a lock can satisfy every
 input yet be stale once a newer admissible version exists.
@@ -350,7 +389,7 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | Code | Meaning |
 | ---- | ------- |
 | `0`  | Success. |
-| `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
+| `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
 | `130` | Interrupted with Ctrl-C. `nab` prints `error: interrupted` and exits. |
 
 [PEP 751]: https://peps.python.org/pep-0751/

@@ -92,6 +92,8 @@ def check_envelope(
     extras: tuple[str, ...],
     dependency_groups: tuple[str, ...],
     default_groups: tuple[str, ...],
+    base_group: str | None = None,
+    build_group: str | None = None,
 ) -> LockDisqualification | None:
     """Compare the current envelope against the committed lock.
 
@@ -99,6 +101,11 @@ def check_envelope(
     selection as a set of normalized names, so reformatting or reordering
     does not fire and an empty selection matches the ``None`` the writer
     commits. Returns the first difference, or ``None`` when every field agrees.
+
+    ``base_group`` and ``build_group`` are the names this run would give
+    the project's own dependencies and its build requirements. No run
+    selects either, so both are checked before the arrays are compared and
+    then dropped from them: a reason names only groups the caller asked for.
     """
     requires_python_result = _check_requires_python(
         committed.requires_python, requires_python
@@ -106,16 +113,61 @@ def check_envelope(
     if requires_python_result is not None:
         return requires_python_result
 
+    for name, subject in (
+        (base_group, "the project's own dependencies"),
+        (build_group, "the build requirements"),
+    ):
+        named_result = _check_configured_group(committed, name, subject)
+        if named_result is not None:
+            return named_result
+
     for kind, committed_names, current_names in (
         ("extras", committed.extras, extras),
-        ("dependency-groups", committed.dependency_groups, dependency_groups),
-        ("default-groups", committed.default_groups, default_groups),
+        (
+            "dependency-groups",
+            _without(committed.dependency_groups, base_group, build_group),
+            dependency_groups,
+        ),
+        (
+            "default-groups",
+            _without(committed.default_groups, base_group),
+            default_groups,
+        ),
     ):
         result = _check_name_set(kind, committed_names, current_names)
         if result is not None:
             return result
 
     return None
+
+
+def _without(names: Sequence[str] | None, *dropped: str | None) -> list[str]:
+    """Return ``names`` without any of ``dropped``, comparing canonical names."""
+    drop = {canonicalize_name(name) for name in dropped if name is not None}
+    return [name for name in names or () if canonicalize_name(name) not in drop]
+
+
+def _check_configured_group(
+    committed: Pylock, name: str | None, subject: str
+) -> LockDisqualification | None:
+    """Whether the lock offers ``name`` for ``subject`` as this run would.
+
+    A committed name looks like any other group, so which one an earlier
+    run gave to what cannot be read back.  The reason says only what this
+    run would write and the lock does not have.
+    """
+    if name is None:
+        return None
+    if any(
+        canonicalize_name(committed_name) == canonicalize_name(name)
+        for committed_name in committed.dependency_groups or ()
+    ):
+        return None
+    return LockDisqualification(
+        reason=(
+            f"the lockfile does not name {name!r} for {subject}, which this run does"
+        )
+    )
 
 
 def _check_requires_python(
@@ -343,6 +395,8 @@ def check_locked(  # noqa: PLR0913 - the envelope fields and the validity inputs
     extras: tuple[str, ...],
     dependency_groups: tuple[str, ...],
     default_groups: tuple[str, ...],
+    base_group: str | None = None,
+    build_group: str | None = None,
     roots: Iterable[RootRequirement] | None = None,
     constraints: Iterable[str] = (),
     resolve_target: ResolveTarget | None = None,
@@ -366,6 +420,8 @@ def check_locked(  # noqa: PLR0913 - the envelope fields and the validity inputs
         extras=extras,
         dependency_groups=dependency_groups,
         default_groups=default_groups,
+        base_group=base_group,
+        build_group=build_group,
     )
     if disqualification is not None or roots is None or resolve_target is None:
         return disqualification

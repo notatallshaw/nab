@@ -180,6 +180,7 @@ jobs:
           cache-dependency-path: |
             .github/requirements/pylock.nox.toml
             .github/requirements/pylock.dists.toml
+            .github/requirements/pylock.build.toml
           allow-prereleases: true
 
       - name: Upgrade pip to PEP 751 install support

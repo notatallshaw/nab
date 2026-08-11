@@ -77,6 +77,7 @@ detached = true
 _sync = [
     'python -m pip install --upgrade "pip>=26.1"',
     "python -m pip install -r .github/requirements/pylock.release.toml",
+    "python -m pip install -r .github/requirements/pylock.build.toml",
 ]
 make = ["_sync", "python tasks/release.py make {args}"]
 build = ["_sync", "python tasks/build_dists.py {args}"]

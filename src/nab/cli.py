@@ -321,6 +321,8 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
     cli_decision_order: str | None = None,
     cli_constraint: tuple[str, ...] = (),
     cli_default_group: tuple[str, ...] = (),
+    cli_base_group: str | None = None,
+    cli_build_group: str | None = None,
 ) -> dict[str, object]:
     """Build the registry-keyed CLI override dict from the named flags.
 
@@ -347,6 +349,8 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
             "project_decision_order": cli_decision_order,
             "project_constraint": cli_constraint,
             "project_default_group": cli_default_group,
+            "project_base_group": cli_base_group,
+            "project_build_group": cli_build_group,
         }
     )
 
@@ -558,6 +562,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     python: str | None = None,
     groups: tuple[str, ...] = (),
     extras: tuple[str, ...] = (),
+    build_requirements: bool = False,
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressReporter | None = None,
 ) -> ResolveResult:
@@ -582,6 +587,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
                 offline=offline,
                 groups=groups,
                 extras=extras,
+                build_requirements=build_requirements,
                 resolution_strategy=resolution_strategy,
                 progress=progress,
             )

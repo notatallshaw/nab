@@ -62,13 +62,18 @@ from nab_python.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
     expand_extra_requirements,
+    read_pyproject_build_requires,
     read_pyproject_dependencies,
     read_pyproject_groups,
     read_pyproject_name,
     read_pyproject_optional_dependencies,
     resolve_groups_to_requirements,
 )
-from nab_python.resolve import build_lock_input
+from nab_python.resolve import (
+    active_group_names,
+    build_lock_input,
+    config_for_build_requirements,
+)
 from nab_python.target import UnevaluableMarkerError
 
 from . import cli as _cli
@@ -116,6 +121,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     all_groups: bool = False,
     extras: tuple[str, ...] = (),
     all_extras: bool = False,
+    build_requirements: bool = False,
     workspace_discovery: bool = True,
     no_emit_workspace: bool = False,
     project_resolution: ResolutionFlag | None = None,
@@ -128,6 +134,8 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     project_decision_order: DecisionOrderFlag | None = None,
     project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
+    project_base_group: str | None = None,
+    project_build_group: str | None = None,
     upgrade: bool = False,
     locked: bool = False,
 ) -> None:
@@ -142,6 +150,16 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     ``--extras`` / ``--all-extras`` select entries from
     ``[project.optional-dependencies]``.  Selected names are folded into
     the resolve and recorded in the lockfile.
+
+    ``--build-requirements`` locks ``[build-system].requires`` instead of
+    the project's dependencies, for the environment the project is built
+    in rather than the one it runs in.  A project that declares no
+    ``[build-system]`` is an error: the PEP 517 default backend is what
+    an installer falls back to, not something the project asked to pin.
+    Only the static list is read, so what a backend adds from
+    ``get_requires_for_build_wheel`` is not covered.  ``--output``
+    defaults to ``pylock.build.toml`` or ``build-requirements.txt``, and
+    no group or extra can be selected alongside it.
 
     Universal mode (``[tool.nab].mode = "universal"``) supports all
     three formats.  For requirements formats, an ``--output`` template
@@ -176,6 +194,16 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     if locked and (format != "pylock" or _cli.is_stdout(output)):
         _cli.printer().error("--locked is only supported for pylock output to a file.")
         sys.exit(1)
+    if build_requirements:
+        _refuse_group_selection_with_build_requirements(
+            groups=groups,
+            all_groups=all_groups,
+            extras=extras,
+            all_extras=all_extras,
+            default_group=project_default_group,
+            base_group=project_base_group,
+            build_group=project_build_group,
+        )
     overrides = _cli._cli_overrides(  # noqa: SLF001
         cli_resolution=project_resolution,
         cli_offline=offline,
@@ -190,6 +218,8 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         cli_decision_order=project_decision_order,
         cli_constraint=project_constraint,
         cli_default_group=project_default_group,
+        cli_base_group=project_base_group,
+        cli_build_group=project_build_group,
     )
     project_overrides = _cli.project_config_overrides(overrides)
     _cli._project_cli_overrides_or_exit(project_overrides)  # noqa: SLF001
@@ -197,6 +227,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         path,
         output=output,
         format=format,
+        build_requirements=build_requirements,
         upgrade=upgrade,
         cli_overrides=project_overrides,
     )
@@ -206,6 +237,8 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         anchor=anchor,
         cli_overrides=project_overrides,
     )
+    if build_requirements:
+        config = config_for_build_requirements(config)
     if locked and config.mode is ResolveMode.UNIVERSAL:
         _cli.printer().error("--locked is not supported in universal mode.")
         sys.exit(1)
@@ -245,6 +278,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
             python=python,
             extras=selected_extras,
             groups=selected_groups,
+            build_requirements=build_requirements,
             workspace_to_drop=workspace_to_drop,
         )
 
@@ -259,6 +293,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         python=python,
         groups=selected_groups,
         extras=selected_extras,
+        build_requirements=build_requirements,
         resolution_strategy=settings.resolution,
         progress=ProgressReporter(_cli.printer()),
     )
@@ -275,9 +310,16 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     lock_input.provenance = provenance
 
     if locked:
-        _check_locked(lock_input, output=output)
+        _check_locked(lock_input, output=output, build_requirements=build_requirements)
         return
-    _emit_or_exit(lambda: _emit(lock_input, format=format, output=output))
+    _emit_or_exit(
+        lambda: _emit(
+            lock_input,
+            format=format,
+            output=output,
+            build_requirements=build_requirements,
+        )
+    )
 
 
 def _emit(
@@ -285,12 +327,16 @@ def _emit(
     *,
     format: str,  # noqa: A002 - shadows builtin by convention
     output: Path | None,
+    build_requirements: bool = False,
 ) -> None:
     """Write the resolved lock in the requested format."""
+    default_output = _default_output_path(format, build_requirements=build_requirements)
     if format == "pylock":
-        _emit_pylock(lock_input, output=output)
+        _emit_pylock(lock_input, output=output, default_output=default_output)
     else:
-        _emit_requirements(lock_input, format=format, output=output)
+        _emit_requirements(
+            lock_input, format=format, output=output, default_output=default_output
+        )
 
 
 def _packages_only(text: str) -> str:
@@ -305,9 +351,80 @@ def _packages_only(text: str) -> str:
     return tomli_w.dumps(data)
 
 
-def _locked_target_path(output: Path | None) -> Path:
+_BUILD_DEFAULT_OUTPUT: dict[str, str] = {
+    "pylock": "pylock.build.toml",
+    "requirements": "build-requirements.txt",
+    "requirements-without-hashes": "build-requirements.txt",
+}
+
+
+def _default_output_path(
+    format: str,  # noqa: A002 - shadows builtin by convention
+    *,
+    build_requirements: bool = False,
+) -> Path:
+    """Return the file this run writes when ``--output`` is not given.
+
+    A build-requirements lock gets a name of its own so it cannot
+    overwrite the project's runtime lock.  ``pylock.build.toml`` is the
+    PEP 751 ``pylock.<name>.toml`` spelling.
+    """
+    names = _BUILD_DEFAULT_OUTPUT if build_requirements else _cli._DEFAULT_OUTPUT  # noqa: SLF001
+    return Path(names[format])
+
+
+def _refuse_group_selection_with_build_requirements(
+    *,
+    groups: tuple[str, ...],
+    all_groups: bool,
+    extras: tuple[str, ...],
+    all_extras: bool,
+    default_group: tuple[str, ...],
+    base_group: str | None,
+    build_group: str | None,
+) -> None:
+    """Exit 1 when a run names a selection a build-requirements lock has none of.
+
+    Refusing is what keeps the flags honest.  ``--project-default-group``,
+    ``--project-base-group`` and ``--project-build-group`` would otherwise
+    be dropped by
+    :func:`~nab_python.resolve.config_for_build_requirements` after the run had
+    already printed a reproducibility notice and recorded them in the lock,
+    claiming an override that changed nothing.
+    """
+    named = (
+        bool(groups),
+        all_groups,
+        bool(extras),
+        all_extras,
+        bool(default_group),
+        base_group is not None,
+        build_group is not None,
+    )
+    if not any(named):
+        return
+    _cli.printer().error(
+        "--build-requirements locks [build-system].requires, which has no"
+        " groups or extras to select."
+    )
+    sys.exit(1)
+
+
+def _locked_target_path(output: Path | None, *, build_requirements: bool) -> Path:
     """Return the file ``--locked`` reads and re-renders against."""
-    return output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
+    if output is not None:
+        return output
+    return _default_output_path("pylock", build_requirements=build_requirements)
+
+
+def _refresh_command(*, build_requirements: bool) -> str:
+    """Return the command that would rewrite the lock ``--locked`` just read.
+
+    A build lock is written by a different run than the project's own, so
+    telling the user to run bare ``nab lock`` would send them to overwrite
+    the wrong file and leave the failure in place.
+    """
+    return "nab lock --build-requirements" if build_requirements else "nab lock"
 
 
 def _fast_fail_locked(
@@ -318,6 +435,7 @@ def _fast_fail_locked(
     python: str | None,
     extras: tuple[str, ...],
     groups: tuple[str, ...],
+    build_requirements: bool,
     workspace_to_drop: frozenset[str],
 ) -> None:
     """Fast-fail ``nab lock --locked`` before any resolve when a mismatch is proven.
@@ -326,12 +444,13 @@ def _fast_fail_locked(
     checks.  On the first disqualification it prints the reason and exits
     non-zero; otherwise it returns and the full resolve runs.
     """
-    target = _locked_target_path(output)
+    target = _locked_target_path(output, build_requirements=build_requirements)
+    refresh = _refresh_command(build_requirements=build_requirements)
 
     # A stat that failed is not an absent lock.
     if path_state(target) is PathState.ABSENT:
         _cli.printer().error(
-            f"--locked: no lockfile at {target} to check; run `nab lock` first."
+            f"--locked: no lockfile at {target} to check; run `{refresh}` first."
         )
         sys.exit(1)
 
@@ -344,6 +463,9 @@ def _fast_fail_locked(
             extras=extras,
             groups=groups,
             default_groups=config.default_groups,
+            base_group=config.base_group,
+            build_requirements=build_requirements,
+            build_group=config.build_group,
         )
     except (
         InvalidProjectTableError,
@@ -362,6 +484,8 @@ def _fast_fail_locked(
             extras=extras,
             dependency_groups=groups,
             default_groups=config.default_groups,
+            base_group=config.base_group,
+            build_group=config.build_group,
             roots=roots,
             constraints=config.constraints,
             resolve_target=resolve_target,
@@ -373,20 +497,20 @@ def _fast_fail_locked(
     except LockfileSyntaxError as e:
         _cli.printer().error(
             f"--locked: lockfile {target} is not valid TOML: {e};"
-            " re-run `nab lock` to regenerate it."
+            f" re-run `{refresh}` to regenerate it."
         )
         sys.exit(1)
     except InvalidLockfileError as e:
         _cli.printer().error(
             f"--locked: lockfile {target} is not a valid PEP 751 lockfile: {e};"
-            " re-run `nab lock` to regenerate it."
+            f" re-run `{refresh}` to regenerate it."
         )
         sys.exit(1)
     if disqualification is None:
         return
     _cli.printer().error(
         f"--locked: lockfile {target} is out of date: {disqualification.reason};"
-        " re-run `nab lock` to update it."
+        f" re-run `{refresh}` to update it."
     )
     sys.exit(1)
 
@@ -413,6 +537,9 @@ def _active_root_requirements(
     extras: tuple[str, ...],
     groups: tuple[str, ...],
     default_groups: tuple[str, ...],
+    base_group: str | None = None,
+    build_requirements: bool = False,
+    build_group: str | None = None,
 ) -> list[RootRequirement]:
     """Collect this run's active direct requirements with their source clause.
 
@@ -420,7 +547,19 @@ def _active_root_requirements(
     and group contributes, each carrying the clause it came from so a
     disqualification can name it.  A default group is expanded only so an
     undeclared name raises here too; its requirements are left to the resolve.
+
+    A build-requirements run has one source and no selection, so
+    ``[build-system].requires`` stands alone.  ``build_group`` names them
+    on a run that carries them alongside the project's own, and they are
+    appended as their own source rather than routed through the group
+    table, which does not hold the configured name.
     """
+    if build_requirements:
+        return [
+            RootRequirement(requirement=req, source="[build-system].requires")
+            for req in read_pyproject_build_requires(path)
+        ]
+
     roots = [
         RootRequirement(requirement=req, source="[project].dependencies")
         for req in read_pyproject_dependencies(path)
@@ -435,7 +574,9 @@ def _active_root_requirements(
                 for req in expand_extra_requirements(optional, project_name, [extra])
             )
 
-    effective_groups = dict.fromkeys((*groups, *default_groups))
+    effective_groups = dict.fromkeys(
+        active_group_names(groups, default_groups, base_group)
+    )
     if effective_groups:
         table = read_pyproject_groups(path)
         for group in effective_groups:
@@ -449,10 +590,18 @@ def _active_root_requirements(
                 for req in requirements
             )
 
+    if build_group is not None:
+        roots.extend(
+            RootRequirement(requirement=req, source="[build-system].requires")
+            for req in read_pyproject_build_requires(path)
+        )
+
     return roots
 
 
-def _check_locked(lock_input: LockInput, *, output: Path | None) -> None:
+def _check_locked(
+    lock_input: LockInput, *, output: Path | None, build_requirements: bool
+) -> None:
     """Verify the committed pylock matches a fresh resolve, writing nothing.
 
     The resolve has already run; this renders the lock it would produce and
@@ -460,25 +609,28 @@ def _check_locked(lock_input: LockInput, *, output: Path | None) -> None:
     both, so only a real change to the locked packages fails.  The committed
     lock is never read back into the resolve.
     """
-    target = _locked_target_path(output)
+    target = _locked_target_path(output, build_requirements=build_requirements)
     new_text = _render_or_exit(lambda: render_lock(lock_input, lock_dir=target.parent))
     committed = _packages_only(target.read_text(encoding="utf-8"))
     if _packages_only(new_text) == committed:
         _cli.printer().done(f"Lockfile {target} is up to date.")
         return
+    refresh = _refresh_command(build_requirements=build_requirements)
     _cli.printer().error(
-        f"--locked: lockfile {target} is out of date; re-run `nab lock` to update it."
+        f"--locked: lockfile {target} is out of date; re-run `{refresh}` to update it."
     )
     sys.exit(1)
 
 
-def _emit_pylock(lock_input: LockInput, *, output: Path | None) -> None:
+def _emit_pylock(
+    lock_input: LockInput, *, output: Path | None, default_output: Path
+) -> None:
     """Write the PEP 751 lock to a file, or print it."""
     if _cli.is_stdout(output):
         sys.stdout.write(_write_lock_or_exit(lock_input, target=None))
         return
 
-    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT["pylock"])  # noqa: SLF001
+    target = output if output is not None else default_output
     # Read the prior pins before the write overwrites the file.
     prior = read_lockfile_packages(target)
     # Pass the target so wheel/sdist/directory paths are written relative
@@ -591,6 +743,7 @@ def _emit_requirements(
     *,
     format: str,  # noqa: A002 - shadows builtin by convention
     output: Path | None,
+    default_output: Path,
 ) -> None:
     """Emit the pins as requirements, one file per target where needed.
 
@@ -602,7 +755,7 @@ def _emit_requirements(
       multi-block file), and it is why a multi-target lock has no default
       file to fall back to: there is no one file to write.
     * ``output`` is unset and the lock covers one target: write
-      ``requirements.txt``.
+      ``default_output``.
     * ``output`` names a :data:`~nab.cli.TUPLE_TEMPLATE_VARS` variable:
       write one file per target, substituting the target's values into
       the template.  This is the constraints-per-Python-version shape
@@ -624,7 +777,7 @@ def _emit_requirements(
         sys.stdout.write(text)
         return
 
-    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
+    target = output if output is not None else default_output
     template = str(target)
     if not any(var in template for var in _cli.TUPLE_TEMPLATE_VARS):
         if multi_target:
@@ -953,6 +1106,7 @@ def _reused_lock_anchor(
     *,
     output: Path | None,
     format: str,  # noqa: A002 - shadows builtin by convention
+    build_requirements: bool = False,
     cli_overrides: Mapping[str, object] | None = None,
 ) -> tuple[datetime | None, datetime | None]:
     """Return ``(absolute_cutoff, prior_lock_anchor)`` for the re-lock anchor.
@@ -972,8 +1126,8 @@ def _reused_lock_anchor(
         return absolute, None
     if _cli.is_stdout(output) or format != "pylock":
         return None, None
-    target = output if output is not None else Path(_cli._DEFAULT_OUTPUT[format])  # noqa: SLF001
-    return None, read_lockfile_anchor(target)
+    target = _default_output_path(format, build_requirements=build_requirements)
+    return None, read_lockfile_anchor(output if output is not None else target)
 
 
 def _determine_lock_anchor(
@@ -981,6 +1135,7 @@ def _determine_lock_anchor(
     *,
     output: Path | None,
     format: str,  # noqa: A002 - shadows builtin by convention
+    build_requirements: bool = False,
     upgrade: bool,
     cli_overrides: Mapping[str, object] | None = None,
 ) -> datetime:
@@ -995,7 +1150,11 @@ def _determine_lock_anchor(
     resolve either way), so the notice fires only in that case.
     """
     absolute, prior = _reused_lock_anchor(
-        path, output=output, format=format, cli_overrides=cli_overrides
+        path,
+        output=output,
+        format=format,
+        build_requirements=build_requirements,
+        cli_overrides=cli_overrides,
     )
     if upgrade:
         fresh = datetime.now(timezone.utc)

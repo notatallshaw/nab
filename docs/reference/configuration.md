@@ -25,8 +25,35 @@ constraints = ["urllib3<2"]
 # and pinned into the lock.  The names are also recorded in the
 # lockfile's default-groups array.  Two members of the same
 # at-most-one or exactly-one set in [tool.nab].conflicts cannot
-# both be defaults.
+# both be defaults.  A --groups selection that adds a second
+# member of such a set to a default forks the run into one
+# resolve per member.
 default-groups = ["dev"]
+
+# The group name a lock gives the project's own [project.dependencies],
+# recorded in both of the lockfile's group arrays.  Unset, they carry no
+# marker and install under every selection, so a lock offering groups
+# cannot be asked for one group without them.  The name must not be one
+# the file being locked declares in [dependency-groups].  It joins the
+# lockfile's default-groups only when default-groups above is unset;
+# declare it there too to keep it in the default selection.
+base-group = "base"
+
+# The group name a lock gives [build-system].requires, so one lock can
+# describe the environment the project is built in as well as the one it
+# runs in.  Unset, a lock says nothing about how the project is built.
+# Set it and those requirements are resolved alongside the project's own,
+# and a pylock gates them behind that name, which it records in
+# dependency-groups but not in default-groups: an install that asks for
+# no group is installing the project, not building it.  The requirements
+# output formats carry no markers, so there they render as ordinary
+# pins.  The name must not be one [dependency-groups] declares, nor the
+# base-group name, and base-group must be set: unnamed, the project's
+# own dependencies carry no marker and come with every group, so nothing
+# could ask for the build requirements alone.  Either name may be a
+# [tool.nab].conflicts member, which forks the resolve so each side gets
+# its own pins.
+build-group = "build"
 
 # The Python range this project supports.  A declaration: it is
 # recorded in the lockfile and checked against the resolve target,

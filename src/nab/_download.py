@@ -63,6 +63,8 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     project_decision_order: DecisionOrderFlag | None = None,
     project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
     project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
+    project_base_group: str | None = None,
+    project_build_group: str | None = None,
 ) -> None:
     """Resolve and download every wheel, sdist, and direct-URL archive.
 
@@ -106,6 +108,8 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
         cli_decision_order=project_decision_order,
         cli_constraint=project_constraint,
         cli_default_group=project_default_group,
+        cli_base_group=project_base_group,
+        cli_build_group=project_build_group,
     )
     project_overrides = _cli.project_config_overrides(overrides)
     _cli._project_cli_overrides_or_exit(project_overrides)  # noqa: SLF001

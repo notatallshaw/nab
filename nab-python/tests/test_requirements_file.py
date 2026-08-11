@@ -13,12 +13,14 @@ from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.utils import InvalidName
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
+    InvalidProjectTableError,
     _add_extra_marker,
     expand_extra_requirements,
     expand_group_includes,
     expand_self_extras,
     parse_project_requirement,
     raise_for_unsatisfiable,
+    read_pyproject_build_requires,
     read_pyproject_dependencies,
     read_pyproject_groups,
     read_pyproject_name,
@@ -235,6 +237,82 @@ class TestReadPyprojectDependencies:
         p.write_text('project = ["a", "b"]\n')
         with pytest.raises(TypeError, match=r"\[project\] must be a table"):
             read_pyproject_dependencies(p)
+
+
+class TestReadPyprojectBuildRequires:
+    def test_reads_requires(self, tmp_path: object) -> None:
+        """Parse [build-system].requires from a valid pyproject.toml."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('[build-system]\nrequires = ["hatchling", "hatch-vcs>=0.4"]\n')
+        requires = read_pyproject_build_requires(p)
+        assert [str(r) for r in requires] == ["hatchling", "hatch-vcs>=0.4"]
+
+    def test_marker_is_kept(self, tmp_path: object) -> None:
+        """A build requirement may carry a PEP 508 marker."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text(
+            "[build-system]\n"
+            'requires = ["setuptools", "tomli; python_version < \'3.11\'"]\n'
+        )
+        requires = read_pyproject_build_requires(p)
+        assert str(requires[1].marker) == 'python_version < "3.11"'
+
+    def test_empty_requires_is_no_build_requirements(self, tmp_path: object) -> None:
+        """An empty array declares a build system that needs nothing."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text("[build-system]\nrequires = []\n")
+        assert read_pyproject_build_requires(p) == []
+
+    def test_missing_build_system_raises(self, tmp_path: object) -> None:
+        """No [build-system] is not the PEP 517 default, it is an error."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('[project]\nname = "foo"\n')
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"declares no \[build-system\]"
+        ):
+            read_pyproject_build_requires(p)
+
+    def test_missing_requires_key_raises(self, tmp_path: object) -> None:
+        """PEP 518 makes requires mandatory once [build-system] is present."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('[build-system]\nbuild-backend = "flit_core.buildapi"\n')
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"\[build-system\].requires"
+        ):
+            read_pyproject_build_requires(p)
+
+    def test_non_table_build_system_raises(self, tmp_path: object) -> None:
+        """A [build-system] that is not a table is malformed, not absent."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('build-system = "hatchling"\n')
+        with pytest.raises(
+            InvalidProjectTableError, match=r"\[build-system\] must be a table"
+        ):
+            read_pyproject_build_requires(p)
+
+    def test_string_requires_raises(self, tmp_path: object) -> None:
+        """A bare string would iterate character by character."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('[build-system]\nrequires = "hatchling"\n')
+        with pytest.raises(
+            InvalidProjectRequirementError, match="must be an array of strings"
+        ):
+            read_pyproject_build_requires(p)
+
+    def test_malformed_requirement_string_raises(self, tmp_path: object) -> None:
+        """A malformed PEP 508 string names the table it came from."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text('[build-system]\nrequires = ["hatchling >= 1 junk"]\n')
+        with pytest.raises(
+            InvalidProjectRequirementError, match=r"\[build-system\].requires"
+        ):
+            read_pyproject_build_requires(p)
+
+    def test_missing_file_raises(self, tmp_path: object) -> None:
+        """Raise FileNotFoundError for a missing pyproject.toml."""
+        p = Path(str(tmp_path)) / "missing.toml"
+        with pytest.raises(FileNotFoundError):
+            read_pyproject_build_requires(p)
 
 
 class TestReadPyprojectGroups:

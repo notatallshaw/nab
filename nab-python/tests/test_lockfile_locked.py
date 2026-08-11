@@ -10,6 +10,7 @@ import pytest
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.lockfile import (
+    BASE_MEMBER,
     IndexPin,
     InvalidLockfileError,
     LockfileSyntaxError,
@@ -17,6 +18,7 @@ from nab_python.lockfile import (
     RootRequirement,
     TargetLock,
     WheelArtifact,
+    build_pylock,
     check_locked,
     drop_workspace_pins,
     read_lockfile_packages,
@@ -56,6 +58,8 @@ def _lock_input(
     *,
     dependencies: Mapping[str, tuple[str, ...]] | None = None,
     base_dependencies: Mapping[str, tuple[str, ...]] | None = None,
+    package_gates: Mapping[str, tuple[tuple[str, str], ...]] | None = None,
+    base_group: str | None = None,
 ) -> LockInput:
     return LockInput(
         targets={
@@ -64,8 +68,10 @@ def _lock_input(
                 pins=dict(pins),
                 dependencies=dict(dependencies or {}),
                 base_dependencies=dict(base_dependencies or {}),
+                package_gates=dict(package_gates or {}),
             )
-        }
+        },
+        base_group=base_group,
     )
 
 
@@ -420,6 +426,34 @@ class TestDropWorkspacePins:
 
         dropped = drop_workspace_pins(lock_input, frozenset({"alpha"}))
         assert dropped.targets[TARGET.label].base_dependencies == edges
+
+    def test_a_surviving_package_keeps_its_whole_gate(self) -> None:
+        """Dropping a member cannot narrow what still installs.
+
+        A gate names install contexts, never packages, so nothing a
+        dropped member reached can leave a gate behind that no longer
+        resolves.
+        """
+        lock_input = _lock_input(
+            {"foo": _pin("foo", "1.0"), "alpha": _pin("alpha", "2.0")},
+            dependencies={"alpha": ("foo",)},
+            package_gates={
+                "foo": (BASE_MEMBER, ("group", "dev")),
+                "alpha": (BASE_MEMBER,),
+            },
+            base_group="default",
+        )
+
+        dropped = drop_workspace_pins(lock_input, frozenset({"alpha"}))
+
+        assert dropped.targets[TARGET.label].package_gates == {
+            "foo": (BASE_MEMBER, ("group", "dev"))
+        }
+        marker = next(p.marker for p in build_pylock(dropped).packages)
+        assert marker is not None
+        assert str(marker) == (
+            '"default" in dependency_groups or "dev" in dependency_groups'
+        )
 
 
 class TestSummarizeLock:

@@ -27,6 +27,7 @@ from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
 from ..metadata import validate_specifier_versions
 from ..paths import path_state
+from .groups import BASE_MEMBER
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -276,7 +277,7 @@ def build_target_lock(
     install context requires directly: the project's own dependencies,
     and those of each selected extra and each selected group, keyed by
     its ``(kind, name)`` member.  :func:`_membership_gates` walks the
-    resolve from them to find the packages only a selection reaches.  An
+    resolve from each to find which contexts reach each package.  An
     empty ``base_roots`` is a project with no dependencies of its own, so
     it does not stand in for ``None``: omitting it while passing selector
     roots raises.
@@ -359,33 +360,34 @@ def _membership_gates(
     base_roots: Iterable[str],
     selector_roots: Mapping[tuple[str, str], Iterable[str]],
 ) -> dict[str, tuple[tuple[str, str], ...]]:
-    """Name the selections that gate each package no base dependency reaches.
+    """Name every install context that reaches each package.
 
     A selected extra or group is folded into the resolve that produces
     the lock, so its requirements pin packages a default install must not
-    receive.  PEP 751 defaults an install to no extras and to
-    ``default-groups``, and decides per package from ``packages.marker``,
-    so a package only a selection reaches has to name every selection
-    that reaches it; the writer turns each ``(kind, name)`` member into
-    ``'name' in extras`` / ``'name' in dependency_groups``.  A package
-    the project's own dependencies reach is unconditional.
+    receive.  PEP 751 decides per package from ``packages.marker``, so a
+    package has to name every context that reaches it; the writer turns
+    each ``(kind, name)`` member into ``'name' in extras`` /
+    ``'name' in dependency_groups``.  The project's own dependencies are
+    one such context, recorded as
+    :data:`~nab_python.lockfile.BASE_MEMBER` until the writer knows what to
+    call it, so a package both they and a group reach installs for either.
 
     Reachability is over this target's resolved graph, so an extras proxy
     (an extra requiring ``pkg[fancy]`` while the project requires plain
     ``pkg``) gates what ``fancy`` adds without gating ``pkg``.
+
+    Empty roots on both sides gate nothing, which is a lock with no
+    selection and no name for the project's own dependencies.
     """
-    if not selector_roots:
-        return {}
-
     pinned = {canonicalize_name(name): version for name, version in pins.items()}
-    base_reachable = _reachable_names(provider, pinned, base_roots)
 
-    gates: defaultdict[str, list[tuple[str, str]]] = defaultdict(list)
-    for member in sorted(selector_roots):
-        gated = _reachable_names(provider, pinned, selector_roots[member])
-        for name in gated - base_reachable:
-            gates[name].append(member)
-    return {name: tuple(members) for name, members in gates.items()}
+    reach: defaultdict[str, set[tuple[str, str]]] = defaultdict(set)
+    for name in _reachable_names(provider, pinned, base_roots):
+        reach[name].add(BASE_MEMBER)
+    for member, roots in selector_roots.items():
+        for name in _reachable_names(provider, pinned, roots):
+            reach[name].add(member)
+    return {name: tuple(sorted(members)) for name, members in reach.items()}
 
 
 def _reachable_names(
