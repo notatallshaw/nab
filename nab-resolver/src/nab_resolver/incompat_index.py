@@ -1,10 +1,12 @@
 """Incompatibility index and dependency-clause merging.
 
-The resolver keeps two derived indexes alongside ``incompatibilities``:
+The resolver keeps three structures alongside ``incompatibilities``:
 ``package_to_incompatibilities`` (package -> list of clause indices) for
-unit-propagation lookup, and ``dependency_index`` (merge key -> index)
-for collapsing many singleton dependency clauses into one
-``pkg in {v1, v2, ...}`` clause (pubgrub-rs's ``merge_dependents``).
+unit-propagation lookup, ``dependency_index`` (merge key -> index) for
+collapsing many singleton dependency clauses into one
+``pkg in {v1, v2, ...}`` clause (pubgrub-rs's ``merge_dependents``), and
+``clause_contradicted_at`` (clause index -> epoch), unit propagation's
+per-clause skip stamp.
 """
 
 from __future__ import annotations
@@ -28,6 +30,10 @@ __all__ = [
 # A dependency-style clause is exactly two terms (parent + dep).
 _DEPENDENCY_CLAUSE_TERMS = 2
 
+# Stamp for a clause with no term known to be contradicted.  Epochs start at
+# zero, so this can never read as current.
+_NOT_CONTRADICTED = -1
+
 
 def add_incompatibility(
     resolver: Resolver[Any, Any], incompatibility: Incompatibility[Any, Any]
@@ -38,6 +44,7 @@ def add_incompatibility(
 
     index = len(resolver.incompatibilities)
     resolver.incompatibilities.append(incompatibility)
+    resolver.clause_contradicted_at.append(_NOT_CONTRADICTED)
     for term in incompatibility.terms:
         resolver.package_to_incompatibilities[term.package].append(index)
     index_dependency(resolver, incompatibility, index)
@@ -116,4 +123,6 @@ def maybe_merge_dependency(
     # Safe to replace in place: DEPENDENCY clauses have no cause_left/right
     # references that would break.
     resolver.incompatibilities[existing_index] = merged
+    # The union widens the package term, which can lift a contradiction.
+    resolver.clause_contradicted_at[existing_index] = _NOT_CONTRADICTED
     return True

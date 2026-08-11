@@ -139,7 +139,10 @@ def test_merged_store_semantically_equivalent(
 @given(specs=st.lists(clause_specs(), min_size=1, max_size=8))
 @PROPERTY_SETTINGS
 def test_package_index_matches_full_scan(specs: list[tuple[object, ...]]) -> None:
-    """The per-package index reaches exactly the clauses a full scan finds."""
+    """The per-package index reaches exactly the clauses a full scan finds.
+
+    The skip stamps stay at one entry per clause too.
+    """
     resolver = _fresh_resolver()
     for spec in specs:
         add_incompatibility(resolver, _build_clause(spec))
@@ -156,6 +159,8 @@ def test_package_index_matches_full_scan(specs: list[tuple[object, ...]]) -> Non
         )
     for indices in resolver.package_to_incompatibilities.values():
         assert all(0 <= i < len(resolver.incompatibilities) for i in indices)
+
+    assert len(resolver.clause_contradicted_at) == len(resolver.incompatibilities)
 
 
 @given(specs=st.lists(clause_specs(), min_size=1, max_size=8))

@@ -40,10 +40,17 @@ def unit_propagation(
     conflicting incompatibility if all terms are satisfied, or
     None if propagation completes without conflict.
 
+    One contradicted term settles a clause for the rest of the solution's
+    contradiction epoch.  Each clause records the epoch it was last settled in,
+    and is skipped while that stamp is current.
+
     Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#unit-propagation
     """
     propagation_queue: deque[Any] = deque([changed_package])
     in_queue: set[Any] = {changed_package}
+
+    contradicted_at = resolver.clause_contradicted_at
+    epoch = resolver.solution.contradiction_epoch
 
     while propagation_queue:
         package = propagation_queue.popleft()
@@ -51,8 +58,15 @@ def unit_propagation(
         related_indices = resolver.package_to_incompatibilities.get(package, [])
 
         for incompatibility_index in related_indices:
+            if contradicted_at[incompatibility_index] == epoch:
+                continue
+
             incompatibility = resolver.incompatibilities[incompatibility_index]
             evaluation = evaluate_incompatibility(resolver, incompatibility)
+
+            if evaluation is IncompatibilityState.CONTRADICTED:
+                contradicted_at[incompatibility_index] = epoch
+                continue
 
             if evaluation is IncompatibilityState.CONFLICT:
                 return incompatibility
@@ -67,6 +81,10 @@ def unit_propagation(
                     cause=incompatibility,
                 )
                 range_after = resolver.solution.get(negated_term.package)
+
+                # A derive that empties a range advances the epoch, which
+                # retires the stamps taken before it.
+                epoch = resolver.solution.contradiction_epoch
 
                 if range_before != range_after:
                     resolver.stats.derivations += 1
@@ -89,8 +107,9 @@ def evaluate_incompatibility(
 
     Returns:
       ``IncompatibilityState.CONFLICT``: all terms satisfied
+      ``IncompatibilityState.CONTRADICTED``: some term is contradicted
       ``Term``: exactly one undetermined term (unit propagation candidate)
-      ``None``: 0 or 2+ undetermined terms (nothing to do yet)
+      ``None``: two or more undetermined terms (nothing to do yet)
     """
     undetermined_term: Term[Any, Any] | None = None
 
@@ -99,7 +118,7 @@ def evaluate_incompatibility(
         if relation is SetRelation.SATISFIED:
             continue
         if relation is SetRelation.CONTRADICTED:
-            return None
+            return IncompatibilityState.CONTRADICTED
         if undetermined_term is not None:
             return None
         undetermined_term = term
