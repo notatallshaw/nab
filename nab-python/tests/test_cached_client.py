@@ -25,6 +25,7 @@ from packaging.utils import canonicalize_name
 
 import nab_index.cache as cache_mod
 import nab_index.cached_client as cached_client_mod
+from nab_index._pep503 import json_listing
 from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
@@ -577,6 +578,58 @@ class TestRelativeUrlResolution:
         data = {"files": [{"filename": "foo-1.0-py3-none-any.whl", "url": raw}]}
         files = _parse_files(data, "https://example.com/simple/", "foo")
         assert files[0].url == urljoin(base, raw) != raw
+
+
+class TestControlCharacterUrl:
+    """A file URL is stored without the tab, CR and LF bytes urlsplit removes."""
+
+    _PAGE = "https://example.com/simple/foo/"
+    _STRIPPED = "https://files.example.com/ab/foo-1.0-py3-none-any.whl"
+
+    def _entry(self, url: str) -> dict[str, object]:
+        """A PEP 691 wheel entry for ``url`` that advertises a metadata sidecar."""
+        return {
+            "filename": "foo-1.0-py3-none-any.whl",
+            "url": url,
+            "core-metadata": True,
+        }
+
+    @pytest.mark.parametrize("control", ["\t", "\r", "\n"], ids=["tab", "cr", "lf"])
+    def test_artifact_and_sidecar_name_the_same_file(self, control: str) -> None:
+        raw = f"https://files.example.com/a{control}b/foo-1.0-py3-none-any.whl"
+        data = {"files": [self._entry(raw)]}
+
+        (wheel,) = _parse_files(data, "https://example.com/simple/", "foo")
+
+        assert isinstance(wheel, WheelFile)
+        assert wheel.url == self._STRIPPED
+        assert wheel.metadata_url == f"{self._STRIPPED}.metadata"
+
+    def test_different_scheme_url_is_stripped(self) -> None:
+        """urljoin returns an href verbatim when its scheme differs from the page's."""
+        raw = "ftp://files.example.com/a\tb/foo-1.0.tar.gz"
+        data = {"files": [{"filename": "foo-1.0.tar.gz", "url": raw}]}
+
+        (sdist,) = _parse_files(data, "https://example.com/simple/", "foo")
+
+        assert sdist.url == "ftp://files.example.com/ab/foo-1.0.tar.gz"
+
+    def test_html_and_json_serializations_agree(self) -> None:
+        """The HTML and JSON forms of one page yield the same file URL."""
+        raw = "https://files.example.com/a\nb/foo-1.0-py3-none-any.whl"
+        html_listing = json.loads(json_listing(f'<a href="{raw}">foo</a>', self._PAGE))
+
+        (from_json,) = _parse_files(
+            {"files": [self._entry(raw)]},
+            "https://example.com/simple/",
+            "foo",
+            page_url=self._PAGE,
+        )
+        (from_html,) = _parse_files(
+            html_listing, "https://example.com/simple/", "foo", page_url=self._PAGE
+        )
+
+        assert from_json.url == from_html.url == self._STRIPPED
 
 
 class TestMetadataUrl:

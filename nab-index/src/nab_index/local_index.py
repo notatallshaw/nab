@@ -30,7 +30,7 @@ import zlib
 from email.parser import BytesParser, Parser
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urljoin, urlparse, urlsplit
+from urllib.parse import unquote, urljoin, urlparse, urlsplit, urlunsplit
 from urllib.request import url2pathname
 
 from packaging.utils import canonicalize_name as _canonical
@@ -306,11 +306,12 @@ def _resolve_local_link(
     href_no_frag, _, fragment = href.partition("#")
     hashes = hash_fragment(fragment)
 
-    # A malformed authority (an unterminated IPv6 bracket) makes both of
-    # these raise, so the drop guard has to start here rather than at the
-    # path resolution below.
+    # A malformed authority (an unterminated IPv6 bracket) makes these raise,
+    # so the drop guard has to start here rather than at the path resolution
+    # below.  urljoin leaves an href alone when its scheme differs from the
+    # page's, so the split round trip is what drops a tab, CR or LF.
     try:
-        url = urljoin(base_url, href_no_frag)
+        url = urlunsplit(urlsplit(urljoin(base_url, href_no_frag)))
         parsed = urlparse(url)
     except ValueError:
         return (None, href_no_frag, None, hashes)
