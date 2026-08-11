@@ -37,6 +37,7 @@ from installer.utils import SCHEME_NAMES, Scheme
 
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
+from nab_python._build import env as env_mod
 from nab_python._build import runner as runner_mod
 from nab_python._build.env import (
     BuildEnvError,
@@ -2705,6 +2706,38 @@ class TestBuildRequirementBuildFailures:
         with pytest.raises(BuildEnvError, match="could not be built"):
             self._env()._build_requirement(self.PENDING, tmp_path)
 
+    @pytest.mark.parametrize("cancel", [False, True], ids=["success", "cancel"])
+    def test_cleanup_error_does_not_replace_result_or_cancellation(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        cancel: bool,
+    ) -> None:
+        (tmp_path / self.PENDING.sdist.filename).write_bytes(b"sdist")
+        wheel = tmp_path / "demo-1.0-py3-none-any.whl"
+
+        monkeypatch.setattr(
+            env_mod.tempfile,
+            "TemporaryDirectory",
+            _CleanupErrorTemporaryDirectory,
+        )
+        monkeypatch.setattr(
+            env_mod, "extract_sdist_archive", lambda _data, target: target
+        )
+
+        build = MagicMock(
+            return_value=wheel,
+            side_effect=KeyboardInterrupt if cancel else None,
+        )
+        monkeypatch.setattr(runner_mod, "build_wheel_for_install", build)
+
+        if cancel:
+            with pytest.raises(KeyboardInterrupt):
+                self._env()._build_requirement(self.PENDING, tmp_path)
+        else:
+            assert self._env()._build_requirement(self.PENDING, tmp_path) == wheel
+
     def test_non_string_wheel_path(self, tmp_path: Path) -> None:
         """A backend returning something other than a wheel's basename.
 
@@ -2733,6 +2766,37 @@ class TestBuildRequirementBuildFailures:
             )
 
 
+class _CleanupErrorTemporaryDirectory:
+    """Raise ``PermissionError`` unless cleanup errors are ignored."""
+
+    def __init__(self, *, prefix: str, ignore_cleanup_errors: bool = False) -> None:
+        self.name = f"/tmp/{prefix}in-use"
+        self._ignore_cleanup_errors = ignore_cleanup_errors
+
+    def cleanup(self) -> None:
+        if not self._ignore_cleanup_errors:
+            raise PermissionError("build env is still in use")
+
+    def __enter__(self) -> str:
+        return self.name
+
+    def __exit__(self, *_args: object) -> None:
+        self.cleanup()
+
+
+def _build_env_with_cleanup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> NabBuildEnv:
+    """Return an unprovisioned build env whose temp tree cannot be removed."""
+    monkeypatch.setattr(
+        env_mod.tempfile,
+        "TemporaryDirectory",
+        _CleanupErrorTemporaryDirectory,
+    )
+    monkeypatch.setattr(NabBuildEnv, "_provision", lambda self, _root: None)
+    return NabBuildEnv(requires=[], config=NabProjectConfig())
+
+
 class TestNabBuildEnvLifecycle:
     """Edge cases of the context-manager lifecycle that fall outside
     the happy-path runner tests.
@@ -2746,6 +2810,57 @@ class TestNabBuildEnvLifecycle:
         env = NabBuildEnv(requires=[], config=NabProjectConfig())
         env.__exit__(None, None, None)
         assert env._tmpdir is None  # type: ignore[attr-defined]
+
+    def test_exit_ignores_cleanup_error_after_success(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with _build_env_with_cleanup_error(monkeypatch):
+            pass
+
+    def test_exit_preserves_cancellation_when_cleanup_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        with (
+            pytest.raises(KeyboardInterrupt),
+            _build_env_with_cleanup_error(monkeypatch),
+        ):
+            raise KeyboardInterrupt
+
+    @pytest.mark.parametrize("cancel", [False, True], ids=["success", "cancel"])
+    def test_metadata_cleanup_error_does_not_replace_result_or_cancellation(
+        self, monkeypatch: pytest.MonkeyPatch, *, cancel: bool
+    ) -> None:
+        metadata = MagicMock()
+        prepared = MagicMock()
+        prepared.__enter__.return_value = (MagicMock(), "backend")
+        prepared.__exit__.return_value = False
+        monkeypatch.setattr(
+            runner_mod.tempfile,
+            "TemporaryDirectory",
+            _CleanupErrorTemporaryDirectory,
+        )
+        monkeypatch.setattr(runner_mod, "_read_pyproject", lambda _source: {})
+        monkeypatch.setattr(
+            runner_mod,
+            "_prepared_project",
+            lambda *_args, **_kwargs: prepared,
+        )
+
+        extract = MagicMock(
+            return_value=Path("/tmp/metadata"),
+            side_effect=KeyboardInterrupt if cancel else None,
+        )
+        monkeypatch.setattr(runner_mod, "_extract_metadata_dir", extract)
+        monkeypatch.setattr(runner_mod, "_parse_metadata", lambda _path: metadata)
+
+        if cancel:
+            with pytest.raises(KeyboardInterrupt):
+                run_build_backend(Path("/tmp/source"), config=NabProjectConfig())
+        else:
+            assert (
+                run_build_backend(Path("/tmp/source"), config=NabProjectConfig())
+                is metadata
+            )
 
     def test_render_synthetic_pyproject_empty_requires(self) -> None:
         """The synthetic-pyproject helper renders an empty

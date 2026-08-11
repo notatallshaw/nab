@@ -223,7 +223,9 @@ class NabBuildEnv:
 
     def __enter__(self) -> Self:
         """Build the venv, run the inner resolve, install build requirements."""
-        self._tmpdir = tempfile.TemporaryDirectory(prefix="nab-build-env-")
+        self._tmpdir = tempfile.TemporaryDirectory(
+            prefix="nab-build-env-", ignore_cleanup_errors=True
+        )
         try:
             self._provision(Path(self._tmpdir.name))
         except BaseException:
@@ -301,7 +303,7 @@ class NabBuildEnv:
                 raise BuildEnvError(msg) from exc
 
     def __exit__(self, *args: object) -> None:
-        """Remove the temp tree that holds the venv and downloaded wheels."""
+        """Clean up the temp tree that holds the venv and downloaded wheels."""
         if self._tmpdir is not None:
             self._tmpdir.cleanup()
             self._tmpdir = None
@@ -565,7 +567,9 @@ class NabBuildEnv:
             msg = f"build requirement {label} could not be read at {archive}: {exc}"
             raise BuildEnvError(msg) from exc
 
-        with tempfile.TemporaryDirectory(prefix="nab-build-req-") as td:
+        with tempfile.TemporaryDirectory(
+            prefix="nab-build-req-", ignore_cleanup_errors=True
+        ) as td:
             try:
                 source_dir = extract_sdist_archive(data, Path(td))
             except ValueError as exc:

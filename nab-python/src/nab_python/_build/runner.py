@@ -99,7 +99,9 @@ def run_build_backend(
         _prepared_project(
             source_dir, data, config=config, offline=offline, chain=chain
         ) as (project, backend),
-        tempfile.TemporaryDirectory(prefix="nab-build-meta-") as out_str,
+        tempfile.TemporaryDirectory(
+            prefix="nab-build-meta-", ignore_cleanup_errors=True
+        ) as out_str,
     ):
         metadata_dir = _extract_metadata_dir(
             project,
