@@ -501,6 +501,20 @@ class TestFlatWheelhouse:
         assert [f.url for f in wheelhouse] == [flat.as_uri()]
         assert [f.local_path for f in wheelhouse] == [flat]
 
+    def test_dot_segment_in_root_is_dropped_from_artefact_urls(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A root spelled ``idx/../idx`` still names artefacts under ``idx``."""
+        root = tmp_path.resolve() / "idx"
+        root.mkdir()
+        wheel = root / "foo-1.0-py3-none-any.whl"
+        wheel.write_bytes(b"")
+
+        monkeypatch.chdir(root.parent)
+        client = LocalIndexClient("file:idx/../idx")
+
+        assert [f.url for f in run(client.get_files("foo"))] == [wheel.as_uri()]
+
     def test_unreadable_root_raises_index_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -830,6 +844,66 @@ class TestPep503Directory:
         result = run(client.get_files("foo"))
         assert len(result) == 1
         assert result[0].local_path == wheel_path.resolve()
+
+    def test_symlinked_package_dir_resolves_hrefs_against_the_page_path(
+        self, tmp_path: Path
+    ) -> None:
+        """A mirror may link ``<root>/<package>`` at a directory held elsewhere.
+
+        Its shared ``../../packages/`` tree still sits beside the root, not
+        beside the link target.
+        """
+        base = tmp_path.resolve()
+        name = "foo-1.0-py3-none-any.whl"
+
+        stored = base / "store" / "foo"
+        stored.mkdir(parents=True)
+        body = f'<a href="../../packages/ab/cd/{name}">foo</a>'
+        (stored / "index.html").write_text(body, encoding="utf-8")
+
+        simple = base / "mirror" / "simple"
+        simple.mkdir(parents=True)
+        (simple / "foo").symlink_to(stored, target_is_directory=True)
+
+        wheel = base / "mirror" / "packages" / "ab" / "cd" / name
+        wheel.parent.mkdir(parents=True)
+        wheel.write_bytes(b"")
+
+        client = LocalIndexClient(simple.as_uri())
+        result = run(client.get_files("foo"))
+
+        assert [f.url for f in result] == [wheel.as_uri()]
+        assert [f.local_path for f in result] == [wheel]
+
+    def test_symlinked_root_resolves_hrefs_against_the_page_path(
+        self, tmp_path: Path
+    ) -> None:
+        """The symlink may be the index root itself, not only ``<root>/<package>``.
+
+        A mirror can serve ``simple/`` out of another tree while the
+        ``../../packages/`` its pages link to sits beside the served root.
+        """
+        base = tmp_path.resolve()
+        name = "foo-1.0-py3-none-any.whl"
+
+        stored = base / "srv" / "mirror" / "simple"
+        (stored / "foo").mkdir(parents=True)
+        body = f'<a href="../../packages/ab/cd/{name}">foo</a>'
+        (stored / "foo" / "index.html").write_text(body, encoding="utf-8")
+
+        served = base / "home"
+        served.mkdir()
+        (served / "simple").symlink_to(stored, target_is_directory=True)
+
+        wheel = served / "packages" / "ab" / "cd" / name
+        wheel.parent.mkdir(parents=True)
+        wheel.write_bytes(b"")
+
+        client = LocalIndexClient((served / "simple").as_uri())
+        result = run(client.get_files("foo"))
+
+        assert [f.url for f in result] == [wheel.as_uri()]
+        assert [f.local_path for f in result] == [wheel]
 
     def test_relative_href_with_query_names_the_artifact(self, tmp_path: Path) -> None:
         # RFC 3986 puts the query outside the path, so a cache-busting query
