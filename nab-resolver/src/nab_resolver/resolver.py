@@ -449,6 +449,12 @@ class Resolver(Generic[PackageType, VersionType]):
         self.root_version = root_version
         self.format_range = format_range
 
+        # The widest value the type expresses is the identity a caller folds
+        # with, but a term needs a top its own difference agrees with, since
+        # conflict resolution relies on ``x.is_subset((x - y) | y)``.
+        self.fold_identity: RangeProtocol[Any] = range_type.full()
+        self.term_top: RangeProtocol[Any] = ~range_type.empty()
+
         self.incompatibilities: list[Incompatibility[Any, Any]] = []
         self.package_to_incompatibilities: defaultdict[Any, list[int]] = defaultdict(
             list
@@ -481,6 +487,16 @@ class Resolver(Generic[PackageType, VersionType]):
             tuple[bool, RangeProtocol[Any], RangeProtocol[Any]], SetRelation
         ] = {}
 
+    def as_term_range(self, range_: RangeProtocol[Any]) -> RangeProtocol[VersionType]:
+        """Return the term constraint to record for a supplied range.
+
+        Only a range equal to ``full()`` is substituted.  A range that breaks
+        the identity :class:`~nab_resolver.types.RangeProtocol` documents
+        without equalling ``full()``, such as ``full()`` minus an ``===``
+        literal, passes through and reaches conflict resolution's step budget.
+        """
+        return self.term_top if range_ == self.fold_identity else range_
+
     def resolve(
         self,
         requirements: Mapping[PackageType, RangeProtocol[VersionType]]
@@ -511,6 +527,10 @@ class Resolver(Generic[PackageType, VersionType]):
         it to be installed.  They are injected lazily: only when the
         resolver is about to decide a constrained package (meaning
         something already depends on it).
+
+        A supplied range equal to ``range_type.full()`` is recorded as
+        ``~range_type.empty()``, which may be strictly narrower; see
+        :class:`~nab_resolver.types.RangeProtocol`.
 
         Raises ``ResolutionError`` if no solution exists.
         """
@@ -606,8 +626,9 @@ class Resolver(Generic[PackageType, VersionType]):
             return next_package
         exact_range = self.range_type.singleton(chosen_version)
         widened = self.provider.widen_decision(next_package, chosen_version)
-        parent_range = exact_range if widened is None else widened
-        for dependency_package, dependency_range in dependencies.items():
+        parent_range = exact_range if widened is None else self.as_term_range(widened)
+        for dependency_package, supplied_range in dependencies.items():
+            dependency_range = self.as_term_range(supplied_range)
             cross_package = dependency_package != next_package
             if not cross_package:
                 # An incompatibility holds at most one term per package,
@@ -676,13 +697,14 @@ class Resolver(Generic[PackageType, VersionType]):
     ) -> None:
         """Create one root incompatibility per requirement, and decide root."""
         for idx, root in enumerate(requirements):
+            term_range = self.as_term_range(root.constraint)
             root_term: Term[Any, Any] = Term(
                 ROOT, self.range_type.singleton(self.root_version), positive=True
             )
             incompat_index.add_incompatibility(
                 self,
                 Incompatibility(
-                    [root_term, Term(root.package, root.constraint, positive=False)],
+                    [root_term, Term(root.package, term_range, positive=False)],
                     cause=IncompatibilityCause.ROOT,
                     origin=root.origin,
                 ),

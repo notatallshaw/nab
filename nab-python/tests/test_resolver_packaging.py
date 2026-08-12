@@ -420,6 +420,76 @@ class TestConflictDetection:
             )
 
 
+class TestArbitraryAdmittingRootRange:
+    """A bare root requirement supplies the top that admits ``===`` strings.
+
+    A subtraction that removes versions drops the admission, so recording it
+    in a term would stall conflict resolution.
+    """
+
+    def test_bare_root_requirement_reports_the_conflict(self) -> None:
+        """``a`` needs a ``b`` that has no versions; say so."""
+        provider = PackagingProvider(
+            {
+                "a": {
+                    V("3.0"): {"b": SpecifierSet(">=1")},
+                    V("2.0"): {"b": SpecifierSet(">=1")},
+                    V("1.0"): {"b": SpecifierSet(">=1")},
+                },
+            },
+        )
+        with pytest.raises(ResolutionError) as exc_info:
+            Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+                {"a": SpecifierSet("").to_range()}
+            )
+        message = str(exc_info.value)
+        assert "no versions of b" in message
+        assert "your project depends on a" in message
+        assert "resolver bug" not in message
+
+
+class _ArbitraryAdmittingProvider(PackagingProvider):
+    """A provider whose bare dependency edges keep the ``===`` admission.
+
+    :class:`PackagingProvider` opts out of it; a provider written against
+    :class:`~nab_resolver.types.RangeProtocol` alone need not.
+    """
+
+    def get_dependencies(
+        self, package: str, version: Version
+    ) -> dict[str, VersionRange]:
+        """Convert bare specifiers to the arbitrary-admitting full range."""
+        raw = self._packages.get(package, {}).get(version, {})
+        return {
+            dep: (spec.to_range() if spec else VersionRange.full())
+            for dep, spec in raw.items()
+        }
+
+
+class TestArbitraryAdmittingDependencyRange:
+    """A provider may hand back the admitting top on a bare dependency edge.
+
+    Here a stall would cost a solution rather than an explanation:
+    backtracking off ``a==3.0`` is what reaches the version that resolves.
+    """
+
+    def test_bare_dependency_edge_resolves(self) -> None:
+        """``a==3.0`` is unusable, so ``a==2.0`` is the answer."""
+        provider = _ArbitraryAdmittingProvider(
+            {
+                "a": {
+                    V("3.0"): {"c": SpecifierSet("")},
+                    V("2.0"): {},
+                },
+                "c": {V("1.0"): {"a": SpecifierSet(">=9.0")}},
+            },
+        )
+        result = Resolver(provider, range_type=VersionRange, root_version="0").resolve(
+            {"a": VersionRange.full(admit_arbitrary=False)}
+        )
+        assert result == {"a": V("2.0")}
+
+
 class TestMultiLevelConflict:
     """Verify the resolver handles conflicts requiring deep backtracking."""
 
