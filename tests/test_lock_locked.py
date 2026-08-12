@@ -493,6 +493,31 @@ def test_missing_direct_requirement_fires_without_resolving(
     mock.assert_not_called()
 
 
+def test_python_flag_activates_a_marker_and_fires_without_resolving(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # nab needs 3.10, so this marker is inactive on any host that runs the
+    # suite: only --python makes the requirement active.
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\ndependencies = ["foo; python_version < \\"3.10\\""]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({}))
+    capsys.readouterr()
+
+    mock = _locked_mock(_result({}))
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--python", "3.9")
+
+    assert exc.value.code == 1
+    assert (
+        "[project].dependencies requires foo and its marker applies here, but the"
+        " lock has no foo pin" in capsys.readouterr().err
+    )
+    mock.assert_not_called()
+
+
 # --- fall-through cases: the resolver is always called ---
 
 
@@ -587,6 +612,26 @@ def test_marker_inactive_absent_requirement_falls_through(
 
     mock = _locked_mock(_result({"foo": "1.0"}))
     _run_locked(pyproject, out, mock)
+
+    assert "is up to date" in capsys.readouterr().err
+    mock.assert_called_once()
+
+
+def test_python_flag_deactivates_a_marker_and_falls_through(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The mirror of the fire case: active on any host that runs the suite,
+    # inactive at 3.9, so the lock having no foo pin does not disqualify it.
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\ndependencies = ["foo; python_version >= \\"3.10\\""]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({}))
+    capsys.readouterr()
+
+    mock = _locked_mock(_result({}))
+    _run_locked(pyproject, out, mock, "--python", "3.9")
 
     assert "is up to date" in capsys.readouterr().err
     mock.assert_called_once()
