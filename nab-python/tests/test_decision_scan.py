@@ -12,22 +12,28 @@ which is the race a traced resolve caught: the listing arrives between
 
 Freezing that view keeps one scan consistent with itself, but the scans
 of two runs can still disagree: what had landed when each scan opened is
-a fact about the HTTP cache.  ``decision-order = "stable"`` closes that,
-and the last class here varies only which listings were already resident.
+a fact about the HTTP cache.  ``decision-order = "stable"`` closes that.
+Two classes cover the option: one varies only which listings were already
+resident, the other runs the engine, where the config reaches the provider.
 """
 
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from nab_index.client import WheelFile
 from nab_python._provider.priority import _NO_LISTING_PRIOR
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
-from nab_python.fetch import InMemoryIndex
-from nab_python.provider import DecisionOrder, Provider
+from nab_python.config import NabProjectConfig
+from nab_python.fetch import DEFAULT_INDEX_NAME, InMemoryIndex
+from nab_python.provider import BuildPolicy, DecisionOrder, Provider
+from nab_python.resolve import resolve_with_coordinator
+from nab_python.tags import PlatformSpec
+from nab_python.target import Matrix
 from nab_resolver import decide
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -137,20 +143,27 @@ class _LandsOnWait(threading.Event):
 
     def wait(self, timeout: float | None = None) -> bool:
         self._index.store_listing(self._package, self._files)
+        self._index.store_listing_index(self._package, DEFAULT_INDEX_NAME)
         self.set()
         return super().wait(timeout)
 
 
 def _fetching_coordinator(
     pending: Mapping[str, Sequence[WheelFile | SdistFile]],
+    *,
+    metadata_by_url: Mapping[str, str | None] | None = None,
 ) -> MagicMock:
-    """Coordinator whose listings land only for a caller that waits."""
-    coordinator = make_coordinator(None)
-    index = InMemoryIndex()
-    coordinator.index = index
-    coordinator.request_listing.side_effect = lambda package: _LandsOnWait(
-        index, package, pending[package]
-    )
+    """Coordinator whose listings land only for a caller that waits.
+
+    Only a caller that runs a whole resolve needs ``metadata_by_url``.
+    """
+    coordinator = make_coordinator(metadata_by_url=metadata_by_url)
+    index = coordinator.index
+
+    def request_listing(package: str, *, speculative: bool = False) -> threading.Event:
+        return _LandsOnWait(index, package, pending[package])
+
+    coordinator.request_listing.side_effect = request_listing
     return coordinator
 
 
@@ -209,6 +222,63 @@ def _cause() -> Incompatibility[str, Version]:
     return Incompatibility(
         [Term("root", VersionRange.full(), positive=True)],
         cause=IncompatibilityCause.DEPENDENCY,
+    )
+
+
+class _Counters(NamedTuple):
+    """One target's pins and the search counters behind them."""
+
+    pins: dict[str, str]
+    decisions: int
+    rounds: int
+    conflicts: int
+    backjumps: int
+
+
+_ALPHA_VERSIONS = ("1.0", "2.0", "3.0", "4.0", "5.0")
+
+
+def _sidecar(
+    package: str, version: str, requires: str | None = None
+) -> tuple[str, str]:
+    """Map one wheel's METADATA URL to its text."""
+    text = f"Metadata-Version: 2.1\nName: {package}\nVersion: {version}\n"
+    if requires is not None:
+        text += f"Requires-Dist: {requires}\n"
+    return f"{_wheel(package, version).url}.metadata", text
+
+
+def _engine_counters(decision_order: DecisionOrder) -> _Counters:
+    """Resolve ``alpha`` and ``beta`` off a cold index under ``decision_order``.
+
+    ``beta`` pins ``alpha`` to its oldest version, so a scan that ranks
+    ``alpha`` while ``beta``'s listing is in flight decides ``alpha`` on its
+    own five versions and has to take that decision back.
+    """
+    pending: dict[str, Sequence[WheelFile | SdistFile]] = {
+        "alpha": [_wheel("alpha", version) for version in _ALPHA_VERSIONS],
+        "beta": [_wheel("beta")],
+    }
+
+    sidecars = [_sidecar("alpha", version) for version in _ALPHA_VERSIONS]
+    sidecars.append(_sidecar("beta", "1.0", requires="alpha==1.0"))
+
+    result = resolve_with_coordinator(
+        _fetching_coordinator(pending, metadata_by_url=dict(sidecars)),
+        Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)).expand(),
+        [Requirement("alpha"), Requirement("beta")],
+        config=NabProjectConfig(
+            build_policy=BuildPolicy.NEVER, decision_order=decision_order
+        ),
+    )
+
+    target = result.target_results[0]
+    return _Counters(
+        pins={name: str(version) for name, version in target.pins.items()},
+        decisions=target.decisions,
+        rounds=target.rounds,
+        conflicts=target.conflicts,
+        backjumps=target.backjumps,
     )
 
 
@@ -393,3 +463,32 @@ class TestStableOrderIgnoresArrival:
 
         assert warm == "beta"
         assert cold == "alpha"
+
+
+class TestTheConfiguredOrderReachesTheSearch:
+    """A resolve searches in the order the project config asked for.
+
+    The config parsing ``stable`` and a provider built with it settling
+    listings are both covered elsewhere.  Only a whole resolve shows the
+    config reaching the provider, and the evidence is how the search went.
+    """
+
+    def test_stable_settles_the_listing_before_deciding(self) -> None:
+        """Waiting for ``beta`` pins both packages without backtracking."""
+        assert _engine_counters(DecisionOrder.STABLE) == _Counters(
+            pins={"alpha": "1.0", "beta": "1.0"},
+            decisions=3,
+            rounds=3,
+            conflicts=0,
+            backjumps=0,
+        )
+
+    def test_the_default_decides_before_the_listing_lands(self) -> None:
+        """The same input under ``arrival`` reaches the same pins by backtracking."""
+        assert _engine_counters(DecisionOrder.ARRIVAL) == _Counters(
+            pins={"alpha": "1.0", "beta": "1.0"},
+            decisions=4,
+            rounds=6,
+            conflicts=1,
+            backjumps=1,
+        )
