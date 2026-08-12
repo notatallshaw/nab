@@ -4730,6 +4730,101 @@ class TestDigitRunPastIntLimit:
             read_pyproject_config(path)
 
 
+# Outside an ASCII-only pattern, IGNORECASE matches U+0131 DOTLESS I against
+# "i" and U+017F LONG S against "s", so these operands read as the pre-release
+# word "preview" and the post-release word "post".
+_LOOKALIKE_OPERANDS = ["1.2.3prev\u0131ew1", "1.2.3po\u017ft1"]
+
+
+@pytest.mark.parametrize("operand", _LOOKALIKE_OPERANDS)
+class TestLookalikeLetterInVersion:
+    """A version spelled with a non-ASCII lookalike letter is a config error.
+
+    ``Version()`` accepts only the ASCII pre- and post-release words, so a
+    specifier that admitted one of these operands could never parse its own
+    version.  Every ``[tool.nab]`` key holding a requirement or a
+    ``requires-python`` specifier rejects it.
+    """
+
+    def test_requires_python(self, tmp_path: Path, operand: str) -> None:
+        path = write(tmp_path, f'[tool.nab]\nrequires-python = "~={operand}"\n')
+        with pytest.raises(
+            ConfigError, match="requires-python must be a PEP 440 specifier"
+        ):
+            read_pyproject_config(path)
+
+    def test_constraints(self, tmp_path: Path, operand: str) -> None:
+        path = write(tmp_path, f'[tool.nab]\nconstraints = ["widget ~={operand}"]\n')
+        with pytest.raises(
+            ConfigError, match=r"constraints\[0\] is not a valid requirement"
+        ):
+            read_pyproject_config(path)
+
+    def test_packages_selector(self, tmp_path: Path, operand: str) -> None:
+        path = write(
+            tmp_path,
+            f'[tool.nab.packages."widget ~={operand}"]\ndist-policy = "sdist-only"\n',
+        )
+        with pytest.raises(ConfigError, match="is not a valid PEP 508 requirement"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_package_rules_match(self, tmp_path: Path, operand: str) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.package-rules]]\n"
+            f'match = ["widget ~={operand}"]\n'
+            'dist-policy = "sdist-only"\n',
+        )
+        with pytest.raises(ConfigError, match="is not a valid PEP 508 requirement"):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_package_rules_requires_python(self, tmp_path: Path, operand: str) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.package-rules]]\n"
+            'match = ["widget"]\n'
+            f'requires-python = "~={operand}"\n',
+        )
+        with pytest.raises(
+            ConfigError, match="requires-python must be a PEP 440 specifier"
+        ):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_package_rules_dependencies(self, tmp_path: Path, operand: str) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.package-rules]]\n"
+            'match = ["widget"]\n'
+            f'dependencies = ["gadget ~={operand}"]\n',
+        )
+        with pytest.raises(
+            ConfigError, match=r"dependencies\[0\] is not a valid PEP 508 requirement"
+        ):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_package_override_requires_python(
+        self, tmp_path: Path, operand: str
+    ) -> None:
+        path = write(
+            tmp_path,
+            f'[tool.nab.packages.widget]\nrequires-python = "~={operand}"\n',
+        )
+        with pytest.raises(
+            ConfigError, match="requires-python must be a PEP 440 specifier"
+        ):
+            read_pyproject_config(path, discover_workspace=False)
+
+    def test_package_override_dependencies(self, tmp_path: Path, operand: str) -> None:
+        path = write(
+            tmp_path,
+            f'[tool.nab.packages.widget]\ndependencies = ["gadget ~={operand}"]\n',
+        )
+        with pytest.raises(
+            ConfigError, match=r"dependencies\[0\] is not a valid PEP 508 requirement"
+        ):
+            read_pyproject_config(path, discover_workspace=False)
+
+
 class TestWorkspace:
     """``[tool.nab.workspace]`` parses into a typed :class:`WorkspaceConfig`."""
 
