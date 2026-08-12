@@ -8,6 +8,7 @@ the one running the suite.  One smoke test uses the live sources.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -109,37 +110,45 @@ class TestForHost:
         assert target.tags.ordered
 
 
-class TestPythonRelease:
-    """``Requires-Python`` names a release, so a prerelease host is one."""
+class TestPrereleaseHost:
+    """``Requires-Python`` names a language, so a prerelease host is one."""
 
-    def test_a_release_candidate_host_is_its_release(self) -> None:
+    def test_a_release_candidate_host_admits_its_release(self) -> None:
         """A 3.15 candidate satisfies ``>=3.15``, as it does under pip.
 
-        The PEP 508 marker value keeps the ``rc``, but a specifier admits no
+        The PEP 508 full version keeps the ``rc``, and a specifier admits no
         prerelease unless it names one, so comparing that value would drop
         every distribution requiring the release the host is a candidate for.
         """
         target = ResolveTarget.for_host(
-            env_source=lambda: {**_HOST_ENV, "python_full_version": "3.15.0rc1"},
+            env_source=lambda: {
+                **_HOST_ENV,
+                "python_full_version": "3.15.0rc1",
+                "python_version": "3.15",
+            },
             tags_source=_host_tags,
         )
         assert target.python_full_version == "3.15.0rc1"
-        assert target.python_release == Version("3.15.0")
-        assert target.python_release in SpecifierSet(">=3.15")
-
-    def test_a_final_release_is_itself(self) -> None:
-        target = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
-        assert target.python_release == Version(_HOST_ENV["python_full_version"])
+        assert target.admits_requires_python(SpecifierSet(">=3.15"))
+        assert target.admits_requires_python(SpecifierSet("==3.15"))
 
 
 class TestTargetPythonIsComparable:
     """Every candidate's Requires-Python is tested against this target."""
 
-    def test_an_unparseable_python_names_itself(self) -> None:
+    def test_an_unparseable_full_version_names_itself(self) -> None:
         """A local-build version fails here, not once per candidate."""
-        with pytest.raises(ValueError, match="not a PEP 440 version"):
+        with pytest.raises(ValueError, match="python_full_version '3.11.2\\+'"):
             ResolveTarget.for_host(
                 env_source=lambda: {**_HOST_ENV, "python_full_version": "3.11.2+"},
+                tags_source=_host_tags,
+            )
+
+    def test_an_unparseable_minor_names_itself(self) -> None:
+        """Requires-Python is compared against the minor, so it is checked too."""
+        with pytest.raises(ValueError, match="python_version '3.11\\+'"):
+            ResolveTarget.for_host(
+                env_source=lambda: {**_HOST_ENV, "python_version": "3.11+"},
                 tags_source=_host_tags,
             )
 
@@ -219,7 +228,7 @@ class TestForHostPython:
             "3.13.0", env_source=_host_env, tags_source=_host_tags
         )
         assert not target.is_minor_interval
-        assert not target.admits_requires_python(SpecifierSet(">=3.13.5"))
+        assert 'python_full_version == "3.13.0"' in declared_range_marker(target)
 
     def test_bare_minor_is_an_interval(self) -> None:
         """A bare ``3.13`` target is a micro interval off its ``.0`` floor."""
@@ -288,74 +297,120 @@ class TestForDeclared:
         assert not any("manylinux" in t for t in tag_strs)
 
 
-class TestAdmitsRequiresPython:
-    """A minor interval admits a candidate whose Requires-Python overlaps it.
+def _a_bare_minor_target() -> ResolveTarget:
+    """A declared 3.13 target, standing for every micro of the minor."""
+    return ResolveTarget.for_declared(
+        python_version="3.13", spec=PlatformSpec("linux_x86_64")
+    )
 
-    Range overlap, not a scalar probe: truncating the compared scalar to
-    major.minor is a no-op, since ``3.13`` and ``3.13.0`` are both excluded by
-    ``>= "3.13.2"``.  The interval minor honours a micro floor at the language
-    minor it names; a whole target keeps the scalar test.
+
+def _a_patch_pinned_target() -> ResolveTarget:
+    """A matrix ``python-patches`` target pinned to one micro of 3.13."""
+    return ResolveTarget.for_declared(
+        python_version="3.13",
+        spec=PlatformSpec("linux_x86_64"),
+        python_full_version="3.13.4",
+    )
+
+
+def _a_host_target() -> ResolveTarget:
+    """The 3.13.2 host of ``_HOST_ENV``, reporting a real interpreter."""
+    return ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
+
+
+_EVERY_TARGET_KIND = pytest.mark.parametrize(
+    "make_target",
+    [
+        pytest.param(_a_bare_minor_target, id="bare-minor"),
+        pytest.param(_a_patch_pinned_target, id="patch-pin"),
+        pytest.param(_a_host_target, id="host"),
+    ],
+)
+
+# Requires-Python declarations and whether they admit the 3.13 language.
+_ADMITS_PYTHON_3_13 = [
+    ("", True),
+    ("==3.13", True),
+    ("==3.13.*", True),
+    ("==3.13.4.*", True),
+    ("==3.13.4", True),
+    ("==3.13.0", True),
+    ("==3.*", True),
+    ("==3", False),
+    ("==3.14", False),
+    ("!=3.13", False),
+    ("!=3.13.*", False),
+    ("!=3.13.0.*", True),
+    ("!=3.*", False),
+    ("!=3.13.7", True),
+    ("!=3.13.0", True),
+    ("!=3.13rc1", True),
+    ("!=3.13.post1", True),
+    ("!=3.13.dev1", True),
+    ("!=3.13+local", True),
+    (">=3.13", True),
+    (">=3.13.1", True),
+    (">=3.13.8", True),
+    (">=3.10a1", True),
+    (">=3.14", False),
+    (">=1!3.13", False),
+    (">3.13", True),
+    (">3.13.9", True),
+    ("<=3.13", True),
+    ("<=3.13.2", True),
+    ("<=3.13.0rc1", False),
+    ("<3.13.5", True),
+    ("<3.13", False),
+    ("<3.14", True),
+    ("<3.11", False),
+    ("~=3.13", True),
+    ("~=3.13.4", True),
+    ("~=3.14.0", False),
+    ("===3.13", True),
+    ("===3.13.7", True),
+    ("===not-a-version", False),
+    (">=3.7,!=3.9.7", True),
+]
+
+
+class TestAdmitsRequiresPython:
+    """Requires-Python names a language, so every target answers at its minor.
+
+    A micro segment says which patch releases a distribution was built and
+    tested against, not which Python it runs on, so it neither admits a minor
+    nor excludes one.  The three kinds of target differ in how precisely they
+    name their interpreter and agree on every declaration.
     """
 
-    @staticmethod
-    def _minor_target() -> ResolveTarget:
-        return ResolveTarget.for_declared(
-            python_version="3.13", spec=PlatformSpec("linux_x86_64")
-        )
+    @_EVERY_TARGET_KIND
+    @pytest.mark.parametrize(("spec", "admits"), _ADMITS_PYTHON_3_13)
+    def test_the_language_level_verdict(
+        self, make_target: Callable[[], ResolveTarget], spec: str, admits: bool
+    ) -> None:
+        assert make_target().admits_requires_python(SpecifierSet(spec)) is admits
 
-    def test_a_micro_floor_admits_the_whole_minor(self) -> None:
-        target = self._minor_target()
-        assert target.is_minor_interval
-        assert target.admits_requires_python(SpecifierSet(">=3.13.2"))
+    def test_a_declaration_that_names_only_micros_admits_everything(self) -> None:
+        """Every clause dropping leaves an empty set, which excludes nothing."""
+        target = _a_bare_minor_target()
+        assert target.admits_requires_python(SpecifierSet("!=3.13.7,!=3.9.2"))
 
-    def test_the_scalar_probe_is_a_no_op_trap(self) -> None:
-        target = self._minor_target()
-        assert target.python_release not in SpecifierSet(">=3.13.2")
-        assert Version("3.13") not in SpecifierSet(">=3.13.2")
-
-    def test_a_disjoint_floor_still_excludes(self) -> None:
-        target = self._minor_target()
-        assert not target.admits_requires_python(SpecifierSet(">=3.14"))
-        assert not target.admits_requires_python(SpecifierSet("<3.13"))
-
-    def test_a_whole_host_target_uses_the_scalar_test(self) -> None:
-        target = ResolveTarget.for_host(env_source=_host_env, tags_source=_host_tags)
-        assert not target.is_minor_interval
-        assert target.admits_requires_python(SpecifierSet(">=3.13.2"))
-        assert not target.admits_requires_python(SpecifierSet(">=3.13.3"))
-
-    def test_a_python_patches_micro_is_whole(self) -> None:
-        target = ResolveTarget.for_declared(
-            python_version="3.13",
-            spec=PlatformSpec("linux_x86_64"),
-            python_full_version="3.13.4",
-        )
-        assert not target.is_minor_interval
-        assert target.admits_requires_python(SpecifierSet(">=3.13.2"))
-        assert not target.admits_requires_python(SpecifierSet(">=3.13.5"))
-
-    def test_a_python_patches_zero_micro_is_whole(self) -> None:
-        """A ``.0`` pin is a concrete deployment micro, not a bare minor floor."""
-        target = ResolveTarget.for_declared(
-            python_version="3.13",
-            spec=PlatformSpec("linux_x86_64"),
-            python_full_version="3.13.0",
-        )
-        assert not target.is_minor_interval
-        assert target.admits_requires_python(SpecifierSet(">=3.13.0"))
-        assert not target.admits_requires_python(SpecifierSet(">=3.13.5"))
+    @_EVERY_TARGET_KIND
+    def test_an_uncomparable_version_raises(
+        self, make_target: Callable[[], ResolveTarget]
+    ) -> None:
+        """A version too large to compare raises instead of getting a verdict."""
+        oversized = SpecifierSet(">=3." + "9" * 5000)
+        with pytest.raises(ValueError, match="Exceeds the limit"):
+            make_target().admits_requires_python(oversized)
 
     def test_every_slice_of_a_split_minor_agrees(self) -> None:
         """A slice off a bare minor is an interval on every side of the split.
 
         A split moves the upper slice onto a real micro representative, but the
         row still stands for every interpreter above the boundary, so the whole
-        minor is the admission granularity.  Answering the upper slice at its
-        representative reverts to the synthetic-floor bug: a candidate whose
-        Requires-Python only its interpreters satisfy would be dropped on the
-        slice that can install it.
+        minor is the admission granularity.
         """
-        floor, upper = slices_from_points(self._minor_target(), [Version("3.13.4")])
+        floor, upper = slices_from_points(_a_bare_minor_target(), [Version("3.13.4")])
         assert floor.is_minor_interval
         assert upper.is_minor_interval
         spec = SpecifierSet(">=3.13.6")

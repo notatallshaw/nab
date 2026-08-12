@@ -2379,7 +2379,12 @@ class TestLocalVcsRequiresPython:
         assert result.success
         assert str(result.target_results[0].pins["foo"]) == "1.0"
 
-    def test_patch_below_local_requires_python_fails(self, tmp_path: Path) -> None:
+    def test_patch_below_local_requires_python_resolves(self, tmp_path: Path) -> None:
+        """A floor above the pinned patch is still the 3.13 language.
+
+        The pin says which micro the lock's markers describe, not which
+        micros the source supports, so the check runs at the minor.
+        """
         local = self._write(
             tmp_path,
             '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.13.5"\n',
@@ -2393,10 +2398,8 @@ class TestLocalVcsRequiresPython:
             ),
             local,
         )
-        assert not result.success
-        error = result.target_results[0].error
-        assert error is not None
-        assert "foo 1.0 requires Python" in str(error)
+        assert result.success
+        assert str(result.target_results[0].pins["foo"]) == "1.0"
 
 
 def _archive_bytes(name: str, version: str, pyproject: str) -> bytes:

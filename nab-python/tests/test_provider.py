@@ -566,7 +566,7 @@ class TestFetchVersions:
 
         The entry is a string, so it passes the parser's isinstance guard and
         SpecifierSet accepts it; the ValueError only lands when the target
-        compares against it, on either branch of admits_requires_python.
+        compares against it, where the listing catches it and keeps the wheel.
         """
         oversized = ">=" + "1" * (sys.get_int_max_str_digits() + 1)
         data = {

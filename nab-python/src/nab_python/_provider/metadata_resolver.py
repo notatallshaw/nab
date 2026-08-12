@@ -754,7 +754,7 @@ def _reject_incompatible_python(
 
     msg = (
         f"{package} {version} requires Python {spec} but the"
-        f" {target.label} resolve targets Python {target.python_full_version}"
+        f" {target.label} resolve targets Python {target.python_version}"
     )
     raise IncompatiblePythonError(msg)
 

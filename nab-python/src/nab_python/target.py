@@ -32,7 +32,7 @@ from ._conflict_kind import (
 from ._vendor.packaging import tags as ptags
 from ._vendor.packaging.markers import Marker, default_environment
 from ._vendor.packaging.markersets import variable_names
-from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from ._vendor.packaging.specifiers import InvalidSpecifier, Specifier, SpecifierSet
 from ._vendor.packaging.version import InvalidVersion, Version
 from .tags import (
     FREE_THREADED_MIN_PYTHON,
@@ -42,7 +42,6 @@ from .tags import (
 )
 
 if TYPE_CHECKING:
-    from ._vendor.packaging.ranges import VersionRange
     from .tags import TagsSource
 
 
@@ -704,6 +703,134 @@ def apply_python_axis_overlay(
     environment.update(axis)
 
 
+def _language_minor(version: Version) -> str:
+    """Return ``version`` as an epoch-preserving ``major.minor`` string.
+
+    ``3.13.7`` and ``3.13rc1`` both give ``3.13``; a version written with
+    only a major (``3``) gives ``3.0``.  The epoch survives because
+    ``1!3.13`` and ``3.13`` name different languages.
+    """
+    release = version.release
+    minor = release[1] if len(release) >= _PYTHON_VERSION_PARTS else 0
+    epoch = f"{version.epoch}!" if version.epoch else ""
+    return f"{epoch}{release[0]}.{minor}"
+
+
+def _names_a_micro(version: Version) -> bool:
+    """Whether ``version`` names a point inside a minor rather than the minor.
+
+    ``3.13.7`` and ``3.13.0`` name one micro, ``3.13rc1`` one prerelease of
+    one; ``3.13`` and ``3`` name the minor itself.
+    """
+    return (
+        len(version.release) > _PYTHON_VERSION_PARTS
+        or version.pre is not None
+        or version.post is not None
+        or version.dev is not None
+        or version.local is not None
+    )
+
+
+def _arbitrary_at_the_minor(raw: str) -> str:
+    """Rewrite a ``===`` version, which names one interpreter build.
+
+    A version PEP 440 cannot parse is kept as written.  ``===`` compares by
+    string, so it goes on matching nothing.
+    """
+    try:
+        named = Version(raw)
+    except InvalidVersion:
+        return f"==={raw}"
+    return f"=={_language_minor(named)}"
+
+
+def _prefix_at_the_minor(operator: str, raw: str) -> str | None:
+    """Rewrite an ``==``/``!=`` prefix match to the minor its prefix names.
+
+    ``== "3.*"`` carries no minor of its own and already matches whole
+    major.minor values, so it is kept as written.  A prefix reaching past
+    the minor names micros of it, so it reads like the point clause of the
+    same operator: ``== "3.13.4.*"`` still admits 3.13, while
+    ``!= "3.13.0.*"`` leaves the rest of the minor and drops.
+    """
+    prefix = Version(raw.removesuffix(".*"))
+    if len(prefix.release) < _PYTHON_VERSION_PARTS:
+        return f"{operator}{raw}"
+    if operator == "!=" and _names_a_micro(prefix):
+        return None
+    return f"{operator}{_language_minor(prefix)}"
+
+
+def _bound_at_the_minor(operator: str, version: Version, minor: str) -> str:
+    """Rewrite an ordered clause to bound whole minors.
+
+    A bound anywhere inside a minor still leaves micros of that minor on its
+    admitted side, so ``> "3.13.9"`` becomes ``>= "3.13"``.  Only an upper
+    bound at or below the minor's ``.0`` floor excludes the minor outright.
+    """
+    if operator in {">", ">="}:
+        return f">={minor}"
+    floor = Version(minor)
+    admits_a_micro = version > floor if operator == "<" else version >= floor
+    return f"<={minor}" if admits_a_micro else f"<{minor}"
+
+
+def _language_level_clause(clause: Specifier) -> str | None:
+    """Rewrite one ``Requires-Python`` clause to name language versions.
+
+    Returns ``None`` for a clause that constrains only micros, which says
+    nothing about any minor and so drops out of the set.
+    """
+    operator, raw = clause.operator, clause.version
+    if operator == "===":
+        return _arbitrary_at_the_minor(raw)
+    if raw.endswith(".*"):
+        return _prefix_at_the_minor(operator, raw)
+
+    version = Version(raw)
+    minor = _language_minor(version)
+    if operator in {">", ">=", "<", "<="}:
+        return _bound_at_the_minor(operator, version, minor)
+    if operator == "!=":
+        return None if _names_a_micro(version) else f"!={minor}"
+
+    # ~= "3.13.4" is >= "3.13.4", == "3.13.*": exactly the 3.13 minor.
+    if operator == "~=" and len(version.release) > _PYTHON_VERSION_PARTS:
+        return f"=={minor}"
+
+    # ~= "3.13" and == "3.13" already say what they mean about the minor.
+    return f"{operator}{minor}"
+
+
+def _language_level(spec: SpecifierSet) -> SpecifierSet:
+    """Reduce a ``Requires-Python`` specifier to language (major.minor) level.
+
+    ``Requires-Python`` states which Python language a distribution runs on,
+    so nab reads it at that granularity: ``>= "3.13.2"`` supports the 3.13
+    language, and a micro segment neither adds a version nor takes one away.
+    The result is compared against a target's ``python_version``, which is
+    itself a bare ``major.minor``.
+
+    A version no ``int()`` can hold raises :class:`ValueError` here, as
+    comparing against the raw specifier does.
+    """
+    clauses = (_language_level_clause(clause) for clause in spec)
+    return SpecifierSet(",".join(clause for clause in clauses if clause is not None))
+
+
+def _check_comparable(label: str, name: str, value: str) -> None:
+    """Reject a target python value no version comparison can read.
+
+    ``label`` and ``name`` identify the target and the marker variable, so
+    the failure says which value to fix.
+    """
+    try:
+        Version(value)
+    except InvalidVersion as exc:
+        msg = f"target {label!r} names {name} {value!r}, which is not a PEP 440 version"
+        raise ValueError(msg) from exc
+
+
 @dataclass(frozen=True)
 class ResolveTarget:
     """One environment a resolve runs against: markers, wheel tags, a name.
@@ -757,18 +884,14 @@ class ResolveTarget:
     def __post_init__(self) -> None:
         """Reject a python the resolve cannot compare Requires-Python against.
 
-        Every candidate's ``Requires-Python`` is tested against this target,
-        so an unparseable version has to fail here, naming itself, rather than
-        as an ``InvalidVersion`` raised per candidate deep in the listing.
+        Every candidate's ``Requires-Python`` is tested against
+        ``python_version`` and every version marker against
+        ``python_full_version``, so an unparseable value has to fail here,
+        naming itself, rather than as an ``InvalidVersion`` raised per
+        candidate deep in the listing.
         """
-        try:
-            Version(self.python_full_version)
-        except InvalidVersion as exc:
-            msg = (
-                f"target {self.label!r} names python_full_version"
-                f" {self.python_full_version!r}, which is not a PEP 440 version"
-            )
-            raise ValueError(msg) from exc
+        _check_comparable(self.label, "python_version", self.python_version)
+        _check_comparable(self.label, "python_full_version", self.python_full_version)
 
     @property
     def python_version(self) -> str:
@@ -781,29 +904,16 @@ class ResolveTarget:
         return self.marker_env["python_full_version"]
 
     @property
-    def python_release(self) -> Version:
-        """The release a ``Requires-Python`` specifier is compared against.
-
-        ``python_full_version`` is the PEP 508 marker value, so on a release
-        candidate it carries the ``rc``.  A specifier admits no prerelease
-        unless it names one, so comparing that value directly would exclude
-        every distribution requiring the very release the interpreter is a
-        candidate for.  pip compares ``sys.version_info``, and so does this.
-        """
-        return Version(Version(self.python_full_version).base_version)
-
-    @property
     def is_minor_interval(self) -> bool:
         """Whether this target is a bare minor resolved as a micro interval.
 
         A host reports a real interpreter and a python-patches pin names a
         concrete micro; both are whole and resolve at one point.  A bare minor
         synthesizes ``{minor}.0`` and stands for every real micro of the minor,
-        so the micro line can be split on it and Requires-Python is answered
-        against the whole minor, not the synthetic floor.  A slice off that
-        minor carries ``micro_clauses`` and still stands for every interpreter
-        its bounds admit, so it too is an interval answering Requires-Python at
-        the same whole minor.
+        so the micro line can be split on it and the emitted markers leave the
+        micro open.  A slice off that minor carries ``micro_clauses`` and still
+        stands for every interpreter its bounds admit, so it too is an
+        interval.
 
         A pinned ``X.Y.0`` reads as the synthetic floor by string alone, so the
         concrete-micro flag, not the value, decides: a python-patches pin is
@@ -815,26 +925,16 @@ class ResolveTarget:
             return True
         return self.python_full_version == f"{self.python_version}.0"
 
-    @property
-    def minor_range(self) -> VersionRange:
-        """The ``[X.Y.0, X.(Y+1).0)`` range this target's minor covers."""
-        release = Version(self.python_version).release
-        major, minor = release[0], release[1]
-        return SpecifierSet(f">={major}.{minor}.0,<{major}.{minor + 1}.0").to_range()
-
     def admits_requires_python(self, spec: SpecifierSet) -> bool:
         """Whether a candidate's ``Requires-Python`` admits this target.
 
-        A whole target (host or a concrete micro) is admitted when its single
-        release satisfies ``spec``.  A minor interval is admitted when ``spec``
-        overlaps the whole minor, so a micro floor like ``>= "3.13.2"`` admits
-        the 3.13 minor instead of excluding it at the synthetic ``.0`` floor.
-        The test is range overlap, not a scalar ``in``: ``>= "3.13.2"`` would
-        exclude both ``3.13`` and ``3.13.0``.
+        Both sides are read at the language minor: ``spec`` through
+        :func:`_language_level` and the target through its
+        ``python_version``.  Every kind of target answers the same way, so a
+        micro floor like ``>= "3.13.2"`` admits 3.13 whether the target is a
+        bare minor, a patch-level pin, or the running host.
         """
-        if self.is_minor_interval:
-            return not spec.to_range().intersection(self.minor_range).is_empty
-        return self.python_release in spec
+        return _language_level(spec).contains(self.python_version)
 
     @property
     def implementation(self) -> str:

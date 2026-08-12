@@ -5,12 +5,12 @@ from __future__ import annotations
 import pytest
 
 from nab_python._vendor.packaging.markers import Marker, default_environment
-from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python.tags import PlatformSpec
 from nab_python.target import (
     KNOWN_PYTHON_MINORS,
     Matrix,
     _pythons_in_range,
+    declared_range_marker,
 )
 
 
@@ -169,7 +169,11 @@ class TestMatrixExpand:
         assert tuples[0].marker_env["python_full_version"] == "3.11.0"
 
     def test_python_patches_zero_micro_pins_whole(self) -> None:
-        """A ``.0`` pin is a concrete micro resolved whole, not a bare minor."""
+        """A ``.0`` pin is a concrete micro resolved whole, not a bare minor.
+
+        The two read the same by string, so only the pin's markers tell them
+        apart: a whole target declares the micro it resolved at.
+        """
         matrix = Matrix(
             python="==3.13",
             platforms=(PlatformSpec("linux_x86_64"),),
@@ -177,7 +181,7 @@ class TestMatrixExpand:
         )
         target = matrix.expand()[0]
         assert not target.is_minor_interval
-        assert not target.admits_requires_python(SpecifierSet(">=3.13.5"))
+        assert 'python_full_version == "3.13.0"' in declared_range_marker(target)
 
     def test_python_patches_partial_mapping(self) -> None:
         """A partial mapping uses overrides for declared minors only."""

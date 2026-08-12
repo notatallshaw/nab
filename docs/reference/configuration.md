@@ -410,12 +410,15 @@ it both widens and narrows:
   older Pythons reject it.
 
 The override goes through the same comparison a declared
-`Requires-Python` value takes (the full target Python version against
-the specifier), so it admits or rejects a version exactly as a declared
-value would.  An empty string (`requires-python = ""`) removes
-the Python requirement entirely (admits every target).  For an index pin
-the lock records the overridden specifier, so a widened pin stays
-installable by a conforming PEP 751 installer.  A local-path or VCS pin
+`Requires-Python` value takes, so it admits or rejects a version exactly
+as a declared value would.  That comparison is made at the language
+version: a micro segment neither admits a target nor excludes one, so
+`>=3.13.2`, `==3.13.4` and `==3.13.*` all admit a 3.13 target, while
+`!=3.13` excludes every 3.13 interpreter.  An empty string
+(`requires-python = ""`) removes the Python requirement entirely (admits
+every target).  For an index pin the lock records the overridden
+specifier, so a widened pin stays installable by a conforming PEP 751
+installer, which enforces it in full.  A local-path or VCS pin
 has no `requires-python` field, but the override is still what its Python
 check enforces.
 
@@ -844,8 +847,13 @@ error.  See [Build policy](build-policy.md).
 * `[tool.nab].requires-python` (or `[project].requires-python`): the
   range the project supports.  A declaration.  It is recorded as the
   lockfile's top-level `requires-python` and checked against the resolve
-  target; it does not choose that target.  A declaration that excludes
-  the target is a config error naming the knob that moves it:
+  target; it does not choose that target.  The check reads the
+  declaration at the language version, the same way a candidate's
+  `Requires-Python` is read, so `==3.13` and `>=3.13.2` both admit a
+  3.13 target however precisely that target names its interpreter, and
+  `!=3.13` excludes one however it is named.  A
+  declaration that excludes the target is a config error naming the knob
+  that moves it:
   `[tool.nab.environment] python` for a single-environment resolve,
   `[tool.nab.matrix].python` and `[tool.nab.matrix.python-patches]` for a
   matrix target, since neither `--python` nor `[tool.nab.environment]` is
