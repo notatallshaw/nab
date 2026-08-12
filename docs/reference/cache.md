@@ -8,9 +8,9 @@ and reset it with [`nab cache`](cli.md).
 
 ## Layout
 
-Each entry is one file under a versioned bucket directory. Bumping a
-bucket's version suffix retires the old format: the stale directory is
-harmless and `nab cache clear` reclaims it.
+Each record nab writes is one file under a versioned bucket directory.
+Bumping a bucket's version suffix retires the old format: the stale
+directory is harmless and `nab cache clear` reclaims it.
 
 | Bucket | Holds |
 | ------ | ----- |
@@ -20,11 +20,24 @@ harmless and `nab cache clear` reclaims it.
 | `metadata-v1/` | PEP 658 metadata and recovered wheel `METADATA`, immutable |
 | `sdist-v1/` | an sdist's `PKG-INFO` and `pyproject.toml`, immutable |
 
-Buckets are keyed per index, so two indexes never share an entry. A
-listing body is stored as PEP 691 JSON; when the index answers in PEP 503
-HTML the stored body is nab's own JSON rendering of the page. An index
-pinned to one `serialization` gets its own listing directories, since the
-stored body records nothing about which form it came from.
+Record buckets are keyed per index, so two indexes never share an entry.
+A listing body is stored as PEP 691 JSON; when the index answers in PEP
+503 HTML the stored body is nab's own JSON rendering of the page. An
+index pinned to one `serialization` gets its own listing directories,
+since the stored body records nothing about which form it came from.
+
+A declared VCS or archive source (see [Configuration](configuration.md))
+fills a bucket of its own:
+
+| Bucket | Holds |
+| ------ | ----- |
+| `vcs/` | a shallow clone, at `vcs/vcs/<repo key>/<commit sha>/` |
+| `archive/` | an extracted archive, at `archive/<archive digest>/` |
+
+Both hold upstream files rather than nab records, so neither is versioned
+or keyed per index. Under `--no-cache` there is no root to write to, so
+the run materialises them in a temporary directory and discards them at
+the end.
 
 ## Freshness
 
@@ -61,10 +74,12 @@ formats nab cannot read.
 
 ## Verifying and clearing
 
-`nab cache verify` walks every bucket read-only and reports any entry that
-will not parse, including a parsed blob that is not decodable. It checks
-structure only, not freshness: a stale-but-valid parsed blob is not
-corrupt, since the digest binding retires it at read time. `nab cache
-clear` removes every bucket, returning the cache to cold. Both refuse a
-root that does not look like a nab cache and never follow a symlink out of
-it.
+`nab cache verify` walks the record buckets read-only and reports any
+entry that will not parse, including a parsed blob that is not decodable.
+It checks structure only, not freshness: a stale-but-valid parsed blob is
+not corrupt, since the digest binding retires it at read time. Clones and
+extracted archives hold no nab records, so `verify` skips them.
+
+`nab cache clear` removes every bucket, clones and archives included,
+returning the cache to cold. `verify` and `clear` both refuse a root that
+does not look like a nab cache and never follow a symlink out of it.
