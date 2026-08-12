@@ -88,6 +88,22 @@ def choose_version(resolver: Resolver[Any, Any], package: Any) -> Any | None:
     return resolver.provider.choose_version(package, current_range)
 
 
+def _normalize_terms(
+    resolver: Resolver[Any, Any], incompatibility: Incompatibility[Any, Any]
+) -> None:
+    """Replace, in place, any term whose constraint is not a legal term range.
+
+    A provider builds a pending clause's terms itself, so they reach the
+    formula without the substitution a supplied range gets on the way in.
+    """
+    for index, term in enumerate(incompatibility.terms):
+        constraint = resolver.as_term_range(term.constraint)
+        if constraint is not term.constraint:
+            incompatibility.terms[index] = Term(
+                term.package, constraint, positive=term.is_positive()
+            )
+
+
 def absorb_pending_clauses(resolver: Resolver[Any, Any]) -> bool:
     """Drain provider-queued incompatibilities into the formula.
 
@@ -98,6 +114,7 @@ def absorb_pending_clauses(resolver: Resolver[Any, Any]) -> bool:
     """
     clauses = list(resolver.provider.consume_pending_clauses())
     for incompatibility in clauses:
+        _normalize_terms(resolver, incompatibility)
         add_incompatibility(resolver, incompatibility)
     return bool(clauses)
 
@@ -156,7 +173,7 @@ def record_no_versions(
     if had_pending:
         return
 
-    current_range = resolver.solution.get(package) or resolver.range_type.full()
+    current_range = resolver.solution.get(package) or resolver.term_top
     resolver.observer.on_no_versions(package, current_range)
 
     constraint = resolver.constraints.get(package)
