@@ -24,9 +24,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-    from datetime import datetime
-
     from nab_python.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
@@ -34,6 +31,26 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from benchmark_config import (
+    benchmark_index_settings,
+    build_benchmark_config,
+    build_benchmark_provider,
+    build_benchmark_resolver_inputs,
+    direct_packages_from_requirements,
+    parse_scenario_build_packages,
+    parse_scenario_index_routes,
+    parse_scenario_indexes,
+    parse_scenario_project_metadata,
+    parse_scenario_requirement_strings,
+    parse_scenario_vcs_config,
+    parse_trust_unverified_sdist_deps,
+    parse_vcs_allowed_repos,
+    parse_vcs_allowed_schemes,
+    parse_vcs_policy,
+    parse_vcs_require_pin,
+    validate_scenario_build_policy,
+    validate_scenario_settings,
+)
 from benchmark_datetime import parse_datetime
 from benchmark_host import (
     BenchmarkHost,
@@ -43,28 +60,14 @@ from benchmark_host import (
 )
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_index.multi_index import IndexConfig
 from nab_python._vcs_admission import admit_vcs_url
 from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
-from nab_python.config import PackageOverride
-from nab_python.fetch import (
-    DEFAULT_INDEX_NAME,
-    DEFAULT_INDEX_URL,
-    FetchCoordinator,
-    IndexRoute,
-)
-from nab_python.provider import (
-    BuildPolicy,
-    DistPolicy,
-    Provider,
-    ResolutionStrategy,
-    VcsConfig,
-    VcsPolicy,
-    split_extra,
-)
+from nab_python.config import NabProjectConfig, index_routes_from_config
+from nab_python.fetch import FetchCoordinator
+from nab_python.provider import BuildPolicy, ResolutionStrategy, VcsConfig, split_extra
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
@@ -74,9 +77,6 @@ CACHE_DIR = BENCHMARKS_DIR / "cache"
 CANARY_MANIFEST = BENCHMARKS_DIR / "canary.toml"
 CANARY_MANIFEST_SCHEMA = 1
 _LEGACY_STRATEGY_SUFFIXES = ("-lowest", "-lowest-direct")
-DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
-    IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
-)
 
 
 class CanaryCase(NamedTuple):
@@ -97,13 +97,8 @@ class PreparedCanaryExecution(NamedTuple):
     """Validated inputs for one or more runs of a canary scenario."""
 
     requirements: dict[str, VersionRange]
-    uploaded_prior_to: datetime | None
     constraints: dict[str, VersionRange] | None
-    indexes: list[IndexConfig]
-    index_routes: list[IndexRoute]
-    build_policy_overrides: dict[str, BuildPolicy]
-    resolution_strategy: ResolutionStrategy
-    trust_unverified_sdist_deps: bool
+    config: NabProjectConfig
     target: ResolveTarget
     host: BenchmarkHost
 
@@ -305,49 +300,27 @@ def get_git_commit() -> str:
     return result.stdout.strip()
 
 
-def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
+def run_one(
     requirements: dict[str, VersionRange],
-    uploaded_prior_to: datetime | None,
     constraints: dict[str, VersionRange] | None,
     *,
-    indexes: list[IndexConfig] | None = None,
-    index_routes: list[IndexRoute] | None = None,
-    build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
-    resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
-    trust_unverified_sdist_deps: bool = False,
+    config: NabProjectConfig,
     target: ResolveTarget,
     host: BenchmarkHost,
 ) -> dict:
-    direct_packages = frozenset(
-        name for name in requirements if split_extra(name)[1] is None
-    )
-    effective_indexes = list(indexes) if indexes is not None else list(DEFAULT_INDEXES)
-    package_overrides = tuple(
-        PackageOverride(
-            requirement=Requirement(name),
-            name=canonicalize_name(name),
-            version_range=VersionRange.full(),
-            build_policy=policy,
-        )
-        for name, policy in (build_policy_overrides or {}).items()
-    )
+    direct_packages = direct_packages_from_requirements(requirements)
+    inputs = build_benchmark_resolver_inputs(requirements, constraints)
     with FetchCoordinator(
         HttpxAsyncTransport(),
-        indexes=effective_indexes,
+        indexes=list(config.indexes),
         cache_dir=CACHE_DIR,
-        index_routes=index_routes,
+        index_routes=index_routes_from_config(config),
     ) as coordinator:
-        provider = Provider(
+        provider = build_benchmark_provider(
             coordinator,
+            config=config,
             target=target,
-            root_requirements=requirements,
-            uploaded_prior_to=uploaded_prior_to,
-            dist_policy=DistPolicy.WHEEL_OR_SDIST,
-            build_policy=BuildPolicy.NEVER,
-            package_overrides=package_overrides,
-            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
-            resolution_strategy=resolution_strategy,
-            direct_packages=direct_packages,
+            inputs=inputs,
         )
         resolver = Resolver(
             provider,
@@ -358,7 +331,10 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
         start = time.monotonic()
         try:
             with host.wall_timeout():
-                raw = resolver.resolve(requirements, constraints=constraints)
+                raw = resolver.resolve(
+                    inputs.requirements,
+                    constraints=inputs.constraints,
+                )
             elapsed = time.monotonic() - start
             result = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
             success = True
@@ -374,26 +350,24 @@ def run_one(  # noqa: PLR0913 - one wrapper per scenario knob
         ps = provider.stats
         return {
             "settings": {
-                "resolution": resolution_strategy.value,
-                "dist_policy": DistPolicy.WHEEL_OR_SDIST.value,
-                "build_policy": BuildPolicy.NEVER.value,
-                "trust_unverified_sdist_deps": trust_unverified_sdist_deps,
+                "resolution": config.resolution.value,
+                "dist_policy": config.dist_policy.value,
+                "build_policy": config.build_policy.value,
+                "trust_unverified_sdist_deps": config.trust_unverified_sdist_deps,
                 "max_iterations": DEFAULT_MAX_ITERATIONS,
                 "wall_timeout_seconds": host.wall_timeout_seconds,
                 "runtime": _runtime_manifest(host),
                 "direct_packages": sorted(direct_packages),
                 "target": _target_manifest(target),
-                "indexes": [
-                    {"name": index.name, "url": index.url}
-                    for index in effective_indexes
-                ],
+                "indexes": benchmark_index_settings(config.indexes),
                 "index_routes": [
                     {"name": route.name, "index": route.index}
-                    for route in (index_routes or [])
+                    for route in index_routes_from_config(config)
                 ],
                 "build_policy_overrides": {
-                    name: policy.value
-                    for name, policy in sorted((build_policy_overrides or {}).items())
+                    override.name: override.build_policy.value
+                    for override in config.package_overrides
+                    if override.build_policy is not None
                 },
             },
             "success": success,
@@ -574,16 +548,105 @@ def _scenario_file(toml_stem: str) -> Path:
     return toml_path
 
 
+def _validate_selected_execution_fields(
+    cases: list[CanaryCase],
+    scenarios: list[tuple[str, dict]],
+) -> None:
+    """Validate marker, build, resolution, and host fields by phase."""
+    marker_environments = [
+        parse_target_marker_environment(scenario_name, scenario)
+        for scenario_name, scenario in scenarios
+    ]
+    build_policy_overrides: list[dict[str, BuildPolicy]] = [
+        parse_scenario_build_packages(scenario_name, scenario)
+        for scenario_name, scenario in scenarios
+    ]
+
+    for (scenario_name, scenario), marker_environment, overrides in zip(
+        scenarios,
+        marker_environments,
+        build_policy_overrides,
+        strict=True,
+    ):
+        if "unsupported_reason" not in scenario:
+            validate_scenario_build_policy(
+                scenario_name,
+                marker_environment,
+                overrides,
+            )
+
+    for case, (scenario_name, scenario), marker_environment in zip(
+        cases,
+        scenarios,
+        marker_environments,
+        strict=True,
+    ):
+        scenario_resolution(
+            scenario,
+            scenario_name=scenario_name,
+            override=case.resolution,
+        )
+        parse_requires_matching_host(
+            scenario_name,
+            scenario,
+            marker_environment,
+        )
+
+
 def select_scenarios(cases: list[CanaryCase]) -> list[CanaryCase]:
     """Validate every selection before a benchmark run or result write."""
     if not cases:
         msg = "at least one scenario must be selected"
         raise _SelectionError(msg)
-    missing = [case.scenario for case in cases if find_scenario(case.scenario) is None]
+    missing: list[str] = []
+    found_scenarios: list[tuple[str, dict]] = []
+    for case in cases:
+        scenario = find_scenario(case.scenario)
+        if scenario is None:
+            missing.append(case.scenario)
+            continue
+        found_scenarios.append((case.scenario, scenario))
     if missing:
         label = "scenario" if len(missing) == 1 else "scenarios"
         msg = f"{label} not found: {', '.join(repr(spec) for spec in missing)}"
         raise _SelectionError(msg)
+
+    labels = [case.scenario.split(":", 1)[-1] for case in cases]
+    duplicate_labels = sorted({label for label in labels if labels.count(label) > 1})
+    if duplicate_labels:
+        msg = (
+            "scenario names must be unique across selected files; duplicate(s): "
+            + ", ".join(duplicate_labels)
+        )
+        raise _SelectionError(msg)
+
+    for scenario_name, scenario in found_scenarios:
+        validate_scenario_settings(scenario_name, scenario)
+
+    field_validators = (
+        parse_trust_unverified_sdist_deps,
+        parse_scenario_requirement_strings,
+        parse_vcs_require_pin,
+        parse_vcs_policy,
+        parse_vcs_allowed_schemes,
+        parse_vcs_allowed_repos,
+        parse_scenario_project_metadata,
+    )
+    for validate_field in field_validators:
+        for scenario_name, scenario in found_scenarios:
+            validate_field(scenario_name, scenario)
+
+    parsed_indexes = [
+        parse_scenario_indexes(scenario_name, scenario)
+        for scenario_name, scenario in found_scenarios
+    ]
+    for (scenario_name, scenario), indexes in zip(
+        found_scenarios,
+        parsed_indexes,
+        strict=True,
+    ):
+        parse_scenario_index_routes(scenario_name, scenario, indexes)
+    _validate_selected_execution_fields(cases, found_scenarios)
     return cases
 
 
@@ -593,7 +656,7 @@ def _parse_scenario_selection(
 ) -> list[CanaryCase]:
     try:
         return select_scenarios([parse_canary_case(spec) for spec in specs])
-    except _SelectionError as exc:
+    except (TypeError, ValueError) as exc:
         parser.error(str(exc))
 
 
@@ -602,7 +665,7 @@ def _parse_default_selection(
 ) -> list[CanaryCase]:
     try:
         return select_scenarios(load_canary_manifest())
-    except _SelectionError as exc:
+    except (TypeError, ValueError) as exc:
         parser.error(str(exc))
 
 
@@ -720,22 +783,6 @@ def canary_v2_identity(
     return CanaryV2Identity(f"{stem}-{resolution.value}:{name}", definition)
 
 
-def _canary_indexes(scenario: dict) -> list[IndexConfig]:
-    raw = scenario.get("indexes")
-    if raw is None:
-        return list(DEFAULT_INDEXES)
-    return [
-        IndexConfig(name=str(entry["name"]), url=str(entry["url"])) for entry in raw
-    ]
-
-
-def _canary_index_routes(scenario: dict) -> list[IndexRoute]:
-    return [
-        IndexRoute(name=str(entry["name"]), index=str(entry["index"]))
-        for entry in scenario.get("index_routes", [])
-    ]
-
-
 def _prepare_canary_execution(
     scenario: dict,
     *,
@@ -744,34 +791,32 @@ def _prepare_canary_execution(
     host: BenchmarkHost,
 ) -> CanaryPreparation:
     """Validate and prepare a supported canary scenario for this host."""
+    validate_scenario_settings(scenario_name, scenario)
+    trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(
+        scenario_name,
+        scenario,
+    )
+    requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
+    vcs_config = parse_scenario_vcs_config(scenario_name, scenario)
+    project_metadata = parse_scenario_project_metadata(scenario_name, scenario)
+    indexes = parse_scenario_indexes(scenario_name, scenario)
+    index_routes = parse_scenario_index_routes(scenario_name, scenario, indexes)
     python_version = scenario["python_version"]
-    requirement_strings = list(scenario["requirements"])
-    constraint_strings = scenario.get("constraints", [])
+    requirement_strings = requirement_inputs.requirements
+    constraint_strings = requirement_inputs.constraints
     marker_environment = parse_target_marker_environment(scenario_name, scenario)
-    raw_build_packages = scenario.get("build_packages", []) or []
-    build_policy_overrides = {
-        str(name): BuildPolicy.BUILD_REMOTE for name in raw_build_packages
-    }
-    if marker_environment and build_policy_overrides:
-        msg = (
-            f"{scenario_name}: build_packages cannot be combined "
-            "with a marker environment overlay"
-        )
-        raise ValueError(msg)
+    build_policy_overrides = parse_scenario_build_packages(scenario_name, scenario)
+    validate_scenario_build_policy(
+        scenario_name,
+        marker_environment,
+        build_policy_overrides,
+    )
 
     resolution_strategy = scenario_resolution(
         scenario,
         scenario_name=scenario_name,
         override=resolution_override,
     )
-    vcs_config = VcsConfig(
-        policy=VcsPolicy(scenario.get("vcs_policy", "block")),
-        allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
-        allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
-        require_pin=scenario.get("vcs_require_pin", True),
-    )
-    indexes = _canary_indexes(scenario)
-    index_routes = _canary_index_routes(scenario)
 
     requires_matching_host = parse_requires_matching_host(
         scenario_name,
@@ -787,13 +832,13 @@ def _prepare_canary_execution(
         return CanaryPreparation(None, admission.inapplicable_reason)
     target = admission.target
 
-    project_name = scenario.get("project_name")
+    project_name = project_metadata.project_name
     if project_name:
         requirement_strings.extend(
             expand_project_extras(
                 project_name,
-                scenario.get("project_extras", []),
-                scenario.get("optional_dependencies", {}),
+                project_metadata.project_extras,
+                project_metadata.optional_dependencies,
             )
         )
 
@@ -812,22 +857,21 @@ def _prepare_canary_execution(
         if constraint_strings
         else None
     )
-    # See scenarios.py: trust pre-2.2 sdist PKG-INFO deps by default so the
-    # benchmark measures search, not strict PEP 643 sdist rejection.
-    trust_unverified_sdist_deps = bool(
-        scenario.get("trust_unverified_sdist_deps", True)
-    )
     datetime_str = scenario.get("datetime")
+    config = build_benchmark_config(
+        uploaded_prior_to=parse_datetime(datetime_str) if datetime_str else None,
+        indexes=indexes,
+        index_routes=index_routes,
+        build_policy_overrides=build_policy_overrides,
+        resolution=resolution_strategy,
+        trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+        vcs=vcs_config,
+    )
     return CanaryPreparation(
         PreparedCanaryExecution(
             requirements=requirements,
-            uploaded_prior_to=parse_datetime(datetime_str) if datetime_str else None,
             constraints=constraints,
-            indexes=indexes,
-            index_routes=index_routes,
-            build_policy_overrides=build_policy_overrides,
-            resolution_strategy=resolution_strategy,
-            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+            config=config,
             target=target,
             host=host,
         ),
@@ -838,13 +882,8 @@ def _prepare_canary_execution(
 def _run_prepared_canary(execution: PreparedCanaryExecution) -> dict:
     return run_one(
         execution.requirements,
-        execution.uploaded_prior_to,
         execution.constraints,
-        indexes=execution.indexes,
-        index_routes=execution.index_routes or None,
-        build_policy_overrides=execution.build_policy_overrides or None,
-        resolution_strategy=execution.resolution_strategy,
-        trust_unverified_sdist_deps=execution.trust_unverified_sdist_deps,
+        config=execution.config,
         target=execution.target,
         host=execution.host,
     )
@@ -914,8 +953,6 @@ def main() -> None:
 
     source = get_git_source_state()
     commit = args.commit or str(source["commit"] or "no-git")
-    host = BenchmarkHost.current(WALL_TIMEOUT_S)
-
     cases_to_run: list[CanaryCase]
     if args.scenarios_list:
         with Path(args.scenarios_list).open(encoding="utf-8") as f:
@@ -928,13 +965,8 @@ def main() -> None:
     else:
         cases_to_run = _parse_default_selection(parser)
 
+    host = BenchmarkHost.current(WALL_TIMEOUT_S)
     labels = [case.scenario.split(":", 1)[-1] for case in cases_to_run]
-    duplicate_labels = sorted({label for label in labels if labels.count(label) > 1})
-    if duplicate_labels:
-        parser.error(
-            "scenario names must be unique across selected files; duplicate(s): "
-            + ", ".join(duplicate_labels)
-        )
 
     out_dir = RESULTS_DIR / commit
     out_dir.mkdir(parents=True, exist_ok=True)

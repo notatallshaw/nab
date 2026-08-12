@@ -46,7 +46,7 @@ def _settings() -> dict[str, object]:
     return {
         "dist_policy": "wheel-or-sdist",
         "build_policy": "never",
-        "trust_unverified_sdist_deps_default": True,
+        "trust_unverified_sdist_deps_default": False,
         "max_iterations": 200_000,
         "wall_timeout_seconds": 120,
         "host": {
@@ -326,6 +326,30 @@ def test_load_run_rejects_invalid_settings(
     _rewrite_json(run_dir / module.MANIFEST_FILENAME, mutate)
 
     with pytest.raises(module.ComparisonError):
+        module.load_run(run_dir)
+
+
+def test_load_run_rejects_a_trusted_sdist_default(tmp_path: Path) -> None:
+    module = _harness()
+    run_dir = _write_run(module, tmp_path, "run", source_commit="a" * 40)
+    manifest_path = run_dir / module.MANIFEST_FILENAME
+    _rewrite_json(
+        manifest_path,
+        lambda data: data["settings"].update(trust_unverified_sdist_deps_default=True),
+    )
+
+    manifest = json.loads(manifest_path.read_text())
+    settings_hash = module._settings_hash(manifest["settings"])
+    # Keep the result identities valid so only the changed default is rejected.
+    for execution_key in manifest["completed_execution_keys"]:
+        _rewrite_json(
+            run_dir / execution_key,
+            lambda data: data["input"].update(settings_hash=settings_hash),
+        )
+
+    with pytest.raises(
+        module.ComparisonError, match="invalid standard benchmark settings"
+    ):
         module.load_run(run_dir)
 
 

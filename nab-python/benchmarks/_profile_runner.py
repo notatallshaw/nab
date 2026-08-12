@@ -28,6 +28,18 @@ else:
 sys.path.insert(0, str(Path(__file__).parent))
 
 import scenarios as sc
+from benchmark_config import (
+    build_benchmark_config,
+    parse_scenario_build_packages,
+    parse_scenario_index_routes,
+    parse_scenario_indexes,
+    parse_scenario_project_metadata,
+    parse_scenario_requirement_strings,
+    parse_scenario_vcs_config,
+    parse_trust_unverified_sdist_deps,
+    validate_scenario_build_policy,
+    validate_scenario_settings,
+)
 
 
 def find_scenario(spec: str) -> tuple[str, dict]:
@@ -70,16 +82,27 @@ def build_inputs(
     resolution_override: sc.ResolutionStrategy | None = None,
     host: sc.BenchmarkHost | None = None,
 ) -> dict:
+    validate_scenario_settings(name, scenario)
+    trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(name, scenario)
+    requirement_inputs = parse_scenario_requirement_strings(name, scenario)
+    vcs_config = parse_scenario_vcs_config(name, scenario)
+    project_metadata = parse_scenario_project_metadata(name, scenario)
+    indexes = parse_scenario_indexes(name, scenario)
+    index_routes = parse_scenario_index_routes(name, scenario, indexes)
     python_version = scenario["python_version"]
-    requirement_strings = list(scenario["requirements"])
-    constraint_strings = scenario.get("constraints", [])
+    requirement_strings = requirement_inputs.requirements
+    constraint_strings = requirement_inputs.constraints
     marker_environment = sc.parse_marker_environment(name, scenario)
-    build_policy_overrides = sc.parse_build_packages(name, scenario)
-    sc.validate_scenario_build_policy(
+    build_policy_overrides = parse_scenario_build_packages(name, scenario)
+    validate_scenario_build_policy(
         name,
         marker_environment,
         build_policy_overrides,
     )
+    declared_resolution = sc.ResolutionStrategy(
+        scenario.get("resolution", sc.ResolutionStrategy.HIGHEST.value)
+    )
+    resolution_strategy = resolution_override or declared_resolution
     requires_matching_host = sc.parse_requires_matching_host(
         name,
         scenario,
@@ -96,22 +119,11 @@ def build_inputs(
         raise SystemExit(msg)
     target = admission.target
 
-    declared_resolution = sc.ResolutionStrategy(
-        scenario.get("resolution", sc.ResolutionStrategy.HIGHEST.value)
-    )
-    resolution_strategy = resolution_override or declared_resolution
-    vcs_config = sc.VcsConfig(
-        policy=sc.VcsPolicy(scenario.get("vcs_policy", "block")),
-        allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
-        allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
-        require_pin=scenario.get("vcs_require_pin", True),
-    )
-
-    if scenario.get("project_name"):
+    if project_metadata.project_name:
         requirement_strings += sc.expand_project_extras(
-            scenario["project_name"],
-            scenario.get("project_extras", []),
-            scenario.get("optional_dependencies", {}),
+            project_metadata.project_name,
+            project_metadata.project_extras,
+            project_metadata.optional_dependencies,
         )
 
     marker_env = dict(target.marker_env)
@@ -127,17 +139,19 @@ def build_inputs(
     )
 
     datetime_str = scenario.get("datetime")
+    config = build_benchmark_config(
+        uploaded_prior_to=sc.parse_datetime(datetime_str) if datetime_str else None,
+        indexes=indexes,
+        index_routes=index_routes,
+        build_policy_overrides=build_policy_overrides,
+        resolution=resolution_strategy,
+        trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+        vcs=vcs_config,
+    )
     return {
         "requirements": requirements,
-        "uploaded_prior_to": sc.parse_datetime(datetime_str) if datetime_str else None,
         "constraints": constraints,
-        "indexes": sc.parse_indexes(name, scenario),
-        "index_routes": sc.parse_index_routes(name, scenario) or None,
-        "build_policy_overrides": build_policy_overrides or None,
-        "resolution_strategy": resolution_strategy,
-        "trust_unverified_sdist_deps": scenario.get(
-            "trust_unverified_sdist_deps", True
-        ),
+        "config": config,
         "target": target,
         "host": effective_host,
     }
@@ -173,8 +187,7 @@ def main() -> None:
     resolution_override = (
         sc.ResolutionStrategy(args.resolution) if args.resolution is not None else None
     )
-    host = sc.BenchmarkHost.current(sc.SCENARIO_WALL_TIMEOUT_SECONDS)
-    inputs = build_inputs(name, scenario, resolution_override, host)
+    inputs = build_inputs(name, scenario, resolution_override, host=None)
 
     if not args.cprofile:
         report(name, sc.resolve_scenario(**inputs))

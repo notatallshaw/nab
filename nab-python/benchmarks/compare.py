@@ -173,7 +173,7 @@ def _validate_settings(value: object, run_dir: Path) -> None:
     if (
         value["dist_policy"] != "wheel-or-sdist"
         or value["build_policy"] != "never"
-        or value["trust_unverified_sdist_deps_default"] is not True
+        or value["trust_unverified_sdist_deps_default"] is not False
         or type(value["max_iterations"]) is not int
         or value["max_iterations"] <= 0
         or (timeout is not None and (type(timeout) is not int or timeout <= 0))

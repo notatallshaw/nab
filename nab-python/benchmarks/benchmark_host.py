@@ -10,7 +10,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nab_python.target import IMPLEMENTATION_MARKERS, PLATFORM_MARKERS, ResolveTarget
+from nab_python.target import (
+    IMPLEMENTATION_MARKERS,
+    PEP508_MARKER_VARIABLES,
+    PLATFORM_MARKERS,
+    ResolveTarget,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -71,6 +76,11 @@ def parse_target_marker_environment(
         raise TypeError(msg)
 
     marker_environment = dict(raw)
+    unknown = sorted(set(marker_environment) - PEP508_MARKER_VARIABLES)
+    if unknown:
+        msg = f"{scenario_name}: unknown marker_environment variables: {unknown!r}"
+        raise ValueError(msg)
+
     platform_system = scenario.get("platform_system")
     if platform_system is not None:
         if type(platform_system) is not str or not platform_system:

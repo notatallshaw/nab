@@ -14,6 +14,9 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from typing_extensions import Self
 
+from nab_index.multi_index import IndexConfig
+from nab_index.serialization import SimpleSerialization
+from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from nab_python.target import ResolveTarget
 
 pytestmark = pytest.mark.benchmark
@@ -133,7 +136,7 @@ def test_canary_uses_scenario_resolution(
     seen: list[str] = []
 
     def fake_run_one(*_args: object, **kwargs: object) -> dict:
-        seen.append(str(kwargs["resolution_strategy"].value))
+        seen.append(str(kwargs["config"].resolution.value))
         return _run_result()
 
     monkeypatch.setattr(module, "run_one", fake_run_one)
@@ -321,7 +324,7 @@ def test_canary_explicit_resolution_overrides_declared_strategy(
     seen: list[object] = []
 
     def fake_run_one(*_args: object, **kwargs: object) -> dict:
-        seen.append(kwargs["resolution_strategy"])
+        seen.append(kwargs["config"].resolution)
         return _run_result()
 
     monkeypatch.setattr(module, "run_one", fake_run_one)
@@ -387,7 +390,13 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
             "requirements": ["demo>=1"],
             "constraints": ["support<3"],
             "datetime": "2025-01-02 03:04:05",
-            "indexes": [{"name": "private", "url": "https://example.test/simple"}],
+            "indexes": [
+                {
+                    "name": "private",
+                    "url": "https://example.test/simple",
+                    "serialization": "html",
+                }
+            ],
             "index_routes": [{"name": "demo", "index": "private"}],
             "build_packages": ["demo"],
             "resolution": "lowest-direct",
@@ -417,17 +426,23 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
     assert len(calls) == 3
     assert calls[1:] == [calls[0], calls[0]]
     args, kwargs = calls[0]
-    requirements, uploaded_prior_to, constraints = args
+    requirements, constraints = args
     assert set(requirements) == {"demo"}
-    assert uploaded_prior_to == module.parse_datetime("2025-01-02 03:04:05")
     assert set(constraints) == {"support"}
-    assert kwargs["indexes"] == [
-        module.IndexConfig("private", "https://example.test/simple")
-    ]
-    assert kwargs["index_routes"] == [module.IndexRoute("demo", "private")]
-    assert kwargs["build_policy_overrides"] == {"demo": module.BuildPolicy.BUILD_REMOTE}
-    assert kwargs["resolution_strategy"] is module.ResolutionStrategy.LOWEST_DIRECT
-    assert kwargs["trust_unverified_sdist_deps"] is True
+    config = kwargs["config"]
+    assert config.uploaded_prior_to == module.parse_datetime("2025-01-02 03:04:05")
+    assert config.indexes == (
+        IndexConfig(
+            "private",
+            "https://example.test/simple",
+            SimpleSerialization.HTML,
+        ),
+    )
+    assert module.index_routes_from_config(config) == [IndexRoute("demo", "private")]
+    assert len(config.package_overrides) == 1
+    assert config.package_overrides[0].build_policy is module.BuildPolicy.BUILD_REMOTE
+    assert config.resolution is module.ResolutionStrategy.LOWEST_DIRECT
+    assert config.trust_unverified_sdist_deps is True
     assert kwargs["target"].marker_env["python_version"] == "3.11"
     assert kwargs["host"] is host
 
@@ -450,8 +465,7 @@ def test_canary_configures_lowest_direct_roots(
             pass
 
     class FakeProvider:
-        def __init__(self, *_args: object, **kwargs: object) -> None:
-            seen.update(kwargs)
+        def __init__(self) -> None:
             self.stats = SimpleNamespace(
                 metadata_fetched=0,
                 distributions_seen=0,
@@ -469,24 +483,41 @@ def test_canary_configures_lowest_direct_roots(
                 incompatibilities_learned=0,
             )
 
-        def resolve(self, *_args: object, **_kwargs: object) -> dict:
+        def resolve(self, roots: object, **kwargs: object) -> dict:
+            seen["resolver_roots"] = roots
+            seen["resolver_constraints"] = kwargs["constraints"]
             return {}
+
+    def fake_build_provider(_coordinator: object, **kwargs: object) -> FakeProvider:
+        seen.update(kwargs)
+        return FakeProvider()
 
     monkeypatch.setattr(module, "FetchCoordinator", FakeCoordinator)
     monkeypatch.setattr(module, "HttpxAsyncTransport", object)
-    monkeypatch.setattr(module, "Provider", FakeProvider)
+    monkeypatch.setattr(module, "build_benchmark_provider", fake_build_provider)
     monkeypatch.setattr(module, "Resolver", FakeResolver)
 
     requirements = module.parse_requirements(["Root[feature]", "Other==1"])
+    constraints = module.parse_requirements(["root==1"])
     captured = module.BenchmarkHost.current(module.WALL_TIMEOUT_S)
     host = module.BenchmarkHost(captured.target, captured.python_runtime, None)
     admission = host.target_for("3.11", {}, requires_matching_host=False)
     assert admission.target is not None
+    config = module.build_benchmark_config(
+        indexes=(
+            IndexConfig(
+                DEFAULT_INDEX_NAME,
+                DEFAULT_INDEX_URL,
+                SimpleSerialization.HTML,
+            ),
+        ),
+        resolution=module.ResolutionStrategy.LOWEST_DIRECT,
+        trust_unverified_sdist_deps=False,
+    )
     result = module.run_one(
         requirements,
-        None,
-        None,
-        resolution_strategy=module.ResolutionStrategy.LOWEST_DIRECT,
+        constraints,
+        config=config,
         target=admission.target,
         host=host,
     )
@@ -499,21 +530,39 @@ def test_canary_configures_lowest_direct_roots(
     assert settings["trust_unverified_sdist_deps"] is False
     assert settings["max_iterations"] == module.DEFAULT_MAX_ITERATIONS
     assert settings["wall_timeout_seconds"] is None
+
     assert settings["runtime"]["python"] == sys.version
     assert settings["runtime"]["implementation"] == sys.implementation.name
+
     assert settings["direct_packages"] == ["other", "root"]
     assert settings["indexes"] == [
-        {"name": module.DEFAULT_INDEX_NAME, "url": module.DEFAULT_INDEX_URL}
+        {
+            "name": DEFAULT_INDEX_NAME,
+            "url": DEFAULT_INDEX_URL,
+            "serialization": "html",
+        }
     ]
     assert settings["target"]["marker_environment"]["python_version"] == "3.11"
     assert settings["target"]["wheel_tags_count"] > 0
-    assert seen["resolution_strategy"] is module.ResolutionStrategy.LOWEST_DIRECT
-    assert seen["direct_packages"] == frozenset({"root", "other"})
+
+    assert seen["config"] is config
     assert seen["target"] is admission.target
     assert resolver_kwargs == {
         "range_type": module.VersionRange,
         "root_version": "0",
     }
+
+    inputs = seen["inputs"]
+    assert inputs.requirements is requirements
+    assert inputs.root_extras == {("root", "feature")}
+
+    assert inputs.constraints is not constraints
+    assert set(constraints) == {"root"}
+    assert inputs.constraints is not None
+    assert set(inputs.constraints) == {"root", "root[feature]"}
+
+    assert seen["resolver_roots"] is requirements
+    assert seen["resolver_constraints"] is inputs.constraints
 
 
 def test_canary_main_records_v2_contract(
@@ -524,7 +573,7 @@ def test_canary_main_records_v2_contract(
     monkeypatch.setattr(module, "RESULTS_DIR", tmp_path)
     source = {"commit": "source-sha", "dirty": False, "diff_hash": None}
     monkeypatch.setattr(module, "get_git_source_state", lambda: source)
-    scenario = {"unsupported_reason": "test fixture"}
+    scenario = {"requirements": [], "unsupported_reason": "test fixture"}
     input_hash = module.scenario_input_hash("quick:requests", scenario)
     monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
     monkeypatch.setattr(
@@ -550,6 +599,159 @@ def test_canary_main_records_v2_contract(
             "summary": {"skipped": "test fixture"},
         }
     }
+
+
+@pytest.mark.parametrize(
+    ("scenario", "default_selection", "message"),
+    [
+        (
+            {
+                "unsupported_reason": "test fixture",
+                "trust_unverified_sdist_deps": "false",
+            },
+            False,
+            "quick:requests: trust_unverified_sdist_deps must be a boolean, got str",
+        ),
+        (
+            {"unsupported_reason": "test fixture"},
+            False,
+            "quick:requests: missing required field 'requirements'",
+        ),
+        (
+            {"requirements": "demo", "unsupported_reason": "test fixture"},
+            False,
+            "quick:requests: requirements must be a list, got str",
+        ),
+        (
+            {"requirements": [""], "unsupported_reason": "test fixture"},
+            False,
+            "quick:requests: requirements[0] must be a non-empty string",
+        ),
+        (
+            {"requirements": [""], "unsupported_reason": "test fixture"},
+            True,
+            "quick:requests: requirements[0] must be a non-empty string",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
+                "project_name": "demo-project",
+                "project_extras": ["all"],
+                "optional_dependencies": {"all": "demo"},
+            },
+            True,
+            "quick:requests: optional_dependencies['all'] must be a list, got str",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
+                "vcs_require_pin": "false",
+            },
+            False,
+            "quick:requests: vcs_require_pin must be a boolean, got str",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
+                "vcs_policy": "permit",
+            },
+            False,
+            "quick:requests: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
+                "vcs_allowed_schemes": {"git+https": False},
+            },
+            False,
+            "quick:requests: vcs_allowed_schemes must be a list, got dict",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
+                "indexes": "private",
+            },
+            False,
+            "quick:requests: indexes must be an array of tables, got str",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
+                "index_routes": "private",
+            },
+            False,
+            "quick:requests: index_routes must be an array of tables, got str",
+        ),
+        (
+            {
+                "requirements": [],
+                "unsupported_reason": "test fixture",
+                "vcs_allowed_repos": {"https://example.test/repo": False},
+            },
+            True,
+            "quick:requests: vcs_allowed_repos must be a list, got dict",
+        ),
+    ],
+    ids=(
+        "sdist-trust",
+        "missing",
+        "scalar",
+        "empty-item",
+        "default-empty-item",
+        "default-project-metadata",
+        "vcs-require-pin",
+        "vcs-policy",
+        "vcs-scheme-table",
+        "indexes",
+        "index-routes",
+        "default-vcs-repo-table",
+    ),
+)
+def test_canary_schema_validation_precedes_host_capture_and_result_creation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    scenario: dict[str, object],
+    default_selection: bool,
+    message: str,
+) -> None:
+    module = _harness()
+    results_dir = tmp_path / "results"
+    monkeypatch.setattr(module, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(
+        module,
+        "get_git_source_state",
+        lambda: {"commit": "source-sha", "dirty": False, "diff_hash": None},
+    )
+
+    def fail_host(*_args: object, **_kwargs: object) -> object:
+        pytest.fail("scenario validation reached host capture")
+
+    monkeypatch.setattr(module.BenchmarkHost, "current", classmethod(fail_host))
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+    if default_selection:
+        monkeypatch.setattr(
+            module,
+            "load_canary_manifest",
+            lambda: [module.CanaryCase("quick:requests", None)],
+        )
+    argv = ["canary.py", "--commit", "test"]
+    if not default_selection:
+        argv.extend(("--scenario", "quick:requests"))
+    monkeypatch.setattr(sys, "argv", argv)
+
+    with pytest.raises(SystemExit) as exc_info:
+        module.main()
+
+    assert exc_info.value.code == 2
+    assert message in capsys.readouterr().err
+    assert not results_dir.exists()
 
 
 def test_canary_main_preserves_v2_lowest_identity_and_effective_settings(
@@ -822,20 +1024,39 @@ def test_canary_source_state_preserves_commit_when_hashing_fails(
 
 
 def test_canary_main_rejects_duplicate_output_labels(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     module = _harness()
+    results_dir = tmp_path / "results"
+    monkeypatch.setattr(module, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(
+        module,
+        "get_git_source_state",
+        lambda: {"commit": "source-sha", "dirty": False, "diff_hash": None},
+    )
+    scenario = {"trust_unverified_sdist_deps": "false"}
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
     monkeypatch.setattr(
         sys,
         "argv",
         [
             "canary.py",
+            "--commit",
+            "test",
             "--scenario",
-            "quick:requests",
+            "first:shared",
             "--scenario",
-            "quick:requests",
+            "second:shared",
         ],
     )
 
-    with pytest.raises(SystemExit, match="2"):
+    with pytest.raises(SystemExit) as exc_info:
         module.main()
+
+    stderr = capsys.readouterr().err
+    assert exc_info.value.code == 2
+    assert "scenario names must be unique across selected files" in stderr
+    assert "trust_unverified_sdist_deps" not in stderr
+    assert not results_dir.exists()

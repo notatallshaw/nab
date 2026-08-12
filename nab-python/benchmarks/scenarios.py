@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from datetime import datetime
 
+    from nab_index.multi_index import IndexConfig
     from nab_python.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
@@ -32,6 +32,23 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from benchmark_config import (
+    DEFAULT_INDEXES,
+    DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS,
+    benchmark_index_settings,
+    build_benchmark_config,
+    build_benchmark_provider,
+    build_benchmark_resolver_inputs,
+    parse_scenario_build_packages,
+    parse_scenario_index_routes,
+    parse_scenario_indexes,
+    parse_scenario_project_metadata,
+    parse_scenario_requirement_strings,
+    parse_scenario_vcs_config,
+    parse_trust_unverified_sdist_deps,
+    validate_scenario_build_policy,
+    validate_scenario_settings,
+)
 from benchmark_datetime import parse_datetime
 from benchmark_host import (
     HOST_TAG_MISMATCH_REASON,
@@ -43,24 +60,20 @@ from benchmark_host import (
 )
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_index.multi_index import IndexConfig
 from nab_python._vcs_admission import admit_vcs_url
 from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name, is_normalized_name
 from nab_python._vendor.packaging.version import Version
-from nab_python.config import PackageOverride
+from nab_python.config import NabProjectConfig, index_routes_from_config
 from nab_python.fetch import (
-    DEFAULT_INDEX_NAME,
-    DEFAULT_INDEX_URL,
     FetchCoordinator,
     IndexRoute,
 )
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
-    Provider,
     ResolutionStrategy,
     VcsConfig,
     VcsPolicy,
@@ -77,9 +90,6 @@ STANDARD_MANIFEST_SCHEMA = 4
 _INAPPLICABLE_KEY_PREVIEW = 8
 _STANDARD_METADATA_FILENAMES = frozenset(
     {STANDARD_MANIFEST_FILENAME, "_provenance.json"}
-)
-DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
-    IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
 )
 STANDARD_STRATEGIES = (
     ResolutionStrategy.HIGHEST,
@@ -512,12 +522,7 @@ class PreparedStandardExecution(NamedTuple):
 
     requirement_strings: list[str]
     constraint_strings: list[str]
-    indexes: list[IndexConfig]
-    index_routes: list[IndexRoute]
-    build_policy_overrides: dict[str, BuildPolicy]
-    uploaded_prior_to: datetime | None
-    vcs_config: VcsConfig
-    trust_unverified_sdist_deps: bool
+    config: NabProjectConfig
     target: ResolveTarget
     expected_input: dict[str, object]
 
@@ -577,16 +582,25 @@ def load_standard_corpus(files: list[Path]) -> list[StandardScenario]:
             for name, definition in scenarios.items()
         )
     for row in rows:
+        validate_scenario_settings(row.logical_key, row.definition)
+        parse_trust_unverified_sdist_deps(row.logical_key, row.definition)
+        parse_scenario_requirement_strings(row.logical_key, row.definition)
+        parse_scenario_vcs_config(row.logical_key, row.definition)
+        parse_scenario_project_metadata(row.logical_key, row.definition)
+        indexes = parse_scenario_indexes(row.logical_key, row.definition)
+        parse_scenario_index_routes(row.logical_key, row.definition, indexes)
         marker_environment = parse_marker_environment(row.name, row.definition)
-        parse_requires_matching_host(row.name, row.definition, marker_environment)
-        build_policy_overrides = parse_build_packages(row.name, row.definition)
-        if "unsupported_reason" in row.definition:
-            continue
-        validate_scenario_build_policy(
+        build_policy_overrides = parse_scenario_build_packages(
             row.name,
-            marker_environment,
-            build_policy_overrides,
+            row.definition,
         )
+        if "unsupported_reason" not in row.definition:
+            validate_scenario_build_policy(
+                row.name,
+                marker_environment,
+                build_policy_overrides,
+            )
+        parse_requires_matching_host(row.name, row.definition, marker_environment)
     return rows
 
 
@@ -876,7 +890,9 @@ def standard_benchmark_settings(host: BenchmarkHost) -> dict[str, object]:
     return {
         "dist_policy": DistPolicy.WHEEL_OR_SDIST.value,
         "build_policy": BuildPolicy.NEVER.value,
-        "trust_unverified_sdist_deps_default": True,
+        "trust_unverified_sdist_deps_default": (
+            DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS
+        ),
         "max_iterations": DEFAULT_MAX_ITERATIONS,
         "wall_timeout_seconds": host.wall_timeout_seconds,
         "host": host.identity(),
@@ -1313,49 +1329,27 @@ def write_standard_manifest(  # noqa: PLR0913 - explicit contract fields
     return complete
 
 
-def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
+def resolve_scenario(
     requirements: dict[str, VersionRange],
-    uploaded_prior_to: datetime | None = None,
     constraints: dict[str, VersionRange] | None = None,
-    indexes: list[IndexConfig] | None = None,
-    index_routes: list[IndexRoute] | None = None,
-    build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
-    resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
     *,
+    config: NabProjectConfig,
     target: ResolveTarget,
     host: BenchmarkHost,
-    trust_unverified_sdist_deps: bool = False,
 ) -> dict:
     """Resolve requirements and return stats dict."""
-    direct_packages = frozenset(
-        name for name in requirements if split_extra(name)[1] is None
-    )
-    package_overrides = tuple(
-        PackageOverride(
-            requirement=Requirement(name),
-            name=canonicalize_name(name),
-            version_range=VersionRange.full(),
-            build_policy=policy,
-        )
-        for name, policy in (build_policy_overrides or {}).items()
-    )
+    inputs = build_benchmark_resolver_inputs(requirements, constraints)
     with FetchCoordinator(
         HttpxAsyncTransport(),
-        indexes=indexes,
+        indexes=list(config.indexes),
         cache_dir=CACHE_DIR,
-        index_routes=index_routes,
+        index_routes=index_routes_from_config(config),
     ) as coordinator:
-        provider = Provider(
+        provider = build_benchmark_provider(
             coordinator,
+            config=config,
             target=target,
-            root_requirements=requirements,
-            uploaded_prior_to=uploaded_prior_to,
-            dist_policy=DistPolicy.WHEEL_OR_SDIST,
-            build_policy=BuildPolicy.NEVER,
-            package_overrides=package_overrides,
-            trust_unverified_sdist_deps=trust_unverified_sdist_deps,
-            resolution_strategy=resolution_strategy,
-            direct_packages=direct_packages,
+            inputs=inputs,
         )
         resolver = Resolver(
             provider,
@@ -1367,7 +1361,10 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
         start = time.monotonic()
         try:
             with host.wall_timeout():
-                raw = resolver.resolve(requirements, constraints=constraints)
+                raw = resolver.resolve(
+                    inputs.requirements,
+                    constraints=inputs.constraints,
+                )
             elapsed = time.monotonic() - start
             pins = dict(
                 sorted(
@@ -1422,7 +1419,7 @@ def resolve_scenario(  # noqa: PLR0913 - one wrapper per scenario knob
         }
 
 
-def _expected_input(  # noqa: PLR0913, PLR0917 - assembling the JSON dump key
+def _expected_input(  # noqa: PLR0913 - assembling the JSON dump key
     commit: str,
     python_version: str,
     requirement_strings: list[str],
@@ -1430,14 +1427,13 @@ def _expected_input(  # noqa: PLR0913, PLR0917 - assembling the JSON dump key
     datetime_str: str | None,
     project_name: str | None,
     project_extras: list[str],
+    *,
     vcs_config: VcsConfig,
-    vcs_policy_str: str,
     marker_environment: dict[str, str],
     indexes: list[IndexConfig],
     index_routes: list[IndexRoute],
     build_packages: list[str] | None = None,
     resolution_strategy: ResolutionStrategy = ResolutionStrategy.HIGHEST,
-    *,
     trust_unverified_sdist_deps: bool = False,
 ) -> dict:
     """Build the JSON-serialisable ``input`` block describing the scenario."""
@@ -1454,99 +1450,25 @@ def _expected_input(  # noqa: PLR0913, PLR0917 - assembling the JSON dump key
         expected_input["project_name"] = project_name
         expected_input["project_extras"] = project_extras
     if vcs_config.policy is not VcsPolicy.BLOCK:
-        expected_input["vcs_policy"] = vcs_policy_str
+        expected_input["vcs_policy"] = vcs_config.policy.value
         expected_input["vcs_allowed_schemes"] = sorted(vcs_config.allowed_schemes)
         expected_input["vcs_allowed_repos"] = list(vcs_config.allowed_repos)
         expected_input["vcs_require_pin"] = vcs_config.require_pin
     if marker_environment:
         expected_input["marker_environment"] = dict(sorted(marker_environment.items()))
     if list(indexes) != list(DEFAULT_INDEXES):
-        expected_input["indexes"] = [
-            {"name": cfg.name, "url": cfg.url} for cfg in indexes
-        ]
+        expected_input["indexes"] = benchmark_index_settings(indexes)
     if index_routes:
         expected_input["index_routes"] = [
             {"name": o.name, "index": o.index} for o in index_routes
         ]
     if build_packages:
-        expected_input["build_packages"] = sorted(build_packages)
+        expected_input["build_packages"] = list(build_packages)
     if resolution_strategy is not ResolutionStrategy.HIGHEST:
         expected_input["resolution"] = resolution_strategy.value
     if trust_unverified_sdist_deps:
         expected_input["trust_unverified_sdist_deps"] = True
     return expected_input
-
-
-def parse_index_routes(
-    scenario_name: str,
-    scenario: dict,
-) -> list[IndexRoute]:
-    """Read the ``index_routes`` array of records from a scenario.
-
-    Each entry is a TOML inline table with keys ``name`` (the package
-    name) and ``index`` (the *name* of an entry in ``indexes``).  A route
-    carries no version scope and no marker.  Entries are returned in
-    declaration order so :func:`nab_python.fetch._resolve_routes` can
-    apply last-match-wins on duplicates.
-    """
-    raw = scenario.get("index_routes", [])
-    if not isinstance(raw, list):
-        msg = (
-            f"{scenario_name}: index_routes must be a TOML array of"
-            f" tables, got {type(raw).__name__}"
-        )
-        raise TypeError(msg)
-    out: list[IndexRoute] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            msg = (
-                f"{scenario_name}: index_routes entries must be tables,"
-                f" got {type(entry).__name__}"
-            )
-            raise TypeError(msg)
-        try:
-            name = entry["name"]
-            index = entry["index"]
-        except KeyError as missing:
-            msg = (
-                f"{scenario_name}: index_routes entry missing required key {missing!s}"
-            )
-            raise ValueError(msg) from None
-        out.append(IndexRoute(name=str(name), index=str(index)))
-    return out
-
-
-def parse_indexes(scenario_name: str, scenario: dict) -> list[IndexConfig]:
-    """Read the ``indexes`` array; default to PyPI when missing.
-
-    Each entry is a TOML inline table with keys ``name`` and ``url``.
-    Order is significant.
-    """
-    raw = scenario.get("indexes")
-    if raw is None:
-        return list(DEFAULT_INDEXES)
-    if not isinstance(raw, list):
-        msg = (
-            f"{scenario_name}: indexes must be a TOML array of tables,"
-            f" got {type(raw).__name__}"
-        )
-        raise TypeError(msg)
-    out: list[IndexConfig] = []
-    for entry in raw:
-        if not isinstance(entry, dict):
-            msg = (
-                f"{scenario_name}: indexes entries must be tables, got"
-                f" {type(entry).__name__}"
-            )
-            raise TypeError(msg)
-        try:
-            name = entry["name"]
-            url = entry["url"]
-        except KeyError as missing:
-            msg = f"{scenario_name}: indexes entry missing required key {missing!s}"
-            raise ValueError(msg) from None
-        out.append(IndexConfig(name=str(name), url=str(url)))
-    return out
 
 
 def parse_marker_environment(
@@ -1555,57 +1477,6 @@ def parse_marker_environment(
 ) -> dict[str, str]:
     """Read the ``marker_environment`` table + ``platform_system`` shorthand."""
     return parse_target_marker_environment(scenario_name, scenario)
-
-
-def parse_build_packages(
-    scenario_name: str,
-    scenario: dict,
-) -> Mapping[str, BuildPolicy]:
-    """Read ``build_packages`` and lift them to ``BUILD_REMOTE`` overrides.
-
-    ``build_packages`` is a list of canonical package names whose
-    sdists may be built (PEP 517 backend invocation against the
-    fetched sdist).  The default benchmark policy is
-    ``BuildPolicy.NEVER``; entries here override that on a
-    per-package basis without affecting any other package in the
-    same scenario.
-
-    Use this when the scenario's resolution requires a sdist that
-    has no usable wheel and the build is cheap enough to run inside
-    the benchmark host.  Native or CUDA-heavy sdists belong in
-    ``unsupported.toml`` instead.
-    """
-    raw = scenario.get("build_packages", [])
-    if not isinstance(raw, list):
-        msg = (
-            f"{scenario_name}: build_packages must be an array of"
-            f" package names, got {type(raw).__name__}"
-        )
-        raise TypeError(msg)
-    overrides: dict[str, BuildPolicy] = {}
-    for i, name in enumerate(raw):
-        if not isinstance(name, str):
-            msg = (
-                f"{scenario_name}: build_packages[{i}] must be a string,"
-                f" got {type(name).__name__}"
-            )
-            raise TypeError(msg)
-        overrides[name] = BuildPolicy.BUILD_REMOTE
-    return overrides
-
-
-def validate_scenario_build_policy(
-    scenario_name: str,
-    marker_environment: Mapping[str, str],
-    build_policy_overrides: Mapping[str, BuildPolicy],
-) -> None:
-    """Reject build policy paired with a marker environment overlay."""
-    if marker_environment and build_policy_overrides:
-        msg = (
-            f"{scenario_name}: build_packages cannot be combined "
-            "with a marker environment overlay"
-        )
-        raise ValueError(msg)
 
 
 def prepare_standard_execution(
@@ -1620,13 +1491,21 @@ def prepare_standard_execution(
     """Prepare and identify one execution without performing network work."""
     scenario_name = execution.scenario.name
     scenario = execution.scenario.definition
+    validate_scenario_settings(scenario_name, scenario)
+    trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(
+        scenario_name,
+        scenario,
+    )
+    requirement_inputs = parse_scenario_requirement_strings(scenario_name, scenario)
+    vcs_config = parse_scenario_vcs_config(scenario_name, scenario)
+    project_metadata = parse_scenario_project_metadata(scenario_name, scenario)
+    indexes = parse_scenario_indexes(scenario_name, scenario)
+    index_routes = parse_scenario_index_routes(scenario_name, scenario, indexes)
     python_version: str = scenario["python_version"]
-    requirement_strings: list[str] = list(scenario["requirements"])
-    constraint_strings: list[str] = scenario.get("constraints", [])
+    requirement_strings = requirement_inputs.requirements
+    constraint_strings = requirement_inputs.constraints
     marker_environment = parse_marker_environment(scenario_name, scenario)
-    indexes = parse_indexes(scenario_name, scenario)
-    index_routes = parse_index_routes(scenario_name, scenario)
-    build_policy_overrides = dict(parse_build_packages(scenario_name, scenario))
+    build_policy_overrides = parse_scenario_build_packages(scenario_name, scenario)
     if "unsupported_reason" not in scenario:
         validate_scenario_build_policy(
             scenario_name,
@@ -1634,26 +1513,25 @@ def prepare_standard_execution(
             build_policy_overrides,
         )
     datetime_str: str | None = scenario.get("datetime")
-    project_name: str | None = scenario.get("project_name")
-    project_extras: list[str] = scenario.get("project_extras", [])
-    optional_dependencies: dict[str, list[str]] = scenario.get(
-        "optional_dependencies", {}
-    )
+    project_name = project_metadata.project_name
+    project_extras = project_metadata.project_extras
     if project_name:
         requirement_strings.extend(
-            expand_project_extras(project_name, project_extras, optional_dependencies)
+            expand_project_extras(
+                project_name,
+                project_extras,
+                project_metadata.optional_dependencies,
+            )
         )
-    vcs_policy_str: str = scenario.get("vcs_policy", "block")
-    vcs_config = VcsConfig(
-        policy=VcsPolicy(vcs_policy_str),
-        allowed_schemes=frozenset(scenario.get("vcs_allowed_schemes", [])),
-        allowed_repos=tuple(scenario.get("vcs_allowed_repos", [])),
-        require_pin=scenario.get("vcs_require_pin", True),
-    )
-    # Search benchmarks accept pre-2.2 PKG-INFO dependency metadata by default;
-    # individual strict-policy scenarios opt out explicitly.
-    trust_unverified_sdist_deps: bool = scenario.get(
-        "trust_unverified_sdist_deps", True
+    uploaded_prior_to = parse_datetime(datetime_str) if datetime_str else None
+    config = build_benchmark_config(
+        uploaded_prior_to=uploaded_prior_to,
+        indexes=indexes,
+        index_routes=index_routes,
+        build_policy_overrides=build_policy_overrides,
+        resolution=execution.strategy,
+        trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+        vcs=vcs_config,
     )
     expected_input = {
         **_expected_input(
@@ -1664,12 +1542,11 @@ def prepare_standard_execution(
             datetime_str,
             project_name,
             project_extras,
-            vcs_config,
-            vcs_policy_str,
-            marker_environment,
-            indexes,
-            index_routes,
-            build_packages=sorted(build_policy_overrides),
+            vcs_config=vcs_config,
+            marker_environment=marker_environment,
+            indexes=indexes,
+            index_routes=index_routes,
+            build_packages=list(build_policy_overrides),
             resolution_strategy=execution.strategy,
             trust_unverified_sdist_deps=trust_unverified_sdist_deps,
         ),
@@ -1684,12 +1561,7 @@ def prepare_standard_execution(
     return PreparedStandardExecution(
         requirement_strings=requirement_strings,
         constraint_strings=constraint_strings,
-        indexes=indexes,
-        index_routes=index_routes,
-        build_policy_overrides=build_policy_overrides,
-        uploaded_prior_to=parse_datetime(datetime_str) if datetime_str else None,
-        vcs_config=vcs_config,
-        trust_unverified_sdist_deps=trust_unverified_sdist_deps,
+        config=config,
         target=target,
         expected_input=expected_input,
     )
@@ -1723,13 +1595,13 @@ def process_scenario(
     requirement_marker_env = dict(prepared.target.marker_env)
     requirements = parse_requirements(
         prepared.requirement_strings,
-        vcs_config=prepared.vcs_config,
+        vcs_config=prepared.config.vcs,
         marker_environment=requirement_marker_env,
     )
     constraints = (
         parse_requirements(
             prepared.constraint_strings,
-            vcs_config=prepared.vcs_config,
+            vcs_config=prepared.config.vcs,
             marker_environment=requirement_marker_env,
         )
         if prepared.constraint_strings
@@ -1737,15 +1609,10 @@ def process_scenario(
     )
     data = resolve_scenario(
         requirements,
-        prepared.uploaded_prior_to,
         constraints,
-        indexes=prepared.indexes,
-        index_routes=prepared.index_routes or None,
-        build_policy_overrides=prepared.build_policy_overrides or None,
-        resolution_strategy=execution.strategy,
+        config=prepared.config,
         target=prepared.target,
         host=host,
-        trust_unverified_sdist_deps=prepared.trust_unverified_sdist_deps,
     )
     data["input"] = prepared.expected_input
 
@@ -1796,7 +1663,6 @@ def main(argv: list[str] | None = None) -> None:
         except argparse.ArgumentTypeError as exc:
             parser.error(str(exc))
     source_start = get_git_source_state()
-    host = BenchmarkHost.current(SCENARIO_WALL_TIMEOUT_SECONDS)
 
     if not SCENARIOS_DIR.is_dir():
         print(f"Error: {SCENARIOS_DIR} does not exist")
@@ -1833,7 +1699,7 @@ def main(argv: list[str] | None = None) -> None:
 
     try:
         all_rows = load_standard_corpus(all_files)
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         parser.error(str(exc))
     selected_stems = {path.stem for path in selected_files}
     selected_rows = [row for row in all_rows if row.toml_stem in selected_stems]
@@ -1842,6 +1708,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     mode = "strategy-matrix" if args.strategy_matrix else "default"
     corpus_hash = standard_corpus_hash(all_rows)
+    host = BenchmarkHost.current(SCENARIO_WALL_TIMEOUT_SECONDS)
     plan = standard_run_plan(selected_rows, strategies, host)
     execution_plan = plan.executions
     settings = standard_benchmark_settings(host)

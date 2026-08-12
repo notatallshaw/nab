@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -18,7 +19,7 @@ _EXPECTED_V2_INPUT_HASHES = {
     "pip-lowest:trustllm": "df30174b6d056d4935f4fa1509b0793b54802abcc6d32d54291f4ca4cc1c6956",
     "pip-lowest:copick": "31499574be189da527d8e14ae82f894ea78aede42bb5698805686a68ba441668",
     "pip-lowest:promptflow-vectordb": "df451641b6115b623a42e7cef6d0e8942c191a11d42575289fb4f627a37b0f64",
-    "pip-lowest:ultralytics-export": "a61e66d55fa8b05744c80af5eee833186c54fc60b889d9a80a7c0afbc83569ce",
+    "pip:ultralytics-export": "fe9f57216b10878fec77925c7bac99cb98995625f5946646629b7e7eacde7098",
     "pip-lowest:datacontract-cli": "e4f3cf317d15791206d1379d4917aeae91a9ce0306c3624ec375483b96a7fcd5",
     "pip-lowest:pandas-aws-boto3-dandi-frenzy": "87c9501504c42ecbcf90c610391252dac18e2ab39fde4d7a949410f0f43f9e2b",
     "ai-stack:vllm-transformers-floor": "38b7cba134e62de586d4d19a02dac092df50b4ad8aa16e1f0555abf3eb7877bc",
@@ -31,8 +32,8 @@ _EXPECTED_V2_INPUT_HASHES = {
     "forums-lowest-direct:so-dbt-core-snowflake-79744735": "2f409a250216abc0c5f89f74bf752db4c2b6b1564264d2df2d22dbb8f3a8d541",
     "uv-lowest:uv-issue-16601-xinference": "a6aa7fbec8e1291349a311745800095e4ed52c02805180da8517299860fb5476",
     "uv-lowest:uv-issue-16601-xinference-fixed": "109bb4cd7dd756a96f5b04edd007f3312fe5853c442ea7ee1b64ae6ea234903f",
-    "ai-stack:rag-chroma-langchain": "7dfda04a2fb704451afd48ee66d3fb617955535138f663dc7926ce397a304722",
-    "ai-stack:streamlit-langchain": "906384169268c46027f15ddead1f021edbc2f20589bd165ebf5ddc1e521fe338",
+    "ai-stack:rag-chroma-langchain": "0aeb86e88d6f7410ef858b51c4104d1f5c79349b9c25a1b71e7b59e053b642fe",
+    "ai-stack:streamlit-langchain": "145f34978276b96146e589c080ece06229d3b4817e619f2dfbf7ae95b247f784",
 }
 
 
@@ -43,7 +44,12 @@ def _harness() -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    benchmark_dir = str(_CANARY.parent)
+    sys.path.insert(0, benchmark_dir)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(benchmark_dir)
     return module
 
 
@@ -72,6 +78,42 @@ def _resolve_path_as(
     monkeypatch.setattr(Path, "resolve", resolve)
 
 
+def _assert_main_preflight_error(
+    module: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    scenario: dict[str, object],
+    message: str,
+) -> None:
+    """Assert selection fails before canary host capture or result creation."""
+    results_dir = tmp_path / "results"
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+    monkeypatch.setattr(module, "RESULTS_DIR", results_dir)
+    monkeypatch.setattr(
+        module,
+        "get_git_source_state",
+        lambda: {"commit": "a" * 40, "dirty": False, "diff_hash": None},
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["canary.py", "--commit", "safe", "--scenario", "quick:example"],
+    )
+
+    def fail_host(*_args: object, **_kwargs: object) -> object:
+        pytest.fail("scenario preflight reached host capture")
+
+    monkeypatch.setattr(module.BenchmarkHost, "current", classmethod(fail_host))
+
+    with pytest.raises(SystemExit) as exc_info:
+        module.main()
+
+    assert exc_info.value.code == 2
+    assert message in capsys.readouterr().err
+    assert not results_dir.exists()
+
+
 def test_default_canary_manifest_preserves_19_strategies() -> None:
     module = _harness()
 
@@ -82,11 +124,20 @@ def test_default_canary_manifest_preserves_19_strategies() -> None:
     assert selected == cases
     assert len({case.scenario for case in cases}) == _EXPECTED_CANARY_CASES
     assert Counter(case.resolution.value for case in cases) == {
-        "highest": 3,
-        "lowest": 11,
+        "highest": 4,
+        "lowest": 10,
         "lowest-direct": 5,
     }
     assert all("-lowest" not in case.scenario.split(":", 1)[0] for case in cases)
+
+
+def test_default_canaries_do_not_build_packages() -> None:
+    module = _harness()
+    cases = module.load_canary_manifest()
+
+    assert all(
+        "build_packages" not in module.find_scenario(case.scenario) for case in cases
+    )
 
 
 def test_default_canary_manifest_preserves_v2_input_identities() -> None:
@@ -323,7 +374,7 @@ def test_existing_summary_is_not_overwritten(
     scenarios_dir = tmp_path / "scenarios"
     scenarios_dir.mkdir()
     (scenarios_dir / "inside.toml").write_text(
-        '[skipped]\nunsupported_reason = "test fixture"\n',
+        '[skipped]\nrequirements = []\nunsupported_reason = "test fixture"\n',
         encoding="utf-8",
     )
     results_dir = tmp_path / "results"
@@ -471,6 +522,420 @@ def test_missing_scenario_exits_before_creating_results(
     assert exc_info.value.code == 2
     assert "scenario not found: 'missing:example'" in capsys.readouterr().err
     assert not results_dir.exists()
+
+
+def test_selection_validates_requirement_lists_before_vcs_pin_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenarios = {
+        "quick:first": {
+            "requirements": [],
+            "vcs_require_pin": "false",
+            "vcs_policy": "permit",
+            "vcs_allowed_schemes": {"git+https": False},
+            "vcs_allowed_repos": {"https://example.test/repo": False},
+        },
+        "quick:second": {"requirements": "demo"},
+    }
+    monkeypatch.setattr(module, "find_scenario", scenarios.get)
+
+    with pytest.raises(
+        TypeError,
+        match="quick:second: requirements must be a list, got str",
+    ):
+        module.select_scenarios(
+            [
+                module.CanaryCase("quick:first", None),
+                module.CanaryCase("quick:second", None),
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    "unsupported_reason",
+    [None, "not runnable"],
+    ids=("supported", "unsupported"),
+)
+def test_selection_validates_unknown_settings_across_the_whole_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    unsupported_reason: str | None,
+) -> None:
+    module = _harness()
+    second: dict[str, object] = {
+        "requirements": [],
+        "trust_unverified_sdist_dependencies": False,
+    }
+    if unsupported_reason is not None:
+        second["unsupported_reason"] = unsupported_reason
+    scenarios = {
+        "quick:first": {
+            "requirements": [],
+            "trust_unverified_sdist_deps": "false",
+        },
+        "quick:second": second,
+    }
+    monkeypatch.setattr(module, "find_scenario", scenarios.get)
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "quick:second: unknown scenario settings: "
+            "['trust_unverified_sdist_dependencies']"
+        ),
+    ):
+        module.select_scenarios(
+            [
+                module.CanaryCase("quick:first", None),
+                module.CanaryCase("quick:second", None),
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    ("vcs_settings", "message"),
+    [
+        (
+            {"vcs_require_pin": "false"},
+            "quick:first: vcs_require_pin must be a boolean, got str",
+        ),
+        (
+            {"vcs_policy": "permit"},
+            "quick:first: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+        ),
+        (
+            {"vcs_allowed_schemes": {"git+https": False}},
+            "quick:first: vcs_allowed_schemes must be a list, got dict",
+        ),
+        (
+            {"vcs_allowed_repos": {"https://example.test/repo": False}},
+            "quick:first: vcs_allowed_repos must be a list, got dict",
+        ),
+    ],
+    ids=("pin", "policy", "schemes", "repos"),
+)
+def test_selection_validates_vcs_settings_before_project_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    vcs_settings: dict[str, object],
+    message: str,
+) -> None:
+    module = _harness()
+    scenarios = {
+        "quick:first": {
+            "requirements": [],
+            **vcs_settings,
+        },
+        "quick:second": {
+            "requirements": [],
+            "project_name": "demo-project",
+            "project_extras": ["all"],
+            "optional_dependencies": {"all": "demo"},
+        },
+    }
+    monkeypatch.setattr(module, "find_scenario", scenarios.get)
+
+    with pytest.raises(
+        (TypeError, ValueError),
+        match=re.escape(message),
+    ):
+        module.select_scenarios(
+            [
+                module.CanaryCase("quick:first", None),
+                module.CanaryCase("quick:second", None),
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    ("first_scenario", "second_scenario", "message"),
+    [
+        (
+            {"vcs_policy": "permit"},
+            {"vcs_require_pin": "false"},
+            "quick:second: vcs_require_pin must be a boolean, got str",
+        ),
+        (
+            {"vcs_allowed_schemes": {"git+https": False}},
+            {"vcs_policy": "permit"},
+            "quick:second: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+        ),
+        (
+            {"vcs_allowed_repos": {"https://example.test/repo": False}},
+            {"vcs_allowed_schemes": {"git+https": False}},
+            "quick:second: vcs_allowed_schemes must be a list, got dict",
+        ),
+        (
+            {"indexes": "private"},
+            {
+                "project_name": "demo-project",
+                "project_extras": ["all"],
+                "optional_dependencies": {"all": "demo"},
+            },
+            "quick:second: optional_dependencies['all'] must be a list, got str",
+        ),
+    ],
+    ids=(
+        "pin-before-policy",
+        "policy-before-schemes",
+        "schemes-before-repos",
+        "project-before-indexes",
+    ),
+)
+def test_selection_validates_fields_across_the_whole_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    first_scenario: dict[str, object],
+    second_scenario: dict[str, object],
+    message: str,
+) -> None:
+    module = _harness()
+    scenarios = {
+        "quick:first": {
+            "requirements": [],
+            **first_scenario,
+        },
+        "quick:second": {
+            "requirements": [],
+            **second_scenario,
+        },
+    }
+    monkeypatch.setattr(module, "find_scenario", scenarios.get)
+
+    with pytest.raises((TypeError, ValueError), match=re.escape(message)):
+        module.select_scenarios(
+            [
+                module.CanaryCase("quick:first", None),
+                module.CanaryCase("quick:second", None),
+            ]
+        )
+
+
+def test_selection_validates_index_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenario = {
+        "requirements": [],
+        "indexes": [{"name": "private", "url": "https://example.test/simple"}],
+        "index_routes": [{"name": "demo>=1", "index": "private"}],
+    }
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+    message = (
+        "quick:example: index_routes[0].name must be a valid distribution name, "
+        "got 'demo>=1'"
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        module.select_scenarios([module.CanaryCase("quick:example", None)])
+
+
+def test_selection_validates_all_indexes_before_any_index_routes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenarios = {
+        "quick:first": {
+            "requirements": [],
+            "index_routes": "private",
+        },
+        "quick:second": {
+            "requirements": [],
+            "indexes": "private",
+        },
+    }
+    monkeypatch.setattr(module, "find_scenario", scenarios.get)
+
+    with pytest.raises(
+        TypeError,
+        match="quick:second: indexes must be an array of tables, got str",
+    ):
+        module.select_scenarios(
+            [
+                module.CanaryCase("quick:first", None),
+                module.CanaryCase("quick:second", None),
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "error", "message"),
+    [
+        (
+            {"build_packages": "demo"},
+            {"marker_environment": "Linux"},
+            TypeError,
+            "quick:second: marker_environment must be a table of strings",
+        ),
+        (
+            {
+                "platform_system": "Linux",
+                "build_packages": ["demo"],
+            },
+            {"build_packages": "demo"},
+            TypeError,
+            ("quick:second: build_packages must be a list of package names, got str"),
+        ),
+        (
+            {"build_packages": "demo"},
+            {"marker_environment": {"platform_codename": "Windows"}},
+            ValueError,
+            (
+                "quick:second: unknown marker_environment variables: ['platform_codename']"
+            ),
+        ),
+    ],
+    ids=(
+        "marker-shapes-before-build",
+        "build-shapes-before-compatibility",
+        "marker-names-before-build",
+    ),
+)
+def test_selection_validates_field_phases_across_the_whole_selection(
+    monkeypatch: pytest.MonkeyPatch,
+    first: dict[str, object],
+    second: dict[str, object],
+    error: type[Exception],
+    message: str,
+) -> None:
+    module = _harness()
+    scenarios = {
+        "quick:first": {"requirements": [], **first},
+        "quick:second": {"requirements": [], **second},
+    }
+    monkeypatch.setattr(module, "find_scenario", scenarios.get)
+
+    with pytest.raises(error, match=re.escape(message)):
+        module.select_scenarios(
+            [
+                module.CanaryCase("quick:first", None),
+                module.CanaryCase("quick:second", None),
+            ]
+        )
+
+
+def test_selection_validates_build_compatibility_before_resolution_and_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenario = {
+        "requirements": [],
+        "platform_system": "Linux",
+        "build_packages": ["demo"],
+        "resolution": "middle",
+        "requires_matching_host": "yes",
+    }
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+    message = (
+        "quick:example: build_packages cannot be combined "
+        "with a marker environment overlay"
+    )
+
+    with pytest.raises(ValueError, match=re.escape(message)):
+        module.select_scenarios([module.CanaryCase("quick:example", None)])
+
+
+def test_selection_validates_unsupported_build_shape_but_not_compatibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    valid_quarantine = {
+        "requirements": [],
+        "unsupported_reason": "marker/build metadata is unsound",
+        "platform_system": "Linux",
+        "build_packages": ["Demo_Pkg"],
+    }
+    invalid_quarantine = {
+        **valid_quarantine,
+        "build_packages": ["demo>=1"],
+    }
+    selected = [module.CanaryCase("quick:example", None)]
+
+    monkeypatch.setattr(
+        module,
+        "find_scenario",
+        lambda _name: valid_quarantine,
+    )
+    assert module.select_scenarios(selected) == selected
+
+    monkeypatch.setattr(module, "find_scenario", lambda _name: invalid_quarantine)
+    with pytest.raises(ValueError, match="valid distribution name"):
+        module.select_scenarios(selected)
+
+
+def test_selection_rejects_unknown_marker_variables_on_unsupported_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _harness()
+    scenario = {
+        "requirements": [],
+        "unsupported_reason": "not runnable",
+        "marker_environment": {"platform_codename": "Windows"},
+    }
+    monkeypatch.setattr(module, "find_scenario", lambda _name: scenario)
+
+    with pytest.raises(
+        ValueError,
+        match=re.escape(
+            "quick:example: unknown marker_environment variables: ['platform_codename']"
+        ),
+    ):
+        module.select_scenarios([module.CanaryCase("quick:example", None)])
+
+
+@pytest.mark.parametrize(
+    ("scenario", "message"),
+    [
+        (
+            {
+                "requirements": [],
+                "trust_unverified_sdist_deps": "false",
+                "trust_unverified_sdist_dependencies": False,
+            },
+            "unknown scenario settings: ['trust_unverified_sdist_dependencies']",
+        ),
+        (
+            {"requirements": [], "build_packages": "demo"},
+            "build_packages must be a list of package names",
+        ),
+        (
+            {"requirements": [], "resolution": "middle"},
+            "resolution must be one of ['highest', 'lowest', 'lowest-direct']",
+        ),
+        (
+            {"requirements": [], "requires_matching_host": "yes"},
+            "requires_matching_host must be a boolean",
+        ),
+        (
+            {
+                "requirements": [],
+                "marker_environment": {"platform_codename": "Windows"},
+            },
+            "unknown marker_environment variables: ['platform_codename']",
+        ),
+    ],
+    ids=(
+        "unknown-setting",
+        "build-packages",
+        "resolution",
+        "host-requirement",
+        "marker-variable",
+    ),
+)
+def test_selected_scenario_preflight_fails_before_host_and_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    scenario: dict[str, object],
+    message: str,
+) -> None:
+    module = _harness()
+    _assert_main_preflight_error(
+        module,
+        tmp_path,
+        monkeypatch,
+        capsys,
+        scenario,
+        message,
+    )
 
 
 def test_empty_scenarios_list_exits_before_creating_results(
