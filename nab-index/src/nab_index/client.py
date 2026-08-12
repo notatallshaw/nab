@@ -89,8 +89,10 @@ class WheelHashMismatchError(Exception):
 
 # Mirrors packaging.utils._build_tag_regex: PEP 427 build numbers start with a digit.
 _BUILD_TAG_RE = re.compile(r"(\d+)(.*)", re.ASCII)
-# Mirrors packaging.utils' PEP 427 project-name check (re.match, not fullmatch).
-_WHEEL_NAME_RE = re.compile(r"^[\w\d._]*$", re.UNICODE)
+# Mirrors packaging.utils' PEP 427 project-name check. One character minimum, so
+# an empty name is rejected, and ``\Z`` rather than ``$`` so a trailing newline is
+# not accepted as the end of the name.
+_WHEEL_NAME_RE = re.compile(r"^[\w._]+\Z", re.UNICODE)
 # A wheel filename has 4 dashes, or 5 when it carries a build tag.
 _WHEEL_DASHES = (4, 5)
 _WHEEL_DASHES_WITH_BUILD = 5
@@ -148,9 +150,17 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     bad_build = (
         dashes == _WHEEL_DASHES_WITH_BUILD and _BUILD_TAG_RE.match(parts[2]) is None
     )
-    # No tag component may be empty (the tag triple is parts[-1]).
-    empty_tag = any("" in component.split(".") for component in parts[-1].split("-"))
-    if bad_build or empty_tag:
+
+    # The tag triple is parts[-1]; no component of it may be empty, and every
+    # interpreter must be an identifier, which is the only per-tag check
+    # packaging's own parser makes.
+    interpreters, *rest = parts[-1].split("-")
+    empty_tag = any("" in component.split(".") for component in (interpreters, *rest))
+    bad_interpreter = any(
+        not interpreter.isidentifier() for interpreter in interpreters.split(".")
+    )
+
+    if bad_build or empty_tag or bad_interpreter:
         return None
 
     return (_intern_name(name_part), version)

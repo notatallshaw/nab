@@ -31,29 +31,39 @@ def __dir__() -> list[str]:
 BuildTag = Union[tuple[()], tuple[int, str]]
 """
 A wheel build tag: an empty tuple, or a ``(build number, build tag suffix)`` pair.
+
+.. versionadded:: 20.9
 """
 
 NormalizedName = NewType("NormalizedName", str)
 """
 A :class:`typing.NewType` of :class:`str`, representing a normalized name.
+
+.. versionadded:: 20.4
 """
 
 
 class InvalidName(ValueError):
     """
     An invalid distribution name; users should refer to the packaging user guide.
+
+    .. versionadded:: 23.2
     """
 
 
 class InvalidWheelFilename(ValueError):
     """
     An invalid wheel filename was found, users should refer to PEP 427.
+
+    .. versionadded:: 20.9
     """
 
 
 class InvalidSdistFilename(ValueError):
     """
     An invalid sdist filename was found, users should refer to the packaging user guide.
+
+    .. versionadded:: 20.9
     """
 
 
@@ -66,7 +76,7 @@ _normalized_regex = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*", re.ASCII)
 _build_tag_regex = re.compile(r"(\d+)(.*)", re.ASCII)
 # PEP 427: Valid characters for an escaped project name in a wheel filename.
 # Requires at least one character so an empty project name is rejected.
-_wheel_name_regex = re.compile(r"^[\w._]+$", re.UNICODE)
+_wheel_name_regex = re.compile(r"^[\w._]+\Z", re.UNICODE)
 
 
 def canonicalize_name(name: str, *, validate: bool = False) -> NormalizedName:
@@ -98,6 +108,9 @@ def canonicalize_name(name: str, *, validate: bool = False) -> NormalizedName:
 
     .. versionchanged:: 20.4
        The return type was changed to :class:`NormalizedName`.
+
+    .. versionchanged:: 23.2
+       Added the *validate* keyword parameter.
     """
     if validate and not _validate_regex.fullmatch(name):
         raise InvalidName(f"name is invalid: {name!r}")
@@ -113,16 +126,27 @@ def canonicalize_name(name: str, *, validate: bool = False) -> NormalizedName:
 
 def is_normalized_name(name: str) -> bool:
     """
-    Check if a name is already normalized (i.e. :func:`canonicalize_name` would
-    roundtrip to the same value).
+    Check if a name is a normalized project name (i.e. a valid name that
+    :func:`canonicalize_name` would roundtrip to the same value).
+
+    The roundtrip only characterizes normalized names for *valid* names. A name
+    must start and end with an ASCII letter or digit, which
+    :func:`canonicalize_name` does not enforce: it leaves a leading or trailing
+    hyphen in place, so such a name roundtrips without being normalized.
 
     :param str name: The name to check.
 
-    >>> from packaging.utils import is_normalized_name
+    >>> from packaging.utils import canonicalize_name, is_normalized_name
     >>> is_normalized_name("requests")
     True
     >>> is_normalized_name("Django")
     False
+    >>> canonicalize_name("_not_legal")
+    '-not-legal'
+    >>> is_normalized_name("-not-legal")  # roundtrips, but not a valid name
+    False
+
+    .. versionadded:: 23.2
     """
     return _normalized_regex.fullmatch(name) is not None
 
@@ -156,6 +180,14 @@ def canonicalize_version(
 
     >>> canonicalize_version('1.4.0.0.0')
     '1.4'
+
+    .. versionadded:: 17.1
+
+    .. versionchanged:: 21.0
+       The return type was narrowed to :class:`str`.
+
+    .. versionchanged:: 22.0
+       Added the *strip_trailing_zero* keyword parameter.
     """
     if isinstance(version, str):
         try:
@@ -207,12 +239,18 @@ def parse_wheel_filename(
     >>> not build
     True
 
+    .. versionadded:: 20.9
+
+    .. versionchanged:: 23.2
+       Raises :class:`InvalidWheelFilename` when the version component is invalid.
+
     .. versionadded:: 26.1
        The *validate_order* parameter.
 
     .. versionchanged:: 26.3
-       Raises :class:`InvalidWheelFilename` on empty tag set components or an
-       empty project name.
+       Raises :class:`InvalidWheelFilename` when an interpreter component is
+       not an identifier, a tag set component is empty, or the project name is
+       empty.
     """
     if not filename.endswith(".whl"):
         raise InvalidWheelFilename(
@@ -260,7 +298,7 @@ def parse_wheel_filename(
         ) from None
     except InvalidTag:
         raise InvalidWheelFilename(
-            f"Invalid wheel filename (empty tag component): {filename!r}"
+            f"Invalid wheel filename (invalid tag component): {filename!r}"
         ) from None
     return (name, version, build, tags)
 
@@ -286,6 +324,14 @@ def parse_sdist_filename(filename: str) -> tuple[NormalizedName, Version]:
     'foo'
     >>> ver == Version('1.0')
     True
+
+    .. versionadded:: 20.9
+
+    .. versionchanged:: 21.0
+       Added support for ``.zip`` source distributions.
+
+    .. versionchanged:: 23.2
+       Raises :class:`InvalidSdistFilename` when the version component is invalid.
 
     .. versionchanged:: 26.3
        Raises :class:`InvalidSdistFilename` on an empty project name.

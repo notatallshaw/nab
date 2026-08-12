@@ -85,7 +85,8 @@ types = [
     {include-group = "tests"},
     "mypy>=1.19",
     "pyright>=1.1.400",
-    "ty>=0.0.20",
+    # Earlier versions report the `ty: ignore` in nab-resolver as unused.
+    "ty>=0.0.66",
     "pyrefly>=0.50",
     "typing_extensions>=4.10",
     "zuban>=0.6",

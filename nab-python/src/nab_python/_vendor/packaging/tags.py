@@ -46,6 +46,7 @@ __all__ = [
     "mac_platforms",
     "parse_tag",
     "platform_tags",
+    "pure_python_tags",
     "sys_tags",
 ]
 
@@ -59,11 +60,15 @@ logger = logging.getLogger(__name__)
 PythonVersion = Sequence[int]
 """
 A sequence of integers describing a Python version, e.g. ``(3, 13)``.
+
+.. versionadded:: 20.0
 """
 
 AppleVersion = tuple[int, int]
 """
 A ``(major, minor)`` integer pair describing an Apple OS version.
+
+.. versionadded:: 24.2
 """
 _T = TypeVar("_T")
 
@@ -95,8 +100,8 @@ class UnsortedTagsError(ValueError):
 
 class InvalidTag(ValueError):
     """
-    Raised when a tag has an empty interpreter, ABI, or platform component, or
-    does not have exactly three components.
+    Raised when an interpreter component is not an identifier, a tag component
+    is empty, or a tag does not have exactly three components.
 
     .. versionadded:: 26.3
     """
@@ -248,9 +253,9 @@ def parse_tag(
     :param int | None limit: The maximum number of tags to parse.
     :raises UnsortedTagsError: If **validate_order** is true and any compressed tag
         set component is not in sorted order.
-    :raises InvalidTag: If the interpreter, ABI, or platform field (or any member
-        of a compressed tag set) is empty, or the tag does not have exactly three
-        components.
+    :raises InvalidTag: If the interpreter field is not an identifier; if the
+        interpreter, ABI, or platform field (or any member of a compressed tag
+        set) is empty; or if the tag does not have exactly three components.
     :raises TooManyTagsError: If **limit** is not ``None`` and the compressed tag
         set would generate more than **limit** tags.
     :raises ValueError: If **limit** is negative.
@@ -259,8 +264,9 @@ def parse_tag(
        The *validate_order* parameter.
 
     .. versionadded:: 26.3
-       Raises :class:`InvalidTag` on empty tag components, or a tag that does
-       not have exactly three components.
+       Raises :class:`InvalidTag` when an interpreter component is not an
+       identifier, a tag component is empty, or a tag does not have exactly
+       three components.
        Added the *limit* parameter. Raises :class:`TooManyTagsError` if the compressed
        tag set would generate more than *limit* tags.
     """
@@ -293,6 +299,9 @@ def parse_tag(
         interpreters, abis, platforms = component_parts
     except ValueError as exc:
         raise InvalidTag(f"Tag {tag!r} must have exactly three components") from exc
+    for interpreter in interpreters:
+        if not interpreter.isidentifier():
+            raise InvalidTag(f"Tag {tag!r} has an invalid interpreter: {interpreter!r}")
     return frozenset(
         Tag(interpreter, abi, platform_)
         for interpreter in interpreters
@@ -419,6 +428,8 @@ def cpython_tags(
     :param Iterable platforms: Iterable of compatible platforms. Defaults to the
                                platforms compatible with the current system.
     :param bool warn: Whether warnings should be logged. Defaults to ``False``.
+
+    .. versionadded:: 20.0
     """
     if not python_version:
         python_version = sys.version_info[:2]
@@ -536,6 +547,8 @@ def generic_tags(
     :param Iterable platforms: Iterable of compatible platforms. Defaults to the
                                platforms compatible with the current system.
     :param bool warn: Whether warnings should be logged. Defaults to ``False``.
+
+    .. versionadded:: 20.0
     """
     if not interpreter:
         interp_name = interpreter_name()
@@ -565,6 +578,30 @@ def _py_interpreter_range(py_version: PythonVersion) -> Iterator[str]:
             yield f"py{_version_nodot((py_version[0], minor))}"
 
 
+def pure_python_tags(
+    python_version: PythonVersion | None = None,
+) -> Iterator[Tag]:
+    """
+    Yields the pure-Python tags compatible with ``python_version``.
+
+    The tags use the ``"none"`` ABI and ``"any"`` platform, so their
+    generation does not depend on the running platform.
+
+    .. versionadded:: 26.3
+
+    :param Sequence python_version: A one- or two-item sequence representing the
+                                 compatible version of Python. Defaults to
+                                 ``sys.version_info[:2]``.
+    :raises ValueError: If ``python_version`` is an empty sequence.
+    """
+    if python_version is None:
+        python_version = sys.version_info[:2]
+    elif not python_version:
+        raise ValueError("python_version must contain at least one item")
+    for version in _py_interpreter_range(python_version):
+        yield Tag(version, "none", "any")
+
+
 def compatible_tags(
     python_version: PythonVersion | None = None,
     interpreter: str | None = None,
@@ -587,6 +624,8 @@ def compatible_tags(
                             ``"cp38"``. Defaults to the current interpreter.
     :param Iterable platforms: Iterable of compatible platforms. Defaults to the
                                platforms compatible with the current system.
+
+    .. versionadded:: 20.0
     """
     if not python_version:
         python_version = sys.version_info[:2]
@@ -596,8 +635,7 @@ def compatible_tags(
             yield Tag(version, "none", platform_)
     if interpreter:
         yield Tag(interpreter, "none", "any")
-    for version in _py_interpreter_range(python_version):
-        yield Tag(version, "none", "any")
+    yield from pure_python_tags(python_version)
 
 
 def _mac_arch(arch: str, is_32bit: bool = _32_BIT_INTERPRETER) -> str:
@@ -665,6 +703,8 @@ def mac_platforms(
         - On Windows, platform compatibility is statically specified
         - On Linux, code must be run on the system itself to determine
           compatibility
+
+    .. versionadded:: 20.0
     """
     if version is None or arch is None:
         version_str, _, cpu_arch = platform.mac_ver()
@@ -749,6 +789,8 @@ def ios_platforms(
     .. note::
         Behavior of this method is undefined if invoked on non-iOS platforms
         without providing explicit version and multiarch arguments.
+
+    .. versionadded:: 24.2
     """
     if version is None:
         # if iOS is the current platform, ios_ver *must* be defined. However,
@@ -808,6 +850,8 @@ def android_platforms(
         e.g. ``arm64_v8a``. Defaults to the current system's ABI , as returned by
         ``sysconfig.get_platform``. Hyphens and periods will be replaced with
         underscores.
+
+    .. versionadded:: 25.0
     """
     if platform.system() != "Android" and (api_level is None or abi is None):
         raise TypeError(
@@ -866,6 +910,8 @@ def _generic_platforms() -> Iterator[str]:
 def platform_tags() -> Iterator[str]:
     """
     Yields the :attr:`~Tag.platform` tags for the running interpreter.
+
+    .. versionadded:: 21.1
     """
     if platform.system() == "Darwin":
         return mac_platforms()
@@ -889,6 +935,8 @@ def interpreter_name() -> str:
     be returned when appropriate.
 
     This typically acts as the prefix to the :attr:`~Tag.interpreter` tag.
+
+    .. versionadded:: 20.0
     """
     name = sys.implementation.name
     return INTERPRETER_SHORT_NAMES.get(name) or name
@@ -901,6 +949,8 @@ def interpreter_version(*, warn: bool = False) -> str:
     This typically acts as the suffix to the :attr:`~Tag.interpreter` tag.
 
     :param bool warn: Whether warnings should be logged. Defaults to ``False``.
+
+    .. versionadded:: 20.0
     """
     version = _get_config_var("py_version_nodot", warn=warn)
     return str(version) if version else _version_nodot(sys.version_info[:2])

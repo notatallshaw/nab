@@ -387,10 +387,12 @@ def _as_root_requirements(
     if _is_root_sequence(requirements):
         return requirements
     # The parameters are spelled out because ``constraint`` is a contravariant
-    # protocol, which gives the version parameter no inference site.
+    # protocol, which gives the version parameter no inference site.  The
+    # suppression is ty's: it reads the sequence member of the union as still
+    # live in the negative branch of a generic ``TypeIs``.
     return [
         RootRequirement[PackageType, VersionType](package, required_range)
-        for package, required_range in requirements.items()
+        for package, required_range in requirements.items()  # ty: ignore[unresolved-attribute]
     ]
 
 
