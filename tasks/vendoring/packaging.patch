@@ -1815,26 +1815,6 @@ index 0000000..72eee6b
 +        _clause_formula(sorted(clause, key=_atom_key)) for clause in residual
 +    )
 +    return make_and([*lead, inner])
-diff --git a/nab-python/src/nab_python/_vendor/packaging/_parser.py b/nab-python/src/nab_python/_vendor/packaging/_parser.py
-index b4ea978..9331b4b 100644
---- a/nab-python/src/nab_python/_vendor/packaging/_parser.py
-+++ b/nab-python/src/nab_python/_vendor/packaging/_parser.py
-@@ -68,7 +68,14 @@ class Value(Node):
-     __slots__ = ()
- 
-     def serialize(self) -> str:
--        return f'"{self}"'
-+        value = str(self)
-+        if '"' not in value:
-+            return f'"{value}"'
-+        if "'" not in value:
-+            return f"'{value}'"
-+        raise ValueError(
-+            "Cannot serialize marker value containing both quote characters"
-+        )
- 
- 
- class Op(Node):
 diff --git a/nab-python/src/nab_python/_vendor/packaging/_ranges.py b/nab-python/src/nab_python/_vendor/packaging/_ranges.py
 index 5370ec8..b305068 100644
 --- a/nab-python/src/nab_python/_vendor/packaging/_ranges.py
