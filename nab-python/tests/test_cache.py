@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import stat
 import subprocess
 import time
@@ -21,6 +22,7 @@ from nab_index.cache import (
     CACHE_VERSION_SDIST,
     CACHE_VERSION_SIMPLE,
     CACHE_VERSION_SIMPLE_NEG,
+    SOURCE_BUCKETS,
     VCS_BUCKET,
     CachePolicy,
     NullCache,
@@ -963,6 +965,41 @@ class TestSourceBuckets:
         assert "fixture.json" not in names
         assert "data.json" not in names
         assert "foo.json" in names
+
+
+class TestCacheReferenceLayout:
+    """The cache reference's Layout tables name every bucket the root holds."""
+
+    def _documented_buckets(self) -> set[str]:
+        """Return the bucket names the Layout section's tables list."""
+        doc = Path(__file__).resolve().parents[2] / "docs" / "reference" / "cache.md"
+        text = doc.read_text(encoding="utf-8")
+
+        start = text.index("## Layout")
+        end = text.index("\n## ", start + 1)
+        section = text[start:end]
+
+        return set(re.findall(r"^\| `([^`]+)/` \|", section, flags=re.MULTILINE))
+
+    def _record_buckets(self, cache: OnDiskCache) -> set[str]:
+        """Return the root-level directories ``cache`` writes its records under.
+
+        Read off the cache's own paths rather than a populated root, so a
+        bucket added to ``OnDiskCache`` fails this test until the reference
+        names it too.
+        """
+        root = cache._root
+        return {
+            path.relative_to(root).parts[0]
+            for path in vars(cache).values()
+            if isinstance(path, Path) and path != root
+        }
+
+    def test_tables_name_every_bucket(self, tmp_path: Path) -> None:
+        cache = OnDiskCache(tmp_path / "cache", "https://pypi.org/simple")
+
+        expected = self._record_buckets(cache) | set(SOURCE_BUCKETS)
+        assert self._documented_buckets() == expected
 
 
 class TestAddOwnerMode:
