@@ -622,6 +622,34 @@ class TestNarrowForDisplay:
         narrowed = provider.narrow_for_display("p", constraint)
         assert provider.format_range(narrowed) == "!=1.10,!=1.11,!=1.12,<=1.20,>=1.5"
 
+    def test_hole_sharing_a_release_with_a_local_build_is_not_stated(self) -> None:
+        """``!=1.0`` would exclude ``1.0+cu118`` too, so no hole is stated.
+
+        PEP 440 has no spelling for the plain release on its own, so the term
+        falls back to the snapped range.
+        """
+        provider = _listing_provider("p", ["2.0", "1.0+cu118", "1.0", "0.5"])
+        low = provider.widen_decision_gap("p", V("0.5"))
+        middle = provider.widen_decision_gap("p", V("1.0+cu118"))
+        high = provider.widen_decision_gap("p", V("2.0"))
+        assert low is not None
+        assert middle is not None
+        assert high is not None
+        banned = low | middle | high
+
+        narrowed = provider.narrow_for_display("p", banned)
+        listed = [V("0.5"), V("1.0"), V("1.0+cu118"), V("2.0")]
+        assert [version for version in listed if version in narrowed] == [
+            V("0.5"),
+            V("1.0+cu118"),
+            V("2.0"),
+        ]
+
+        assert (
+            provider.format_range(narrowed)
+            == "<VersionRange '(-inf, 0.5] | [1.0+cu118, +inf)'>"
+        )
+
     def test_narrowing_a_span_full_of_holes_falls_back_to_snapping(self) -> None:
         """Past a handful of holes the exclusions run longer than the range."""
         provider = _listing_provider("p", _descending_listing(30))
@@ -668,6 +696,58 @@ class TestNarrowForDisplay:
 
         expected = f"because no versions of a {banned} are available"
         assert expected in str(exc_info.value).splitlines()
+
+    def test_report_keeps_a_local_build_the_clause_rules_out(self) -> None:
+        """A clause covering ``c 1.0+cu118`` may not print as ``c !=1.0``.
+
+        ``x`` pins d and e at 1, so c is rejected at 0.5, 1.0+cu118 and 2.0
+        against d, and at 1.0 against e.  The d clause holds every listed
+        version but plain 1.0; ``!=1.0`` understates it by dropping the local
+        build too, which the report then names as a version c does not have.
+
+        The e clause is the mirror, holding only the local build, and
+        ``!=1.0+cu118`` states it exactly.
+        """
+        coordinator = _graph_coordinator(
+            {
+                "x": {"1.0": ["d==1", "e==1"]},
+                "c": {
+                    "2.0": ["d==2"],
+                    "1.0+cu118": ["d==2"],
+                    "1.0": ["e==2"],
+                    "0.5": ["d==2"],
+                },
+                "d": {"2": [], "1": []},
+                "e": {"2": [], "1": []},
+            }
+        )
+        root_reqs = {
+            "x": VersionRange.full(admit_arbitrary=False),
+            "c": VersionRange.full(admit_arbitrary=False),
+        }
+        provider = Provider(
+            coordinator,
+            target=ResolveTarget.for_host_python("3.12.0"),
+            root_requirements=root_reqs,
+        )
+        resolver = Resolver(
+            provider,
+            range_type=VersionRange,
+            root_version="0",
+            format_range=provider.format_range,
+        )
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(dict(root_reqs))
+
+        lines = str(exc_info.value).splitlines()
+        assert (
+            "because c <VersionRange '(-inf, 0.5] | [1.0+cu118, +inf)'> "
+            "is incompatible with d <=1"
+        ) in lines
+        assert "because c !=1.0 is incompatible with d <=1" not in lines
+        assert "because no versions of c ==1.0+cu118 are available" not in lines
+
+        assert "because c !=1.0+cu118,==1.0 is incompatible with e <=1" in lines
 
     def test_whole_listing_rejected_drops_the_range(self) -> None:
         """With every version of ``a`` rejected the line names no range."""
