@@ -1967,7 +1967,7 @@ def _raise_for_source_python(
         if spec is not None and not target.admits_requires_python(spec):
             msg = (
                 f"{normalized} {version} requires Python {spec} but the"
-                f" {target.label} resolve targets Python {target.python_full_version}"
+                f" {target.label} resolve targets Python {target.python_version}"
             )
             raise ResolutionError(msg)
 

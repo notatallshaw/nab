@@ -850,12 +850,11 @@ class TestUnsetKnobAcceptsAnyLevel:
 
 
 class TestRequiresPythonPatch:
-    """A whole target evaluates Requires-Python at its full patch version.
+    """Requires-Python is evaluated at the target's language minor.
 
-    A python-patches tuple names one concrete micro and is admitted when that
-    micro satisfies the specifier.  A bare minor is an interval and is admitted
-    when the specifier overlaps the whole minor, so a micro floor keeps the
-    dist rather than excluding it at the synthetic ``.0`` floor.
+    A python-patches tuple names one concrete micro and a bare minor stands
+    for all of them; both admit the same dists, so a micro floor keeps the
+    dist and only a disjoint minor drops it.
     """
 
     def test_dist_kept_when_patch_satisfies_requires_python(self) -> None:
@@ -871,10 +870,27 @@ class TestRequiresPythonPatch:
         result = provider.fetch_versions("pkg")
         assert [v for v, _ in result] == [Version("1.0")]
 
-    def test_whole_target_excludes_a_dist_its_patch_fails(self) -> None:
-        """A 3.13.1 python-patches tuple excludes a >=3.13.5 dist."""
+    def test_patch_pin_keeps_a_dist_its_own_micro_would_fail(self) -> None:
+        """A 3.13.1 python-patches tuple keeps a >=3.13.5 dist.
+
+        The dist declares the 3.13 language, which is what the tuple pins;
+        which micro of it the deployment runs is the installer's business.
+        """
         provider = Provider(
             _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.5")]),
+            ResolveTarget.for_declared(
+                python_version="3.13",
+                spec=PlatformSpec("linux_x86_64"),
+                python_full_version="3.13.1",
+            ),
+        )
+        result = provider.fetch_versions("pkg")
+        assert [v for v, _ in result] == [Version("1.0")]
+
+    def test_patch_pin_excludes_a_disjoint_dist(self) -> None:
+        """A 3.13.1 python-patches tuple still excludes a >=3.14 dist."""
+        provider = Provider(
+            _make_coordinator([_make_wheel("1.0", requires_python=">=3.14")]),
             ResolveTarget.for_declared(
                 python_version="3.13",
                 spec=PlatformSpec("linux_x86_64"),
@@ -884,7 +900,7 @@ class TestRequiresPythonPatch:
         assert provider.fetch_versions("pkg") == []
 
     def test_minor_interval_keeps_a_dist_its_floor_would_fail(self) -> None:
-        """A bare 3.13 minor keeps a >=3.13.1 dist: the range overlaps 3.13."""
+        """A bare 3.13 minor keeps a >=3.13.1 dist: the floor is 3.13."""
         provider = Provider(
             _make_coordinator([_make_wheel("1.0", requires_python=">=3.13.1")]),
             ResolveTarget.for_declared(
@@ -895,7 +911,7 @@ class TestRequiresPythonPatch:
         assert [v for v, _ in result] == [Version("1.0")]
 
     def test_minor_interval_excludes_a_disjoint_dist(self) -> None:
-        """A bare 3.13 minor still excludes a >=3.14 dist: no overlap."""
+        """A bare 3.13 minor still excludes a >=3.14 dist: a later language."""
         provider = Provider(
             _make_coordinator([_make_wheel("1.0", requires_python=">=3.14")]),
             ResolveTarget.for_declared(

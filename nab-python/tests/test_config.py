@@ -60,7 +60,7 @@ from nab_python.provider import (
     VcsSource,
 )
 from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget, host_environment
+from nab_python.target import ResolveTarget, declared_range_marker, host_environment
 from nab_python.workspace import WorkspaceConfig
 
 
@@ -1168,7 +1168,7 @@ class TestRequiresPython:
                 "python_full_version": "3.14.0rc1",
             },
         )
-        assert target.python_release in SpecifierSet(">=3.14")
+        assert target.admits_requires_python(SpecifierSet(">=3.14"))
         _check_requires_python_admits_target(
             config.requires_python,
             target,
@@ -1228,7 +1228,7 @@ class TestRequiresPython:
         with pytest.raises(ConfigError) as exc:
             plan_targets(config)
         message = str(exc.value)
-        assert "excludes the resolve target Python 3.11.0" in message
+        assert "excludes the resolve target Python 3.11" in message
         assert "matrix.python" in message
         assert "python-patches" not in message
         assert "--python" not in message
@@ -1237,9 +1237,9 @@ class TestRequiresPython:
     def test_a_micro_floor_admits_the_whole_matrix_minor(self, tmp_path: Path) -> None:
         """A micro Requires-Python floor admits the language minor it names.
 
-        ``>= "3.11.4"`` overlaps the whole 3.11 minor, so the 3.11 target the
+        ``>= "3.11.4"`` declares the 3.11 language, so the 3.11 target the
         matrix expands is admitted rather than excluded at its synthetic ``.0``
-        floor.  The scalar probe the old code used was a no-op trap.
+        floor.
         """
         path = write(
             tmp_path,
@@ -1249,6 +1249,20 @@ class TestRequiresPython:
         )
         (target,) = plan_targets(read_pyproject_config(path))
         assert target.python_version == "3.11"
+
+    def test_a_pinned_minor_admits_a_micro_environment(self, tmp_path: Path) -> None:
+        """``==3.12`` names the 3.12 language, which a 3.12.13 target speaks.
+
+        Read as a version instead, it would zero-pad to ``3.12.0`` and reject
+        every environment naming the micro it actually runs.
+        """
+        path = write(
+            tmp_path,
+            '[tool.nab]\nrequires-python = "==3.12"\n'
+            '[tool.nab.environment]\npython = "3.12.13"\n',
+        )
+        (target,) = plan_targets(read_pyproject_config(path))
+        assert target.python_full_version == "3.12.13"
 
     def test_python_patches_pins_the_matrix_target(self, tmp_path: Path) -> None:
         """python-patches pins the minor to one concrete deployment micro."""
@@ -1738,7 +1752,7 @@ class TestEnvironment:
         )
         (target,) = plan_targets(read_pyproject_config(path))
         assert not target.is_minor_interval
-        assert not target.admits_requires_python(SpecifierSet(">=3.12.5"))
+        assert 'python_full_version == "3.12.0"' in declared_range_marker(target)
 
     def test_environment_bare_minor_is_an_interval(self, tmp_path: Path) -> None:
         """A ``python = "3.12"`` environment is a bare minor, resolved as a range."""
@@ -1750,7 +1764,7 @@ class TestEnvironment:
         )
         (target,) = plan_targets(read_pyproject_config(path))
         assert target.is_minor_interval
-        assert target.admits_requires_python(SpecifierSet(">=3.12.5"))
+        assert "python_full_version" not in declared_range_marker(target)
 
     def test_environment_no_platform_zero_micro_pins_whole(
         self, tmp_path: Path
@@ -1759,7 +1773,7 @@ class TestEnvironment:
         path = write(tmp_path, '[tool.nab.environment]\npython = "3.12.0"\n')
         (target,) = plan_targets(read_pyproject_config(path))
         assert not target.is_minor_interval
-        assert not target.admits_requires_python(SpecifierSet(">=3.12.5"))
+        assert 'python_full_version == "3.12.0"' in declared_range_marker(target)
 
     def test_environment_no_platform_bare_minor_is_an_interval(
         self, tmp_path: Path
@@ -1768,7 +1782,7 @@ class TestEnvironment:
         path = write(tmp_path, '[tool.nab.environment]\npython = "3.12"\n')
         (target,) = plan_targets(read_pyproject_config(path))
         assert target.is_minor_interval
-        assert target.admits_requires_python(SpecifierSet(">=3.12.5"))
+        assert "python_full_version" not in declared_range_marker(target)
 
     def test_windows_arm64_bare_id_declares_a_target(self, tmp_path: Path) -> None:
         path = write(

@@ -112,7 +112,7 @@ def build_remote_sdist(
     ):
         msg = (
             f"{package}=={version} built sdist requires Python {spec} but the"
-            f" resolve targets Python {target.python_full_version}"
+            f" resolve targets Python {target.python_version}"
         )
         raise UnsupportedSdistError(msg)
     if canonicalize_name(built.name) != canonical or built.version != version:

@@ -1255,26 +1255,22 @@ def _check_requires_python_admits_target(
     does not support would produce a lock the project's own metadata
     rejects, so it fails loud and names the knob that moves the target.
 
-    A minor-interval target is admitted when ``requires-python`` overlaps its
-    whole minor, so a micro floor like ``>= "3.11.4"`` admits the 3.11 minor
-    rather than excluding it at the synthetic ``.0`` floor.  Which knob the
-    error names depends on the target.  A matrix declares the python axis of
-    every target it expands, and both ``--python`` and ``[tool.nab.environment]``
-    are themselves errors alongside one, so a matrix target is moved by
-    ``matrix.python`` instead.
+    The declaration goes through
+    :meth:`~nab_python.target.ResolveTarget.admits_requires_python`, the
+    comparison every candidate's ``Requires-Python`` takes, so it is read at
+    the language minor and a micro floor like ``>= "3.11.4"`` admits a 3.11
+    target.  Which knob the error names depends on the target.  A matrix
+    declares the python axis of every target it expands, and both
+    ``--python`` and ``[tool.nab.environment]`` are themselves errors
+    alongside one, so a matrix target is moved by ``matrix.python`` instead.
     """
     if requires_python is None:
         return
-    # A minor-interval target is admitted when the specifier overlaps the whole
-    # minor; a whole target when its single release satisfies it.  A specifier
-    # admits no prerelease unless it names one, so ">=3.14" has to admit a 3.14
-    # candidate host.  This is the comparison every candidate's Requires-Python
-    # takes too (see ResolveTarget.admits_requires_python).
     if target.admits_requires_python(SpecifierSet(requires_python)):
         return
     excludes = (
         f"{source} = {requires_python!r} excludes the resolve target"
-        f" Python {target.python_full_version} ({target.label})."
+        f" Python {target.python_version} ({target.label})."
     )
     if matrix:
         msg = (
@@ -1405,7 +1401,7 @@ def _parse_requires_python(value: object) -> str | None:
     can pass it straight to :class:`SpecifierSet`.  Raises
     :class:`ConfigError` for invalid specifiers and for well-meaning bare
     versions like ``"3.13"``; those are not valid specifiers and must be
-    written ``"==3.13"`` or ``">=3.13,<3.14"``.
+    written ``"==3.13"`` or ``">=3.13"``.
     """
     raw = _parse_string_value("requires-python", value)
     try:
@@ -1414,7 +1410,7 @@ def _parse_requires_python(value: object) -> str | None:
     except ValueError as exc:
         msg = (
             f"requires-python must be a PEP 440 specifier, got {raw!r}."
-            f"  Did you mean ==X.Y or >=X.Y,<X.{{Y+1}}?"
+            "  Did you mean ==X.Y or >=X.Y?"
         )
         raise ConfigError(msg) from exc
     return raw

@@ -610,10 +610,9 @@ def excluded_by_python(
     A per-package ``requires-python`` override substitutes for
     ``dist.requires_python`` and goes through the same cached comparison,
     keyed by the specifier string; the verdict depends only on that string
-    and the fixed ``provider.target``.  A minor-interval target admits the
-    candidate when the specifier overlaps the whole minor; a whole target
-    when its single release satisfies it (see
-    :meth:`~nab_python.target.ResolveTarget.admits_requires_python`).
+    and the fixed ``provider.target``.  The specifier is read at the language
+    minor, so a micro segment never excludes a target
+    (see :meth:`~nab_python.target.ResolveTarget.admits_requires_python`).
     """
     override_rp = provider.effective_requires_python(normalized, version)
     effective = override_rp if override_rp is not None else dist.requires_python
