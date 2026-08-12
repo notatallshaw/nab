@@ -14,10 +14,11 @@ from __future__ import annotations
 import contextlib
 import errno
 import os
+import shlex
 import stat
 import sys
 import tempfile
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from string import Formatter
@@ -92,9 +93,12 @@ from .cli import (
 from .output import ProgressReporter
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from nab_python.target import ResolveTarget
+
+
+_DEFAULT_PROJECT_PATH = Path("pyproject.toml")
 
 
 def _emit_or_exit(emit: Callable[[], None]) -> None:
@@ -108,7 +112,7 @@ def _emit_or_exit(emit: Callable[[], None]) -> None:
 
 @app.command
 def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config object would hide the user-facing surface
-    path: PathArg = Path("pyproject.toml"),
+    path: PathArg = _DEFAULT_PROJECT_PATH,
     *,
     output: Path | None = None,
     format: LockFormat = "pylock",  # noqa: A002 - shadows builtin by convention
@@ -270,17 +274,22 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
             " experimental and may change without notice"
         )
 
+    run = _LockRun(
+        path=path,
+        output=output,
+        python=python,
+        groups=selected_groups,
+        extras=selected_extras,
+        offline=offline,
+        build_requirements=build_requirements,
+        workspace_discovery=workspace_discovery,
+        no_emit_workspace=no_emit_workspace,
+        cli_overrides=overrides,
+        upgrade=upgrade,
+    )
+
     if locked:
-        _fast_fail_locked(
-            path,
-            config=config,
-            output=output,
-            python=python,
-            extras=selected_extras,
-            groups=selected_groups,
-            build_requirements=build_requirements,
-            workspace_to_drop=workspace_to_drop,
-        )
+        _fast_fail_locked(run, config=config, workspace_to_drop=workspace_to_drop)
 
     transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
     result = _cli._resolve(  # noqa: SLF001
@@ -310,7 +319,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     lock_input.provenance = provenance
 
     if locked:
-        _check_locked(lock_input, output=output, build_requirements=build_requirements)
+        _check_locked(lock_input, run=run)
         return
     _emit_or_exit(
         lambda: _emit(
@@ -410,32 +419,103 @@ def _refuse_group_selection_with_build_requirements(
     sys.exit(1)
 
 
-def _locked_target_path(output: Path | None, *, build_requirements: bool) -> Path:
-    """Return the file ``--locked`` reads and re-renders against."""
-    if output is not None:
-        return output
-    return _default_output_path("pylock", build_requirements=build_requirements)
+_CMD_SYNTAX = frozenset(' \t\n"&()<>^|')
 
 
-def _refresh_command(*, build_requirements: bool) -> str:
-    """Return the command that would rewrite the lock ``--locked`` just read.
+def _quote_for_cmd(argument: str) -> str:
+    """Quote one argument the way a Windows shell reads it back as one token.
 
-    A build lock is written by a different run than the project's own, so
-    telling the user to run bare ``nab lock`` would send them to overwrite
-    the wrong file and leave the failure in place.
+    cmd.exe has no single quote, and treats ``&``, ``|``, ``<``, ``>``, ``(``,
+    ``)`` and ``^`` as syntax unless they sit inside a double quote.
+    ``subprocess.list2cmdline`` is not enough: it quotes for the C runtime's
+    argv split, which leaves those characters live.
     """
-    return "nab lock --build-requirements" if build_requirements else "nab lock"
+    if argument and _CMD_SYNTAX.isdisjoint(argument):
+        return argument
+    return '"' + argument.replace('"', '""') + '"'
+
+
+def _join_for_cmd(arguments: Iterable[str]) -> str:
+    """Join ``arguments`` into one line a Windows shell splits back into them."""
+    return " ".join(_quote_for_cmd(argument) for argument in arguments)
+
+
+_join_command: Callable[[Iterable[str]], str] = (
+    _join_for_cmd if sys.platform == "win32" else shlex.join
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _LockRun:
+    """The flags that decide which file ``nab lock`` writes and what goes in it.
+
+    ``--locked`` writes nothing, so its failure has to name the run that would
+    rewrite the file it just read.
+    """
+
+    path: Path
+    output: Path | None
+    python: str | None
+    groups: tuple[str, ...]
+    extras: tuple[str, ...]
+    offline: bool | None
+    build_requirements: bool
+    workspace_discovery: bool
+    no_emit_workspace: bool
+    cli_overrides: Mapping[str, object]
+    upgrade: bool
+
+    def refresh_command(self) -> str:
+        """Render this run without ``--locked``, ready to paste into a shell."""
+        return _join_command(
+            ["nab", "lock", *self._file_arguments(), *self._content_arguments()]
+        )
+
+    def _file_arguments(self) -> list[str]:
+        """Return the arguments naming the project read and the file written."""
+        arguments: list[str] = []
+        if self.path != _DEFAULT_PROJECT_PATH:
+            arguments.append(str(self.path))
+        if self.output is not None:
+            arguments += ["--output", str(self.output)]
+        return arguments
+
+    def _content_arguments(self) -> list[str]:
+        """Return the flags that decide what the rewritten lock holds."""
+        arguments: list[str] = []
+        if self.python is not None:
+            arguments += ["--python", self.python]
+        if self.groups:
+            arguments += ["--groups", *self.groups]
+        if self.extras:
+            arguments += ["--extras", *self.extras]
+        if self.offline is not None:
+            arguments += ["--offline", str(self.offline)]
+
+        if self.build_requirements:
+            arguments.append("--build-requirements")
+        if not self.workspace_discovery:
+            arguments.append("--no-workspace-discovery")
+        if self.no_emit_workspace:
+            arguments.append("--no-emit-workspace")
+
+        arguments += _cli.project_override_arguments(self.cli_overrides)
+        if self.upgrade:
+            arguments.append("--upgrade")
+        return arguments
+
+
+def _locked_target_path(run: _LockRun) -> Path:
+    """Return the file ``--locked`` reads and re-renders against."""
+    if run.output is not None:
+        return run.output
+    return _default_output_path("pylock", build_requirements=run.build_requirements)
 
 
 def _fast_fail_locked(
-    path: Path,
+    run: _LockRun,
     *,
     config: NabProjectConfig,
-    output: Path | None,
-    python: str | None,
-    extras: tuple[str, ...],
-    groups: tuple[str, ...],
-    build_requirements: bool,
     workspace_to_drop: frozenset[str],
 ) -> None:
     """Fast-fail ``nab lock --locked`` before any resolve when a mismatch is proven.
@@ -444,20 +524,20 @@ def _fast_fail_locked(
     checks.  On the first disqualification it prints the reason and exits
     non-zero; otherwise it returns and the full resolve runs.
     """
-    target = _locked_target_path(output, build_requirements=build_requirements)
-    refresh = _refresh_command(build_requirements=build_requirements)
+    target = _locked_target_path(run)
+    refresh = run.refresh_command()
 
     # A run whose own requirements cannot be read or evaluated is not the
     # lock's fault, so leave the error to the resolve rather than reporting a
     # stale lock.
     try:
         roots = _active_root_requirements(
-            path,
-            extras=extras,
-            groups=groups,
+            run.path,
+            extras=run.extras,
+            groups=run.groups,
             default_groups=config.default_groups,
             base_group=config.base_group,
-            build_requirements=build_requirements,
+            build_requirements=run.build_requirements,
             build_group=config.build_group,
         )
     except (
@@ -475,14 +555,14 @@ def _fast_fail_locked(
         )
         sys.exit(1)
 
-    resolve_target = _locked_resolve_target(config, python=python)
+    resolve_target = _locked_resolve_target(config, python=run.python)
 
     try:
         disqualification = check_locked(
             target,
             requires_python=config.requires_python,
-            extras=extras,
-            dependency_groups=groups,
+            extras=run.extras,
+            dependency_groups=run.groups,
             default_groups=config.default_groups,
             base_group=config.base_group,
             build_group=config.build_group,
@@ -599,9 +679,7 @@ def _active_root_requirements(
     return roots
 
 
-def _check_locked(
-    lock_input: LockInput, *, output: Path | None, build_requirements: bool
-) -> None:
+def _check_locked(lock_input: LockInput, *, run: _LockRun) -> None:
     """Verify the committed pylock matches a fresh resolve, writing nothing.
 
     The resolve has already run; this renders the lock it would produce and
@@ -609,15 +687,15 @@ def _check_locked(
     both, so only a real change to the locked packages fails.  The committed
     lock is never read back into the resolve.
     """
-    target = _locked_target_path(output, build_requirements=build_requirements)
+    target = _locked_target_path(run)
     new_text = _render_or_exit(lambda: render_lock(lock_input, lock_dir=target.parent))
     committed = _packages_only(target.read_text(encoding="utf-8"))
     if _packages_only(new_text) == committed:
         _cli.printer().done(f"Lockfile {target} is up to date.")
         return
-    refresh = _refresh_command(build_requirements=build_requirements)
     _cli.printer().error(
-        f"--locked: lockfile {target} is out of date; re-run `{refresh}` to update it."
+        f"--locked: lockfile {target} is out of date;"
+        f" re-run `{run.refresh_command()}` to update it."
     )
     sys.exit(1)
 
