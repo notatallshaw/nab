@@ -52,6 +52,12 @@ CORPUS = [
     # rejected: invalid project name
     "foo__bar-1.0-py3-none-any.whl",
     "foo bar-1.0-py3-none-any.whl",
+    "-1.0-py3-none-any.whl",
+    "foo\n-1.0-py3-none-any.whl",
+    # rejected: interpreter that is not an identifier
+    "foo-1.0-py3 -none-any.whl",
+    "foo-1.0-0-none-any.whl",
+    "foo-1.0-py2.0-none-any.whl",
     # rejected: invalid version
     "foo-notaversion-py3-none-any.whl",
     # rejected: 5-dash build part not starting with a digit
