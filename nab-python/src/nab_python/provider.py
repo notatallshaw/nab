@@ -1332,7 +1332,9 @@ class Provider:
             return preferred
 
         if extra is not None:
-            return self._choose_extra_version(package, base, extra, version_range)
+            return _extras.choose_extra_version(
+                self, package, base, extra, version_range
+            )
 
         version_list = self.fetch_versions(package)
         all_versions = self.versions_only(normalized, version_list)
@@ -1508,12 +1510,6 @@ class Provider:
         self._flush_pending_blocks()
         self._record_no_versions_reason(package, all_versions, blockers=blockers)
         return None
-
-    def _choose_extra_version(
-        self, package: str, base: str, extra: str, version_range: VersionRange
-    ) -> Version | None:
-        """See :func:`nab_python._provider.extras.choose_extra_version`."""
-        return _extras.choose_extra_version(self, package, base, extra, version_range)
 
     def _scan_candidates_pipelined(
         self,
@@ -2132,7 +2128,7 @@ class Provider:
 
         base, extra, normalized = self.split_and_normalize(package)
         if extra is not None:
-            return self._get_extra_dependencies(base, extra, version)
+            return _extras.get_extra_dependencies(self, base, extra, version)
 
         cache_key = (normalized, version)
         if cache_key in self.deps_cache:
@@ -2153,26 +2149,34 @@ class Provider:
             or normalized in self.vcs_sources
             or normalized in self.archive_sources
         ):
-            self._cache_deps_from_metadata(cache_key, self.metadata_cache[cache_key])
+            _metadata_resolver.cache_deps_from_metadata(
+                self, cache_key, self.metadata_cache[cache_key]
+            )
             return self.deps_cache[cache_key]
 
         # Skip-fetch: a complete ``dependencies`` override (even an empty
         # tuple) supplies the deps, so no METADATA fetch or build is needed.
         # After the local/VCS/archive branch so sources still materialise;
-        # ``_cache_deps_from_metadata`` stamps the remaining override fields
-        # onto the bare record.
+        # metadata caching applies the remaining override fields to the bare
+        # record.
         if self.effective_dependencies(normalized, version) is not None:
-            self._cache_deps_from_metadata(
-                cache_key, WheelMetadata(name=normalized, version=version)
+            _metadata_resolver.cache_deps_from_metadata(
+                self,
+                cache_key,
+                WheelMetadata(name=normalized, version=version),
             )
             self.prefetch_new_deps(self.deps_cache[cache_key])
             return self.deps_cache[cache_key]
 
-        metadata_text, from_sdist = self._resolve_metadata(versions, package, version)
+        metadata_text, from_sdist = _metadata_resolver.resolve_metadata(
+            self, versions, package, version
+        )
         self._parse_and_cache_metadata_guarded(
             cache_key, metadata_text, from_sdist=from_sdist
         )
-        self._check_sibling_metadata_divergence(versions, package, version)
+        _metadata_resolver.check_sibling_metadata_divergence(
+            self, versions, package, version
+        )
 
         self.stats.metadata_fetched += 1
         self.prefetch_new_deps(self.deps_cache[cache_key])
@@ -2232,29 +2236,6 @@ class Provider:
         """See :func:`nab_python._provider.listing.prefetch_new_deps`."""
         _listing.prefetch_new_deps(self, deps)
 
-    def _resolve_metadata(
-        self,
-        versions: list[tuple[Version, DistFile]],
-        package: str,
-        version: Version,
-    ) -> tuple[str, bool]:
-        """See :func:`nab_python._provider.metadata_resolver.resolve_metadata`."""
-        return _metadata_resolver.resolve_metadata(self, versions, package, version)
-
-    def _check_sibling_metadata_divergence(
-        self,
-        versions: list[tuple[Version, DistFile]],
-        package: str,
-        version: Version,
-    ) -> None:
-        """Check the version's tie-ranked wheels for divergent target deps.
-
-        See :func:`._provider.metadata_resolver.check_sibling_metadata_divergence`.
-        """
-        _metadata_resolver.check_sibling_metadata_divergence(
-            self, versions, package, version
-        )
-
     def parse_and_cache_metadata(
         self,
         cache_key: tuple[str, Version],
@@ -2266,23 +2247,6 @@ class Provider:
         _metadata_resolver.parse_and_cache_metadata(
             self, cache_key, metadata_text, from_sdist=from_sdist
         )
-
-    def _cache_deps_from_metadata(
-        self,
-        cache_key: tuple[str, Version],
-        metadata: WheelMetadata,
-    ) -> None:
-        """See :func:`._provider.metadata_resolver.cache_deps_from_metadata`."""
-        _metadata_resolver.cache_deps_from_metadata(self, cache_key, metadata)
-
-    def _get_extra_dependencies(
-        self,
-        base: str,
-        extra: str,
-        version: Version,
-    ) -> dict[str, VersionRange]:
-        """See :func:`nab_python._provider.extras.get_extra_dependencies`."""
-        return _extras.get_extra_dependencies(self, base, extra, version)
 
     def split_and_normalize(self, package: str) -> tuple[str, str | None, str]:
         """Return ``(base, extra, normalized_base)`` for ``package``, cached."""
