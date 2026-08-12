@@ -3512,6 +3512,45 @@ def _console_block(text: str, command: str) -> list[str]:
     raise AssertionError(msg)
 
 
+def _doc_paragraph(text: str, needle: str) -> str:
+    """The blank-line-delimited paragraph of ``text`` that contains ``needle``."""
+    for paragraph in text.split("\n\n"):
+        if needle in paragraph:
+            return paragraph
+
+    msg = f"no paragraph containing {needle!r}"
+    raise AssertionError(msg)
+
+
+def _emitted_labels(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    body: str,
+    *,
+    extras: tuple[str, ...] = (),
+    groups: tuple[str, ...] = (),
+) -> list[str]:
+    """The ``# label`` headers a ``nab lock`` over ``body`` prints for the selection.
+
+    The requirements formats label one block per emitted target and omit
+    the header when there is only one, so for these single-target
+    specific-mode locks the headers count the forks.
+    """
+    pyproject = _make_pyproject(tmp_path, body)
+    lock(
+        pyproject,
+        cache_dir=tmp_path / "cache",
+        offline=True,
+        extras=extras,
+        groups=groups,
+        format="requirements-without-hashes",
+        output=Path("-"),
+    )
+
+    printed = capsys.readouterr().out
+    return [line for line in printed.splitlines() if line.startswith("# ")]
+
+
 class TestConflictsDocTranscript:
     """The conflicts page quotes the refusal lines the CLI prints."""
 
@@ -3560,6 +3599,61 @@ class TestConflictsDocTranscript:
         assert printed in _console_block(doc, "$ nab lock")
 
 
+class TestConflictsDocForkingPolicies:
+    """The conflicts page names which policies fork a co-selecting run.
+
+    Only the exclusive policies do; ``at-least-one`` permits co-selection.
+    """
+
+    _GROUPS = (
+        '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
+        "[dependency-groups]\n"
+        "a = []\n"
+        "b = []\n"
+    )
+
+    def _body(self, policy: str) -> str:
+        """The two-group project with ``a`` and ``b`` conflicting under ``policy``."""
+        members = '[{ group = "a" }, { group = "b" }]'
+        return (
+            self._GROUPS
+            + "[tool.nab]\n"
+            + f'conflicts = [{{ members = {members}, policy = "{policy}" }}]\n'
+        )
+
+    def _unwrapped_claim(self, needle: str) -> str:
+        """The page's paragraph holding ``needle``, rejoined onto one line.
+
+        The page hard-wraps, so a claim spanning a line break only matches unwrapped.
+        """
+        doc = _CONFLICTS_DOC.read_text(encoding="utf-8")
+        return " ".join(_doc_paragraph(doc, needle).split())
+
+    def test_exactly_one_forks_co_selected_members(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An exclusive set resolves each co-selected member on its own."""
+        labels = _emitted_labels(
+            tmp_path, capsys, self._body("exactly-one"), groups=("a", "b")
+        )
+        assert labels == ["# host-group-a", "# host-group-b"]
+
+        claim = self._unwrapped_claim("When the selection activates")
+        assert "an exclusive set (`at-most-one` or `exactly-one`)" in claim
+
+    def test_at_least_one_co_selection_stays_one_resolve(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An at-least-one set permits co-selection, so the run does not fork."""
+        labels = _emitted_labels(
+            tmp_path, capsys, self._body("at-least-one"), groups=("a", "b")
+        )
+        assert labels == []
+
+        claim = self._unwrapped_claim("The require-one policies")
+        assert "`at-least-one` permits it" in claim
+
+
 _CLI_REFERENCE_DOC = (
     Path(__file__).resolve().parents[1] / "docs" / "reference" / "cli.md"
 )
@@ -3567,16 +3661,6 @@ _CLI_REFERENCE_DOC = (
 
 def _doc_section(text: str, heading: str) -> str:
     return text.partition(f"\n{heading}\n")[2].partition("\n## ")[0]
-
-
-def _doc_paragraph(text: str, needle: str) -> str:
-    """The blank-line-delimited paragraph of ``text`` that contains ``needle``."""
-    for paragraph in text.split("\n\n"):
-        if needle in paragraph:
-            return paragraph
-
-    msg = f"no paragraph containing {needle!r}"
-    raise AssertionError(msg)
 
 
 def _names_flag(text: str, flag: str) -> bool:
@@ -3603,27 +3687,6 @@ class TestCliReferenceSelectionShape:
 
     _CONFLICT = '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
 
-    def _emitted_labels(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], body: str
-    ) -> list[str]:
-        """The ``# label`` headers ``nab lock --extras cpu gpu`` prints for ``body``.
-
-        The requirements formats label one block per emitted target and omit
-        the header when there is only one, so for these single-target
-        specific-mode locks the headers count the forks.
-        """
-        pyproject = _make_pyproject(tmp_path, body)
-        lock(
-            pyproject,
-            cache_dir=tmp_path / "cache",
-            offline=True,
-            extras=("cpu", "gpu"),
-            format="requirements-without-hashes",
-            output=Path("-"),
-        )
-        printed = capsys.readouterr().out
-        return [line for line in printed.splitlines() if line.startswith("# ")]
-
     def _selection_paragraph(self) -> str:
         """The ``nab lock`` paragraph that states what a selection resolves to."""
         text = _doc_section(
@@ -3635,7 +3698,8 @@ class TestCliReferenceSelectionShape:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Two extras with no conflict declared resolve once, as the page says."""
-        assert self._emitted_labels(tmp_path, capsys, self._EXTRAS) == []
+        labels = _emitted_labels(tmp_path, capsys, self._EXTRAS, extras=("cpu", "gpu"))
+        assert labels == []
 
         assert "single union resolve" in self._selection_paragraph()
 
@@ -3643,7 +3707,9 @@ class TestCliReferenceSelectionShape:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Declaring the same two extras exclusive resolves each separately."""
-        labels = self._emitted_labels(tmp_path, capsys, self._EXTRAS + self._CONFLICT)
+        labels = _emitted_labels(
+            tmp_path, capsys, self._EXTRAS + self._CONFLICT, extras=("cpu", "gpu")
+        )
         assert labels == ["# host-extra-cpu", "# host-extra-gpu"]
 
         paragraph = self._selection_paragraph()
