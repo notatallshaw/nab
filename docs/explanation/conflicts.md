@@ -112,7 +112,7 @@ conflicts = [[{ group = "base" }, { group = "build" }, { group = "dev" }]]
 ```
 
 That forks three ways when the run selects `dev`, and two otherwise,
-since a set forks only over the members the selection activates. With
+since the set forks only over the members the selection activates. With
 `dev` selected, an install choosing it gets that group without the
 project's own dependencies. Declare two sets instead if
 `dev` should install alongside them, remembering that `build` can be in
@@ -126,9 +126,10 @@ only one of them.
 
 ## Forking co-selected members
 
-When the selection activates two or more members of a set, nab does not
-reject it: it forks the resolve. For example `nab lock --extras cpu gpu`,
-or `nab lock --all-groups` over the `black*` groups above, resolves each
+When the selection activates two or more members of an exclusive set
+(`at-most-one` or `exactly-one`), nab does not reject it: it forks the
+resolve. For example `nab lock --extras cpu gpu`, or
+`nab lock --all-groups` over the `black*` groups above, resolves each
 member separately and writes every result into one lockfile. This is the
 same in specific and universal mode; the resolve mode does not change how
 a conflict is handled. Two cases are refused rather than forked, both
@@ -160,8 +161,8 @@ crossed with `isort{5,6,7}` is nine forks. Non-conflicting selections
 stay active in every fork.
 
 Forking needs one member per fork. If a single selection forces two
-members of one set together, no fork can separate them, so the resolve
-is refused before any network work:
+members of one exclusive set together, no fork can separate them, so the
+resolve is refused before any network work:
 
 ```console
 $ nab lock --extras all
@@ -175,7 +176,9 @@ all-in-one umbrella cannot resolve disjointly, so it is rejected.
 
 The require-one policies still raise. Declaring `exactly-one` or
 `at-least-one` and selecting none of its members is rejected before the
-resolve, regardless of mode; co-selection forks instead.
+resolve, regardless of mode. Co-selection forks under `exactly-one`;
+`at-least-one` permits it, so its members stay active together in one
+resolve.
 
 Groups named in `[tool.nab].default-groups` count as part of the
 selection for every conflict check. A project with
@@ -219,8 +222,8 @@ package whose version does depend on the combination keeps the
 conjunction, and so does anything that requires it: an entry never
 fires where one of its own dependencies would not.
 
-A set forks only over the members the selection activates. The rest of
-its declared members are absent from the lock's `extras` and
+An exclusive set forks only over the members the selection activates.
+The rest of its declared members are absent from the lock's `extras` and
 `dependency-groups` arrays and from every marker, so a set with an
 unselected member gates an entry exactly as one without it would.
 
