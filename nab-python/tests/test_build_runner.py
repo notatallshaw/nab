@@ -24,6 +24,7 @@ import tarfile
 import zipfile
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from dataclasses import fields
 from datetime import datetime, timezone
 from importlib.util import cache_from_source
 from pathlib import Path
@@ -58,7 +59,16 @@ from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
-from nab_python.config import IndexOverride, NabProjectConfig
+from nab_python.config import (
+    ConflictKind,
+    ConflictMember,
+    ConflictSet,
+    EnvironmentConfig,
+    IndexOverride,
+    MatrixConfig,
+    NabProjectConfig,
+    ResolveMode,
+)
 from nab_python.download import DownloadError, DownloadResult, iter_artifacts
 from nab_python.lockfile import (
     IndexPin,
@@ -68,7 +78,18 @@ from nab_python.lockfile import (
     TargetLock,
     WheelArtifact,
 )
-from nab_python.provider import BuildPolicy, DistPolicy, LocalSource, MissingExtraError
+from nab_python.provider import (
+    ArchiveSource,
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    LocalSource,
+    MissingExtraError,
+    ResolutionStrategy,
+    VcsConfig,
+    VcsPolicy,
+    VcsSource,
+)
 from nab_python.resolve import ResolveResult, TargetResult
 from nab_python.tags import PlatformSpec, TagSet
 from nab_python.target import ResolveTarget
@@ -1681,6 +1702,85 @@ class TestNabBuildEnvInstall:
         assert len(installer_calls) == 1
 
 
+# Every ``NabProjectConfig`` field, grouped by what the inner build-requires
+# config does with it: forward the outer value, pin a fixed one, or leave the
+# default.  A field in none of the three fails the test below.
+_INNER_FORWARDS = frozenset(
+    {
+        "decision_order",
+        "index_overrides",
+        "indexes",
+        "package_overrides",
+        "uploaded_prior_to",
+    }
+)
+_INNER_PINS = frozenset({"build_policy", "dist_policy"})
+_INNER_DROPS = frozenset(
+    {
+        "archive_sources",
+        "base_group",
+        "build_group",
+        "build_requires_depth",
+        "conflicts",
+        "constraints",
+        "default_groups",
+        "environment",
+        "local_sources",
+        "matrix",
+        "mode",
+        "requires_python",
+        "requires_python_source",
+        "resolution",
+        "trust_unverified_sdist_deps",
+        "vcs",
+        "vcs_sources",
+        "workspace",
+        "workspace_member_names",
+    }
+)
+
+
+def _config_off_every_default(tmp_path: Path) -> NabProjectConfig:
+    """A project config with every field set away from its default.
+
+    No parser produces this combination (``environment`` and ``matrix``
+    are exclusive).  Every value is off-default so that a dropped field
+    leaking into the inner config reads back as the outer value rather
+    than as one that happens to match the default.
+    """
+    cutoff = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    return NabProjectConfig(
+        mode=ResolveMode.UNIVERSAL,
+        constraints=("setuptools<70",),
+        default_groups=("dev",),
+        base_group="project",
+        build_group="build",
+        requires_python=">=3.11",
+        requires_python_source="[project] requires-python",
+        uploaded_prior_to=cutoff,
+        dist_policy=DistPolicy.SDIST_ONLY,
+        build_policy=BuildPolicy.BUILD_REMOTE,
+        build_requires_depth=1,
+        trust_unverified_sdist_deps=True,
+        environment=EnvironmentConfig(python="3.12"),
+        indexes=(IndexConfig("internal", "https://example.invalid/simple/"),),
+        vcs=VcsConfig(policy=VcsPolicy.ALLOW),
+        local_sources=(LocalSource("plugin", str(tmp_path / "plugin")),),
+        vcs_sources=(VcsSource("tool", "git+https://example.invalid/tool.git@v1"),),
+        archive_sources=(
+            ArchiveSource("blob", "https://example.invalid/b-1.0.tar.gz"),
+        ),
+        matrix=MatrixConfig(python=">=3.11", platforms=(PlatformSpec("linux_x86_64"),)),
+        resolution=ResolutionStrategy.LOWEST,
+        decision_order=DecisionOrder.STABLE,
+        workspace=WorkspaceConfig(members=("packages/plugin",)),
+        conflicts=(ConflictSet(members=(ConflictMember(ConflictKind.EXTRA, "cpu"),)),),
+        package_overrides=(pkg_override("hatchling", uploaded_prior_to=cutoff),),
+        index_overrides={"internal": IndexOverride(uploaded_prior_to=cutoff)},
+        workspace_member_names=frozenset({"plugin"}),
+    )
+
+
 class TestResolveAndDownload:
     """What the inner build-requires resolve is allowed to see and do."""
 
@@ -1823,10 +1923,10 @@ class TestResolveAndDownload:
         assert env._resolve_and_download(wheel_dir) == []
         assert "python_version" not in captured
 
-    def test_inner_resolve_takes_indexes_cutoff_and_overrides_only(
+    def test_inner_resolve_takes_indexes_cutoff_order_and_overrides_only(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The inner config forwards the indexes, the cutoff and both override tables.
+        """The inner config forwards the indexes, cutoff, order and overrides.
 
         Build deps come from the configured indexes alone, so the outer
         run's constraints, dist policy, local sources and workspace do
@@ -1841,6 +1941,7 @@ class TestResolveAndDownload:
             config=NabProjectConfig(
                 indexes=(index,),
                 uploaded_prior_to=cutoff,
+                decision_order=DecisionOrder.STABLE,
                 package_overrides=(package_override,),
                 index_overrides={"internal": index_override},
                 constraints=("setuptools<70",),
@@ -1854,6 +1955,7 @@ class TestResolveAndDownload:
 
         assert inner.indexes == (index,)
         assert inner.uploaded_prior_to == cutoff
+        assert inner.decision_order is DecisionOrder.STABLE
         assert inner.package_overrides == (package_override,)
         assert inner.index_overrides == {"internal": index_override}
 
@@ -1861,6 +1963,44 @@ class TestResolveAndDownload:
         assert inner.dist_policy is DistPolicy.WHEEL_OR_SDIST
         assert inner.local_sources == ()
         assert inner.workspace is None
+
+    def test_inner_resolve_keeps_the_default_decision_order(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A project that did not ask for ``stable`` does not get it inside."""
+        env = NabBuildEnv(requires=["hatchling"], config=NabProjectConfig())
+
+        inner = self._capture_inner_config(env, tmp_path, monkeypatch)
+
+        assert inner.decision_order is DecisionOrder.ARRIVAL
+
+    def test_every_config_field_is_forwarded_pinned_or_dropped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A field crosses into the build env only by being named.
+
+        ``_inner_resolve_config`` copies the fields it lists, so a field
+        added to ``NabProjectConfig`` takes its default inside the build
+        env until someone sorts it into one of the three sets above.
+        """
+        names = {f.name for f in fields(NabProjectConfig)}
+        assert names == _INNER_FORWARDS | _INNER_PINS | _INNER_DROPS
+
+        outer = _config_off_every_default(tmp_path)
+        default = NabProjectConfig()
+
+        # A field left at its default would make the leak check below vacuous.
+        at_default = sorted(
+            name for name in names if getattr(outer, name) == getattr(default, name)
+        )
+        assert not at_default
+
+        env = NabBuildEnv(requires=["hatchling"], config=outer)
+        inner = self._capture_inner_config(env, tmp_path, monkeypatch)
+
+        assert {name: getattr(inner, name) for name in _INNER_DROPS} == {
+            name: getattr(default, name) for name in _INNER_DROPS
+        }
 
     def test_url_build_requirement_wrapped(self, tmp_path: Path) -> None:
         """A direct-URL build requirement the inner resolve refuses is

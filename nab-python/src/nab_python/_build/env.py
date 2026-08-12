@@ -403,20 +403,8 @@ class NabBuildEnv:
         synthetic = synthetic_dir / "pyproject.toml"
         synthetic.write_text(_render_synthetic_pyproject(requires), encoding="utf-8")
 
-        inner_config = NabProjectConfig(
-            indexes=self._config.indexes,
-            package_overrides=tuple(
-                _without_build_permission(override)
-                for override in self._config.package_overrides
-            ),
-            index_overrides={
-                name: _without_build_permission(override)
-                for name, override in self._config.index_overrides.items()
-            },
-            uploaded_prior_to=self._config.uploaded_prior_to,
-            dist_policy=DistPolicy.WHEEL_OR_SDIST,
-            build_policy=BuildPolicy.NEVER,
-        )
+        inner_config = _inner_resolve_config(self._config)
+
         # download_lock closes its transport, and ``install`` may call
         # this again for ``get_requires_for_build_wheel`` follow-ups;
         # build a fresh transport each time.
@@ -604,6 +592,31 @@ def _without_build_permission(override: _OverrideT) -> _OverrideT:
     if override.build_policy in (None, BuildPolicy.NEVER):
         return override
     return replace(override, build_policy=None)
+
+
+def _inner_resolve_config(config: NabProjectConfig) -> NabProjectConfig:
+    """Return the config the build-requires resolve runs under.
+
+    Only the fields named here cross into it: build deps come from the
+    configured indexes alone, so the outer run's own requirements and
+    sources stay out.  The cutoff and the decision order cross because
+    this resolve picks the backend that writes the metadata the outer
+    resolve reads, and a lock reproduces only if this search does too.
+    """
+    return NabProjectConfig(
+        indexes=config.indexes,
+        package_overrides=tuple(
+            _without_build_permission(override) for override in config.package_overrides
+        ),
+        index_overrides={
+            name: _without_build_permission(override)
+            for name, override in config.index_overrides.items()
+        },
+        uploaded_prior_to=config.uploaded_prior_to,
+        decision_order=config.decision_order,
+        dist_policy=DistPolicy.WHEEL_OR_SDIST,
+        build_policy=BuildPolicy.NEVER,
+    )
 
 
 def _remove_files(entries: list[tuple[Path, Path]]) -> None:
