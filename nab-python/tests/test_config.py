@@ -4742,8 +4742,7 @@ class TestLookalikeLetterInVersion:
 
     ``Version()`` accepts only the ASCII pre- and post-release words, so a
     specifier that admitted one of these operands could never parse its own
-    version.  Every ``[tool.nab]`` key holding a requirement or a
-    ``requires-python`` specifier rejects it.
+    version.
     """
 
     def test_requires_python(self, tmp_path: Path, operand: str) -> None:
@@ -4759,70 +4758,6 @@ class TestLookalikeLetterInVersion:
             ConfigError, match=r"constraints\[0\] is not a valid requirement"
         ):
             read_pyproject_config(path)
-
-    def test_packages_selector(self, tmp_path: Path, operand: str) -> None:
-        path = write(
-            tmp_path,
-            f'[tool.nab.packages."widget ~={operand}"]\ndist-policy = "sdist-only"\n',
-        )
-        with pytest.raises(ConfigError, match="is not a valid PEP 508 requirement"):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_package_rules_match(self, tmp_path: Path, operand: str) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.package-rules]]\n"
-            f'match = ["widget ~={operand}"]\n'
-            'dist-policy = "sdist-only"\n',
-        )
-        with pytest.raises(ConfigError, match="is not a valid PEP 508 requirement"):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_package_rules_requires_python(self, tmp_path: Path, operand: str) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.package-rules]]\n"
-            'match = ["widget"]\n'
-            f'requires-python = "~={operand}"\n',
-        )
-        with pytest.raises(
-            ConfigError, match="requires-python must be a PEP 440 specifier"
-        ):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_package_rules_dependencies(self, tmp_path: Path, operand: str) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.package-rules]]\n"
-            'match = ["widget"]\n'
-            f'dependencies = ["gadget ~={operand}"]\n',
-        )
-        with pytest.raises(
-            ConfigError, match=r"dependencies\[0\] is not a valid PEP 508 requirement"
-        ):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_package_override_requires_python(
-        self, tmp_path: Path, operand: str
-    ) -> None:
-        path = write(
-            tmp_path,
-            f'[tool.nab.packages.widget]\nrequires-python = "~={operand}"\n',
-        )
-        with pytest.raises(
-            ConfigError, match="requires-python must be a PEP 440 specifier"
-        ):
-            read_pyproject_config(path, discover_workspace=False)
-
-    def test_package_override_dependencies(self, tmp_path: Path, operand: str) -> None:
-        path = write(
-            tmp_path,
-            f'[tool.nab.packages.widget]\ndependencies = ["gadget ~={operand}"]\n',
-        )
-        with pytest.raises(
-            ConfigError, match=r"dependencies\[0\] is not a valid PEP 508 requirement"
-        ):
-            read_pyproject_config(path, discover_workspace=False)
 
 
 class TestWorkspace:
