@@ -18,16 +18,14 @@ env:
 
 jobs:
   test:
-    name: ${{ matrix.workspace }} / ${{ matrix.os }} / ${{ matrix.python-version }}
+    name: ${{ matrix.os }} / ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu, windows, macos]
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        # noxfile.py maps each workspace to its tests and coverage gates.
-        workspace: [resolver, python, umbrella]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -50,13 +48,11 @@ jobs:
       - name: Install nox
         run: pip install -r .github/requirements/pylock.nox.toml
 
-      # Test and coverage logic lives in noxfile.py. The workspace goes through
-      # env, not inline ${{ }}, for zizmor; shell: bash expands it on Windows.
-      - name: Test the ${{ matrix.workspace }} workspace
-        run: nox -s "tests(workspace='${WORKSPACE}')"
-        shell: bash
-        env:
-          WORKSPACE: ${{ matrix.workspace }}
+      # Test and coverage logic lives in noxfile.py. The tests session is
+      # parametrized by workspace, so this runs all three, each in its own
+      # venv and gated on its own packages.
+      - name: Test every workspace
+        run: nox -s tests
 
   benchmarks:
     name: benchmark harness / ${{ matrix.os }} / ${{ matrix.python-version }}
