@@ -187,8 +187,6 @@ class TestMacPlatformsMatchesUpstream:
         """Vendored ``mac_platforms`` equals upstream for identical inputs."""
         got = list(vendored_tags.mac_platforms(version=version, arch=arch))
         expected = list(upstream_tags.mac_platforms(version=version, arch=arch))
-        # packaging 26.2 predates the fat32 -> fat3 tag fix the vendored copy carries.
-        expected = [p.replace("fat32", "fat3") for p in expected]
         assert got == expected
 
 
@@ -207,12 +205,27 @@ class TestParseTagMatchesUpstream:
     @given(py=compressed, abi=compressed, plat=compressed)
     @PROPERTY_SETTINGS
     def test_parse_tag_matches_upstream(self, py: str, abi: str, plat: str) -> None:
-        """Vendored and upstream ``parse_tag`` expand identically."""
+        """Vendored and upstream ``parse_tag`` agree, including on rejection.
+
+        Each side raises its own ``InvalidTag``, so a rejected tag becomes
+        ``None`` on both and the two still have to match.
+        """
         s = f"{py}-{abi}-{plat}"
-        got = {(t.interpreter, t.abi, t.platform) for t in vendored_tags.parse_tag(s)}
-        expected = {
-            (t.interpreter, t.abi, t.platform) for t in upstream_tags.parse_tag(s)
-        }
+
+        try:
+            got = {
+                (t.interpreter, t.abi, t.platform) for t in vendored_tags.parse_tag(s)
+            }
+        except vendored_tags.InvalidTag:
+            got = None
+
+        try:
+            expected = {
+                (t.interpreter, t.abi, t.platform) for t in upstream_tags.parse_tag(s)
+            }
+        except upstream_tags.InvalidTag:
+            expected = None
+
         assert got == expected
 
 
