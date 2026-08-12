@@ -104,9 +104,10 @@ def encode(files: list[WheelFile | SdistFile], body_digest: str) -> bytes:
                 ]
             )
     header = [FORMAT_VERSION, CODEC, KEY_SCHEME, body_digest]
-    return json.dumps(
-        [header, rows], ensure_ascii=False, separators=(",", ":")
-    ).encode()
+
+    # Escape non-ASCII: a field kept verbatim from the listing, such as
+    # ``requires_python``, can hold a lone surrogate with no UTF-8 form.
+    return json.dumps([header, rows], separators=(",", ":")).encode()
 
 
 def decode(blob: bytes, policy: CachePolicy) -> list[WheelFile | SdistFile] | None:

@@ -487,6 +487,51 @@ class TestWritePathParsedBlob:
         assert decode(old_blob, policy) is None
 
 
+_SURROGATE_REQUIRES_PYTHON = ">=3.8\ud800"
+
+# The escape is plain ASCII on the wire; json.loads is what makes it a surrogate.
+_SURROGATE_LISTING_BYTES = json.dumps(
+    {
+        "meta": {"api-version": "1.0"},
+        "name": "pkg",
+        "files": [
+            {
+                "filename": "pkg-1.0-py3-none-any.whl",
+                "url": "https://files.example.com/pkg-1.0-py3-none-any.whl",
+                "requires-python": _SURROGATE_REQUIRES_PYTHON,
+                "hashes": {"sha256": "cafef00d"},
+            }
+        ],
+    }
+).encode()
+
+
+class TestSurrogateInListingString:
+    def test_field_with_no_utf8_form_is_served_and_cached(self, tmp_path: Path) -> None:
+        """A field with no UTF-8 form must not abort the fetch or the blob write.
+
+        ``requires-python`` is kept verbatim, so a surrogate in it reaches the
+        blob; the warm read proves the blob was written rather than rebuilt.
+        """
+        cache = _cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(_SURROGATE_LISTING_BYTES)])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        files = _run(client.get_files("pkg"))
+
+        assert [record.requires_python for record in files] == [
+            _SURROGATE_REQUIRES_PYTHON
+        ]
+
+        stats = ParsedCacheStats()
+        warm = CachedAsyncSimpleClient(
+            _FakeTransport([]), cache, _INDEX, parsed_stats=stats
+        )
+
+        assert _run(warm.get_files("pkg")) == files
+        assert (stats.hit, stats.miss, stats.rebuild) == (1, 0, 0)
+
+
 _PARSED = _parse_files(json.loads(_LISTING_BYTES), _INDEX_NORM, "pkg")
 
 _JSON_PATH_PARTS = (_SIMPLE_BUCKET, "pypi", "pkg.json")

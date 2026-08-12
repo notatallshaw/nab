@@ -12,8 +12,9 @@ This harness discharges that contract two ways:
 
 * a Hypothesis strategy generating PEP 691 bodies across the parse surface
   (wheels, sdists, name-mismatch phantoms, yanked bool/string, non-string
-  ``requires-python``, negative/bool/string ``size``, PEP 714 key
-  precedence, empty and multi hash, relative and absolute URLs), and
+  and unpaired-surrogate ``requires-python``, negative/bool/string
+  ``size``, PEP 714 key precedence, empty and multi hash, relative and
+  absolute URLs), and
 * a checked-in trimmed real corpus (boto3, botocore, cryptography, and one
   large AI-stack body, torch).
 
@@ -145,7 +146,7 @@ def _file_entry(draw: st.DrawFn, package: str) -> Any:
         entry["hashes"] = draw(_hash_table())
     if draw(st.booleans()):
         entry["requires-python"] = draw(
-            st.sampled_from([">=3.9", ">=3.7,<4", "", 3.9, 3, None])
+            st.sampled_from([">=3.9", ">=3.7,<4", ">=3.9\ud800", "", 3.9, 3, None])
         )
     if draw(st.booleans()):
         entry["upload-time"] = draw(

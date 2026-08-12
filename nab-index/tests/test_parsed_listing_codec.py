@@ -12,6 +12,7 @@ reaching a record.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 
@@ -141,6 +142,17 @@ def test_metadata_hash_present_and_absent() -> None:
     assert isinstance(bare, WheelFile)
     assert full.metadata_hash == ("sha256", "dead")
     assert bare.metadata_hash is None
+
+
+def test_lone_surrogate_in_field_round_trips() -> None:
+    """A field with no UTF-8 form still round-trips, escaped in the blob.
+
+    ``json.loads`` accepts an unpaired ``\\udXXX`` escape, so a listing can put
+    one in ``requires-python``, which ``_parse_files`` keeps verbatim.
+    """
+    record = dataclasses.replace(SDIST_FULL, requires_python=f"{RP}\ud800")
+
+    assert decode(encode([record], DIGEST), _policy()) == [record]
 
 
 def test_blob_is_portable_json() -> None:

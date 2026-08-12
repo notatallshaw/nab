@@ -455,7 +455,7 @@ def _parse_files(
     PEP 592 ``yanked`` files are dropped unconditionally.
 
     A single malformed *entry* (non-dict, missing string ``filename`` /
-    ``url``, or a ``url`` that does not parse) is skipped so the usable
+    ``url``, or a ``url`` that cannot be used) is skipped so the usable
     entries in the same listing are kept.  A malformed *body* (not a JSON
     object, or a ``files`` value that is not a list) is a broken response,
     not an empty one, so it raises :class:`MalformedSimpleResponseError`
@@ -498,11 +498,13 @@ def _parse_files(
 
 
 def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
-    """Return the entry's absolute URL, or None when it does not parse.
+    """Return the entry's absolute URL, or None when it is not usable.
 
     PEP 691 allows a relative ``url``, which resolves against the package
-    page.  ``urlsplit`` raises on a netloc it cannot parse, such as an
-    unbalanced bracket in an IPv6 host.
+    page.  ``urlsplit`` rejects a netloc it cannot parse, such as an
+    unbalanced bracket in an IPv6 host, and ``encode`` rejects a string
+    with no UTF-8 form, such as one holding an unpaired surrogate; both
+    signal it with a ``ValueError``.
 
     ``urlsplit`` deletes a tab, CR or LF anywhere in a URL, so the split
     round trip stores the URL a later parse of the record would yield.
@@ -515,9 +517,14 @@ def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
             if raw_url.startswith(("https://", "http://"))
             else urljoin(base_url, raw_url)
         )
-        return urlunsplit(urlsplit(absolute))
+        file_url = urlunsplit(urlsplit(absolute))
+
+        # Encode only to reject a string with no UTF-8 form.
+        file_url.encode()
     except ValueError:
         return None
+
+    return file_url
 
 
 def _parse_file_entry(
@@ -532,7 +539,7 @@ def _parse_file_entry(
     ``filename`` and ``raw_url`` are the entry's already-validated string
     fields.  ``expected`` is the queried package's canonical name; files
     whose parsed name differs, whose filename packaging does not
-    recognise, or whose URL does not parse are dropped (see
+    recognise, or whose URL cannot be used are dropped (see
     :func:`_parse_files`).
     """
     file_url = _resolve_file_url(raw_url, base_url)
