@@ -470,8 +470,8 @@ def _unset_if_none(value: object) -> object:
     Most policy fields store ``None`` to mean "unset" on the override
     dataclasses, so wrapping their attribute access in this helper yields
     the ``_UNSET``-or-value shape :meth:`Provider._effective_field`
-    expects.  The upload-time helpers, where ``None`` is a real value
-    (a disabled cutoff), build that shape themselves and skip this.
+    expects.  :meth:`Provider._uploaded_prior_to_value` builds that shape
+    itself, because there ``None`` is a real value (a disabled cutoff).
     """
     if value is None:
         return _UNSET
@@ -933,8 +933,7 @@ class Provider:
             version,
             index_name,
             field="build-policy",
-            package_value=lambda o: _unset_if_none(o.build_policy),
-            index_value=lambda o: _unset_if_none(o.build_policy),
+            value=lambda o: _unset_if_none(o.build_policy),
         )
         if result is _UNSET:
             return self.build_policy
@@ -974,8 +973,7 @@ class Provider:
             version,
             index_name,
             field="dist-policy",
-            package_value=lambda o: _unset_if_none(o.dist_policy),
-            index_value=lambda o: _unset_if_none(o.dist_policy),
+            value=lambda o: _unset_if_none(o.dist_policy),
         )
         if result is _UNSET:
             return self._dist_policy
@@ -1004,13 +1002,12 @@ class Provider:
             version,
             index_name,
             field="uploaded-prior-to",
-            package_value=self._package_uploaded_prior_to,
-            index_value=self._index_uploaded_prior_to,
+            value=self._uploaded_prior_to_value,
         )
         if result is _UNSET:
             return self.uploaded_prior_to
-        # ``result`` is either ``None`` (a disabled cutoff) or a datetime;
-        # the upload-time value helpers only ever yield those two.
+        # ``_uploaded_prior_to_value`` yields only ``None`` (a disabled
+        # cutoff) or a datetime.
         return cast("datetime | None", result)
 
     def effective_trust_unverified(
@@ -1025,8 +1022,7 @@ class Provider:
             version,
             index_name,
             field="dist-policy.trust-unverified-deps",
-            package_value=lambda o: _unset_if_none(o.dist_trust_unverified_deps),
-            index_value=lambda o: _unset_if_none(o.dist_trust_unverified_deps),
+            value=lambda o: _unset_if_none(o.dist_trust_unverified_deps),
         )
         if result is _UNSET:
             return self.trust_unverified_sdist_deps
@@ -1146,17 +1142,8 @@ class Provider:
         )
 
     @staticmethod
-    def _package_uploaded_prior_to(override: PackageOverride) -> object:
-        """Per-package upload-time value: a datetime, ``None`` (disabled), or unset."""
-        if override.uploaded_prior_to is not None:
-            return override.uploaded_prior_to
-        if override.uploaded_prior_to_disabled:
-            return None
-        return _UNSET
-
-    @staticmethod
-    def _index_uploaded_prior_to(override: IndexOverride) -> object:
-        """Per-index upload-time value: a datetime, ``None`` (disabled), or unset."""
+    def _uploaded_prior_to_value(override: PackageOverride | IndexOverride) -> object:
+        """Upload-time value: a datetime, ``None`` (disabled), or ``_UNSET``."""
         if override.uploaded_prior_to is not None:
             return override.uploaded_prior_to
         if override.uploaded_prior_to_disabled:
@@ -1187,8 +1174,7 @@ class Provider:
         index_name: str | None,
         *,
         field: str,
-        package_value: Callable[[PackageOverride], object],
-        index_value: Callable[[IndexOverride], object],
+        value: Callable[[PackageOverride | IndexOverride], object],
     ) -> object:
         """Resolve one policy field for a candidate across both override surfaces.
 
@@ -1199,13 +1185,14 @@ class Provider:
         candidate, raises :class:`~nab_python.config.OverrideConflictError`:
         the two surfaces are deliberately not ranked.
 
-        Each value callable returns ``_UNSET`` when its override does not
-        set the field, and the actual value (which may be ``None`` for a
-        disabled upload-time cutoff) when it does.
+        Both override types spell the policy fields the same way, so one
+        ``value`` callable reads either.  It returns ``_UNSET`` when the
+        override does not set the field, and the value (which may be
+        ``None`` for a disabled upload-time cutoff) when it does.
         """
-        pkg = self._matching_package_override(canonical_name, version, package_value)
+        pkg = self._matching_package_override(canonical_name, version, value)
         idx = self._index_overrides.get(index_name) if index_name is not None else None
-        idx_value = index_value(idx) if idx is not None else _UNSET
+        idx_value = value(idx) if idx is not None else _UNSET
 
         if pkg is not None and idx_value is not _UNSET:
             # Late import: config imports provider at module load.
@@ -1221,7 +1208,7 @@ class Provider:
             raise OverrideConflictError(msg)
 
         if pkg is not None:
-            return package_value(pkg)
+            return value(pkg)
         return idx_value
 
     def force_backtrack_count(self, canonical_name: str) -> int:
