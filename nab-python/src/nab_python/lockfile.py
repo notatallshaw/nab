@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field, replace
+from datetime import timezone
 from typing import TYPE_CHECKING, Any
 
 from ._lockfile.builder import (
@@ -305,10 +306,20 @@ class Provenance:
     package_metadata_overrides: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     def to_block(self) -> dict[str, Any]:
-        """Render to the dict the TOML writer drops under ``[tool.nab]``."""
+        """Render to the dict the TOML writer drops under ``[tool.nab]``.
+
+        ``created-at`` is emitted in UTC because TOML offset date-times are
+        RFC 3339, whose offset has no seconds field, so an offset such as
+        ``+00:19:32`` cannot be written.  A naive value is taken as UTC, the
+        way ``read_lockfile_anchor`` reads one back.
+        """
+        created_at = self.created_at
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+
         block: dict[str, Any] = {
             "nab-version": self.nab_version,
-            "created-at": self.created_at,
+            "created-at": created_at.astimezone(timezone.utc),
             "command-line": list(self.command_line),
             "input-path": self.input_path,
             "mode": self.mode,

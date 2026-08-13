@@ -4150,6 +4150,24 @@ class TestLockAnchorReuse:
 
         assert read_lockfile_anchor(out) == absolute
 
+    def test_sub_minute_offset_cutoff_stays_readable(self, tmp_path: Path) -> None:
+        # A cutoff offset carrying seconds is valid ISO 8601 but not valid TOML.
+        absolute = datetime(
+            2026, 5, 1, tzinfo=timezone(timedelta(minutes=19, seconds=32))
+        )
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            f'[tool.nab]\nuploaded-prior-to = "{absolute.isoformat()}"\n',
+        )
+        out = tmp_path / "pylock.toml"
+        with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
+            lock(pyproject, output=out)
+        from nab_python.lockfile import read_lockfile_anchor
+
+        assert tomli.loads(out.read_text())["tool"]["nab"]["created-at"] == absolute
+        assert read_lockfile_anchor(out) == absolute
+
     def test_relative_cutoff_window_uses_reused_anchor(self, tmp_path: Path) -> None:
         # The reused created-at sets the resolve window, not just the recorded
         # provenance.
