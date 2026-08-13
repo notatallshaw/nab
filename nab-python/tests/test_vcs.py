@@ -466,6 +466,29 @@ class TestPrepareClone:
                     or not list(entry.iterdir())
                 ), f"partial clone left behind at {entry}"
 
+    def test_interrupted_fetch_leaves_no_temp_clone(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sha = "f" * 40
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir()
+            if cmd[:2] == ["git", "fetch"]:
+                (cwd / ".git" / "partial").touch()
+                raise KeyboardInterrupt
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "https://example/repo.git", sha, "")
+        with pytest.raises(KeyboardInterrupt):
+            prepare_clone(tmp_path, req, require_pin=True)
+
+        assert list((tmp_path / "vcs").rglob("*.tmp")) == []
+
     def test_subdirectory_propagates(
         self,
         tmp_path: Path,

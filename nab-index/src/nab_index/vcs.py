@@ -231,18 +231,20 @@ def prepare_clone(
         shutil.rmtree(dest)
 
     tmp = Path(tempfile.mkdtemp(dir=dest.parent, prefix=f"{sha}.", suffix=".tmp"))
-    _shallow_clone(request.repo_url, sha, tmp)
     try:
-        tmp.rename(dest)
-    except OSError as exc:
-        # A concurrent run renamed its own finished clone first: use it.
+        _shallow_clone(request.repo_url, sha, tmp)
+        try:
+            tmp.rename(dest)
+        except OSError as exc:
+            # A concurrent run renamed its own finished clone first: use it.
+            if not _clone_complete(dest):
+                msg = (
+                    f"clone of {request.repo_url} @ {sha} could not be"
+                    f" moved into place: {exc}"
+                )
+                raise VcsCloneError(msg) from exc
+    finally:
         shutil.rmtree(tmp, ignore_errors=True)
-        if not _clone_complete(dest):
-            msg = (
-                f"clone of {request.repo_url} @ {sha} could not be"
-                f" moved into place: {exc}"
-            )
-            raise VcsCloneError(msg) from exc
 
     return VcsClone(
         path=dest,
