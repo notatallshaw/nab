@@ -93,8 +93,8 @@ def config_command(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag
     # iterating OPTIONS in one place, not from an if per option.  A new row
     # needs only its tyro param above.
     # Validate the pyproject path the same way the run commands do: a
-    # missing or directory --path is a hard error, not a silently-skipped
-    # source that prints all-built-in defaults.
+    # --path that is missing, a directory, or not a regular file is a hard
+    # error, not a silently-skipped source that prints all-built-in defaults.
     require_pyproject_file(path)
 
     cli_overrides = _cli_overrides(

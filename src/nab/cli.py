@@ -470,11 +470,11 @@ def _is_pylock(path: Path) -> bool:
 def require_pyproject_file(path: Path) -> None:
     """Exit 1 if ``path`` is not a readable pyproject file.
 
-    Shared by every command that takes a project path, so the
-    not-found/directory wording lives in one place.  A missing or
-    directory ``--path`` is a hard error, not a silently-skipped source.
-    A path whose stat fails passes: the config read reports it, naming
-    the errno.
+    Shared by every command that takes a project path, so the rejection
+    wording lives in one place.  A ``--path`` that is missing, a
+    directory, or not a regular file is a hard error, not a
+    silently-skipped source.  A path whose stat fails passes: the config
+    read reports it, naming the errno.
     """
     state = path_state(path)
 
@@ -482,7 +482,11 @@ def require_pyproject_file(path: Path) -> None:
         printer().error(f"{path} is a directory")
         sys.exit(1)
 
-    if not state.should_read:
+    if state is PathState.OTHER:
+        printer().error(f"{path} exists but is not a regular file")
+        sys.exit(1)
+
+    if state is PathState.ABSENT:
         printer().error(f"{path} not found")
         sys.exit(1)
 

@@ -409,6 +409,21 @@ class TestConfigErrors:
         err = capsys.readouterr().err
         assert "is a directory" in err
 
+    def test_pipe_path_exits(
+        self,
+        hermetic_roots: Path,
+        capsys: pytest.CaptureFixture[str],
+        as_fifo: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        # The shared guard's wording reaches every command that takes a
+        # project path, so a pipe is named here the same way nab lock names it.
+        path = _project(hermetic_roots)
+        with as_fifo(path), pytest.raises(SystemExit):
+            config_command("list", path=path)
+        err = capsys.readouterr().err
+        assert f"{path} exists but is not a regular file" in err
+        assert "not found" not in err
+
     def test_unsearchable_parent_reports_the_errno(
         self,
         hermetic_roots: Path,
