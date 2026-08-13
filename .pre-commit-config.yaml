@@ -21,7 +21,7 @@ repos:
       - id: ruff-format
 
   - repo: https://github.com/crate-ci/typos
-    rev: 8a48f81b6c64dcfea44b3633223084c4be58ac5f  # frozen: v1.49.0
+    rev: b859c0df7f391deba73030f79b957e62b4d81dc6  # frozen: varcon-core-v5.0.7
     hooks:
       - id: typos
         # Benchmarks, CI lockfiles, captured lock data and vendored code are
