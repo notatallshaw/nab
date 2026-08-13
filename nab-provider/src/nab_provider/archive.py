@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .digest import is_hex_digest
 from .records import ACCEPTED_HASH_ALGORITHMS
 from .subdir import subdirectory_escapes
 
@@ -55,9 +56,10 @@ class ArchiveRequest:
 
         The fragment holds ``&``-separated ``key=value`` parts: a
         recognised hash algorithm (see :data:`ACCEPTED_HASH_ALGORITHMS`)
-        or ``subdirectory``.  Either an unescaped space in the URL or an
-        unrecognised fragment key raises :class:`ArchiveRequestError`;
-        requiring a hash is left to the config layer so the error names the
+        or ``subdirectory``.  An unescaped space in the URL, an unrecognised
+        fragment key, or a digest that is not hexadecimal raises
+        :class:`ArchiveRequestError`; requiring a hash at all is left to the
+        config layer so the error names the
         offending source.
         """
         url, _, fragment = raw_url.partition("#")
@@ -81,6 +83,11 @@ class ArchiveRequest:
             if key == "subdirectory":
                 subdirectory = value
             elif key in ACCEPTED_HASH_ALGORITHMS:
+                # An empty digest is the missing-hash case, left to config.
+                if value and not is_hex_digest(value):
+                    msg = f"{key} digest {value!r} is not hexadecimal in {raw_url!r}"
+                    raise ArchiveRequestError(msg)
+
                 hashes.append((key, value.lower()))
             else:
                 msg = (

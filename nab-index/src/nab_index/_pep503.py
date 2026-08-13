@@ -15,6 +15,8 @@ from urllib.parse import unquote, urljoin, urlsplit
 
 from typing_extensions import override
 
+from nab_provider.digest import is_hex_digest
+
 __all__ = [
     "Anchor",
     "hash_fragment",
@@ -165,17 +167,15 @@ def hash_fragment(fragment: str) -> tuple[tuple[str, str], ...]:
     place the hash appears when the index has not opted into :pep:`691` JSON.
     The fragment is a ``&``-separated list of ``key=value`` parts, so a hash
     can sit beside ``egg`` or ``subdirectory`` in any order.  A part keyed by
-    a ``hashlib`` algorithm and carrying a digest is a hash; anything else is
-    not.
+    a ``hashlib`` algorithm and carrying a hex digest is a hash; anything else
+    is not.
     """
     hashes: list[tuple[str, str]] = []
 
     for part in fragment.split("&"):
-        algo, sep, digest = part.partition("=")
-        if not sep or not digest:
-            continue
+        algo, _, digest = part.partition("=")
         algo = algo.lower()
-        if algo in hashlib.algorithms_guaranteed:
+        if algo in hashlib.algorithms_guaranteed and is_hex_digest(digest):
             hashes.append((algo, digest.lower()))
 
     return tuple(hashes)

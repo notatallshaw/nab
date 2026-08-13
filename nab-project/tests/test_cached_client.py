@@ -351,6 +351,11 @@ class TestMetadataHashParsing:
 
         assert _metadata_hash({"core-metadata": {"sha256": ""}}) is None
 
+    def test_non_hex_digest_yields_none(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash({"core-metadata": {"sha256": "not-a-digest"}}) is None
+
     def test_empty_digest_falls_through_to_valid_algo(self) -> None:
         from nab_index.client import _metadata_hash
 
@@ -795,6 +800,28 @@ class TestParseHashes:
         from nab_index.client import _parse_hashes, _select_artifact_hash
 
         assert _select_artifact_hash(_parse_hashes({"sha256": ""})) is None
+
+    def test_single_non_hex_digest_dropped(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": "not-a-digest"}) == ()
+
+    def test_hex_digest_split_by_whitespace_dropped(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": "0123abcd\nbeef"}) == ()
+
+    def test_non_hex_digest_falls_through_to_valid(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": "deadbeef ", "sha512": "f" * 128}) == (
+            ("sha512", "f" * 128),
+        )
+
+    def test_uppercase_digest_kept_lowercased(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": "A" * 64}) == (("sha256", "a" * 64),)
 
 
 class TestSelectArtifactHash:

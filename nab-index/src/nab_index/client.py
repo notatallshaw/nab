@@ -23,6 +23,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from packaging.utils import canonicalize_name, parse_sdist_filename
 from packaging.version import Version
 
+from nab_provider.digest import is_hex_digest
 from nab_provider.errors import (
     MalformedSimpleResponseError,
     MetadataHashMismatchError,
@@ -548,21 +549,20 @@ def _parse_hashes(value: object) -> tuple[tuple[str, str], ...]:
     # Both halves are lowercased: PEP 503/691 don't mandate a case, pip
     # treats them case-insensitively, and the acceptable-algorithm filter
     # and hashlib.hexdigest() both expect the lowercase form.
-    # An empty digest carries no integrity claim and can never match a real
-    # file, so it is dropped rather than recorded and later failed against.
+    # A digest that is not hex can never match a file's bytes, so it is dropped.
     if not isinstance(value, dict):
         return ()
 
     # The common case is a single hash; skip the list build.
     if len(value) == 1:
         ((algo, digest),) = value.items()
-        if isinstance(algo, str) and isinstance(digest, str) and digest:
+        if isinstance(algo, str) and isinstance(digest, str) and is_hex_digest(digest):
             return ((sys.intern(algo.lower()), digest.lower()),)
         return ()
 
     out: list[tuple[str, str]] = []
     for algo, digest in value.items():
-        if isinstance(algo, str) and isinstance(digest, str) and digest:
+        if isinstance(algo, str) and isinstance(digest, str) and is_hex_digest(digest):
             out.append((sys.intern(algo.lower()), digest.lower()))
 
     return tuple(out)
@@ -606,8 +606,8 @@ def _has_metadata(file_info: _FileEntry) -> bool:
 def _metadata_hash(file_info: _FileEntry) -> tuple[str, str] | None:
     """Return the sidecar's published ``(algo, hex)`` to verify, or None.
 
-    A bare ``true`` (sidecar exists, no hash), an empty digest, or a table with
-    no accepted algorithm yields None, so no check runs.
+    A bare ``true`` (sidecar exists, no hash), a digest that is not hex, or a
+    table with no accepted algorithm yields None, so no check runs.
     """
     value = _metadata_value(file_info)
     if not isinstance(value, dict):
@@ -616,7 +616,7 @@ def _metadata_hash(file_info: _FileEntry) -> tuple[str, str] | None:
     published = tuple(
         (algo, digest)
         for algo, digest in value.items()
-        if isinstance(algo, str) and isinstance(digest, str)
+        if isinstance(algo, str) and isinstance(digest, str) and is_hex_digest(digest)
     )
     return _select_artifact_hash(published)
 

@@ -272,6 +272,20 @@ class TestArchiveRequestParse:
         req = ArchiveRequest.parse("https://ex.com/foo%201.0.tar.gz#sha256=abc")
         assert req.url == "https://ex.com/foo%201.0.tar.gz"
 
+    def test_non_hex_digest_raises(self) -> None:
+        with pytest.raises(ArchiveRequestError, match="is not hexadecimal"):
+            ArchiveRequest.parse("https://ex.com/foo.tar.gz#sha256=not-a-digest")
+
+    def test_path_shaped_digest_raises(self) -> None:
+        """The digest names the extraction cache directory, so it cannot escape it."""
+        with pytest.raises(ArchiveRequestError, match="is not hexadecimal"):
+            ArchiveRequest.parse("https://ex.com/foo.tar.gz#sha256=../../x")
+
+    def test_empty_digest_kept_as_unusable(self) -> None:
+        req = ArchiveRequest.parse("https://ex.com/foo.tar.gz#sha256=")
+        assert req.hashes == (("sha256", ""),)
+        assert not req.has_usable_hash
+
     def test_parent_subdirectory_rejected(self) -> None:
         with pytest.raises(ArchiveRequestError, match="unsafe archive subdirectory"):
             ArchiveRequest.parse(
