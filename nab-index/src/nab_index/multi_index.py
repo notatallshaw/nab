@@ -23,12 +23,11 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from packaging.utils import canonicalize_name as _normalise_name
 
-from nab_provider.serialization import SimpleSerialization
+from nab_provider.records import IndexConfig
 
 from .cache import OfflineError
 
@@ -109,22 +108,6 @@ class IndexClient(Protocol):
     async def aclose(self) -> None:
         """Close any underlying transport."""
         ...
-
-
-@dataclass(frozen=True, slots=True)
-class IndexConfig:
-    """Declares one index in the ordered list of indexes.
-
-    ``name`` is the index identifier used by overrides and lockfile
-    output.  ``url`` is the Simple API root (HTTPS or ``file://``).
-    Order is significant: callers walk the list left-to-right and
-    presence-based first-index applies.  ``serialization`` pins which
-    Simple-API serialization this index is asked for and read as.
-    """
-
-    name: str
-    url: str
-    serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE
 
 
 class MultiIndexClient:

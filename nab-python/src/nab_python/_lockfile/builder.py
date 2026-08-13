@@ -756,7 +756,7 @@ def _archive_pin_from_source(
     credential userinfo, like every other pin, so a committed lockfile
     never carries a token.
     """
-    from nab_index.archive import ArchiveRequest
+    from nab_provider.archive import ArchiveRequest
 
     from ..lockfile import ArchivePin
 

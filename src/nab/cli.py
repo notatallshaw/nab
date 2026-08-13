@@ -30,8 +30,8 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelHashMismatchError,
 )
-from nab_index.errors import IndexAccessError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_provider.errors import IndexAccessError
 from nab_python.config import (
     ConfigError,
     NabProjectConfig,

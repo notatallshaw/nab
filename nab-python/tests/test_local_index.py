@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, TypeVar
 import pytest
 
 from nab_index.client import SdistFile, WheelFile
-from nab_index.errors import IndexAccessError
 from nab_index.local_index import (
     LocalIndexClient,
     LocalIndexError,
@@ -31,6 +30,7 @@ from nab_index.local_index import (
     read_wheel_metadata,
 )
 from nab_index.transport import HttpError
+from nab_provider.errors import IndexAccessError
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Iterator

@@ -17,9 +17,9 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nab_index.archive import ArchiveRequest
 from nab_index.client import SdistFile, extract_sdist_archive, verify_sdist_hash
 from nab_index.vcs import VcsCloneError, VcsRequest
+from nab_provider.archive import ArchiveRequest
 
 from .._vendor.packaging.utils import canonicalize_name
 from ..errors import SourceNameMismatchError, UnsupportedSdistError

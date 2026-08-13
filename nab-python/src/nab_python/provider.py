@@ -21,8 +21,9 @@ from nab_index.client import (
     WheelFile,
     WheelHashMismatchError,
 )
-from nab_index.errors import IndexAccessError
 from nab_index.transport import UnserveableUrlError
+from nab_provider.errors import IndexAccessError
+from nab_provider.records import DistFile
 
 from ._provider import extras as _extras
 from ._provider import listing as _listing
@@ -144,9 +145,6 @@ class ProviderStats:
     choose_version_calls: int = 0
     prioritize_calls: int = 0
     look_ahead_rejections: int = 0
-
-
-DistFile = WheelFile | SdistFile
 
 
 _STAT_FIELDS = tuple(stat.name for stat in fields(ProviderStats))

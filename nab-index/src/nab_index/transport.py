@@ -12,7 +12,8 @@ import zlib
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
-from .errors import IndexAccessError
+from nab_provider.errors import HttpError
+
 from .retry import RETRY_STATUSES
 
 if TYPE_CHECKING:
@@ -59,14 +60,6 @@ _CONTENT_STATUSES: Final[frozenset[int]] = frozenset({200, 203})
 
 # RFC 9110 8.4.1.3: "x-gzip" is the same coding as "gzip".
 _GZIP_CODINGS: Final[frozenset[str]] = frozenset({"gzip", "x-gzip"})
-
-
-class HttpError(IndexAccessError):
-    """A request failed, or answered with a status the caller cannot use.
-
-    Transports raise this from ``get`` and ``raise_for_status`` so callers
-    can handle index failures without importing a specific HTTP backend.
-    """
 
 
 class UnserveableUrlError(HttpError):

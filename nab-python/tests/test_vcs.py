@@ -20,9 +20,9 @@ from nab_index.vcs import (
     VcsRequest,
     _clone_complete,
     _resolve_sha,
-    _split_repo_ref,
     prepare_clone,
 )
+from nab_provider.vcs_request import _split_repo_ref
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version

@@ -37,6 +37,8 @@ from urllib.request import url2pathname
 from packaging.utils import canonicalize_name as _canonical
 from packaging.utils import parse_sdist_filename
 
+from nab_provider.errors import IndexAccessError, UnsupportedWheelError
+
 from ._pep503 import hash_fragment, metadata_declaration, read_page
 from .client import (
     SdistFile,
@@ -46,7 +48,6 @@ from .client import (
     _parse_wheel_filename,
     is_readable_filename,
 )
-from .errors import IndexAccessError
 
 if TYPE_CHECKING:
     from packaging.utils import NormalizedName
@@ -66,15 +67,6 @@ __all__ = [
     "read_wheel_metadata",
     "wheel_metadata_member",
 ]
-
-
-class UnsupportedWheelError(Exception):
-    """A local wheel's ``.dist-info`` contradicts its own filename.
-
-    Raised when a wheel carries more than one top-level ``.dist-info``
-    directory, or a single one whose name does not canonicalise to the
-    distribution named by the wheel's filename.
-    """
 
 
 class LocalIndexError(IndexAccessError):

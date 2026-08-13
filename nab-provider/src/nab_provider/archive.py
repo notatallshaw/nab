@@ -1,4 +1,4 @@
-"""Direct-URL archive requirement parsing for nab-index.
+"""Direct-URL archive requirement parsing.
 
 Parses a pip-style archive URL such as
 ``https://example.com/foo-1.0.tar.gz#sha256=<hex>&subdirectory=pkg`` into
@@ -13,9 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from nab_provider.subdir import subdirectory_escapes
-
-from .client import ACCEPTED_HASH_ALGORITHMS
+from .records import ACCEPTED_HASH_ALGORITHMS
+from .subdir import subdirectory_escapes
 
 __all__ = [
     "ArchiveRequest",

@@ -23,11 +23,11 @@ import httpx
 import pytest
 import respx
 
-from nab_index.archive import ArchiveRequest, ArchiveRequestError
 from nab_index.client import SdistHashMismatchError, extract_sdist_archive
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.multi_index import IndexConfig
 from nab_index.transport import HttpError
+from nab_provider.archive import ArchiveRequest, ArchiveRequestError
 from nab_python._provider import sources
 from nab_python._provider.sources import _fetch_archive_bytes
 from nab_python._testing.coordinator_fake import make_coordinator
