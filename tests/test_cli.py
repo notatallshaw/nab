@@ -56,6 +56,7 @@ from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.pylock import Pylock
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import ConfigError, read_pyproject_config
 from nab_python.config_sources import SourceRoots
@@ -262,6 +263,25 @@ def _sdist_archive(name: str = "foo", version: str = "1.0") -> bytes:
     return buf.getvalue()
 
 
+def _static_sdist_archive(name: str = "foo", version: str = "1.0") -> bytes:
+    """Build sdist bytes with static project metadata and no dependencies."""
+    pyproject = (
+        f'[project]\nname = "{name}"\nversion = "{version}"\ndependencies = []\n'
+    ).encode()
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        info = tarfile.TarInfo(f"{name}-{version}/pyproject.toml")
+        info.size = len(pyproject)
+        tar.addfile(info, io.BytesIO(pyproject))
+    return buf.getvalue()
+
+
+requires_data_filter = pytest.mark.skipif(
+    not hasattr(tarfile, "data_filter"),
+    reason="sdist extraction requires the tar data filter (PEP 706)",
+)
+
+
 def _sidecarless_wheel(name: str = "foo", version: str = "1.0") -> bytes:
     """Build wheel bytes whose METADATA sits inside the archive."""
     buf = io.BytesIO()
@@ -279,6 +299,26 @@ def _make_pyproject(tmp_path: Path, body: str = "") -> Path:
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(body or '[project]\ndependencies = ["foo"]\n')
     return pyproject
+
+
+def _make_archive_source_project(
+    tmp_path: Path, *, percent_encoded: bool
+) -> tuple[Path, str]:
+    """Write a project backed by a local archive whose filename has a space."""
+    archive = tmp_path / "foo 1.0.tar.gz"
+    data = _static_sdist_archive()
+    archive.write_bytes(data)
+    digest = hashlib.sha256(data).hexdigest()
+    encoded_url = archive.as_uri()
+    url = encoded_url if percent_encoded else encoded_url.replace("%20", " ")
+    source_url = f"{url}#sha256={digest}"
+    pyproject = _make_pyproject(
+        tmp_path,
+        '[project]\nname = "probe"\nversion = "0.1"\ndependencies = ["foo"]\n'
+        '[[tool.nab.archive-sources]]\nname = "foo"\n'
+        f'url = "{source_url}"\n',
+    )
+    return pyproject, source_url
 
 
 # A well-formed project for tests that stub the resolve; neither list is read.
@@ -773,6 +813,65 @@ class TestLockCommandSpecific:
         text = out.read_text()
         assert "foo==1.0" in text
         assert "--hash=sha256:" in text
+
+    def test_archive_source_unescaped_space_exits_cleanly(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A URL that requirements syntax would split is rejected at config load."""
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+        pyproject, source_url = _make_archive_source_project(
+            tmp_path, percent_encoded=False
+        )
+        url = source_url.partition("#")[0]
+        out = tmp_path / "requirements.txt"
+
+        with pytest.raises(SystemExit, match="1"):
+            lock(
+                pyproject,
+                output=out,
+                format="requirements",
+                cache_dir=tmp_path / "cache",
+            )
+
+        err = capsys.readouterr().err
+        assert f"archive URL {url!r} contains an unescaped space" in err
+        assert "percent-encode spaces as %20" in err
+        assert "Traceback" not in err
+        assert not out.exists()
+
+    @requires_data_filter
+    def test_archive_source_percent_encoded_space_renders_requirement(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A percent-encoded local archive resolves to a parseable requirement."""
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+        pyproject, source_url = _make_archive_source_project(
+            tmp_path, percent_encoded=True
+        )
+        out = tmp_path / "requirements.txt"
+
+        lock(
+            pyproject,
+            output=out,
+            format="requirements",
+            cache_dir=tmp_path / "cache",
+        )
+
+        rendered = out.read_text().strip()
+        assert "%20" in rendered
+        requirement = Requirement(rendered)
+        assert requirement.url == source_url
 
     def test_requirements_without_hashes_writes_to_file(self, tmp_path: Path) -> None:
         """requirements-without-hashes renders one name==version per line."""

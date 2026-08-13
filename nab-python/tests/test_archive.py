@@ -257,6 +257,19 @@ class TestArchiveRequestParse:
         req = ArchiveRequest.parse("https://ex.com/foo.tar.gz#sha256=abc&")
         assert req.hashes == (("sha256", "abc"),)
 
+    def test_unescaped_space_rejected(self) -> None:
+        url = "https://ex.com/foo 1.0.tar.gz"
+        with pytest.raises(ArchiveRequestError) as excinfo:
+            ArchiveRequest.parse(f"{url}#sha256=abc")
+        assert str(excinfo.value) == (
+            f"archive URL {url!r} contains an unescaped space;"
+            " percent-encode spaces as %20"
+        )
+
+    def test_percent_encoded_space_allowed(self) -> None:
+        req = ArchiveRequest.parse("https://ex.com/foo%201.0.tar.gz#sha256=abc")
+        assert req.url == "https://ex.com/foo%201.0.tar.gz"
+
     def test_parent_subdirectory_rejected(self) -> None:
         with pytest.raises(ArchiveRequestError, match="unsafe archive subdirectory"):
             ArchiveRequest.parse(
