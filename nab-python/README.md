@@ -1,19 +1,20 @@
 # nab-python
 
-The Python package index provider that drives [`nab-resolver`](https://pypi.org/project/nab-resolver/)
-for Python packages.
+nab's own host for [`nab-provider`](https://pypi.org/project/nab-provider/):
+it supplies the I/O the resolution logic asks for, over
+[`nab-index`](https://pypi.org/project/nab-index/), and adds everything a
+command-line resolver needs beyond resolving.
 
-It owns all the mechanics of how the resolver needs to interact with standards
-based Python package indexes and packages.
-
-It implements build and distribution policies to allow the user to control
-resolver and install behavior.
+It owns the `[tool.nab]` config ladder, workspace discovery, the PEP 517 build
+path, the lockfile emitter and the downloader. The provider, the policies and
+the resolve target live in `nab-provider`, which this package installs.
 
 ## When to use it
 
-Use `nab-python` if you need to embed Python package resolution in
-another tool and want the resolver, provider, and lockfile emitter
-without the CLI.
+Use `nab-python` if you need to embed Python package resolution in another tool
+and want nab's own fetching, config and lockfile emitter without the CLI. If
+you already own your networking and want only the resolution logic, take
+`nab-provider` instead.
 
 The API is currently under rapid experimentation, use exact version
 pinning.

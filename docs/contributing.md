@@ -16,7 +16,7 @@ nab --version
 ```
 
 `hatch shell` enters a virtual environment (`.venv` by default) with
-all four workspace members installed editable, plus the test, lint,
+all five workspace members installed editable, plus the test, lint,
 docs, and types groups available via `hatch run`.
 
 [hatch]: https://hatch.pypa.io/
@@ -24,7 +24,8 @@ docs, and types groups available via `hatch run`.
 ## Running the tests
 
 The default suite is fast (under a minute) and covers every module
-under `nab_resolver`, `nab_python`, `nab_index`, and `nab`:
+under `nab_resolver`, `nab_provider`, `nab_python`, `nab_index`, and
+`nab`:
 
 ```bash
 .venv/bin/python -m pytest                # default selection (no markers)
@@ -77,7 +78,7 @@ installed rather than fetched during the build. It is locked from
 and every path that builds installs it, the `dists` nox session, the release
 workflow and `hatch run release:build`.
 
-One lock serves all four packages, which holds only while they declare the
+One lock serves all five packages, which holds only while they declare the
 same `[build-system]`. The refresh script checks that before it writes
 anything, and checks afterwards that the locks sharing an environment agree on
 the packages they share.
@@ -106,12 +107,17 @@ the floor.
 
 The `pyproject.toml` `[tool.coverage.report] fail_under = 100`
 setting requires 100 percent branch coverage on every workspace
-package: `nab_resolver`, `nab_python`, `nab_index`, and `nab`. The
-full local suite under `coverage run -m pytest` checks all four
-together; nox splits them per workspace in CI so each workspace's
-tests cover only its own package, with `nab_index` gated alongside
-`nab_python`, whose tests exercise it. When code is genuinely
-unreachable from the default suite, prefer:
+package: `nab_resolver`, `nab_provider`, `nab_python`, `nab_index`,
+and `nab`. The full local suite under `coverage run -m pytest` checks
+all five together; nox splits them per workspace in CI. `nab_index` is
+gated alongside `nab_python`, whose tests exercise it, and so is
+`nab_provider`, because full coverage of the provider needs
+nab-python's engine, config and coordinator tests as well as its own
+suite. The `provider` workspace installs `nab-provider` and
+`nab-resolver` and nothing else and runs `nab-provider/tests`, which
+is the mechanical proof that the provider works without `nab-index`;
+it gates no package of its own. When code is genuinely unreachable
+from the default suite, prefer:
 
 * `# pragma: no cover` for a platform-specific or defensively
   unreachable line.

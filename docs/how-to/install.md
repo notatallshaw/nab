@@ -1,7 +1,8 @@
 # Install nab
 
-`nab` ships as a CLI plus three importable libraries. The
-recommended path is to install it as an isolated tool.
+`nab` ships as a CLI plus four importable libraries; see
+[the five distributions](../explanation/packages.md) for what each
+one holds. The recommended path is to install it as an isolated tool.
 
 ## uv tool install
 
@@ -10,9 +11,9 @@ uv tool install nab
 ```
 
 Drops `nab` into a uv-managed tool venv and exposes the console
-script on `PATH`. uv resolves and installs the four workspace
-distributions (`nab`, `nab-resolver`, `nab-python`, `nab-index`)
-together. Confirm with:
+script on `PATH`. uv resolves and installs the five workspace
+distributions (`nab`, `nab-resolver`, `nab-provider`, `nab-python`,
+`nab-index`) together. Confirm with:
 
 ```bash
 nab --version
@@ -56,7 +57,7 @@ against it.
 
 ## Installing from a checkout
 
-To run a revision that has not been released, build the four wheels
+To run a revision that has not been released, build the five wheels
 from a checkout and install from the result:
 
 ```bash
@@ -64,8 +65,9 @@ git clone https://github.com/notatallshaw/nab.git
 cd nab
 mkdir -p /tmp/nab-wheels
 uv build --wheel --out-dir /tmp/nab-wheels nab-resolver
-uv build --wheel --out-dir /tmp/nab-wheels nab-python
+uv build --wheel --out-dir /tmp/nab-wheels nab-provider
 uv build --wheel --out-dir /tmp/nab-wheels nab-index
+uv build --wheel --out-dir /tmp/nab-wheels nab-python
 uv build --wheel --out-dir /tmp/nab-wheels .
 uv tool install --find-links /tmp/nab-wheels nab
 ```
