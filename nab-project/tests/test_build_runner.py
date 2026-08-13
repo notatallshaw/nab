@@ -913,6 +913,27 @@ class TestParseMetadata:
         with pytest.raises(BuildBackendError, match="no METADATA file"):
             _parse_metadata(tmp_path / "DOES-NOT-EXIST")
 
+    def test_unreadable_metadata_reports_the_errno(
+        self,
+        tmp_path: Path,
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        """A METADATA that cannot be read is a read failure, not an absent file."""
+        from nab_project._build.runner import _parse_metadata
+
+        path = tmp_path / "METADATA"
+        path.write_text(
+            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n", encoding="utf-8"
+        )
+
+        with (
+            deny_access(path),
+            pytest.raises(
+                BuildBackendError, match="could not be read.*Permission denied"
+            ),
+        ):
+            _parse_metadata(path)
+
     def test_non_utf8_metadata_raises_build_backend_error(self, tmp_path: Path) -> None:
         from nab_project._build.runner import _parse_metadata
 

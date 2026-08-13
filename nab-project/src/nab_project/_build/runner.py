@@ -81,10 +81,10 @@ def run_build_backend(
     Returns a :class:`~nab_provider.metadata.WheelMetadata` parsed from
     the ``METADATA`` file the backend produces.  Raises
     :class:`BuildBackendError` on any failure: backend import
-    error, a rejected ``backend-path``, hook crash, malformed
-    METADATA, an unreadable built wheel, a build requirement that
-    cannot be installed or built, or build requirements ``offline``
-    bars from being fetched.
+    error, a rejected ``backend-path``, hook crash, METADATA that
+    is unreadable or malformed, an unreadable built wheel, a build
+    requirement that cannot be installed or built, or build
+    requirements ``offline`` bars from being fetched.
 
     The build runs in an isolated venv driven by
     :class:`NabBuildEnv`; nothing in the user's main environment is
@@ -428,11 +428,15 @@ def _build_wheel_and_extract(
 
 def _parse_metadata(metadata_path: Path) -> WheelMetadata:
     """Parse a ``METADATA`` file into :class:`WheelMetadata`."""
-    if not metadata_path.is_file():
+    if not path_state(metadata_path).should_read:
         msg = f"backend produced no METADATA file at {metadata_path}"
         raise BuildBackendError(msg)
+
     try:
         text = metadata_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        msg = f"backend METADATA at {metadata_path} could not be read: {exc}"
+        raise BuildBackendError(msg) from exc
     except UnicodeDecodeError as exc:
         msg = f"backend METADATA at {metadata_path} is not valid UTF-8: {exc}"
         raise BuildBackendError(msg) from exc
