@@ -55,11 +55,19 @@ class ArchiveRequest:
 
         The fragment holds ``&``-separated ``key=value`` parts: a
         recognised hash algorithm (see :data:`ACCEPTED_HASH_ALGORITHMS`)
-        or ``subdirectory``.  Any other key raises
-        :class:`ArchiveRequestError`; requiring a hash is left to the
-        config layer so the error names the offending source.
+        or ``subdirectory``.  Either an unescaped space in the URL or an
+        unrecognised fragment key raises :class:`ArchiveRequestError`;
+        requiring a hash is left to the config layer so the error names the
+        offending source.
         """
         url, _, fragment = raw_url.partition("#")
+        if " " in url:
+            msg = (
+                f"archive URL {url!r} contains an unescaped space;"
+                " percent-encode spaces as %20"
+            )
+            raise ArchiveRequestError(msg)
+
         hashes: list[tuple[str, str]] = []
         subdirectory = ""
 
