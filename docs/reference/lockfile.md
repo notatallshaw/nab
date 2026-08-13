@@ -59,28 +59,28 @@ A trimmed example, after resolving the
 
 ```toml
 lock-version = "1.0"
-created-by = "nab"
-requires-python = ">=3.10"
 environments = [
-    'python_version == "3.12" and sys_platform == "linux" and platform_machine == "x86_64"',
+    'python_version == "3.12" and sys_platform == "linux" and platform_machine == "x86_64" and platform_system == "Linux"',
 ]
+created-by = "nab"
 
 [[packages]]
 name = "fastapi"
-version = "0.115.2"
+version = "0.109.1"
+requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
-[[packages.wheels]]
-name = "fastapi-0.115.2-py3-none-any.whl"
-url = "https://files.pythonhosted.org/.../fastapi-0.115.2-py3-none-any.whl"
-hashes.sha256 = "..."
-size = 94918
-
 [packages.sdist]
-name = "fastapi-0.115.2.tar.gz"
-url = "https://files.pythonhosted.org/.../fastapi-0.115.2.tar.gz"
+name = "fastapi-0.109.1.tar.gz"
+url = "https://files.pythonhosted.org/.../fastapi-0.109.1.tar.gz"
 hashes.sha256 = "..."
-size = 286433
+size = 11720487
+
+[[packages.wheels]]
+name = "fastapi-0.109.1-py3-none-any.whl"
+url = "https://files.pythonhosted.org/.../fastapi-0.109.1-py3-none-any.whl"
+hashes.sha256 = "..."
+size = 92070
 ```
 
 ### Supported keys
@@ -372,10 +372,10 @@ covers.
 using pip's [hash-checking] format:
 
 ```
-fastapi==0.115.2 \
+fastapi==0.109.1 \
     --hash=sha256:... \
     --hash=sha256:...
-starlette==0.36.0 \
+starlette==0.35.1 \
     --hash=sha256:... \
     --hash=sha256:...
 ```
