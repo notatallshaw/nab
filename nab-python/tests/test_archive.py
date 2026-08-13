@@ -34,8 +34,10 @@ from nab_python._provider.sources import _fetch_archive_bytes
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
 from nab_python.download import (
+    DownloadEntry,
     DownloadError,
-    _reject_colliding_targets,
+    _coalesce_download_targets,
+    download_lock,
     iter_artifacts,
 )
 from nab_python.fetch import FetchCoordinator, InMemoryIndex
@@ -180,6 +182,32 @@ def _lock_input(pins: Mapping[str, PinShape]) -> LockInput:
     """Wrap ``pins`` as the one-target lock input the downloader reads."""
     target = ResolveTarget.for_host()
     return LockInput(targets={target.label: TargetLock(target=target, pins=pins)})
+
+
+def _archive_download_entries(
+    *,
+    first_filename: str = "v1.0.0.tar.gz",
+    second_filename: str = "v1.0.0.tar.gz",
+    first_digest: str = "a" * 64,
+    second_digest: str = "b" * 64,
+    second_algorithm: str = "sha256",
+) -> list[DownloadEntry]:
+    """Return two archive entries from different URLs."""
+    pins = {
+        "alpha": ArchivePin(
+            name="alpha",
+            version="1.0",
+            url=f"https://a.example.com/dist/{first_filename}",
+            hashes=(("sha256", first_digest),),
+        ),
+        "beta": ArchivePin(
+            name="beta",
+            version="2.0",
+            url=f"https://b.example.com/dist/{second_filename}",
+            hashes=((second_algorithm, second_digest),),
+        ),
+    }
+    return list(iter_artifacts(_lock_input(pins)))
 
 
 # Extraction requires the tar data filter (PEP 706), so skip the paths that
@@ -876,41 +904,102 @@ class TestArchiveDownload:
         with pytest.raises(ValueError, match="no acceptable hash"):
             _ = pin.primary_digest
 
-    def test_colliding_basenames_rejected(self) -> None:
-        # Two archives from different repos sharing a URL basename would clobber
-        # each other in the flat output dir, so the collision is refused.
-        pins = {
-            "foo": ArchivePin(
-                name="foo",
-                version="1.0",
-                url="https://a.example.com/dist/v1.0.0.tar.gz",
-                hashes=(("sha256", "a" * 64),),
-            ),
-            "bar": ArchivePin(
-                name="bar",
-                version="2.0",
-                url="https://b.example.com/dist/v1.0.0.tar.gz",
-                hashes=(("sha256", "b" * 64),),
-            ),
-        }
-        entries = list(iter_artifacts(_lock_input(pins)))
-        with pytest.raises(DownloadError, match="collide on output filename"):
-            _reject_colliding_targets(entries)
+    def test_different_hash_same_filename_rejected(self) -> None:
+        with pytest.raises(DownloadError, match="different hash identities"):
+            _coalesce_download_targets(_archive_download_entries())
 
-    def test_same_basename_same_digest_allowed(self) -> None:
-        # The same archive pinned under two names writes identical bytes, so it
-        # is not a collision.
-        url = "https://a.example.com/dist/v1.0.0.tar.gz"
+    def test_different_hash_casefold_equivalent_filenames_rejected(self) -> None:
+        with pytest.raises(DownloadError, match="different hash identities") as excinfo:
+            _coalesce_download_targets(
+                _archive_download_entries(
+                    first_filename="Artifact.tar.gz",
+                    second_filename="artifact.tar.gz",
+                )
+            )
+
+        assert "'Artifact.tar.gz' and 'artifact.tar.gz'" in str(excinfo.value)
+
+    def test_same_hash_identity_same_filename_coalesced(self) -> None:
+        entries = _archive_download_entries(second_digest="a" * 64)
+
+        assert entries[0].url != entries[1].url
+        assert _coalesce_download_targets(entries) == [entries[0]]
+
+    def test_same_hash_identity_casefold_equivalent_filenames_coalesced(self) -> None:
+        entries = _archive_download_entries(
+            first_filename="Artifact.tar.gz",
+            second_filename="artifact.tar.gz",
+            second_digest="a" * 64,
+        )
+        assert _coalesce_download_targets(entries) == [entries[0]]
+
+    def test_unicode_casefold_equivalent_filenames_coalesced(self) -> None:
+        entries = _archive_download_entries(
+            first_filename="Straße.tar.gz",
+            second_filename="STRASSE.tar.gz",
+            second_digest="a" * 64,
+        )
+        assert _coalesce_download_targets(entries) == [entries[0]]
+
+    @pytest.mark.parametrize(
+        ("first_filename", "second_filename"),
+        [
+            pytest.param("artifact.tar.gz", "artifact.tar.gz", id="exact"),
+            pytest.param("Artifact.tar.gz", "artifact.tar.gz", id="casefold"),
+        ],
+    )
+    def test_same_hash_identity_casefold_equivalent_filename_written_once(
+        self,
+        tmp_path: Path,
+        first_filename: str,
+        second_filename: str,
+    ) -> None:
+        payload = b"ARCHIVE"
+        digest = hashlib.sha256(payload).hexdigest()
+        first = tmp_path / "first" / first_filename
+        second = tmp_path / "second" / second_filename
+        first.parent.mkdir()
+        second.parent.mkdir()
+        first.write_bytes(payload)
+        second.write_bytes(payload)
         pins = {
-            "foo": ArchivePin(
-                name="foo", version="1.0", url=url, hashes=(("sha256", "a" * 64),)
+            "alpha": ArchivePin(
+                name="alpha",
+                version="1.0",
+                url=first.as_uri(),
+                hashes=(("sha256", digest),),
             ),
-            "bar": ArchivePin(
-                name="bar", version="1.0", url=url, hashes=(("sha256", "a" * 64),)
+            "beta": ArchivePin(
+                name="beta",
+                version="1.0",
+                url=second.as_uri(),
+                hashes=(("sha256", digest),),
             ),
         }
-        entries = list(iter_artifacts(_lock_input(pins)))
-        _reject_colliding_targets(entries)
+
+        output = tmp_path / "output"
+        result = download_lock(
+            _lock_input(pins),
+            HttpxAsyncTransport(),
+            output,
+        )
+
+        expected = output / first_filename
+        assert result.written == (expected,)
+        assert result.skipped == ()
+        assert expected.read_bytes() == payload
+        assert list(output.iterdir()) == [expected]
+
+    def test_same_digest_text_under_different_algorithms_rejected(self) -> None:
+        with pytest.raises(DownloadError, match="different hash identities"):
+            _coalesce_download_targets(
+                _archive_download_entries(
+                    first_filename="Artifact.tar.gz",
+                    second_filename="artifact.tar.gz",
+                    second_digest="a" * 64,
+                    second_algorithm="sha384",
+                )
+            )
 
 
 class TestExtractArchive:
