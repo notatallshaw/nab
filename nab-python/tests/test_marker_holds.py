@@ -11,11 +11,8 @@ from collections.abc import Set as AbstractSet
 
 import pytest
 
-from nab_python._conflict_kind import (
-    EMPTY_MEMBERSHIP_SETS,
-    UnevaluableMarkerError,
-    dependency_marker_holds,
-)
+from nab_python._conflict_kind import EMPTY_MEMBERSHIP_SETS
+from nab_python._marker_holds import UnevaluableMarkerError, dependency_marker_holds
 from nab_python._vendor.packaging.markers import MARKERS_ALLOWING_SET, Marker
 
 _ENV: dict[str, str] = {

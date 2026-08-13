@@ -8,6 +8,12 @@ target for the requirements and once for the constraints.
 
 The whole of its config dependency is ``config.vcs``, read to decide
 whether a direct-URL requirement is admitted at all.
+
+Evaluating a root requirement's marker is the caller's, not this module's:
+:data:`MarkerHolds` arrives as an argument.  The predicate needs a
+set-valued ``extra`` and so needs :mod:`packaging.markersets`, which is the
+one part of packaging a host embedding the engine would otherwise have to
+carry.
 """
 
 from __future__ import annotations
@@ -17,24 +23,54 @@ from collections import defaultdict
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, NamedTuple
 
+from nab_resolver.errors import ResolutionError
 from nab_resolver.types import RootRequirement
 
-from .._conflict_kind import dependency_marker_holds, membership_set_in_marker
+from .._conflict_kind import membership_set_in_marker
 from .._errors import ConfigError
 from .._extra_keys import join_extra, split_extra
 from .._vcs_admission import admit_vcs_url
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
-from ..requirements_file import raise_for_unsatisfiable
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
+    from .._vendor.packaging.markers import Marker
     from .._vendor.packaging.requirements import Requirement
     from ..config import NabProjectConfig
 
+    # Whether a dependency marker holds for one environment.
+    # :func:`nab_python._marker_holds.dependency_marker_holds` is nab's own;
+    # a host embedding the engine supplies its own instead.
+    MarkerHolds = Callable[[Marker, Mapping[str, str]], bool]
+
 
 _logger = logging.getLogger(__name__)
+
+
+def raise_for_unsatisfiable(
+    ranges: Mapping[str, VersionRange],
+    sources: Mapping[str, Sequence[str]],
+    *,
+    kind: str,
+) -> None:
+    """Raise :class:`ResolutionError` if any folded range is empty.
+
+    ``ranges`` holds one intersected range per package and ``sources``
+    the requirement strings folded into each.  An empty range means
+    those requirements share no version; the error lists them.
+
+    ``kind`` ("requirement" or "constraint") only shapes the wording.
+    """
+    unsatisfiable = [name for name, range_ in ranges.items() if range_.is_empty]
+    if not unsatisfiable:
+        return
+    detail = "\n".join(
+        f"  {name}: {', '.join(sources[name])}" for name in unsatisfiable
+    )
+    msg = f"conflicting {kind}s leave no satisfiable version:\n{detail}"
+    raise ResolutionError(msg)
 
 
 def _warn_dropped_root_marker(req: Requirement, warned: set[str]) -> None:
@@ -74,12 +110,13 @@ def _build_resolver_inputs(
     config: NabProjectConfig,
     *,
     environment: Mapping[str, str],
+    marker_holds: MarkerHolds,
     kind: str = "requirement",
     warned: set[str] | None = None,
 ) -> _ResolverInputs:
     """Convert PEP 508 requirements to the resolver's input shape.
 
-    Requirements whose PEP 508 marker evaluates to ``False`` under
+    Requirements whose PEP 508 marker ``marker_holds`` rejects under
     ``environment`` are skipped, matching pip/uv's root-requirement
     handling.  A direct-URL or VCS requirement is refused by
     :func:`admit_vcs_url`; resolving one is not implemented.
@@ -107,9 +144,7 @@ def _build_resolver_inputs(
         if kind == "constraint" and req.extras:
             msg = f"Constraints cannot have extras: {req}"
             raise ConfigError(msg)
-        if req.marker is not None and not dependency_marker_holds(
-            req.marker, environment
-        ):
+        if req.marker is not None and not marker_holds(req.marker, environment):
             _warn_dropped_root_marker(req, already_warned)
             continue
         if req.url is not None:

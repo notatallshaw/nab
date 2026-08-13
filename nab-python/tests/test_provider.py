@@ -36,6 +36,7 @@ from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.multi_index import IndexConfig
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_python._marker_holds import dependency_marker_holds
 from nab_python._provider import build_remote, metadata_resolver
 from nab_python._provider import listing as listing_mod
 from nab_python._provider.lookahead import DepRangeUnion
@@ -7160,6 +7161,7 @@ class TestExtrasPrereleaseAdmission:
             [Requirement(r) for r in requirements],
             NabProjectConfig(),
             environment={},
+            marker_holds=dependency_marker_holds,
         )
         provider = Provider(
             self._coordinator_for_c(),

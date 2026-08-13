@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING
 
 import tomli
 
-from .._conflict_kind import UnevaluableMarkerError, dependency_marker_holds
+from .._marker_holds import UnevaluableMarkerError, dependency_marker_holds
 from .._vendor.packaging.markers import UndefinedEnvironmentName
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.requirements import Requirement

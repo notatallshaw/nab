@@ -25,6 +25,7 @@ from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
 from nab_python import resolve as resolve_mod
+from nab_python._marker_holds import dependency_marker_holds
 from nab_python._provider import listing as listing_mod
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
@@ -156,6 +157,7 @@ def _settings(
         source_root=source_root,
         align=align,
         resolution=effective.resolution,
+        marker_holds=dependency_marker_holds,
     )
 
 
@@ -1062,7 +1064,10 @@ class TestBuildResolverInputs:
         """A requirement whose marker matches the env is kept."""
         env = _linux_311().marker_env
         out = _build_resolver_inputs(
-            _reqs('pkg; sys_platform == "linux"'), NabProjectConfig(), environment=env
+            _reqs('pkg; sys_platform == "linux"'),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert "pkg" in out
 
@@ -1070,7 +1075,10 @@ class TestBuildResolverInputs:
         """A requirement whose marker excludes the env is dropped."""
         env = _linux_311().marker_env
         out = _build_resolver_inputs(
-            _reqs('pkg; sys_platform == "win32"'), NabProjectConfig(), environment=env
+            _reqs('pkg; sys_platform == "win32"'),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert out == {}
 
@@ -1078,7 +1086,10 @@ class TestBuildResolverInputs:
         """A lockfile-only set marker is empty at resolve time, so the dep drops."""
         env = _linux_311().marker_env
         out = _build_resolver_inputs(
-            _reqs('pkg ; "x" in extras'), NabProjectConfig(), environment=env
+            _reqs('pkg ; "x" in extras'),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert out == {}
 
@@ -1086,7 +1097,10 @@ class TestBuildResolverInputs:
         """Extras become ``name[extra]`` entries with any-version range."""
         env = _linux_311().marker_env
         out = _build_resolver_inputs(
-            _reqs("pkg[foo,bar]"), NabProjectConfig(), environment=env
+            _reqs("pkg[foo,bar]"),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert "pkg" in out
         assert "pkg[foo]" in out
@@ -1104,7 +1118,12 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         req = Requirement("pkg[a,b,c]")
         monkeypatch.setattr(req, "extras", sorted(req.extras, reverse=True))
-        out = _build_resolver_inputs([req], NabProjectConfig(), environment=env).ranges
+        out = _build_resolver_inputs(
+            [req],
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
+        ).ranges
         proxy_keys = [k for k in out if k.startswith("pkg[")]
         assert proxy_keys == ["pkg[a]", "pkg[b]", "pkg[c]"]
 
@@ -1112,7 +1131,10 @@ class TestBuildResolverInputs:
         """An unconstrained requirement gets the any() range."""
         env = _linux_311().marker_env
         out = _build_resolver_inputs(
-            _reqs("pkg"), NabProjectConfig(), environment=env
+            _reqs("pkg"),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert out["pkg"] == VersionRange.full(admit_arbitrary=False)
 
@@ -1120,7 +1142,10 @@ class TestBuildResolverInputs:
         """A bounded specifier produces the corresponding interval."""
         env = _linux_311().marker_env
         out = _build_resolver_inputs(
-            _reqs("pkg>=1.0,<2.0"), NabProjectConfig(), environment=env
+            _reqs("pkg>=1.0,<2.0"),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         # The specifier should be stricter than unbounded; we check
         # by confirming a known-out-of-range version is excluded.
@@ -1136,7 +1161,10 @@ class TestBuildResolverInputs:
         """
         env = _linux_311().marker_env
         out = _build_resolver_inputs(
-            _reqs("pkg[ext]===1.0.special"), NabProjectConfig(), environment=env
+            _reqs("pkg[ext]===1.0.special"),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert "pkg" in out
         assert "1.0.special" in out["pkg"]
@@ -1147,7 +1175,10 @@ class TestBuildResolverInputs:
         """Two requirements for one package combine to their overlap."""
         env = _linux_311().marker_env
         out = _build_resolver_inputs(
-            _reqs("pkg>=2.0", "pkg<3.0"), NabProjectConfig(), environment=env
+            _reqs("pkg>=2.0", "pkg<3.0"),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert Version("2.5") in out["pkg"]
         assert Version("1.0") not in out["pkg"]
@@ -1157,7 +1188,10 @@ class TestBuildResolverInputs:
         """Contradictory pins reach the solver as their own clauses."""
         env = _linux_311().marker_env
         inputs = _build_resolver_inputs(
-            _reqs("pkg==1.0", "pkg==2.0"), NabProjectConfig(), environment=env
+            _reqs("pkg==1.0", "pkg==2.0"),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         )
         assert [root.origin for root in inputs.roots] == ["pkg==1.0", "pkg==2.0"]
         assert inputs.ranges["pkg"].is_empty
@@ -1170,6 +1204,7 @@ class TestBuildResolverInputs:
                 _reqs("pkg[dev]<2.0"),
                 NabProjectConfig(),
                 environment=env,
+                marker_holds=dependency_marker_holds,
                 kind="constraint",
             )
 
@@ -1185,6 +1220,7 @@ class TestBuildResolverInputs:
             _reqs('pkg<2.0 ; sys_platform == "win32"'),
             NabProjectConfig(),
             environment=env,
+            marker_holds=dependency_marker_holds,
             kind="constraint",
         ).ranges
         assert out == {}
@@ -1196,6 +1232,7 @@ class TestBuildResolverInputs:
             _reqs('pkg<2.0 ; sys_platform == "linux"'),
             NabProjectConfig(),
             environment=env,
+            marker_holds=dependency_marker_holds,
             kind="constraint",
         ).ranges
         assert Version("1.0") in out["pkg"]
@@ -1205,7 +1242,10 @@ class TestBuildResolverInputs:
         """The proxy key is PEP 685 normalized."""
         env = _linux_311().marker_env
         out = _build_resolver_inputs(
-            _reqs("pkg[My_Extra]"), NabProjectConfig(), environment=env
+            _reqs("pkg[My_Extra]"),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert "pkg[my-extra]" in out
 
@@ -1217,6 +1257,7 @@ class TestBuildResolverInputs:
                 _reqs("pkg @ https://example.com/pkg.whl"),
                 NabProjectConfig(),
                 environment=env,
+                marker_holds=dependency_marker_holds,
             )
 
     def test_vcs_url_refused_by_default_policy(self) -> None:
@@ -1227,6 +1268,7 @@ class TestBuildResolverInputs:
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 NabProjectConfig(),
                 environment=env,
+                marker_holds=dependency_marker_holds,
             )
 
     def test_url_constraint_refused(self) -> None:
@@ -1237,6 +1279,7 @@ class TestBuildResolverInputs:
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 NabProjectConfig(),
                 environment=env,
+                marker_holds=dependency_marker_holds,
                 kind="constraint",
             )
 
@@ -1255,6 +1298,7 @@ class TestBuildResolverInputs:
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 config,
                 environment=env,
+                marker_holds=dependency_marker_holds,
             )
 
 
@@ -1294,7 +1338,10 @@ class TestSelfRefMarker:
             )
         )
         excluded = _build_resolver_inputs(
-            reqs, NabProjectConfig(), environment=_linux_311().marker_env
+            reqs,
+            NabProjectConfig(),
+            environment=_linux_311().marker_env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert "some-dep" not in excluded
         included_env = {
@@ -1303,7 +1350,10 @@ class TestSelfRefMarker:
             "python_full_version": "3.9.0",
         }
         included = _build_resolver_inputs(
-            reqs, NabProjectConfig(), environment=included_env
+            reqs,
+            NabProjectConfig(),
+            environment=included_env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert "some-dep" in included
 
@@ -1314,14 +1364,20 @@ class TestRootExtras:
     def test_recovers_and_normalizes_extras(self) -> None:
         env = _linux_311().marker_env
         root_extras = _build_resolver_inputs(
-            _reqs("pkg[My_Extra]", "other"), NabProjectConfig(), environment=env
+            _reqs("pkg[My_Extra]", "other"),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         ).extras
         assert root_extras == {("pkg", "my-extra")}
 
     def test_no_extras_yields_empty(self) -> None:
         env = _linux_311().marker_env
         root_extras = _build_resolver_inputs(
-            _reqs("pkg"), NabProjectConfig(), environment=env
+            _reqs("pkg"),
+            NabProjectConfig(),
+            environment=env,
+            marker_holds=dependency_marker_holds,
         ).extras
         assert root_extras == set()
 

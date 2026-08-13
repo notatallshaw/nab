@@ -20,6 +20,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from nab_python._marker_holds import dependency_marker_holds
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
@@ -91,6 +92,7 @@ class TestQuoteCanonicalDirectNames:
             [Requirement(name) for name in names],
             NabProjectConfig(),
             environment=_fake_target().marker_env,
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert all(n == n.lower() for n in out)
         if names:
@@ -151,6 +153,7 @@ class TestMarkerFiltering:
                 parsed,
                 NabProjectConfig(),
                 environment=linux_env,
+                marker_holds=dependency_marker_holds,
             ).ranges
         except ResolutionError:
             # Self-contradictory draws (e.g. ``pkg<0.0``) are rejected

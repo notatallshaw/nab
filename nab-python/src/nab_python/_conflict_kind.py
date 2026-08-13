@@ -4,21 +4,14 @@ A leaf module that :mod:`nab_python.config`, :mod:`nab_python.target`, and
 :mod:`nab_python._lockfile.disjointness` can import without forming a
 cycle.  :class:`nab_python.config.ConflictKind` takes its enum values from
 ``KIND_EXTRA`` / ``KIND_GROUP`` so a rename here flows to every consumer.
+
+Nothing here imports :mod:`packaging.markersets`.  Evaluating a dependency
+marker does, and lives in :mod:`nab_python._marker_holds` for that reason.
 """
 
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
-
-from ._vendor.packaging.markers import UndefinedComparison
-from ._vendor.packaging.markersets import MarkerSet
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
-    from collections.abc import Set as AbstractSet
-
-    from ._vendor.packaging.markers import Marker
 
 KIND_EXTRA = "extra"
 KIND_GROUP = "group"
@@ -56,58 +49,3 @@ def membership_set_in_marker(marker_text: str) -> str | None:
     """
     match = _MEMBERSHIP_SET_PATTERN.search(marker_text)
     return match.group(1) if match else None
-
-
-class UnevaluableMarkerError(ValueError):
-    """A dependency marker parses but no comparison decides it.
-
-    PEP 508 accepts any operator between a variable and a literal, and PEP 440
-    gives the compatible-release operator a meaning only over a release with
-    at least two components.  So ``python_full_version ~= "3"`` is a valid
-    marker with nothing to evaluate, and ``sys_platform ~= "linux"`` is one on
-    a variable that holds no version at all.
-
-    A requirement the project declares is neither activated nor dropped by
-    such a marker, and either guess changes what gets locked, so the run stops
-    and names it.  A candidate's own metadata takes the other route:
-    ``Provider.get_dependencies`` already turns metadata it cannot read into a
-    candidate skip.
-    """
-
-
-def marker_set(marker: Marker) -> MarkerSet:
-    """Return the algebra form of ``marker``.
-
-    Each clause is checked against its operator while the set is built, so
-    this is the one place a marker with no meaning can be caught.  Raises
-    :class:`UnevaluableMarkerError` naming the whole marker, since the failing
-    clause alone does not say which dependency to edit.
-    """
-    try:
-        return MarkerSet.from_marker(marker)
-    except UndefinedComparison as exc:
-        msg = f"marker {marker} cannot be evaluated: {exc}"
-        raise UnevaluableMarkerError(msg) from exc
-
-
-def dependency_marker_holds(
-    marker: Marker, environment: Mapping[str, str | AbstractSet[str]]
-) -> bool:
-    """Evaluate a dependency marker for a resolve-time ``environment``.
-
-    ``extra`` is set-valued: bound to the active extra names, ``extra == "x"``
-    tests membership and ``extra != "x"`` non-membership, both PEP 685
-    normalised.  It defaults to the empty set when ``environment`` omits it.
-
-    A standard variable a marker names but ``environment`` omits raises
-    ``UndefinedEnvironmentName``; callers pass a complete
-    ``ResolveTarget.marker_env``.  The lockfile-only set variables are seeded
-    empty, so a marker that tests one evaluates to False rather than raising.
-
-    A clause no comparison decides raises :class:`UnevaluableMarkerError`.
-    """
-    env: dict[str, str | AbstractSet[str]] = {"extra": frozenset()}
-    env.update(environment)
-    env.update(EMPTY_MEMBERSHIP_SETS)
-
-    return marker_set(marker).evaluate(env)

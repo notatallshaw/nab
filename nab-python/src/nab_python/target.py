@@ -24,11 +24,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from ._conflict_kind import (
-    EMPTY_MEMBERSHIP_SETS,
-    MARKER_VARIABLE_FOR_KIND,
-    UnevaluableMarkerError,
-)
+from ._conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
+from ._marker_holds import UnevaluableMarkerError
 from ._vendor.packaging import tags as ptags
 from ._vendor.packaging.markers import Marker, default_environment
 from ._vendor.packaging.markersets import variable_names

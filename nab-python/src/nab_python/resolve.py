@@ -38,7 +38,7 @@ from nab_resolver.types import (
     IncompatibilityCause,
 )
 
-from ._conflict_kind import dependency_marker_holds
+from ._marker_holds import dependency_marker_holds
 from ._resolve.inputs import (
     _build_resolver_inputs as _build_resolver_inputs,  # noqa: PLC0414  (re-export)
 )
@@ -100,6 +100,7 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
 
+    from ._resolve.inputs import MarkerHolds
     from ._vendor.packaging.version import Version
 
 
@@ -421,6 +422,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs a caller drives a bar
     align_across_targets: bool = True,
     preferences: Mapping[str, Version] | None = None,
     progress: ProgressSink | None = None,
+    marker_holds: MarkerHolds | None = None,
 ) -> ResolveResult:
     """Resolve ``targets`` against an already-open coordinator.
 
@@ -442,6 +444,12 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs a caller drives a bar
     pass resolves them per target so the lock writer can tell a true base
     dependency from one required by every member; pass it only when
     conflict forks ran.
+
+    ``marker_holds`` decides whether a root requirement's marker holds for
+    a target's environment; it defaults to nab's own
+    :func:`~nab_python._marker_holds.dependency_marker_holds`.  A host
+    driving the engine with its own marker machinery passes that instead,
+    and then nothing below this call needs ``packaging.markersets``.
     """
     effective = config if config is not None else NabProjectConfig()
     with _source_root(cache_dir, effective) as source_root:
@@ -454,6 +462,9 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs a caller drives a bar
                 resolution_strategy
                 if resolution_strategy is not None
                 else effective.resolution
+            ),
+            marker_holds=(
+                dependency_marker_holds if marker_holds is None else marker_holds
             ),
             progress=progress,
         )
@@ -919,6 +930,10 @@ class _EngineSettings:
     source_root: Path | None
     align: bool
     resolution: ResolutionStrategy
+    # Whether a root requirement's marker holds for one target's environment.
+    # The engine takes it rather than importing one, because the predicate a
+    # dependency marker needs is the resolve path's only marker-set dependency.
+    marker_holds: MarkerHolds
     progress: ProgressSink | None = None
     # Shared by every target of every pass: the coordinator and the policy
     # config the pre-tag half of the listing filter reads are both fixed here.
@@ -1072,12 +1087,14 @@ def _resolve_one_target(
             requirements,
             config,
             environment=environment,
+            marker_holds=settings.marker_holds,
             warned=settings.warned_root_markers,
         )
         constraint_ranges = _build_resolver_inputs(
             constraints,
             config,
             environment=environment,
+            marker_holds=settings.marker_holds,
             kind="constraint",
             warned=settings.warned_root_markers,
         ).ranges
@@ -1148,7 +1165,9 @@ def _resolve_one_target(
         provider.stats.distributions_seen,
         provider.stats.metadata_fetched,
     )
-    base_roots, selector_roots = _install_context_roots(contexts, environment)
+    base_roots, selector_roots = _install_context_roots(
+        contexts, environment, settings.marker_holds
+    )
     return TargetResult(
         target=target,
         success=True,
@@ -1169,7 +1188,9 @@ def _resolve_one_target(
 
 
 def _install_context_roots(
-    contexts: InstallContexts | None, environment: Mapping[str, str]
+    contexts: InstallContexts | None,
+    environment: Mapping[str, str],
+    marker_holds: MarkerHolds,
 ) -> tuple[frozenset[str] | None, dict[tuple[str, str], frozenset[str]] | None]:
     """Return the lock writer's install-context roots for one target.
 
@@ -1182,16 +1203,18 @@ def _install_context_roots(
     if contexts is None or not (contexts.selectors or contexts.name_project):
         return None, None
     return (
-        _root_keys(contexts.project, environment),
+        _root_keys(contexts.project, environment, marker_holds),
         {
-            member: _root_keys(requirements, environment)
+            member: _root_keys(requirements, environment, marker_holds)
             for member, requirements in contexts.selectors.items()
         },
     )
 
 
 def _root_keys(
-    requirements: Sequence[Requirement], environment: Mapping[str, str]
+    requirements: Sequence[Requirement],
+    environment: Mapping[str, str],
+    marker_holds: MarkerHolds,
 ) -> frozenset[str]:
     """Return the resolver keys ``requirements`` names directly.
 
@@ -1201,9 +1224,7 @@ def _root_keys(
     """
     keys: set[str] = set()
     for req in requirements:
-        if req.marker is not None and not dependency_marker_holds(
-            req.marker, environment
-        ):
+        if req.marker is not None and not marker_holds(req.marker, environment):
             continue
         name = str(canonicalize_name(req.name))
         keys.add(name)

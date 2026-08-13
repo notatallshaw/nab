@@ -16,6 +16,7 @@ import respx
 from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.transport import HttpError
+from nab_python._marker_holds import dependency_marker_holds
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._vendor.packaging.markers import Marker, default_environment
 from nab_python._vendor.packaging.pylock import Pylock
@@ -143,6 +144,7 @@ def _build_constraints(
         [Requirement(text) for text in config.constraints],
         config,
         environment=environment,
+        marker_holds=dependency_marker_holds,
         kind="constraint",
     ).ranges
 
@@ -2408,6 +2410,7 @@ class TestLoadExtraRequirements:
             [req],
             NabProjectConfig(),
             environment={"python_version": "3.12", "python_full_version": "3.12.0"},
+            marker_holds=dependency_marker_holds,
         ).ranges
         assert "some-dep" not in excluded
 
@@ -2419,7 +2422,10 @@ class TestBuildResolverInputs:
         """Two requirements for one package combine to their overlap."""
         reqs = [Requirement("foo>=2.0"), Requirement("foo<3.0")]
         resolver_requirements = _build_resolver_inputs(
-            reqs, NabProjectConfig(), environment={}
+            reqs,
+            NabProjectConfig(),
+            environment={},
+            marker_holds=dependency_marker_holds,
         ).ranges
         foo = resolver_requirements["foo"]
         assert V("2.5") in foo
@@ -2429,7 +2435,12 @@ class TestBuildResolverInputs:
     def test_conflicting_names_stay_separate_roots(self) -> None:
         """Contradictory requirements reach the solver as their own clauses."""
         reqs = [Requirement("foo==1.0"), Requirement("foo==2.0")]
-        inputs = _build_resolver_inputs(reqs, NabProjectConfig(), environment={})
+        inputs = _build_resolver_inputs(
+            reqs,
+            NabProjectConfig(),
+            environment={},
+            marker_holds=dependency_marker_holds,
+        )
         assert [(root.package, root.origin) for root in inputs.roots] == [
             ("foo", "foo==1.0"),
             ("foo", "foo==2.0"),
@@ -2439,7 +2450,12 @@ class TestBuildResolverInputs:
     def test_a_repeated_extra_gets_one_proxy_root(self) -> None:
         """A second mention of the same extra adds no second proxy clause."""
         reqs = [Requirement("foo[dev]>1"), Requirement("foo[dev]<9")]
-        inputs = _build_resolver_inputs(reqs, NabProjectConfig(), environment={})
+        inputs = _build_resolver_inputs(
+            reqs,
+            NabProjectConfig(),
+            environment={},
+            marker_holds=dependency_marker_holds,
+        )
         assert [root.package for root in inputs.roots] == ["foo", "foo[dev]", "foo"]
 
     def test_root_extra_marker_warns(self, caplog: pytest.LogCaptureFixture) -> None:
@@ -2447,7 +2463,10 @@ class TestBuildResolverInputs:
         reqs = [Requirement('foo ; extra == "test"')]
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
             resolver_requirements = _build_resolver_inputs(
-                reqs, NabProjectConfig(), environment={}
+                reqs,
+                NabProjectConfig(),
+                environment={},
+                marker_holds=dependency_marker_holds,
             ).ranges
         assert "foo" not in resolver_requirements
         assert any("membership marker" in rec.message for rec in caplog.records)
@@ -2459,7 +2478,10 @@ class TestBuildResolverInputs:
         reqs = [Requirement('foo ; "x" in extras')]
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
             resolver_requirements = _build_resolver_inputs(
-                reqs, NabProjectConfig(), environment={}
+                reqs,
+                NabProjectConfig(),
+                environment={},
+                marker_holds=dependency_marker_holds,
             ).ranges
         assert "foo" not in resolver_requirements
         assert any("membership marker" in rec.message for rec in caplog.records)
@@ -2471,7 +2493,10 @@ class TestBuildResolverInputs:
         reqs = [Requirement('foo ; "dev" in dependency_groups')]
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
             resolver_requirements = _build_resolver_inputs(
-                reqs, NabProjectConfig(), environment={}
+                reqs,
+                NabProjectConfig(),
+                environment={},
+                marker_holds=dependency_marker_holds,
             ).ranges
         assert "foo" not in resolver_requirements
         assert any("membership marker" in rec.message for rec in caplog.records)
@@ -2482,7 +2507,12 @@ class TestBuildResolverInputs:
         """packaging normalises the spelling, so the scan sees one form."""
         reqs = [Requirement('foo ; extra=="test"')]
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
-            _build_resolver_inputs(reqs, NabProjectConfig(), environment={})
+            _build_resolver_inputs(
+                reqs,
+                NabProjectConfig(),
+                environment={},
+                marker_holds=dependency_marker_holds,
+            )
         assert any("membership marker" in rec.message for rec in caplog.records)
 
     def test_extras_of_package_syntax_does_not_warn(
@@ -2492,7 +2522,10 @@ class TestBuildResolverInputs:
         reqs = [Requirement("foo[redis]")]
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
             resolver_requirements = _build_resolver_inputs(
-                reqs, NabProjectConfig(), environment={}
+                reqs,
+                NabProjectConfig(),
+                environment={},
+                marker_holds=dependency_marker_holds,
             ).ranges
         assert "foo" in resolver_requirements
         assert not caplog.records
@@ -2503,7 +2536,10 @@ class TestBuildResolverInputs:
         env = {"python_version": "3.11", "python_full_version": "3.11.2"}
         with caplog.at_level("WARNING", logger="nab_python.resolve"):
             resolver_requirements = _build_resolver_inputs(
-                reqs, NabProjectConfig(), environment=env
+                reqs,
+                NabProjectConfig(),
+                environment=env,
+                marker_holds=dependency_marker_holds,
             ).ranges
         assert "foo" not in resolver_requirements
         assert not caplog.records
@@ -2521,7 +2557,10 @@ class TestBuildResolverInputs:
         req = Requirement("demo[x,y,z]")
         monkeypatch.setattr(req, "extras", ["z", "y", "x"])
         resolver_requirements = _build_resolver_inputs(
-            [req], NabProjectConfig(), environment={}
+            [req],
+            NabProjectConfig(),
+            environment={},
+            marker_holds=dependency_marker_holds,
         ).ranges
         proxy_keys = [k for k in resolver_requirements if k.startswith("demo[")]
         assert proxy_keys == ["demo[x]", "demo[y]", "demo[z]"]
