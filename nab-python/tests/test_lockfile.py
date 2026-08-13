@@ -4735,6 +4735,51 @@ class TestWriteRequirementsPerTarget:
         assert text == "foo==1.0\n"
 
 
+class TestGettingStartedTranscript:
+    """The tutorial's sample output is a block this renderer can print."""
+
+    _COMMAND = "nab lock --format requirements-without-hashes --output - pyproject.toml"
+
+    def _documented_lines(self) -> list[str]:
+        """Return the lines of the output block the tutorial shows for ``_COMMAND``."""
+        doc = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "tutorial"
+            / "getting-started.md"
+        )
+
+        block = re.search(
+            rf"```bash\n{re.escape(self._COMMAND)}\n```\n\n```\n(.*?)\n```",
+            doc.read_text(encoding="utf-8"),
+            re.DOTALL,
+        )
+        if block is None:
+            msg = f"no output block follows {self._COMMAND!r}"
+            raise AssertionError(msg)
+        return block.group(1).splitlines()
+
+    def test_documented_pins_render_as_written(self) -> None:
+        """Rendering the documented pins reproduces the block verbatim.
+
+        A pin carries a canonical name, so a documented line spelled any
+        other way renders differently. Feeding the pins in reverse leaves
+        the block's order to the renderer's own sort.
+        """
+        documented = self._documented_lines()
+        assert documented
+
+        pins: dict[str, PinShape] = {}
+        for line in reversed(documented):
+            name, separator, version = line.partition("==")
+            assert separator, f"not a pinned requirement: {line}"
+            canonical = canonicalize_name(name)
+            pins[canonical] = _index_pin(name=canonical, version=version)
+
+        text = write_requirements_without_hashes(LockInput(targets=_one(pins)))
+        assert text.splitlines() == documented
+
+
 def test_lock_input_ignores_vcs_policy() -> None:
     """VcsConfig gates the provider, not the lock builder.
 

@@ -38,16 +38,27 @@ nab lock --format requirements-without-hashes --output - pyproject.toml
 ```
 
 ```
-anyio==4.6.2.post1
-fastapi==0.115.2
-idna==3.10
-sniffio==1.3.1
-starlette==0.36.0
-typing_extensions==4.12.2
+annotated-types==0.8.0
+anyio==4.14.2
+fastapi==0.109.1
+idna==3.18
+pydantic==2.13.4
+pydantic-core==2.46.4
+starlette==0.35.1
+typing-extensions==4.16.0
+typing-inspection==0.4.4
 ```
 
+`fastapi` resolves to 0.109.1 rather than its `<=0.115.2` cap because
+every later release requires a starlette that `<=0.36.0` excludes.
+
 The resolver pins one version per package for the host's marker
-environment. For multi-platform / multi-Python locks see
+environment, taking the newest release the constraints allow. That
+block came off CPython 3.12 on Linux, so another host or a later
+resolve gives different versions. Names print in their PEP 503
+canonical form, so `typing_extensions` appears as `typing-extensions`.
+
+For multi-platform / multi-Python locks see
 [universal resolution](../explanation/universal.md).
 
 ## Where to next
