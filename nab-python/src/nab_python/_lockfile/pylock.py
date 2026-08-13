@@ -21,15 +21,14 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import tomli_w
 
 from nab_index.atomic import atomic_write_text
-
-from .._vendor.packaging.markers import Marker
-from .._vendor.packaging.markersets import (
+from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.markersets import (
     DecisionStore,
     IntractableMarkerSet,
     MarkerSet,
     UnserializableMarkerSet,
 )
-from .._vendor.packaging.pylock import (
+from nab_provider._vendor.packaging.pylock import (
     Package,
     PackageArchive,
     PackageDirectory,
@@ -39,9 +38,10 @@ from .._vendor.packaging.pylock import (
     Pylock,
     PylockValidationError,
 )
-from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name, is_normalized_name
-from .._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.utils import canonicalize_name, is_normalized_name
+from nab_provider._vendor.packaging.version import Version
+
 from ..config import conflict_exclusion_groups, conflict_member_groups
 from ..conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from .builder import require_artifact_hashes

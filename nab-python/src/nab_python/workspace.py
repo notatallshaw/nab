@@ -25,8 +25,9 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
+from nab_provider._vendor.packaging.utils import canonicalize_name
+
 from ._toml import tool_nab_section
-from ._vendor.packaging.utils import canonicalize_name
 from .paths import path_state, resolve_path
 from .policy import LocalSource
 

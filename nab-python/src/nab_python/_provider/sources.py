@@ -16,17 +16,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.archive import ArchiveRequest
 from nab_provider.records import SdistFile
 
-from .._vendor.packaging.utils import canonicalize_name
 from ..errors import SourceNameMismatchError
 from ..vcs_admission import VcsPolicy, admit_vcs_url
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from .._vendor.packaging.version import Version
+    from nab_provider._vendor.packaging.version import Version
+
     from ..metadata import WheelMetadata
     from ..policy import ArchiveSource, LocalSource, VcsSource
     from ..provider import Provider

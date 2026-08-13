@@ -17,8 +17,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_python._vendor.packaging.ranges import VersionRange
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.version import Version
 
 from .strategies import PROPERTY_SETTINGS
 

@@ -14,8 +14,8 @@ import sys
 from pathlib import Path
 from typing import NamedTuple, NoReturn
 
-from nab_python._vendor.packaging.utils import is_normalized_name
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.utils import is_normalized_name
+from nab_provider._vendor.packaging.version import Version
 
 RESULTS_DIR = Path(__file__).parent / "results"
 MANIFEST_FILENAME = "_standard_manifest.json"

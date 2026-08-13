@@ -34,6 +34,10 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver.errors import ResolutionError
 
 from ._resolve.engine import (
@@ -47,10 +51,6 @@ from ._resolve.engine import (
     _resolve_with_micro_narrowing,
     env_signature,
 )
-from ._vendor.packaging.markers import Marker
-from ._vendor.packaging.ranges import VersionRange
-from ._vendor.packaging.requirements import Requirement
-from ._vendor.packaging.utils import canonicalize_name
 from .config import (
     ConfigError,
     ConflictFork,
@@ -102,8 +102,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
     from nab_index.transport import AsyncHttpTransport
+    from nab_provider._vendor.packaging.version import Version
 
-    from ._vendor.packaging.version import Version
     from .provider import ResolutionStrategy
     from .resolver_inputs import MarkerHolds
 

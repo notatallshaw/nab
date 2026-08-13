@@ -45,7 +45,7 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from ..errors import MissingExtraError
 from ..policy import BuildPolicy, DistPolicy
 from ..vcs_admission import UnsupportedVcsError
-from .._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.utils import canonicalize_name
 from ..config import NabProjectConfig
 from ..download import DownloadError, download_lock
 from ..lockfile import IndexPin

@@ -15,14 +15,14 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-from ._vendor.packaging.requirements import Requirement
-from ._vendor.packaging.specifiers import SpecifierSet
-from ._vendor.packaging.version import InvalidVersion, Version
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.version import InvalidVersion, Version
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from ._vendor.packaging.markers import Marker
+    from nab_provider._vendor.packaging.markers import Marker
 
 __all__ = [
     "DEPENDENCY_FIELDS",

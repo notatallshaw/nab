@@ -31,13 +31,13 @@ from nab_index.lazy_wheel import RangeCapabilityMemo
 from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
 from nab_index.multi_index import MultiIndexClient
 from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
+from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.records import IndexConfig, SdistFile, WheelFile
 from nab_provider.serialization import SimpleSerialization
 
 from ._build_remote import build_remote_sdist
 from ._sources import materialize_source
 from ._toml import parse_pyproject_table
-from ._vendor.packaging.utils import canonicalize_name
 from .store import InMemoryIndex, metadata_pending_key, range_pending_key
 
 if TYPE_CHECKING:

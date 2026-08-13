@@ -22,12 +22,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver, ResolverObserver
 from nab_resolver.types import IncompatibilityCause
 
-from .._vendor.packaging.ranges import VersionRange
-from .._vendor.packaging.utils import canonicalize_name
 from ..lockfile import build_target_lock
 from ..provider import ListingFilterCache, Provider, join_extra, split_extra
 from ..resolver_inputs import ProxyConstraints, build_resolver_inputs
@@ -37,11 +37,11 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
+    from nab_provider._vendor.packaging.markers import Marker
+    from nab_provider._vendor.packaging.requirements import Requirement
+    from nab_provider._vendor.packaging.version import Version
     from nab_resolver.types import Incompatibility
 
-    from .._vendor.packaging.markers import Marker
-    from .._vendor.packaging.requirements import Requirement
-    from .._vendor.packaging.version import Version
     from ..config import NabProjectConfig
     from ..fetch import FetchCoordinator
     from ..lockfile import TargetLock

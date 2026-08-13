@@ -54,10 +54,10 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_provider._vendor.packaging.pylock import Pylock
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
 from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python._vendor.packaging.pylock import Pylock
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import Version
 from nab_python.config import ConfigError, read_pyproject_config
 from nab_python.config_sources import SourceRoots
 from nab_python.download import DownloadError

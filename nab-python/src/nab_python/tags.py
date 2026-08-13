@@ -28,13 +28,13 @@ from functools import cache, cached_property, lru_cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, Protocol, TypeVar
 
-from ._vendor.packaging import tags as ptags
-from ._vendor.packaging.version import Version
+from nab_provider._vendor.packaging import tags as ptags
+from nab_provider._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from ._vendor.packaging.tags import Tag
+    from nab_provider._vendor.packaging.tags import Tag
 
 
 __all__ = [

@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.utils import InvalidName
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.utils import InvalidName
 from nab_python.marker_holds import UnevaluableMarkerError
 from nab_python.pyproject_files import (
     read_pyproject_build_requires,

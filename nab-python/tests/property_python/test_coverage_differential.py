@@ -21,10 +21,10 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.markersets import IntractableMarkerSet
+from nab_provider._vendor.packaging.version import Version
 from nab_python._lockfile.coverage import CoverageError, validate_marker_coverage
-from nab_python._vendor.packaging.markers import Marker
-from nab_python._vendor.packaging.markersets import IntractableMarkerSet
-from nab_python._vendor.packaging.version import Version
 from nab_python.tags import PlatformSpec
 from nab_python.target import (
     ResolveTarget,

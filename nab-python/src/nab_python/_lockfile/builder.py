@@ -18,12 +18,12 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import tomli
 
+from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.records import SdistFile, WheelFile
 
 from .._toml import tool_nab_section
-from .._vendor.packaging.pylock import Pylock, PylockValidationError
-from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name
 from ..extra_keys import split_extra
 from ..iso8601 import parse_iso_datetime
 from ..metadata import validate_specifier_versions
@@ -34,9 +34,9 @@ from .groups import BASE_MEMBER
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
+    from nab_provider._vendor.packaging.version import Version
     from nab_provider.records import IndexConfig
 
-    from .._vendor.packaging.version import Version
     from ..lockfile import (
         ArchivePin,
         IndexPin,

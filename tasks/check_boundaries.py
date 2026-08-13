@@ -25,10 +25,22 @@ Four rules:
 
 ``vendored``
     ``_vendor`` is stricter still: it is off limits to every other package
-    and must not be re-exported to make it reachable.
+    and must not be re-exported to make it reachable. nab-provider vendors
+    packaging so a resolve does not depend on the ambient copy, and
+    publishing any of that tree would commit nab-provider to a third-party
+    surface it does not own and cannot re-vendor freely.
 
-Only the ``src`` trees are walked, since tests are not shipped and may reach
-into what they test. Vendored code is skipped as third-party.
+    One allowance, listed in ``VENDOR_ALLOWANCES``: nab-python may name
+    ``nab_provider._vendor.packaging`` and nothing else. There has to be exactly
+    one copy of the fork, because ``nab_python.config`` builds ``Version``,
+    ``Requirement`` and ``VersionRange`` objects that the provider stack
+    consumes, and a second copy is a second set of classes that ``isinstance``
+    and dict keying would silently disagree about. The allowance is temporary:
+    it goes away when the fork's changes land upstream and nab depends on a
+    released ``packaging``.
+
+Tests are not shipped and may reach into what they test, so only the
+``src`` trees are walked. Vendored code is skipped: it is third-party.
 
 Run directly::
 
@@ -68,8 +80,15 @@ REMEDY = (
     "existing callers."
 )
 
-# Packages whose docstring publishes a supported-path table. Listed so a table
-# that stops parsing fails the run instead of dropping the ``supported`` rule.
+# (importing package, exact vendored prefix it may name).  See the ``vendored``
+# paragraph above: one entry, one direction, one subtree, and it is debt.
+VENDOR_ALLOWANCES: frozenset[tuple[str, str]] = frozenset(
+    {("nab_python", "nab_provider._vendor.packaging")}
+)
+
+# Packages whose docstring publishes a supported-path table. Listed here so a
+# table that stops parsing fails the run rather than quietly dropping the
+# ``supported`` rule for the package it covers.
 PUBLISHES_SUPPORTED_PATHS = ("nab_resolver",)
 
 
@@ -211,6 +230,19 @@ def imported_paths(tree: ast.AST) -> list[tuple[str, int]]:
     return found
 
 
+def _vendor_allowed(importer: str, dotted: str) -> bool:
+    """Whether ``importer`` naming ``dotted`` is one of the listed allowances.
+
+    Matched on the whole prefix, so an allowance for one vendored subtree does
+    not open the rest of that package's ``_vendor`` directory.
+    """
+    return any(
+        importer == allowed_importer
+        and (dotted == prefix or dotted.startswith(f"{prefix}."))
+        for allowed_importer, prefix in VENDOR_ALLOWANCES
+    )
+
+
 def violations(package: Package, modules: dict[str, Package]) -> list[str]:
     """Return every boundary rule ``package`` breaks, as printable lines."""
     found: list[str] = []
@@ -231,6 +263,8 @@ def violations(package: Package, modules: dict[str, Package]) -> list[str]:
 
             parts = rest.split(".")
             if "_vendor" in parts:
+                if _vendor_allowed(package.module, dotted):
+                    continue
                 found.append(
                     f"{location}:{lineno}: {dotted} reaches into a vendored tree; "
                     f"it stays private to {modules[head].dist_name} and is not to "

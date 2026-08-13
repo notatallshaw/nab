@@ -11,10 +11,10 @@ from unittest.mock import patch
 import pytest
 
 from nab_index.multi_index import IndexConfig
+from nab_provider._vendor.packaging.markers import default_environment
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.version import Version
 from nab_provider.serialization import SimpleSerialization
-from nab_python._vendor.packaging.markers import default_environment
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     _MATRIX_KEYS,
     _PEP508_MARKER_VARIABLES,

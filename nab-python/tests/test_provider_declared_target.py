@@ -19,11 +19,11 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from nab_index.client import SdistFile, WheelFile
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._testing.overrides import pkg_override
-from nab_python._vendor.packaging.ranges import VersionRange
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import Version
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,

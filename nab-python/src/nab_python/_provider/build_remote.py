@@ -23,13 +23,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.utils import canonicalize_name
+
 from ..errors import UnsupportedSdistError
 from .metadata_resolver import find_sdist
 
 if TYPE_CHECKING:
-    from .._vendor.packaging.version import Version
+    from nab_provider._vendor.packaging.version import Version
+
     from ..metadata import WheelMetadata
     from ..provider import Provider
 

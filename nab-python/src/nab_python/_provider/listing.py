@@ -10,10 +10,10 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING
 
+from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.records import SdistFile, WheelFile
 
-from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
-from .._vendor.packaging.version import InvalidVersion, Version
 from ..errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
@@ -29,9 +29,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
 
+    from nab_provider._vendor.packaging.ranges import VersionRange
     from nab_resolver.types import RangeProtocol
 
-    from .._vendor.packaging.ranges import VersionRange
     from ..fetch_port import Waitable
     from ..policy import ArchiveSource, LocalSource, VcsSource
     from ..provider import DistFile, Provider

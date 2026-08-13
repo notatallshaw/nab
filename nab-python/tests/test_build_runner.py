@@ -38,6 +38,9 @@ from installer.utils import SCHEME_NAMES, Scheme
 
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.version import Version
 from nab_python._build import env as env_mod
 from nab_python._build import runner as runner_mod
 from nab_python._build.env import (
@@ -56,9 +59,6 @@ from nab_python._build.runner import (
 )
 from nab_python._provider.metadata_resolver import pick_dist
 from nab_python._testing.overrides import pkg_override
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.utils import canonicalize_name
-from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     ConflictKind,
     ConflictMember,

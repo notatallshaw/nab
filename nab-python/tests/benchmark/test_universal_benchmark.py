@@ -13,7 +13,7 @@ from types import ModuleType
 import pytest
 from typing_extensions import Self
 
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.version import Version
 from nab_python.lockfile import IndexPin, TargetLock, WheelArtifact
 from nab_python.resolve import ResolveResult, TargetResult
 from nab_python.tags import PlatformSpec

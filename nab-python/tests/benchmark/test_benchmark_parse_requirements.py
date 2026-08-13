@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from nab_python._vendor.packaging.ranges import VersionRange
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

@@ -34,7 +34,7 @@ from nab._config_cmd import config_command
 from nab._download import download
 from nab._lock import lock
 from nab.cli import app, effective_config
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
 from nab_python.config_sources import OPTIONS, OptionSpec, Scope, SourceRoots
 from nab_python.lockfile import (

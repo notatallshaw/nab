@@ -24,10 +24,10 @@ from datetime import datetime, timezone
 from hypothesis import HealthCheck, settings
 from hypothesis import strategies as st
 
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.utils import canonicalize_name
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.version import Version
 from nab_python.config import PackageOverride
 from nab_python.provider import BuildPolicy, DistPolicy
 from nab_python.tags import PlatformSpec

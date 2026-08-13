@@ -21,6 +21,17 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+from nab_provider._vendor.packaging import _markersets as engine
+from nab_provider._vendor.packaging import markersets
+from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.markersets import (
+    DecisionStore,
+    IntractableMarkerSet,
+    MarkerSet,
+)
+from nab_provider._vendor.packaging.pylock import Package, PackageWheel
+from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.version import Version
 from nab_python._lockfile import pylock
 from nab_python._lockfile.coverage import CoverageError
 from nab_python._lockfile.disjointness import validate_marker_disjointness
@@ -32,17 +43,6 @@ from nab_python._lockfile.pylock import (
     build_pylock,
     render_lock,
 )
-from nab_python._vendor.packaging import _markersets as engine
-from nab_python._vendor.packaging import markersets
-from nab_python._vendor.packaging.markers import Marker
-from nab_python._vendor.packaging.markersets import (
-    DecisionStore,
-    IntractableMarkerSet,
-    MarkerSet,
-)
-from nab_python._vendor.packaging.pylock import Package, PackageWheel
-from nab_python._vendor.packaging.utils import canonicalize_name
-from nab_python._vendor.packaging.version import Version
 from nab_python.lockfile import (
     DisjointnessError,
     IndexPin,
@@ -57,7 +57,7 @@ from nab_python.target import ResolveTarget, environment_declaration
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from nab_python._vendor.packaging._markersets import Atom, Cell
+    from nab_provider._vendor.packaging._markersets import Atom, Cell
 
 _spec = importlib.util.spec_from_file_location(
     "simplify_corpus_fixtures",

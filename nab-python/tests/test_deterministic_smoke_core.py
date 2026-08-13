@@ -13,9 +13,9 @@ from types import ModuleType
 
 import pytest
 
-from nab_python._vendor.packaging.pylock import Pylock
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.pylock import Pylock
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
 from nab_python.lockfile import IndexPin, TargetLock, WheelArtifact
 from nab_python.resolve import ResolveResult, TargetResult

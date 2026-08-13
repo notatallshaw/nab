@@ -22,10 +22,10 @@ from nab_index.vcs import (
     _resolve_sha,
     prepare_clone,
 )
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
 from nab_provider.vcs_request import _split_repo_ref
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import Version
 from nab_python.fetch import FetchCoordinator
 from nab_python.lockfile import VcsPin, build_target_lock
 from nab_python.metadata import WheelMetadata

@@ -16,6 +16,11 @@ import respx
 from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.transport import HttpError
+from nab_provider._vendor.packaging.markers import Marker, default_environment
+from nab_provider._vendor.packaging.pylock import Pylock
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
 from nab_python._resolve.engine import (
     _augment_resolution_error,
     _raise_for_source_python,
@@ -23,11 +28,6 @@ from nab_python._resolve.engine import (
     _walk_no_versions_packages,
 )
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_python._vendor.packaging.markers import Marker, default_environment
-from nab_python._vendor.packaging.pylock import Pylock
-from nab_python._vendor.packaging.ranges import VersionRange
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     ConfigError,
     ConflictKind,

@@ -11,14 +11,14 @@ from __future__ import annotations
 from operator import itemgetter
 from typing import TYPE_CHECKING
 
-from .._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.ranges import VersionRange
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from nab_provider._vendor.packaging.version import Version
     from nab_resolver.types import RangeProtocol
 
-    from .._vendor.packaging.version import Version
     from ..provider import Provider
 
 

@@ -20,9 +20,9 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.utils import canonicalize_name
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.version import Version
 from nab_python.lockfile import IndexPin, TargetLock
 from nab_python.marker_holds import dependency_marker_holds
 from nab_python.provider import VcsConfig

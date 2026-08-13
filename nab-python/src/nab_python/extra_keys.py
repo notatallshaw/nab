@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from ._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.utils import canonicalize_name
 
 __all__ = [
     "join_extra",

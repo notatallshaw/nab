@@ -9,11 +9,11 @@
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
-VENDOR="$ROOT/nab-python/src/nab_python/_vendor/packaging"
+VENDOR="$ROOT/nab-provider/src/nab_provider/_vendor/packaging"
 PIN_FILE="$ROOT/tasks/vendoring/packaging.pin"
 PATCH_FILE="$ROOT/tasks/vendoring/packaging.patch"
 REMOTE="https://github.com/pypa/packaging"
-VENDOR_REL="nab-python/src/nab_python/_vendor/packaging"
+VENDOR_REL="nab-provider/src/nab_provider/_vendor/packaging"
 
 MODE="regenerate"
 if [[ $# -gt 0 ]]; then

@@ -12,10 +12,10 @@ from typing import Any
 
 import pytest
 
-from nab_python._vendor.packaging import ranges
-from nab_python._vendor.packaging.ranges import VersionRange
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging import ranges
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.version import Version
 
 V = Version
 

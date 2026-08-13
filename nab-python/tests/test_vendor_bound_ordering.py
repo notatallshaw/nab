@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 import pytest
 
-from nab_python._vendor.packaging._ranges import (
+from nab_provider._vendor.packaging._ranges import (
     NEG_INF,
     POS_INF,
     BoundaryKind,
@@ -24,12 +24,12 @@ from nab_python._vendor.packaging._ranges import (
     LowerBound,
     UpperBound,
 )
-from nab_python._vendor.packaging.ranges import (
+from nab_provider._vendor.packaging.ranges import (
     RangeRelation,
     _relate_bounds,
     _subset_bounds,
 )
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
     from collections.abc import Callable

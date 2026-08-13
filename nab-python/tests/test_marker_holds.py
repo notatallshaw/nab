@@ -11,7 +11,7 @@ from collections.abc import Set as AbstractSet
 
 import pytest
 
-from nab_python._vendor.packaging.markers import MARKERS_ALLOWING_SET, Marker
+from nab_provider._vendor.packaging.markers import MARKERS_ALLOWING_SET, Marker
 from nab_python.conflict_kind import EMPTY_MEMBERSHIP_SETS
 from nab_python.marker_holds import UnevaluableMarkerError, dependency_marker_holds
 

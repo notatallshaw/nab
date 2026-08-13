@@ -36,6 +36,12 @@ from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.multi_index import IndexConfig
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.tags import Tag
+from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_python import _build_remote
 from nab_python._provider import build_remote, metadata_resolver
 from nab_python._provider import listing as listing_mod
@@ -51,12 +57,6 @@ from nab_python._provider.metadata_resolver import (
 from nab_python._resolve.engine import _raise_for_source_python
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._testing.overrides import pkg_override
-from nab_python._vendor.packaging.markers import Marker
-from nab_python._vendor.packaging.ranges import VersionRange
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.tags import Tag
-from nab_python._vendor.packaging.version import InvalidVersion, Version
 from nab_python.config import (
     IndexOverride,
     NabProjectConfig,
@@ -3507,7 +3507,7 @@ class TestLocalSources:
         [3.3.0, 3.4.0.dev0)" because the pre-cached PyPI listing did
         not have that range, even though the local source did.
         """
-        from nab_python._vendor.packaging.specifiers import SpecifierSet
+        from nab_provider._vendor.packaging.specifiers import SpecifierSet
 
         self._write_local(
             tmp_path,
@@ -9041,7 +9041,7 @@ class TestEffectiveBuildPolicy:
         build backend (mocked here) along with the run's ``--offline``
         flag.
         """
-        from nab_python._vendor.packaging.version import Version as _Version
+        from nab_provider._vendor.packaging.version import Version as _Version
 
         archive_bytes = b"sdist-archive-bytes"
         coordinator = make_coordinator(
@@ -9112,7 +9112,7 @@ class TestEffectiveBuildPolicy:
         importantly, re-building) the same sdist for every tuple.  The
         cache key is the canonical name + version string.
         """
-        from nab_python._vendor.packaging.version import Version as _Version
+        from nab_provider._vendor.packaging.version import Version as _Version
 
         coordinator = make_coordinator([make_sdist("1.0")], package="pkg")
         provider = Provider(coordinator, target=_PY312)

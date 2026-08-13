@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 import pytest
 from packaging.markers import Marker
 
-from nab_python._vendor.packaging import _markersets as engine
-from nab_python._vendor.packaging.markersets import (
+from nab_provider._vendor.packaging import _markersets as engine
+from nab_provider._vendor.packaging.markersets import (
     _MAX_CELLS,
     _MAX_WORK,
     DecisionStore,
@@ -29,7 +29,7 @@ from nab_python._vendor.packaging.markersets import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from nab_python._vendor.packaging._markersets import Atom, Cell
+    from nab_provider._vendor.packaging._markersets import Atom, Cell
 
 _spec = importlib.util.spec_from_file_location(
     "simplify_corpus_fixtures",

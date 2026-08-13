@@ -28,10 +28,10 @@ from nab_index.client import (
     WheelHashMismatchError,
 )
 from nab_index.transport import HttpError, UnserveableUrlError
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.version import Version
 from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python._vendor.packaging.ranges import VersionRange
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.version import Version
 from nab_python.provider import Provider
 from nab_python.target import ResolveTarget
 from nab_resolver.resolver import Resolver

@@ -21,13 +21,19 @@ from __future__ import annotations
 from functools import reduce
 from typing import TYPE_CHECKING
 
-from .._vendor.packaging.markersets import DecisionStore, MarkerSet, variable_names
+from nab_provider._vendor.packaging.markersets import (
+    DecisionStore,
+    MarkerSet,
+    variable_names,
+)
+
 from ..target import UNBOUNDABLE_MARKER_VARIABLES, declared_range_marker
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from .._vendor.packaging.markers import Marker
+    from nab_provider._vendor.packaging.markers import Marker
+
     from ..target import ResolveTarget
 
 

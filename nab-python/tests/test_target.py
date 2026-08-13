@@ -13,15 +13,15 @@ from pathlib import Path
 
 import pytest
 
-from nab_python._vendor.packaging.markers import (
+from nab_provider._vendor.packaging.markers import (
     InvalidMarker,
     Marker,
     default_environment,
 )
-from nab_python._vendor.packaging.ranges import VersionRange
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.tags import Tag
-from nab_python._vendor.packaging.version import InvalidVersion, Version
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.tags import Tag
+from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_python.tags import PlatformSpec
 from nab_python.target import (
     IMPLEMENTATION_MARKERS,

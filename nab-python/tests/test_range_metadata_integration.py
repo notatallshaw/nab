@@ -22,8 +22,8 @@ import pytest
 from nab_index.client import WheelHashMismatchError
 from nab_index.lazy_wheel import RangeOutcome
 from nab_index.transport import HttpError
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
 from nab_python.fetch import FetchCoordinator
 from nab_python.provider import BuildPolicy

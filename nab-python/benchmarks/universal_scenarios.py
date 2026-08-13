@@ -49,8 +49,8 @@ from universal_result import (
 )
 
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_python.config import NabProjectConfig, enforce_build_policy_for_targets
 from nab_python.fetch import FetchCoordinator
 from nab_python.lockfile import build_pylock, render_lock

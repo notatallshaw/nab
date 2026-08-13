@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from nab_python._vendor.packaging.ranges import VersionRange
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.version import InvalidVersion, Version
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.version import InvalidVersion, Version
 
 V = Version
 

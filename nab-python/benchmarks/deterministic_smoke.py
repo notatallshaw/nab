@@ -31,7 +31,7 @@ from urllib.request import url2pathname
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from nab_python._vendor.packaging.pylock import Package, Pylock
+    from nab_provider._vendor.packaging.pylock import Package, Pylock
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -40,11 +40,11 @@ else:
 
 from nab_index.multi_index import IndexConfig
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_python._vendor.packaging.markers import Marker
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.utils import canonicalize_name
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig, enforce_build_policy_for_targets
 from nab_python.fetch import FetchCoordinator
 from nab_python.lockfile import LOCK_VERSION, build_pylock

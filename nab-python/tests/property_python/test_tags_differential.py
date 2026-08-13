@@ -36,7 +36,7 @@ from packaging.utils import BuildTag, InvalidWheelFilename
 from packaging.version import InvalidVersion
 
 from nab_index.client import WheelFile, _parse_wheel_filename
-from nab_python._vendor.packaging import tags as vendored_tags
+from nab_provider._vendor.packaging import tags as vendored_tags
 from nab_python.tags import (
     _MACOS_TAG_FLOOR,
     _PLATFORM_ARCH,

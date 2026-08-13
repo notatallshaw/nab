@@ -47,8 +47,8 @@ TREES = {
 
 MARKER_SET_MODULES = frozenset(
     {
-        "nab_python._vendor.packaging.markersets",
-        "nab_python._vendor.packaging._markersets",
+        "nab_provider._vendor.packaging.markersets",
+        "nab_provider._vendor.packaging._markersets",
     }
 )
 
@@ -89,7 +89,7 @@ EXEMPT = {
         "somewhere to live that the engine does not import. Reached here only "
         "through target, requirements_file and _lockfile.validate."
     ),
-    "nab_python._vendor.packaging.markersets": "The marker-set module itself.",
+    "nab_provider._vendor.packaging.markersets": "The marker-set module itself.",
 }
 
 

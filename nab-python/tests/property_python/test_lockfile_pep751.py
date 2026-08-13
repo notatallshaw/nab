@@ -23,7 +23,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover - 3.10 fallback
     import tomli as tomllib  # type: ignore[no-redef]
 
-from nab_python._vendor.packaging.pylock import Pylock
+from nab_provider._vendor.packaging.pylock import Pylock
 from nab_python.lockfile import (
     IndexPin,
     LocalPin,

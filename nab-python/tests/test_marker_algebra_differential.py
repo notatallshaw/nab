@@ -18,9 +18,9 @@ import random
 
 import pytest
 
-from nab_python._vendor.packaging.markers import Marker
-from nab_python._vendor.packaging.markersets import MarkerSet
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.markersets import MarkerSet
+from nab_provider._vendor.packaging.version import Version
 
 # Version values straddle every literal the alphabets use
 # (3.9, 3.10, 3.14), including the 3.14 prerelease-carve-out witnesses, an epoch

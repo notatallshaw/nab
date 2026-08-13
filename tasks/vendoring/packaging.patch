@@ -1,8 +1,8 @@
-diff --git a/nab-python/src/nab_python/_vendor/packaging/_markersets.py b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/_markersets.py b/nab-provider/src/nab_provider/_vendor/packaging/_markersets.py
 new file mode 100644
 index 0000000..a1cd981
 --- /dev/null
-+++ b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/_markersets.py
 @@ -0,0 +1,1809 @@
 +"""Marker algebra engine: reason about PEP 508 markers as sets of environments.
 +
@@ -1813,10 +1813,10 @@ index 0000000..a1cd981
 +        _clause_formula(sorted(clause, key=_atom_key)) for clause in residual
 +    )
 +    return make_and([*lead, inner])
-diff --git a/nab-python/src/nab_python/_vendor/packaging/_ranges.py b/nab-python/src/nab_python/_vendor/packaging/_ranges.py
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
 index e312a1f..9a611c3 100644
---- a/nab-python/src/nab_python/_vendor/packaging/_ranges.py
-+++ b/nab-python/src/nab_python/_vendor/packaging/_ranges.py
+--- a/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
 @@ -186,6 +186,11 @@ class LowerBound:
      __slots__ = ("_above", "inclusive", "version")
  
@@ -1890,11 +1890,11 @@ index e312a1f..9a611c3 100644
      def __hash__(self) -> int:
          return hash((self.version, self.inclusive))
  
-diff --git a/nab-python/src/nab_python/_vendor/packaging/markersets.py b/nab-python/src/nab_python/_vendor/packaging/markersets.py
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/markersets.py b/nab-provider/src/nab_provider/_vendor/packaging/markersets.py
 new file mode 100644
 index 0000000..638bc9e
 --- /dev/null
-+++ b/nab-python/src/nab_python/_vendor/packaging/markersets.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/markersets.py
 @@ -0,0 +1,392 @@
 +"""The public :class:`MarkerSet`: a marker's denotation as a set of environments.
 +
@@ -2288,10 +2288,10 @@ index 0000000..638bc9e
 +
 +    def __repr__(self) -> str:
 +        return f"<{type(self).__name__} {_markersets.describe(self._tree)!r}>"
-diff --git a/nab-python/src/nab_python/_vendor/packaging/ranges.py b/nab-python/src/nab_python/_vendor/packaging/ranges.py
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
 index 4fbf48e..d52f359 100644
---- a/nab-python/src/nab_python/_vendor/packaging/ranges.py
-+++ b/nab-python/src/nab_python/_vendor/packaging/ranges.py
+--- a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
 @@ -24,6 +24,7 @@ import typing
  from typing import (
      TYPE_CHECKING,

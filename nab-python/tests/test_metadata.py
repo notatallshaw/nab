@@ -6,8 +6,8 @@ import sys
 
 import pytest
 
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.version import Version
 from nab_python.metadata import (
     metadata_deps_are_static,
     parse_metadata,

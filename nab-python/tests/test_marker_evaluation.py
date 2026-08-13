@@ -1,7 +1,7 @@
 """Marker-evaluation semantics the resolver depends on.
 
 The PubGrub provider gates marker-conditioned dependencies on
-``nab_python._vendor.packaging.markers.Marker.evaluate``. The vendored
+``nab_provider._vendor.packaging.markers.Marker.evaluate``. The vendored
 snapshot tracks packaging PR #1182 (unreleased), so these tests pin the
 boolean results for realistic markers and the deliberate string-key
 operator semantics, so a future re-vendor cannot silently change which
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from nab_python._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.markers import Marker
 
 LINUX_CP311: dict[str, str] = {
     "os_name": "posix",

@@ -42,10 +42,10 @@ from nab_index.local_index import wheel_metadata_member
 from nab_provider.errors import UnsupportedWheelError
 from nab_resolver.errors import ResolutionError
 
-from .._vendor.packaging.requirements import Requirement
-from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name, parse_wheel_filename
-from .._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.utils import canonicalize_name, parse_wheel_filename
+from nab_provider._vendor.packaging.version import Version
 from ..metadata import WheelMetadata, validate_specifier_versions
 from ..paths import PathState, path_state
 from .env import BuildChain, BuildEnvError, NabBuildEnv

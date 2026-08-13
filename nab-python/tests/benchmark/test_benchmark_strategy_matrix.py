@@ -19,10 +19,10 @@ import pytest
 
 from nab_index.client import WheelFile
 from nab_index.multi_index import IndexConfig
+from nab_provider._vendor.packaging.tags import Tag
+from nab_provider._vendor.packaging.version import Version
 from nab_provider.serialization import SimpleSerialization
 from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python._vendor.packaging.tags import Tag
-from nab_python._vendor.packaging.version import Version
 from nab_python.fetch import IndexRoute
 from nab_python.target import ResolveTarget
 

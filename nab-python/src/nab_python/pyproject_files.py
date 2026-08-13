@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from ._vendor.packaging.requirements import Requirement
+    from nab_provider._vendor.packaging.requirements import Requirement
 
 __all__ = [
     "read_pyproject_build_requires",

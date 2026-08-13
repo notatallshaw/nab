@@ -12,15 +12,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ._vendor.packaging.markers import UndefinedComparison
-from ._vendor.packaging.markersets import MarkerSet
+from nab_provider._vendor.packaging.markers import UndefinedComparison
+from nab_provider._vendor.packaging.markersets import MarkerSet
+
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from collections.abc import Set as AbstractSet
 
-    from ._vendor.packaging.markers import Marker
+    from nab_provider._vendor.packaging.markers import Marker
 
 
 class UnevaluableMarkerError(ValueError):

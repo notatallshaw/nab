@@ -17,12 +17,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.version import Version
 from nab_python._provider.metadata_resolver import (
     extend_with_extras,
     parse_pyproject_deps,
 )
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.version import Version
 from nab_python.build_backend import (
     BuildBackendError,
     extract_metadata,

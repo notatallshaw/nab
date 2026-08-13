@@ -36,11 +36,12 @@ from typing import TYPE_CHECKING
 
 import tomli
 
-from .._vendor.packaging.markers import UndefinedEnvironmentName
-from .._vendor.packaging.pylock import Pylock, PylockValidationError
-from .._vendor.packaging.requirements import Requirement
-from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.markers import UndefinedEnvironmentName
+from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.utils import canonicalize_name
+
 from ..marker_holds import UnevaluableMarkerError, dependency_marker_holds
 from ..metadata import validate_specifier_versions
 from ..target import NonIntervalMarkerError, micro_boundary_points
@@ -49,9 +50,10 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from pathlib import Path
 
-    from .._vendor.packaging.markers import Marker
-    from .._vendor.packaging.pylock import Package
-    from .._vendor.packaging.version import Version
+    from nab_provider._vendor.packaging.markers import Marker
+    from nab_provider._vendor.packaging.pylock import Package
+    from nab_provider._vendor.packaging.version import Version
+
     from ..target import ResolveTarget
 
 

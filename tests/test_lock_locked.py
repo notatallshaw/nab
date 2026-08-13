@@ -20,7 +20,7 @@ import tomli
 
 from nab._lock import _join_command, _join_for_cmd, _quote_for_cmd
 from nab.cli import app
-from nab_python._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.version import Version
 from nab_python.lockfile import (
     IndexPin,
     SdistArtifact,

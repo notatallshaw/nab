@@ -22,7 +22,7 @@ from nab_index.client import (
     _parse_sdist_filename,
     _parse_wheel_filename,
 )
-from nab_python._vendor.packaging.utils import (
+from nab_provider._vendor.packaging.utils import (
     InvalidWheelFilename,
     parse_wheel_filename,
 )

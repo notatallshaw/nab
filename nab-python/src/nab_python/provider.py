@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, cast
 
 from nab_index.client import MalformedSimpleResponseError
 from nab_index.transport import UnserveableUrlError
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import (
     IndexAccessError,
     MetadataHashMismatchError,
@@ -29,9 +32,6 @@ from ._provider import lookahead as _lookahead
 from ._provider import metadata_resolver as _metadata_resolver
 from ._provider import priority as _priority
 from ._provider import sources as _sources
-from ._vendor.packaging.ranges import VersionRange
-from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
-from ._vendor.packaging.utils import canonicalize_name
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .errors import (
     ForeignMetadataError,
@@ -73,11 +73,11 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
+    from nab_provider._vendor.packaging.markers import Marker
+    from nab_provider._vendor.packaging.requirements import Requirement
+    from nab_provider._vendor.packaging.version import Version
     from nab_resolver.types import Incompatibility, RangeProtocol
 
-    from ._vendor.packaging.markers import Marker
-    from ._vendor.packaging.requirements import Requirement
-    from ._vendor.packaging.version import Version
     from .fetch_port import FetchPort, Waitable
     from .overrides import IndexOverride, PackageOverride
     from .tags import TagSet

@@ -12,13 +12,14 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.version import Version
+
 from ._build.errors import (
     BuildBackendError as BuildBackendError,  # noqa: PLC0414  (public re-export)
 )
 from ._toml import parse_pyproject_table
-from ._vendor.packaging.specifiers import SpecifierSet
-from ._vendor.packaging.utils import canonicalize_name
-from ._vendor.packaging.version import Version
 from .metadata import (
     WheelMetadata,
     static_project_from_table,
@@ -34,7 +35,8 @@ from .requirements_file import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from ._vendor.packaging.requirements import Requirement
+    from nab_provider._vendor.packaging.requirements import Requirement
+
     from .config import NabProjectConfig
 
 __all__ = [

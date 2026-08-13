@@ -12,12 +12,12 @@ import logging
 from typing import TYPE_CHECKING, TypeGuard
 from urllib.parse import urlsplit
 
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.version import InvalidVersion
 from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
-from .._vendor.packaging.ranges import VersionRange
-from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name
-from .._vendor.packaging.version import InvalidVersion
 from ..conflict_kind import EMPTY_MEMBERSHIP_SETS
 from ..errors import (
     ForeignMetadataError,
@@ -47,9 +47,10 @@ from ..vcs_admission import admit_vcs_url
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from .._vendor.packaging.markers import Marker
-    from .._vendor.packaging.requirements import Requirement
-    from .._vendor.packaging.version import Version
+    from nab_provider._vendor.packaging.markers import Marker
+    from nab_provider._vendor.packaging.requirements import Requirement
+    from nab_provider._vendor.packaging.version import Version
+
     from ..provider import DistFile, Provider
     from ..store import InMemoryIndex
     from ..tags import TagSet

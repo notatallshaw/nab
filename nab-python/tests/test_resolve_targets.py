@@ -24,13 +24,13 @@ from nab_index import vcs as vcs_mod
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
 from nab_python._provider import listing as listing_mod
 from nab_python._resolve import engine as engine_mod
 from nab_python._resolve.engine import _EngineSettings, _resolve_one_target, _run_pass
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_python._vendor.packaging.ranges import VersionRange
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     ConfigError,
     ConflictKind,

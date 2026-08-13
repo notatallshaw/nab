@@ -23,6 +23,12 @@ else:
 
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
+from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
+from nab_provider._vendor.packaging.pylock import Package, PackageWheel, Pylock
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.version import Version
 from nab_python._lockfile.builder import _common_requires_python
 from nab_python._lockfile.coverage import (
     CoverageError,
@@ -39,12 +45,6 @@ from nab_python._lockfile.pylock import (
 )
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._testing.overrides import pkg_override
-from nab_python._vendor.packaging.markers import Marker
-from nab_python._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
-from nab_python._vendor.packaging.pylock import Package, PackageWheel, Pylock
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.utils import canonicalize_name
-from nab_python._vendor.packaging.version import Version
 from nab_python.config import (
     ConflictKind,
     ConflictMember,

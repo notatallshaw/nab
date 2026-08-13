@@ -5,11 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING
 
-from ._vendor.packaging.dependency_groups import resolve_dependency_groups
-from ._vendor.packaging.errors import ExceptionGroup
-from ._vendor.packaging.markers import Marker
-from ._vendor.packaging.requirements import Requirement
-from ._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.dependency_groups import resolve_dependency_groups
+from nab_provider._vendor.packaging.errors import ExceptionGroup
+from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.utils import canonicalize_name
+
 from .marker_holds import dependency_marker_holds, marker_set
 from .metadata import validate_specifier_versions
 from .resolver_inputs import (

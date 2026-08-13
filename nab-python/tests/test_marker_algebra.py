@@ -12,13 +12,13 @@ import traceback
 
 import pytest
 
-from nab_python._vendor.packaging import markersets
-from nab_python._vendor.packaging.markers import (
+from nab_provider._vendor.packaging import markersets
+from nab_provider._vendor.packaging.markers import (
     InvalidMarker,
     Marker,
     UndefinedEnvironmentName,
 )
-from nab_python._vendor.packaging.markersets import (
+from nab_provider._vendor.packaging.markersets import (
     IntractableMarkerSet,
     MarkerSet,
     UnserializableMarkerSet,

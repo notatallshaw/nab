@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import replace
 
 from nab_index.client import WheelFile
+from nab_provider._vendor.packaging.pylock import Package, Pylock
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
 from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python._vendor.packaging.pylock import Package, Pylock
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig, enforce_build_policy_for_targets
 from nab_python.lockfile import build_pylock
 from nab_python.provider import BuildPolicy

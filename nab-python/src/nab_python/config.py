@@ -22,16 +22,16 @@ import tomli
 from typing_extensions import override
 
 from nab_index.local_index import is_file_url
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
+from nab_provider._vendor.packaging.version import Version
 from nab_provider.archive import ArchiveRequest, ArchiveRequestError
 from nab_provider.records import IndexConfig
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.subdir import subdirectory_escapes
 
 from ._toml import tool_nab_section
-from ._vendor.packaging.requirements import Requirement
-from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
-from ._vendor.packaging.utils import InvalidName, canonicalize_name
-from ._vendor.packaging.version import Version
 from .config_sources import (
     ConfigError,
     EffectiveValue,

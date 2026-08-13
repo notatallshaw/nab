@@ -11,8 +11,8 @@ import itertools
 
 import pytest
 
-from nab_python._vendor.packaging.ranges import RangeRelation, VersionRange
-from nab_python._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.ranges import RangeRelation, VersionRange
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
 
 # Single and double bounds, exclusions, wildcards, an epoch, a post, a local,
 # a pre-release naming clause, and the two ``===`` shapes.

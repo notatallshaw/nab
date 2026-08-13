@@ -18,8 +18,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from ._vendor.packaging.ranges import VersionRange
-    from ._vendor.packaging.requirements import Requirement
+    from nab_provider._vendor.packaging.ranges import VersionRange
+    from nab_provider._vendor.packaging.requirements import Requirement
+
     from .policy import BuildPolicy, DistPolicy
 
 __all__ = ["IndexOverride", "PackageOverride"]

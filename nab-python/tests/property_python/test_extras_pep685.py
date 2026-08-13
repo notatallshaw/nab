@@ -19,8 +19,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from nab_index.client import WheelFile
+from nab_provider._vendor.packaging.version import Version
 from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python._vendor.packaging.version import Version
 from nab_python.provider import (
     ExtrasMode,
     MissingExtraError,

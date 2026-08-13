@@ -24,11 +24,16 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from ._vendor.packaging import tags as ptags
-from ._vendor.packaging.markers import Marker, default_environment
-from ._vendor.packaging.markersets import variable_names
-from ._vendor.packaging.specifiers import InvalidSpecifier, Specifier, SpecifierSet
-from ._vendor.packaging.version import InvalidVersion, Version
+from nab_provider._vendor.packaging import tags as ptags
+from nab_provider._vendor.packaging.markers import Marker, default_environment
+from nab_provider._vendor.packaging.markersets import variable_names
+from nab_provider._vendor.packaging.specifiers import (
+    InvalidSpecifier,
+    Specifier,
+    SpecifierSet,
+)
+from nab_provider._vendor.packaging.version import InvalidVersion, Version
+
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
 from .marker_holds import UnevaluableMarkerError
 from .tags import (

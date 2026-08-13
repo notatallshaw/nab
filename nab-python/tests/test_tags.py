@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nab_index.client import WheelFile
-from nab_python._vendor.packaging.tags import Tag
+from nab_provider._vendor.packaging.tags import Tag
 from nab_python.tags import (
     _PLATFORM_ARCH,
     _PLATFORM_KIND,

@@ -144,9 +144,9 @@ and no upstream pull request proposes them.
 Once the patch is empty, delete this directory and reinstate `packaging` as a
 normal dependency:
 
-- Add `packaging>=<release>` back to `nab-python/pyproject.toml`
+- Add `packaging>=<release>` back to `nab-provider/pyproject.toml`
   `[project].dependencies`.
-- Search-replace `from nab_python._vendor.packaging` -> `from packaging` and
-  `import nab_python._vendor.packaging` -> `import packaging` across the
+- Search-replace `from nab_provider._vendor.packaging` -> `from packaging` and
+  `import nab_provider._vendor.packaging` -> `import packaging` across the
   workspace.
 - Remove this `_vendor/` tree and the `tasks/vendoring/` files.

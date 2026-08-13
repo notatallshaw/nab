@@ -33,13 +33,13 @@ PACKAGES = build_dists.PACKAGES
 # The import name of each released distribution, for the wheel smoke import.
 MODULES = tuple(name.replace("-", "_") for name in PACKAGES)
 
-# Every nab-python artifact ships the vendored packaging tree, so its licenses
-# travel with it. Matched by suffix because the wheel roots the package at
-# nab_python/ while the sdist roots it at <root>/src/nab_python/.
+# Every nab-provider artifact ships the vendored packaging tree, so its license
+# files have to travel with it. Matched by suffix because the wheel roots the
+# package at nab_provider/ while the sdist roots it at <root>/src/nab_provider/.
 VENDOR_LICENSES = (
-    "nab_python/_vendor/packaging/LICENSE",
-    "nab_python/_vendor/packaging/LICENSE.APACHE",
-    "nab_python/_vendor/packaging/LICENSE.BSD",
+    "nab_provider/_vendor/packaging/LICENSE",
+    "nab_provider/_vendor/packaging/LICENSE.APACHE",
+    "nab_provider/_vendor/packaging/LICENSE.BSD",
 )
 
 
@@ -197,7 +197,7 @@ def check_sdist_license(sdist: Path) -> None:
 
 
 def check_vendored_licenses(wheel: Path, sdist: Path) -> None:
-    """Fail unless both nab-python artifacts carry the vendored licenses."""
+    """Fail unless both nab-provider artifacts carry the vendored licenses."""
     with zipfile.ZipFile(wheel) as archive:
         wheel_names = archive.namelist()
     with tarfile.open(sdist) as archive:
@@ -226,8 +226,8 @@ def main() -> None:
             check_wheel_license(_wheel(dist_root, package))
             check_sdist_license(_sdist(dist_root, package))
         check_vendored_licenses(
-            _wheel(dist_root, "nab-python"),
-            _sdist(dist_root, "nab-python"),
+            _wheel(dist_root, "nab-provider"),
+            _sdist(dist_root, "nab-provider"),
         )
 
     print("dists built, installed from sdists and wheels, and license-checked.")

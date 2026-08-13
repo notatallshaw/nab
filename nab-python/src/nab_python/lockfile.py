@@ -17,6 +17,10 @@ from dataclasses import dataclass, field, replace
 from datetime import timezone
 from typing import TYPE_CHECKING, Any
 
+from nab_provider._vendor.packaging.pylock import is_valid_pylock_path
+from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.version import Version
+
 from ._lockfile.builder import (
     MissingHashError,
     MissingSdistError,
@@ -45,16 +49,14 @@ from ._lockfile.validate import (
     RootRequirement,
     check_locked,
 )
-from ._vendor.packaging.pylock import is_valid_pylock_path
-from ._vendor.packaging.utils import canonicalize_name
-from ._vendor.packaging.version import Version
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
     from pathlib import Path
 
-    from ._vendor.packaging.markers import Marker
+    from nab_provider._vendor.packaging.markers import Marker
+
     from .config import ConflictSet, PackageOverride
     from .target import ResolveTarget
 

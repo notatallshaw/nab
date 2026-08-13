@@ -21,10 +21,10 @@ import itertools
 import pytest
 from hypothesis import given
 
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.version import Version
 from nab_python._packaging_provider import PackagingProvider
-from nab_python._vendor.packaging.ranges import VersionRange
-from nab_python._vendor.packaging.specifiers import SpecifierSet
-from nab_python._vendor.packaging.version import Version
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 
