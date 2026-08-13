@@ -494,8 +494,9 @@ def _requirement_over_listing(
     specifiers, so it has a spelling to render.
 
     ``None`` when a bound carries a local segment, which an ordering specifier
-    does not accept, or when the span holds more than ``_MAX_EXCLUSIONS``
-    versions to exclude.
+    does not accept, when the span holds more than ``_MAX_EXCLUSIONS`` versions
+    to exclude, or when excluding one by name would take a selected version
+    with it.
     """
     clauses: list[str] = []
     if not VersionRange.from_bounds(None, selected[0]).is_subset(constraint):
@@ -520,7 +521,13 @@ def _requirement_over_listing(
         return bounded
 
     clauses.extend(f"!={hole}" for hole in holes)
-    return SpecifierSet(",".join(clauses)).to_range()
+    stated = SpecifierSet(",".join(clauses)).to_range()
+
+    # ``!=1.0`` also excludes ``1.0+cu118``: PEP 440 ignores a candidate's
+    # local label when the specifier carries none.
+    if any(version not in stated for version in selected):
+        return None
+    return stated
 
 
 class Provider:

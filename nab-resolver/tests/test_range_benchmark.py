@@ -65,7 +65,7 @@ SUITE_PROFILE = {
         intervals_seen=892,
         largest_range=8,
         hash_misses=116,
-        equality_calls=436,
+        equality_calls=471,
     ),
     "conflict-free-fanout": Profile(
         rounds=8,
@@ -75,7 +75,7 @@ SUITE_PROFILE = {
         intervals_seen=1058,
         largest_range=1,
         hash_misses=12,
-        equality_calls=41,
+        equality_calls=48,
     ),
 }
 
