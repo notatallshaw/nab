@@ -49,7 +49,7 @@ jobs:
         run: pip install -r .github/requirements/pylock.nox.toml
 
       # Test and coverage logic lives in noxfile.py. The tests session is
-      # parametrized by workspace, so this runs all three, each in its own
+      # parametrized by workspace, so this runs all four, each in its own
       # venv and gated on its own packages.
       - name: Test every workspace
         run: nox -s tests
@@ -122,7 +122,7 @@ jobs:
         run: pip install -r .github/requirements/pylock.tests.toml
 
       - name: Install workspace packages
-        run: pip install --no-deps -e nab-resolver -e nab-python -e nab-index -e .
+        run: pip install --no-deps -e nab-resolver -e nab-provider -e nab-python -e nab-index -e .
 
       - name: Run property-based tests
         # CrossHair tests run in the dedicated crosshair-tests job; the
@@ -153,7 +153,7 @@ jobs:
         run: pip install -r .github/requirements/pylock.crosshair.toml
 
       - name: Install workspace packages
-        run: pip install --no-deps -e nab-resolver -e nab-python -e nab-index -e .
+        run: pip install --no-deps -e nab-resolver -e nab-provider -e nab-python -e nab-index -e .
 
       - name: Run CrossHair property tests
         run: python -m pytest -m crosshair

@@ -20,6 +20,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "nab-provider==0.0.14.dev0",
     "nab-resolver==0.0.14.dev0",
     "nab-index==0.0.14.dev0",
     "tomli>=2.0",

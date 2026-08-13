@@ -21,6 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "nab-resolver==0.0.14.dev0",
+    "nab-provider==0.0.14.dev0",
     "nab-python==0.0.14.dev0",
     "nab-index==0.0.14.dev0",
     "tyro>=1.0",
@@ -134,7 +135,7 @@ dists = [
 # `nab lock` config: universal mode resolves the full matrix in one
 # pass, P7D matches the 7-day Dependabot cooldown.
 [tool.nab.workspace]
-members = ["nab-resolver", "nab-python", "nab-index"]
+members = ["nab-resolver", "nab-provider", "nab-python", "nab-index"]
 
 [tool.nab]
 mode = "universal"
@@ -153,7 +154,7 @@ platforms = [
 
 # Workspace packages skip the cooldown; bumps land immediately.
 [[tool.nab.package-rules]]
-match = ["nab", "nab-resolver", "nab-python", "nab-index"]
+match = ["nab", "nab-resolver", "nab-provider", "nab-python", "nab-index"]
 uploaded-prior-to = false
 
 # https://docs.pytest.org/en/stable/reference/reference.html#confval-addopts
@@ -170,6 +171,7 @@ addopts = [
 ]
 testpaths = [
     "nab-resolver/tests",
+    "nab-provider/tests",
     "nab-python/tests",
     "nab-index/tests",
     "tests",
@@ -197,6 +199,7 @@ sigterm = true
 disable_warnings = ["module-not-imported"]
 source_pkgs = [
     "nab_resolver",
+    "nab_provider",
     "nab_python",
     "nab_index",
     "nab",
@@ -232,6 +235,10 @@ exclude_also = [
 nab_resolver = [
     "nab-resolver/src/nab_resolver",
     "*/nab_resolver",
+]
+nab_provider = [
+    "nab-provider/src/nab_provider",
+    "*/nab_provider",
 ]
 nab_python = [
     "nab-python/src/nab_python",
@@ -328,7 +335,7 @@ convention = "pep257"
 
 # https://docs.astral.sh/ruff/settings/#lintisort
 [tool.ruff.lint.isort]
-known-first-party = ["nab", "nab_index", "nab_python", "nab_resolver"]
+known-first-party = ["nab", "nab_index", "nab_provider", "nab_python", "nab_resolver"]
 
 # https://microsoft.github.io/pyright/#/configuration?id=main-pyright-settings
 [tool.pyright]
@@ -344,6 +351,7 @@ include = [
 # point it at the source trees directly so cross-package imports resolve.
 extraPaths = [
     "nab-resolver/src",
+    "nab-provider/src",
     "nab-python/src",
     "nab-index/src",
     "src",

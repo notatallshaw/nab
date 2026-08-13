@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from nab_index.local_index import is_file_url
 from nab_index.multi_index import IndexConfig
-from nab_index.serialization import SimpleSerialization
+from nab_provider.serialization import SimpleSerialization
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import InvalidName, canonicalize_name

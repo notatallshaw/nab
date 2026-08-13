@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 import tomli
 
 from nab_index.multi_index import IndexConfig
-from nab_index.serialization import SimpleSerialization
+from nab_provider.serialization import SimpleSerialization
 
 from ._errors import ConfigError as ConfigError  # noqa: PLC0414  (public re-export)
 from ._policy import (

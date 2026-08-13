@@ -27,7 +27,6 @@ from nab_index.archive import ArchiveRequest, ArchiveRequestError
 from nab_index.client import SdistHashMismatchError, extract_sdist_archive
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.multi_index import IndexConfig
-from nab_index.subdir import subdirectory_escapes
 from nab_index.transport import HttpError
 from nab_python._provider import sources
 from nab_python._provider.sources import _fetch_archive_bytes
@@ -321,14 +320,6 @@ class TestArchiveRequestParse:
             ArchiveRequest.parse(
                 "https://ex.com/foo.tar.gz#sha256=abc&subdirectory=c\\d/../.."
             )
-
-
-class TestSubdirectoryEscapes:
-    def test_posix_backslash_parent_escapes(self) -> None:
-        assert subdirectory_escapes("c\\d/../..") is True
-
-    def test_backslash_segment_stays_contained(self) -> None:
-        assert subdirectory_escapes("sub\\deeper") is False
 
 
 class TestArchiveIndexing:

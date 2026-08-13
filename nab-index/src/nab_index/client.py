@@ -24,8 +24,9 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from packaging.utils import canonicalize_name, parse_sdist_filename
 from packaging.version import Version
 
+from nab_provider.serialization import SimpleSerialization, simple_accept_header
+
 from ._pep503 import json_listing
-from .serialization import SimpleSerialization, simple_accept_header
 from .transport import IDENTITY_HEADERS, HttpError, raise_unless_ok
 
 if TYPE_CHECKING:

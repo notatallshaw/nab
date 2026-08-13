@@ -48,9 +48,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from nab_provider.serialization import SimpleSerialization
+
 from .atomic import atomic_write
 from .parsed_listing import corruption_reason as _parsed_corruption
-from .serialization import SimpleSerialization
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

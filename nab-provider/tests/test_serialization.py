@@ -1,8 +1,8 @@
-"""Tests for nab_index.serialization."""
+"""Tests for nab_provider.serialization."""
 
 from __future__ import annotations
 
-from nab_index.serialization import SimpleSerialization, simple_accept_header
+from nab_provider.serialization import SimpleSerialization, simple_accept_header
 
 
 class TestAcceptHeader:

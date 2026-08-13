@@ -33,26 +33,35 @@ BUILD_LOCK = ".github/requirements/pylock.build.toml"
 #
 # nab-index is gated with the python workspace because each entry has to reach
 # 100 percent from its own suite, and nab-python's tests cover most of nab-index.
+# The provider workspace installs only nab-provider and nab-resolver, which is
+# what proves a host can take it without nab-index.
 WORKSPACES = {
     "resolver": (
         ["nab-resolver"],
         ["nab-resolver/tests"],
         ["nab_resolver"],
     ),
+    "provider": (
+        ["nab-resolver", "nab-provider"],
+        ["nab-provider/tests"],
+        ["nab_provider"],
+    ),
     "python": (
-        ["nab-resolver", "nab-index", "nab-python"],
+        ["nab-resolver", "nab-provider", "nab-index", "nab-python"],
         ["nab-python/tests", "nab-index/tests"],
         ["nab_python", "nab_index"],
     ),
     "umbrella": (
-        ["nab-resolver", "nab-index", "nab-python", "."],
+        ["nab-resolver", "nab-provider", "nab-index", "nab-python", "."],
         ["tests"],
         ["nab"],
     ),
 }
 
 # nab-python is left out: it carries the vendored packaging tree, which is
-# rebuilt from upstream and cannot be edited to satisfy a checker.
+# rebuilt from upstream and cannot be edited to satisfy a checker. nab-provider
+# is left out too: its modules arrive from nab-python and are not yet held to
+# the strict configs.
 TYPED_TREES = ["nab-resolver/src", "nab-index/src", "src"]
 
 # checker -> command; pyright reads its targets from [tool.pyright] in
@@ -111,7 +120,9 @@ def benchmarks(session: nox.Session) -> None:
     """Run the benchmark-harness tests the workspace sessions deselect."""
     # These cover the scripts under nab-resolver/benchmarks and
     # nab-python/benchmarks, which no coverage gate owns.
-    _install(session, TESTS_LOCK, ["nab-resolver", "nab-index", "nab-python"])
+    _install(
+        session, TESTS_LOCK, ["nab-resolver", "nab-provider", "nab-index", "nab-python"]
+    )
     session.run(
         "python",
         "-m",

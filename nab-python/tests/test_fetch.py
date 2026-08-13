@@ -35,8 +35,8 @@ from nab_index.lazy_wheel import RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 from nab_index.parsed_listing import encode as encode_parsed
-from nab_index.serialization import SimpleSerialization
 from nab_index.transport import HttpError, HttpResponse
+from nab_provider.serialization import SimpleSerialization
 from nab_python.fetch import (
     _WARM_SYNC_MIN_BLOB_BYTES,
     FetchCoordinator,

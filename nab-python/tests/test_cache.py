@@ -34,8 +34,8 @@ from nab_index.cache import (
     _encode_policy,
     _index_dirname,
 )
-from nab_index.serialization import SimpleSerialization
 from nab_index.vcs import VcsRequest, prepare_clone
+from nab_provider.serialization import SimpleSerialization
 
 # Derived so a bucket-version bump does not need every path updated.
 SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"

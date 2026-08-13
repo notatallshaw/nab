@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from .subdir import subdirectory_escapes
+from nab_provider.subdir import subdirectory_escapes
 
 __all__ = [
     "FULL_GIT_SHA_RE",

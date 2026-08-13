@@ -19,7 +19,7 @@ import pytest
 
 from nab_index.client import WheelFile
 from nab_index.multi_index import IndexConfig
-from nab_index.serialization import SimpleSerialization
+from nab_provider.serialization import SimpleSerialization
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.tags import Tag
 from nab_python._vendor.packaging.version import Version

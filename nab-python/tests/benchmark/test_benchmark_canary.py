@@ -15,7 +15,7 @@ import pytest
 from typing_extensions import Self
 
 from nab_index.multi_index import IndexConfig
-from nab_index.serialization import SimpleSerialization
+from nab_provider.serialization import SimpleSerialization
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from nab_python.target import ResolveTarget
 

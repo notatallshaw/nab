@@ -40,6 +40,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TREES = {
     "nab_python": "nab-python/src/nab_python",
     "nab_resolver": "nab-resolver/src/nab_resolver",
+    "nab_provider": "nab-provider/src/nab_provider",
     "nab_index": "nab-index/src/nab_index",
     "nab": "src/nab",
 }

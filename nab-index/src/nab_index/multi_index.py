@@ -28,8 +28,9 @@ from typing import TYPE_CHECKING, Protocol
 
 from packaging.utils import canonicalize_name as _normalise_name
 
+from nab_provider.serialization import SimpleSerialization
+
 from .cache import OfflineError
-from .serialization import SimpleSerialization
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

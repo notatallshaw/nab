@@ -1,8 +1,6 @@
-"""Simple-API serialization vocabulary for nab-index.
+"""Simple-API serialization vocabulary.
 
-The enum and the ``Accept`` header each of its members asks for.  Kept free
-of nab-index imports so the client, the cache, and the config layer can all
-reach it.
+The enum and the ``Accept`` header each of its members asks for.
 """
 
 from __future__ import annotations

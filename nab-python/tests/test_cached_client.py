@@ -46,8 +46,8 @@ from nab_index.client import (
     _select_artifact_hash,
 )
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
-from nab_index.serialization import SimpleSerialization
 from nab_index.transport import HttpError
+from nab_provider.serialization import SimpleSerialization
 from nab_python.metadata import parse_metadata
 
 LISTING = {

@@ -11,7 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from nab_index.multi_index import IndexConfig
-from nab_index.serialization import SimpleSerialization
+from nab_provider.serialization import SimpleSerialization
 from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.version import Version

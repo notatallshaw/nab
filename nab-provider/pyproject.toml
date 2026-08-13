@@ -1,7 +1,7 @@
 [project]
-name = "nab-index"
+name = "nab-provider"
 version = "0.0.14.dev0"
-description = "PyPI Simple-API client and on-disk cache for nab"
+description = "IO-free resolution core for nab"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -19,16 +19,13 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
+# The provider does no IO, so it takes nothing that fetches, builds, or parses
+# a config file. A host that supplies its own IO can vendor this and the solver
+# without taking nab's HTTP client, cache, or build machinery with it.
 dependencies = [
-    "nab-provider==0.0.14.dev0",
-    "packaging>=24.0",
-    "truststore>=0.10",
+    "nab-resolver==0.0.14.dev0",
     "typing_extensions>=4.6",
-    "urllib3>=2.0",
 ]
-
-[project.optional-dependencies]
-httpx = ["httpx[http2]>=0.28"]
 
 [project.urls]
 Homepage = "https://github.com/notatallshaw/nab"
