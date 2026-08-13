@@ -14,7 +14,8 @@ updates:
     directories:
       - /
       - /nab-resolver
-      - /nab-python
+      - /nab-provider
+      - /nab-project
       - /nab-index
     schedule:
       interval: monthly

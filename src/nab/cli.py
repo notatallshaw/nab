@@ -25,21 +25,15 @@ import tyro
 from tyro.extras import SubcommandApp
 
 from nab._version import __version__
-from nab_index.client import (
-    MetadataHashMismatchError,
-    SdistHashMismatchError,
-    WheelHashMismatchError,
-)
-from nab_index.errors import IndexAccessError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_python.config import (
+from nab_project.config import (
     ConfigError,
     NabProjectConfig,
     ResolveMode,
     read_pyproject_config,
     with_python_override,
 )
-from nab_python.config_sources import (
+from nab_project.config_sources import (
     OPTIONS,
     EffectiveValue,
     RejectedLayer,
@@ -56,9 +50,17 @@ from nab_python.config_sources import (
     read_env_layer,
     resolve_config,
 )
-from nab_python.lockfile import MissingHashError, MissingSdistError
-from nab_python.paths import PathState, path_state
-from nab_python.provider import (
+from nab_project.lockfile import MissingHashError, MissingSdistError
+from nab_project.paths import PathState, path_state
+from nab_project.resolve import resolve_for_targets
+from nab_project.workspace import WorkspaceDiscoveryError
+from nab_provider.errors import (
+    IndexAccessError,
+    MetadataHashMismatchError,
+    SdistHashMismatchError,
+    WheelHashMismatchError,
+)
+from nab_provider.provider import (
     InvalidUploadTimeError,
     MetadataError,
     MissingExtraError,
@@ -66,13 +68,11 @@ from nab_python.provider import (
     SourceNameMismatchError,
     UnsupportedVcsError,
 )
-from nab_python.requirements_file import (
+from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
 )
-from nab_python.resolve import resolve_for_targets
-from nab_python.target import NonIntervalMarkerError, UnevaluableMarkerError
-from nab_python.workspace import WorkspaceDiscoveryError
+from nab_provider.target import NonIntervalMarkerError, UnevaluableMarkerError
 from nab_resolver.errors import ResolutionError
 
 from .output import (
@@ -88,8 +88,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from nab_index.transport import AsyncHttpTransport
-    from nab_python.provider import ResolutionStrategy
-    from nab_python.resolve import ResolveResult
+    from nab_project.resolve import ResolveResult
+    from nab_provider.provider import ResolutionStrategy
 
 __all__ = [
     "main",

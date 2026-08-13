@@ -19,6 +19,8 @@ from datetime import timezone
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
 
+from nab_provider.serialization import SimpleSerialization, simple_accept_header
+
 from .cache import CacheBackend, CachePolicy, OfflineError
 from .client import (
     _HTTP_NOT_FOUND,
@@ -50,7 +52,6 @@ from .parsed_listing import (
 from .parsed_listing import (
     encode as _encode_parsed,
 )
-from .serialization import SimpleSerialization, simple_accept_header
 from .transport import IDENTITY_HEADERS, raise_unless_ok
 
 if TYPE_CHECKING:

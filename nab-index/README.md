@@ -1,7 +1,7 @@
 # nab-index
 
 PyPI Simple-API client and on-disk cache used by
-[`nab-python`](https://pypi.org/project/nab-python/) and
+[`nab-project`](https://pypi.org/project/nab-project/) and
 [`nab`](https://pypi.org/project/nab/).
 
 It provides:

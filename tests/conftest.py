@@ -12,9 +12,11 @@ import pytest
 
 from nab import cli
 from nab.output import reset_log_handlers
+from nab_project.config_sources import SourceRoots
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -38,3 +40,27 @@ def _reset_nab_output(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
     cli._printer = None
     reset_log_handlers()
+
+
+@pytest.fixture
+def hermetic_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point config discovery at a tmp system/user/project tree.
+
+    Returns the project dir. The system and user files point at tmp paths a
+    test can write, so nothing reads the real ``~/.config``.
+    """
+    project_dir = tmp_path / "proj"
+    project_dir.mkdir()
+
+    def fake_roots(_: Path) -> SourceRoots:
+        return SourceRoots(
+            system_toml=tmp_path / "sys" / "nab.toml",
+            user_toml=tmp_path / "usr" / "nab.toml",
+            project_dir=project_dir,
+        )
+
+    monkeypatch.setattr(cli, "_config_search_roots", fake_roots)
+    monkeypatch.delenv("NAB_OFFLINE", raising=False)
+    monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
+    monkeypatch.delenv("NAB_RESOLUTION", raising=False)
+    return project_dir

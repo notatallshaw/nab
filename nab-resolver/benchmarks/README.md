@@ -2,7 +2,7 @@
 
 `range_scenarios.py` resolves two graph shapes through `nab_resolver.Resolver` with every
 constructor argument left at its default, so the range type under test is this package's
-`Range`. nab-python's benchmark suites all pass packaging's `VersionRange`, which leaves
+`Range`. nab-project's benchmark suites all pass packaging's `VersionRange`, which leaves
 `Range` unmeasured everywhere else even though it is what a consumer that supplies no
 `range_type` gets.
 

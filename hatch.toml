@@ -1,8 +1,8 @@
 [envs.default]
-workspace.members = ["nab-resolver", "nab-python", "nab-index"]
+workspace.members = ["nab-resolver", "nab-provider", "nab-project", "nab-index"]
 
 [envs.hatch-test]
-workspace.members = ["nab-resolver", "nab-python", "nab-index"]
+workspace.members = ["nab-resolver", "nab-provider", "nab-project", "nab-index"]
 features = ["httpx"]
 extra-dependencies = [
     "hypothesis>=6.100",
@@ -11,7 +11,7 @@ extra-dependencies = [
 ]
 
 [envs.crosshair]
-workspace.members = ["nab-resolver", "nab-python", "nab-index"]
+workspace.members = ["nab-resolver", "nab-provider", "nab-project", "nab-index"]
 extra-dependencies = [
     "crosshair-tool>=0.0.104",
     "hypothesis-crosshair>=0.0.28",
@@ -24,7 +24,7 @@ extra-dependencies = [
 check = "pytest -m crosshair {args}"
 
 [envs.types]
-workspace.members = ["nab-resolver", "nab-python", "nab-index"]
+workspace.members = ["nab-resolver", "nab-provider", "nab-project", "nab-index"]
 dependencies = [
     "pyright>=1.1.400",
     "mypy>=1.19",

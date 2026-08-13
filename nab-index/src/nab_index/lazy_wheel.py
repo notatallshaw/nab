@@ -30,7 +30,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-from .client import MalformedSimpleResponseError, WheelHashMismatchError
+from nab_provider.errors import WheelHashMismatchError
+from nab_provider.records import RangeMetadataResult, RangeOutcome
+
+from .client import MalformedSimpleResponseError
 from .local_index import UnsupportedWheelError, wheel_metadata_member
 from .transport import IDENTITY_HEADERS
 
@@ -61,23 +64,6 @@ _HTTP_RANGE_NOT_SATISFIABLE = 416
 _RANGE_REJECT_STATUSES = frozenset({400, 403, _HTTP_RANGE_NOT_SATISFIABLE, 501})
 
 _CONTENT_RANGE_RE = re.compile(r"bytes\s+(\d+)-(\d+)/(\d+)")
-
-
-class RangeOutcome(enum.Enum):
-    """How rung 4 obtained (or failed to obtain) a wheel's METADATA."""
-
-    PARTIAL = "partial"
-    FULL_BODY = "full-body"
-    UNSUPPORTED = "unsupported"
-    MISSING = "missing"
-
-
-@dataclass(frozen=True, slots=True)
-class RangeMetadataResult:
-    """The recovered METADATA text and the outcome that produced it."""
-
-    text: str | None
-    outcome: RangeOutcome
 
 
 class RangeCapability(enum.Enum):

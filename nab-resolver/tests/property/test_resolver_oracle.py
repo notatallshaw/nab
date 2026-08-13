@@ -11,7 +11,7 @@ agree that no solution exists.
 The lookahead variant exercises the pending-clauses and force-backtrack
 provider contract: the provider rejects candidates whose dependencies
 conflict with current decisions, queues the corresponding sound clauses,
-and periodically requests force backtracks, mimicking nab-python's
+and periodically requests force backtracks, mimicking nab-project's
 look-ahead.  Every queued clause is implied by a dependency fact, so any
 unsoundness flagged here is the resolver's.
 """

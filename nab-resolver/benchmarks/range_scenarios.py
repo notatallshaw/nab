@@ -6,7 +6,7 @@ Usage:
     python nab-resolver/benchmarks/range_scenarios.py --repeats 9 --json out.json
 
 ``Range`` is what ``Resolver`` and ``PartialSolution`` fall back to when a
-consumer passes no ``range_type``, and nab-python always passes packaging's
+consumer passes no ``range_type``, and nab-project always passes packaging's
 ``VersionRange``, so nothing in nab's other benchmark suites runs it. A change
 to Range's algebra can win on one graph shape and lose on another, so both
 regimes run here: ``wrong-package-backtracking`` drives the set predicates and

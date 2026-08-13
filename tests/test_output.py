@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import logging
 import sys
-from pathlib import Path
 
 import pytest
 
@@ -313,8 +312,8 @@ def test_log_handler_normal_prefixes_warning() -> None:
     printer, stream = _handler_printer()
     try:
         install_log_handler(printer)
-        _emit_record("nab_python.demo", logging.WARNING, "dropped marker")
-        _emit_record("nab_python.demo", logging.INFO, "hidden at normal")
+        _emit_record("nab_project.demo", logging.WARNING, "dropped marker")
+        _emit_record("nab_project.demo", logging.INFO, "hidden at normal")
     finally:
         reset_log_handlers()
     assert stream.getvalue() == "warning: dropped marker\n"
@@ -334,10 +333,10 @@ def test_log_handler_verbose_shows_info_with_source() -> None:
     printer, stream = _handler_printer(Verbosity.VERBOSE)
     try:
         install_log_handler(printer)
-        _emit_record("nab_python.demo", logging.INFO, "fetching")
+        _emit_record("nab_project.demo", logging.INFO, "fetching")
     finally:
         reset_log_handlers()
-    assert stream.getvalue() == "INFO nab_python.demo: fetching\n"
+    assert stream.getvalue() == "INFO nab_project.demo: fetching\n"
 
 
 def test_log_handler_reinstall_does_not_stack() -> None:
@@ -355,7 +354,7 @@ def test_log_handler_untokened_level_is_bare() -> None:
     printer, stream = _handler_printer()
     try:
         install_log_handler(printer)
-        _emit_record("nab_python.demo", logging.WARNING + 5, "custom level")
+        _emit_record("nab_project.demo", logging.WARNING + 5, "custom level")
     finally:
         reset_log_handlers()
     assert stream.getvalue() == "custom level\n"
@@ -365,7 +364,7 @@ def test_reset_log_handlers_detaches() -> None:
     printer, stream = _handler_printer()
     install_log_handler(printer)
     reset_log_handlers()
-    _emit_record("nab_python.demo", logging.WARNING, "after reset")
+    _emit_record("nab_project.demo", logging.WARNING, "after reset")
     assert stream.getvalue() == ""
 
 
@@ -461,7 +460,7 @@ def test_log_record_wipes_live_progress_line() -> None:
     try:
         install_log_handler(printer)
         reporter.on_fetch()
-        _emit_record("nab_python.demo", logging.WARNING, "offline skip")
+        _emit_record("nab_project.demo", logging.WARNING, "offline skip")
     finally:
         reset_log_handlers()
     assert "pinnedwarning:" not in err.getvalue()
@@ -476,77 +475,3 @@ def test_progress_repaints_after_diagnostic() -> None:
     printer.warning("careful")
     reporter.on_pin(1)
     assert err.getvalue().endswith("\r\033[K⠙ Resolving... 1 fetched, 1 pinned")
-
-
-_CLI_REFERENCE = Path(__file__).resolve().parents[1] / "docs" / "reference" / "cli.md"
-
-_SUBCOMMANDS = ("lock", "download", "config", "cache")
-
-
-def _cli_reference_text() -> str:
-    return _CLI_REFERENCE.read_text(encoding="utf-8")
-
-
-def _section_body(text: str, heading: str) -> str:
-    after = text.partition(f"\n{heading}\n")[2]
-    return after.partition("\n## ")[0]
-
-
-class TestCliReferenceDocumentsOutputPolicy:
-    """The CLI reference must list every output-policy flag and env var the CLI accepts.
-
-    ``parse_output_options`` defines the flags and ``Printer`` reads the env vars.
-    """
-
-    def test_verbosity_flags_documented(self) -> None:
-        text = _cli_reference_text()
-        for flag in ("-v", "-vv", "-q", "-qq", "--verbose", "--quiet"):
-            assert f"`{flag}`" in text, f"CLI reference omits verbosity flag {flag}"
-
-    def test_color_flags_documented(self) -> None:
-        text = _cli_reference_text()
-        assert "`--color`" in text
-        assert "`--no-color`" in text
-        for choice in ColorChoice:
-            assert f"`{choice.value}`" in text, (
-                f"CLI reference omits --color value {choice.value}"
-            )
-
-    def test_progress_documented(self) -> None:
-        text = _cli_reference_text()
-        assert "`--no-progress`" in text
-        assert "Resolving" in text
-
-    def test_output_env_vars_documented(self) -> None:
-        text = _cli_reference_text()
-        for var in ("NAB_VERBOSITY", "NAB_NO_PROGRESS", "NO_COLOR", "FORCE_COLOR"):
-            assert var in text, f"CLI reference omits env var {var}"
-
-    def test_nab_verbosity_values_documented(self) -> None:
-        text = _cli_reference_text()
-        for level in Verbosity:
-            name = level.name.lower()
-            assert f"`{name}`" in text, (
-                f"CLI reference omits NAB_VERBOSITY value {name!r}"
-            )
-
-    def test_output_control_scope_covers_every_subcommand(self) -> None:
-        """The scope paragraph must name every subcommand the flags reach.
-
-        ``main`` extracts a global ``-q`` before dispatching to any
-        subcommand, so the doc's enumeration must include ``cache``.
-        """
-        for sub in _SUBCOMMANDS:
-            _opts, rest = parse_output_options(["-q", sub], {})
-            assert rest == [sub], f"global -q not extracted before {sub!r}"
-
-        text = _cli_reference_text()
-        scope = next(
-            para
-            for para in _section_body(text, "## Output control").split("\n\n")
-            if "before the subcommand" in para
-        )
-        for sub in _SUBCOMMANDS:
-            assert f"`{sub}`" in scope, (
-                f"Output control scope omits the {sub!r} subcommand"
-            )

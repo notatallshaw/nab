@@ -20,8 +20,9 @@ installer you trust.
   [build policy](reference/build-policy.md), and the
   [on-disk cache](reference/cache.md).
 * Want to know how something works: the explanations cover
-  [universal resolution](explanation/universal.md) and
-  [conflicting extras and groups](explanation/conflicts.md).
+  [universal resolution](explanation/universal.md),
+  [conflicting extras and groups](explanation/conflicts.md), and
+  [the five distributions](explanation/packages.md).
 
 ```{toctree}
 :maxdepth: 1
@@ -59,6 +60,7 @@ reference/cache
 
 explanation/universal
 explanation/conflicts
+explanation/packages
 ```
 
 ```{toctree}

@@ -1,7 +1,7 @@
 """``nab lock`` subcommand and its lockfile-emission helpers.
 
 Wires :func:`resolve_for_targets` to the writers in
-:mod:`nab_python.lockfile`, plus the per-target emission shapes a matrix
+:mod:`nab_project.lockfile`, plus the per-target emission shapes a matrix
 needs (a templated file per tuple, multi-block stdout).
 
 The helpers this shares with :mod:`nab._download` (config loading, the
@@ -29,14 +29,14 @@ import tomli_w
 import tyro
 
 from nab._version import __version__
-from nab_python.config import (
+from nab_project.config import (
     ConfigError,
     NabProjectConfig,
     ResolveMode,
     plan_targets,
     with_python_override,
 )
-from nab_python.lockfile import (
+from nab_project.lockfile import (
     DisjointnessError,
     DivergentBaseDependencyError,
     InvalidLockfileError,
@@ -59,24 +59,26 @@ from nab_python.lockfile import (
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
-from nab_python.paths import PathState, path_state
-from nab_python.requirements_file import (
-    InvalidProjectRequirementError,
-    InvalidProjectTableError,
-    expand_extra_requirements,
+from nab_project.paths import PathState, path_state
+from nab_project.pyproject_files import (
     read_pyproject_build_requires,
     read_pyproject_dependencies,
     read_pyproject_groups,
     read_pyproject_name,
     read_pyproject_optional_dependencies,
-    resolve_groups_to_requirements,
 )
-from nab_python.resolve import (
+from nab_project.resolve import (
     active_group_names,
     build_lock_input,
     config_for_build_requirements,
 )
-from nab_python.target import UnevaluableMarkerError
+from nab_provider.requirements_file import (
+    InvalidProjectRequirementError,
+    InvalidProjectTableError,
+    expand_extra_requirements,
+    resolve_groups_to_requirements,
+)
+from nab_provider.target import UnevaluableMarkerError
 
 from . import cli as _cli
 from .cli import (
@@ -96,7 +98,7 @@ from .output import ProgressReporter
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
-    from nab_python.target import ResolveTarget
+    from nab_provider.target import ResolveTarget
 
 
 _DEFAULT_PROJECT_PATH = Path("pyproject.toml")
@@ -398,7 +400,7 @@ def _refuse_group_selection_with_build_requirements(
     Refusing is what keeps the flags honest.  ``--project-default-group``,
     ``--project-base-group`` and ``--project-build-group`` would otherwise
     be dropped by
-    :func:`~nab_python.resolve.config_for_build_requirements` after the run had
+    :func:`~nab_project.resolve.config_for_build_requirements` after the run had
     already printed a reproducibility notice and recorded them in the lock,
     claiming an override that changed nothing.
     """

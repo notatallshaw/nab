@@ -1,8 +1,8 @@
-diff --git a/nab-python/src/nab_python/_vendor/packaging/_markersets.py b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/_markersets.py b/nab-provider/src/nab_provider/_vendor/packaging/_markersets.py
 new file mode 100644
 index 0000000..a1cd981
 --- /dev/null
-+++ b/nab-python/src/nab_python/_vendor/packaging/_markersets.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/_markersets.py
 @@ -0,0 +1,1809 @@
 +"""Marker algebra engine: reason about PEP 508 markers as sets of environments.
 +
@@ -1813,11 +1813,11 @@ index 0000000..a1cd981
 +        _clause_formula(sorted(clause, key=_atom_key)) for clause in residual
 +    )
 +    return make_and([*lead, inner])
-diff --git a/nab-python/src/nab_python/_vendor/packaging/_ranges.py b/nab-python/src/nab_python/_vendor/packaging/_ranges.py
-index 5370ec8..b305068 100644
---- a/nab-python/src/nab_python/_vendor/packaging/_ranges.py
-+++ b/nab-python/src/nab_python/_vendor/packaging/_ranges.py
-@@ -187,6 +187,11 @@ class LowerBound:
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
+index e312a1f..9a611c3 100644
+--- a/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
+@@ -186,6 +186,11 @@ class LowerBound:
      __slots__ = ("_above", "inclusive", "version")
  
      def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
@@ -1829,7 +1829,7 @@ index 5370ec8..b305068 100644
          self.version = version
          self.inclusive = inclusive
          # Pre-bind a predicate "is parsed at or above this lower
-@@ -224,6 +229,30 @@ class LowerBound:
+@@ -223,6 +228,30 @@ class LowerBound:
          # [v < (v: inclusive starts earlier.
          return self.inclusive and not other.inclusive
  
@@ -1860,7 +1860,7 @@ index 5370ec8..b305068 100644
      def __hash__(self) -> int:
          return hash((self.version, self.inclusive))
  
-@@ -244,6 +273,10 @@ class UpperBound:
+@@ -243,6 +272,10 @@ class UpperBound:
      __slots__ = ("_below", "inclusive", "version")
  
      def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
@@ -1871,7 +1871,7 @@ index 5370ec8..b305068 100644
          self.version = version
          self.inclusive = inclusive
          # Pre-bind a predicate "is parsed at or below this upper
-@@ -283,6 +316,18 @@ class UpperBound:
+@@ -282,6 +315,18 @@ class UpperBound:
          # v) < v]: exclusive ends earlier.
          return not self.inclusive and other.inclusive
  
@@ -1890,37 +1890,11 @@ index 5370ec8..b305068 100644
      def __hash__(self) -> int:
          return hash((self.version, self.inclusive))
  
-diff --git a/nab-python/src/nab_python/_vendor/packaging/markers.py b/nab-python/src/nab_python/_vendor/packaging/markers.py
-index 51b6036..38b2c26 100644
---- a/nab-python/src/nab_python/_vendor/packaging/markers.py
-+++ b/nab-python/src/nab_python/_vendor/packaging/markers.py
-@@ -21,6 +21,8 @@ from .utils import canonicalize_name
- if TYPE_CHECKING:
-     from collections.abc import Mapping
- 
-+    from . import markersets
-+
- __all__ = [
-     "Environment",
-     "EvaluateContext",
-@@ -553,6 +555,12 @@ class Marker:
-             self._markers, _repair_python_full_version(current_environment)
-         )
- 
-+    def to_set(self) -> markersets.MarkerSet:
-+        """Return this marker's denotation as a :class:`~packaging.markersets.MarkerSet`."""
-+        from .markersets import MarkerSet  # noqa: PLC0415
-+
-+        return MarkerSet.from_marker(self)
-+
- 
- def _pep440_python_full_version(python_full_version: str) -> str:
-     """
-diff --git a/nab-python/src/nab_python/_vendor/packaging/markersets.py b/nab-python/src/nab_python/_vendor/packaging/markersets.py
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/markersets.py b/nab-provider/src/nab_provider/_vendor/packaging/markersets.py
 new file mode 100644
-index 0000000..c9a2883
+index 0000000..638bc9e
 --- /dev/null
-+++ b/nab-python/src/nab_python/_vendor/packaging/markersets.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/markersets.py
 @@ -0,0 +1,392 @@
 +"""The public :class:`MarkerSet`: a marker's denotation as a set of environments.
 +
@@ -1932,8 +1906,8 @@ index 0000000..c9a2883
 +one boundary, :meth:`~MarkerSet.to_marker_string`, which may return ``None`` or
 +raise :class:`UnserializableMarkerSet`.
 +
-+Build one with :meth:`~packaging.markers.Marker.to_set`,
-+:meth:`MarkerSet.from_marker`, :meth:`MarkerSet.full`, or :meth:`MarkerSet.empty`;
++Build one with :meth:`MarkerSet.from_marker`, :meth:`MarkerSet.full`, or
++:meth:`MarkerSet.empty`;
 +combine with :meth:`intersection`, :meth:`union`, and :meth:`complement` (or
 +``&`` / ``|`` / ``~``); and query with the decision procedures. Equality is
 +identity; :meth:`equivalent` tests whether two sets denote the same
@@ -2027,7 +2001,7 @@ index 0000000..c9a2883
 +    """A set of environments: the denotation of a PEP 508 marker. Immutable.
 +
 +    Instances are created only through the factories (:meth:`from_marker`,
-+    :meth:`full`, :meth:`empty`, or :meth:`~packaging.markers.Marker.to_set`);
++    :meth:`full`, or :meth:`empty`);
 +    calling ``MarkerSet(...)`` raises :class:`TypeError`.
 +
 +    The algebra is closed under :meth:`intersection`, :meth:`union`, and
@@ -2041,7 +2015,7 @@ index 0000000..c9a2883
 +    def __new__(cls, *args: object, **kwargs: object) -> MarkerSet:  # noqa: PYI034
 +        raise TypeError(
 +            "cannot create 'MarkerSet' instances directly; use "
-+            "Marker.to_set(), MarkerSet.from_marker(), MarkerSet.full(), or "
++            "MarkerSet.from_marker(), MarkerSet.full(), or "
 +            "MarkerSet.empty() instead"
 +        )
 +
@@ -2314,19 +2288,19 @@ index 0000000..c9a2883
 +
 +    def __repr__(self) -> str:
 +        return f"<{type(self).__name__} {_markersets.describe(self._tree)!r}>"
-diff --git a/nab-python/src/nab_python/_vendor/packaging/ranges.py b/nab-python/src/nab_python/_vendor/packaging/ranges.py
-index 8144a65..b94c447 100644
---- a/nab-python/src/nab_python/_vendor/packaging/ranges.py
-+++ b/nab-python/src/nab_python/_vendor/packaging/ranges.py
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
+index 4fbf48e..d52f359 100644
+--- a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
 @@ -24,6 +24,7 @@ import typing
  from typing import (
      TYPE_CHECKING,
      Any,
 +    Literal,
      TypeVar,
-     Union,
  )
-@@ -55,11 +56,41 @@ if TYPE_CHECKING:
+ 
+@@ -54,11 +55,41 @@ if TYPE_CHECKING:
      from .specifiers import SpecifierSet
  
  
@@ -2334,7 +2308,7 @@ index 8144a65..b94c447 100644
 +__all__ = ["RangeRelation", "SortedOrder", "VersionRange"]
  
  T = TypeVar("T")
- UnparsedVersion = Union[Version, str]
+ UnparsedVersion = Version | str
  UnparsedVersionVar = TypeVar("UnparsedVersionVar", bound=UnparsedVersion)
 +SortedOrder = Literal["ascending", "descending"]
 +
@@ -2369,7 +2343,7 @@ index 8144a65..b94c447 100644
  
  #: The most ``!=`` exclusion fragments (``!=V`` points or ``!=P.*`` prefixes)
  #: that :meth:`VersionRange.to_specifier_set` will materialize to spell a
-@@ -144,6 +175,97 @@ def _union_ranges(
+@@ -143,6 +174,97 @@ def _union_ranges(
      return merged
  
  
@@ -2467,7 +2441,7 @@ index 8144a65..b94c447 100644
  def _complement_ranges(ranges: Sequence[Interval]) -> list[Interval]:
      """Complement a sorted, non-overlapping interval list.
  
-@@ -293,6 +415,142 @@ def _struct_admits(
+@@ -292,6 +414,142 @@ def _struct_admits(
      return matches_bounds_only(bounds, parsed)
  
  
@@ -2610,7 +2584,7 @@ index 8144a65..b94c447 100644
  # Repr helpers:
  
  
-@@ -905,7 +1163,8 @@ class VersionRange:
+@@ -904,7 +1162,8 @@ class VersionRange:
      :class:`~packaging.specifiers.SpecifierSet`.
  
      Construct via :meth:`~packaging.specifiers.SpecifierSet.to_range`, or with
@@ -2620,7 +2594,7 @@ index 8144a65..b94c447 100644
      Compose with :meth:`intersection`, :meth:`union`, :meth:`complement`, and
      :meth:`difference` (or the ``&`` / ``|`` / ``~`` / ``-`` operators). Test
      membership with ``in`` or :meth:`contains`, filter an iterable with
-@@ -920,9 +1179,9 @@ class VersionRange:
+@@ -919,9 +1178,9 @@ class VersionRange:
      that opt-in scoped to those versions, so unrelated pre-releases are not
      admitted wholesale.
  
@@ -2633,7 +2607,7 @@ index 8144a65..b94c447 100644
  
      >>> r = SpecifierSet(">=1.0,<2.0").to_range()
      >>> "1.5" in r
-@@ -998,7 +1257,8 @@ class VersionRange:
+@@ -997,7 +1256,8 @@ class VersionRange:
          raise TypeError(
              "cannot create 'VersionRange' instances directly; use "
              "SpecifierSet.to_range(), VersionRange.full(), "
@@ -2643,7 +2617,7 @@ index 8144a65..b94c447 100644
          )
  
      @classmethod
-@@ -1190,6 +1450,73 @@ class VersionRange:
+@@ -1189,6 +1449,73 @@ class VersionRange:
              prereleases_configured=prereleases,
          )
  
@@ -2717,7 +2691,7 @@ index 8144a65..b94c447 100644
      def intersection(self, other: VersionRange) -> VersionRange:
          """Range containing exactly the versions in both self and other.
  
-@@ -1470,6 +1797,15 @@ class VersionRange:
+@@ -1469,6 +1796,15 @@ class VersionRange:
          False
          >>> VersionRange.empty().is_subset(outer)
          True
@@ -2733,7 +2707,7 @@ index 8144a65..b94c447 100644
          """
          self._check_policy_compat(other)
  
-@@ -1480,12 +1816,52 @@ class VersionRange:
+@@ -1479,12 +1815,52 @@ class VersionRange:
  
          # Plain ranges: subset reduces to bounds containment, no algebra needed.
          if self._is_plain() and other._is_plain():
@@ -2787,7 +2761,7 @@ index 8144a65..b94c447 100644
      def is_superset(self, other: VersionRange) -> bool:
          """Return whether every member of other is also a member of self.
  
-@@ -1516,12 +1892,19 @@ class VersionRange:
+@@ -1515,12 +1891,19 @@ class VersionRange:
          True
          >>> a.is_disjoint(SpecifierSet(">=1.5,<2.5").to_range())
          False
@@ -2808,7 +2782,7 @@ index 8144a65..b94c447 100644
          return self.intersection(other).is_empty
  
      def _same_releases(self, other: VersionRange) -> bool:
-@@ -1540,6 +1923,8 @@ class VersionRange:
+@@ -1539,6 +1922,8 @@ class VersionRange:
          iterable: Iterable[UnparsedVersionVar],
          prereleases: bool | None = None,
          key: None = ...,
@@ -2817,7 +2791,7 @@ index 8144a65..b94c447 100644
      ) -> Iterator[UnparsedVersionVar]: ...
  
      @typing.overload
-@@ -1548,6 +1933,28 @@ class VersionRange:
+@@ -1547,6 +1932,28 @@ class VersionRange:
          iterable: Iterable[T],
          prereleases: bool | None = None,
          key: Callable[[T], UnparsedVersion] = ...,
@@ -2846,7 +2820,7 @@ index 8144a65..b94c447 100644
      ) -> Iterator[T]: ...
  
      def filter(
-@@ -1555,6 +1962,8 @@ class VersionRange:
+@@ -1554,6 +1961,8 @@ class VersionRange:
          iterable: Iterable[Any],
          prereleases: bool | None = None,
          key: Callable[[Any], Version | str] | None = None,
@@ -2855,7 +2829,7 @@ index 8144a65..b94c447 100644
      ) -> Iterator[Any]:
          """Yield items from iterable whose version falls inside the range.
  
-@@ -1565,13 +1974,56 @@ class VersionRange:
+@@ -1564,13 +1973,56 @@ class VersionRange:
          ``prereleases=True`` would yield it). A flushed buffer comes after
          every in-place yield, so the output is not version-sorted.
  
@@ -2913,7 +2887,7 @@ index 8144a65..b94c447 100644
          region: tuple[Interval, ...] = ()
          if prereleases is None:
              # The region applies only under the autodetect default; a configured
-@@ -1579,19 +2031,93 @@ class VersionRange:
+@@ -1578,19 +2030,93 @@ class VersionRange:
              prereleases = self._prereleases_configured
              region = self._pre_region
  
@@ -3012,7 +2986,7 @@ index 8144a65..b94c447 100644
      def _filter_with_admission(
          self,
          iterable: Iterable[Any],
-@@ -1679,6 +2205,123 @@ class VersionRange:
+@@ -1678,6 +2204,123 @@ class VersionRange:
          if not found_final:
              yield from all_nonfinal
  

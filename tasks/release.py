@@ -3,9 +3,9 @@
 ``make X.Y.Z`` branches off main, writes two commits (the release version, then a
 return to development), tags the release commit, and pushes the branch and tag.
 You open the PR from that branch yourself. Publishing happens later: merge the PR
-with a merge commit, then publish the tag's release in the GitHub UI, which
-triggers the publish workflow. ``check`` verifies a tag matches the manifests and
-is what that workflow runs before building.
+with a merge commit, then publish the tag's release in the GitHub UI to trigger
+the publish workflow. ``check``, which that workflow runs before it builds,
+verifies the tag matches the manifests.
 
 Run through hatch::
 
@@ -28,14 +28,13 @@ from tyro.extras import SubcommandApp
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-WORKSPACE_PACKAGES = ("nab-resolver", "nab-python", "nab-index")
+# Every distribution except the umbrella, which builds from the repo root.
+WORKSPACE_PACKAGES = ("nab-resolver", "nab-provider", "nab-project", "nab-index")
 _WORKSPACE = {canonicalize_name(name) for name in WORKSPACE_PACKAGES}
 
 PYPROJECT_PATHS = (
     REPO_ROOT / "pyproject.toml",
-    REPO_ROOT / "nab-resolver" / "pyproject.toml",
-    REPO_ROOT / "nab-python" / "pyproject.toml",
-    REPO_ROOT / "nab-index" / "pyproject.toml",
+    *(REPO_ROOT / name / "pyproject.toml" for name in WORKSPACE_PACKAGES),
 )
 
 
@@ -115,9 +114,8 @@ def read_current_version() -> str:
 def check_release(tag: str) -> None:
     """Verify the working tree is a clean release matching ``tag``.
 
-    Confirms the ``vX.Y.Z`` tag matches every package version, that the version
-    is not a development version, and that every cross-pin is exactly
-    ``==X.Y.Z``. The publish workflow runs this before it builds.
+    The ``vX.Y.Z`` tag has to match every package version, that version must
+    not be a dev version, and every cross-pin has to be exactly ``==X.Y.Z``.
     """
     if not tag.startswith("v"):
         msg = f"release tag {tag!r} must start with 'v'"

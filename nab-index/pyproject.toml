@@ -20,6 +20,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    "nab-provider==0.0.14.dev0",
     "packaging>=24.0",
     "truststore>=0.10",
     "typing_extensions>=4.6",

@@ -119,14 +119,17 @@ other tools:
 
  * `nab-resolver`: An agnostic resolver library based on PubGrub, but with
    extensions that make it compatible with Python packaging standards
- * `nab-python`: A Python packaging provider that drives the nab-resolver
+ * `nab-provider`: The Python packaging provider that drives the nab-resolver,
    with lots of specific features and optimizations for the Python packaging
-   ecosystem
- * `nab-index`: Provides APIs for nab-python to interact with Python package
-   indexes, abstracts HTTP library interface so different HTTP libraries can
-   be plugged in
+   ecosystem. It does no I/O: everything comes through one interface a host
+   implements
+ * `nab-index`: Provides APIs for talking to Python package indexes, abstracts
+   HTTP library interface so different HTTP libraries can be plugged in
+ * `nab-project`: nab's own host. It implements the fetch interface over
+   nab-index and adds the resolve orchestration, the config ladder, workspace
+   discovery, the build path, the lockfile emitter and the downloader
 
-All 3 libraries are in experimental mode, I currently recommend pinning them,
+All 4 libraries are in experimental mode, I currently recommend pinning them,
 e.g. `nab-resolver==0.0.1`, as APIs may change at any point.
 
 Once we reach `0.1.0` we will only break API stability on each minor update,

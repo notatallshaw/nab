@@ -54,14 +54,11 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python._vendor.packaging.pylock import Pylock
-from nab_python._vendor.packaging.requirements import Requirement
-from nab_python._vendor.packaging.version import Version
-from nab_python.config import ConfigError, read_pyproject_config
-from nab_python.config_sources import SourceRoots
-from nab_python.download import DownloadError
-from nab_python.lockfile import (
+from nab_project._testing.coordinator_fake import make_coordinator
+from nab_project.config import ConfigError, read_pyproject_config
+from nab_project.config_sources import SourceRoots
+from nab_project.download import DownloadError
+from nab_project.lockfile import (
     ArchivePin,
     DisjointnessError,
     DivergentBaseDependencyError,
@@ -75,17 +72,20 @@ from nab_python.lockfile import (
     TargetLock,
     WheelArtifact,
 )
-from nab_python.provider import (
+from nab_project.resolve import ResolveResult, TargetResult, env_signature
+from nab_provider._vendor.packaging.pylock import Pylock
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import (
     InvalidUploadTimeError,
     MissingExtraError,
     ResolutionStrategy,
     SiblingMetadataDivergenceError,
     UnsupportedVcsError,
 )
-from nab_python.requirements_file import InvalidProjectRequirementError
-from nab_python.resolve import ResolveResult, TargetResult, env_signature
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget, host_environment
+from nab_provider.requirements_file import InvalidProjectRequirementError
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget, host_environment
 from nab_resolver.errors import ResolutionError
 
 V = Version
@@ -771,7 +771,7 @@ class TestLockCommandSpecific:
                 f'[project]\nname = "{name}"\nversion = "1.0"\n'
             )
         out = tmp_path / "pylock.build.toml"
-        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: make_coordinator([])
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             lock(pyproject, output=out, build_requirements=True, cache=False)
@@ -1878,7 +1878,7 @@ class TestPythonFlag:
         run the flag retargets onto 3.14.
         """
         env = {**host_environment(), "python_full_version": "3.12.11"}
-        monkeypatch.setattr("nab_python.config.host_environment", lambda: env)
+        monkeypatch.setattr("nab_project.config.host_environment", lambda: env)
 
         pyproject = _make_pyproject(
             tmp_path,
@@ -3621,249 +3621,6 @@ class TestConfigErrors:
         assert "workspace discovery error" in capsys.readouterr().err
 
 
-_CONFLICTS_DOC = (
-    Path(__file__).resolve().parents[1] / "docs" / "explanation" / "conflicts.md"
-)
-
-
-def _console_block(text: str, command: str) -> list[str]:
-    """The output lines of the ``console`` block whose first line is ``command``."""
-    for body in re.findall(r"```console\n(.*?)\n```", text, re.DOTALL):
-        lines = body.splitlines()
-        if lines[0] == command:
-            return lines[1:]
-
-    msg = f"no console block for {command!r}"
-    raise AssertionError(msg)
-
-
-def _doc_paragraph(text: str, needle: str) -> str:
-    """The blank-line-delimited paragraph of ``text`` that contains ``needle``."""
-    for paragraph in text.split("\n\n"):
-        if needle in paragraph:
-            return paragraph
-
-    msg = f"no paragraph containing {needle!r}"
-    raise AssertionError(msg)
-
-
-def _emitted_labels(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-    body: str,
-    *,
-    extras: tuple[str, ...] = (),
-    groups: tuple[str, ...] = (),
-) -> list[str]:
-    """The ``# label`` headers a ``nab lock`` over ``body`` prints for the selection.
-
-    The requirements formats label one block per emitted target and omit
-    the header when there is only one, so for these single-target
-    specific-mode locks the headers count the forks.
-    """
-    pyproject = _make_pyproject(tmp_path, body)
-    lock(
-        pyproject,
-        cache_dir=tmp_path / "cache",
-        offline=True,
-        extras=extras,
-        groups=groups,
-        format="requirements-without-hashes",
-        output=Path("-"),
-    )
-
-    printed = capsys.readouterr().out
-    return [line for line in printed.splitlines() if line.startswith("# ")]
-
-
-class TestConflictsDocTranscript:
-    """The conflicts page quotes the refusal lines the CLI prints."""
-
-    _UMBRELLA = (
-        '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
-        "[project.optional-dependencies]\n"
-        "cpu = []\n"
-        "gpu = []\n"
-        'all = ["proj[cpu]", "proj[gpu]"]\n'
-        "[tool.nab]\n"
-        'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
-    )
-
-    _DEFAULT_GROUPS = (
-        '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
-        "[dependency-groups]\n"
-        'black22 = ["black==22.1.0"]\n'
-        'black23 = ["black==23.12.0"]\n'
-        "[tool.nab]\n"
-        'default-groups = ["black22", "black23"]\n'
-        'conflicts = [[{ group = "black22" }, { group = "black23" }]]\n'
-    )
-
-    def test_umbrella_refusal_matches_documented_transcript(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """An umbrella extra reaching both members prints the page's line."""
-        pyproject = _make_pyproject(tmp_path, self._UMBRELLA)
-        with pytest.raises(SystemExit, match="1"):
-            lock(pyproject, cache_dir=tmp_path / "cache", extras=("all",))
-        printed = capsys.readouterr().err.strip()
-
-        doc = _CONFLICTS_DOC.read_text(encoding="utf-8")
-        assert printed in _console_block(doc, "$ nab lock --extras all")
-
-    def test_default_groups_refusal_matches_documented_transcript(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Two default groups in one exclusive set print the page's line."""
-        pyproject = _make_pyproject(tmp_path, self._DEFAULT_GROUPS)
-        with pytest.raises(SystemExit, match="1"):
-            lock(pyproject, cache_dir=tmp_path / "cache")
-        printed = capsys.readouterr().err.strip()
-
-        doc = _CONFLICTS_DOC.read_text(encoding="utf-8")
-        assert printed in _console_block(doc, "$ nab lock")
-
-
-class TestConflictsDocForkingPolicies:
-    """The conflicts page names which policies fork a co-selecting run.
-
-    Only the exclusive policies do; ``at-least-one`` permits co-selection.
-    """
-
-    _GROUPS = (
-        '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
-        "[dependency-groups]\n"
-        "a = []\n"
-        "b = []\n"
-    )
-
-    def _body(self, policy: str) -> str:
-        """The two-group project with ``a`` and ``b`` conflicting under ``policy``."""
-        members = '[{ group = "a" }, { group = "b" }]'
-        return (
-            self._GROUPS
-            + "[tool.nab]\n"
-            + f'conflicts = [{{ members = {members}, policy = "{policy}" }}]\n'
-        )
-
-    def _unwrapped_claim(self, needle: str) -> str:
-        """The page's paragraph holding ``needle``, rejoined onto one line.
-
-        The page hard-wraps, so a claim spanning a line break only matches unwrapped.
-        """
-        doc = _CONFLICTS_DOC.read_text(encoding="utf-8")
-        return " ".join(_doc_paragraph(doc, needle).split())
-
-    def test_exactly_one_forks_co_selected_members(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """An exclusive set resolves each co-selected member on its own."""
-        labels = _emitted_labels(
-            tmp_path, capsys, self._body("exactly-one"), groups=("a", "b")
-        )
-        assert labels == ["# host-group-a", "# host-group-b"]
-
-        claim = self._unwrapped_claim("When the selection activates")
-        assert "an exclusive set (`at-most-one` or `exactly-one`)" in claim
-
-    def test_at_least_one_co_selection_stays_one_resolve(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """An at-least-one set permits co-selection, so the run does not fork."""
-        labels = _emitted_labels(
-            tmp_path, capsys, self._body("at-least-one"), groups=("a", "b")
-        )
-        assert labels == []
-
-        claim = self._unwrapped_claim("The require-one policies")
-        assert "`at-least-one` permits it" in claim
-
-
-_CLI_REFERENCE_DOC = (
-    Path(__file__).resolve().parents[1] / "docs" / "reference" / "cli.md"
-)
-
-
-def _doc_section(text: str, heading: str) -> str:
-    return text.partition(f"\n{heading}\n")[2].partition("\n## ")[0]
-
-
-def _names_flag(text: str, flag: str) -> bool:
-    """Whether ``text`` names ``flag``, its ``--no-`` form, or a covering wildcard."""
-    forms = [flag, f"--no-{flag.removeprefix('--')}"]
-    if flag.startswith("--project-"):
-        forms.append("--project-*")
-    return any(re.search(rf"`{re.escape(form)}(?![\w-])", text) for form in forms)
-
-
-class TestCliReferenceSelectionShape:
-    """The reference's selection paragraph matches how many resolves a selection runs.
-
-    ``--extras`` and ``--groups`` union into one resolve until they select
-    two members of a declared conflict set, which forks the run.
-    """
-
-    _EXTRAS = (
-        '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
-        "[project.optional-dependencies]\n"
-        "cpu = []\n"
-        "gpu = []\n"
-    )
-
-    _CONFLICT = '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
-
-    def _selection_paragraph(self) -> str:
-        """The ``nab lock`` paragraph that states what a selection resolves to."""
-        text = _doc_section(
-            _CLI_REFERENCE_DOC.read_text(encoding="utf-8"), "## `nab lock`"
-        )
-        return _doc_paragraph(text, "union resolve")
-
-    def test_selection_alone_is_one_union_resolve(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Two extras with no conflict declared resolve once, as the page says."""
-        labels = _emitted_labels(tmp_path, capsys, self._EXTRAS, extras=("cpu", "gpu"))
-        assert labels == []
-
-        assert "single union resolve" in self._selection_paragraph()
-
-    def test_co_selected_conflict_members_fork_the_resolve(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """Declaring the same two extras exclusive resolves each separately."""
-        labels = _emitted_labels(
-            tmp_path, capsys, self._EXTRAS + self._CONFLICT, extras=("cpu", "gpu")
-        )
-        assert labels == ["# host-extra-cpu", "# host-extra-gpu"]
-
-        paragraph = self._selection_paragraph()
-        assert "`[tool.nab].conflicts`" in paragraph
-        assert "../explanation/conflicts.md" in paragraph
-
-
-class TestCliReferenceFlagCoverage:
-    """Each run subcommand's reference section names every flag it accepts."""
-
-    @pytest.mark.parametrize(
-        ("heading", "command"),
-        [("## `nab lock`", lock), ("## `nab download`", download)],
-    )
-    def test_section_names_every_flag(
-        self, heading: str, command: Callable[..., None]
-    ) -> None:
-        text = _CLI_REFERENCE_DOC.read_text(encoding="utf-8")
-
-        # Flags shared by both commands are documented once, in their own section.
-        scope = _doc_section(text, heading) + _doc_section(text, "## Runtime flags")
-
-        for name, param in inspect.signature(command).parameters.items():
-            if param.kind is not inspect.Parameter.KEYWORD_ONLY:
-                continue
-            flag = "--" + name.replace("_", "-")
-            assert _names_flag(scope, flag), f"{heading} omits {flag}"
-
-
 class TestCliDocstringCommandModules:
     """``nab.cli``'s docstring names every module that registers a subcommand."""
 
@@ -4120,7 +3877,7 @@ class TestLockAnchorReuse:
         with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=prior)
         # New pylock's [tool.nab].created-at must equal the prior anchor.
-        from nab_python.lockfile import read_lockfile_anchor
+        from nab_project.lockfile import read_lockfile_anchor
 
         assert read_lockfile_anchor(prior) == self._RECORDED
 
@@ -4128,7 +3885,7 @@ class TestLockAnchorReuse:
         prior, pyproject = self._relative_cutoff_relock(tmp_path)
         with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=prior, upgrade=True)
-        from nab_python.lockfile import read_lockfile_anchor
+        from nab_project.lockfile import read_lockfile_anchor
 
         new_anchor = read_lockfile_anchor(prior)
         assert new_anchor is not None
@@ -4146,7 +3903,7 @@ class TestLockAnchorReuse:
         out = tmp_path / "pylock.toml"
         with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out)
-        from nab_python.lockfile import read_lockfile_anchor
+        from nab_project.lockfile import read_lockfile_anchor
 
         assert read_lockfile_anchor(out) == absolute
 
@@ -4163,7 +3920,7 @@ class TestLockAnchorReuse:
         out = tmp_path / "pylock.toml"
         with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out)
-        from nab_python.lockfile import read_lockfile_anchor
+        from nab_project.lockfile import read_lockfile_anchor
 
         assert tomli.loads(out.read_text())["tool"]["nab"]["created-at"] == absolute
         assert read_lockfile_anchor(out) == absolute
@@ -5417,7 +5174,7 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """Without ``-v`` an engine INFO record is dropped and a WARNING shows."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch)
-        logger = logging.getLogger("nab_python")
+        logger = logging.getLogger("nab_project")
         logger.info("engine detail")
         logger.warning("engine note")
         assert "engine detail" not in stderr.getvalue()
@@ -5429,7 +5186,7 @@ class TestMainWiresOutputOptions:
         """``-vv`` reaches the log handler, not just the printer."""
         printer, _stderr = self._run_lock(tmp_path, monkeypatch, "-vv")
         assert printer.verbosity is Verbosity.DEBUG
-        assert logging.getLogger("nab_python").getEffectiveLevel() == logging.DEBUG
+        assert logging.getLogger("nab_project").getEffectiveLevel() == logging.DEBUG
 
     def test_color_always_paints_the_run_summary(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -5444,7 +5201,7 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """The handler is installed with the printer's colour decision."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch, "--color", "always")
-        logging.getLogger("nab_python").warning("engine note")
+        logging.getLogger("nab_project").warning("engine note")
         assert f"{YELLOW}warning:{RESET} engine note" in stderr.getvalue()
 
     def test_log_records_stay_plain_with_color_off(
@@ -5452,7 +5209,7 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """With colour off the handler emits a plain ``warning:`` token."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch)
-        logging.getLogger("nab_python").warning("engine note")
+        logging.getLogger("nab_project").warning("engine note")
         assert "warning: engine note" in stderr.getvalue()
         assert "\033[" not in stderr.getvalue()
 
@@ -5477,7 +5234,7 @@ class TestMainWiresOutputOptions:
         monkeypatch.setenv("NAB_VERBOSITY", "debug")
         printer, _stderr = self._run_lock(tmp_path, monkeypatch)
         assert printer.verbosity is Verbosity.DEBUG
-        assert logging.getLogger("nab_python").getEffectiveLevel() == logging.DEBUG
+        assert logging.getLogger("nab_project").getEffectiveLevel() == logging.DEBUG
 
     def test_env_no_progress_blocks_progress(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

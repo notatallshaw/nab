@@ -19,7 +19,7 @@ from typing import Annotated
 import tyro
 
 from nab_index.cache import OnDiskCache, is_recognized_bucket
-from nab_python.config_sources import SourceConfigError
+from nab_project.config_sources import SourceConfigError
 
 from .cli import (
     _default_cache_dir,

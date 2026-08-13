@@ -1,0 +1,39 @@
+[project]
+name = "nab-provider"
+version = "0.0.14.dev0"
+description = "IO-free resolution core for nab"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Damian Shaw", email = "damian.peter.shaw@gmail.com" },
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+# The provider does no IO, so it takes nothing that fetches, builds, or parses
+# a config file. A host that supplies its own IO can vendor this and the solver
+# without taking nab's HTTP client, cache, or build machinery with it.
+dependencies = [
+    "nab-resolver==0.0.14.dev0",
+    "typing_extensions>=4.6",
+]
+
+[project.urls]
+Homepage = "https://github.com/notatallshaw/nab"
+Documentation = "https://nab.readthedocs.io/"
+Issues = "https://github.com/notatallshaw/nab/issues"
+Source = "https://github.com/notatallshaw/nab"
+Changelog = "https://github.com/notatallshaw/nab/releases"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

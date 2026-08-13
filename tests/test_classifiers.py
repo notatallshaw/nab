@@ -14,11 +14,12 @@ import tomli
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+# Every distribution except the umbrella, which builds from the repo root.
+WORKSPACE_PACKAGES = ("nab-resolver", "nab-provider", "nab-project", "nab-index")
+
 PYPROJECT_PATHS = (
     REPO_ROOT / "pyproject.toml",
-    REPO_ROOT / "nab-resolver" / "pyproject.toml",
-    REPO_ROOT / "nab-python" / "pyproject.toml",
-    REPO_ROOT / "nab-index" / "pyproject.toml",
+    *(REPO_ROOT / name / "pyproject.toml" for name in WORKSPACE_PACKAGES),
 )
 
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test.yml"

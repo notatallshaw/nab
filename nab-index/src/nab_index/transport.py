@@ -12,7 +12,8 @@ import zlib
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
-from .errors import IndexAccessError
+from nab_provider.errors import HttpError, UnserveableUrlError
+
 from .retry import RETRY_STATUSES
 
 if TYPE_CHECKING:
@@ -59,28 +60,6 @@ _CONTENT_STATUSES: Final[frozenset[int]] = frozenset({200, 203})
 
 # RFC 9110 8.4.1.3: "x-gzip" is the same coding as "gzip".
 _GZIP_CODINGS: Final[frozenset[str]] = frozenset({"gzip", "x-gzip"})
-
-
-class HttpError(IndexAccessError):
-    """A request failed, or answered with a status the caller cannot use.
-
-    Transports raise this from ``get`` and ``raise_for_status`` so callers
-    can handle index failures without importing a specific HTTP backend.
-    """
-
-
-class UnserveableUrlError(HttpError):
-    """The index reached a verdict that it will not serve this URL.
-
-    Raised for a client-error status the retry policy does not treat as a
-    blip, so not a 408 or a 429: a 404 on an advertised PEP 658 sidecar, a
-    403, a 410.  The status is a property of the URL, so asking again gets
-    the same answer, and a caller may treat the artifact as unavailable.
-
-    A 5xx that outlived the retry budget, and a connection that failed,
-    stay a bare :class:`HttpError`.  Those say nothing about the URL, so a
-    caller must not read them as a verdict.
-    """
 
 
 class ContentDecodingError(Exception):

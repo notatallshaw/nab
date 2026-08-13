@@ -7,6 +7,7 @@ build/
 .hypothesis/
 .coverage*
 .ruff_cache/
+.venv/
 .hatch/
 .nox/
 docs/_build/

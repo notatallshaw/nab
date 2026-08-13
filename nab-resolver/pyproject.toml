@@ -19,6 +19,8 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
+# Empty on purpose. The solver core is standard library only, so a host
+# application can vendor it without dragging anything else in.
 dependencies = []
 
 [project.urls]

@@ -1,6 +1,6 @@
 """Build, verify, and smoke-test the nab distributions for a release.
 
-Builds all four packages into ``dist/<package>`` with a pinned timestamp, proves
+Builds all five packages into ``dist/<package>`` with a pinned timestamp, proves
 the build is reproducible by building a second time and comparing hashes, runs
 ``twine check --strict``, and installs the built ``nab`` into a throwaway venv to
 confirm the CLI runs. The publish workflow calls this; nothing here uploads.
@@ -23,7 +23,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The umbrella package lives at the repo root; the rest are subdirectories.
-PACKAGES = ("nab-resolver", "nab-index", "nab-python", "nab")
+PACKAGES = ("nab-resolver", "nab-provider", "nab-index", "nab-project", "nab")
 
 
 def _require_tools(*tools: str) -> None:
@@ -57,7 +57,7 @@ def _run(
     return (result.stdout or "").strip() if capture else ""
 
 
-def _source_dir(package: str) -> Path:
+def source_dir(package: str) -> Path:
     """Return the source directory for a workspace package."""
     return REPO_ROOT if package == "nab" else REPO_ROOT / package
 
@@ -79,7 +79,7 @@ def build_all(outdir: Path, source_date_epoch: str) -> None:
                 "--no-isolation",
                 "--outdir",
                 str(outdir / package),
-                str(_source_dir(package)),
+                str(source_dir(package)),
             ],
             env=env,
         )

@@ -10,7 +10,7 @@ from nab import cli as nab_cli
 from nab.cli import app
 from nab_index.cache import CACHE_VERSION_SIMPLE, CachePolicy, OnDiskCache
 from nab_index.parsed_listing import encode as _encode_parsed
-from nab_python.config_sources import SourceRoots
+from nab_project.config_sources import SourceRoots
 
 # Derived so a bucket-version bump does not need every path updated.
 SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"

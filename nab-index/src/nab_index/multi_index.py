@@ -23,13 +23,13 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from packaging.utils import canonicalize_name as _normalise_name
 
+from nab_provider.records import IndexConfig
+
 from .cache import OfflineError
-from .serialization import SimpleSerialization
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -70,8 +70,8 @@ class IndexClient(Protocol):
         version: str,
         metadata_url: str,
         metadata_hash: tuple[str, str] | None = None,
-    ) -> str:
-        """Return the metadata text for a wheel."""
+    ) -> str | None:
+        """Return the metadata text for a wheel, or ``None`` if unreadable."""
         ...
 
     async def get_sdist_files(
@@ -108,22 +108,6 @@ class IndexClient(Protocol):
     async def aclose(self) -> None:
         """Close any underlying transport."""
         ...
-
-
-@dataclass(frozen=True, slots=True)
-class IndexConfig:
-    """Declares one index in the ordered list of indexes.
-
-    ``name`` is the index identifier used by overrides and lockfile
-    output.  ``url`` is the Simple API root (HTTPS or ``file://``).
-    Order is significant: callers walk the list left-to-right and
-    presence-based first-index applies.  ``serialization`` pins which
-    Simple-API serialization this index is asked for and read as.
-    """
-
-    name: str
-    url: str
-    serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE
 
 
 class MultiIndexClient:
@@ -258,7 +242,7 @@ class MultiIndexClient:
         version: str,
         metadata_url: str,
         metadata_hash: tuple[str, str] | None = None,
-    ) -> str:
+    ) -> str | None:
         """Forward to the routed client; presupposes ``get_files`` was called."""
         return await self._client_for(package).get_metadata_text(
             package, version, metadata_url, metadata_hash

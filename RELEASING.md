@@ -1,6 +1,6 @@
 # Releasing
 
-All four packages release together at one version (lockstep).
+All five packages release together at one version (lockstep).
 
 ## Cut a release
 
@@ -21,7 +21,7 @@ All four packages release together at one version (lockstep).
 
 4. Draft a GitHub release for the `v0.0.3` tag, click "Generate release notes",
    and publish it. That triggers the release workflow, which builds and validates
-   all four packages and publishes them to PyPI via trusted publishing. Approve
+   all five packages and publishes them to PyPI via trusted publishing. Approve
    the `pypi` deployment in the Actions tab when prompted.
 
 ## Notes

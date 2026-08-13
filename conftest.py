@@ -16,7 +16,7 @@ The property suite under ``nab-*/tests/property*/`` uses explicit
 decorators so its example budget is independent of the profile.
 
 ``cap_writes`` and ``deny_access`` are here rather than in one suite's
-conftest because both the ``nab-python`` suite and the CLI suite use them.
+conftest because both the ``nab-project`` suite and the CLI suite use them.
 """
 
 from __future__ import annotations
