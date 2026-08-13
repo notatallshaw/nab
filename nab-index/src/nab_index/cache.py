@@ -30,8 +30,8 @@ rendering also needs the suffix bumped to reach warm caches.
 A resolve writes two more buckets under the same root, holding upstream
 source trees:
 
-    vcs/vcs/<repo key>/<commit sha>/   <- shallow clone
-    archive/<archive digest>/          <- extracted archive
+    vcs-v1/vcs/<repo key>/<commit sha>/   <- shallow clone
+    archive-v1/<archive digest>/          <- extracted archive
 """
 
 from __future__ import annotations
@@ -74,15 +74,19 @@ CACHE_VERSION_SIMPLE_PARSED = "v0"
 CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
 CACHE_VERSION_SDIST = "v1"
+CACHE_VERSION_VCS = "v1"
+CACHE_VERSION_ARCHIVE = "v1"
 
 # Buckets of nab-written records. simple-neg-* is covered by the simple- prefix.
 ENTRY_BUCKET_PREFIXES = ("simple-", "metadata-", "sdist-")
 
 # Buckets a resolve fills with upstream source trees. nab owns the directories,
 # not the files inside them.
-VCS_BUCKET = "vcs"
-ARCHIVE_BUCKET = "archive"
+VCS_BUCKET = f"vcs-{CACHE_VERSION_VCS}"
+ARCHIVE_BUCKET = f"archive-{CACHE_VERSION_ARCHIVE}"
 SOURCE_BUCKETS = (VCS_BUCKET, ARCHIVE_BUCKET)
+_LEGACY_SOURCE_BUCKETS = ("vcs", "archive")
+_RECOGNIZED_SOURCE_BUCKETS = SOURCE_BUCKETS + _LEGACY_SOURCE_BUCKETS
 
 DEFAULT_PYPI_URLS = frozenset(
     [
@@ -134,7 +138,7 @@ def _is_entry_bucket(name: str) -> bool:
 
 def is_recognized_bucket(name: str) -> bool:
     """Whether ``name`` is a bucket directory nab owns under a cache root."""
-    return _is_entry_bucket(name) or name in SOURCE_BUCKETS
+    return _is_entry_bucket(name) or name in _RECOGNIZED_SOURCE_BUCKETS
 
 
 def _index_dirname(index_url: str) -> str:

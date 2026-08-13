@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from nab_index import vcs as vcs_mod
+from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
 from nab_python import resolve as resolve_mod
@@ -1599,6 +1600,53 @@ class TestVcsConfigPlumbing:
         assert result.success
         assert result.target_results[0].pins == {"pkg": Version("1.0")}
 
+    def test_poisoned_legacy_cached_clone_is_not_reused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A clone written before source-cache isolation cannot affect a resolve."""
+        repo_key = "repo-key"
+        legacy = tmp_path / "vcs" / "vcs" / repo_key / _FORTY_SHA
+        (legacy / ".git").mkdir(parents=True)
+        (legacy / ".git" / "nab-complete").touch()
+        legacy_pyproject = legacy / "pyproject.toml"
+        legacy_pyproject.write_text(
+            '[project]\nname = "pkg"\nversion = "99.0"\n', encoding="utf-8"
+        )
+
+        git_commands: list[str] = []
+
+        def fake_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess:
+            git_commands.append(cmd[1])
+            cwd = Path(str(kwargs["cwd"]))
+            if cmd[:2] == ["git", "init"]:
+                (cwd / ".git").mkdir(exist_ok=True)
+            if cmd[:2] == ["git", "checkout"]:
+                (cwd / "pyproject.toml").write_text(
+                    '[project]\nname = "pkg"\nversion = "1.0"\n', encoding="utf-8"
+                )
+            return subprocess.CompletedProcess(cmd, 0)
+
+        monkeypatch.setattr(vcs_mod, "_repo_key", lambda _url: repo_key)
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        result = resolve_with_coordinator(
+            _make_coordinator({}),
+            _one_target(),
+            _reqs("pkg"),
+            config=_no_build(vcs=self._allow(), vcs_sources=(self._source(),)),
+            cache_dir=tmp_path,
+        )
+
+        current = tmp_path / VCS_BUCKET / "vcs" / repo_key / _FORTY_SHA
+        assert result.success
+        assert result.target_results[0].pins == {"pkg": Version("1.0")}
+        assert git_commands == ["init", "fetch", "checkout"]
+        assert (current / ".git" / "nab-complete").is_file()
+        assert 'version = "1.0"' in (current / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+        assert 'version = "99.0"' in legacy_pyproject.read_text(encoding="utf-8")
+
 
 class TestCutoffAndOverridePlumbing:
     """The upload cutoff and the two override tables reach the provider.
@@ -2505,6 +2553,43 @@ class TestArchiveSourceAcrossTargets:
         for target_result in result.target_results:
             assert str(target_result.pins["foo"]) == "1.0"
             assert str(target_result.pins["bar"]) == "2.0"
+
+    def test_poisoned_legacy_cached_tree_is_not_reused(self, tmp_path: Path) -> None:
+        """A tree written before source-cache isolation cannot affect a resolve."""
+        fresh = '[project]\nname = "foo"\nversion = "1.0"\n'
+        data = _archive_bytes("foo", "1.0", fresh)
+        digest = hashlib.sha256(data).hexdigest()
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.tar.gz#sha256={digest}"
+        )
+
+        legacy_entry = tmp_path / "archive" / digest
+        legacy_tree = legacy_entry / "tree"
+        legacy_tree.mkdir(parents=True)
+        (legacy_tree / "pyproject.toml").write_text(
+            '[project]\nname = "foo"\nversion = "99.0"\n', encoding="utf-8"
+        )
+        (legacy_entry / ".nab-hashes").write_text(f"sha256={digest}", encoding="utf-8")
+        (legacy_entry / ".nab-complete").touch()
+
+        coord = make_coordinator([], package="foo")
+        coord.index.store_sdist_archive("foo", digest, data)
+
+        result = resolve_with_coordinator(
+            coord,
+            _one_target(),
+            _reqs("foo"),
+            config=NabProjectConfig(archive_sources=(source,)),
+            cache_dir=tmp_path,
+        )
+
+        assert result.success
+        assert str(result.target_results[0].pins["foo"]) == "1.0"
+        assert (tmp_path / ARCHIVE_BUCKET / digest / ".nab-complete").is_file()
+        assert 'version = "99.0"' in (legacy_tree / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+        coord.request_direct_archive.assert_called_once()
 
     def test_resolves_with_caching_off(self) -> None:
         """``nab lock --no-cache`` still extracts and pins the declared archive."""

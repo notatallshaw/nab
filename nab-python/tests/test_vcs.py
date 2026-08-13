@@ -24,9 +24,11 @@ from nab_index.vcs import (
     _split_repo_ref,
     prepare_clone,
 )
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
 from nab_python.fetch import FetchCoordinator, InMemoryIndex
 from nab_python.lockfile import VcsPin, build_target_lock
+from nab_python.metadata import WheelMetadata
 from nab_python.provider import (
     BuildPolicy,
     LocalSource,
@@ -1144,6 +1146,79 @@ class TestProviderVcsIntegration:
         )
         with pytest.raises(UnsupportedSdistError, match="build-policy 'build-remote'"):
             provider.fetch_versions("foo")
+
+    def test_dynamic_backend_mutation_does_not_poison_cached_clone(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sha = "a" * 40
+        clone_dir = tmp_path / "cache" / "vcs" / "k" / sha
+        _mark_complete(clone_dir)
+        project = clone_dir / "pkg"
+        project.mkdir()
+        (project / "pyproject.toml").write_text(
+            '[project]\nname = "foo"\nversion = "1.0.0"\ndynamic = ["dependencies"]\n',
+            encoding="utf-8",
+        )
+        dependency = project / "dependency.txt"
+        dependency.write_text("dep-one==1", encoding="utf-8")
+        (clone_dir / "shared.txt").write_text("parent context", encoding="utf-8")
+
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: "k")
+        monkeypatch.setattr(subprocess, "run", _refuse_git)
+
+        def mutating_backend(path: Path, **_kwargs: object) -> WheelMetadata:
+            assert path.parent.name == clone_dir.name
+            assert (path.parent / "shared.txt").read_text(encoding="utf-8") == (
+                "parent context"
+            )
+            assert (path.parent / ".git" / _COMPLETE_MARKER).is_file()
+            backend_input = path / "dependency.txt"
+            requires_dist = [Requirement(backend_input.read_text(encoding="utf-8"))]
+            backend_input.write_text("dep-two==2", encoding="utf-8")
+            return WheelMetadata(
+                name="foo",
+                version=Version("1.0.0"),
+                requires_python=None,
+                requires_dist=requires_dist,
+                provides_extra=[],
+            )
+
+        monkeypatch.setattr(
+            "nab_python.build_backend.extract_metadata", mutating_backend
+        )
+
+        def make_provider() -> Provider:
+            return Provider(
+                self.coordinator(),
+                vcs_config=VcsConfig(
+                    policy=VcsPolicy.ALLOW,
+                    allowed_schemes=frozenset({"git+https"}),
+                    allowed_repos=("https://example.com/",),
+                    require_pin=True,
+                ),
+                vcs_sources=[
+                    VcsSource(
+                        name="foo",
+                        url=(f"git+https://example.com/foo.git@{sha}#subdirectory=pkg"),
+                    )
+                ],
+                vcs_cache_dir=tmp_path / "cache",
+                build_policy=BuildPolicy.BUILD_REMOTE,
+            )
+
+        first = make_provider()
+        first.fetch_versions("foo")
+        second = make_provider()
+        second.fetch_versions("foo")
+
+        metadata_key = ("foo", Version("1.0.0"))
+        assert [
+            str(first.metadata_cache[metadata_key].requires_dist[0]),
+            str(second.metadata_cache[metadata_key].requires_dist[0]),
+        ] == ["dep-one==1", "dep-one==1"]
+        assert dependency.read_text(encoding="utf-8") == "dep-one==1"
 
     def test_duplicate_source_across_local_vcs_raises(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="duplicate source"):

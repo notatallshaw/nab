@@ -31,13 +31,15 @@ fills a bucket of its own:
 
 | Bucket | Holds |
 | ------ | ----- |
-| `vcs/` | a shallow clone, at `vcs/vcs/<repo key>/<commit sha>/` |
-| `archive/` | an extracted archive, at `archive/<archive digest>/` |
+| `vcs-v1/` | a shallow clone, at `vcs-v1/vcs/<repo key>/<commit sha>/` |
+| `archive-v1/` | an extracted archive, at `archive-v1/<archive digest>/` |
 
-Both hold upstream files rather than nab records, so neither is versioned
-or keyed per index. Under `--no-cache` there is no root to write to, so
-the run materialises them in a temporary directory and discards them at
-the end.
+Both hold upstream files rather than nab records and are not keyed per
+index. Their bucket versions let nab retire trees whose reuse rules have
+changed. Resolves ignore the older unversioned `vcs/` and `archive/`
+buckets, while `nab cache clear` continues to remove them. Under
+`--no-cache` there is no root to write to, so the run materialises source
+trees in a temporary directory and discards them at the end.
 
 ## Freshness
 

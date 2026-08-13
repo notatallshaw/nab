@@ -18,6 +18,7 @@ import pytest
 
 from nab_index.atomic import atomic_write, atomic_write_text
 from nab_index.cache import (
+    ARCHIVE_BUCKET,
     CACHE_VERSION_METADATA,
     CACHE_VERSION_SDIST,
     CACHE_VERSION_SIMPLE,
@@ -913,7 +914,7 @@ class TestSourceBuckets:
         (tree / "pyproject.toml").write_text("[project]\n")
         return tree
 
-    def test_clear_removes_the_clone_tree(
+    def test_clear_removes_the_legacy_clone_tree(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         root = tmp_path / "cache"
@@ -924,13 +925,23 @@ class TestSourceBuckets:
         assert not clone.exists()
         assert not (root / "vcs").exists()
 
-    def test_clear_removes_the_archive_tree(self, tmp_path: Path) -> None:
+    def test_clear_removes_the_legacy_archive_tree(self, tmp_path: Path) -> None:
         root = tmp_path / "cache"
         cache = _populate(root)
         tree = self._extract_into(root / "archive")
         assert "archive" in cache.clear_cache()
         assert not tree.exists()
         assert not (root / "archive").exists()
+
+    def test_clear_removes_current_source_buckets(self, tmp_path: Path) -> None:
+        root = tmp_path / "cache"
+        cache = OnDiskCache(root, "https://pypi.org/simple")
+        (root / VCS_BUCKET).mkdir(parents=True)
+        (root / ARCHIVE_BUCKET).mkdir()
+
+        assert set(cache.clear_cache()) == {VCS_BUCKET, ARCHIVE_BUCKET}
+        assert not (root / VCS_BUCKET).exists()
+        assert not (root / ARCHIVE_BUCKET).exists()
 
     def test_clear_removes_a_read_only_clone(self, tmp_path: Path) -> None:
         root = tmp_path / "cache"

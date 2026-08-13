@@ -13,6 +13,7 @@ import gzip
 import hashlib
 import inspect
 import io
+import os
 import tarfile
 import textwrap
 import zlib
@@ -31,6 +32,7 @@ from nab_index.subdir import subdirectory_escapes
 from nab_index.transport import HttpError
 from nab_python._provider import sources
 from nab_python._provider.sources import _fetch_archive_bytes
+from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
 from nab_python.download import (
@@ -126,14 +128,19 @@ def _corrupt_deflate_sdist() -> bytes:
     return clean + deflate.flush(zlib.Z_SYNC_FLUSH) + _INVALID_DEFLATE_BLOCK
 
 
-def _provider(archive_sources: list[ArchiveSource], cache_dir: Path | None) -> Provider:
+def _provider(
+    archive_sources: list[ArchiveSource],
+    cache_dir: Path | None,
+    *,
+    build_policy: BuildPolicy = BuildPolicy.NEVER,
+) -> Provider:
     coordinator = MagicMock()
     coordinator.index = InMemoryIndex()
     return Provider(
         coordinator,
         archive_sources=archive_sources,
         archive_cache_dir=cache_dir,
-        build_policy=BuildPolicy.NEVER,
+        build_policy=build_policy,
     )
 
 
@@ -176,6 +183,17 @@ def _warm_extracted_tree(cache: Path, digest: str) -> None:
     (tree / "pyproject.toml").write_text(_PYPROJECT, encoding="utf-8")
     (target / ".nab-hashes").write_text(f"sha256={digest}", encoding="utf-8")
     (target / ".nab-complete").touch()
+
+
+def _warm_dynamic_archive_tree(cache: Path, digest: str) -> Path:
+    """Return a cached archive tree whose dependency metadata needs a backend."""
+    _warm_extracted_tree(cache, digest)
+    tree = cache / digest / "tree"
+    (tree / "pyproject.toml").write_text(
+        '[project]\nname = "foo"\nversion = "1.0.0"\ndynamic = ["dependencies"]\n',
+        encoding="utf-8",
+    )
+    return tree
 
 
 def _lock_input(pins: Mapping[str, PinShape]) -> LockInput:
@@ -491,6 +509,104 @@ class TestArchiveMaterialize:
 
         assert str(versions[0][0]) == "1.0.0"
         assert sentinel.exists()
+
+    def test_dynamic_backend_mutation_does_not_poison_cached_tree(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        digest = "a" * 64
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        tree = _warm_dynamic_archive_tree(cache, digest)
+        dependency = tree / "dependency.txt"
+        dependency.write_text("dep-one==1", encoding="utf-8")
+        dependency_alias = tree / "dependency-alias.txt"
+        os.link(dependency, dependency_alias)
+
+        def mutating_backend(path: Path, **_kwargs: object) -> WheelMetadata:
+            assert path.name == tree.name
+            backend_input = path / "dependency.txt"
+            backend_alias = path / "dependency-alias.txt"
+            assert backend_input.samefile(backend_alias)
+            backend_input.write_text("dep-two==2", encoding="utf-8")
+            requires_dist = [Requirement(backend_alias.read_text(encoding="utf-8"))]
+            return WheelMetadata(
+                name="foo",
+                version=Version("1.0.0"),
+                requires_python=None,
+                requires_dist=requires_dist,
+                provides_extra=[],
+            )
+
+        monkeypatch.setattr(
+            "nab_python.build_backend.extract_metadata", mutating_backend
+        )
+
+        first = _provider([source], cache, build_policy=BuildPolicy.BUILD_REMOTE)
+        first.fetch_versions("foo")
+        second = _provider([source], cache, build_policy=BuildPolicy.BUILD_REMOTE)
+        second.fetch_versions("foo")
+
+        metadata_key = ("foo", Version("1.0.0"))
+        assert [
+            str(first.metadata_cache[metadata_key].requires_dist[0]),
+            str(second.metadata_cache[metadata_key].requires_dist[0]),
+        ] == ["dep-two==2", "dep-two==2"]
+        assert dependency.read_text(encoding="utf-8") == "dep-one==1"
+        assert dependency_alias.read_text(encoding="utf-8") == "dep-one==1"
+        assert dependency.samefile(dependency_alias)
+        first.coordinator.request_direct_archive.assert_not_called()
+        second.coordinator.request_direct_archive.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("failure_target", "expected"),
+        [
+            (
+                "nab_python._provider.sources.tempfile.TemporaryDirectory",
+                "could not create a temporary build tree",
+            ),
+            (
+                "nab_python._provider.sources.shutil.copytree",
+                "could not copy cached source tree",
+            ),
+            (
+                "nab_python._provider.sources.os.link",
+                "could not copy cached source tree",
+            ),
+        ],
+    )
+    def test_cached_tree_copy_failure_names_archive_source(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        failure_target: str,
+        expected: str,
+    ) -> None:
+        digest = "a" * 64
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        tree = _warm_dynamic_archive_tree(cache, digest)
+        dependency = tree / "dependency.txt"
+        dependency.write_text("dep-one==1", encoding="utf-8")
+        os.link(dependency, tree / "dependency-alias.txt")
+        monkeypatch.setattr(
+            failure_target, MagicMock(side_effect=OSError("simulated copy failure"))
+        )
+
+        provider = _provider([source], cache, build_policy=BuildPolicy.BUILD_REMOTE)
+        with pytest.raises(UnsupportedSdistError) as excinfo:
+            provider.fetch_versions("foo")
+
+        message = str(excinfo.value)
+        assert "archive source 'foo'" in message
+        assert expected in message
+        assert "simulated copy failure" in message
+        provider.coordinator.request_direct_archive.assert_not_called()
 
     @requires_data_filter
     def test_every_verified_hash_is_recorded_for_reuse(self, tmp_path: Path) -> None:
