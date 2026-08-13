@@ -69,12 +69,12 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
-from nab_python.requirements_file import (
-    expand_extra_requirements,
+from nab_python.pyproject_files import (
     read_pyproject_dependencies,
     read_pyproject_name,
     read_pyproject_optional_dependencies,
 )
+from nab_python.requirements_file import expand_extra_requirements
 from nab_python.resolve import (
     InstallContexts,
     ResolveFork,

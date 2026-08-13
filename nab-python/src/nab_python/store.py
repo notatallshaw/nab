@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
@@ -79,7 +79,7 @@ class InMemoryIndex:
         # Packages whose offline skips have already been warned about.
         self._offline_metadata_warned: set[str] = set()
 
-        self._sdist_pyproject: dict[tuple[str, str], str | None] = {}
+        self._sdist_pyproject: dict[tuple[str, str], Mapping[str, Any] | None] = {}
         self._sdist_archives: dict[tuple[str, str], bytes | None] = {}
         self._sdist_archive_errors: dict[tuple[str, str], BaseException] = {}
 
@@ -422,17 +422,22 @@ class InMemoryIndex:
         with self._lock:
             return self._range_outcomes.get((package, version, wheel_url))
 
-    def store_sdist_pyproject(self, package: str, version: str, data: str) -> None:
-        """Store sdist-derived pyproject.toml text for static-metadata fallback.
+    def store_sdist_pyproject(
+        self, package: str, version: str, data: Mapping[str, Any] | None
+    ) -> None:
+        """Store an sdist's parsed pyproject.toml for static-metadata fallback.
 
-        No ``None`` slot is written: missing pyproject.toml is
-        indistinguishable from never-fetched at the read path.
+        The fetcher writes both PKG-INFO and pyproject.toml when an sdist is
+        downloaded, and parses the TOML on the way in so the store stays free
+        of a TOML library.  ``None`` reads the same as never-fetched.
         """
         with self._lock:
             self._sdist_pyproject[(package, version)] = data
 
-    def get_sdist_pyproject(self, package: str, version: str) -> str | None:
-        """Return sdist pyproject.toml text or ``None`` if absent or unfetched."""
+    def get_sdist_pyproject(
+        self, package: str, version: str
+    ) -> Mapping[str, Any] | None:
+        """Return the parsed sdist pyproject, or ``None`` if absent or unfetched."""
         with self._lock:
             return self._sdist_pyproject.get((package, version))
 

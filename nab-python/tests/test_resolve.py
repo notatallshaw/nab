@@ -48,12 +48,12 @@ from nab_python.provider import (
     ResolutionStrategy,
     UnsupportedVcsError,
 )
-from nab_python.requirements_file import (
-    InvalidProjectRequirementError,
+from nab_python.pyproject_files import (
     read_pyproject_groups,
     read_pyproject_name,
     read_pyproject_optional_dependencies,
 )
+from nab_python.requirements_file import InvalidProjectRequirementError
 from nab_python.resolve import (
     ResolveFork,
     ResolveResult,

@@ -16,6 +16,7 @@ import threading
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from nab_provider.records import IndexConfig
+from nab_python._toml import parse_pyproject_table
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
 from nab_python.store import InMemoryIndex
 
@@ -114,7 +115,9 @@ def _make_sdist_server(
         # ``None`` marks the slot fetched, which is how a failed sdist reads.
         index.store_sdist_metadata(pkg, ver, pkg_info)
         if sdist_pyproject_toml is not None:
-            index.store_sdist_pyproject(pkg, ver, sdist_pyproject_toml)
+            index.store_sdist_pyproject(
+                pkg, ver, parse_pyproject_table(sdist_pyproject_toml)
+            )
 
     return _serve
 

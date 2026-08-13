@@ -472,10 +472,10 @@ def augment_from_pyproject(
     # Late import keeps the resolver-time path off ``WheelMetadata``
     # construction unless the dynamic-deps pyproject fallback fires.
     from ..metadata import WheelMetadata as _WheelMetadata
-    from ..metadata import load_static_project
+    from ..metadata import static_project_from_table
 
-    text = provider.coordinator.index.get_sdist_pyproject(package, str(version))
-    project = load_static_project(text) if text is not None else None
+    data = provider.coordinator.index.get_sdist_pyproject(package, str(version))
+    project = static_project_from_table(data) if data is not None else None
     if project is None:
         return None
 

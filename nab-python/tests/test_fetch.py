@@ -13,9 +13,9 @@ import tempfile
 import threading
 import time
 import zipfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn
 
 import httpx
 import pytest
@@ -1581,7 +1581,7 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, content=buf.getvalue())
         )
 
-        pyproject_at_event: list[str | None] = []
+        pyproject_at_event: list[Mapping[str, Any] | None] = []
 
         class RecordingIndex(InMemoryIndex):
             def store_sdist_metadata(
@@ -1596,7 +1596,7 @@ class TestFetchCoordinator:
                 "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz"
             )
             event.wait(timeout=5)
-        assert pyproject_at_event == ['[project]\nname = "pkg"\n']
+        assert pyproject_at_event == [{"project": {"name": "pkg"}}]
 
     @respx.mock
     def test_request_listing_serving_index_stored_before_event(self) -> None:

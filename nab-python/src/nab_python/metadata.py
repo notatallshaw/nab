@@ -15,22 +15,22 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-import tomli
-
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.version import InvalidVersion, Version
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from ._vendor.packaging.markers import Marker
 
 __all__ = [
     "DEPENDENCY_FIELDS",
     "WheelMetadata",
     "intern_version",
-    "load_static_project",
     "metadata_deps_are_static",
     "parse_metadata",
+    "static_project_from_table",
     "validate_specifier_versions",
 ]
 
@@ -41,19 +41,14 @@ __all__ = [
 _DYNAMIC_FIELD_BLOCKERS = frozenset({"dependencies", "optional-dependencies"})
 
 
-def load_static_project(text: str) -> dict[str, Any] | None:
-    """Return the ``[project]`` table when it can be trusted as static.
+def static_project_from_table(data: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Return ``data``'s ``[project]`` table when it can be trusted as static.
 
-    Returns ``None`` when the TOML cannot be parsed, the
-    ``[project]`` table is missing or malformed, or
-    ``project.dynamic`` includes ``dependencies`` /
+    Returns ``None`` when the ``[project]`` table is missing or
+    malformed, or ``project.dynamic`` includes ``dependencies`` /
     ``optional-dependencies`` (in which case the static reader can
     not provide either).
     """
-    try:
-        data = tomli.loads(text)
-    except tomli.TOMLDecodeError:
-        return None
     project = data.get("project")
     if not isinstance(project, dict):
         return None

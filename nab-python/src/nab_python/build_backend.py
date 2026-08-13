@@ -15,10 +15,15 @@ from typing import TYPE_CHECKING
 from ._build.errors import (
     BuildBackendError as BuildBackendError,  # noqa: PLC0414  (public re-export)
 )
+from ._toml import parse_pyproject_table
 from ._vendor.packaging.specifiers import SpecifierSet
 from ._vendor.packaging.utils import canonicalize_name
 from ._vendor.packaging.version import Version
-from .metadata import WheelMetadata, load_static_project, validate_specifier_versions
+from .metadata import (
+    WheelMetadata,
+    static_project_from_table,
+    validate_specifier_versions,
+)
 from .paths import is_absent_error, path_state
 from .requirements_file import (
     InvalidProjectRequirementError,
@@ -93,6 +98,16 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     if project is None:
         return None
     return _project_to_metadata(project)
+
+
+def load_static_project(text: str) -> dict | None:
+    """Return ``text``'s ``[project]`` table when it can be trusted as static.
+
+    ``None`` when the TOML does not parse, which the static reader treats
+    the same as a table it may not trust.
+    """
+    data = parse_pyproject_table(text)
+    return None if data is None else static_project_from_table(data)
 
 
 def _project_to_metadata(project: dict) -> WheelMetadata | None:

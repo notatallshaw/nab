@@ -34,6 +34,7 @@ from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
 from nab_provider.records import IndexConfig, SdistFile, WheelFile
 from nab_provider.serialization import SimpleSerialization
 
+from ._toml import parse_pyproject_table
 from ._vendor.packaging.utils import canonicalize_name
 from .store import InMemoryIndex, metadata_pending_key, range_pending_key
 
@@ -1072,7 +1073,9 @@ class FetchCoordinator:
         # pending event, and a released waiter reads the pyproject slot
         # with no further synchronisation.
         if pyproject is not None:
-            self.index.store_sdist_pyproject(req.package, req.version, pyproject)
+            self.index.store_sdist_pyproject(
+                req.package, req.version, parse_pyproject_table(pyproject)
+            )
         self.index.store_sdist_metadata(req.package, req.version, pkg_info)
 
     async def _fetch_sdist_archive(

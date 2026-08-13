@@ -11,6 +11,13 @@ from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.specifiers import SpecifierSet
 from nab_python._vendor.packaging.utils import InvalidName
 from nab_python.marker_holds import UnevaluableMarkerError
+from nab_python.pyproject_files import (
+    read_pyproject_build_requires,
+    read_pyproject_dependencies,
+    read_pyproject_groups,
+    read_pyproject_name,
+    read_pyproject_optional_dependencies,
+)
 from nab_python.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
@@ -20,11 +27,6 @@ from nab_python.requirements_file import (
     expand_self_extras,
     parse_project_requirement,
     raise_for_unsatisfiable,
-    read_pyproject_build_requires,
-    read_pyproject_dependencies,
-    read_pyproject_groups,
-    read_pyproject_name,
-    read_pyproject_optional_dependencies,
     resolve_groups_to_requirements,
     self_extra_markers,
 )

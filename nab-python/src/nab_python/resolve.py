@@ -71,15 +71,17 @@ from .config import (
 from .fetch import FetchCoordinator
 from .lockfile import LockInput, TargetLock
 from .marker_holds import dependency_marker_holds
-from .requirements_file import (
-    expand_extra_requirements,
-    expand_group_includes,
-    expand_self_extras,
+from .pyproject_files import (
     read_pyproject_build_requires,
     read_pyproject_dependencies,
     read_pyproject_groups,
     read_pyproject_name,
     read_pyproject_optional_dependencies,
+)
+from .requirements_file import (
+    expand_extra_requirements,
+    expand_group_includes,
+    expand_self_extras,
     resolve_groups_to_requirements,
     self_extra_markers,
 )

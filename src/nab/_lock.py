@@ -60,15 +60,17 @@ from nab_python.lockfile import (
     write_requirements_without_hashes,
 )
 from nab_python.paths import PathState, path_state
-from nab_python.requirements_file import (
-    InvalidProjectRequirementError,
-    InvalidProjectTableError,
-    expand_extra_requirements,
+from nab_python.pyproject_files import (
     read_pyproject_build_requires,
     read_pyproject_dependencies,
     read_pyproject_groups,
     read_pyproject_name,
     read_pyproject_optional_dependencies,
+)
+from nab_python.requirements_file import (
+    InvalidProjectRequirementError,
+    InvalidProjectTableError,
+    expand_extra_requirements,
     resolve_groups_to_requirements,
 )
 from nab_python.resolve import (
