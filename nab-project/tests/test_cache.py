@@ -747,6 +747,21 @@ class TestReadCacheEntry:
         path.write_bytes(b"not json")
         assert cache.read_cache_entry(path) is not None
 
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            b'{"fetched_at": Infinity, "max_age": 600, "etag": null}',
+            b'{"fetched_at": -Infinity, "max_age": 600, "etag": null}',
+            b'{"fetched_at": 1, "max_age": 1e400, "etag": null}',
+        ],
+    )
+    def test_out_of_range_policy_number(self, tmp_path: Path, raw: bytes) -> None:
+        cache = self._cache(tmp_path)
+        path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.policy"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(raw)
+        assert cache.read_cache_entry(path) == "policy not decodable"
+
     def test_valid_policy(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
         cache.put_simple("foo", b"{}", _FRESH)

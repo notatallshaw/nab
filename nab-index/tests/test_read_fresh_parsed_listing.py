@@ -69,6 +69,7 @@ _ZIP_ONLY_BYTES = json.dumps(
 
 # Derived so a bucket-version bump does not need every path updated.
 _JSON_PATH_PARTS = (f"simple-{CACHE_VERSION_SIMPLE}", "pypi", "pkg.json")
+_POLICY_PATH_PARTS = (f"simple-{CACHE_VERSION_SIMPLE}", "pypi", "pkg.policy")
 
 
 def _run(coro: Coroutine[Any, Any, _T]) -> _T:
@@ -161,6 +162,20 @@ class TestReadFreshParsedListing:
 
     def test_absent_policy_returns_none(self, tmp_path: Path) -> None:
         assert read_fresh_parsed_listing(_cache(tmp_path), "pkg", offline=False) is None
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            b"not json",
+            b'{"fetched_at": Infinity, "max_age": 99999, "etag": null}',
+            b'{"fetched_at": 2000000000, "max_age": 1e400, "etag": null}',
+        ],
+    )
+    def test_corrupt_policy_returns_none(self, tmp_path: Path, raw: bytes) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache)
+        tmp_path.joinpath(*_POLICY_PATH_PARTS).write_bytes(raw)
+        assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
     def test_stale_online_returns_none(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
