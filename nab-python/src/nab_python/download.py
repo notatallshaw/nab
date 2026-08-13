@@ -154,28 +154,33 @@ def _iter_index_pin(canonical: str, pin: IndexPin) -> Iterable[DownloadEntry]:
         )
 
 
-def _reject_colliding_targets(artefacts: list[DownloadEntry]) -> None:
-    """Refuse two distinct artefacts that would write to one output filename.
+def _coalesce_download_targets(
+    artefacts: list[DownloadEntry],
+) -> list[DownloadEntry]:
+    """Coalesce casefold-equivalent names sharing ``(hash_algo, digest)``.
 
-    Index sdist/wheel filenames embed the package name and version, so they
-    never collide.  A direct-URL archive's filename is the bare basename of
-    its URL, which is arbitrary: two archives from different repositories
-    commonly share one (e.g. a GitHub ``v1.0.0.tar.gz`` tag tarball).  Two
-    artefacts with different digests but the same basename would clobber each
-    other in the flat output dir, silently dropping one, so refuse it loudly.
+    The first spelling wins; a different identity raises :class:`DownloadError`.
     """
     by_name: dict[str, DownloadEntry] = {}
+    unique: list[DownloadEntry] = []
     for entry in artefacts:
-        prior = by_name.get(entry.filename)
-        if prior is not None and prior.digest != entry.digest:
+        key = entry.filename.casefold()
+        prior = by_name.get(key)
+        if prior is not None and (prior.hash_algo, prior.digest) != (
+            entry.hash_algo,
+            entry.digest,
+        ):
             msg = (
-                f"artefacts collide on output filename {entry.filename!r}:"
-                f" {prior.package}=={prior.version} and"
-                f" {entry.package}=={entry.version} differ."
+                "artefacts collide on casefold-equivalent output filenames"
+                f" {prior.filename!r} and {entry.filename!r}, but their entries"
+                " record different hash identities."
                 " Download them to separate directories."
             )
             raise DownloadError(msg)
-        by_name[entry.filename] = entry
+        if prior is None:
+            by_name[key] = entry
+            unique.append(entry)
+    return unique
 
 
 def download_lock(
@@ -199,8 +204,7 @@ def download_lock(
     served.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    artefacts = list(iter_artifacts(lock_input))
-    _reject_colliding_targets(artefacts)
+    artefacts = _coalesce_download_targets(list(iter_artifacts(lock_input)))
     return asyncio.run(
         _run_downloads(
             artefacts, transport, output_dir, max_concurrency, offline=offline
