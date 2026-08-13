@@ -56,6 +56,7 @@ from nab_provider.provider import (
 )
 from nab_provider.tags import PlatformSpec, TagSet
 from nab_provider.target import ResolveTarget
+from nab_provider.testing import pkg_override
 from nab_python._build import env as env_mod
 from nab_python._build import runner as runner_mod
 from nab_python._build.env import (
@@ -72,7 +73,6 @@ from nab_python._build.runner import (
     build_wheel_for_install,
     run_build_backend,
 )
-from nab_python._testing.overrides import pkg_override
 from nab_python.config import (
     ConflictKind,
     ConflictMember,

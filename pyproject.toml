@@ -211,6 +211,7 @@ omit = [
     "*/test_crosshair_*.py",
     "*/_vendor/*",
     "*/nab_python/_testing/*",
+    "*/nab_provider/testing.py",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#report

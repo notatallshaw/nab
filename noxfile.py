@@ -28,13 +28,19 @@ DISTS_LOCK = ".github/requirements/pylock.dists.toml"
 BUILD_LOCK = ".github/requirements/pylock.build.toml"
 
 # workspace -> (editable packages, pytest paths, coverage-gated packages).
-# Each entry installs the dependency closure of what it gates; the umbrella
-# builds from the repo root, so it installs as ".".
+# Between them the entries gate every distribution the release builds. The
+# umbrella builds from the repo root, so it installs as ".".
+# nab-index rides with the python workspace: nab-python is its only consumer
+# and its tests supply most of nab-index's coverage, so the two are gated here
+# without running nab-python's suite twice.
 #
-# nab-index is gated with the python workspace because each entry has to reach
-# 100 percent from its own suite, and nab-python's tests cover most of nab-index.
-# The provider workspace installs only nab-provider and nab-resolver, which is
-# what proves a host can take it without nab-index.
+# nab-provider rides there too, and gates nothing of its own. The provider
+# workspace installs nab-resolver and nothing else, which is the mechanical
+# proof that a host can take the provider without nab-index or nab-python, and
+# it runs the provider's own suite to prove it works there. It cannot also be
+# the coverage gate: full coverage of nab_provider needs nab-python's engine,
+# config and coordinator tests, so nab_provider is gated with the python
+# workspace, which runs both suites.
 WORKSPACES = {
     "resolver": (
         ["nab-resolver"],
@@ -44,12 +50,12 @@ WORKSPACES = {
     "provider": (
         ["nab-resolver", "nab-provider"],
         ["nab-provider/tests"],
-        ["nab_provider"],
+        [],
     ),
     "python": (
         ["nab-resolver", "nab-provider", "nab-index", "nab-python"],
-        ["nab-python/tests", "nab-index/tests"],
-        ["nab_python", "nab_index"],
+        ["nab-provider/tests", "nab-python/tests", "nab-index/tests"],
+        ["nab_provider", "nab_python", "nab_index"],
     ),
     "umbrella": (
         ["nab-resolver", "nab-provider", "nab-index", "nab-python", "."],

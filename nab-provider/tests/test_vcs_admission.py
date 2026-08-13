@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 
-from nab_index.vcs import VcsRequest
 from nab_provider.vcs_admission import (
     UnsupportedVcsError,
     VcsConfig,
@@ -17,6 +16,7 @@ from nab_provider.vcs_admission import (
     has_full_commit_sha,
     split_vcs_scheme,
 )
+from nab_provider.vcs_request import VcsRequest
 
 _FORTY = "0123456789abcdef0123456789abcdef01234567"
 

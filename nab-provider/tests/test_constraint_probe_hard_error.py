@@ -21,19 +21,20 @@ from __future__ import annotations
 
 import pytest
 
-from nab_index.client import (
-    MalformedSimpleResponseError,
-    MetadataHashMismatchError,
-    WheelFile,
-    WheelHashMismatchError,
-)
-from nab_index.transport import HttpError, UnserveableUrlError
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.errors import (
+    HttpError,
+    MalformedSimpleResponseError,
+    MetadataHashMismatchError,
+    UnserveableUrlError,
+    WheelHashMismatchError,
+)
 from nab_provider.provider import Provider
+from nab_provider.records import WheelFile
 from nab_provider.target import ResolveTarget
-from nab_python._testing.coordinator_fake import make_coordinator
+from nab_provider.testing import make_coordinator
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility
 

@@ -61,7 +61,10 @@ if TYPE_CHECKING:
 
 _spec = importlib.util.spec_from_file_location(
     "simplify_corpus_fixtures",
-    Path(__file__).with_name("simplify_corpus_fixtures.py"),
+    Path(__file__).parents[2]
+    / "nab-provider"
+    / "tests"
+    / "simplify_corpus_fixtures.py",
 )
 assert _spec is not None
 assert _spec.loader is not None

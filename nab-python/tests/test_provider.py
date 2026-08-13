@@ -77,10 +77,10 @@ from nab_provider.provider import (
 )
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
+from nab_provider.testing import pkg_override
 from nab_python import _build_remote
 from nab_python._resolve.engine import _raise_for_source_python
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_python._testing.overrides import pkg_override
 from nab_python.config import (
     IndexOverride,
     NabProjectConfig,

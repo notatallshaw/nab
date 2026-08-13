@@ -169,9 +169,7 @@ def test_packages_holds_every_distribution_in_the_tree() -> None:
 def test_hatch_envs_install_every_released_package() -> None:
     """Each hatch env that installs the workspace declares every member of it.
 
-    An env listing fewer members tests or type-checks a smaller workspace than the
-    one that ships. Detached and skip-install envs install nothing, so they are
-    left out.
+    Detached and skip-install envs install nothing, so they are left out.
     """
     declared = {
         name: sorted(env.get("workspace", {}).get("members", []))
@@ -183,14 +181,20 @@ def test_hatch_envs_install_every_released_package() -> None:
     assert declared == dict.fromkeys(declared, MEMBERS)
 
 
-def test_nox_workspaces_install_what_they_gate() -> None:
-    """Each nox workspace installs the packages it gates and their dependencies.
+def _suite_owners(paths: list[str]) -> set[str]:
+    """The distributions whose test suites a workspace's pytest paths run."""
+    return {DISTRIBUTION_AT[(REPO_ROOT / path).resolve().parent] for path in paths}
+
+
+def test_nox_workspaces_install_what_they_run_and_gate() -> None:
+    """Each nox workspace installs what its suites and gates need, exactly.
 
     Held one entry at a time, since a package dropped from one entry's
-    editables is still installed by another.
+    editables is still installed by another. The provider entry gates nothing,
+    so its suite is what pins its editables.
     """
-    for workspace, (editables, _, gated) in _nox_workspaces().items():
-        owned = {MODULES[module] for module in gated}
+    for workspace, (editables, paths, gated) in _nox_workspaces().items():
+        owned = {MODULES[module] for module in gated} | _suite_owners(paths)
 
         assert _distributions(editables) == _closure(owned), workspace
 
@@ -198,7 +202,7 @@ def test_nox_workspaces_install_what_they_gate() -> None:
 def test_umbrella_workspace_installs_every_released_package() -> None:
     """The umbrella entry installs every released package.
 
-    The types session installs this entry, so every import has to resolve.
+    No coverage gate pins this list.
     """
     editables, _, _ = _nox_workspaces()["umbrella"]
 
@@ -206,10 +210,7 @@ def test_umbrella_workspace_installs_every_released_package() -> None:
 
 
 def test_nox_gates_every_released_package_at_full_coverage() -> None:
-    """Between them the nox workspaces report coverage on every distribution.
-
-    A module in no entry is imported by the suite but never reported on.
-    """
+    """Between them the nox workspaces report coverage on every distribution."""
     gated = {
         module for _, _, modules in _nox_workspaces().values() for module in modules
     }
@@ -229,11 +230,7 @@ def test_ci_runs_every_nox_workspace() -> None:
 
 
 def test_coverage_measures_every_released_package() -> None:
-    """source_pkgs decides what coverage measures at all.
-
-    A distribution missing here is never traced, and its per-package report
-    stays green about code nothing looked at.
-    """
+    """source_pkgs decides what coverage measures at all."""
     measured = _toml(PYPROJECT)["tool"]["coverage"]["run"]["source_pkgs"]
 
     assert set(measured) == set(MODULES)
@@ -277,10 +274,7 @@ def test_ci_installs_every_released_package_outside_nox() -> None:
 
 
 def test_dependabot_watches_every_released_package() -> None:
-    """Dependabot raises Python updates per directory, not per repository.
-
-    A member directory missing from the list has its dependencies frozen silently.
-    """
+    """Dependabot raises Python updates per directory, not per repository."""
     watched = _dependabot_pip_directories()
 
     assert watched == {"/", *(f"/{name}" for name in MEMBERS)}
@@ -300,7 +294,7 @@ def test_release_workflow_publishes_every_released_package() -> None:
 def test_the_dists_check_imports_every_released_package() -> None:
     """The dists check installs the whole wheel set, then imports it.
 
-    A wheel missing from the import list can ship nothing importable and still pass.
+    The import list is derived from PACKAGES and pinned here.
     """
     assert set(check_dists.MODULES) == set(MODULES)
 
@@ -308,9 +302,8 @@ def test_the_dists_check_imports_every_released_package() -> None:
 def test_lock_config_covers_every_released_package() -> None:
     """``nab lock`` resolves every distribution from the tree and skips its cooldown.
 
-    A member missing from the workspace table locks against the published copy,
-    and a name missing from the cooldown exemption pins the CI lockfiles to a
-    version older than the cooldown window.
+    A member missing from the workspace table locks against the published copy
+    instead of the source tree.
     """
     config = _toml(PYPROJECT)["tool"]["nab"]
     exempt = {

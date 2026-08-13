@@ -1,9 +1,7 @@
 """The value records a resolve is expressed in.
 
-A listing entry, an index declaration, and the outcome of a range read.
-None of them fetches anything, and none is annotated against a version or
-requirement type, so the fetching side and the resolving side can both name
-them without either one owning the other.
+None of them fetches anything or is typed against a version or requirement
+class, so the fetching side and the resolving side can both name them.
 """
 
 from __future__ import annotations
@@ -20,6 +18,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ACCEPTED_HASH_ALGORITHMS",
+    "DEFAULT_INDEX_NAME",
+    "DEFAULT_INDEX_URL",
     "DistFile",
     "IndexConfig",
     "RangeMetadataResult",
@@ -39,17 +39,15 @@ class WheelFile:
     ``hashes`` is a tuple of ``(algorithm, hex_digest)`` pairs in the
     order PEP 691 declared them (tuple form keeps the dataclass
     hashable).  ``has_metadata`` says whether the index advertised a
-    PEP 658/714 sidecar; :attr:`metadata_url` derives the URL lazily.
+    PEP 658/714 sidecar.
 
-    ``local_path`` is the on-disk path of a wheel served from a local
-    index, and ``None`` for one fetched from a remote index.  It lets
-    downstream code use the path directly instead of reversing the
-    ``file:`` URL, which is lossy across platforms.
+    ``local_path`` is set for a wheel served from a local index, so a
+    caller need not reverse the ``file:`` URL, which is lossy across
+    platforms.
 
     ``metadata_hash`` is the published ``(algorithm, hex_digest)`` for
     the PEP 658/714 sidecar, or ``None`` when the index advertised the
-    sidecar without a hash.  The fetcher verifies the sidecar bytes
-    against it.
+    sidecar without a hash.
     """
 
     filename: str
@@ -112,6 +110,11 @@ class IndexConfig:
     name: str
     url: str
     serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE
+
+
+# The index a run uses when nothing declares one.
+DEFAULT_INDEX_NAME = "pypi"
+DEFAULT_INDEX_URL = "https://pypi.org/simple/"
 
 
 class RangeOutcome(enum.Enum):

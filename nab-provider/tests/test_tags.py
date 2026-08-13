@@ -18,8 +18,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nab_index.client import WheelFile
 from nab_provider._vendor.packaging.tags import Tag
+from nab_provider.records import WheelFile
 from nab_provider.tags import (
     _PLATFORM_ARCH,
     _PLATFORM_KIND,

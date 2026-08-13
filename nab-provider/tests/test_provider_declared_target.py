@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from nab_index.client import SdistFile, WheelFile
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
@@ -33,10 +32,10 @@ from nab_provider.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_provider.records import SdistFile, WheelFile
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
-from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_python._testing.overrides import pkg_override
+from nab_provider.testing import FakeFetchPort, make_coordinator, pkg_override
 from nab_resolver.resolver import Resolver
 
 if TYPE_CHECKING:
@@ -1035,12 +1034,15 @@ _SDIST_PKG_INFO = (
     "\n"
 )
 
-_SDIST_PYPROJECT = """
-[project]
-name = "pkg"
-version = "1.0"
-dependencies = ["dep-from-static-pyproject"]
-"""
+# The parsed [project] table a bundled pyproject.toml yields; the provider
+# never parses TOML, so the store holds the table rather than the text.
+_SDIST_PYPROJECT = {
+    "project": {
+        "name": "pkg",
+        "version": "1.0",
+        "dependencies": ["dep-from-static-pyproject"],
+    }
+}
 
 
 def _wheel_and_sdist_targets(
@@ -1060,7 +1062,7 @@ def _wheel_and_sdist_targets(
         package="pkg",
         metadata_text=wheel_metadata,
         sdist_pkg_info=_SDIST_PKG_INFO,
-        sdist_pyproject_toml=_SDIST_PYPROJECT,
+        sdist_pyproject=_SDIST_PYPROJECT,
     )
     macos = Provider(
         coordinator,

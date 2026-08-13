@@ -32,7 +32,13 @@ from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
 from nab_index.multi_index import MultiIndexClient
 from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
 from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider.records import IndexConfig, SdistFile, WheelFile
+from nab_provider.records import (
+    DEFAULT_INDEX_NAME,
+    DEFAULT_INDEX_URL,
+    IndexConfig,
+    SdistFile,
+    WheelFile,
+)
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.store import InMemoryIndex, metadata_pending_key, range_pending_key
 
@@ -56,9 +62,6 @@ __all__ = [
     "WarmSyncStats",
 ]
 
-
-DEFAULT_INDEX_NAME = "pypi"
-DEFAULT_INDEX_URL = "https://pypi.org/simple/"
 
 # Maximum time the main thread waits for the fetcher thread to drain
 # its queue and exit on :meth:`FetchCoordinator.shutdown`.

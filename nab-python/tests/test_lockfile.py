@@ -46,6 +46,7 @@ from nab_provider.target import (
     micro_boundary_points,
     slices_from_points,
 )
+from nab_provider.testing import pkg_override
 from nab_python._lockfile.builder import _common_requires_python
 from nab_python._lockfile.coverage import (
     CoverageError,
@@ -61,7 +62,6 @@ from nab_python._lockfile.pylock import (
     _relativize_path,
 )
 from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python._testing.overrides import pkg_override
 from nab_python.config import (
     ConflictKind,
     ConflictMember,
