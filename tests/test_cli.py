@@ -1203,6 +1203,32 @@ class TestLockCommandSpecific:
         assert "cannot be evaluated" in err
         assert "Traceback" not in err
 
+    def test_unnormalizable_extra_name_exits_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An extra PEP 751 will not accept exits 1, not a traceback.
+
+        ``_cli`` canonicalizes to ``-cli``, which the top-level ``extras``
+        array cannot hold. The refusal quotes the key as the pyproject
+        writes it, and a lock already on disk survives it.
+        """
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "proj"\nversion = "0.1"\ndependencies = []\n'
+            "[project.optional-dependencies]\n_cli = []\n",
+        )
+        out = tmp_path / "pylock.toml"
+        out.write_text("prior lock\n")
+
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=out, all_extras=True, offline=True)
+
+        err = capsys.readouterr().err
+        assert "cannot lock: extra '_cli' normalizes to '-cli'" in err
+        assert "Traceback" not in err
+
+        assert out.read_text() == "prior lock\n"
+
     def test_sibling_metadata_divergence_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

@@ -38,9 +38,10 @@ from .._vendor.packaging.pylock import (
     PackageVcs,
     PackageWheel,
     Pylock,
+    PylockValidationError,
 )
 from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name
+from .._vendor.packaging.utils import canonicalize_name, is_normalized_name
 from .._vendor.packaging.version import Version
 from ..config import conflict_exclusion_groups, conflict_member_groups
 from .builder import require_artifact_hashes
@@ -64,6 +65,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DivergentBaseDependencyError",
+    "LockValidationError",
     "UnsoundSimplificationError",
     "build_pylock",
     "write_lock",
@@ -180,6 +182,14 @@ class DivergentBaseDependencyError(ValueError):
     """
 
 
+class LockValidationError(ValueError):
+    """The document a render would emit is not a valid PEP 751 lock.
+
+    Covers nab's own checks and the vendored validator's refusals, so a
+    caller catches one class instead of the vendored exceptions.
+    """
+
+
 def write_lock(
     lock_input: LockInput,
     *,
@@ -196,6 +206,9 @@ def write_lock(
     ``output_path``'s parent so the lockfile stays portable between
     machines (PEP 751 records those paths relative to the lock file).
     With no ``output_path`` the current directory is the base.
+
+    Raises :class:`LockValidationError` when the input would not build a
+    valid lock, before anything is written.
     """
     lock_dir = Path(output_path).parent if output_path is not None else None
     text = render_lock(lock_input, lock_dir=lock_dir)
@@ -211,11 +224,35 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
     and sdist paths are emitted relative to it so the lock stays portable.
     Defaults to the current directory.  Used by ``write_lock`` and by
     ``nab lock --locked`` to render the would-be lock for comparison.
+
+    Raises :class:`LockValidationError` when the document it would build
+    does not satisfy PEP 751.
     """
     require_artifact_hashes(lock_input)
+    _check_extra_names(lock_input.extras)
     pylock = build_pylock(lock_input, lock_dir=lock_dir)
-    pylock.validate()
+    try:
+        pylock.validate()
+    except PylockValidationError as e:
+        raise LockValidationError(str(e)) from e
     return tomli_w.dumps(dict(pylock.to_dict()))
+
+
+def _check_extra_names(extras: Sequence[str]) -> None:
+    """Refuse an extra whose canonical form PEP 751 will not accept as a name.
+
+    The lock's ``extras`` array holds canonical names, so the message quotes
+    the declared name alongside the one that fails.
+    """
+    for extra in extras:
+        canonical = canonicalize_name(extra)
+        if not is_normalized_name(canonical):
+            msg = (
+                f"extra {extra!r} normalizes to {canonical!r}, which PEP 751 "
+                "does not accept in 'extras'; a name must start and end with "
+                "a letter or digit."
+            )
+            raise LockValidationError(msg)
 
 
 def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylock:

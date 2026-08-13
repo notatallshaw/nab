@@ -42,6 +42,7 @@ from nab_python.lockfile import (
     InvalidLockfileError,
     LockfileSyntaxError,
     LockInput,
+    LockValidationError,
     MissingHashError,
     Provenance,
     RootRequirement,
@@ -726,7 +727,7 @@ def _render_or_exit(render: Callable[[], str]) -> str:
     """Run a lock render, mapping every refusal it raises to a clean exit."""
     try:
         return render()
-    except MissingHashError as e:
+    except (MissingHashError, LockValidationError) as e:
         _cli.printer().error(f"cannot lock: {e}")
         sys.exit(1)
     except (DisjointnessError, DivergentBaseDependencyError) as e:
