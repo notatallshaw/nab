@@ -28,6 +28,7 @@ from ._lockfile.disjointness import DisjointnessError
 from ._lockfile.groups import BASE_MEMBER
 from ._lockfile.pylock import (
     DivergentBaseDependencyError,
+    LockValidationError,
     build_pylock,
     render_lock,
     write_lock,
@@ -69,6 +70,7 @@ __all__ = [
     "LocalPin",
     "LockDisqualification",
     "LockInput",
+    "LockValidationError",
     "LockfileSyntaxError",
     "MissingHashError",
     "MissingSdistError",

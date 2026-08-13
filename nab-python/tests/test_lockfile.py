@@ -64,6 +64,7 @@ from nab_python.lockfile import (
     IndexPin,
     LocalPin,
     LockInput,
+    LockValidationError,
     MissingHashError,
     MissingSdistError,
     MissingVcsCommitError,
@@ -1506,6 +1507,28 @@ class TestBuildPylockReturnsValidPylock:
 
 
 class TestErrorPaths:
+    def test_unnormalizable_extra_names_both_forms(self) -> None:
+        """The refusal quotes the declared extra as well as its canonical form.
+
+        ``_cli`` canonicalizes to ``-cli``, which the lock's ``extras`` array
+        cannot hold, and ``_cli`` is the form the caller wrote.
+        """
+        lock_input = LockInput(targets=_one({"foo": _index_pin()}), extras=("_cli",))
+        with pytest.raises(LockValidationError) as excinfo:
+            write_lock(lock_input)
+
+        assert "extra '_cli' normalizes to '-cli'" in str(excinfo.value)
+
+    def test_vendored_refusal_reraised_as_lock_validation_error(self) -> None:
+        """A refusal from the vendored validator arrives as nab's own class.
+
+        Package names are canonicalized on the way in and checked nowhere
+        else, so ``_foo`` gets as far as ``Pylock.validate``.
+        """
+        lock_input = LockInput(targets=_one({"_foo": _index_pin(name="_foo")}))
+        with pytest.raises(LockValidationError, match="'-foo' is not normalized"):
+            write_lock(lock_input)
+
     def test_unknown_pin_shape_raises(self) -> None:
         class Weird:
             pass
