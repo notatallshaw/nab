@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
+from .._errors import MetadataError
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
 
@@ -73,9 +74,6 @@ def look_ahead_ok(
     rejection so the resolver moves on; the message is recorded for the
     eventual no-versions diagnostic.
     """
-    # Late import: provider imports this module at module load.
-    from ..provider import MetadataError
-
     if provider.split_and_normalize(package)[1] is not None:
         return True
 

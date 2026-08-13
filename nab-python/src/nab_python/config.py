@@ -28,9 +28,22 @@ from nab_index.serialization import SimpleSerialization
 from nab_index.subdir import subdirectory_escapes
 
 from ._conflict_kind import KIND_EXTRA, KIND_GROUP
+from ._errors import (
+    OverrideConflictError as OverrideConflictError,  # noqa: PLC0414  (public re-export)
+)
 from ._iso8601 import parse_iso_datetime
+from ._policy import (
+    ArchiveSource,
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    LocalSource,
+    ResolutionStrategy,
+    ResolveMode,
+    VcsSource,
+)
 from ._toml import tool_nab_section
-from ._vcs_admission import known_vcs_schemes
+from ._vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import InvalidName, canonicalize_name
@@ -50,18 +63,6 @@ from .config_sources import (
 )
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from .paths import resolve_path
-from .provider import (
-    ArchiveSource,
-    BuildPolicy,
-    DecisionOrder,
-    DistPolicy,
-    LocalSource,
-    ResolutionStrategy,
-    ResolveMode,
-    VcsConfig,
-    VcsPolicy,
-    VcsSource,
-)
 from .tags import DEFAULT_LIBC, LIBC_MAJOR, Libc, PlatformSpec, platform_kind
 from .target import (
     PLATFORM_MARKERS,
@@ -533,17 +534,6 @@ class ConflictSelectionError(ConfigError):
     mutually-exclusive members at once.  A declared matrix forks the
     resolve instead of raising, and only raises when one fork still
     reaches two members (through an umbrella extra, say).
-    """
-
-
-class OverrideConflictError(ConfigError):
-    """A per-package and a per-index override set the same field for one candidate.
-
-    Raised at resolve time when a candidate ``(package, version)`` served
-    from an index is governed by both a per-package override (whose range
-    contains the version) and a per-index override that each set the same
-    policy field.  The two surfaces are deliberately not ranked, so an
-    overlap is an error rather than a precedence call.
     """
 
 

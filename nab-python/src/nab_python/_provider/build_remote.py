@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import extract_sdist_archive
 
+from .._errors import UnsupportedSdistError
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
 from .metadata_resolver import find_sdist
@@ -52,7 +53,6 @@ def build_remote_sdist(
     # Late imports: ``provider`` imports this module at module load.
     from .. import build_backend
     from ..build_backend import BuildBackendError
-    from ..provider import UnsupportedSdistError
 
     canonical = canonicalize_name(package)
     versions = provider.versions_cache.get(canonical, [])

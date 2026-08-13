@@ -25,10 +25,10 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
+from ._policy import LocalSource
 from ._toml import tool_nab_section
 from ._vendor.packaging.utils import canonicalize_name
 from .paths import path_state, resolve_path
-from .provider import LocalSource
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

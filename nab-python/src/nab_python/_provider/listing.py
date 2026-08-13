@@ -12,7 +12,13 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._errors import (
+    ForeignMetadataError,
+    IncompatiblePythonError,
+    InvalidUploadTimeError,
+)
 from .._iso8601 import parse_iso_datetime
+from .._policy import DistPolicy
 from .._vcs_admission import UnsupportedVcsError
 from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from .._vendor.packaging.version import InvalidVersion, Version
@@ -27,8 +33,18 @@ if TYPE_CHECKING:
 
     from .._vendor.packaging.ranges import VersionRange
     from ..fetch_port import Waitable
-    from ..provider import DistFile, DistPolicy, Provider
+    from ..provider import DistFile, Provider
     from ..tags import TagSet
+
+
+# Drives two prefetch paths: the speculative root-batch prefetch fired when a
+# listing first arrives, and the scan batch in
+# ``Provider._scan_candidates_pipelined``.  Matched to the provider's abort
+# threshold: prefetching 8 versions covers the worst-case abort scan without
+# overshooting.  Larger batches waste bandwidth and in-flight HTTP slots on
+# metadata the resolver never decides; smaller batches starve the look-ahead
+# pipeline.
+PREFETCH_BATCH = 8
 
 
 def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, DistFile]]:
@@ -176,10 +192,6 @@ def prefetch_root_batch(
     Versions go out in the order ``choose_version`` walks them, so the look-ahead
     finds the ones it tries first already cached.
     """
-    # Imported lazily because provider.py imports this module; pulling
-    # Provider in at the top would create an import cycle.
-    from ..provider import Provider as _Provider
-
     # Reverse out of place: ``versions`` is the shared cached listing.
     ordered = (
         list(reversed(versions)) if provider.wants_lowest(normalized) else versions
@@ -187,7 +199,7 @@ def prefetch_root_batch(
 
     items: list[tuple[str, str, str, tuple[str, str] | None]] = []
     for version, dist in ordered:
-        if len(items) >= _Provider.PREFETCH_BATCH:
+        if len(items) >= PREFETCH_BATCH:
             break
         if version not in root_range:
             continue
@@ -348,9 +360,6 @@ def _filter_base(
     version alive.  The answer is the same for every target that shares
     the listing and the policy config, which is what the memo assumes.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import DistPolicy
-
     index_name = provider.serving_index(normalized)
 
     # Fast path: skip the time-filter dispatch entirely when no cutoff applies.
@@ -536,9 +545,6 @@ def _drop_sdist_install_wheel_only(
     Such a version has no source to install, so it must not reach the
     resolver even though its wheels stay as a cheap metadata source.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import DistPolicy
-
     versions_with_sdist = {v for v, d in result if isinstance(d, SdistFile)}
     drop = {
         v
@@ -592,9 +598,6 @@ def _excluded_by_dist_policy(dist: DistFile, policy: object) -> bool:
     other policies admit both kinds here (``SDIST_INSTALL`` keeps wheels
     as a metadata source and prunes them at lock-construction time).
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import DistPolicy
-
     if policy == DistPolicy.WHEEL_ONLY:
         return not isinstance(dist, WheelFile)
     if policy == DistPolicy.SDIST_ONLY:
@@ -659,9 +662,6 @@ def excluded_by_time(
 
     # PEP 700 mandates timezone-aware UTC upload times; refuse to guess.
     if upload_dt.tzinfo is None:
-        # Imported lazily: provider.py imports this module.
-        from ..provider import InvalidUploadTimeError
-
         msg = (
             f"{normalized} {dist.version} has a timezone-naive upload time "
             f"{dist.upload_time!r}; the Simple API requires "
@@ -772,9 +772,6 @@ def await_metadata_batch(
     submitted: list[tuple[Version, str, str, Waitable]],
 ) -> None:
     """Wait for all submitted metadata to arrive, then parse into cache."""
-    # Imported lazily: provider.py imports this module.
-    from ..provider import ForeignMetadataError, IncompatiblePythonError
-
     for version, ver_str, metadata_url, event in submitted:
         cache_key = (package, version)
         if cache_key in provider.deps_cache:

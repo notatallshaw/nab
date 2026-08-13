@@ -21,6 +21,15 @@ from nab_index.local_index import (
 )
 
 from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
+from .._errors import (
+    ForeignMetadataError,
+    IncompatiblePythonError,
+    MetadataError,
+    SiblingMetadataDivergenceError,
+    UnsupportedSdistError,
+)
+from .._extra_keys import join_extra
+from .._policy import BuildPolicy
 from .._vcs_admission import admit_vcs_url
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.specifiers import SpecifierSet
@@ -77,9 +86,6 @@ def resolve_metadata(
     only sdist values are subject to the :pep:`643` Dynamic
     guarantees and may need a ``pyproject.toml`` fallback.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import MetadataError
-
     _, _, normalized = provider.split_and_normalize(package)
     ver_str = str(version)
     index = provider.coordinator.index
@@ -159,9 +165,6 @@ def _ladder_failure(
     rejection, so the version would be dropped and an older release pinned
     instead of the resolve failing.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import MetadataError
-
     if unreadable_wheel is not None:
         return unreadable_wheel
 
@@ -414,8 +417,7 @@ def resolve_dynamic_sdist(
     :func:`nab_python._provider.lookahead.look_ahead_ok` and surfaces the
     accumulated reasons if no candidate ultimately works.
     """
-    # Late imports: both modules import this one at module load.
-    from ..provider import BuildPolicy, UnsupportedSdistError
+    # Late import: ``build_remote`` imports this module at module load.
     from .build_remote import build_remote_sdist
 
     package, version = cache_key
@@ -709,9 +711,6 @@ def _reject_foreign_metadata(
     to the project and version it was served under.  Checked ahead of the
     sdist reconciliation so a contradicting sdist is never built.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import ForeignMetadataError
-
     if _declares_served_release(cache_key, metadata):
         return
 
@@ -735,9 +734,6 @@ def _reject_incompatible_python(
     still replaces it, matching the listing gate.  Raised before the deps are
     cached so no partial state survives the rejection.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import IncompatiblePythonError
-
     target = provider.target
     if target is None:
         return
@@ -973,9 +969,6 @@ def check_sibling_metadata_divergence(
     dropped candidate: dropping would silently remove a version an installer can
     legitimately install.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import SiblingMetadataDivergenceError
-
     tags = provider.wheel_tags
     pick = pick_dist_for_metadata(versions, version, tags, provider.target)
     if not isinstance(pick, WheelFile):
@@ -1196,9 +1189,6 @@ def add_classified_dep(
     A name appearing on several ``Requires-Dist`` lines is intersected
     into one range.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import join_extra
-
     name = canonicalize_name(req.name)
     # A bare dependency enters the solver without arbitrary-string admission;
     # the accumulator identities stay arbitrary-admitting for === literals.

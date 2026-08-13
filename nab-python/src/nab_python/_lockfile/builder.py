@@ -20,7 +20,9 @@ import tomli
 
 from nab_index.client import SdistFile, WheelFile
 
+from .._extra_keys import split_extra
 from .._iso8601 import parse_iso_datetime
+from .._policy import DistPolicy
 from .._toml import tool_nab_section
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.specifiers import SpecifierSet
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
 
     from nab_index.multi_index import IndexConfig
 
+    from .._policy import ArchiveSource, LocalSource, VcsSource
     from .._vendor.packaging.version import Version
     from ..lockfile import (
         ArchivePin,
@@ -45,7 +48,6 @@ if TYPE_CHECKING:
         VcsPin,
         WheelArtifact,
     )
-    from ..provider import ArchiveSource, DistPolicy, LocalSource, VcsSource
     from ..target import ResolveTarget
 
 
@@ -400,8 +402,6 @@ def _reachable_names(
     The walk is over resolver keys, so a ``name[extra]`` root pulls in
     that extra's dependencies on top of the package's own.
     """
-    from ..provider import split_extra
-
     reached: set[str] = set()
     seen: set[str] = set()
     stack = list(roots)
@@ -444,8 +444,6 @@ def _forward_dependency_graph(
     dropped from both so every edge points at a real ``[[packages]]``
     entry.
     """
-    from ..provider import split_extra
-
     activated_extras: defaultdict[str, set[str]] = defaultdict(set)
     for key in resolved_keys:
         base, extra = split_extra(key)
@@ -510,7 +508,6 @@ def _index_pin_from_listing(
     """
     from ..fetch import DEFAULT_INDEX_URL
     from ..lockfile import IndexPin, SdistArtifact, WheelArtifact
-    from ..provider import DistPolicy
 
     files = list(provider.dist_files_for(canonical, version))
     serving = provider.coordinator.index.get_listing_index(canonical)

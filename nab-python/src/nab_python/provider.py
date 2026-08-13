@@ -8,9 +8,7 @@ types into nab-resolver Range types.
 from __future__ import annotations
 
 import bisect
-import enum
 import logging
-import re
 from collections import defaultdict, deque
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, cast
@@ -27,6 +25,31 @@ from nab_index.errors import IndexAccessError
 from nab_index.transport import UnserveableUrlError
 
 from ._conflict_kind import EMPTY_MEMBERSHIP_SETS
+from ._errors import (
+    ForeignMetadataError,
+    IncompatiblePythonError,
+    InvalidUploadTimeError,
+    MetadataError,
+    MissingExtraError,
+    OverrideConflictError,
+    SiblingMetadataDivergenceError,
+    SourceNameMismatchError,
+    UnsupportedSdistError,
+)
+from ._extra_keys import join_extra, split_extra
+from ._policy import (
+    ArchiveSource,
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    ExtrasMode,
+    LocalSource,
+    ResolutionStrategy,
+    VcsSource,
+)
+from ._policy import (
+    ResolveMode as ResolveMode,  # noqa: PLC0414  (re-export: not in __all__, kept importable from here)
+)
 from ._provider import extras as _extras
 from ._provider import listing as _listing
 from ._provider import lookahead as _lookahead
@@ -89,278 +112,6 @@ __all__ = [
 
 
 logger = logging.getLogger(__name__)
-
-_EXTRA_RE = re.compile(r"^(?P<base>[^\[]+)\[(?P<extra>[^\]]+)\]$")
-
-
-def split_extra(package: str) -> tuple[str, str | None]:
-    """Split 'name[extra]' into ('name', 'extra'), or ('name', None).
-
-    The extra name is normalized per PEP 685.
-    """
-    m = _EXTRA_RE.match(package)
-    if m is None:
-        return (package, None)
-    return (m.group("base"), canonicalize_name(m.group("extra")))
-
-
-def join_extra(base: str, extra: str) -> str:
-    """Join a base name and extra into 'name[extra]'.
-
-    The extra name is normalized per PEP 685.
-    """
-    return f"{base}[{canonicalize_name(extra)}]"
-
-
-class MissingExtraError(Exception):
-    """Raised when a user-requested extra is not provided by the package."""
-
-
-class ExtrasMode(enum.Enum):
-    """How to handle missing extras (not in Provides-Extra)."""
-
-    WARN = "warn"
-    """Log warning, drop the extra, resolution continues (pip's behavior)."""
-
-    ERROR_USER = "error_user"
-    """Error for user-provided extras, warn for transitive."""
-
-    BACKTRACK = "backtrack"
-    """Error for user-provided, backtrack for transitive."""
-
-
-class ResolveMode(enum.Enum):
-    """How the resolver interprets the project.
-
-    ``SPECIFIC`` resolves one target, the host or an impersonated
-    marker environment.  ``UNIVERSAL`` resolves one target per tuple
-    declared in ``[tool.nab.matrix]``.  Both run the same engine over a
-    list of targets.  ``UNIVERSAL``'s multi-target lockfile format is
-    *experimental* and may change; the resolver itself is the same one
-    ``SPECIFIC`` runs.  Users opt in by setting
-    ``[tool.nab].mode = "universal"`` and declaring ``[tool.nab.matrix]``.
-    """
-
-    SPECIFIC = "specific"
-    UNIVERSAL = "universal"
-
-
-class DistPolicy(enum.Enum):
-    """How to admit wheels and sdists during resolution."""
-
-    WHEEL_ONLY = "wheel-only"
-    """Ignore sdists entirely. Use wheels, reading PEP 658 metadata when
-    published or an HTTP range read of the wheel otherwise."""
-
-    PREFER_WHEEL = "prefer-wheel"
-    """Try wheels first, fall back to sdists for versions without wheels."""
-
-    WHEEL_OR_SDIST = "wheel-or-sdist"
-    """Admit both. Newest version wins regardless of artifact kind."""
-
-    SDIST_ONLY = "sdist-only"
-    """Reject wheels; sdists only.  Mirrors pip's ``--no-binary <pkg>``."""
-
-    SDIST_INSTALL = "sdist-install"
-    """Lock the sdist; resolve from whichever artifact is cheapest.
-
-    Same lockfile shape as :attr:`SDIST_ONLY` (only the sdist is pinned, so
-    installers download and build that archive), but the resolver is free to
-    consult either the wheel's METADATA (via PEP 658 or a range fetch) or
-    the sdist's PKG-INFO when extracting dependency facts.  In practice it
-    reads the wheel when one exists at the chosen version because that is
-    the cheapest source; when only the sdist is published it falls back to
-    PKG-INFO with the usual :pep:`643` and pyproject.toml fallbacks.
-    Mirrors a pip install with ``--no-binary <pkg>`` while keeping the
-    resolver-time fast paths intact.
-    """
-
-
-class BuildPolicy(enum.Enum):
-    """How permissive the resolver is about invoking PEP 517 backends.
-
-    Three levels, strictest to most permissive.  Each level reads static
-    metadata from every source it admits; the difference is what is
-    permitted to fall through to a backend invocation when the static
-    read returns nothing usable.
-    """
-
-    NEVER = "never"
-    """Static metadata only, from any source.
-
-    Wheels, PEP 643 sdists, sdists with a static ``pyproject.toml`` fallback,
-    local checkouts via ``[[tool.nab.local-sources]]``, VCS clones via
-    ``[[tool.nab.vcs-sources]]``, and archive sources via
-    ``[[tool.nab.archive-sources]]`` are all read statically.  A source whose
-    metadata cannot be read statically raises :class:`UnsupportedSdistError`,
-    which skips a PyPI sdist version but ends the resolve for a declared
-    source.
-    """
-
-    BUILD_LOCAL = "build-local"
-    """Static metadata everywhere, plus PEP 517 builds on local checkouts.
-
-    Adds backend invocation for ``[[tool.nab.local-sources]]`` and
-    workspace members when their ``pyproject.toml`` cannot be read
-    statically.  VCS clones, archive sources, and remote PyPI sdists
-    remain static-only.
-    """
-
-    BUILD_REMOTE = "build-remote"
-    """Builds extend to VCS clones, archive sources, and remote PyPI sdists.
-
-    On top of :attr:`BUILD_LOCAL`, invokes the backend on VCS-cloned
-    trees, extracted archive trees, and fetched sdists when their
-    metadata is dynamic and has no static fallback.
-    """
-
-
-class ResolutionStrategy(enum.Enum):
-    """Which version the resolver picks within an allowed range.
-
-    Mirrors uv's ``--resolution`` flag.  ``LOWEST_DIRECT`` catches missing
-    ``>=`` bounds without dragging the whole transitive graph to its floor.
-    """
-
-    HIGHEST = "highest"
-    """Newest compatible version (default)."""
-
-    LOWEST = "lowest"
-    """Oldest compatible version, transitively."""
-
-    LOWEST_DIRECT = "lowest-direct"
-    """Oldest for direct deps; newest for transitive deps."""
-
-
-class DecisionOrder(enum.Enum):
-    """Whether arrived listings may steer which package is decided next."""
-
-    ARRIVAL = "arrival"
-    """Rank on what has already landed, so the search keeps moving (default)."""
-
-    STABLE = "stable"
-    """Wait for each listing, so the sort key cannot see which had arrived."""
-
-
-@dataclass(frozen=True, slots=True)
-class LocalSource:
-    """A source tree on disk used as the only candidate for a package.
-
-    ``name`` is the package name; the resolver pins the package to a
-    single synthetic version, read from the directory's
-    ``[project].version`` field or computed by the build backend when
-    that field is declared dynamic.  ``path`` is the absolute filesystem
-    path to the source tree.
-
-    ``editable`` requests a PEP 660 editable install in the lockfile;
-    ``subdirectory`` is a path under ``path`` for monorepo layouts.
-    """
-
-    name: str
-    path: str
-    editable: bool = False
-    subdirectory: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class VcsSource:
-    """A VCS reference used as the only candidate for a package.
-
-    ``name`` is the package name; ``url`` is the pip-style VCS URL
-    (e.g. ``git+https://github.com/x/y.git@<sha>#subdirectory=pkg``).
-    The provider clones the repo to its cache and treats the
-    checked-out source as a :class:`LocalSource` for metadata
-    extraction.
-    """
-
-    name: str
-    url: str
-
-
-@dataclass(frozen=True, slots=True)
-class ArchiveSource:
-    """A direct-URL archive used as the only candidate for a package.
-
-    ``name`` is the package name; ``url`` is the archive URL carrying its
-    hash (and optional subdirectory) in the fragment, e.g.
-    ``https://example.com/x-1.0.tar.gz#sha256=<hex>``.  The provider
-    downloads and hash-verifies the archive, then extracts and treats it
-    as a :class:`LocalSource` for metadata extraction.
-    """
-
-    name: str
-    url: str
-
-
-class MetadataError(Exception):
-    """Raised when dependency metadata cannot be extracted."""
-
-
-class UnsupportedSdistError(MetadataError):
-    """Sdist or source tree needs a backend invocation the policy disallows.
-
-    Raised when extraction would require a build the current
-    :class:`BuildPolicy` (or its per-package override) does not permit:
-    dynamic metadata under :attr:`BuildPolicy.NEVER`, a VCS clone under
-    :attr:`BuildPolicy.BUILD_LOCAL`, or a remote sdist build failure
-    under :attr:`BuildPolicy.BUILD_REMOTE`.  For a PyPI sdist it is
-    caught by :meth:`Provider._look_ahead_ok`, so the resolver skips
-    the version.  A declared source (local, VCS, archive, or workspace
-    member) is read while listing its one version, so the error ends
-    the resolve instead.
-    """
-
-
-class ForeignMetadataError(MetadataError):
-    """An index candidate's METADATA declares a different release.
-
-    Core metadata ``Name`` and ``Version`` say which release an artifact is, so
-    a candidate whose METADATA (or :pep:`658` sidecar) names another project or
-    version describes some other release's dependencies.  Caught by
-    :meth:`Provider._look_ahead_ok` so the resolver skips the version.
-    """
-
-
-class IncompatiblePythonError(MetadataError):
-    """An index candidate's METADATA Requires-Python excludes the resolve target.
-
-    The Simple-API ``requires-python`` hint is optional, so the listing gate
-    admits a version whose listing omits it.  Once the wheel METADATA (or sdist
-    PKG-INFO) is fetched, its authoritative ``Requires-Python`` is checked and
-    an incompatible candidate is rejected.  Caught by
-    :meth:`Provider._look_ahead_ok` so the resolver skips the version.
-    """
-
-
-# Deliberately not a MetadataError: _look_ahead_ok catches MetadataError
-# and would silently reject the version; a naive upload-time is a hard error.
-class InvalidUploadTimeError(Exception):
-    """Raised when an index upload-time is not the timezone-aware UTC PEP 700 needs."""
-
-
-# Deliberately not a MetadataError: _look_ahead_ok catches those and skips the
-# version, but tie-ranked wheels that disagree on a target's dependencies are an
-# ambiguity nab cannot resolve, so it must abort rather than drop the version.
-class SiblingMetadataDivergenceError(Exception):
-    """Raised when a version's tie-ranked wheels declare different target deps.
-
-    nab reads one wheel's dependencies per version and treats it as
-    authoritative, so a tie whose wheels declare different dependencies is an
-    ambiguity: pinning from one silently disagrees with an install of the other.
-    """
-
-
-# Deliberately not a MetadataError: _look_ahead_ok catches those and skips the
-# version, but a name mismatch is a misconfiguration that must abort.
-class SourceNameMismatchError(Exception):
-    """Raised when a materialised source's project name differs from its declaration.
-
-    A local, VCS, or archive source maps a declared ``name`` to a directory,
-    repo, or archive and becomes the only candidate for that package.  When the
-    source's own ``[project].name`` does not canonicalise to the declared name,
-    it provides a different distribution, so pinning it would carry the wrong
-    version and dependencies.
-    """
 
 
 @dataclass
@@ -585,14 +336,10 @@ class Provider:
     :meth:`settled_listing`.
     """
 
-    # Drives two prefetch paths: the speculative root-batch prefetch
-    # fired when a listing first arrives, and the scan batch in
-    # ``_scan_candidates_pipelined``.  Matched to the abort threshold
-    # below: prefetching 8 versions covers the worst-case abort scan
-    # without overshooting.  Larger batches waste bandwidth and
-    # in-flight HTTP slots on metadata the resolver never decides;
-    # smaller batches starve the look-ahead pipeline.
-    PREFETCH_BATCH: int = 8
+    # Declared in ``_provider.listing``, which reads it directly while
+    # building the root batch; re-exported here because the scan path in
+    # ``_scan_candidates_pipelined`` reads it off the instance.
+    PREFETCH_BATCH: int = _listing.PREFETCH_BATCH
 
     # Batches kept fetching during the previous batch's await in
     # ``choose_version``.  Depth>=2 reordered listing arrivals and
@@ -1225,9 +972,6 @@ class Provider:
         idx_value = value(idx) if idx is not None else _UNSET
 
         if pkg is not None and idx_value is not _UNSET:
-            # Late import: config imports provider at module load.
-            from .config import OverrideConflictError  # noqa: PLC0415
-
             msg = (
                 f"override conflict for {canonical_name}=={version} served from"
                 f" index {index_name!r}: both a per-package override"
@@ -1459,9 +1203,6 @@ class Provider:
         resolution instead of failing.  The ``finally`` restores the snapshot
         either way.
         """
-        # Late import: config imports provider at module load.
-        from .config import OverrideConflictError  # noqa: PLC0415
-
         saved_counts = dict(self._force_backtrack_counts)
         saved_reasons = dict(self._no_versions_reasons)
 
@@ -2220,8 +1961,6 @@ class Provider:
         is answered from cache. Hard errors propagate unrecorded.
         """
         package, version = cache_key
-        from .config import OverrideConflictError  # noqa: PLC0415 (config import cycle)
-
         try:
             self.parse_and_cache_metadata(
                 cache_key, metadata_text, from_sdist=from_sdist

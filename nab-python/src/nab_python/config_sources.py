@@ -42,10 +42,8 @@ import tomli
 from nab_index.multi_index import IndexConfig
 from nab_index.serialization import SimpleSerialization
 
-from ._toml import tool_nab_section
-from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
-from .paths import PathState, is_usable_path_name, path_state
-from .provider import (
+from ._errors import ConfigError as ConfigError  # noqa: PLC0414  (public re-export)
+from ._policy import (
     ArchiveSource,
     BuildPolicy,
     DecisionOrder,
@@ -53,9 +51,12 @@ from .provider import (
     LocalSource,
     ResolutionStrategy,
     ResolveMode,
-    VcsConfig,
     VcsSource,
 )
+from ._toml import tool_nab_section
+from ._vcs_admission import VcsConfig
+from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
+from .paths import PathState, is_usable_path_name, path_state
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -167,17 +168,6 @@ def inspector_anchor() -> Iterator[None]:
         yield
     finally:
         _INSPECTOR_ANCHOR.reset(token)
-
-
-class ConfigError(ValueError):
-    """Raised when ``[tool.nab]`` configuration is invalid.
-
-    The base for every config-parse error.  Lives here (the lowest config
-    layer) so :class:`SourceConfigError` can subclass it without an import
-    cycle; :mod:`nab_python.config` re-exports it as its public name and
-    hangs its own subclasses (``ConflictSelectionError``,
-    ``OverrideConflictError``) off it.
-    """
 
 
 class SourceConfigError(ConfigError):

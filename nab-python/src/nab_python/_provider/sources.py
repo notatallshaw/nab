@@ -21,14 +21,18 @@ from nab_index.archive import ArchiveRequest
 from nab_index.client import SdistFile, extract_sdist_archive, verify_sdist_hash
 from nab_index.vcs import VcsCloneError, VcsRequest
 
+from .._errors import SourceNameMismatchError, UnsupportedSdistError
+from .._policy import BuildPolicy
+from .._vcs_admission import VcsPolicy, admit_vcs_url
 from .._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from .._policy import ArchiveSource, LocalSource, VcsSource
     from .._vendor.packaging.version import Version
     from ..metadata import WheelMetadata
-    from ..provider import ArchiveSource, LocalSource, Provider, VcsSource
+    from ..provider import Provider
 
 # The archive names everything under _TREE_DIR, so the cache's own bookkeeping
 # sits beside that directory rather than inside it.
@@ -170,7 +174,6 @@ def extract_source_metadata(
     # Imported in-function so tests can patch the module attribute.
     from .. import build_backend
     from ..build_backend import BuildBackendError, extract_static_metadata
-    from ..provider import BuildPolicy, UnsupportedSdistError
 
     try:
         metadata = extract_static_metadata(path)
@@ -221,8 +224,6 @@ def seed_synthetic_listing(
     # the wrong version and dependencies.
     actual = canonicalize_name(metadata.name)
     if actual != normalized:
-        from ..provider import SourceNameMismatchError
-
         msg = (
             f"{descriptor} declares package {normalized!r} but its"
             f" [project].name is {actual!r} (at {path}); a source declared for"
@@ -263,10 +264,6 @@ def index_vcs_sources(
     repo, and pin allowlists apply to ``[[tool.nab.vcs-sources]]``
     just like project-root direct-URL requirements.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from .._vcs_admission import admit_vcs_url
-    from ..provider import VcsPolicy
-
     if not sources:
         return {}
 
@@ -297,8 +294,6 @@ def materialize_vcs_source(
     """Clone ``source`` and materialise it via the same path as a LocalSource."""
     # Imported in-function so tests can patch the module attribute.
     from nab_index import vcs as _vcs
-
-    from ..provider import UnsupportedSdistError
 
     if provider.vcs_cache_dir is None:
         msg = (
@@ -380,8 +375,6 @@ def _fetch_archive_bytes(
     bytes, or the bytes fail their hash.  The coordinator reads the declared
     URL without verifying it, so every declared hash is checked here.
     """
-    from ..provider import UnsupportedSdistError
-
     canonical = canonicalize_name(source.name)
     digest = request.hashes[0][1]
     index = provider.coordinator.index
@@ -416,8 +409,6 @@ def _prepare_archive_tree(
     Otherwise the archive is downloaded and checked against the whole
     declaration, so adding a hash re-verifies rather than trusting the tree.
     """
-    from ..provider import UnsupportedSdistError
-
     cache_dir = provider.archive_cache_dir
     if cache_dir is None:
         msg = (
@@ -520,8 +511,6 @@ def _extract_archive(
     renamed into place once its completion marker is written, so the cache
     path never holds a partial tree.
     """
-    from ..provider import UnsupportedSdistError
-
     target = cache_dir / digest
     marker = target / _COMPLETE_MARKER
 

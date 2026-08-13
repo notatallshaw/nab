@@ -12,6 +12,9 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from .._errors import MetadataError, MissingExtraError
+from .._extra_keys import join_extra
+from .._policy import ExtrasMode
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
 from .metadata_resolver import refuse_url_dep
@@ -110,9 +113,6 @@ def _pick_in_mode(
     the proxy always needs the base metadata. BACKTRACK mode additionally
     checks ``Provides-Extra`` for transitive extras.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import ExtrasMode, MetadataError
-
     _, _, normalized = provider.split_and_normalize(base)
     is_user = (normalized, extra) in provider.root_extras
     backtrack = provider.extras_mode == ExtrasMode.BACKTRACK
@@ -155,9 +155,6 @@ def _pick_for_user_extra(
     user's constraint, so the answer follows the index rather than the
     metadata fetched so far.
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import ExtrasMode
-
     if provider.extras_mode == ExtrasMode.WARN:
         return chosen
 
@@ -193,9 +190,6 @@ def version_provides_extra(
     safe when the preferred version both provides the extra and has
     extractable metadata in this tuple.
     """
-    # Late import: provider imports this module at module load.
-    from ..provider import MetadataError
-
     _, _, normalized = provider.split_and_normalize(base)
     try:
         provider.get_dependencies(base, version)
@@ -255,9 +249,6 @@ def get_extra_dependencies(
     version: Version,
 ) -> dict[str, VersionRange]:
     """Get dependencies for an extras proxy package."""
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import MetadataError, join_extra
-
     _, _, normalized = provider.split_and_normalize(base)
     extra_key = join_extra(normalized, extra)
     cache_key = (extra_key, version)
@@ -309,9 +300,6 @@ def handle_missing_extra(
     only the base dep (BACKTRACK skips these versions in
     choose_version before we get here).
     """
-    # Late import: ``provider`` imports this module at module load.
-    from ..provider import ExtrasMode, MissingExtraError
-
     is_user = (normalized, extra) in provider.root_extras
     if is_user and provider.extras_mode != ExtrasMode.WARN:
         msg = f"{normalized}=={version} does not provide extra '{extra}'"
