@@ -15,6 +15,8 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from nab_index.local_index import UnreadableLocalIndexError, read_wheel_metadata
+from nab_provider.errors import UnsupportedWheelError
 from nab_provider.records import IndexConfig
 from nab_python._build_remote import build_remote_sdist
 from nab_python._sources import materialize_source
@@ -24,6 +26,7 @@ from nab_python.store import InMemoryIndex
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from pathlib import Path
 
     from nab_provider.records import RangeMetadataResult, SdistFile, WheelFile
     from nab_python.config import NabProjectConfig
@@ -53,6 +56,14 @@ def _done_event() -> threading.Event:
     ev = threading.Event()
     ev.set()
     return ev
+
+
+def _local_wheel_metadata(path: Path) -> str | None:
+    """Read a wheel's own METADATA, as the local index client does."""
+    try:
+        return read_wheel_metadata(path)
+    except UnsupportedWheelError:
+        return None
 
 
 def _pre_populate_index(
@@ -337,18 +348,37 @@ class FakeFetchPort:
         return _done_event()
 
     def _fetch_metadata(self, package: str, version: str, url: str) -> None:
-        """Write one sidecar slot, as the fetcher's metadata handler does."""
+        """Write one metadata slot, as the fetcher's metadata handler does."""
         # The fetcher skips a sidecar the index already answers for.
         if self.index.has_metadata(package, version, url):
             return
 
-        # Storing ``None`` still marks the slot fetched.
-        self.index.store_metadata(
-            package,
-            version,
-            self._serve_metadata(package, version, url),
-            metadata_url=url,
-        )
+        # A wheel the listing serves off disk publishes no sidecar and is
+        # asked for at its own URL, so its METADATA comes out of the wheel,
+        # the way LocalIndexClient.get_metadata_text serves one.
+        wheel = self._served_wheel(package, url)
+        try:
+            text = (
+                _local_wheel_metadata(wheel)
+                if wheel is not None
+                else self._serve_metadata(package, version, url)
+            )
+        except UnreadableLocalIndexError as exc:
+            # A wheel the host cannot open lands as a per-slot error, the way
+            # the fetcher records a failed fetch.
+            self.index.store_metadata_error(package, version, exc, url)
+            return
+
+        # Store even when the read returns nothing: an empty fetch still
+        # marks the slot fetched.
+        self.index.store_metadata(package, version, text, metadata_url=url)
+
+    def _served_wheel(self, package: str, url: str) -> Path | None:
+        """Return the on-disk wheel this listing serves at ``url``, if any."""
+        for dist in self.index.get_listing(package) or ():
+            if dist.url == url:
+                return dist.local_path
+        return None
 
     def _metadata(
         self,

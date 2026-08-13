@@ -622,8 +622,15 @@ class LocalIndexClient:
         version: str,  # noqa: ARG002
         metadata_url: str,
         metadata_hash: tuple[str, str] | None = None,  # noqa: ARG002
-    ) -> str:
-        """Return PEP 658 metadata text for a wheel sitting on disk.
+    ) -> str | None:
+        """Return metadata text for a wheel sitting on disk.
+
+        A wheel that publishes a sidecar is asked for at the sidecar's URL; one
+        that does not is asked for at its own, and its METADATA is read out of
+        the wheel.  A wheel that is not a readable zip, carries no METADATA
+        member, or whose ``.dist-info`` names another distribution answers
+        ``None``.  One the process cannot open raises
+        :class:`UnreadableLocalIndexError`, like a sidecar.
 
         The on-disk sidecar is trusted, so ``metadata_hash`` is accepted only
         to match the remote client signature and is not verified.  A missing
@@ -632,6 +639,11 @@ class LocalIndexClient:
         :class:`OSError` or :class:`UnicodeDecodeError` escapes.
         """
         path = _resolve_served_path(metadata_url)
+        if path.suffix == ".whl":
+            try:
+                return read_wheel_metadata(path)
+            except UnsupportedWheelError:
+                return None
         data = _read_served_bytes(path, "metadata sidecar")
         try:
             return data.decode("utf-8")

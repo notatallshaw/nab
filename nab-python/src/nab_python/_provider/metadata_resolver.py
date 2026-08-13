@@ -12,8 +12,6 @@ import logging
 from typing import TYPE_CHECKING, TypeGuard
 from urllib.parse import urlsplit
 
-from nab_index.local_index import UnreadableLocalIndexError, read_wheel_metadata
-from nab_provider.errors import UnsupportedWheelError
 from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
 from .._vendor.packaging.ranges import VersionRange
@@ -152,8 +150,8 @@ def _ladder_failure(
     *,
     sdist: SdistFile | None,
     metadata_url: str | None,
-    unreadable_wheel: UnreadableLocalIndexError | None,
-) -> Exception:
+    unreadable_wheel: BaseException | None,
+) -> BaseException:
     """Return the error for a version no rung of the ladder could answer.
 
     An unreadable local wheel takes precedence, and is deliberately not a
@@ -224,37 +222,38 @@ def _report_offline_skip(
 
 def _read_direct_wheel_metadata(
     provider: Provider, dist: DistFile | None, package: str, version: str
-) -> tuple[str | None, bool, UnreadableLocalIndexError | None]:
+) -> tuple[str | None, bool, BaseException | None]:
     """Rungs 2 and 3: a PEP 658 sidecar read, then a local wheel read.
 
     Returns ``(metadata_text, from_sdist, unreadable)``; ``from_sdist`` is
-    always ``False`` since both sources are wheel METADATA.  A recorded sidecar
-    integrity error is re-raised and fails the resolve; a contradictory local
-    ``.dist-info`` reads back as ``None`` and the ladder steps on.  A wheel
-    that cannot be opened comes back as ``unreadable`` rather than raising, so
-    the version's own sdist still gets a turn; the caller raises it when no
-    later rung answers.
+    always ``False`` since both sources are wheel METADATA.  Both rungs are the
+    same request: a published sidecar is asked for at its own URL, and a local
+    wheel, which has no sidecar, at the wheel's URL, because opening the wheel
+    is the host's to do.  A recorded sidecar integrity error is re-raised and
+    fails the resolve; a wheel the host cannot read reads back as ``None`` and
+    the ladder steps on.  An error recorded for a local wheel comes back as
+    ``unreadable`` rather than raising, so the version's own sdist still gets a
+    turn; the caller raises it when no later rung answers.
     """
+    if not isinstance(dist, WheelFile):
+        return None, False, None
+    if (url := dist.metadata_url) is not None:
+        metadata_hash, local_wheel = dist.metadata_hash, False
+    elif dist.local_path is not None:
+        url, metadata_hash, local_wheel = dist.url, None, True
+    else:
+        return None, False, None
+
     index = provider.coordinator.index
-    if isinstance(dist, WheelFile) and (url := dist.metadata_url) is not None:
-        event = provider.coordinator.request_metadata(
-            package, version, url, dist.metadata_hash
-        )
-        event.wait()
-        integrity_error = index.get_metadata_error(package, version, url)
-        if integrity_error is not None:
-            raise integrity_error
-        text, from_sdist = index.get_metadata_with_origin(package, version, url)
-        return text, from_sdist, None
-    if isinstance(dist, WheelFile) and dist.local_path is not None:
-        try:
-            return read_wheel_metadata(dist.local_path), False, None
-        except UnsupportedWheelError:
-            # A contradictory .dist-info is unusable, like a corrupt archive.
-            return None, False, None
-        except UnreadableLocalIndexError as exc:
-            return None, False, exc
-    return None, False, None
+    event = provider.coordinator.request_metadata(package, version, url, metadata_hash)
+    event.wait()
+    error = index.get_metadata_error(package, version, url)
+    if error is not None:
+        if local_wheel:
+            return None, False, error
+        raise error
+    text, from_sdist = index.get_metadata_with_origin(package, version, url)
+    return text, from_sdist, None
 
 
 def _is_bare_remote_wheel(dist: DistFile | None) -> TypeGuard[WheelFile]:

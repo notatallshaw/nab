@@ -1498,6 +1498,40 @@ class TestMetadataAndSdist:
         with pytest.raises(NonLocalArtifactError):
             run(client.get_metadata_text("foo", "1.0", metadata_url))
 
+    def test_get_metadata_text_reads_a_sidecarless_wheel(self, tmp_path: Path) -> None:
+        """A wheel asked for at its own URL is read out of the wheel.
+
+        A flat wheelhouse publishes no sidecar, so the provider asks for the
+        wheel's METADATA at the wheel's URL and the local index opens the zip.
+        """
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as zf:
+            zf.writestr(
+                "foo-1.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n",
+            )
+        client = LocalIndexClient(tmp_path.as_uri())
+        text = run(client.get_metadata_text("foo", "1.0", wheel.as_uri()))
+        assert text is not None
+        assert text.startswith("Metadata-Version: 2.1")
+
+    def test_get_metadata_text_answers_none_for_a_foreign_dist_info(
+        self, tmp_path: Path
+    ) -> None:
+        """A wheel whose ``.dist-info`` names another project answers nothing.
+
+        Nothing vouches for it, so the caller's ladder steps to the sdist rung
+        instead of failing the resolve on the wrong project's dependencies.
+        """
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel, "w") as zf:
+            zf.writestr(
+                "bar-2.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: bar\nVersion: 2.0\n",
+            )
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert run(client.get_metadata_text("foo", "1.0", wheel.as_uri())) is None
+
     def test_https_sdist_url_raises_index_error(self, tmp_path: Path) -> None:
         package_dir = tmp_path / "foo"
         package_dir.mkdir()
