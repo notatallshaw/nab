@@ -15,6 +15,10 @@ of two runs can still disagree: what had landed when each scan opened is
 a fact about the HTTP cache.  ``decision-order = "stable"`` closes that.
 Two classes cover the option: one varies only which listings were already
 resident, the other runs the engine, where the config reaches the provider.
+
+The scan is also where the resolver's two search counters reach the sort
+key.  Seeding one counter at a time and reading back which package the
+scan decides is what tells their two roles apart.
 """
 
 from __future__ import annotations
@@ -23,7 +27,11 @@ import threading
 from typing import TYPE_CHECKING, NamedTuple
 
 from nab_index.client import WheelFile
-from nab_python._provider.priority import _NO_LISTING_PRIOR
+from nab_python._provider.priority import (
+    _NO_LISTING_PRIOR,
+    CONFLICT_THRESHOLD,
+    CULPRIT_DEMOTE_THRESHOLD,
+)
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
@@ -216,6 +224,18 @@ def _decided_first(*, resident: bool, decision_order: DecisionOrder) -> str | No
         resident=resident, decision_order=decision_order
     )
     return decide.choose_package_to_decide(resolver)
+
+
+def _counter_resolver() -> Resolver[str, Version]:
+    """The same two packages with both listings already resident.
+
+    Nothing is in flight, so both are ready and the sort key comes down to
+    the tier the search counters give a package, then its candidate count.
+    """
+    resolver, _ = _two_package_resolver(
+        resident=True, decision_order=DecisionOrder.ARRIVAL
+    )
+    return resolver
 
 
 def _cause() -> Incompatibility[str, Version]:
@@ -492,3 +512,31 @@ class TestTheConfiguredOrderReachesTheSearch:
             conflicts=1,
             backjumps=1,
         )
+
+
+class TestTheSearchCountersReachTheSortKey:
+    """The scan ranks on both search counters, each in its own role.
+
+    They pull opposite ways: a package whose own decisions keep being
+    discarded is decided first, one blamed for discarding another's is
+    decided last.  The scan passes them positionally, so only a scan shows
+    each one landing in the role named for it.
+    """
+
+    def test_the_candidate_count_decides_with_no_history(self) -> None:
+        """Baseline: nothing has conflicted, so fewer candidates wins."""
+        assert decide.choose_package_to_decide(_counter_resolver()) == "beta"
+
+    def test_a_runaway_culprit_decides_last(self) -> None:
+        """``beta`` blamed for the conflicts drops behind the wider ``alpha``."""
+        resolver = _counter_resolver()
+        resolver.stats.package_culprit_counts["beta"] = CULPRIT_DEMOTE_THRESHOLD
+
+        assert decide.choose_package_to_decide(resolver) == "alpha"
+
+    def test_a_repeatedly_discarded_package_decides_first(self) -> None:
+        """``alpha``'s own discarded decisions lift it past ``beta``."""
+        resolver = _counter_resolver()
+        resolver.stats.package_conflict_counts["alpha"] = CONFLICT_THRESHOLD
+
+        assert decide.choose_package_to_decide(resolver) == "alpha"

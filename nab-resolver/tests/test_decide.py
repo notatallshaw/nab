@@ -8,7 +8,8 @@ PEP 440 semantics.
 
 ``choose_package_to_decide`` calls ``begin_decision_scan`` once before it reads
 any sort key, which is how a provider fed by another thread knows when its
-answers may move.
+answers may move.  The same scan hands the provider both search counters, one
+per parameter.
 """
 
 from __future__ import annotations
@@ -145,6 +146,32 @@ class _InertProvider:
         self, package: Any, constraint: RangeProtocol[int]
     ) -> RangeProtocol[int]:
         return constraint
+
+
+class _CounterRecordingProvider(_InertProvider):
+    """Records the two counter mappings each sort key is built from.
+
+    Copies each one, and records an omitted ``culprit_counts`` as ``None``
+    so a dropped argument does not read back as an empty mapping.
+    """
+
+    def __init__(self) -> None:
+        self.counters: list[tuple[dict[Any, int], dict[Any, int] | None]] = []
+
+    def prioritize(
+        self,
+        package: Any,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[Any, int],
+        culprit_counts: Mapping[Any, int] | None = None,
+    ) -> Any:
+        self.counters.append(
+            (
+                dict(conflict_counts),
+                None if culprit_counts is None else dict(culprit_counts),
+            )
+        )
+        return 0
 
 
 class _ScanOrderProvider(_InertProvider):
@@ -324,3 +351,30 @@ class TestScanBoundary:
 
         assert decide.choose_package_to_decide(resolver) is None
         assert provider.calls == []
+
+
+class TestBothCountersReachTheProvider:
+    """Every sort key is built from both of the resolver's search counters.
+
+    The two mean opposite things: how often a decision on the package was
+    discarded, against how often the package discarded another's.  They are
+    passed positionally, so nothing else pins which parameter each reaches.
+    """
+
+    def test_each_counter_arrives_in_the_parameter_named_for_it(self) -> None:
+        """Conflict counts third, culprit counts fourth, once per package."""
+        provider = _CounterRecordingProvider()
+        resolver, _ = _resolver_with(provider)
+        for package in ("a", "b"):
+            resolver.solution.derive(
+                package,
+                RefiningRange.at_least(1),
+                positive=True,
+                cause=_dependency_cause(),
+            )
+
+        resolver.stats.package_conflict_counts["a"] = 3
+        resolver.stats.package_culprit_counts["b"] = 7
+
+        assert decide.choose_package_to_decide(resolver) is not None
+        assert provider.counters == [({"a": 3}, {"b": 7})] * 2
