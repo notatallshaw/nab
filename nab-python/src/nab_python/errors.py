@@ -25,6 +25,7 @@ __all__ = [
     "MissingExtraError",
     "OverrideConflictError",
     "SiblingMetadataDivergenceError",
+    "SourceBuildPolicyError",
     "SourceNameMismatchError",
     "UnsupportedSdistError",
 ]
@@ -71,6 +72,17 @@ class UnsupportedSdistError(MetadataError):
     the version.  A declared source (local, VCS, archive, or workspace
     member) is read while listing its one version, so the error ends
     the resolve instead.
+    """
+
+
+class SourceBuildPolicyError(UnsupportedSdistError):
+    """A declared source needs a backend run the effective policy refuses.
+
+    Its own class because the two halves of the decision sit on opposite sides
+    of the fetch port: the provider resolves the policy and counts the
+    exclusion, and the host is the one that discovers the static read yielded
+    nothing.  Callers that only care that the source is unusable catch
+    :class:`UnsupportedSdistError` and see no difference.
     """
 
 

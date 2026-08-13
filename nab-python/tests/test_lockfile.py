@@ -3774,7 +3774,7 @@ class TestBuildTargetLock:
     def test_vcs_source_without_resolved_sha_raises(self) -> None:
         """A pinned VCS source with no recorded SHA is an invariant breach.
 
-        materialize_vcs_source records the post-clone SHA before any
+        materialize_source records the post-clone SHA before any
         version can be pinned, so reaching the builder without one is
         impossible through a real resolve; guard it loudly rather than
         emit a branch name as the commit id.

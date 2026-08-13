@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
     from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
+    from .policy import SourceMaterialization
+
 __all__ = [
     "InMemoryIndex",
     "metadata_pending_key",
@@ -95,6 +97,12 @@ class InMemoryIndex:
         # bundled pyproject.toml or a PEP 517 backend.  Shared across targets so
         # a matrix does not rebuild one sdist per tuple.
         self._resolved_sdist_metadata: dict[tuple[str, str], Any] = {}
+
+        # What a host made of a declared local, VCS or archive source, and the
+        # metadata a PEP 517 build produced for a remote sdist.  Both are the
+        # results of the two port members the provider cannot serve itself.
+        self._sources: dict[str, SourceMaterialization] = {}
+        self._built_metadata: dict[tuple[str, str], Any] = {}
 
     @contextmanager
     def _publishing(self, key: str) -> Iterator[None]:
@@ -525,3 +533,28 @@ class InMemoryIndex:
         """Cache reconciled sdist metadata for cross-tuple reuse."""
         with self._lock:
             self._resolved_sdist_metadata[(package, version)] = metadata
+
+    def store_source(self, package: str, result: SourceMaterialization) -> None:
+        """Record what a host made of ``package``'s declared source."""
+        with self._lock:
+            self._sources[package] = result
+
+    def get_source(self, package: str) -> SourceMaterialization | None:
+        """Return ``package``'s materialised source, or ``None``."""
+        with self._lock:
+            return self._sources.get(package)
+
+    def store_built_metadata(self, package: str, version: str, metadata: Any) -> None:
+        """Record the METADATA a host's :pep:`517` build produced."""
+        with self._lock:
+            self._built_metadata[(package, version)] = metadata
+
+    def get_built_metadata(self, package: str, version: str) -> Any | None:
+        """Return built METADATA for ``(package, version)``, or ``None``.
+
+        Unlike :meth:`get_resolved_sdist_metadata` this is what the build
+        declared, before the provider checks it against the candidate it asked
+        for, so a rejected build never reaches the reconciled cache.
+        """
+        with self._lock:
+            return self._built_metadata.get((package, version))

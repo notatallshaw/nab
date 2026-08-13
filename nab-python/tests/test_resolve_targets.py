@@ -1813,11 +1813,14 @@ class TestBuildConfigPlumbing:
         config = read_pyproject_config(self._project(tmp_path))
         built = WheelMetadata(name="dyn", version=Version("7.0"))
 
+        coordinator = make_coordinator(
+            listings={}, auto_metadata=True, build_config=config
+        )
         with patch(
             "nab_python._build.runner.run_build_backend", return_value=built
         ) as runner:
             result = resolve_with_coordinator(
-                _make_coordinator({}), _one_target(), _reqs("dyn"), config=config
+                coordinator, _one_target(), _reqs("dyn"), config=config
             )
 
         assert result.success

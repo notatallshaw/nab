@@ -1,10 +1,15 @@
-"""BUILD_REMOTE path: fetch, extract, and build a remote sdist.
+"""BUILD_REMOTE path: pick the sdist to build, and check what came back.
 
 Invoked from :func:`resolve_dynamic_sdist` when neither the
 :pep:`643` static-deps path nor the bundled ``pyproject.toml``
 fallback yields usable dependency metadata, and the effective
 :class:`~nab_python.provider.BuildPolicy` for the package is
 :attr:`~nab_python.provider.BuildPolicy.BUILD_REMOTE`.
+
+The build itself is the host's, behind
+:meth:`~nab_python.fetch_port.FetchPort.request_built_metadata`.  What is left
+here is the part that needs provider state: which sdist of the listing to
+build, and whether what the build declared is the candidate that was asked for.
 
 A failure here raises :class:`~nab_python.provider.UnsupportedSdistError`
 so :func:`nab_python._provider.lookahead.look_ahead_ok` can skip the
@@ -16,11 +21,7 @@ it just turns silence into a real diagnostic.
 
 from __future__ import annotations
 
-import tempfile
-from pathlib import Path
 from typing import TYPE_CHECKING
-
-from nab_index.client import extract_sdist_archive
 
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
@@ -38,7 +39,7 @@ def build_remote_sdist(
     package: str,
     version: Version,
 ) -> WheelMetadata:
-    """Download the sdist for ``(package, version)``, extract, and build.
+    """Have the host build ``(package, version)``, and check what it declared.
 
     ``package`` is the canonical package name; ``version`` matches an
     entry in ``provider.versions_cache``.  A built sdist whose
@@ -50,14 +51,6 @@ def build_remote_sdist(
     version disagrees with the requested candidate is also rejected rather
     than used for the wrong package.
     """
-    # Imported in-function so tests can patch the module attribute, and to
-    # keep ``_build.runner`` (and the ``build`` package behind it) off the
-    # import path of a resolve that never invokes a backend.  Hoisting it
-    # would also close the resolve-builds-resolve loop described in
-    # :func:`nab_python._build.env.NabBuildEnv._resolve_and_download`.
-    from .. import build_backend
-    from ..build_backend import BuildBackendError
-
     canonical = canonicalize_name(package)
     versions = provider.versions_cache.get(canonical, [])
     sdist = find_sdist(versions, version)
@@ -69,40 +62,14 @@ def build_remote_sdist(
         raise UnsupportedSdistError(msg)
 
     ver_str = str(version)
-    event = provider.coordinator.request_sdist_archive(
+    event = provider.coordinator.request_built_metadata(
         canonical, ver_str, sdist.url, sdist.hashes
     )
     event.wait()
-    integrity_error = provider.coordinator.index.get_sdist_archive_error(
-        canonical, ver_str
-    )
-    if integrity_error is not None:
-        raise integrity_error
-    data = provider.coordinator.index.get_sdist_archive(canonical, ver_str)
-    if data is None:
-        msg = (
-            f"{package}=={version} build-remote requested but sdist archive"
-            f" fetch from {sdist.url} failed"
-        )
-        raise UnsupportedSdistError(msg)
-
-    with tempfile.TemporaryDirectory(
-        prefix="nab-build-remote-", ignore_cleanup_errors=True
-    ) as td:
-        try:
-            source_dir = extract_sdist_archive(data, Path(td))
-        except ValueError as exc:
-            msg = f"{package}=={version} sdist archive could not be extracted: {exc}"
-            raise UnsupportedSdistError(msg) from exc
-        try:
-            built = build_backend.extract_metadata(
-                source_dir,
-                config=provider.build_config,
-                offline=provider.coordinator.offline,
-            )
-        except BuildBackendError as exc:
-            msg = f"{package}=={version} build-remote backend failed: {exc}"
-            raise UnsupportedSdistError(msg) from exc
+    built = provider.coordinator.index.get_built_metadata(canonical, ver_str)
+    # The port answers inline and raises on failure, so a request that returned
+    # has left the metadata behind.
+    assert built is not None
 
     target = provider.target
     override_rp = provider.effective_requires_python(canonical, version)

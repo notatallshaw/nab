@@ -41,6 +41,7 @@ from .errors import (
     MissingExtraError,
     OverrideConflictError,
     SiblingMetadataDivergenceError,
+    SourceBuildPolicyError,
     SourceNameMismatchError,
     UnsupportedSdistError,
 )
@@ -54,6 +55,7 @@ from .policy import (
     ExtrasMode,
     LocalSource,
     ResolutionStrategy,
+    SourceRequest,
     VcsSource,
 )
 from .policy import (
@@ -425,8 +427,8 @@ class Provider:
         # targets of this resolve.  ``None`` computes it here instead.
         self.listing_filter_cache = listing_filter_cache
 
-        # Passed through to the build env when extract_source_metadata
-        # falls through to a PEP 517 backend; static-only callers leave None.
+        # The backend runs behind the fetch port under the coordinator's own
+        # config; this copy only feeds the trust flag below.
         self.build_config = build_config
         self.extras_mode = extras_mode
         self.root_extras = root_extras or set()
@@ -989,39 +991,47 @@ class Provider:
         """Return True if metadata parsing previously failed for this pin."""
         return (canonical_name, version) in self._invalid_metadata
 
-    def materialize_local_source(
+    def materialize_source(
         self,
         normalized: str,
-        source: LocalSource,
+        source: LocalSource | VcsSource | ArchiveSource,
     ) -> list[tuple[Version, DistFile]]:
-        """See :func:`nab_python._provider.sources.materialize_local_source`."""
-        result: list[tuple[Version, DistFile]] = []
-        for version, sdist in _sources.materialize_local_source(
-            self, normalized, source
-        ):
-            result.append((version, sdist))
-        return result
+        """Have the host materialise ``source`` and seed its one candidate.
 
-    def materialize_vcs_source(
-        self,
-        normalized: str,
-        source: VcsSource,
-    ) -> list[tuple[Version, DistFile]]:
-        """See :func:`nab_python._provider.sources.materialize_vcs_source`."""
-        result: list[tuple[Version, DistFile]] = []
-        for version, sdist in _sources.materialize_vcs_source(self, normalized, source):
-            result.append((version, sdist))
-        return result
+        The policy is resolved here, because the overrides that decide it are
+        the provider's; the directory read, the clone and the download are the
+        host's.  A VCS clone reports the commit it landed on, which is what the
+        lock writer pins.
+        """
+        request = SourceRequest(
+            package=normalized,
+            source=source,
+            build_policy=self.effective_build_policy_for_source(normalized),
+            vcs_cache_dir=self.vcs_cache_dir,
+            archive_cache_dir=self.archive_cache_dir,
+            require_pin=self.vcs_config.require_pin,
+        )
+        try:
+            event = self.coordinator.request_source_listing(request)
+        except SourceBuildPolicyError:
+            self.stats.excluded_by_build_policy += 1
+            raise
+        event.wait()
+        materialized = self.coordinator.index.get_source(normalized)
+        # The port answers inline and raises on failure, so a request that
+        # returned has left its result behind.
+        assert materialized is not None
 
-    def materialize_archive_source(
-        self,
-        normalized: str,
-        source: ArchiveSource,
-    ) -> list[tuple[Version, DistFile]]:  # pragma: no cover (see sources.py)
-        """See :func:`nab_python._provider.sources.materialize_archive_source`."""
+        if materialized.commit_sha is not None:
+            self.vcs_pins[normalized] = materialized.commit_sha
+
         result: list[tuple[Version, DistFile]] = []
-        for version, sdist in _sources.materialize_archive_source(
-            self, normalized, source
+        for version, sdist in _sources.seed_synthetic_listing(
+            self,
+            normalized,
+            materialized.path,
+            materialized.metadata,
+            source.descriptor,
         ):
             result.append((version, sdist))
         return result
@@ -2122,8 +2132,8 @@ class Provider:
     def vcs_pin_for(self, canonical_name: str) -> str | None:
         """Return the post-clone commit SHA for ``canonical_name``, or None.
 
-        Written by :func:`~nab_python._provider.sources.materialize_vcs_source`
-        after the shallow clone resolves the ref to a 40-char SHA.
+        Written by :meth:`materialize_source` after the host's shallow clone
+        resolves the ref to a 40-char SHA.
         """
         return self.vcs_pins.get(canonicalize_name(canonical_name))
 

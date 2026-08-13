@@ -18,10 +18,17 @@ from nab_python.fetch_port import FetchPort, Waitable
 SRC = Path(__file__).resolve().parents[1] / "src" / "nab_python"
 
 PROVIDER_SOURCES = (SRC / "provider.py", *sorted((SRC / "_provider").glob("*.py")))
-"""The modules the census reads.
+"""The modules the census reads for the ``coordinator`` handle.
 
 A module outside this list can read the handle unseen, so the list is part of
 what the census asserts."""
+
+HOST_SOURCES = (SRC / "_build_remote.py", SRC / "_sources.py")
+"""The host-side halves of source materialisation and the remote build.
+
+They hold the port as a parameter named ``port`` and reach the archive
+requests through it, so the census walks them for that handle the way it
+walks the provider modules for ``coordinator``."""
 
 
 def declared_members(protocol: type) -> frozenset[str]:
@@ -37,15 +44,15 @@ def parameter_shape(func: object) -> list[tuple[str, inspect._ParameterKind, obj
     ]
 
 
-def is_the_handle(node: ast.expr) -> bool:
-    """Whether ``node`` evaluates to the coordinator handle.
+def is_the_handle(node: ast.expr, handle: str) -> bool:
+    """Whether ``node`` evaluates to the handle named ``handle``.
 
-    Two spellings reach it: the constructor's parameter, and the ``.coordinator``
-    attribute it is stored under.
+    Two spellings reach it: the parameter of that name, and the attribute the
+    holder reads it back from (``self.coordinator`` on the provider).
     """
     if isinstance(node, ast.Name):
-        return node.id == "coordinator"
-    return isinstance(node, ast.Attribute) and node.attr == "coordinator"
+        return node.id == handle
+    return isinstance(node, ast.Attribute) and node.attr == handle
 
 
 def binding_of(node: ast.AST) -> tuple[ast.expr, Sequence[ast.expr]] | None:
@@ -59,43 +66,54 @@ def binding_of(node: ast.AST) -> tuple[ast.expr, Sequence[ast.expr]] | None:
     return None
 
 
-def followable_handles(module: ast.Module) -> set[int]:
+def followable_handles(module: ast.Module, handle: str) -> set[int]:
     """The ``id()`` of every handle occurrence in ``module`` the walk can account for.
 
-    A handle read as ``coordinator.<member>`` is the census's own input.
-    ``self.coordinator = coordinator`` stores it under the name the walk already
-    looks for, so its later reads stay visible; any other target hides them.
+    Three spellings qualify. The object of an attribute read is the census's
+    own input. ``self.coordinator = coordinator`` stores the handle under the
+    name the walk already looks for, so its reads stay visible; any other
+    target hides them. And ``port=port`` passes it under its own name, so the
+    callee's reads stay visible for the same reason.
     """
     followable: set[int] = set()
     for node in ast.walk(module):
-        if isinstance(node, ast.Attribute) and is_the_handle(node.value):
+        if isinstance(node, ast.Attribute) and is_the_handle(node.value, handle):
             followable.add(id(node.value))
+            continue
+        if isinstance(node, ast.Call):
+            followable.update(
+                id(kw.value)
+                for kw in node.keywords
+                if kw.arg == handle and is_the_handle(kw.value, handle)
+            )
             continue
         binding = binding_of(node)
         if binding is None:
             continue
         value, targets = binding
-        if is_the_handle(value) and all(is_the_handle(t) for t in targets):
+        if is_the_handle(value, handle) and all(
+            is_the_handle(t, handle) for t in targets
+        ):
             followable.update(id(occurrence) for occurrence in (value, *targets))
     return followable
 
 
-def members_read_from(path: Path) -> set[str]:
-    """Every attribute name ``path`` reads off the coordinator handle.
+def members_read_from(path: Path, handle: str = "coordinator") -> set[str]:
+    """Every attribute name ``path`` reads off the ``handle`` it holds.
 
     Refuses any occurrence of the handle the walk cannot account for: an alias
     has too many spellings to chase.
     """
     module = ast.parse(path.read_text(encoding="utf-8"))
-    followable = followable_handles(module)
+    followable = followable_handles(module, handle)
 
     members: set[str] = set()
     for node in ast.walk(module):
         if isinstance(node, (ast.Name, ast.Attribute)):
-            if is_the_handle(node) and id(node) not in followable:
+            if is_the_handle(node, handle) and id(node) not in followable:
                 msg = f"{path.name}:{node.lineno} hides the handle from the census"
                 raise AssertionError(msg)
-            if isinstance(node, ast.Attribute) and is_the_handle(node.value):
+            if isinstance(node, ast.Attribute) and is_the_handle(node.value, handle):
                 members.add(node.attr)
     return members
 
@@ -105,6 +123,13 @@ def provider_census() -> set[str]:
     return set().union(*(members_read_from(path) for path in PROVIDER_SOURCES))
 
 
+def host_census() -> set[str]:
+    """The port's surface as the host-side helpers use it, read from source."""
+    return set().union(
+        *(members_read_from(path, handle="port") for path in HOST_SOURCES)
+    )
+
+
 @pytest.fixture
 def coordinator() -> FetchCoordinator:
     """A coordinator that is never started, so it makes no request."""
@@ -112,9 +137,16 @@ def coordinator() -> FetchCoordinator:
 
 
 class TestPortDeclaration:
-    def test_declares_exactly_the_members_the_provider_uses(self) -> None:
-        """The port is a census, so recompute it rather than restate it here."""
-        assert provider_census() == declared_members(FetchPort)
+    def test_declares_exactly_the_members_its_consumers_use(self) -> None:
+        """The port is a census, so recompute it rather than restate it here.
+
+        Asserting against a hand-written list would only catch drift in the
+        protocol. Walking the consumers catches drift on either side: a member
+        one starts reading and a member one stops reading both fail. The
+        consumers are the provider and the two host-side helpers, which reach
+        the archive requests through the port a host hands them.
+        """
+        assert provider_census() | host_census() == declared_members(FetchPort)
 
     @pytest.mark.parametrize(
         "source",
@@ -142,6 +174,17 @@ class TestPortDeclaration:
             encoding="utf-8",
         )
         assert members_read_from(path) == {"request_listing"}
+
+    def test_the_census_allows_a_keyword_pass_under_its_own_name(
+        self, tmp_path: Path
+    ) -> None:
+        """Passing the handle as ``port=port`` keeps the callee's reads visible."""
+        path = tmp_path / "passed.py"
+        path.write_text(
+            "build(request, port=port)\nport.request_direct_archive('a', 'b', 'c')\n",
+            encoding="utf-8",
+        )
+        assert members_read_from(path, handle="port") == {"request_direct_archive"}
 
     def test_waitable_declares_only_a_bare_wait(self) -> None:
         assert declared_members(Waitable) == {"wait"}

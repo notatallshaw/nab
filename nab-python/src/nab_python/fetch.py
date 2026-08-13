@@ -34,6 +34,8 @@ from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
 from nab_provider.records import IndexConfig, SdistFile, WheelFile
 from nab_provider.serialization import SimpleSerialization
 
+from ._build_remote import build_remote_sdist
+from ._sources import materialize_source
 from ._toml import parse_pyproject_table
 from ._vendor.packaging.utils import canonicalize_name
 from .store import InMemoryIndex, metadata_pending_key, range_pending_key
@@ -73,7 +75,18 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
 
+    from .config import NabProjectConfig
+    from .metadata import WheelMetadata
+    from .policy import SourceRequest
+
 logger = logging.getLogger(__name__)
+
+
+def _done_event() -> threading.Event:
+    """Return an already-set event, for a request answered without waiting."""
+    event = threading.Event()
+    event.set()
+    return event
 
 
 class FetchKind(enum.Enum):
@@ -177,6 +190,7 @@ class FetchCoordinator:
         index_routes: list[IndexRoute] | None = None,
         index_cache_floors: Mapping[str, int] | None = None,
         on_fetch: Callable[[], None] | None = None,
+        build_config: NabProjectConfig | None = None,
     ) -> None:
         """Create a coordinator that wraps ``transport``.
 
@@ -194,6 +208,11 @@ class FetchCoordinator:
         freshness floor in seconds, passed to that index's cached client
         as ``min_fresh_seconds``.  Indexes absent from the map, and the
         ``file://`` local client, get no floor.
+
+        ``build_config`` is the project config a :pep:`517` build runs under,
+        for the two members that build: source materialisation and the
+        remote-sdist rung.  A caller that resolves without building leaves it
+        ``None``.
 
         ``cache_backend`` wins over ``cache_dir`` if both are given;
         otherwise ``cache_dir`` enables a per-index :class:`OnDiskCache`
@@ -243,6 +262,7 @@ class FetchCoordinator:
         else:
             self._cache = NullCache()
         self._cache_dir = cache_dir
+        self._build_config = build_config
         self._index_routes = list(index_routes or [])
         self._index_cache_floors = dict(index_cache_floors or {})
         # The sync warm-hit path serves one shape only: a single non-file index
@@ -632,6 +652,41 @@ class FetchCoordinator:
             )
         return event
 
+    def request_source_listing(self, request: SourceRequest) -> threading.Event:
+        """Materialise a declared source and store what it declared.
+
+        Run inline rather than on the fetcher thread: an archive source waits
+        on :meth:`request_direct_archive`, which the fetcher thread is the one
+        that serves, and a dynamic source runs a build backend.  The returned
+        event is therefore always already set.
+        """
+        self._check_alive()
+        self.index.store_source(
+            request.package,
+            materialize_source(self, request, self._build_config),
+        )
+        return _done_event()
+
+    def request_built_metadata(
+        self,
+        package: str,
+        version: str,
+        url: str,
+        sdist_hashes: tuple[tuple[str, str], ...],
+    ) -> threading.Event:  # pragma: no cover (tar data filter)
+        """Build the sdist at ``url`` and store the METADATA it produced.
+
+        Run inline, for the same reason as :meth:`request_source_listing`: the
+        build waits on :meth:`request_sdist_archive`, which the fetcher thread
+        serves.
+        """
+        self._check_alive()
+        built: WheelMetadata = build_remote_sdist(
+            self, package, version, url, sdist_hashes, self._build_config
+        )
+        self.index.store_built_metadata(package, version, built)
+        return _done_event()
+
     def request_metadata_batch(
         self, items: list[tuple[str, str, str, tuple[str, str] | None]]
     ) -> list[tuple[str, str, threading.Event]]:
@@ -646,9 +701,7 @@ class FetchCoordinator:
         batch: list[FetchRequest] = []
         for package, version, url, metadata_hash in items:
             if self.index.has_metadata(package, version, url):
-                done = threading.Event()
-                done.set()
-                results.append((package, version, done))
+                results.append((package, version, _done_event()))
                 continue
             key = metadata_pending_key(package, version, url)
             event, existed = self.index.get_or_create_pending(key)

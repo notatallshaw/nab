@@ -227,6 +227,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the surface mirrors the CLI; bundlin
         index_routes=index_routes_from_config(config),
         index_cache_floors=index_cache_floors_from_config(config),
         on_fetch=progress.on_fetch if progress is not None else None,
+        build_config=config,
     ) as coordinator:
         return resolve_with_coordinator(
             coordinator,

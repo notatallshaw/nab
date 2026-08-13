@@ -28,8 +28,8 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.multi_index import IndexConfig
 from nab_index.transport import HttpError
 from nab_provider.archive import ArchiveRequest, ArchiveRequestError
-from nab_python._provider import sources
-from nab_python._provider.sources import _fetch_archive_bytes
+from nab_python import _sources as sources
+from nab_python._sources import _fetch_archive_bytes
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
@@ -155,7 +155,12 @@ def _fetching_provider(
 
 def _fetch_bytes(provider: Provider, source: ArchiveSource) -> bytes:
     """Fetch and verify ``source``'s archive the way materialisation does."""
-    return _fetch_archive_bytes(provider, source, ArchiveRequest.parse(source.url))
+    return _fetch_archive_bytes(
+        canonicalize_name(source.name),
+        source,
+        ArchiveRequest.parse(source.url),
+        port=provider.coordinator,
+    )
 
 
 def _archive_provider(data: bytes, cache: Path) -> Provider:
@@ -565,15 +570,15 @@ class TestArchiveMaterialize:
         ("failure_target", "expected"),
         [
             (
-                "nab_python._provider.sources.tempfile.TemporaryDirectory",
+                "nab_python._sources.tempfile.TemporaryDirectory",
                 "could not create a temporary build tree",
             ),
             (
-                "nab_python._provider.sources.shutil.copytree",
+                "nab_python._sources.shutil.copytree",
                 "could not copy cached source tree",
             ),
             (
-                "nab_python._provider.sources.os.link",
+                "nab_python._sources.os.link",
                 "could not copy cached source tree",
             ),
         ],
@@ -1272,13 +1277,13 @@ class TestArchiveBuildPolicyLevels:
     """
 
     def _extract(self, policy: BuildPolicy, path: Path) -> WheelMetadata:
-        provider = Provider(make_coordinator(), build_policy=policy)
         return sources.extract_source_metadata(
-            provider,
             path,
             descriptor="archive source 'pkg'",
-            package=canonicalize_name("pkg"),
+            policy=policy,
             kind="archive",
+            offline=False,
+            build_config=None,
         )
 
     @pytest.mark.parametrize("policy", [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL])

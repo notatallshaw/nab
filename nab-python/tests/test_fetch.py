@@ -37,6 +37,8 @@ from nab_index.multi_index import IndexConfig, MultiIndexClient
 from nab_index.parsed_listing import encode as encode_parsed
 from nab_index.transport import HttpError, HttpResponse
 from nab_provider.serialization import SimpleSerialization
+from nab_python._vendor.packaging.version import Version
+from nab_python.config import NabProjectConfig
 from nab_python.fetch import (
     _WARM_SYNC_MIN_BLOB_BYTES,
     FetchCoordinator,
@@ -47,6 +49,7 @@ from nab_python.fetch import (
     WarmSyncStats,
     _resolve_routes,
 )
+from nab_python.metadata import WheelMetadata
 
 
 @pytest.fixture
@@ -1739,6 +1742,53 @@ class TestFetchCoordinator:
             assert coord.index.get_sdist_archive("pkg", "1.0") is None
             error = coord.index.get_sdist_archive_error("pkg", "1.0")
             assert isinstance(error, HttpError)
+
+    @respx.mock
+    @pytest.mark.skipif(
+        not hasattr(tarfile, "data_filter"),
+        reason="sdist extraction requires the tar data filter (PEP 706)",
+    )
+    def test_request_built_metadata_builds_the_downloaded_sdist(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The build rung downloads, extracts, and stores what the backend said.
+
+        Only the backend invocation is faked: the archive is really fetched
+        through the transport and really extracted, so the member is exercised
+        the way the provider reaches it.
+        """
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            body = b'[project]\nname = "pkg"\nversion = "1.0"\n'
+            info = tarfile.TarInfo(name="pkg-1.0/pyproject.toml")
+            info.size = len(body)
+            tar.addfile(info, io.BytesIO(body))
+        respx.get("https://files.example.com/pkg-1.0.tar.gz").mock(
+            return_value=httpx.Response(200, content=buf.getvalue()),
+        )
+
+        built = WheelMetadata(
+            name="pkg",
+            version=Version("1.0"),
+            requires_python=None,
+            requires_dist=[],
+            provides_extra=[],
+        )
+        seen: dict[str, object] = {}
+
+        def fake_build(_path: Path, **kwargs: object) -> WheelMetadata:
+            seen.update(kwargs)
+            return built
+
+        monkeypatch.setattr("nab_python.build_backend.extract_metadata", fake_build)
+        config = NabProjectConfig()
+        with _coord(build_config=config) as coord:
+            event = coord.request_built_metadata(
+                "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz", ()
+            )
+            assert event.wait(timeout=5)
+            assert coord.index.get_built_metadata("pkg", "1.0") is built
+        assert seen == {"config": config, "offline": False}
 
     def test_request_direct_archive_deduplicates(self, tmp_path: Path) -> None:
         """A direct archive already in flight hands back its pending event."""

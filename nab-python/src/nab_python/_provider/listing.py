@@ -33,6 +33,7 @@ if TYPE_CHECKING:
 
     from .._vendor.packaging.ranges import VersionRange
     from ..fetch_port import Waitable
+    from ..policy import ArchiveSource, LocalSource, VcsSource
     from ..provider import DistFile, Provider
     from ..tags import TagSet
 
@@ -59,25 +60,20 @@ def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, Dist
     if normalized in provider.versions_cache:
         return provider.versions_cache[normalized]
 
-    local = provider.local_sources.get(normalized)
-    if local is not None:
-        result = provider.materialize_local_source(normalized, local)
+    declared: LocalSource | VcsSource | ArchiveSource | None = (
+        provider.local_sources.get(normalized)
+    )
+    if declared is None:
+        declared = provider.vcs_sources.get(normalized)
+    if declared is None:
+        declared = provider.archive_sources.get(normalized)
+    if declared is not None:
+        # For an archive the download-and-verify guards are gated everywhere;
+        # only the post-extraction success tail needs the tar data filter
+        # (see nab_python._sources).
+        result = provider.materialize_source(normalized, declared)
         provider.versions_cache[normalized] = result
         return result
-
-    vcs = provider.vcs_sources.get(normalized)
-    if vcs is not None:
-        result = provider.materialize_vcs_source(normalized, vcs)
-        provider.versions_cache[normalized] = result
-        return result
-
-    archive = provider.archive_sources.get(normalized)
-    if archive is not None:
-        # The download-and-verify guards are gated everywhere; only the
-        # post-extraction success tail needs the tar data filter (see sources.py).
-        result = provider.materialize_archive_source(normalized, archive)
-        provider.versions_cache[normalized] = result  # pragma: no cover
-        return result  # pragma: no cover
 
     files = provider.coordinator.index.get_listing(normalized)
     if files is None:

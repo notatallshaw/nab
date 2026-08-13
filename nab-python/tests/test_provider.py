@@ -36,6 +36,7 @@ from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.multi_index import IndexConfig
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_python import _build_remote
 from nab_python._provider import build_remote, metadata_resolver
 from nab_python._provider import listing as listing_mod
 from nab_python._provider.lookahead import DepRangeUnion
@@ -3287,12 +3288,13 @@ class TestLocalSources:
         (tmp_path / "pyproject.toml").write_bytes(
             b'[project]\nname = "foo"\nversion = "1.0"\ndescription = "\xe9"\n'
         )
-        coordinator = make_coordinator([], package="foo")
+        coordinator = make_coordinator(
+            [], package="foo", build_config=NabProjectConfig()
+        )
         provider = Provider(
             coordinator,
             local_sources=[LocalSource("foo", str(tmp_path))],
             build_policy=BuildPolicy.BUILD_LOCAL,
-            build_config=NabProjectConfig(),
         )
         with pytest.raises(UnsupportedSdistError, match="could not read pyproject"):
             provider.fetch_versions("foo")
@@ -3447,7 +3449,7 @@ class TestLocalSources:
         assert len(provider.fetch_versions("foo")) == 1
         assert captured == {
             "path": tmp_path,
-            "config": provider.build_config,
+            "config": coordinator.build_config,
             "offline": False,
         }
 
@@ -3475,14 +3477,15 @@ class TestLocalSources:
             raise AssertionError("offline must not reach the network")
 
         monkeypatch.setattr("nab_python.resolve.resolve_for_targets", _boom)
-        coordinator = make_coordinator([], package="foo")
+        coordinator = make_coordinator(
+            [], package="foo", build_config=NabProjectConfig()
+        )
         coordinator.offline = True
         provider = Provider(
             coordinator,
             target=_PY312,
             local_sources=[LocalSource("foo", str(tmp_path))],
             build_policy=BuildPolicy.BUILD_LOCAL,
-            build_config=NabProjectConfig(),
         )
         with pytest.raises(UnsupportedSdistError, match="offline mode"):
             provider.fetch_versions("foo")
@@ -9078,7 +9081,7 @@ class TestEffectiveBuildPolicy:
             captured["kwargs"] = kwargs
             return built_meta
 
-        monkeypatch.setattr(build_remote, "extract_sdist_archive", fake_extract)
+        monkeypatch.setattr(_build_remote, "extract_sdist_archive", fake_extract)
         monkeypatch.setattr("nab_python.build_backend.extract_metadata", fake_build)
 
         starting = WheelMetadata(
@@ -9097,7 +9100,7 @@ class TestEffectiveBuildPolicy:
         # The backend runs on the host interpreter, so the resolve
         # target's Python must not reach the build env.
         assert captured["kwargs"] == {
-            "config": provider.build_config,
+            "config": coordinator.build_config,
             "offline": offline,
         }
 
@@ -9536,7 +9539,7 @@ class TestStaticSdistMetadata:
             provides_extra=[],
         )
         monkeypatch.setattr(
-            build_remote, "extract_sdist_archive", lambda _data, target: target
+            _build_remote, "extract_sdist_archive", lambda _data, target: target
         )
         monkeypatch.setattr(
             "nab_python.build_backend.extract_metadata", lambda *_a, **_k: built
@@ -9642,7 +9645,7 @@ class TestStaticSdistMetadata:
             )
 
         monkeypatch.setattr(
-            build_remote, "extract_sdist_archive", lambda data, target: target
+            _build_remote, "extract_sdist_archive", lambda data, target: target
         )
         monkeypatch.setattr("nab_python.build_backend.extract_metadata", _naive_build)
 
@@ -9742,6 +9745,7 @@ class TestBuildRemoteFailureModes:
             package="pkg",
             sdist_archive=sdist_archive,
             sdist_archive_error=sdist_archive_error,
+            build_config=build_config,
         )
         return Provider(
             coordinator,
@@ -9749,7 +9753,6 @@ class TestBuildRemoteFailureModes:
             dist_policy=DistPolicy.WHEEL_OR_SDIST,
             build_policy=BuildPolicy.BUILD_REMOTE,
             package_overrides=overrides,
-            build_config=build_config,
         )
 
     def test_missing_sdist_in_listing_raises(self) -> None:
@@ -9831,7 +9834,7 @@ class TestBuildRemoteFailureModes:
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
         monkeypatch.setattr(
-            build_remote, "extract_sdist_archive", lambda _d, target: target
+            _build_remote, "extract_sdist_archive", lambda _d, target: target
         )
 
         def _boom(*_a: object, **_k: object) -> None:
@@ -9892,7 +9895,7 @@ class TestBuildRemoteFailureModes:
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
         monkeypatch.setattr(
-            build_remote, "extract_sdist_archive", lambda _d, target: target
+            _build_remote, "extract_sdist_archive", lambda _d, target: target
         )
         monkeypatch.setattr(
             "nab_python.build_backend.extract_metadata", lambda *_a, **_k: built
@@ -9940,7 +9943,7 @@ class TestBuildRemoteFailureModes:
         )
         provider = self._build_into(monkeypatch, built)
         monkeypatch.setattr(
-            build_remote.tempfile,
+            _build_remote.tempfile,
             "TemporaryDirectory",
             _CleanupErrorTemporaryDirectory,
         )
@@ -10089,7 +10092,7 @@ class TestBuildRemoteFailureModes:
         )
 
         monkeypatch.setattr(
-            build_remote, "extract_sdist_archive", lambda _d, target: target
+            _build_remote, "extract_sdist_archive", lambda _d, target: target
         )
 
         built = WheelMetadata(

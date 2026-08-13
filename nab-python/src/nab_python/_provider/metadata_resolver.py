@@ -413,10 +413,8 @@ def resolve_dynamic_sdist(
     :func:`nab_python._provider.lookahead.look_ahead_ok` and surfaces the
     accumulated reasons if no candidate ultimately works.
     """
-    # Imported in-function so tests can patch the module attribute, and so
-    # the remote-build path (and the ``build`` dependency behind it) is not
-    # paid for by a resolve that never builds a remote sdist.  It could not
-    # be hoisted anyway: ``build_remote`` imports ``find_sdist`` from this
+    # Imported in-function so tests can patch the module attribute.  It could
+    # not be hoisted anyway: ``build_remote`` imports ``find_sdist`` from this
     # module at load, so a module-level import here is a cycle.
     from .build_remote import build_remote_sdist
 

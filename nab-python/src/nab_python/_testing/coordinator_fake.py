@@ -16,6 +16,8 @@ import threading
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from nab_provider.records import IndexConfig
+from nab_python._build_remote import build_remote_sdist
+from nab_python._sources import materialize_source
 from nab_python._toml import parse_pyproject_table
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
 from nab_python.store import InMemoryIndex
@@ -24,6 +26,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from nab_provider.records import RangeMetadataResult, SdistFile, WheelFile
+    from nab_python.config import NabProjectConfig
+    from nab_python.policy import SourceRequest
 
 _MINIMAL_METADATA = "Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\n"
 
@@ -37,6 +41,8 @@ REQUESTS = (
     "request_sdist",
     "request_sdist_archive",
     "request_direct_archive",
+    "request_source_listing",
+    "request_built_metadata",
 )
 """The port's request methods, and the names :meth:`FakeFetchPort.calls_to`
 and :meth:`FakeFetchPort.override` accept."""
@@ -184,12 +190,14 @@ class FakeFetchPort:
         serve_sdist: Callable[[str, str], None],
         serve_range: Callable[[str, str, str], None],
         serve_archive: Callable[[str, str], None],
+        build_config: NabProjectConfig | None = None,
     ) -> None:
         """Wire the port to ``index`` and to one server per fetch kind."""
         self.index = index
         # Not on the port: the engine reads it off the coordinator.
         self.indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
         self.offline = False
+        self.build_config = build_config
 
         self._serve_metadata = serve_metadata
         self._serve_sdist = serve_sdist
@@ -303,6 +311,26 @@ class FakeFetchPort:
             "request_direct_archive", (package, version, url), self._direct_archive
         )
 
+    def request_source_listing(self, request: SourceRequest) -> threading.Event:
+        """Materialise the declared source for real, as the coordinator does."""
+        return self._handle(
+            "request_source_listing", (request,), self._materialize_source
+        )
+
+    def request_built_metadata(
+        self,
+        package: str,
+        version: str,
+        url: str,
+        sdist_hashes: tuple[tuple[str, str], ...],
+    ) -> threading.Event:
+        """Build the sdist for real, over whatever archive bytes the store has."""
+        return self._handle(
+            "request_built_metadata",
+            (package, version, url, sdist_hashes),
+            self._store_built_metadata,
+        )
+
     def _listing(self, package: str, speculative: bool) -> threading.Event:  # noqa: FBT001 - _handle calls this positionally
         """Serve a listing request: the index already holds what was pre-loaded."""
         del package, speculative
@@ -386,6 +414,22 @@ class FakeFetchPort:
         self._serve_archive(package, version)
         return _done_event()
 
+    def _materialize_source(self, request: SourceRequest) -> threading.Event:
+        """Materialise one declared source, as the coordinator does."""
+        self.index.store_source(
+            request.package, materialize_source(self, request, self.build_config)
+        )
+        return _done_event()
+
+    def _store_built_metadata(
+        self, pkg: str, ver: str, url: str, hashes: tuple[tuple[str, str], ...]
+    ) -> threading.Event:
+        """Build one sdist, as the coordinator does."""
+        self.index.store_built_metadata(
+            pkg, ver, build_remote_sdist(self, pkg, ver, url, hashes, self.build_config)
+        )
+        return _done_event()
+
 
 def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-loads
     wheels: Sequence[WheelFile | SdistFile] | None = None,
@@ -404,6 +448,7 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     range_by_url: Mapping[str, RangeMetadataResult] | None = None,
     sdist_archive: bytes | None = None,
     sdist_archive_error: BaseException | None = None,
+    build_config: NabProjectConfig | None = None,
 ) -> FakeFetchPort:
     """Build a :class:`FakeFetchPort` backed by an :class:`InMemoryIndex`.
 
@@ -433,7 +478,12 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
       With none it writes nothing, so rung 4 finds nothing.
     * ``request_sdist_archive`` and ``request_direct_archive`` write
       ``sdist_archive_error``, or ``sdist_archive`` as the fetched bytes.  With
-      neither they write nothing, leaving whatever the test stored in the index.
+      neither they write nothing, which leaves whatever the test stored in the
+      index itself.
+    * ``request_source_listing`` and ``request_built_metadata`` run the real
+      materialiser and the real remote build under ``build_config``, so a
+      declared source or a BUILD_REMOTE candidate behaves as it does in
+      production over whatever bytes the store holds.
 
     For a setup these keywords cannot express, replace one request with
     :meth:`FakeFetchPort.override`, and read back the calls with
@@ -468,4 +518,5 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
             sdist_archive=sdist_archive,
             sdist_archive_error=sdist_archive_error,
         ),
+        build_config=build_config,
     )

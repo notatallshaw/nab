@@ -11,6 +11,12 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from .metadata import WheelMetadata
 
 __all__ = [
     "ArchiveSource",
@@ -21,6 +27,8 @@ __all__ = [
     "LocalSource",
     "ResolutionStrategy",
     "ResolveMode",
+    "SourceMaterialization",
+    "SourceRequest",
     "VcsSource",
 ]
 
@@ -170,6 +178,11 @@ class LocalSource:
     editable: bool = False
     subdirectory: str | None = None
 
+    @property
+    def descriptor(self) -> str:
+        """How this source is named in the errors it raises."""
+        return f"local source {self.name!r}"
+
 
 @dataclass(frozen=True, slots=True)
 class VcsSource:
@@ -185,6 +198,11 @@ class VcsSource:
     name: str
     url: str
 
+    @property
+    def descriptor(self) -> str:
+        """How this source is named in the errors it raises."""
+        return f"vcs source {self.name!r}"
+
 
 @dataclass(frozen=True, slots=True)
 class ArchiveSource:
@@ -199,3 +217,40 @@ class ArchiveSource:
 
     name: str
     url: str
+
+    @property
+    def descriptor(self) -> str:
+        """How this source is named in the errors it raises."""
+        return f"archive source {self.name!r}"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceRequest:
+    """One declared source and everything a host needs to materialise it.
+
+    Built by the provider, which owns ``build_policy`` (its per-package
+    overrides decide it) and the two cache directories, and consumed by
+    :meth:`~nab_python.fetch_port.FetchPort.request_source_listing`.  A host
+    that owns its own source handling ignores the cache directories.
+    """
+
+    package: str
+    source: LocalSource | VcsSource | ArchiveSource
+    build_policy: BuildPolicy
+    vcs_cache_dir: Path | None
+    archive_cache_dir: Path | None
+    require_pin: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SourceMaterialization:
+    """What a host produced for one declared source.
+
+    ``path`` is the directory the metadata was read from, ``metadata`` is what
+    that directory declared, and ``commit_sha`` is the resolved commit of a VCS
+    clone and ``None`` for a local directory or an archive.
+    """
+
+    path: Path
+    metadata: WheelMetadata
+    commit_sha: str | None

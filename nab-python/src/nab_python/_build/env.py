@@ -388,7 +388,7 @@ class NabBuildEnv:
         # The one import in nab-python that a declaration move cannot
         # straighten out.  Resolving a project can require building an sdist,
         # and building an sdist requires resolving its build requirements, so
-        # ``resolve`` -> ``provider`` -> ``_provider.sources`` ->
+        # ``resolve`` -> ``fetch`` -> ``_sources`` ->
         # ``build_backend`` -> ``_build.runner`` -> this module -> ``resolve``
         # is mutual recursion rather than a misplaced declaration.  Breaking it
         # for real means the caller supplying the resolve, not this module

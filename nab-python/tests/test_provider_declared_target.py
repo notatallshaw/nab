@@ -989,10 +989,11 @@ class TestVcsConfigPlumbing:
     def test_vcs_cache_dir_set_on_provider(self, tmp_path: Path) -> None:
         """``vcs_cache_dir`` is stored on the provider for later use.
 
-        ``materialize_vcs_source`` reads ``provider.vcs_cache_dir`` when
-        the resolver actually clones; passing ``None`` (the bug) raises
-        ``UnsupportedSdistError`` at clone time.  Verifying the
-        attribute is set proves the kwarg flows through ``super()``.
+        ``materialize_source`` sends ``provider.vcs_cache_dir`` in the
+        :class:`SourceRequest` when the resolver actually clones; passing
+        ``None`` (the bug) raises ``UnsupportedSdistError`` at clone time.
+        Verifying the attribute is set proves the kwarg flows through
+        ``super()``.
         """
         coordinator = _make_coordinator([])
         cache = tmp_path / "vcs"

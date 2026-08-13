@@ -687,7 +687,7 @@ def _vcs_pin_from_source(
     """Build a :class:`VcsPin` from a :class:`VcsSource`.
 
     ``resolved_sha`` is the post-clone SHA recorded on the provider by
-    :func:`~nab_python._provider.sources.materialize_vcs_source`.  A VCS
+    :meth:`~nab_python.provider.Provider.materialize_source`.  A VCS
     source cannot be pinned without first being materialised, so a
     ``None`` here is an internal invariant violation: raise
     :class:`MissingVcsCommitError` rather than emit a branch name or
@@ -713,7 +713,7 @@ def _vcs_pin_from_source(
     if resolved_sha is None:
         msg = (
             f"{canonical}: VCS source pinned without a resolved commit SHA;"
-            " materialize_vcs_source records the post-clone SHA before any"
+            " materialize_source records the post-clone SHA before any"
             " version can be pinned, so this is an internal invariant"
             " violation"
         )

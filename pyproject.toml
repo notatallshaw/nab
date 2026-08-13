@@ -297,6 +297,11 @@ extend-exclude = ["**/_vendor/**"]
 "nab-python/src/nab_python/_build/*.py" = ["PLC0415"]
 "nab-python/src/nab_python/_lockfile/*.py" = ["PLC0415"]
 
+# The two host-side build paths reach build_backend, which reaches back through
+# _build.env into resolve and fetch, so the import has to be deferred.
+"nab-python/src/nab_python/_sources.py" = ["PLC0415"]
+"nab-python/src/nab_python/_build_remote.py" = ["PLC0415"]
+
 # https://docs.astral.sh/ruff/settings/#lint
 [tool.ruff.lint]
 select = ["ALL"]
