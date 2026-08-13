@@ -1,4 +1,4 @@
-"""Tests for the per-target resolve engine in :mod:`nab_python.resolve`.
+"""Tests for the per-target resolve engine in :mod:`nab_python._resolve.engine`.
 
 The hot path is exercised via the runtime scenarios in
 ``run_scenarios.py``.  Unit tests here cover the helper functions and
@@ -24,9 +24,11 @@ from nab_index import vcs as vcs_mod
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
-from nab_python import resolve as resolve_mod
 from nab_python._marker_holds import dependency_marker_holds
 from nab_python._provider import listing as listing_mod
+from nab_python._resolve import engine as engine_mod
+from nab_python._resolve.engine import _EngineSettings, _resolve_one_target, _run_pass
+from nab_python._resolve.inputs import _ProxyConstraints
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
@@ -80,10 +82,6 @@ from nab_python.resolve import (
     ResolveResult,
     TargetResult,
     _build_resolver_inputs,
-    _EngineSettings,
-    _ProxyConstraints,
-    _resolve_one_target,
-    _run_pass,
     build_lock_input,
     resolve_with_coordinator,
 )
@@ -489,13 +487,13 @@ class TestConflictForkResolve:
         reveals whether the first fork's pins were threaded forward.
         """
         seen: list[dict[str, Version]] = []
-        real_run_pass = resolve_mod._run_pass
+        real_run_pass = engine_mod._run_pass
 
         def spy(*args: object) -> object:
             seen.append(dict(args[4]))  # type: ignore[call-overload]
             return real_run_pass(*args)  # type: ignore[arg-type]
 
-        with patch.object(resolve_mod, "_run_pass", spy):
+        with patch.object(engine_mod, "_run_pass", spy):
             result = resolve_with_coordinator(
                 self._black_coordinator(),
                 _one_target(),
@@ -676,7 +674,7 @@ class TestConflictForkBaseNames:
     ) -> None:
         # Each failed base pass is announced on the module logger so a
         # caller that ignores ``result.success`` still gets a signal.
-        with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
+        with caplog.at_level(logging.WARNING, logger="nab_python._resolve.engine"):
             resolve_with_coordinator(
                 self._coordinator(),
                 _one_target(),
@@ -832,7 +830,7 @@ class TestDroppedRootMarkerWarnedOnce:
     def test_warned_once_across_targets_forks_and_base_pass(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
+        with caplog.at_level(logging.WARNING, logger="nab_python._resolve.inputs"):
             result = resolve_with_coordinator(
                 self._coordinator(),
                 self._two_targets(),
@@ -848,7 +846,7 @@ class TestDroppedRootMarkerWarnedOnce:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         reqs = _reqs("base", 'gated ; extra == "test"', 'other ; "dev" in extras')
-        with caplog.at_level(logging.WARNING, logger="nab_python.resolve"):
+        with caplog.at_level(logging.WARNING, logger="nab_python._resolve.inputs"):
             result = resolve_with_coordinator(
                 self._coordinator(),
                 self._two_targets(),
@@ -874,9 +872,9 @@ class TestDirectPackages:
         """The ``direct_packages`` a resolve of ``texts`` hands the provider."""
         coordinator = _make_coordinator({})
         with (
-            patch.object(resolve_mod, "Provider") as provider_cls,
-            patch.object(resolve_mod, "Resolver") as resolver_cls,
-            patch.object(resolve_mod, "build_target_lock"),
+            patch.object(engine_mod, "Provider") as provider_cls,
+            patch.object(engine_mod, "Resolver") as resolver_cls,
+            patch.object(engine_mod, "build_target_lock"),
         ):
             resolver_cls.return_value.resolve.return_value = {}
             _resolve_one_target(
@@ -2859,9 +2857,9 @@ class TestMicroBoundaryNarrowing:
         ).expand()
 
         with patch.object(
-            resolve_mod,
+            engine_mod,
             "_resolve_one_target",
-            wraps=resolve_mod._resolve_one_target,
+            wraps=engine_mod._resolve_one_target,
         ) as spy:
             result = resolve_with_coordinator(
                 coordinator, targets, _reqs("foo"), config=_no_build()
@@ -2888,9 +2886,9 @@ class TestMicroBoundaryNarrowing:
         )
 
         with patch.object(
-            resolve_mod,
+            engine_mod,
             "_resolve_one_target",
-            wraps=resolve_mod._resolve_one_target,
+            wraps=engine_mod._resolve_one_target,
         ) as spy:
             result = resolve_with_coordinator(
                 coordinator,
@@ -3075,7 +3073,7 @@ class TestMicroBoundaryNarrowing:
         ).expand()
 
         with (
-            patch.object(resolve_mod, "_MAX_MICRO_SPLIT_PASSES", 1),
+            patch.object(engine_mod, "_MAX_MICRO_SPLIT_PASSES", 1),
             pytest.raises(ResolutionError, match="did not converge"),
         ):
             resolve_with_coordinator(

@@ -48,6 +48,7 @@ from nab_python._provider.metadata_resolver import (
     pick_dist_for_metadata,
     target_dep_signature,
 )
+from nab_python._resolve.engine import _raise_for_source_python
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.markers import Marker
@@ -88,11 +89,7 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
-from nab_python.resolve import (
-    _build_resolver_inputs,
-    _raise_for_source_python,
-    resolve_with_coordinator,
-)
+from nab_python.resolve import _build_resolver_inputs, resolve_with_coordinator
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
 from nab_resolver.errors import ResolutionError

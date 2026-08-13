@@ -17,6 +17,12 @@ from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.transport import HttpError
 from nab_python._marker_holds import dependency_marker_holds
+from nab_python._resolve.engine import (
+    _augment_resolution_error,
+    _raise_for_source_python,
+    _ResolveObserver,
+    _walk_no_versions_packages,
+)
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._vendor.packaging.markers import Marker, default_environment
 from nab_python._vendor.packaging.pylock import Pylock
@@ -51,7 +57,6 @@ from nab_python.requirements_file import (
 from nab_python.resolve import (
     ResolveFork,
     ResolveResult,
-    _augment_resolution_error,
     _build_resolver_inputs,
     _check_group_disjointness,
     _extra_requirements,
@@ -59,9 +64,6 @@ from nab_python.resolve import (
     _group_requirements,
     _group_requirements_by_group,
     _ProjectTables,
-    _raise_for_source_python,
-    _ResolveObserver,
-    _walk_no_versions_packages,
     build_lock_input,
     config_for_build_requirements,
     resolve_for_targets,
@@ -214,8 +216,8 @@ class TestSpecificModeConflictValidation:
         )
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -240,8 +242,8 @@ class TestSpecificModeConflictValidation:
         pyproject = _malformed_group_pyproject(tmp_path)
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -451,8 +453,8 @@ class TestSpecificModeConflictValidation:
         )
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -494,8 +496,8 @@ class TestSpecificModeConflictValidation:
         )
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -574,8 +576,8 @@ class TestSpecificModeConflictValidation:
         )
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -606,8 +608,8 @@ class TestSpecificModeConflictValidation:
         )
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -631,8 +633,8 @@ class TestSpecificModeConflictValidation:
         )
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -684,8 +686,8 @@ class TestResolvePyproject:
 
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -707,8 +709,8 @@ class TestResolvePyproject:
 
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -735,8 +737,8 @@ class TestResolvePyproject:
 
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -774,8 +776,8 @@ class TestResolvePyproject:
 
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -804,10 +806,10 @@ class TestResolvePyproject:
         )
 
         with (
-            patch("nab_python.resolve.Resolver") as mock_resolver_cls,
+            patch("nab_python._resolve.engine.Resolver") as mock_resolver_cls,
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider"),
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider"),
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -831,8 +833,8 @@ class TestResolvePyproject:
 
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider"),
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider"),
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -840,9 +842,9 @@ class TestResolvePyproject:
 
         assert _pins(result) == {}
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_passes_constraints_to_resolver(
         self,
@@ -874,9 +876,9 @@ class TestResolvePyproject:
         assert "custom" in constraints["skip"]
         assert V("1.0") not in constraints["skip"]
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_extras_create_proxy_packages(
         self,
@@ -906,9 +908,9 @@ class TestResolvePyproject:
         provider_kwargs = mock_provider_cls.call_args.kwargs
         assert ("requests", "security") in provider_kwargs["root_extras"]
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_root_marker_evaluates_against_environment(
         self,
@@ -937,9 +939,9 @@ class TestResolvePyproject:
         assert "foo" in requirements
         assert "windows-only" not in requirements
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_python_version_overlay_keeps_full_version_gated_dep(
         self,
@@ -978,9 +980,9 @@ class TestResolvePyproject:
         assert "foo" in requirements
         assert "legacy" in requirements
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_root_marker_true_keeps_requirement(
         self,
@@ -1011,9 +1013,9 @@ class TestResolvePyproject:
         requirements = _root_ranges(mock_resolver_cls.return_value)
         assert "linux-only" in requirements
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_root_marker_uses_effective_python(
         self,
@@ -1048,9 +1050,9 @@ class TestResolvePyproject:
         with pytest.raises(ConfigError, match="'not-a-version'"):
             _resolved(pyproject, _FAKE_TRANSPORT, python_version="not-a-version")
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_python_version_arg_retargets_the_python_axis(
         self,
@@ -1093,9 +1095,9 @@ class TestResolvePyproject:
         with pytest.raises(ConfigError, match="excludes the resolve target"):
             _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.9")
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_explicit_config_arg_skips_file_read(
         self,
@@ -1126,9 +1128,9 @@ class TestResolvePyproject:
         ]
         assert "urllib3" in forwarded
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_strategy_from_config_reaches_provider(
         self,
@@ -1156,9 +1158,9 @@ class TestResolvePyproject:
         # The direct set holds the canonical names of the project's own deps.
         assert kwargs["direct_packages"] == frozenset({"foo"})
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_cli_strategy_overrides_config(
         self,
@@ -1187,9 +1189,9 @@ class TestResolvePyproject:
         kwargs = mock_provider_cls.call_args.kwargs
         assert kwargs["resolution_strategy"] is ResolutionStrategy.HIGHEST
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_default_strategy_is_highest(
         self,
@@ -1211,9 +1213,9 @@ class TestResolvePyproject:
         kwargs = mock_provider_cls.call_args.kwargs
         assert kwargs["resolution_strategy"] is ResolutionStrategy.HIGHEST
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_extras_excluded_from_direct_packages(
         self,
@@ -1240,9 +1242,9 @@ class TestResolvePyproject:
         # the strategy decision is keyed on the underlying package.
         assert kwargs["direct_packages"] == frozenset({"requests", "foo"})
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_default_groups_from_config_not_cli_groups(
         self,
@@ -1275,9 +1277,9 @@ class TestResolvePyproject:
         assert lock_input.dependency_groups == ("test",)
         assert lock_input.default_groups == ("dev",)
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_default_groups_empty_when_config_omits_it(
         self,
@@ -2107,8 +2109,8 @@ class TestResolvePyprojectLockShape:
 
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock") as mock_build,
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock") as mock_build,
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -2130,8 +2132,8 @@ class TestResolvePyprojectLockShape:
         pyproject.write_text('[project]\ndependencies = ["foo"]\n')
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider"),
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider"),
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -2149,8 +2151,8 @@ class TestResolvePyprojectLockShape:
         )
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider"),
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider"),
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -2168,9 +2170,9 @@ class TestSpecificModeTargetPlan:
         coord.return_value.__exit__ = MagicMock(return_value=False)
         resolver.return_value.resolve.return_value = {}
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_host_is_the_default_target(
         self,
@@ -2191,9 +2193,9 @@ class TestSpecificModeTargetPlan:
         assert target == ResolveTarget.for_host()
         assert target.host_faithful
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_requires_python_does_not_steer_the_target(
         self,
@@ -2222,9 +2224,9 @@ class TestSpecificModeTargetPlan:
             build_lock_input(result, config=read_pyproject_config(pyproject))
         ).requires_python == ">=3.9"
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_environment_python_retargets_the_host(
         self,
@@ -2249,9 +2251,9 @@ class TestSpecificModeTargetPlan:
         assert target.python_full_version == "3.10.5"
         assert target.platform_id == "host"
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_environment_platform_declares_the_target(
         self,
@@ -2279,9 +2281,9 @@ class TestSpecificModeTargetPlan:
         assert target.python_version == "3.11"
         assert not target.host_faithful
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_python_override_wins_over_the_environment(
         self,
@@ -2461,7 +2463,7 @@ class TestBuildResolverInputs:
     def test_root_extra_marker_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         """A root requirement gated on ``extra ==`` is dropped with a warning."""
         reqs = [Requirement('foo ; extra == "test"')]
-        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
             resolver_requirements = _build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
@@ -2476,7 +2478,7 @@ class TestBuildResolverInputs:
     ) -> None:
         """A root ``"x" in extras`` marker is dropped with a warning, not a crash."""
         reqs = [Requirement('foo ; "x" in extras')]
-        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
             resolver_requirements = _build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
@@ -2491,7 +2493,7 @@ class TestBuildResolverInputs:
     ) -> None:
         """A root ``in dependency_groups`` marker is dropped with a warning."""
         reqs = [Requirement('foo ; "dev" in dependency_groups')]
-        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
             resolver_requirements = _build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
@@ -2506,7 +2508,7 @@ class TestBuildResolverInputs:
     ) -> None:
         """packaging normalises the spelling, so the scan sees one form."""
         reqs = [Requirement('foo ; extra=="test"')]
-        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
             _build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
@@ -2520,7 +2522,7 @@ class TestBuildResolverInputs:
     ) -> None:
         """``pkg[redis]`` is the syntax the warning points at; it must not warn."""
         reqs = [Requirement("foo[redis]")]
-        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
             resolver_requirements = _build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
@@ -2534,7 +2536,7 @@ class TestBuildResolverInputs:
         """A requirement dropped by a plain env marker stays silent."""
         reqs = [Requirement('foo ; python_version < "3.0"')]
         env = {"python_version": "3.11", "python_full_version": "3.11.2"}
-        with caplog.at_level("WARNING", logger="nab_python.resolve"):
+        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
             resolver_requirements = _build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
@@ -2999,9 +3001,9 @@ class TestResolvePyprojectGroupConflict:
             " sphinx>=7, sphinx<6."
         )
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_single_group_skips_check(
         self,
@@ -3030,9 +3032,9 @@ class TestResolvePyprojectGroupConflict:
         )
         assert "foo" in _pins(result)
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_no_groups_skips_check(
         self,
@@ -3052,9 +3054,9 @@ class TestResolvePyprojectGroupConflict:
         result = _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
         assert "foo" in _pins(result)
 
-    @patch("nab_python.resolve.build_target_lock")
-    @patch("nab_python.resolve.Resolver")
-    @patch("nab_python.resolve.Provider")
+    @patch("nab_python._resolve.engine.build_target_lock")
+    @patch("nab_python._resolve.engine.Resolver")
+    @patch("nab_python._resolve.engine.Provider")
     @patch("nab_python.resolve.FetchCoordinator")
     def test_no_conflict_multi_group_resolves(
         self,
@@ -3263,8 +3265,8 @@ class TestAugmentResolutionError:
         clause = self._no_versions_clause("foo")
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.Resolver") as mock_resolver_cls,
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.Resolver") as mock_resolver_cls,
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -4047,7 +4049,7 @@ class TestLocalVcsRequiresPython:
         fake = make_coordinator([], package="foo")
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -4080,7 +4082,7 @@ class TestLocalVcsRequiresPython:
         fake = make_coordinator([], package="foo")
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -4115,7 +4117,7 @@ class TestLocalVcsRequiresPython:
         fake = make_coordinator([wheel], package="foo", auto_metadata=True)
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -4155,7 +4157,7 @@ class TestLocalVcsRequiresPython:
         )
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -4210,7 +4212,7 @@ class TestLocalSourceExtrasMarkers:
             (member / "pyproject.toml").write_text(body, encoding="utf-8")
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -5077,8 +5079,8 @@ class TestBuildRequirementsResolve:
         """Resolve ``pyproject`` against a provider that pins everything at 2.0."""
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
@@ -5249,8 +5251,8 @@ class TestBuildGroup:
         """Resolve ``pyproject`` against a provider that pins everything at 2.0."""
         with (
             patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_python.resolve.Provider") as mock_provider_cls,
-            patch("nab_python.resolve.build_target_lock"),
+            patch("nab_python._resolve.engine.Provider") as mock_provider_cls,
+            patch("nab_python._resolve.engine.build_target_lock"),
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)

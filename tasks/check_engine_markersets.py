@@ -52,46 +52,16 @@ MARKER_SET_MODULES = frozenset(
 )
 
 # The engine entry point. `resolve_with_coordinator` and `_source_root` sit
-# above it: they turn a NabProjectConfig into the settings the engine runs on,
-# which is the host's job, and they are where nab binds its own default
-# marker predicate. Everything below this is what a host vendors.
-ENGINE_MODULE = "nab_python.resolve"
+# above it, in nab_python.resolve: they turn a NabProjectConfig into the
+# settings the engine runs on, which is the host's job, and they are where nab
+# binds its own default marker predicate. Everything below this is what a host
+# vendors, and since P0.5's cut that is a module of its own, so the walk enters
+# it whole rather than at a named group.
+ENGINE_MODULE = "nab_python._resolve.engine"
 ENGINE_ENTRY = "_resolve_with_micro_narrowing"
 
-# resolve.py still holds the host driver and the engine in one file (P0.5's
-# cut is priced but not made), so the walk enters it at the engine group only.
-ENGINE_GROUP = frozenset(
-    {
-        "_resolve_with_micro_narrowing",
-        "_resolve_slices",
-        "_grow_micro_points",
-        "_merge_micro_results",
-        "_resolve_passes",
-        "_base_pass",
-        "_EngineSettings",
-        "_threaded_preferences",
-        "_run_pass",
-        "_resolve_one_target",
-        "_install_context_roots",
-        "_root_keys",
-        "_consulted_markers",
-        "_target_stats",
-        "_raise_for_source_python",
-        "_augment_resolution_error",
-        "_walk_no_versions_packages",
-        "ProgressSink",
-        "_ResolveObserver",
-        "InstallContexts",
-        "ResolveFork",
-        "TargetResult",
-        "ResolveResult",
-        "EnvSignature",
-        "env_signature",
-        "_MAX_MICRO_SPLIT_PASSES",
-        "_GROUPED_CLAUSE_TERMS",
-        "_logger",
-    }
-)
+# Nothing is held back: every definition in the engine module is walked.
+ENGINE_GROUP = frozenset()
 
 # Modules in the engine's import closure that still import marker sets, each
 # with the item that takes it out. Nothing else may.
@@ -108,11 +78,15 @@ EXEMPT = {
     ),
     "nab_python._lockfile.pylock": ("P0.8: same edge as _lockfile.disjointness."),
     "nab_python._lockfile.coverage": ("P0.8: same edge as _lockfile.disjointness."),
-    # Reached because nab's own host binds dependency_marker_holds as the
-    # default; the engine below resolve_with_coordinator never uses it.
+    # Since P0.5's cut the engine module does not import this at all: nab's own
+    # host binds dependency_marker_holds in nab_python.resolve, above the entry
+    # point. It stays in the closure only through target, requirements_file
+    # (via _provider.metadata_resolver) and _lockfile.validate, so it clears
+    # when those do.
     "nab_python._marker_holds": (
         "By design: the module that exists so the marker-set dependency has "
-        "somewhere to live that the engine does not import."
+        "somewhere to live that the engine does not import. Reached here only "
+        "through target, requirements_file and _lockfile.validate."
     ),
     "nab_python._vendor.packaging.markersets": "The marker-set module itself.",
 }
@@ -215,7 +189,7 @@ class Walk:
     """What an entry point imports, and which definitions it uses."""
 
     def __init__(self, modules: dict[str, Module], split: frozenset[str]) -> None:
-        """Walk ``modules``, entering ``ENGINE_MODULE`` at ``split`` only."""
+        """Walk ``modules``; a non-empty ``split`` gates entry to ``ENGINE_MODULE``."""
         self.modules = modules
         self.split = split
         self.imported: set[str] = set()
@@ -256,7 +230,7 @@ class Walk:
         node = module.defs.get(name)
         if node is None:
             return
-        if module_name == ENGINE_MODULE and name not in self.split:
+        if self.split and module_name == ENGINE_MODULE and name not in self.split:
             return
         for ref in _name_loads(node):
             self.queue.append((module_name, ref))
