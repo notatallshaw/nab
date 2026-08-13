@@ -9,9 +9,11 @@ downloads and hash-verifies a ``.tar.gz`` and extracts it; both reuse the
 
 from __future__ import annotations
 
+import os
 import shutil
+import stat
 import tempfile
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,6 +24,8 @@ from nab_index.vcs import VcsCloneError, VcsRequest
 from .._vendor.packaging.utils import canonicalize_name
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from .._vendor.packaging.version import Version
     from ..metadata import WheelMetadata
     from ..provider import ArchiveSource, LocalSource, Provider, VcsSource
@@ -31,6 +35,63 @@ if TYPE_CHECKING:
 _TREE_DIR = "tree"
 _COMPLETE_MARKER = ".nab-complete"
 _HASHES_MARKER = ".nab-hashes"
+
+
+class _SourceCopyError(Exception):
+    """Raised when a cached source cannot be copied for a backend build."""
+
+
+class _CopyWithHardlinks:
+    """Copy regular files while retaining source hard-link groups."""
+
+    def __init__(self) -> None:
+        self._destinations: dict[tuple[int, int], Path] = {}
+
+    def __call__(self, source: str, destination: str) -> str:
+        source_path = Path(source)
+        source_stat = source_path.stat(follow_symlinks=False)
+        if source_stat.st_nlink <= 1 or not stat.S_ISREG(source_stat.st_mode):
+            return shutil.copy2(source_path, destination)
+
+        key = (source_stat.st_dev, source_stat.st_ino)
+        existing = self._destinations.get(key)
+        if existing is None:
+            copied = shutil.copy2(source_path, destination)
+            self._destinations[key] = Path(copied)
+            return copied
+
+        os.link(existing, destination)
+        return destination
+
+
+@contextmanager
+def _source_for_build(path: Path, persistent_root: Path | None) -> Iterator[Path]:
+    """Yield the matching path in a disposable copy of a persistent source tree."""
+    if persistent_root is None:
+        yield path
+        return
+
+    relative_path = path.relative_to(persistent_root)
+    try:
+        temporary = tempfile.TemporaryDirectory(
+            prefix="nab-source-build-", ignore_cleanup_errors=True
+        )
+    except OSError as exc:
+        msg = f"could not create a temporary build tree for {persistent_root}: {exc}"
+        raise _SourceCopyError(msg) from exc
+
+    with temporary as temporary_path:
+        try:
+            build_root = shutil.copytree(
+                persistent_root,
+                Path(temporary_path) / persistent_root.name,
+                symlinks=True,
+                copy_function=_CopyWithHardlinks(),
+            )
+        except OSError as exc:
+            msg = f"could not copy cached source tree at {persistent_root}: {exc}"
+            raise _SourceCopyError(msg) from exc
+        yield build_root / relative_path
 
 
 def index_local_sources(
@@ -88,6 +149,7 @@ def extract_source_metadata(
     descriptor: str,
     package: str,
     kind: str,
+    persistent_root: Path | None = None,
 ) -> WheelMetadata:
     """Read metadata from a directory; gates the backend path on policy.
 
@@ -96,6 +158,10 @@ def extract_source_metadata(
     for :class:`VcsSource` clones and ``"archive"`` for extracted
     :class:`ArchiveSource` trees both build only at
     :attr:`BuildPolicy.BUILD_REMOTE`, like a remote sdist.
+
+    ``persistent_root`` identifies the complete cached clone or archive tree.
+    Dynamic builds receive a disposable copy of that root; local-source builds
+    keep using the caller's path.
 
     An unreadable ``pyproject.toml`` is reported as a read failure at
     every policy level: the build path cannot read it either, so calling
@@ -131,12 +197,13 @@ def extract_source_metadata(
         )
         raise UnsupportedSdistError(msg)
     try:
-        return build_backend.extract_metadata(
-            path,
-            config=provider.build_config,
-            offline=provider.coordinator.offline,
-        )
-    except BuildBackendError as exc:
+        with _source_for_build(path, persistent_root) as build_path:
+            return build_backend.extract_metadata(
+                build_path,
+                config=provider.build_config,
+                offline=provider.coordinator.offline,
+            )
+    except (BuildBackendError, _SourceCopyError) as exc:
         msg = f"{descriptor}: {exc}"
         raise UnsupportedSdistError(msg) from exc
 
@@ -262,6 +329,7 @@ def materialize_vcs_source(
         descriptor=descriptor,
         package=canonicalize_name(source.name),
         kind="vcs",
+        persistent_root=root,
     )
     return seed_synthetic_listing(provider, normalized, path, metadata, descriptor)
 
@@ -426,6 +494,7 @@ def materialize_archive_source(
         descriptor=descriptor,
         package=canonicalize_name(source.name),
         kind="archive",
+        persistent_root=root,
     )
     return seed_synthetic_listing(provider, normalized, path, metadata, descriptor)
 

@@ -3386,7 +3386,8 @@ class TestLocalSources:
         )
         captured: dict[str, object] = {}
 
-        def fake_build(_path: Path, **kwargs: object) -> WheelMetadata:
+        def fake_build(path: Path, **kwargs: object) -> WheelMetadata:
+            captured["path"] = path
             captured.update(kwargs)
             return built
 
@@ -3399,7 +3400,11 @@ class TestLocalSources:
             build_policy=BuildPolicy.BUILD_LOCAL,
         )
         assert len(provider.fetch_versions("foo")) == 1
-        assert captured == {"config": provider.build_config, "offline": False}
+        assert captured == {
+            "path": tmp_path,
+            "config": provider.build_config,
+            "offline": False,
+        }
 
     def test_local_source_build_refused_under_an_offline_coordinator(
         self,
