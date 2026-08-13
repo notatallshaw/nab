@@ -1801,6 +1801,54 @@ class TestNoVersionsReasons:
         ].append(V("1.0"))
         assert provider._capture_lookahead_blockers("foo") == []
 
+    def test_metadata_ban_loses_to_a_reason_that_names_a_cause(self) -> None:
+        """A blocker line names a cause, so it outranks the metadata summary."""
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+        recorded = "every version in range was rejected: requires bar in ==2.0"
+        provider._no_versions_reasons["foo"] = recorded
+
+        provider.record_metadata_ban("foo", {V("1.0"): "No metadata for foo==1.0"})
+
+        assert provider.get_no_versions_reason("foo") == recorded
+
+    @pytest.mark.parametrize(
+        "recorded",
+        [
+            "no version matches the requirement",
+            (
+                "found on index but every version matching the requirement"
+                " was filtered (by requires-python, wheel tags, dist-policy,"
+                " or upload-time)"
+            ),
+        ],
+    )
+    def test_metadata_ban_outranks_a_generic_reason(self, recorded: str) -> None:
+        """The ban wins over the lines that say only that nothing matched.
+
+        A sibling requirement over a range the ban emptied records one of
+        these first, so arrival order alone would bury the metadata cause.
+        """
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+        provider._no_versions_reasons["foo"] = recorded
+
+        provider.record_metadata_ban("foo", {V("1.0"): "No metadata for foo==1.0"})
+
+        assert provider.get_no_versions_reason("foo") == "No metadata for foo==1.0"
+
+    def test_metadata_ban_unions_the_blocks_of_every_scan(self) -> None:
+        """Versions banned by a later scan are counted with the earlier ones."""
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+
+        provider.record_metadata_ban("foo", {V("5.0"): "No metadata for foo==5.0"})
+        provider.record_metadata_ban("foo", {V("3.0"): "No metadata for foo==3.0"})
+
+        assert provider.get_no_versions_reason("foo") == (
+            "2 versions failed metadata extraction (first: No metadata for foo==5.0)"
+        )
+
     def test_root_requirement_rejection_names_the_blocker(self) -> None:
         """When the rejection comes from the root-requirement check at
         the top of look_ahead_ok (``foo`` 1.0 requires ``bar==2.0``

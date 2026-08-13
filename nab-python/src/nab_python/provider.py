@@ -478,6 +478,28 @@ def _unset_if_none(value: object) -> object:
     return value
 
 
+def _metadata_block_summary(blocks: Mapping[Version, str]) -> str:
+    """Summarise a package's metadata rejections as one diagnostic line.
+
+    Several collapse into a count plus the first message.  ``blocks`` must
+    not be empty.
+    """
+    first_msg = next(iter(blocks.values()))
+    if len(blocks) == 1:
+        return first_msg
+    return f"{len(blocks)} versions failed metadata extraction (first: {first_msg})"
+
+
+# The two reasons that name no cause beyond "nothing matched".
+_NO_MATCH_REASON = "no version matches the requirement"
+_FILTERED_IN_RANGE_REASON = (
+    "found on index but every version matching the requirement"
+    " was filtered (by requires-python, wheel tags, dist-policy,"
+    " or upload-time)"
+)
+_GENERIC_NO_VERSIONS_REASONS = frozenset({_NO_MATCH_REASON, _FILTERED_IN_RANGE_REASON})
+
+
 # Past this many exclusions the requirement reads worse than the range it states.
 _MAX_EXCLUSIONS = 3
 
@@ -874,6 +896,10 @@ class Provider:
         # Last NO_VERSIONS reason per package; consumed by resolve.py to
         # enrich ResolutionError messages.
         self._no_versions_reasons: dict[str, str] = {}
+
+        # Metadata errors behind the permanent bans, keyed by canonical name
+        # and unioned across scans.
+        self._metadata_ban_blocks: dict[str, dict[Version, str]] = {}
 
         # Blocker packages queued for force back-track by the resolver after
         # the next ``choose_version`` returns.  Populated by the look-ahead
@@ -1781,13 +1807,9 @@ class Provider:
         elif version_range is not None and _listing.has_filtered_in_range_release(
             self, normalized, version_range, all_versions
         ):
-            reason = (
-                "found on index but every version matching the requirement"
-                " was filtered (by requires-python, wheel tags, dist-policy,"
-                " or upload-time)"
-            )
+            reason = _FILTERED_IN_RANGE_REASON
         else:
-            reason = "no version matches the requirement"
+            reason = _NO_MATCH_REASON
         self._no_versions_reasons[package] = reason
 
     def _capture_lookahead_blockers(self, normalized: str) -> list[str]:
@@ -1835,29 +1857,43 @@ class Provider:
                 f" but root has it in {self.format_range(root_range)}"
             )
 
-        # Collapse repeated metadata-error blockers (one per version) into
-        # a single "N versions failed (first: <msg>)" line.
         meta = self.pending_metadata_blocks.get(normalized)
         if meta:
-            count = len(meta)
-            first_msg = next(iter(meta.values()))
-            if count == 1:
-                out.append(first_msg)
-            else:
-                out.append(
-                    f"{count} versions failed metadata extraction (first: {first_msg})"
-                )
+            out.append(_metadata_block_summary(meta))
 
         return out
 
+    def record_metadata_ban(
+        self, normalized: str, blocks: Mapping[Version, str]
+    ) -> None:
+        """Accumulate the metadata errors behind ``normalized``'s permanent ban.
+
+        The ban lasts the whole resolve, so its reason has to outlive the scan
+        that raised it, and bans from several scans union into one line.
+        """
+        recorded = self._metadata_ban_blocks.setdefault(normalized, {})
+        for version, message in blocks.items():
+            recorded.setdefault(version, message)
+
     def get_no_versions_reason(self, package: str) -> str | None:
         """Return the recorded reason for ``package``'s NO_VERSIONS clause.
+
+        Ranked by specificity, not by which pass wrote first: a recorded
+        reason that names a cause wins, and a metadata ban beats the two
+        that say only that nothing matched.
 
         Returns ``None`` if no diagnostic was captured (e.g. the
         package was decided successfully or failed for a non-listing
         reason such as a metadata parse error).
         """
-        return self._no_versions_reasons.get(package)
+        recorded = self._no_versions_reasons.get(package)
+        if recorded is not None and recorded not in _GENERIC_NO_VERSIONS_REASONS:
+            return recorded
+
+        blocks = self._metadata_ban_blocks.get(canonicalize_name(package))
+        if blocks:
+            return _metadata_block_summary(blocks)
+        return recorded
 
     def _prefetch_batch(
         self,

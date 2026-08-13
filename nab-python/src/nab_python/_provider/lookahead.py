@@ -281,6 +281,8 @@ def flush_pending_blocks(provider: Provider) -> None:
 
     for candidate_pkg, versions in provider.pending_metadata_blocks.items():
         unusable[candidate_pkg] |= _candidate_union(provider, candidate_pkg, versions)
+        # The ban outlives this flush, so its reason has to as well.
+        provider.record_metadata_ban(candidate_pkg, versions)
 
     for candidate_pkg, rejected in unusable.items():
         provider.pending_clauses.append(
