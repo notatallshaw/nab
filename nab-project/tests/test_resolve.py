@@ -4985,6 +4985,103 @@ class TestSidecarFetchFailure:
             asyncio.run(transport.aclose())
 
 
+class TestIndexCacheFloorOnAWarmResolve:
+    """``[tool.nab.index.<name>] assume-fresh-seconds`` reaches the resolve.
+
+    The index stamps ``max-age=0``, so its listing is stale the moment it is
+    cached and a second resolve would revalidate it. The floor serves the
+    cached copy instead, hiding a release published inside the window. A
+    sibling project without the key is the control.
+    """
+
+    _INDEX = "https://internal.example/simple/"
+    _FILES = "https://files.example.com/"
+
+    @classmethod
+    def _listing(cls, *versions: str) -> httpx.Response:
+        """``foo``'s Simple listing, stale as soon as it is cached."""
+        return httpx.Response(
+            200,
+            json={
+                "meta": {"api-version": "1.0"},
+                "name": "foo",
+                "files": [
+                    {
+                        "filename": f"foo-{version}-py3-none-any.whl",
+                        "url": f"{cls._FILES}foo-{version}-py3-none-any.whl",
+                        "core-metadata": True,
+                    }
+                    for version in versions
+                ],
+            },
+            headers={"Cache-Control": "max-age=0"},
+        )
+
+    @classmethod
+    def _project(cls, root: Path, *, floor: bool) -> Path:
+        """Write a project on the ``internal`` index and return its pyproject.
+
+        ``floor`` adds ``assume-fresh-seconds`` for that index.
+        """
+        root.mkdir()
+        text = (
+            '[project]\nname = "app"\nversion = "0"\ndependencies = ["foo"]\n'
+            f'[[tool.nab.indexes]]\nname = "internal"\nurl = "{cls._INDEX}"\n'
+        )
+        if floor:
+            text += "[tool.nab.index.internal]\nassume-fresh-seconds = 3600\n"
+        pyproject = root / "pyproject.toml"
+        pyproject.write_text(text, encoding="utf-8")
+        return pyproject
+
+    @staticmethod
+    def _resolve_pins(pyproject: Path, cache_dir: Path) -> dict[str, Version]:
+        """The pins of a resolve whose coordinator reads and writes ``cache_dir``."""
+        transport = HttpxAsyncTransport()
+        try:
+            result = _resolved(
+                pyproject, transport, cache_dir=cache_dir, python_version="3.12.0"
+            )
+        finally:
+            asyncio.run(transport.aclose())
+        return _pins(result)
+
+    @respx.mock
+    def test_floor_hides_a_release_published_inside_the_window(
+        self, tmp_path: Path
+    ) -> None:
+        """A floored index serves its cached listing; a plain one refetches."""
+        listing = respx.get(f"{self._INDEX}foo/").mock(
+            return_value=self._listing("1.0")
+        )
+        for version in ("1.0", "2.0"):
+            respx.get(f"{self._FILES}foo-{version}-py3-none-any.whl.metadata").mock(
+                return_value=httpx.Response(
+                    200,
+                    text=f"Metadata-Version: 2.1\nName: foo\nVersion: {version}\n",
+                )
+            )
+
+        floored = self._project(tmp_path / "floored", floor=True)
+        plain = self._project(tmp_path / "plain", floor=False)
+        floored_cache = tmp_path / "cache-floored"
+        plain_cache = tmp_path / "cache-plain"
+
+        # Warm both caches on the 1.0 listing.
+        assert self._resolve_pins(floored, floored_cache) == {"foo": V("1.0")}
+        assert self._resolve_pins(plain, plain_cache) == {"foo": V("1.0")}
+        warm_requests = listing.call_count
+
+        # foo 2.0 is published, inside the floored index's window.
+        listing.mock(return_value=self._listing("1.0", "2.0"))
+
+        assert self._resolve_pins(floored, floored_cache) == {"foo": V("1.0")}
+        assert listing.call_count == warm_requests
+
+        assert self._resolve_pins(plain, plain_cache) == {"foo": V("2.0")}
+        assert listing.call_count == warm_requests + 1
+
+
 class _RecordingSink:
     """A :class:`~nab_project.resolve.ProgressSink` that records its calls."""
 
