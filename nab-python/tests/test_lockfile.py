@@ -10,7 +10,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import ClassVar
 
@@ -1675,6 +1675,50 @@ class TestProvenance:
         assert "python-specifier" not in data["tool"]["nab"]
         assert "platforms" not in data["tool"]["nab"]
         assert "cli-project-overrides" not in data["tool"]["nab"]
+
+    @pytest.mark.parametrize(
+        "offset",
+        [
+            timezone.utc,
+            timezone(timedelta(hours=5, minutes=30)),
+            timezone(timedelta(minutes=19, seconds=32)),
+            timezone(-timedelta(seconds=30)),
+        ],
+        ids=["utc", "half-hour", "plus-seconds", "minus-seconds"],
+    )
+    def test_created_at_is_emitted_in_utc(self, offset: timezone) -> None:
+        """RFC 3339 offsets stop at minutes, so ``+00:19:32`` has to become UTC."""
+        created = datetime(2026, 5, 7, 12, 0, 0, tzinfo=offset)
+        prov = Provenance(
+            nab_version="9.9.9",
+            created_at=created,
+            command_line=("nab", "lock"),
+            input_path="pyproject.toml",
+            mode="specific",
+        )
+        text = write_lock(
+            LockInput(targets=_one({"foo": _index_pin()}), provenance=prov)
+        )
+
+        emitted = tomllib.loads(text)["tool"]["nab"]["created-at"]
+        assert emitted == created
+        assert emitted.utcoffset() == timedelta(0)
+
+    def test_naive_created_at_is_stamped_utc(self) -> None:
+        """A naive ``created_at`` is stamped UTC rather than read as local time."""
+        stamped = datetime(2026, 5, 7, 12, 0, 0, tzinfo=timezone.utc)
+        prov = Provenance(
+            nab_version="9.9.9",
+            created_at=stamped.replace(tzinfo=None),
+            command_line=("nab", "lock"),
+            input_path="pyproject.toml",
+            mode="specific",
+        )
+        text = write_lock(
+            LockInput(targets=_one({"foo": _index_pin()}), provenance=prov)
+        )
+
+        assert tomllib.loads(text)["tool"]["nab"]["created-at"] == stamped
 
     def test_emits_cli_project_overrides(self) -> None:
         prov = Provenance(

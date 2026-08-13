@@ -436,9 +436,9 @@ the same frozen index. See "Decision order" in the
 
 With both set, a fresh resolve produces the same pin set, and an
 absolute `uploaded-prior-to` also becomes the lockfile's
-`created-at`, so two locks from identical inputs are
-byte-for-byte identical. `--upgrade` is the exception: it stamps
-the run time instead.
+`created-at`, written in UTC, so two locks from identical inputs
+are byte-for-byte identical. `--upgrade` is the exception: it
+stamps the run time instead.
 
 Both settings assume an index that does not move. Several things
 move it. Yanking is a property of the listing as it stands, not
