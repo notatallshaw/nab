@@ -9,6 +9,7 @@ itself is under test.
 from __future__ import annotations
 
 import ast
+import errno
 import gzip
 import hashlib
 import inspect
@@ -17,7 +18,8 @@ import os
 import tarfile
 import textwrap
 import zlib
-from typing import TYPE_CHECKING, NoReturn
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import httpx
 import pytest
@@ -56,7 +58,6 @@ from nab_provider.target import ResolveTarget
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from contextlib import AbstractContextManager
-    from pathlib import Path
 
     from nab_project.lockfile import PinShape
 
@@ -196,6 +197,21 @@ def _warm_dynamic_archive_tree(cache: Path, digest: str) -> Path:
         encoding="utf-8",
     )
     return tree
+
+
+def _deny_access(monkeypatch: pytest.MonkeyPatch, method: str, target: Path) -> None:
+    """Make one ``Path`` call on ``target`` fail with EACCES.
+
+    A real chmod would not do: root ignores the mode bits and Windows has none.
+    """
+    original = getattr(Path, method)
+
+    def failing(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == target:
+            raise PermissionError(errno.EACCES, "Permission denied", str(target))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, method, failing)
 
 
 def _lock_input(pins: Mapping[str, PinShape]) -> LockInput:
@@ -883,6 +899,57 @@ class TestWarmArchiveCache:
         cache = tmp_path / "arch"
         _warm_extracted_tree(cache, digest)
         (cache / digest / ".nab-hashes").unlink()
+        provider = _provider([source], cache)
+
+        with pytest.raises(UnsupportedSdistError, match="download.*failed"):
+            provider.fetch_versions("foo")
+
+    def test_tree_with_undecodable_hash_record_is_not_served(
+        self, tmp_path: Path
+    ) -> None:
+        # A record that will not decode covers no hashes, so the tree is
+        # refetched rather than trusted.
+        digest = "c" * 64
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        _warm_extracted_tree(cache, digest)
+        (cache / digest / ".nab-hashes").write_bytes(b"sha256=\xff\xfe\n")
+        provider = _provider([source], cache)
+
+        with pytest.raises(UnsupportedSdistError, match="download.*failed"):
+            provider.fetch_versions("foo")
+
+    def test_tree_with_unreadable_hash_record_is_not_served(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A record that stats as a file but will not open says as little as
+        # no record at all.
+        digest = "f" * 64
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        _warm_extracted_tree(cache, digest)
+        _deny_access(monkeypatch, "read_text", cache / digest / ".nab-hashes")
+        provider = _provider([source], cache)
+
+        with pytest.raises(UnsupportedSdistError, match="download.*failed"):
+            provider.fetch_versions("foo")
+
+    def test_entry_with_unreadable_marker_is_not_served(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # mkdtemp leaves the entry 0700, so another user's entry is not
+        # traversable and its marker cannot be stat'ed at all.
+        digest = "1" * 64
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        _warm_extracted_tree(cache, digest)
+        _deny_access(monkeypatch, "stat", cache / digest / ".nab-complete")
         provider = _provider([source], cache)
 
         with pytest.raises(UnsupportedSdistError, match="download.*failed"):
