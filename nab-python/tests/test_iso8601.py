@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from nab_python import _iso8601
-from nab_python._iso8601 import _to_isoformat, parse_iso_datetime
+from nab_python import iso8601
+from nab_python.iso8601 import _to_isoformat, parse_iso_datetime
 
 # PEP 700 serves upload-time as an ISO 8601 UTC timestamp, so an index may use
 # any fractional-seconds width from 0 through 6 digits.
@@ -105,10 +105,10 @@ def test_native_path_agrees_with_compatibility_path(
     raw: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Handing ``raw`` straight to ``fromisoformat`` must not change the verdict."""
-    monkeypatch.setattr(_iso8601, "_NATIVE_ACCEPTS_PEP_700", False)
+    monkeypatch.setattr(iso8601, "_NATIVE_ACCEPTS_PEP_700", False)
     compatibility = _parse_or_error(raw)
 
-    monkeypatch.setattr(_iso8601, "_NATIVE_ACCEPTS_PEP_700", True)
+    monkeypatch.setattr(iso8601, "_NATIVE_ACCEPTS_PEP_700", True)
     native = _parse_or_error(raw)
 
     assert native == compatibility

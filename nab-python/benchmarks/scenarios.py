@@ -60,7 +60,6 @@ from benchmark_host import (
 )
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_python._vcs_admission import admit_vcs_url
 from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
@@ -79,6 +78,7 @@ from nab_python.provider import (
     VcsPolicy,
     split_extra,
 )
+from nab_python.vcs_admission import admit_vcs_url
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
@@ -811,7 +811,7 @@ def parse_requirements(
     a top-level dependency with a marker is an opt-in per env.
 
     Direct-URL requirements (``pkg @ git+https://...``) are screened by
-    :func:`nab_python._vcs_admission.admit_vcs_url`; admission failures raise
+    :func:`nab_python.vcs_admission.admit_vcs_url`; admission failures raise
     :class:`UnsupportedVcsError`.  Admitted VCS requirements raise
     :class:`NotImplementedError`.
     """

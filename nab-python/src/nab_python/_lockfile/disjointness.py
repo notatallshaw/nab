@@ -24,9 +24,9 @@ import itertools
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from .._conflict_kind import KIND_EXTRA, KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 from .._vendor.packaging.utils import canonicalize_name
+from ..conflict_kind import KIND_EXTRA, KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

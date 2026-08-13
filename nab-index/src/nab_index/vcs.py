@@ -2,7 +2,7 @@
 
 Performs ``git clone --depth 1`` against a directory under the cache
 root.  URL admission lives upstream in
-:func:`nab_python._vcs_admission.admit_vcs_url`.
+:func:`nab_python.vcs_admission.admit_vcs_url`.
 
 Cache layout under ``cache_root / "vcs"``:
 

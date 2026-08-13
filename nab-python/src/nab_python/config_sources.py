@@ -42,8 +42,11 @@ import tomli
 from nab_index.multi_index import IndexConfig
 from nab_provider.serialization import SimpleSerialization
 
-from ._errors import ConfigError as ConfigError  # noqa: PLC0414  (public re-export)
-from ._policy import (
+from ._toml import tool_nab_section
+from .errors import ConfigError as ConfigError  # noqa: PLC0414  (public re-export)
+from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
+from .paths import PathState, is_usable_path_name, path_state
+from .policy import (
     ArchiveSource,
     BuildPolicy,
     DecisionOrder,
@@ -53,10 +56,7 @@ from ._policy import (
     ResolveMode,
     VcsSource,
 )
-from ._toml import tool_nab_section
-from ._vcs_admission import VcsConfig
-from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
-from .paths import PathState, is_usable_path_name, path_state
+from .vcs_admission import VcsConfig
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence

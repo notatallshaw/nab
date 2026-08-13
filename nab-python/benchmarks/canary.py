@@ -60,7 +60,6 @@ from benchmark_host import (
 )
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_python._vcs_admission import admit_vcs_url
 from nab_python._vendor.packaging.markers import default_environment
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
@@ -68,6 +67,7 @@ from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python.config import NabProjectConfig, index_routes_from_config
 from nab_python.fetch import FetchCoordinator
 from nab_python.provider import BuildPolicy, ResolutionStrategy, VcsConfig, split_extra
+from nab_python.vcs_admission import admit_vcs_url
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent

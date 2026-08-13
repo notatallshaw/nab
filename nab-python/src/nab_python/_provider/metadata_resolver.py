@@ -20,21 +20,19 @@ from nab_index.local_index import (
     read_wheel_metadata,
 )
 
-from .._conflict_kind import EMPTY_MEMBERSHIP_SETS
-from .._errors import (
+from .._vendor.packaging.ranges import VersionRange
+from .._vendor.packaging.specifiers import SpecifierSet
+from .._vendor.packaging.utils import canonicalize_name
+from .._vendor.packaging.version import InvalidVersion
+from ..conflict_kind import EMPTY_MEMBERSHIP_SETS
+from ..errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
     MetadataError,
     SiblingMetadataDivergenceError,
     UnsupportedSdistError,
 )
-from .._extra_keys import join_extra
-from .._policy import BuildPolicy
-from .._vcs_admission import admit_vcs_url
-from .._vendor.packaging.ranges import VersionRange
-from .._vendor.packaging.specifiers import SpecifierSet
-from .._vendor.packaging.utils import canonicalize_name
-from .._vendor.packaging.version import InvalidVersion
+from ..extra_keys import join_extra
 from ..metadata import (
     DEPENDENCY_FIELDS,
     WheelMetadata,
@@ -42,6 +40,7 @@ from ..metadata import (
     metadata_deps_are_static,
     parse_metadata,
 )
+from ..policy import BuildPolicy
 from ..requirements_file import (
     InvalidProjectRequirementError,
     parse_project_requirement,
@@ -49,6 +48,7 @@ from ..requirements_file import (
     require_string_list,
 )
 from ..tags import python_axis_accepts
+from ..vcs_admission import admit_vcs_url
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

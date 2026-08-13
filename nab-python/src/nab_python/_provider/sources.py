@@ -21,17 +21,17 @@ from nab_index.archive import ArchiveRequest
 from nab_index.client import SdistFile, extract_sdist_archive, verify_sdist_hash
 from nab_index.vcs import VcsCloneError, VcsRequest
 
-from .._errors import SourceNameMismatchError, UnsupportedSdistError
-from .._policy import BuildPolicy
-from .._vcs_admission import VcsPolicy, admit_vcs_url
 from .._vendor.packaging.utils import canonicalize_name
+from ..errors import SourceNameMismatchError, UnsupportedSdistError
+from ..policy import BuildPolicy
+from ..vcs_admission import VcsPolicy, admit_vcs_url
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from .._policy import ArchiveSource, LocalSource, VcsSource
     from .._vendor.packaging.version import Version
     from ..metadata import WheelMetadata
+    from ..policy import ArchiveSource, LocalSource, VcsSource
     from ..provider import Provider
 
 # The archive names everything under _TREE_DIR, so the cache's own bookkeeping

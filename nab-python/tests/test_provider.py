@@ -36,7 +36,6 @@ from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.multi_index import IndexConfig
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_python._marker_holds import dependency_marker_holds
 from nab_python._provider import build_remote, metadata_resolver
 from nab_python._provider import listing as listing_mod
 from nab_python._provider.lookahead import DepRangeUnion
@@ -68,6 +67,7 @@ from nab_python.fetch import (
     FetchCoordinator,
     IndexRoute,
 )
+from nab_python.marker_holds import dependency_marker_holds
 from nab_python.metadata import WheelMetadata
 from nab_python.provider import (
     BuildPolicy,
@@ -89,7 +89,7 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
-from nab_python.resolve import _build_resolver_inputs, resolve_with_coordinator
+from nab_python.resolve import build_resolver_inputs, resolve_with_coordinator
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
 from nab_resolver.errors import ResolutionError
@@ -7154,7 +7154,7 @@ class TestExtrasPrereleaseAdmission:
         return make_coordinator(listings=listings, metadata_by_version=metadata)
 
     def _resolve(self, requirements: list[str]) -> dict[str, Version]:
-        _, root_reqs, root_extras = _build_resolver_inputs(
+        _, root_reqs, root_extras = build_resolver_inputs(
             [Requirement(r) for r in requirements],
             NabProjectConfig(),
             environment={},

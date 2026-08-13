@@ -12,11 +12,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from .._errors import MetadataError, MissingExtraError
-from .._extra_keys import join_extra
-from .._policy import ExtrasMode
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
+from ..errors import MetadataError, MissingExtraError
+from ..extra_keys import join_extra
+from ..policy import ExtrasMode
 from .lookahead import flush_pending_blocks
 from .metadata_resolver import refuse_url_dep
 

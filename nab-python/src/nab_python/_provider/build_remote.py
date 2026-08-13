@@ -22,9 +22,9 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import extract_sdist_archive
 
-from .._errors import UnsupportedSdistError
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
+from ..errors import UnsupportedSdistError
 from .metadata_resolver import find_sdist
 
 if TYPE_CHECKING:

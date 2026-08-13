@@ -26,22 +26,22 @@ from typing import TYPE_CHECKING, NamedTuple
 from nab_resolver.errors import ResolutionError
 from nab_resolver.types import RootRequirement
 
-from .._conflict_kind import membership_set_in_marker
-from .._errors import ConfigError
-from .._extra_keys import join_extra, split_extra
-from .._vcs_admission import admit_vcs_url
-from .._vendor.packaging.ranges import VersionRange
-from .._vendor.packaging.utils import canonicalize_name
+from ._vendor.packaging.ranges import VersionRange
+from ._vendor.packaging.utils import canonicalize_name
+from .conflict_kind import membership_set_in_marker
+from .errors import ConfigError
+from .extra_keys import join_extra, split_extra
+from .vcs_admission import admit_vcs_url
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
-    from .._vendor.packaging.markers import Marker
-    from .._vendor.packaging.requirements import Requirement
-    from ..config import NabProjectConfig
+    from ._vendor.packaging.markers import Marker
+    from ._vendor.packaging.requirements import Requirement
+    from .config import NabProjectConfig
 
     # Whether a dependency marker holds for one environment.
-    # :func:`nab_python._marker_holds.dependency_marker_holds` is nab's own;
+    # :func:`nab_python.marker_holds.dependency_marker_holds` is nab's own;
     # a host embedding the engine supplies its own instead.
     MarkerHolds = Callable[[Marker, Mapping[str, str]], bool]
 
@@ -105,7 +105,7 @@ class _ResolverInputs(NamedTuple):
     extras: set[tuple[str, str]]
 
 
-def _build_resolver_inputs(
+def build_resolver_inputs(
     requirements: Sequence[Requirement],
     config: NabProjectConfig,
     *,
@@ -182,7 +182,7 @@ def _build_resolver_inputs(
     return _ResolverInputs(roots, resolver_requirements, root_extras)
 
 
-class _ProxyConstraints(Mapping[str, VersionRange]):
+class ProxyConstraints(Mapping[str, VersionRange]):
     """The user's constraints, where an extras proxy's key reads its base's bound.
 
     The resolver keys a constraint by the package it is deciding, and an
@@ -196,14 +196,17 @@ class _ProxyConstraints(Mapping[str, VersionRange]):
     """
 
     def __init__(self, ranges: Mapping[str, VersionRange]) -> None:
+        """Wrap the per-package ranges the user's constraints folded to."""
         self._ranges = ranges
 
     def __getitem__(self, package: str) -> VersionRange:
-        # Constraints may not carry extras, so a proxy has no bound of its own.
+        """Answer with the base's bound; a proxy has no bound of its own."""
         return self._ranges[split_extra(package)[0]]
 
     def __iter__(self) -> Iterator[str]:
+        """Enumerate only the keys the user wrote, never proxy keys."""
         return iter(self._ranges)
 
     def __len__(self) -> int:
+        """Count the keys the user wrote."""
         return len(self._ranges)

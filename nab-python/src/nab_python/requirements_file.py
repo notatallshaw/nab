@@ -7,16 +7,16 @@ from typing import TYPE_CHECKING
 
 import tomli
 
-from ._marker_holds import dependency_marker_holds, marker_set
-from ._resolve.inputs import (
-    raise_for_unsatisfiable as raise_for_unsatisfiable,  # noqa: PLC0414  (re-export)
-)
 from ._vendor.packaging.dependency_groups import resolve_dependency_groups
 from ._vendor.packaging.errors import ExceptionGroup
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
+from .marker_holds import dependency_marker_holds, marker_set
 from .metadata import validate_specifier_versions
+from .resolver_inputs import (
+    raise_for_unsatisfiable as raise_for_unsatisfiable,  # noqa: PLC0414  (re-export)
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

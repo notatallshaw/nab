@@ -22,7 +22,6 @@ import tomli_w
 
 from nab_index.atomic import atomic_write_text
 
-from .._conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from .._vendor.packaging.markers import Marker
 from .._vendor.packaging.markersets import (
     DecisionStore,
@@ -44,6 +43,7 @@ from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name, is_normalized_name
 from .._vendor.packaging.version import Version
 from ..config import conflict_exclusion_groups, conflict_member_groups
+from ..conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from .builder import require_artifact_hashes
 from .coverage import validate_marker_coverage
 from .disjointness import validate_marker_disjointness

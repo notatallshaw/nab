@@ -12,17 +12,17 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import SdistFile, WheelFile
 
-from .._errors import (
+from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from .._vendor.packaging.version import InvalidVersion, Version
+from ..errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
     InvalidUploadTimeError,
 )
-from .._iso8601 import parse_iso_datetime
-from .._policy import DistPolicy
-from .._vcs_admission import UnsupportedVcsError
-from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
-from .._vendor.packaging.version import InvalidVersion, Version
+from ..iso8601 import parse_iso_datetime
 from ..metadata import intern_version as _intern_version
+from ..policy import DistPolicy
+from ..vcs_admission import UnsupportedVcsError
 from .metadata_resolver import pick_dist, pick_dist_for_metadata
 
 if TYPE_CHECKING:

@@ -36,7 +36,6 @@ from typing import TYPE_CHECKING
 
 from nab_resolver.errors import ResolutionError
 
-from ._marker_holds import dependency_marker_holds
 from ._resolve.engine import (
     EnvSignature,
     InstallContexts,
@@ -47,9 +46,6 @@ from ._resolve.engine import (
     _EngineSettings,
     _resolve_with_micro_narrowing,
     env_signature,
-)
-from ._resolve.inputs import (
-    _build_resolver_inputs as _build_resolver_inputs,  # noqa: PLC0414  (re-export)
 )
 from ._vendor.packaging.markers import Marker
 from ._vendor.packaging.ranges import VersionRange
@@ -74,6 +70,7 @@ from .config import (
 )
 from .fetch import FetchCoordinator
 from .lockfile import LockInput, TargetLock
+from .marker_holds import dependency_marker_holds
 from .requirements_file import (
     expand_extra_requirements,
     expand_group_includes,
@@ -85,6 +82,9 @@ from .requirements_file import (
     read_pyproject_optional_dependencies,
     resolve_groups_to_requirements,
     self_extra_markers,
+)
+from .resolver_inputs import (
+    build_resolver_inputs as build_resolver_inputs,  # noqa: PLC0414  (re-export)
 )
 from .target import (
     UNBOUNDABLE_MARKER_VARIABLES,
@@ -101,9 +101,9 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport
 
-    from ._resolve.inputs import MarkerHolds
     from ._vendor.packaging.version import Version
     from .provider import ResolutionStrategy
+    from .resolver_inputs import MarkerHolds
 
 
 __all__ = [
@@ -276,7 +276,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs a caller drives a bar
 
     ``marker_holds`` decides whether a root requirement's marker holds for
     a target's environment; it defaults to nab's own
-    :func:`~nab_python._marker_holds.dependency_marker_holds`.  A host
+    :func:`~nab_python.marker_holds.dependency_marker_holds`.  A host
     driving the engine with its own marker machinery passes that instead,
     and then nothing below this call needs ``packaging.markersets``.
     """
@@ -936,7 +936,7 @@ def _group_package_ranges(
 ) -> tuple[dict[str, VersionRange], dict[str, list[str]]]:
     """Fold one group's direct requirements into per-package ranges.
 
-    Mirrors :func:`_build_resolver_inputs` (marker filtering,
+    Mirrors :func:`build_resolver_inputs` (marker filtering,
     canonicalisation, intersection); URL requirements are skipped. Also
     returns the requirement strings per package, for the conflict message.
     """

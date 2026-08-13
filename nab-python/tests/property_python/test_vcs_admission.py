@@ -1,4 +1,4 @@
-"""Property tests for :mod:`nab_python._vcs_admission` Layer-1 policy.
+"""Property tests for :mod:`nab_python.vcs_admission` Layer-1 policy.
 
 Invariants:
 
@@ -35,7 +35,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from nab_index.vcs import VcsRequest
-from nab_python._vcs_admission import (
+from nab_python.vcs_admission import (
     UnsupportedVcsError,
     VcsConfig,
     VcsPolicy,

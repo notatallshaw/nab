@@ -84,7 +84,7 @@ EXEMPT = {
     # point. It stays in the closure only through target, requirements_file
     # (via _provider.metadata_resolver) and _lockfile.validate, so it clears
     # when those do.
-    "nab_python._marker_holds": (
+    "nab_python.marker_holds": (
         "By design: the module that exists so the marker-set dependency has "
         "somewhere to live that the engine does not import. Reached here only "
         "through target, requirements_file and _lockfile.validate."

@@ -6,7 +6,7 @@ cycle.  :class:`nab_python.config.ConflictKind` takes its enum values from
 ``KIND_EXTRA`` / ``KIND_GROUP`` so a rename here flows to every consumer.
 
 Nothing here imports :mod:`packaging.markersets`.  Evaluating a dependency
-marker does, and lives in :mod:`nab_python._marker_holds` for that reason.
+marker does, and lives in :mod:`nab_python.marker_holds` for that reason.
 """
 
 from __future__ import annotations

@@ -16,7 +16,6 @@ import respx
 from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.transport import HttpError
-from nab_python._marker_holds import dependency_marker_holds
 from nab_python._resolve.engine import (
     _augment_resolution_error,
     _raise_for_source_python,
@@ -41,6 +40,7 @@ from nab_python.config import (
     read_pyproject_config,
 )
 from nab_python.lockfile import LockInput, PinShape, build_pylock
+from nab_python.marker_holds import dependency_marker_holds
 from nab_python.provider import (
     BuildPolicy,
     LocalSource,
@@ -57,7 +57,6 @@ from nab_python.requirements_file import (
 from nab_python.resolve import (
     ResolveFork,
     ResolveResult,
-    _build_resolver_inputs,
     _check_group_disjointness,
     _extra_requirements,
     _find_group_conflicts,
@@ -65,6 +64,7 @@ from nab_python.resolve import (
     _group_requirements_by_group,
     _ProjectTables,
     build_lock_input,
+    build_resolver_inputs,
     config_for_build_requirements,
     resolve_for_targets,
 )
@@ -142,7 +142,7 @@ def _build_constraints(
     The parser is shared with the requirement side; ``kind`` is what
     tells the two apart.
     """
-    return _build_resolver_inputs(
+    return build_resolver_inputs(
         [Requirement(text) for text in config.constraints],
         config,
         environment=environment,
@@ -2395,7 +2395,7 @@ class TestLoadExtraRequirements:
 
         The gate is carried rather than evaluated here, so the per-target
         parse is what drops the dep on an environment the marker excludes;
-        ``_build_resolver_inputs`` below is where that is asserted.
+        ``build_resolver_inputs`` below is where that is asserted.
         """
         path = tmp_path / "pyproject.toml"
         path.write_text(
@@ -2408,7 +2408,7 @@ class TestLoadExtraRequirements:
         assert req.name == "some-dep"
         assert str(req.marker) == 'python_version < "3.10"'
 
-        excluded = _build_resolver_inputs(
+        excluded = build_resolver_inputs(
             [req],
             NabProjectConfig(),
             environment={"python_version": "3.12", "python_full_version": "3.12.0"},
@@ -2418,12 +2418,12 @@ class TestLoadExtraRequirements:
 
 
 class TestBuildResolverInputs:
-    """``_build_resolver_inputs`` folds duplicate names by intersection."""
+    """``build_resolver_inputs`` folds duplicate names by intersection."""
 
     def test_duplicate_name_intersects(self) -> None:
         """Two requirements for one package combine to their overlap."""
         reqs = [Requirement("foo>=2.0"), Requirement("foo<3.0")]
-        resolver_requirements = _build_resolver_inputs(
+        resolver_requirements = build_resolver_inputs(
             reqs,
             NabProjectConfig(),
             environment={},
@@ -2437,7 +2437,7 @@ class TestBuildResolverInputs:
     def test_conflicting_names_stay_separate_roots(self) -> None:
         """Contradictory requirements reach the solver as their own clauses."""
         reqs = [Requirement("foo==1.0"), Requirement("foo==2.0")]
-        inputs = _build_resolver_inputs(
+        inputs = build_resolver_inputs(
             reqs,
             NabProjectConfig(),
             environment={},
@@ -2452,7 +2452,7 @@ class TestBuildResolverInputs:
     def test_a_repeated_extra_gets_one_proxy_root(self) -> None:
         """A second mention of the same extra adds no second proxy clause."""
         reqs = [Requirement("foo[dev]>1"), Requirement("foo[dev]<9")]
-        inputs = _build_resolver_inputs(
+        inputs = build_resolver_inputs(
             reqs,
             NabProjectConfig(),
             environment={},
@@ -2463,8 +2463,8 @@ class TestBuildResolverInputs:
     def test_root_extra_marker_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         """A root requirement gated on ``extra ==`` is dropped with a warning."""
         reqs = [Requirement('foo ; extra == "test"')]
-        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
-            resolver_requirements = _build_resolver_inputs(
+        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+            resolver_requirements = build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
                 environment={},
@@ -2478,8 +2478,8 @@ class TestBuildResolverInputs:
     ) -> None:
         """A root ``"x" in extras`` marker is dropped with a warning, not a crash."""
         reqs = [Requirement('foo ; "x" in extras')]
-        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
-            resolver_requirements = _build_resolver_inputs(
+        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+            resolver_requirements = build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
                 environment={},
@@ -2493,8 +2493,8 @@ class TestBuildResolverInputs:
     ) -> None:
         """A root ``in dependency_groups`` marker is dropped with a warning."""
         reqs = [Requirement('foo ; "dev" in dependency_groups')]
-        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
-            resolver_requirements = _build_resolver_inputs(
+        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+            resolver_requirements = build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
                 environment={},
@@ -2508,8 +2508,8 @@ class TestBuildResolverInputs:
     ) -> None:
         """packaging normalises the spelling, so the scan sees one form."""
         reqs = [Requirement('foo ; extra=="test"')]
-        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
-            _build_resolver_inputs(
+        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+            build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
                 environment={},
@@ -2522,8 +2522,8 @@ class TestBuildResolverInputs:
     ) -> None:
         """``pkg[redis]`` is the syntax the warning points at; it must not warn."""
         reqs = [Requirement("foo[redis]")]
-        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
-            resolver_requirements = _build_resolver_inputs(
+        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+            resolver_requirements = build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
                 environment={},
@@ -2536,8 +2536,8 @@ class TestBuildResolverInputs:
         """A requirement dropped by a plain env marker stays silent."""
         reqs = [Requirement('foo ; python_version < "3.0"')]
         env = {"python_version": "3.11", "python_full_version": "3.11.2"}
-        with caplog.at_level("WARNING", logger="nab_python._resolve.inputs"):
-            resolver_requirements = _build_resolver_inputs(
+        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+            resolver_requirements = build_resolver_inputs(
                 reqs,
                 NabProjectConfig(),
                 environment=env,
@@ -2558,7 +2558,7 @@ class TestBuildResolverInputs:
         """
         req = Requirement("demo[x,y,z]")
         monkeypatch.setattr(req, "extras", ["z", "y", "x"])
-        resolver_requirements = _build_resolver_inputs(
+        resolver_requirements = build_resolver_inputs(
             [req],
             NabProjectConfig(),
             environment={},

@@ -1,7 +1,7 @@
 """Property tests for cross-target alignment helpers in :mod:`nab_python.resolve`.
 
 A resolve iterates its targets serially with each target's pins threaded
-forward as preferences.  The pure helper ``_build_resolver_inputs``
+forward as preferences.  The pure helper ``build_resolver_inputs``
 shapes that input: it canonicalises the direct names, drops the
 requirements this target's markers exclude, and reports the extras the
 root requested.
@@ -20,17 +20,17 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_python._marker_holds import dependency_marker_holds
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
 from nab_python.config import NabProjectConfig
 from nab_python.lockfile import IndexPin, TargetLock
+from nab_python.marker_holds import dependency_marker_holds
 from nab_python.resolve import (
     ResolveResult,
     TargetResult,
-    _build_resolver_inputs,
     build_lock_input,
+    build_resolver_inputs,
 )
 from nab_python.tags import PlatformSpec
 from nab_python.target import ResolveTarget
@@ -71,7 +71,7 @@ class TestQuoteCanonicalDirectNames:
 
     User-supplied direct dependency names go through the same
     canonicalization before the resolver compares them; the keys of
-    ``_build_resolver_inputs`` are the direct set the provider is given.
+    ``build_resolver_inputs`` are the direct set the provider is given.
 
     Reference: https://peps.python.org/pep-0503/#normalized-names
     """
@@ -88,7 +88,7 @@ class TestQuoteCanonicalDirectNames:
         self, names: list[str]
     ) -> None:
         """Variations of the same name canonicalise to a single canonical form."""
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             [Requirement(name) for name in names],
             NabProjectConfig(),
             environment=_fake_target().marker_env,
@@ -123,7 +123,7 @@ class TestMarkerFiltering:
     evaluates to ``False`` for a given environment, the requirement
     does not apply.
 
-    ``_build_resolver_inputs`` evaluates the marker for the target's
+    ``build_resolver_inputs`` evaluates the marker for the target's
     environment and drops requirements whose marker says ``False``;
     otherwise the per-target solve would over-constrain.
 
@@ -149,7 +149,7 @@ class TestMarkerFiltering:
         excluded = seen - applies
 
         try:
-            out = _build_resolver_inputs(
+            out = build_resolver_inputs(
                 parsed,
                 NabProjectConfig(),
                 environment=linux_env,

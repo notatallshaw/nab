@@ -24,13 +24,13 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from ._conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
-from ._marker_holds import UnevaluableMarkerError
 from ._vendor.packaging import tags as ptags
 from ._vendor.packaging.markers import Marker, default_environment
 from ._vendor.packaging.markersets import variable_names
 from ._vendor.packaging.specifiers import InvalidSpecifier, Specifier, SpecifierSet
 from ._vendor.packaging.version import InvalidVersion, Version
+from .conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
+from .marker_holds import UnevaluableMarkerError
 from .tags import (
     FREE_THREADED_MIN_PYTHON,
     PlatformSpec,
@@ -961,7 +961,7 @@ class ResolveTarget:
         ``extras`` and ``dependency_groups`` are defined only when
         consuming a lockfile, so a dependency marker that tests one
         evaluates False here rather than raising (see
-        :data:`~nab_python._conflict_kind.EMPTY_MEMBERSHIP_SETS`).
+        :data:`~nab_python.conflict_kind.EMPTY_MEMBERSHIP_SETS`).
         """
         return {**self.marker_env, **EMPTY_MEMBERSHIP_SETS}
 

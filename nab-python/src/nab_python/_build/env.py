@@ -42,9 +42,9 @@ from installer.sources import WheelFile
 from nab_index.client import extract_sdist_archive
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 
-from .._errors import MissingExtraError
-from .._policy import BuildPolicy, DistPolicy
-from .._vcs_admission import UnsupportedVcsError
+from ..errors import MissingExtraError
+from ..policy import BuildPolicy, DistPolicy
+from ..vcs_admission import UnsupportedVcsError
 from .._vendor.packaging.utils import canonicalize_name
 from ..config import NabProjectConfig
 from ..download import DownloadError, download_lock

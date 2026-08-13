@@ -24,11 +24,9 @@ from nab_index import vcs as vcs_mod
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
-from nab_python._marker_holds import dependency_marker_holds
 from nab_python._provider import listing as listing_mod
 from nab_python._resolve import engine as engine_mod
 from nab_python._resolve.engine import _EngineSettings, _resolve_one_target, _run_pass
-from nab_python._resolve.inputs import _ProxyConstraints
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
@@ -54,6 +52,7 @@ from nab_python.lockfile import (
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
+from nab_python.marker_holds import dependency_marker_holds
 from nab_python.metadata import WheelMetadata
 from nab_python.provider import (
     ArchiveSource,
@@ -81,10 +80,11 @@ from nab_python.resolve import (
     ResolveFork,
     ResolveResult,
     TargetResult,
-    _build_resolver_inputs,
     build_lock_input,
+    build_resolver_inputs,
     resolve_with_coordinator,
 )
+from nab_python.resolver_inputs import ProxyConstraints
 from nab_python.tags import PlatformSpec
 from nab_python.target import Matrix, ResolveTarget
 from nab_resolver.errors import ResolutionError
@@ -830,7 +830,7 @@ class TestDroppedRootMarkerWarnedOnce:
     def test_warned_once_across_targets_forks_and_base_pass(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.WARNING, logger="nab_python._resolve.inputs"):
+        with caplog.at_level(logging.WARNING, logger="nab_python.resolver_inputs"):
             result = resolve_with_coordinator(
                 self._coordinator(),
                 self._two_targets(),
@@ -846,7 +846,7 @@ class TestDroppedRootMarkerWarnedOnce:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         reqs = _reqs("base", 'gated ; extra == "test"', 'other ; "dev" in extras')
-        with caplog.at_level(logging.WARNING, logger="nab_python._resolve.inputs"):
+        with caplog.at_level(logging.WARNING, logger="nab_python.resolver_inputs"):
             result = resolve_with_coordinator(
                 self._coordinator(),
                 self._two_targets(),
@@ -1056,12 +1056,12 @@ _FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
 class TestBuildResolverInputs:
-    """``_build_resolver_inputs`` builds the resolver-input dict per env."""
+    """``build_resolver_inputs`` builds the resolver-input dict per env."""
 
     def test_marker_true_keeps_requirement(self) -> None:
         """A requirement whose marker matches the env is kept."""
         env = _linux_311().marker_env
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             _reqs('pkg; sys_platform == "linux"'),
             NabProjectConfig(),
             environment=env,
@@ -1072,7 +1072,7 @@ class TestBuildResolverInputs:
     def test_marker_false_drops_requirement(self) -> None:
         """A requirement whose marker excludes the env is dropped."""
         env = _linux_311().marker_env
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             _reqs('pkg; sys_platform == "win32"'),
             NabProjectConfig(),
             environment=env,
@@ -1083,7 +1083,7 @@ class TestBuildResolverInputs:
     def test_set_marker_drops_without_crash(self) -> None:
         """A lockfile-only set marker is empty at resolve time, so the dep drops."""
         env = _linux_311().marker_env
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             _reqs('pkg ; "x" in extras'),
             NabProjectConfig(),
             environment=env,
@@ -1094,7 +1094,7 @@ class TestBuildResolverInputs:
     def test_extras_get_separate_entries(self) -> None:
         """Extras become ``name[extra]`` entries with any-version range."""
         env = _linux_311().marker_env
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             _reqs("pkg[foo,bar]"),
             NabProjectConfig(),
             environment=env,
@@ -1116,7 +1116,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         req = Requirement("pkg[a,b,c]")
         monkeypatch.setattr(req, "extras", sorted(req.extras, reverse=True))
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             [req],
             NabProjectConfig(),
             environment=env,
@@ -1128,7 +1128,7 @@ class TestBuildResolverInputs:
     def test_no_specifier_yields_any(self) -> None:
         """An unconstrained requirement gets the any() range."""
         env = _linux_311().marker_env
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             _reqs("pkg"),
             NabProjectConfig(),
             environment=env,
@@ -1139,7 +1139,7 @@ class TestBuildResolverInputs:
     def test_specifier_yields_intervals(self) -> None:
         """A bounded specifier produces the corresponding interval."""
         env = _linux_311().marker_env
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             _reqs("pkg>=1.0,<2.0"),
             NabProjectConfig(),
             environment=env,
@@ -1158,7 +1158,7 @@ class TestBuildResolverInputs:
         Declared extras still flow through.
         """
         env = _linux_311().marker_env
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             _reqs("pkg[ext]===1.0.special"),
             NabProjectConfig(),
             environment=env,
@@ -1172,7 +1172,7 @@ class TestBuildResolverInputs:
     def test_duplicate_name_intersects(self) -> None:
         """Two requirements for one package combine to their overlap."""
         env = _linux_311().marker_env
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             _reqs("pkg>=2.0", "pkg<3.0"),
             NabProjectConfig(),
             environment=env,
@@ -1185,7 +1185,7 @@ class TestBuildResolverInputs:
     def test_conflicting_names_stay_separate_roots(self) -> None:
         """Contradictory pins reach the solver as their own clauses."""
         env = _linux_311().marker_env
-        inputs = _build_resolver_inputs(
+        inputs = build_resolver_inputs(
             _reqs("pkg==1.0", "pkg==2.0"),
             NabProjectConfig(),
             environment=env,
@@ -1198,7 +1198,7 @@ class TestBuildResolverInputs:
         """A constraint carrying extras is rejected, matching pip."""
         env = _linux_311().marker_env
         with pytest.raises(ConfigError, match="extras"):
-            _build_resolver_inputs(
+            build_resolver_inputs(
                 _reqs("pkg[dev]<2.0"),
                 NabProjectConfig(),
                 environment=env,
@@ -1214,7 +1214,7 @@ class TestBuildResolverInputs:
         path once enforced such constraints unconditionally (issue #38).
         """
         env = _linux_311().marker_env
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             _reqs('pkg<2.0 ; sys_platform == "win32"'),
             NabProjectConfig(),
             environment=env,
@@ -1226,7 +1226,7 @@ class TestBuildResolverInputs:
     def test_marker_true_keeps_constraint(self) -> None:
         """A constraint whose marker matches the env binds its range."""
         env = _linux_311().marker_env
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             _reqs('pkg<2.0 ; sys_platform == "linux"'),
             NabProjectConfig(),
             environment=env,
@@ -1239,7 +1239,7 @@ class TestBuildResolverInputs:
     def test_extra_proxy_key_normalized(self) -> None:
         """The proxy key is PEP 685 normalized."""
         env = _linux_311().marker_env
-        out = _build_resolver_inputs(
+        out = build_resolver_inputs(
             _reqs("pkg[My_Extra]"),
             NabProjectConfig(),
             environment=env,
@@ -1251,7 +1251,7 @@ class TestBuildResolverInputs:
         """A plain archive URL is refused as an unsupported scheme."""
         env = _linux_311().marker_env
         with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
-            _build_resolver_inputs(
+            build_resolver_inputs(
                 _reqs("pkg @ https://example.com/pkg.whl"),
                 NabProjectConfig(),
                 environment=env,
@@ -1262,7 +1262,7 @@ class TestBuildResolverInputs:
         """A git+https requirement is refused under the default BLOCK policy."""
         env = _linux_311().marker_env
         with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
-            _build_resolver_inputs(
+            build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 NabProjectConfig(),
                 environment=env,
@@ -1273,7 +1273,7 @@ class TestBuildResolverInputs:
         """A direct-URL constraint is refused the same way as a requirement."""
         env = _linux_311().marker_env
         with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
-            _build_resolver_inputs(
+            build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 NabProjectConfig(),
                 environment=env,
@@ -1292,7 +1292,7 @@ class TestBuildResolverInputs:
             )
         )
         with pytest.raises(NotImplementedError, match="not implemented"):
-            _build_resolver_inputs(
+            build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 config,
                 environment=env,
@@ -1301,12 +1301,12 @@ class TestBuildResolverInputs:
 
 
 class TestProxyConstraints:
-    """``_ProxyConstraints`` answers an extras proxy with its base's bound."""
+    """``ProxyConstraints`` answers an extras proxy with its base's bound."""
 
     def test_a_proxy_key_reads_the_base_bound(self) -> None:
         """``aaa[x]`` reads ``aaa``'s bound; an unconstrained base has none."""
         bound = Requirement("aaa<3.0").specifier.to_range()
-        constraints = _ProxyConstraints({"aaa": bound})
+        constraints = ProxyConstraints({"aaa": bound})
 
         assert constraints["aaa[x]"] == bound
         assert constraints.get("bbb[x]") is None
@@ -1335,7 +1335,7 @@ class TestSelfRefMarker:
                 ["all"],
             )
         )
-        excluded = _build_resolver_inputs(
+        excluded = build_resolver_inputs(
             reqs,
             NabProjectConfig(),
             environment=_linux_311().marker_env,
@@ -1347,7 +1347,7 @@ class TestSelfRefMarker:
             "python_version": "3.9",
             "python_full_version": "3.9.0",
         }
-        included = _build_resolver_inputs(
+        included = build_resolver_inputs(
             reqs,
             NabProjectConfig(),
             environment=included_env,
@@ -1357,11 +1357,11 @@ class TestSelfRefMarker:
 
 
 class TestRootExtras:
-    """``_build_resolver_inputs`` also reports the extras the root requested."""
+    """``build_resolver_inputs`` also reports the extras the root requested."""
 
     def test_recovers_and_normalizes_extras(self) -> None:
         env = _linux_311().marker_env
-        root_extras = _build_resolver_inputs(
+        root_extras = build_resolver_inputs(
             _reqs("pkg[My_Extra]", "other"),
             NabProjectConfig(),
             environment=env,
@@ -1371,7 +1371,7 @@ class TestRootExtras:
 
     def test_no_extras_yields_empty(self) -> None:
         env = _linux_311().marker_env
-        root_extras = _build_resolver_inputs(
+        root_extras = build_resolver_inputs(
             _reqs("pkg"),
             NabProjectConfig(),
             environment=env,
@@ -1866,7 +1866,7 @@ class TestRunPassConflict:
     def test_conflicting_requirements_fail_the_target(self) -> None:
         """Pinned-but-different reqs surface as a failed TargetResult.
 
-        ``_build_resolver_inputs`` raises before the resolver runs, so
+        ``build_resolver_inputs`` raises before the resolver runs, so
         the failure has to be caught per target rather than escaping the
         whole pass.
         """

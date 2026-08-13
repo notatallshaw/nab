@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ._conflict_kind import EMPTY_MEMBERSHIP_SETS
 from ._vendor.packaging.markers import UndefinedComparison
 from ._vendor.packaging.markersets import MarkerSet
+from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

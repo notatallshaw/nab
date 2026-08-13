@@ -36,12 +36,12 @@ from typing import TYPE_CHECKING
 
 import tomli
 
-from .._marker_holds import UnevaluableMarkerError, dependency_marker_holds
 from .._vendor.packaging.markers import UndefinedEnvironmentName
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.requirements import Requirement
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
+from ..marker_holds import UnevaluableMarkerError, dependency_marker_holds
 from ..metadata import validate_specifier_versions
 from ..target import NonIntervalMarkerError, micro_boundary_points
 

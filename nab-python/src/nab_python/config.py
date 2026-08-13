@@ -27,23 +27,7 @@ from nab_index.multi_index import IndexConfig
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.subdir import subdirectory_escapes
 
-from ._conflict_kind import KIND_EXTRA, KIND_GROUP
-from ._errors import (
-    OverrideConflictError as OverrideConflictError,  # noqa: PLC0414  (public re-export)
-)
-from ._iso8601 import parse_iso_datetime
-from ._policy import (
-    ArchiveSource,
-    BuildPolicy,
-    DecisionOrder,
-    DistPolicy,
-    LocalSource,
-    ResolutionStrategy,
-    ResolveMode,
-    VcsSource,
-)
 from ._toml import tool_nab_section
-from ._vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from ._vendor.packaging.utils import InvalidName, canonicalize_name
@@ -61,8 +45,23 @@ from .config_sources import (
     resolve_anchor,
     resolve_config,
 )
+from .conflict_kind import KIND_EXTRA, KIND_GROUP
+from .errors import (
+    OverrideConflictError as OverrideConflictError,  # noqa: PLC0414  (public re-export)
+)
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
+from .iso8601 import parse_iso_datetime
 from .paths import resolve_path
+from .policy import (
+    ArchiveSource,
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    LocalSource,
+    ResolutionStrategy,
+    ResolveMode,
+    VcsSource,
+)
 from .tags import DEFAULT_LIBC, LIBC_MAJOR, Libc, PlatformSpec, platform_kind
 from .target import (
     PLATFORM_MARKERS,
@@ -72,6 +71,7 @@ from .target import (
     host_environment,
     python_axis_environment,
 )
+from .vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 from .workspace import (
     WorkspaceConfig,
     discover_workspace_root,

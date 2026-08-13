@@ -20,15 +20,15 @@ import tomli
 
 from nab_index.client import SdistFile, WheelFile
 
-from .._extra_keys import split_extra
-from .._iso8601 import parse_iso_datetime
-from .._policy import DistPolicy
 from .._toml import tool_nab_section
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
 from .._vendor.packaging.specifiers import SpecifierSet
 from .._vendor.packaging.utils import canonicalize_name
+from ..extra_keys import split_extra
+from ..iso8601 import parse_iso_datetime
 from ..metadata import validate_specifier_versions
 from ..paths import path_state
+from ..policy import DistPolicy
 from .groups import BASE_MEMBER
 
 if TYPE_CHECKING:
@@ -36,7 +36,6 @@ if TYPE_CHECKING:
 
     from nab_index.multi_index import IndexConfig
 
-    from .._policy import ArchiveSource, LocalSource, VcsSource
     from .._vendor.packaging.version import Version
     from ..lockfile import (
         ArchivePin,
@@ -48,6 +47,7 @@ if TYPE_CHECKING:
         VcsPin,
         WheelArtifact,
     )
+    from ..policy import ArchiveSource, LocalSource, VcsSource
     from ..target import ResolveTarget
 
 

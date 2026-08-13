@@ -23,9 +23,9 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
-from .._errors import MetadataError
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
+from ..errors import MetadataError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

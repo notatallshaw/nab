@@ -24,8 +24,17 @@ from nab_index.client import (
 from nab_index.errors import IndexAccessError
 from nab_index.transport import UnserveableUrlError
 
-from ._conflict_kind import EMPTY_MEMBERSHIP_SETS
-from ._errors import (
+from ._provider import extras as _extras
+from ._provider import listing as _listing
+from ._provider import lookahead as _lookahead
+from ._provider import metadata_resolver as _metadata_resolver
+from ._provider import priority as _priority
+from ._provider import sources as _sources
+from ._vendor.packaging.ranges import VersionRange
+from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from ._vendor.packaging.utils import canonicalize_name
+from .conflict_kind import EMPTY_MEMBERSHIP_SETS
+from .errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
     InvalidUploadTimeError,
@@ -36,8 +45,9 @@ from ._errors import (
     SourceNameMismatchError,
     UnsupportedSdistError,
 )
-from ._extra_keys import join_extra, split_extra
-from ._policy import (
+from .extra_keys import join_extra, split_extra
+from .metadata import WheelMetadata
+from .policy import (
     ArchiveSource,
     BuildPolicy,
     DecisionOrder,
@@ -47,25 +57,15 @@ from ._policy import (
     ResolutionStrategy,
     VcsSource,
 )
-from ._policy import (
+from .policy import (
     ResolveMode as ResolveMode,  # noqa: PLC0414  (re-export: not in __all__, kept importable from here)
 )
-from ._provider import extras as _extras
-from ._provider import listing as _listing
-from ._provider import lookahead as _lookahead
-from ._provider import metadata_resolver as _metadata_resolver
-from ._provider import priority as _priority
-from ._provider import sources as _sources
-from ._vcs_admission import (
+from .target import host_environment
+from .vcs_admission import (
     UnsupportedVcsError,
     VcsConfig,
     VcsPolicy,
 )
-from ._vendor.packaging.ranges import VersionRange
-from ._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
-from ._vendor.packaging.utils import canonicalize_name
-from .metadata import WheelMetadata
-from .target import host_environment
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence

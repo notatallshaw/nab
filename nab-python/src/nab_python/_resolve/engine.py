@@ -30,8 +30,8 @@ from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
 from ..lockfile import build_target_lock
 from ..provider import ListingFilterCache, Provider, join_extra, split_extra
+from ..resolver_inputs import ProxyConstraints, build_resolver_inputs
 from ..target import micro_boundary_points, slices_from_points
-from .inputs import _build_resolver_inputs, _ProxyConstraints
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -46,8 +46,8 @@ if TYPE_CHECKING:
     from ..fetch import FetchCoordinator
     from ..lockfile import TargetLock
     from ..provider import ResolutionStrategy
+    from ..resolver_inputs import MarkerHolds
     from ..target import ResolveTarget
-    from .inputs import MarkerHolds
 
 
 _logger = logging.getLogger(__name__)
@@ -587,14 +587,14 @@ def _resolve_one_target(
     config = settings.config
     environment = target.marker_env
     try:
-        root_requirements, resolver_requirements, root_extras = _build_resolver_inputs(
+        root_requirements, resolver_requirements, root_extras = build_resolver_inputs(
             requirements,
             config,
             environment=environment,
             marker_holds=settings.marker_holds,
             warned=settings.warned_root_markers,
         )
-        constraint_ranges = _build_resolver_inputs(
+        constraint_ranges = build_resolver_inputs(
             constraints,
             config,
             environment=environment,
@@ -602,7 +602,7 @@ def _resolve_one_target(
             kind="constraint",
             warned=settings.warned_root_markers,
         ).ranges
-        resolver_constraints = _ProxyConstraints(constraint_ranges)
+        resolver_constraints = ProxyConstraints(constraint_ranges)
     except ResolutionError as exc:
         return TargetResult(target=target, success=False, error=exc)
 
@@ -722,7 +722,7 @@ def _root_keys(
 ) -> frozenset[str]:
     """Return the resolver keys ``requirements`` names directly.
 
-    The same shape :func:`_build_resolver_inputs` feeds the resolver: a
+    The same shape :func:`build_resolver_inputs` feeds the resolver: a
     canonical name per requirement, plus a ``name[extra]`` proxy key per
     requested extra, with marker-excluded requirements dropped.
     """
