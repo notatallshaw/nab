@@ -17,6 +17,7 @@ from .._extra_keys import join_extra
 from .._policy import ExtrasMode
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.utils import canonicalize_name
+from .lookahead import flush_pending_blocks
 from .metadata_resolver import refuse_url_dep
 
 if TYPE_CHECKING:
@@ -224,10 +225,6 @@ def _record_base_range_blocks(
     tighter (the blocker names one selectable version) than recording
     against the range.
     """
-    # Late import: ``lookahead`` shares state with this module
-    # through ``provider`` and importing it at module load creates a cycle.
-    from .lookahead import flush_pending_blocks
-
     base_decision = provider.solution_decisions.get(base_normalized)
     if base_decision is not None:
         for v in excluded:

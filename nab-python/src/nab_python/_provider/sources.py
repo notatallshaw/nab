@@ -171,7 +171,11 @@ def extract_source_metadata(
     every policy level: the build path cannot read it either, so calling
     it dynamic metadata would blame the policy for a permission error.
     """
-    # Imported in-function so tests can patch the module attribute.
+    # Imported in-function so tests can patch the module attribute, and to
+    # keep ``_build.runner`` (and the ``build`` package behind it) off the
+    # import path of a resolve that never invokes a backend.  Hoisting it
+    # would also close the resolve-builds-resolve loop described in
+    # :func:`nab_python._build.env.NabBuildEnv._resolve_and_download`.
     from .. import build_backend
     from ..build_backend import BuildBackendError, extract_static_metadata
 

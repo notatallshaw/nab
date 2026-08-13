@@ -50,7 +50,11 @@ def build_remote_sdist(
     version disagrees with the requested candidate is also rejected rather
     than used for the wrong package.
     """
-    # Late imports: ``provider`` imports this module at module load.
+    # Imported in-function so tests can patch the module attribute, and to
+    # keep ``_build.runner`` (and the ``build`` package behind it) off the
+    # import path of a resolve that never invokes a backend.  Hoisting it
+    # would also close the resolve-builds-resolve loop described in
+    # :func:`nab_python._build.env.NabBuildEnv._resolve_and_download`.
     from .. import build_backend
     from ..build_backend import BuildBackendError
 

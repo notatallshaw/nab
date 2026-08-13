@@ -385,9 +385,14 @@ class NabBuildEnv:
         learn a build requirement's dependencies would be a second
         recursion, one the depth budget does not count.
         """
-        # Late import: avoids a cycle through ``resolve.py`` which
-        # itself imports ``pypi.py`` which imports ``build_backend``
-        # which imports this module.
+        # The one import in nab-python that a declaration move cannot
+        # straighten out.  Resolving a project can require building an sdist,
+        # and building an sdist requires resolving its build requirements, so
+        # ``resolve`` -> ``provider`` -> ``_provider.sources`` ->
+        # ``build_backend`` -> ``_build.runner`` -> this module -> ``resolve``
+        # is mutual recursion rather than a misplaced declaration.  Breaking it
+        # for real means the caller supplying the resolve, not this module
+        # reaching up for it.
         from ..resolve import build_lock_input, resolve_for_targets
 
         requires = list(self._requires)
