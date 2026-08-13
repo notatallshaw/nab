@@ -681,9 +681,7 @@ def _version_neighbors(text: str) -> list[str]:
     major = release[0]
     release_str = ".".join(str(part) for part in release)
     pre_part = f"{version.pre[0]}{version.pre[1]}" if version.pre is not None else ""
-    out = [base]
-    if version.local is not None:
-        out.extend(_local_twins(version, release_str, pre_part))
+    out = [base, *_equal_twins(version)]
 
     # Bumps stay in the literal's own epoch: the release bump of 1!3.9 is 1!3.10,
     # which outranks it, not 3.10, which sorts below and leaves the band above the
@@ -738,19 +736,19 @@ def _suffix_neighbors(version: Version, release_str: str, pre_part: str) -> list
     return out
 
 
-def _local_twins(version: Version, release_str: str, pre_part: str) -> list[str]:
-    """Mint the shared points of a local-tagged literal.
+def _equal_twins(version: Version) -> list[str]:
+    """Mint the points equal to the literal as a version but not as a string.
 
-    A specifier built from a public point ignores a candidate's local label
-    (PEP 440 version matching), so the local-stripped release realises truth
-    vectors the tagged point cannot. The zero-padded twin is equal to the
-    literal as a version but not as a string, so the invalid-specifier
-    string fall-through tells the two apart.
+    ``in``/``not in`` and an invalid specifier fall through to a raw string
+    test, so separating that reading from PEP 440 matching needs a point the
+    version test accepts and the string test rejects: the release, zero-padded.
+    A local-tagged literal also needs the local-stripped release, since a
+    specifier built from a public point ignores a candidate's local label.
     """
-    post_part = f".post{version.post}" if version.post is not None else ""
-    dev_part = f".dev{version.dev}" if version.dev is not None else ""
-    stem = f"{version.epoch}!{release_str}.0{pre_part}{post_part}{dev_part}"
-    return [version.public, str(Version(f"{stem}+{version.local}"))]
+    padded = version.__replace__(release=(*version.release, 0))
+    if version.local is None:
+        return [str(padded)]
+    return [version.public, str(padded)]
 
 
 def _between(vlow: Version, low: str, vhigh: Version) -> str | None:

@@ -600,7 +600,7 @@ def test_one_operation_reads_each_atom_truth_once(
     """An atom's truth on one point is evaluated once per operation.
 
     Partitions of one axis over overlapping atom sets re-read the same atom on the
-    same point, which is why the memo pays. 156 evaluations here, against 208 with
+    same point, which is why the memo pays. 164 evaluations here, against 218 with
     the memo bypassed.
     """
     left = ms('python_version < "3.12"' + _SPREAD)
@@ -609,7 +609,7 @@ def test_one_operation_reads_each_atom_truth_once(
     truths = _truth_counter(monkeypatch)
     assert left.equivalent_within(right, _row_universe()) is True
 
-    assert truths() == 156
+    assert truths() == 164
 
 
 def test_atoms_keep_no_truths_between_operations(
@@ -709,7 +709,7 @@ def test_a_shared_store_serves_the_next_decision_its_truths(
     """A decision handed the previous one's store re-reads no stored atom truth.
 
     Only restriction repeats, one read for each of the six rows' two operands,
-    against 156 for the decision itself.
+    against 164 for the decision itself.
     """
     universe = _row_universe()
     left = ms('python_version < "3.12"' + _SPREAD)
@@ -721,7 +721,7 @@ def test_a_shared_store_serves_the_next_decision_its_truths(
     first = truths()
     left.equivalent_within(right, universe, store=store)
 
-    assert first == 156
+    assert first == 164
     assert truths() - first == 12
 
 
