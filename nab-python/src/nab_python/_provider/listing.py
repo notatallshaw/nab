@@ -10,7 +10,7 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING
 
-from nab_index.client import SdistFile, WheelFile
+from nab_provider.records import SdistFile, WheelFile
 
 from .._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from .._vendor.packaging.version import InvalidVersion, Version

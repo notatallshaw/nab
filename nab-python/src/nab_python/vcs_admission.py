@@ -20,7 +20,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
 
-from nab_index.vcs import FULL_GIT_SHA_RE
+from nab_provider.vcs_request import FULL_GIT_SHA_RE
 
 __all__ = [
     "UnsupportedVcsError",

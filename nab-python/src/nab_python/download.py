@@ -26,7 +26,7 @@ from urllib.parse import urlsplit
 from nab_index.atomic import atomic_write
 from nab_index.client import AsyncSimpleClient
 from nab_index.local_index import parse_file_url
-from nab_index.transport import HttpError
+from nab_provider.errors import HttpError
 
 from .lockfile import ArchivePin, IndexPin, LocalPin, LockInput, VcsPin
 

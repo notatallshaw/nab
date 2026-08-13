@@ -22,8 +22,8 @@ import tomli
 from typing_extensions import override
 
 from nab_index.local_index import is_file_url
-from nab_index.multi_index import IndexConfig
 from nab_provider.archive import ArchiveRequest, ArchiveRequestError
+from nab_provider.records import IndexConfig
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.subdir import subdirectory_escapes
 

@@ -38,7 +38,8 @@ import build
 import pyproject_hooks
 import tomli
 
-from nab_index.local_index import UnsupportedWheelError, wheel_metadata_member
+from nab_index.local_index import wheel_metadata_member
+from nab_provider.errors import UnsupportedWheelError
 from nab_resolver.errors import ResolutionError
 
 from .._vendor.packaging.requirements import Requirement

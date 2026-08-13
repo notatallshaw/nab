@@ -15,15 +15,14 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from nab_index.multi_index import IndexConfig
+from nab_provider.records import IndexConfig
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
 from nab_python.store import InMemoryIndex
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from nab_index.client import SdistFile, WheelFile
-    from nab_index.lazy_wheel import RangeMetadataResult
+    from nab_provider.records import RangeMetadataResult, SdistFile, WheelFile
 
 _MINIMAL_METADATA = "Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\n"
 

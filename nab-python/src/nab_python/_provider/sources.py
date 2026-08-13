@@ -17,9 +17,10 @@ from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nab_index.client import SdistFile, extract_sdist_archive, verify_sdist_hash
-from nab_index.vcs import VcsCloneError, VcsRequest
+from nab_index.client import extract_sdist_archive, verify_sdist_hash
 from nab_provider.archive import ArchiveRequest
+from nab_provider.records import SdistFile
+from nab_provider.vcs_request import VcsCloneError, VcsRequest
 
 from .._vendor.packaging.utils import canonicalize_name
 from ..errors import SourceNameMismatchError, UnsupportedSdistError

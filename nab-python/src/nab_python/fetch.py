@@ -27,11 +27,11 @@ from nab_index.cached_client import (
     ParsedCacheStats,
     read_fresh_parsed_listing,
 )
-from nab_index.client import SdistFile, WheelFile
 from nab_index.lazy_wheel import RangeCapabilityMemo
 from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
-from nab_index.multi_index import IndexConfig, MultiIndexClient
+from nab_index.multi_index import MultiIndexClient
 from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
+from nab_provider.records import IndexConfig, SdistFile, WheelFile
 from nab_provider.serialization import SimpleSerialization
 
 from ._vendor.packaging.utils import canonicalize_name

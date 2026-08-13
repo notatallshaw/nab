@@ -25,13 +25,13 @@ import tyro
 from tyro.extras import SubcommandApp
 
 from nab._version import __version__
-from nab_index.client import (
+from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_provider.errors import (
+    IndexAccessError,
     MetadataHashMismatchError,
     SdistHashMismatchError,
     WheelHashMismatchError,
 )
-from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_provider.errors import IndexAccessError
 from nab_python.config import (
     ConfigError,
     NabProjectConfig,

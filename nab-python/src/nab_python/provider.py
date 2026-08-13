@@ -13,17 +13,15 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, cast
 
-from nab_index.client import (
-    MalformedSimpleResponseError,
+from nab_index.client import MalformedSimpleResponseError
+from nab_index.transport import UnserveableUrlError
+from nab_provider.errors import (
+    IndexAccessError,
     MetadataHashMismatchError,
-    SdistFile,
     SdistHashMismatchError,
-    WheelFile,
     WheelHashMismatchError,
 )
-from nab_index.transport import UnserveableUrlError
-from nab_provider.errors import IndexAccessError
-from nab_provider.records import DistFile
+from nab_provider.records import DistFile, SdistFile, WheelFile
 
 from ._provider import extras as _extras
 from ._provider import listing as _listing

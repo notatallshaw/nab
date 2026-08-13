@@ -18,7 +18,7 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import tomli
 
-from nab_index.client import SdistFile, WheelFile
+from nab_provider.records import SdistFile, WheelFile
 
 from .._toml import tool_nab_section
 from .._vendor.packaging.pylock import Pylock, PylockValidationError
@@ -34,7 +34,7 @@ from .groups import BASE_MEMBER
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
-    from nab_index.multi_index import IndexConfig
+    from nab_provider.records import IndexConfig
 
     from .._vendor.packaging.version import Version
     from ..lockfile import (
@@ -706,7 +706,7 @@ def _vcs_pin_from_source(
     the requirements.txt line installs the locked commit, not the ref
     the user supplied.
     """
-    from nab_index.vcs import VcsRequest
+    from nab_provider.vcs_request import VcsRequest
 
     from ..lockfile import VcsPin
 

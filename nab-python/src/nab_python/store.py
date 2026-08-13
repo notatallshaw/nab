@@ -14,8 +14,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-    from nab_index.client import SdistFile, WheelFile
-    from nab_index.lazy_wheel import RangeOutcome
+    from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
 __all__ = [
     "InMemoryIndex",

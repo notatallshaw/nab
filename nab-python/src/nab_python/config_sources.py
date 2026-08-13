@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
-from nab_index.multi_index import IndexConfig
+from nab_provider.records import IndexConfig
 from nab_provider.serialization import SimpleSerialization
 
 from ._toml import tool_nab_section

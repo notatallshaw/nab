@@ -12,13 +12,9 @@ import logging
 from typing import TYPE_CHECKING, TypeGuard
 from urllib.parse import urlsplit
 
-from nab_index.client import SdistFile, WheelFile
-from nab_index.lazy_wheel import RangeOutcome
-from nab_index.local_index import (
-    UnreadableLocalIndexError,
-    UnsupportedWheelError,
-    read_wheel_metadata,
-)
+from nab_index.local_index import UnreadableLocalIndexError, read_wheel_metadata
+from nab_provider.errors import UnsupportedWheelError
+from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
 from .._vendor.packaging.ranges import VersionRange
 from .._vendor.packaging.specifiers import SpecifierSet
