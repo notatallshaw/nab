@@ -1,8 +1,8 @@
 """Index-backed provider for nab-resolver.
 
 Fetches package metadata on demand through a
-:class:`~nab_provider.fetch_port.FetchPort`, converting PEP 440/508
-types into nab-resolver Range types.
+:class:`~nab_provider.fetch_port.FetchPort`, converting PEP 440/508 types
+into nab-resolver Range types.
 """
 
 from __future__ import annotations
@@ -56,7 +56,7 @@ from .policy import (
     VcsSource,
 )
 from .policy import (
-    ResolveMode as ResolveMode,  # noqa: PLC0414  (re-export: not in __all__, kept importable from here)
+    ResolveMode as ResolveMode,  # noqa: PLC0414  (re-export, importable from here)
 )
 from .records import DistFile, SdistFile, WheelFile
 from .target import host_environment
@@ -117,9 +117,9 @@ logger = logging.getLogger(__name__)
 class ProviderStats:
     """Counters describing what the provider did during a resolve.
 
-    Complements :class:`nab_resolver.ResolverStats` by tracking the PyPI/wheel
-    layer (listing fetches, metadata reads, filter rejections).  Used by
-    benchmarks to measure prefetch and look-ahead wins.
+    Complements :class:`nab_resolver.resolver.ResolverStats` by tracking the
+    PyPI/wheel layer (listing fetches, metadata reads, filter rejections).
+    Used by benchmarks to measure prefetch and look-ahead wins.
     """
 
     listings_fetched: int = 0
@@ -332,9 +332,7 @@ class Provider:
     :meth:`settled_listing`.
     """
 
-    # Declared in ``_provider.listing``, which reads it directly while
-    # building the root batch; re-exported here because the scan path in
-    # ``_scan_candidates_pipelined`` reads it off the instance.
+    # Declared in ``_provider.listing``; the scan reads it off the instance.
     PREFETCH_BATCH: int = _listing.PREFETCH_BATCH
 
     # Batches kept fetching during the previous batch's await in
@@ -430,9 +428,6 @@ class Provider:
         self.build_policy = build_policy
         # Opt-out: trust a pre-2.2 sdist's PKG-INFO deps as final instead of
         # routing through the dynamic path. Off by default (strict PEP 643).
-        # The project's own setting reaches here through the caller, which
-        # reads it off the config; a caller with no config (a benchmark
-        # harness) passes the flag directly.
         self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
         self._resolution_strategy = resolution_strategy
         # The scan asks this once per package, so keep the answer.
@@ -518,7 +513,7 @@ class Provider:
         self.constraints: Mapping[str, VersionRange] = constraints or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
         self.deps_cache: dict[tuple[str, Version], dict[str, VersionRange]] = {}
-        # Unbounded by design and never evicted mid-resolve: it keeps every
+        # Deliberately unbounded and never evicted mid-resolve: it keeps every
         # parsed Requirement (hence every Marker) alive for the whole resolve,
         # which is what makes the id(marker)-keyed marker caches below safe
         # against id reuse. Do not bound it without re-keying those caches.
@@ -628,8 +623,7 @@ class Provider:
             defaultdict(dict)
         )
 
-        # Last NO_VERSIONS reason per package; consumed by resolve.py to
-        # enrich ResolutionError messages.
+        # Last NO_VERSIONS reason per package, for the resolve's error message.
         self._no_versions_reasons: dict[str, str] = {}
 
         # Metadata errors behind the permanent bans, keyed by canonical name
@@ -694,7 +688,7 @@ class Provider:
         Caller must canonicalise the name first.  A per-package override
         whose version range contains ``version`` and a per-index override
         for ``index_name`` that both set ``build-policy`` are a conflict
-        (raises :class:`~nab_python.config.OverrideConflictError`).
+        (raises :class:`~nab_provider.errors.OverrideConflictError`).
         """
         result = self._effective_field(
             canonical_name,
@@ -950,7 +944,7 @@ class Provider:
         override sets ``field``, else the per-index value when the serving
         index's override sets it, else ``_UNSET`` (the caller substitutes
         the global default).  When BOTH surfaces set the field for this
-        candidate, raises :class:`~nab_python.config.OverrideConflictError`:
+        candidate, raises :class:`~nab_provider.errors.OverrideConflictError`:
         the two surfaces are deliberately not ranked.
 
         Both override types spell the policy fields the same way, so one
@@ -991,10 +985,8 @@ class Provider:
     ) -> list[tuple[Version, DistFile]]:
         """Have the host materialise ``source`` and seed its one candidate.
 
-        The policy is resolved here, because the overrides that decide it are
-        the provider's; the directory read, the clone and the download are the
-        host's.  A VCS clone reports the commit it landed on, which is what the
-        lock writer pins.
+        The build policy is resolved here, out of the provider's overrides; the
+        directory read, the clone and the download are the host's.
         """
         request = SourceRequest(
             package=normalized,
@@ -1004,15 +996,16 @@ class Provider:
             archive_cache_dir=self.archive_cache_dir,
             require_pin=self.vcs_config.require_pin,
         )
+
         try:
             event = self.coordinator.request_source_listing(request)
         except SourceBuildPolicyError:
             self.stats.excluded_by_build_policy += 1
             raise
         event.wait()
+
+        # The port raises on failure, so a request that returned left a result.
         materialized = self.coordinator.index.get_source(normalized)
-        # The port answers inline and raises on failure, so a request that
-        # returned has left its result behind.
         assert materialized is not None
 
         if materialized.commit_sha is not None:

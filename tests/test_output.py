@@ -312,8 +312,8 @@ def test_log_handler_normal_prefixes_warning() -> None:
     printer, stream = _handler_printer()
     try:
         install_log_handler(printer)
-        _emit_record("nab_python.demo", logging.WARNING, "dropped marker")
-        _emit_record("nab_python.demo", logging.INFO, "hidden at normal")
+        _emit_record("nab_project.demo", logging.WARNING, "dropped marker")
+        _emit_record("nab_project.demo", logging.INFO, "hidden at normal")
     finally:
         reset_log_handlers()
     assert stream.getvalue() == "warning: dropped marker\n"
@@ -333,10 +333,10 @@ def test_log_handler_verbose_shows_info_with_source() -> None:
     printer, stream = _handler_printer(Verbosity.VERBOSE)
     try:
         install_log_handler(printer)
-        _emit_record("nab_python.demo", logging.INFO, "fetching")
+        _emit_record("nab_project.demo", logging.INFO, "fetching")
     finally:
         reset_log_handlers()
-    assert stream.getvalue() == "INFO nab_python.demo: fetching\n"
+    assert stream.getvalue() == "INFO nab_project.demo: fetching\n"
 
 
 def test_log_handler_reinstall_does_not_stack() -> None:
@@ -354,7 +354,7 @@ def test_log_handler_untokened_level_is_bare() -> None:
     printer, stream = _handler_printer()
     try:
         install_log_handler(printer)
-        _emit_record("nab_python.demo", logging.WARNING + 5, "custom level")
+        _emit_record("nab_project.demo", logging.WARNING + 5, "custom level")
     finally:
         reset_log_handlers()
     assert stream.getvalue() == "custom level\n"
@@ -364,7 +364,7 @@ def test_reset_log_handlers_detaches() -> None:
     printer, stream = _handler_printer()
     install_log_handler(printer)
     reset_log_handlers()
-    _emit_record("nab_python.demo", logging.WARNING, "after reset")
+    _emit_record("nab_project.demo", logging.WARNING, "after reset")
     assert stream.getvalue() == ""
 
 
@@ -460,7 +460,7 @@ def test_log_record_wipes_live_progress_line() -> None:
     try:
         install_log_handler(printer)
         reporter.on_fetch()
-        _emit_record("nab_python.demo", logging.WARNING, "offline skip")
+        _emit_record("nab_project.demo", logging.WARNING, "offline skip")
     finally:
         reset_log_handlers()
     assert "pinnedwarning:" not in err.getvalue()

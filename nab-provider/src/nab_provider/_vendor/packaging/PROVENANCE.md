@@ -2,7 +2,7 @@
 
 This directory is a copy of the `packaging` library, vendored because nab runs a
 fork of it. The tree is pristine `pypa/packaging` at a pinned commit plus at
-most one checked-in patch, and nothing else.
+most one checked-in patch.
 
 ## Model
 
@@ -56,8 +56,8 @@ most one checked-in patch, and nothing else.
 
 Skipping the merge and diffing the old committed tree straight against the new
 pin looks like it works and is wrong: the diff then carries deletions for
-everything the new pin added, so the patch silently reverts the upstream change
-the bump was for. `--check` still passes, because it only proves the committed
+everything the new pin added, so the patch reverts the upstream change the bump
+was for. `--check` still passes, because it only proves the committed
 tree equals pristine plus the patch, and a reverting patch satisfies that.
 Bumping `6f52c6b` to `58c6cd7` this way produced a patch that deleted
 `VersionRange.to_specifier_set` and every helper behind it.
@@ -81,7 +81,7 @@ Reachable:
 - `parse_tag` refuses an interpreter component that is not a Python identifier,
   and `parse_wheel_filename` reports that as `InvalidWheelFilename`. Its project
   name anchors with `\Z` rather than `$`, so a name ending in a newline is
-  refused too. `nab_python.tags.wheel_tag_set` reads every wheel filename
+  refused too. `nab_provider.tags.wheel_tag_set` reads every wheel filename
   through `parse_tag`, so `foo-1.0-3.7-none-any.whl` and
   `foo-1.0-py3.7-none-any.whl` yield no tags. `nab_index` decides separately
   which files are readable and was admitting those; its `_tag_triple_is_parseable`
@@ -121,7 +121,7 @@ the same pattern.
 On a build tag whose digit run passes CPython's int-from-string limit,
 `parse_wheel_filename` raises `ValueError` out of `int()` rather than returning
 or rejecting, so `nab_index` has no answer to match: it keeps the wheel, and
-`nab_python.tags` sorts an unconvertible build number lowest.
+`nab_provider.tags` sorts an unconvertible build number lowest.
 
 ## License
 

@@ -1,26 +1,23 @@
 """Check that the resolve engine does not depend on packaging's marker sets.
 
 ``packaging.markersets`` and ``packaging._markersets`` are 2,200 lines that
-released packaging does not have. They are nab's largest local patch. A host
-that vendors nab's engine has to carry them only if the engine reaches them,
-so this keeps that reach at zero and names every remaining edge.
+released packaging does not have, so a host vendoring nab's engine carries
+them only if the engine reaches them.
 
 Two rules, both computed statically over the shipped ``src`` trees.
 
 ``use``
     No definition in either marker-set module may be reachable through the
-    use graph from an engine entry point. This is the substantive rule: it
-    says the engine does not need the marker-set engine to run.
+    use graph from the engine entry point.
 
 ``import``
     Importing a module runs its module-level imports, so a module in the
     engine's import closure that imports marker sets puts them in a host's
-    vendored tree even when nothing calls them. Every such module must be
-    on ``EXEMPT`` below, which names the item that removes it. An exemption
-    that no longer fires is also an error, so the list cannot rot.
+    vendored tree even when nothing calls them. Every such module must be on
+    ``EXEMPT``, and an exemption that no longer fires is an error too.
 
-The walk over-approximates inside a definition: every ``Name`` load counts
-as a possible global reference. So a ``use`` result of zero is sound.
+Every ``Name`` load inside a definition counts as a possible global
+reference, so a ``use`` result of zero is sound.
 
 Run directly::
 
@@ -38,7 +35,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 TREES = {
-    "nab_python": "nab-python/src/nab_python",
+    "nab_project": "nab-project/src/nab_project",
     "nab_resolver": "nab-resolver/src/nab_resolver",
     "nab_provider": "nab-provider/src/nab_provider",
     "nab_index": "nab-index/src/nab_index",
@@ -52,42 +49,31 @@ MARKER_SET_MODULES = frozenset(
     }
 )
 
-# The engine entry point. `resolve_with_coordinator` and `_source_root` sit
-# above it, in nab_python.resolve: they turn a NabProjectConfig into the
-# settings the engine runs on, which is the host's job, and they are where nab
-# binds its own default marker predicate. Everything below this is what a host
-# vendors, and since P0.5's cut that is a module of its own, so the walk enters
-# it whole rather than at a named group.
-ENGINE_MODULE = "nab_python._resolve.engine"
+# The engine entry point: what the walk reaches from here is what a host
+# vendors.
+ENGINE_MODULE = "nab_project._resolve.engine"
 ENGINE_ENTRY = "_resolve_with_micro_narrowing"
 
-# Nothing is held back: every definition in the engine module is walked.
+# Empty: every definition in the engine module is walked.
 ENGINE_GROUP = frozenset()
 
-# Modules in the engine's import closure that still import marker sets, each
-# with the item that takes it out. Nothing else may.
+# Modules in the engine's import closure that import marker sets, each with
+# why it is on the path. No other module may.
 EXEMPT = {
     "nab_provider.target": (
-        "P0.13: variable_names serves marker_variables, which only the lock "
-        "writer calls. target.py leaves the vendored tree when Provider takes "
-        "environment= instead of calling host_environment()."
+        "variable_names serves marker_variables, which only the lock writer "
+        "calls. The engine imports target for the micro-boundary helpers, so "
+        "the module stays on the path either way."
     ),
-    "nab_python._lockfile.disjointness": (
-        "P0.8: reached from the engine only through build_target_lock. A "
-        "resolve-without-lock switch would take the whole lock writer off "
-        "the path."
+    "nab_project._lockfile.disjointness": (
+        "Reached from the engine only through build_target_lock."
     ),
-    "nab_python._lockfile.pylock": ("P0.8: same edge as _lockfile.disjointness."),
-    "nab_python._lockfile.coverage": ("P0.8: same edge as _lockfile.disjointness."),
-    # Since P0.5's cut the engine module does not import this at all: nab's own
-    # host binds dependency_marker_holds in nab_python.resolve, above the entry
-    # point. It stays in the closure only through target, requirements_file
-    # (via _provider.metadata_resolver) and _lockfile.validate, so it clears
-    # when those do.
+    "nab_project._lockfile.pylock": ("Same edge as _lockfile.disjointness."),
+    "nab_project._lockfile.coverage": ("Same edge as _lockfile.disjointness."),
     "nab_provider.marker_holds": (
-        "By design: the module that exists so the marker-set dependency has "
-        "somewhere to live that the engine does not import. Reached here only "
-        "through target, requirements_file and _lockfile.validate."
+        "Where the marker-set dependency lives so the engine does not import "
+        "it. Reached here only through target, requirements_file and "
+        "_lockfile.validate."
     ),
     "nab_provider._vendor.packaging.markersets": "The marker-set module itself.",
 }

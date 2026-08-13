@@ -12,7 +12,7 @@ import pytest
 
 from nab import cli
 from nab.output import reset_log_handlers
-from nab_python.config_sources import SourceRoots
+from nab_project.config_sources import SourceRoots
 
 if TYPE_CHECKING:
     from collections.abc import Iterator

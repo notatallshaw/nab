@@ -4,7 +4,7 @@ Read-only v1.  ``list`` shows every effective option with its value,
 scope and origin; ``get`` prints one effective value; ``explain`` prints
 the full shadowed stack for one key, the winner marked with a ``>``
 gutter.  All three are derived from the registry in
-:mod:`nab_python.config_sources`; this module only discovers the
+:mod:`nab_project.config_sources`; this module only discovers the
 layers and prints what the renderers return.  There is no set/unset/edit:
 v1 never writes config.
 """
@@ -17,7 +17,7 @@ from typing import Annotated
 
 import tyro
 
-from nab_python.config_sources import (
+from nab_project.config_sources import (
     RejectedLayer,
     SourceConfigError,
     project_cli_override_notice,

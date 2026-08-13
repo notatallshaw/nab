@@ -38,23 +38,18 @@ if TYPE_CHECKING:
     from ..tags import TagSet
 
 
-# Drives two prefetch paths: the speculative root-batch prefetch fired when a
-# listing first arrives, and the scan batch in
-# ``Provider._scan_candidates_pipelined``.  Matched to the provider's abort
-# threshold: prefetching 8 versions covers the worst-case abort scan without
-# overshooting.  Larger batches waste bandwidth and in-flight HTTP slots on
-# metadata the resolver never decides; smaller batches starve the look-ahead
-# pipeline.
+# Matched to the provider's look-ahead abort threshold: prefetching 8 versions
+# covers the worst-case abort scan without overshooting.  Used by the
+# speculative root-batch prefetch and by the pipelined scan's batch.
 PREFETCH_BATCH = 8
 
 
 def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, DistFile]]:
     """Fetch and cache available versions for a package.
 
-    Checks the in-memory index first; if missing, requests from
-    the coordinator and blocks until the listing arrives.  Local
-    sources short-circuit: a registered :class:`LocalSource`
-    becomes the only candidate for the package.
+    Checks the in-memory index first; if missing, requests from the coordinator
+    and blocks until the listing arrives.  A declared local, VCS or archive
+    source short-circuits: it becomes the package's only candidate.
     """
     _, _, normalized = provider.split_and_normalize(package)
     if normalized in provider.versions_cache:
@@ -67,10 +62,8 @@ def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, Dist
         declared = provider.vcs_sources.get(normalized)
     if declared is None:
         declared = provider.archive_sources.get(normalized)
+
     if declared is not None:
-        # For an archive the download-and-verify guards are gated everywhere;
-        # only the post-extraction success tail needs the tar data filter
-        # (see nab_python._sources).
         result = provider.materialize_source(normalized, declared)
         provider.versions_cache[normalized] = result
         return result

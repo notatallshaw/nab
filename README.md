@@ -121,15 +121,13 @@ other tools:
    extensions that make it compatible with Python packaging standards
  * `nab-provider`: The Python packaging provider that drives the nab-resolver,
    with lots of specific features and optimizations for the Python packaging
-   ecosystem. It does no I/O at all: everything it needs from the world comes
-   through one interface a host implements, so it can be embedded in a tool
-   that already owns its own networking
- * `nab-index`: Provides APIs for talking to Python package indexes, and
-   abstracts the HTTP library interface so different HTTP libraries can be
-   plugged in
- * `nab-python`: nab's own host. It implements the fetch interface over
-   nab-index and adds the config ladder, workspace discovery, the build path,
-   the lockfile emitter and the downloader
+   ecosystem. It does no I/O: everything comes through one interface a host
+   implements
+ * `nab-index`: Provides APIs for talking to Python package indexes, abstracts
+   HTTP library interface so different HTTP libraries can be plugged in
+ * `nab-project`: nab's own host. It implements the fetch interface over
+   nab-index and adds the resolve orchestration, the config ladder, workspace
+   discovery, the build path, the lockfile emitter and the downloader
 
 All 4 libraries are in experimental mode, I currently recommend pinning them,
 e.g. `nab-resolver==0.0.1`, as APIs may change at any point.

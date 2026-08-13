@@ -23,7 +23,7 @@ from nab._download import download
 from nab._lock import lock
 from nab.cli import app
 from nab.output import ColorChoice, Verbosity, parse_output_options
-from nab_python.config_sources import OPTIONS
+from nab_project.config_sources import OPTIONS
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 _CLI_REFERENCE = _DOCS / "reference" / "cli.md"
@@ -324,7 +324,7 @@ class TestCliReferenceDocumentsIncludeRejected:
         path = str(hermetic_roots / "pyproject.toml")
 
         listed = _run_config(["list", _FLAG, "--path", path])
-        with caplog.at_level(logging.WARNING, logger="nab_python"):
+        with caplog.at_level(logging.WARNING, logger="nab_project"):
             _run_config(["explain", "offline", "--path", path])
             warned = caplog.text
             caplog.clear()
@@ -381,7 +381,7 @@ class TestCliReferenceDocumentsIncludeRejected:
         monkeypatch.setenv("NAB_OFLINE", "1")
         path = str(hermetic_roots / "pyproject.toml")
 
-        with caplog.at_level(logging.WARNING, logger="nab_python"):
+        with caplog.at_level(logging.WARNING, logger="nab_project"):
             out = _run_config(["get", "resolution", _FLAG, "--path", path])
 
         assert out == "highest\n"

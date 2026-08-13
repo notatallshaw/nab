@@ -23,7 +23,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The umbrella package lives at the repo root; the rest are subdirectories.
-PACKAGES = ("nab-resolver", "nab-provider", "nab-index", "nab-python", "nab")
+PACKAGES = ("nab-resolver", "nab-provider", "nab-index", "nab-project", "nab")
 
 
 def _require_tools(*tools: str) -> None:

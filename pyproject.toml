@@ -22,7 +22,7 @@ classifiers = [
 dependencies = [
     "nab-resolver==0.0.14.dev0",
     "nab-provider==0.0.14.dev0",
-    "nab-python==0.0.14.dev0",
+    "nab-project==0.0.14.dev0",
     "nab-index==0.0.14.dev0",
     "tyro>=1.0",
     "typing_extensions>=4.6",
@@ -135,7 +135,7 @@ dists = [
 # `nab lock` config: universal mode resolves the full matrix in one
 # pass, P7D matches the 7-day Dependabot cooldown.
 [tool.nab.workspace]
-members = ["nab-resolver", "nab-provider", "nab-python", "nab-index"]
+members = ["nab-resolver", "nab-provider", "nab-project", "nab-index"]
 
 [tool.nab]
 mode = "universal"
@@ -154,7 +154,7 @@ platforms = [
 
 # Workspace packages skip the cooldown; bumps land immediately.
 [[tool.nab.package-rules]]
-match = ["nab", "nab-resolver", "nab-provider", "nab-python", "nab-index"]
+match = ["nab", "nab-resolver", "nab-provider", "nab-project", "nab-index"]
 uploaded-prior-to = false
 
 # https://docs.pytest.org/en/stable/reference/reference.html#confval-addopts
@@ -172,7 +172,7 @@ addopts = [
 testpaths = [
     "nab-resolver/tests",
     "nab-provider/tests",
-    "nab-python/tests",
+    "nab-project/tests",
     "nab-index/tests",
     "tests",
 ]
@@ -200,7 +200,7 @@ disable_warnings = ["module-not-imported"]
 source_pkgs = [
     "nab_resolver",
     "nab_provider",
-    "nab_python",
+    "nab_project",
     "nab_index",
     "nab",
 ]
@@ -210,7 +210,7 @@ omit = [
     "*/tests/property_python/*",
     "*/test_crosshair_*.py",
     "*/_vendor/*",
-    "*/nab_python/_testing/*",
+    "*/nab_project/_testing/*",
     "*/nab_provider/testing.py",
 ]
 
@@ -241,9 +241,9 @@ nab_provider = [
     "nab-provider/src/nab_provider",
     "*/nab_provider",
 ]
-nab_python = [
-    "nab-python/src/nab_python",
-    "*/nab_python",
+nab_project = [
+    "nab-project/src/nab_project",
+    "*/nab_project",
 ]
 nab_index = [
     "nab-index/src/nab_index",
@@ -295,13 +295,13 @@ extend-exclude = ["**/_vendor/**"]
 
 # Subpackages defer imports to break cycles with their parent modules.
 "nab-provider/src/nab_provider/_provider/*.py" = ["PLC0415"]
-"nab-python/src/nab_python/_build/*.py" = ["PLC0415"]
-"nab-python/src/nab_python/_lockfile/*.py" = ["PLC0415"]
+"nab-project/src/nab_project/_build/*.py" = ["PLC0415"]
+"nab-project/src/nab_project/_lockfile/*.py" = ["PLC0415"]
 
 # The two host-side build paths reach build_backend, which reaches back through
 # _build.env into resolve and fetch, so the import has to be deferred.
-"nab-python/src/nab_python/_sources.py" = ["PLC0415"]
-"nab-python/src/nab_python/_build_remote.py" = ["PLC0415"]
+"nab-project/src/nab_project/_sources.py" = ["PLC0415"]
+"nab-project/src/nab_project/_build_remote.py" = ["PLC0415"]
 
 # https://docs.astral.sh/ruff/settings/#lint
 [tool.ruff.lint]
@@ -341,7 +341,7 @@ convention = "pep257"
 
 # https://docs.astral.sh/ruff/settings/#lintisort
 [tool.ruff.lint.isort]
-known-first-party = ["nab", "nab_index", "nab_provider", "nab_python", "nab_resolver"]
+known-first-party = ["nab", "nab_index", "nab_provider", "nab_project", "nab_resolver"]
 
 # https://microsoft.github.io/pyright/#/configuration?id=main-pyright-settings
 [tool.pyright]
@@ -358,7 +358,7 @@ include = [
 extraPaths = [
     "nab-resolver/src",
     "nab-provider/src",
-    "nab-python/src",
+    "nab-project/src",
     "nab-index/src",
     "src",
 ]

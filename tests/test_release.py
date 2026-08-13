@@ -20,15 +20,15 @@ _spec.loader.exec_module(release)
 
 def _make_tree(tmp_path: Path, version: str, pin: str) -> tuple[Path, Path]:
     root = tmp_path / "pyproject.toml"
-    member = tmp_path / "nab-python" / "pyproject.toml"
+    member = tmp_path / "nab-project" / "pyproject.toml"
     member.parent.mkdir()
     root.write_text(
         f'[project]\nname = "nab"\nversion = "{version}"\n'
-        f'dependencies = ["nab-python=={pin}"]\n',
+        f'dependencies = ["nab-project=={pin}"]\n',
         encoding="utf-8",
     )
     member.write_text(
-        f'[project]\nname = "nab-python"\nversion = "{version}"\n'
+        f'[project]\nname = "nab-project"\nversion = "{version}"\n'
         'dependencies = ["typing_extensions>=4.6"]\n',
         encoding="utf-8",
     )
@@ -87,7 +87,7 @@ def test_apply_version_round_trips(
     monkeypatch.setattr(release, "PYPROJECT_PATHS", (root, member))
     release.apply_version("0.0.3")
     assert release.read_current_version() == "0.0.3"
-    assert '"nab-python==0.0.3"' in root.read_text(encoding="utf-8")
+    assert '"nab-project==0.0.3"' in root.read_text(encoding="utf-8")
     assert "typing_extensions>=4.6" in member.read_text(encoding="utf-8")
 
 

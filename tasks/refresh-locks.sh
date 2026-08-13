@@ -19,7 +19,7 @@ if [[ -n "${REFRESH_NAB_BIN:-}" ]]; then
 fi
 
 # The consistency checks below parse pyproject files rather than run nab, so
-# they need an interpreter of their own. tomli comes from nab-python, which the
+# they need an interpreter of their own. tomli comes from nab-project, which the
 # project venv always has, and unlike tomllib it is there on the 3.10 floor.
 PYTHON="${REFRESH_PYTHON:-.venv/bin/python}"
 

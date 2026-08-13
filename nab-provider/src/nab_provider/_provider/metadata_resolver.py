@@ -227,17 +227,17 @@ def _read_direct_wheel_metadata(
     """Rungs 2 and 3: a PEP 658 sidecar read, then a local wheel read.
 
     Returns ``(metadata_text, from_sdist, unreadable)``; ``from_sdist`` is
-    always ``False`` since both sources are wheel METADATA.  Both rungs are the
-    same request: a published sidecar is asked for at its own URL, and a local
-    wheel, which has no sidecar, at the wheel's URL, because opening the wheel
-    is the host's to do.  A recorded sidecar integrity error is re-raised and
-    fails the resolve; a wheel the host cannot read reads back as ``None`` and
-    the ladder steps on.  An error recorded for a local wheel comes back as
-    ``unreadable`` rather than raising, so the version's own sdist still gets a
-    turn; the caller raises it when no later rung answers.
+    always ``False`` since both sources are wheel METADATA.  Both rungs make
+    the same request, a published sidecar at its own URL and a local wheel at
+    the wheel's.
+
+    A sidecar integrity error is re-raised and fails the resolve.  An error on
+    a local wheel comes back as ``unreadable`` instead, so the version's own
+    sdist still gets a turn; the caller raises it when no later rung answers.
     """
     if not isinstance(dist, WheelFile):
         return None, False, None
+
     if (url := dist.metadata_url) is not None:
         metadata_hash, local_wheel = dist.metadata_hash, False
     elif dist.local_path is not None:
@@ -248,11 +248,13 @@ def _read_direct_wheel_metadata(
     index = provider.coordinator.index
     event = provider.coordinator.request_metadata(package, version, url, metadata_hash)
     event.wait()
+
     error = index.get_metadata_error(package, version, url)
     if error is not None:
         if local_wheel:
             return None, False, error
         raise error
+
     text, from_sdist = index.get_metadata_with_origin(package, version, url)
     return text, from_sdist, None
 
@@ -404,18 +406,13 @@ def resolve_dynamic_sdist(
     ``optional-dependencies``, those replace the dynamic PKG-INFO
     values.  When that fallback yields nothing and the effective
     :class:`~nab_provider.provider.BuildPolicy` is
-    :attr:`~nab_provider.provider.BuildPolicy.BUILD_REMOTE`, the sdist is
-    fetched, extracted, and handed to a PEP 517 backend by
-    :func:`nab_provider._provider.build_remote.build_remote_sdist`.  Any
+    :attr:`~nab_provider.provider.BuildPolicy.BUILD_REMOTE`, the sdist is built
+    by :func:`nab_provider._provider.build_remote.build_remote_sdist`.  Any
     other effective policy raises
-    :class:`~nab_provider.provider.UnsupportedSdistError`; the resolver
-    skips the version via
-    :func:`nab_provider._provider.lookahead.look_ahead_ok` and surfaces the
-    accumulated reasons if no candidate ultimately works.
+    :class:`~nab_provider.provider.UnsupportedSdistError`.
     """
-    # Imported in-function so tests can patch the module attribute.  It could
-    # not be hoisted anyway: ``build_remote`` imports ``find_sdist`` from this
-    # module at load, so a module-level import here is a cycle.
+    # In-function: ``build_remote`` imports ``find_sdist`` from here at load,
+    # and tests patch ``build_remote_sdist`` on that module.
     from .build_remote import build_remote_sdist
 
     package, version = cache_key
@@ -807,13 +804,8 @@ def cache_deps_from_metadata(
 ) -> None:
     """Populate ``deps_cache`` + ``extra_deps_map`` from a parsed metadata.
 
-    Shared by the wheel/sdist path (which calls
-    :func:`parse_and_cache_metadata` after parsing METADATA text), the
-    local-source path (which already has a :class:`WheelMetadata` from
-    :func:`nab_python.build_backend.extract_static_metadata`), and the
-    skip-fetch branch of
-    :meth:`nab_provider.provider.Provider.get_dependencies` (which hands in a
-    bare :class:`WheelMetadata` for a complete ``dependencies`` override).
+    ``metadata`` may have been parsed from METADATA text, declared by a
+    materialised source, or built from a complete ``dependencies`` override.
     """
     metadata = effective_metadata(provider, cache_key, metadata)
 

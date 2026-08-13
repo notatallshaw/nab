@@ -2,35 +2,23 @@
 
 The provider reaches the world only through this interface: the index, the
 directory read, the VCS clone, the archive download and the :pep:`517` build
-all sit behind it, so a host that implements the port owns all of the
-provider's I/O.
+all sit behind it.  nab's own implementation is
+:class:`~nab_project.fetch.FetchCoordinator`, which fetches on a background
+asyncio thread; the tests use :class:`~nab_provider.testing.FakeFetchPort`,
+which serves from memory.
 
-nab's own implementation is :class:`~nab_python.fetch.FetchCoordinator`, which
-fetches on a background asyncio thread; the tests use
-:class:`~nab_python._testing.coordinator_fake.FakeFetchPort`, which serves from
-memory.
+The source, build and two archive requests are reached only through a declared
+source or a remote sdist build, so a host that offers neither may raise
+:class:`NotImplementedError` from them.
 
-Every host needs the store, the listing request and the metadata requests. The
-archive, source and build requests are reached only through a declared source
-or a remote sdist build, so a host that offers neither may implement them as a
-raise.
-
-Two members are the exception and say so on themselves:
-:meth:`FetchPort.request_source_listing` and
-:meth:`FetchPort.request_built_metadata` run a build backend, so they are
-answered inline and report failure by raising rather than by writing an error
-slot.  There is nothing for the provider to do while one is outstanding.
+The store is :class:`~nab_provider.store.InMemoryIndex` itself, not a protocol:
+the provider reads its slots, a host's fetcher writes them.
 
 A request registers its waiter under a pending key.
 :func:`~nab_provider.store.metadata_pending_key` and
 :func:`~nab_provider.store.range_pending_key` build the ``metadata:`` and
 ``range:`` keys; the ``listing:``, ``sdist:`` and ``sdist-archive:`` keys have
 no builder.
-
-The store is a class, not a protocol: a protocol over it would restate
-:class:`~nab_provider.store.InMemoryIndex` method for method. A reader wanting one
-slot declares that slice itself, as :mod:`nab_python._lockfile.builder` does for
-the serving-index label.
 """
 
 from __future__ import annotations
@@ -66,7 +54,12 @@ class Waitable(Protocol):
 class FetchPort(Protocol):
     """The fetch handle the provider holds.
 
-    ``indexes`` is not here: nab's engine reads it at one site, to label each
+    A request writes its result into :attr:`index` under the matching
+    ``store_`` method, then releases its waitable.  A failed fetch records the
+    error there rather than raising; only :meth:`request_source_listing` and
+    :meth:`request_built_metadata` raise.
+
+    ``indexes`` is not here: nab's coordinator carries it, to label each
     package's serving index in a lock file.
     """
 
@@ -145,15 +138,16 @@ class FetchPort(Protocol):
     def request_source_listing(self, request: SourceRequest) -> Waitable:
         """Materialise a declared local, VCS or archive source into a listing.
 
-        The host reads the directory, clones the repository or downloads and
-        extracts the archive, reads the metadata it declares (running a
-        :pep:`517` backend when ``request.build_policy`` permits it and the
-        static read yields nothing), and stores the result under
-        :meth:`~nab_provider.store.InMemoryIndex.store_source`.  Answered inline:
-        a failure raises :class:`~nab_provider.errors.UnsupportedSdistError`, or
-        :class:`~nab_provider.errors.SourceBuildPolicyError` when the policy is
-        what refused it.  A host that passes no declared sources never reaches
-        it.
+        The host reads the directory, clones the repo or downloads and extracts
+        the archive, reads the metadata it declares (running a :pep:`517`
+        backend when ``request.build_policy`` permits it and the static read
+        yields nothing), and stores the result under
+        :meth:`~nab_provider.store.InMemoryIndex.store_source`.
+
+        Answered inline: a failure raises
+        :class:`~nab_provider.errors.UnsupportedSdistError`, or
+        :class:`~nab_provider.errors.SourceBuildPolicyError` when the policy
+        refused the build.
         """
         ...
 
@@ -164,14 +158,13 @@ class FetchPort(Protocol):
         url: str,
         sdist_hashes: tuple[tuple[str, str], ...],
     ) -> Waitable:
-        """Build an sdist and store the METADATA the build produced.
+        """Build the sdist at ``url`` and store the METADATA it produced.
 
-        ``url`` names the sdist the provider picked out of the listing and
-        ``sdist_hashes`` are the digests the index published for it.  The
-        result lands under
-        :meth:`~nab_provider.store.InMemoryIndex.store_built_metadata` and the
-        provider checks it against the candidate it asked for.  Answered
-        inline, like :meth:`request_source_listing`.  A host that owns building
-        above the port never reaches it.
+        The result lands under
+        :meth:`~nab_provider.store.InMemoryIndex.store_built_metadata`.
+
+        Answered inline: a failure raises
+        :class:`~nab_provider.errors.UnsupportedSdistError`, or the integrity
+        error the sdist fetch recorded.
         """
         ...

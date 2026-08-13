@@ -34,19 +34,19 @@ from nab._config_cmd import config_command
 from nab._download import download
 from nab._lock import lock
 from nab.cli import app, effective_config
-from nab_provider._vendor.packaging.version import Version
-from nab_provider.provider import DecisionOrder, DistPolicy, ResolutionStrategy
-from nab_provider.target import ResolveTarget
-from nab_python.config import NabProjectConfig
-from nab_python.config_sources import OPTIONS, OptionSpec, Scope, SourceRoots
-from nab_python.lockfile import (
+from nab_project.config import NabProjectConfig
+from nab_project.config_sources import OPTIONS, OptionSpec, Scope, SourceRoots
+from nab_project.lockfile import (
     IndexPin,
     SdistArtifact,
     TargetLock,
     WheelArtifact,
     read_lockfile_anchor,
 )
-from nab_python.resolve import ResolveResult, TargetResult
+from nab_project.resolve import ResolveResult, TargetResult
+from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import DecisionOrder, DistPolicy, ResolutionStrategy
+from nab_provider.target import ResolveTarget
 
 
 def _write(path: Path, body: str) -> Path:
@@ -155,7 +155,7 @@ class TestConfigList:
         # An unrecognized NAB_* var warns and is ignored; the run completes.
         _project(hermetic_roots)
         monkeypatch.setenv("NAB_OFLINE", "1")
-        with caplog.at_level(logging.WARNING, logger="nab_python"):
+        with caplog.at_level(logging.WARNING, logger="nab_project"):
             out = _run_config(
                 ["list", "--path", str(hermetic_roots / "pyproject.toml")]
             )
@@ -600,7 +600,7 @@ class TestTyroConformance:
 
     def test_conformance_catches_a_deliberate_mismatch(self) -> None:
         """Prove the gate is real: a registry flag with no CLI param fails."""
-        from nab_python.config_sources import _parse_bool
+        from nab_project.config_sources import _parse_bool
 
         bogus = OptionSpec(
             key="made-up",

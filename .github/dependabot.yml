@@ -15,7 +15,7 @@ updates:
       - /
       - /nab-resolver
       - /nab-provider
-      - /nab-python
+      - /nab-project
       - /nab-index
     schedule:
       interval: monthly

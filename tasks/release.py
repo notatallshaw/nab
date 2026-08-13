@@ -29,7 +29,7 @@ from tyro.extras import SubcommandApp
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Every distribution except the umbrella, which builds from the repo root.
-WORKSPACE_PACKAGES = ("nab-resolver", "nab-provider", "nab-python", "nab-index")
+WORKSPACE_PACKAGES = ("nab-resolver", "nab-provider", "nab-project", "nab-index")
 _WORKSPACE = {canonicalize_name(name) for name in WORKSPACE_PACKAGES}
 
 PYPROJECT_PATHS = (

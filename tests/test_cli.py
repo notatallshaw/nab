@@ -54,24 +54,11 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_provider._vendor.packaging.pylock import Pylock
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
-from nab_provider.provider import (
-    InvalidUploadTimeError,
-    MissingExtraError,
-    ResolutionStrategy,
-    SiblingMetadataDivergenceError,
-    UnsupportedVcsError,
-)
-from nab_provider.requirements_file import InvalidProjectRequirementError
-from nab_provider.tags import PlatformSpec
-from nab_provider.target import ResolveTarget, host_environment
-from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python.config import ConfigError, read_pyproject_config
-from nab_python.config_sources import SourceRoots
-from nab_python.download import DownloadError
-from nab_python.lockfile import (
+from nab_project._testing.coordinator_fake import make_coordinator
+from nab_project.config import ConfigError, read_pyproject_config
+from nab_project.config_sources import SourceRoots
+from nab_project.download import DownloadError
+from nab_project.lockfile import (
     ArchivePin,
     DisjointnessError,
     DivergentBaseDependencyError,
@@ -85,7 +72,20 @@ from nab_python.lockfile import (
     TargetLock,
     WheelArtifact,
 )
-from nab_python.resolve import ResolveResult, TargetResult, env_signature
+from nab_project.resolve import ResolveResult, TargetResult, env_signature
+from nab_provider._vendor.packaging.pylock import Pylock
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import (
+    InvalidUploadTimeError,
+    MissingExtraError,
+    ResolutionStrategy,
+    SiblingMetadataDivergenceError,
+    UnsupportedVcsError,
+)
+from nab_provider.requirements_file import InvalidProjectRequirementError
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget, host_environment
 from nab_resolver.errors import ResolutionError
 
 V = Version
@@ -771,7 +771,7 @@ class TestLockCommandSpecific:
                 f'[project]\nname = "{name}"\nversion = "1.0"\n'
             )
         out = tmp_path / "pylock.build.toml"
-        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: make_coordinator([])
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             lock(pyproject, output=out, build_requirements=True, cache=False)
@@ -1878,7 +1878,7 @@ class TestPythonFlag:
         run the flag retargets onto 3.14.
         """
         env = {**host_environment(), "python_full_version": "3.12.11"}
-        monkeypatch.setattr("nab_python.config.host_environment", lambda: env)
+        monkeypatch.setattr("nab_project.config.host_environment", lambda: env)
 
         pyproject = _make_pyproject(
             tmp_path,
@@ -3877,7 +3877,7 @@ class TestLockAnchorReuse:
         with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=prior)
         # New pylock's [tool.nab].created-at must equal the prior anchor.
-        from nab_python.lockfile import read_lockfile_anchor
+        from nab_project.lockfile import read_lockfile_anchor
 
         assert read_lockfile_anchor(prior) == self._RECORDED
 
@@ -3885,7 +3885,7 @@ class TestLockAnchorReuse:
         prior, pyproject = self._relative_cutoff_relock(tmp_path)
         with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=prior, upgrade=True)
-        from nab_python.lockfile import read_lockfile_anchor
+        from nab_project.lockfile import read_lockfile_anchor
 
         new_anchor = read_lockfile_anchor(prior)
         assert new_anchor is not None
@@ -3903,7 +3903,7 @@ class TestLockAnchorReuse:
         out = tmp_path / "pylock.toml"
         with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out)
-        from nab_python.lockfile import read_lockfile_anchor
+        from nab_project.lockfile import read_lockfile_anchor
 
         assert read_lockfile_anchor(out) == absolute
 
@@ -3920,7 +3920,7 @@ class TestLockAnchorReuse:
         out = tmp_path / "pylock.toml"
         with patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()):
             lock(pyproject, output=out)
-        from nab_python.lockfile import read_lockfile_anchor
+        from nab_project.lockfile import read_lockfile_anchor
 
         assert tomli.loads(out.read_text())["tool"]["nab"]["created-at"] == absolute
         assert read_lockfile_anchor(out) == absolute
@@ -5174,7 +5174,7 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """Without ``-v`` an engine INFO record is dropped and a WARNING shows."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch)
-        logger = logging.getLogger("nab_python")
+        logger = logging.getLogger("nab_project")
         logger.info("engine detail")
         logger.warning("engine note")
         assert "engine detail" not in stderr.getvalue()
@@ -5186,7 +5186,7 @@ class TestMainWiresOutputOptions:
         """``-vv`` reaches the log handler, not just the printer."""
         printer, _stderr = self._run_lock(tmp_path, monkeypatch, "-vv")
         assert printer.verbosity is Verbosity.DEBUG
-        assert logging.getLogger("nab_python").getEffectiveLevel() == logging.DEBUG
+        assert logging.getLogger("nab_project").getEffectiveLevel() == logging.DEBUG
 
     def test_color_always_paints_the_run_summary(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -5201,7 +5201,7 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """The handler is installed with the printer's colour decision."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch, "--color", "always")
-        logging.getLogger("nab_python").warning("engine note")
+        logging.getLogger("nab_project").warning("engine note")
         assert f"{YELLOW}warning:{RESET} engine note" in stderr.getvalue()
 
     def test_log_records_stay_plain_with_color_off(
@@ -5209,7 +5209,7 @@ class TestMainWiresOutputOptions:
     ) -> None:
         """With colour off the handler emits a plain ``warning:`` token."""
         _printer, stderr = self._run_lock(tmp_path, monkeypatch)
-        logging.getLogger("nab_python").warning("engine note")
+        logging.getLogger("nab_project").warning("engine note")
         assert "warning: engine note" in stderr.getvalue()
         assert "\033[" not in stderr.getvalue()
 
@@ -5234,7 +5234,7 @@ class TestMainWiresOutputOptions:
         monkeypatch.setenv("NAB_VERBOSITY", "debug")
         printer, _stderr = self._run_lock(tmp_path, monkeypatch)
         assert printer.verbosity is Verbosity.DEBUG
-        assert logging.getLogger("nab_python").getEffectiveLevel() == logging.DEBUG
+        assert logging.getLogger("nab_project").getEffectiveLevel() == logging.DEBUG
 
     def test_env_no_progress_blocks_progress(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

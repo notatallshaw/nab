@@ -1,4 +1,4 @@
-"""Minimal METADATA parser for nab-python.
+"""Minimal METADATA parser.
 
 Extracts only the fields needed for dependency resolution from PEP
 566/643 METADATA files (RFC 822 format).  Lighter than
@@ -110,14 +110,11 @@ def metadata_deps_are_static(metadata: WheelMetadata) -> bool:
 def _intern_marker(marker: Marker) -> Marker:
     """Return a shared :class:`Marker` for an equal marker expression.
 
-    ``Marker`` hashes and compares by its text, so a single marker like
-    ``extra == "test"`` recurs across hundreds of distinct dep strings
-    (``pytest; extra == "test"``, ``coverage; extra == "test"``, ...),
-    each parsing to its own object.  The provider caches marker
-    evaluation by ``id(marker)``, so sharing one object per distinct
-    expression lets that cache hit across every candidate instead of
-    re-evaluating the same expression per dep.  Markers are read-only,
-    so sharing is safe.
+    ``Marker`` hashes and compares by its text, so one expression like
+    ``extra == "test"`` parses to a separate object in each of the
+    hundreds of dep strings that carry it.  Sharing one object per
+    expression lets a cache keyed on ``id(marker)`` hit across
+    candidates.  Markers are read-only, so sharing is safe.
     """
     return marker
 
@@ -128,8 +125,7 @@ def _parse_requirement_cached(req_str: str) -> Requirement:
 
     The same dep strings (``numpy>=1.26``, ``pydantic<3``, etc.) recur
     across many wheels in a dependency graph.  ``Requirement`` exposes
-    only read operations (specifier, marker, extras, name) so sharing
-    parsed objects is safe.
+    only read operations, so sharing parsed objects is safe.
 
     Raises ``ValueError`` when the string does not parse or a clause
     version will not convert.
@@ -145,11 +141,10 @@ def _parse_requirement_cached(req_str: str) -> Requirement:
 def intern_version(version_str: str) -> Version:
     """Return a shared :class:`Version` for ``version_str``.
 
-    The same version string recurs across the per-platform wheels of a
-    project (and across projects that publish the same number).  Sharing
-    the parsed object saves the PEP 440 regex walk on every duplicate.
-    ``Version`` is immutable in ``packaging``, so the shared instance
-    is safe.
+    The same version string recurs across a project's per-platform
+    wheels, so sharing the parsed object saves the PEP 440 regex walk on
+    every duplicate.  ``Version`` is immutable in ``packaging``, so the
+    shared instance is safe.
     """
     return Version(version_str)
 
@@ -194,8 +189,7 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
             validate_specifier_versions(requires_python)
         except ValueError as exc:
             # A malformed Requires-Python is invalid metadata; raise rather
-            # than silently drop the field, matching the Name/Version checks
-            # above.
+            # than silently drop the field.
             err = (
                 f"METADATA for {name}=={version_str} has an invalid "
                 f"Requires-Python: {requires_python_str!r}"
@@ -209,9 +203,8 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
     provides_extra = [e.strip() for e in msg.get_all("Provides-Extra") or []]
 
     metadata_version = msg.get("Metadata-Version")
-    # PEP 643 field names are case-insensitive and, per RFC 822, surrounding
-    # whitespace is insignificant; normalise both so downstream membership
-    # tests don't depend on the producer's capitalisation or stray spacing.
+    # PEP 643 field names are case-insensitive, and RFC 822 makes surrounding
+    # whitespace insignificant.
     dynamic = frozenset(d.strip().lower() for d in msg.get_all("Dynamic") or [])
 
     return WheelMetadata(

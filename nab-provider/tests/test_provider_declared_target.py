@@ -5,7 +5,7 @@ its wheel tags are synthesized rather than read off the host.  These
 exercise the paths that only a declared target reaches: the wheel-tag
 filter, cross-target preferences, the resolution strategy, and the
 per-target Requires-Python patch level.
-``nab-python/tests/test_resolve_targets.py`` drives the same provider
+``nab-project/tests/test_resolve_targets.py`` drives the same provider
 through a matrix.
 """
 
@@ -987,11 +987,8 @@ class TestVcsConfigPlumbing:
     def test_vcs_cache_dir_set_on_provider(self, tmp_path: Path) -> None:
         """``vcs_cache_dir`` is stored on the provider for later use.
 
-        ``materialize_source`` sends ``provider.vcs_cache_dir`` in the
-        :class:`SourceRequest` when the resolver actually clones; passing
-        ``None`` (the bug) raises ``UnsupportedSdistError`` at clone time.
-        Verifying the attribute is set proves the kwarg flows through
-        ``super()``.
+        ``materialize_source`` sends it in the :class:`SourceRequest`, so a
+        ``None`` here raises ``UnsupportedSdistError`` at clone time.
         """
         coordinator = _make_coordinator([])
         cache = tmp_path / "vcs"
@@ -1034,8 +1031,7 @@ _SDIST_PKG_INFO = (
     "\n"
 )
 
-# The parsed [project] table a bundled pyproject.toml yields; the provider
-# never parses TOML, so the store holds the table rather than the text.
+# The parsed pyproject.toml a bundled sdist yields.
 _SDIST_PYPROJECT = {
     "project": {
         "name": "pkg",

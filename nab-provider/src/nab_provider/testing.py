@@ -1,29 +1,19 @@
-"""A reference fetch port over a pre-filled store, and the helpers around it.
+"""In-memory fetch port over a pre-filled store, and the helpers around it.
 
 :class:`FakeFetchPort` implements :class:`~nab_provider.fetch_port.FetchPort`
 against a real :class:`~nab_provider.store.InMemoryIndex`.  Its request methods
 write to that index and hand back an already-set :class:`threading.Event`, so
 the synchronous provider code under test sees every fetch resolve immediately.
-It is what makes the provider drivable with no socket and no file, which is the
-claim the package is built on, so it is public and shipped rather than
-test-only scaffolding.
+It is public so a host outside nab can drive the provider with no socket and no
+file.
 
-It is a class rather than a mock so that an unserved request cannot answer.  A
-mock hands back a truthy stand-in for any attribute, so a request nobody
-wired, a name no request has, and any arity at all read alike as a fetch that
-succeeded.  Its request methods carry the port's signatures exactly, defaults
-included, so the provider under test calls the shape a host has to build, and
-``nab-python/tests/test_fetch_port.py`` compares the two signatures parameter
-by parameter.
+The request methods repeat the port's signatures exactly, defaults included.
+Materialising a declared source, building a remote sdist and reading a wheel
+off disk need a host, and arrive as callables.
 
-Three behaviours need a host and arrive as callables: materialising a declared
-source, building a remote sdist, and reading a wheel off disk.  Left out, each
-one answers the way a host that does not offer it does.  nab-python passes its
-own, in :mod:`nab_python._testing.coordinator_fake`.
-
-Calls are recorded, so a test can ask what the provider requested through
-:meth:`FakeFetchPort.calls_to`, and one method's behaviour can be replaced for
-a test through :meth:`FakeFetchPort.override` without losing that record.
+Replace one request with :meth:`FakeFetchPort.override` for a setup the
+keywords cannot express, and read the calls back with
+:meth:`FakeFetchPort.calls_to`.
 """
 
 from __future__ import annotations
@@ -97,7 +87,7 @@ def _pre_populate_index(
     """Load ``listings_map`` into ``index``."""
     for pkg_name, pkg_wheels in listings_map.items():
         index.store_listing(pkg_name, pkg_wheels)
-        # Mirror production: every fetched listing records its serving index.
+        # A fetched listing always records the index that served it.
         index.store_listing_index(pkg_name, DEFAULT_INDEX_NAME)
 
 
@@ -153,8 +143,7 @@ def _make_sdist_server(
             else sdist_pkg_info_by_version.get(ver)
         )
 
-        # ``store_sdist_metadata`` is always called; passing ``None``
-        # poisons the cache slot, which is how an sdist-fetch failure reads.
+        # Always store: ``None`` records an sdist with no readable PKG-INFO.
         index.store_sdist_metadata(pkg, ver, pkg_info)
         if sdist_pyproject is not None:
             index.store_sdist_pyproject(pkg, ver, sdist_pyproject)
@@ -169,16 +158,7 @@ def _make_range_server(
     range_error: BaseException | None,
     range_by_url: Mapping[str, RangeMetadataResult] | None,
 ) -> Callable[[str, str, str], None]:
-    """Return the callable that writes a range read's result into ``index``.
-
-    Mirrors the coordinator's ``_fetch_range_metadata`` handler: a recorded
-    ``range_error`` lands a per-wheel metadata error, otherwise the read stores
-    the recovered METADATA or marks the read absent.  ``range_by_url`` selects a
-    result per wheel URL, which is how sibling sidecar-less wheels of one
-    version are given different dependencies; ``range_result`` is the
-    single-result shortcut.  With none set the read writes nothing, so rung 4
-    finds nothing and the ladder steps to the sdist rung.
-    """
+    """Return the callable that writes a range read's result into ``index``."""
 
     def _serve(pkg: str, ver: str, url: str) -> None:
         if range_error is not None:
@@ -202,11 +182,7 @@ def _make_archive_server(
     sdist_archive: bytes | None,
     sdist_archive_error: BaseException | None,
 ) -> Callable[[str, str], None]:
-    """Return the callable that writes an archive fetch's result into ``index``.
-
-    With neither keyword set it writes nothing, so a test that pre-loads the
-    bytes it wants served keeps them.
-    """
+    """Return the callable that writes an archive fetch's result into ``index``."""
 
     def _serve(pkg: str, ver: str) -> None:
         if sdist_archive_error is not None:
@@ -239,8 +215,7 @@ class FakeFetchPort:
     ) -> None:
         """Wire the port to ``index`` and to one server per fetch kind."""
         self.index = index
-        # Not on the port: nab's engine reads this off its own coordinator to
-        # label the index that served a package, and lock tests drive that.
+        # Not on the port: the engine reads it off its coordinator.
         self.indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
         self.offline = False
         self.build_config = build_config
@@ -353,8 +328,8 @@ class FakeFetchPort:
     ) -> threading.Event:
         """Write the configured archive bytes and return a set event.
 
-        The provider keys a declared archive by its digest, so ``version`` is
-        that digest rather than a release version.
+        A declared archive is keyed by its digest, so ``version`` is that
+        digest rather than a release version.
         """
         return self._handle(
             "request_direct_archive", (package, version, url), self._direct_archive
@@ -391,10 +366,7 @@ class FakeFetchPort:
         if self.index.has_metadata(package, version, url):
             return
 
-        # A wheel the listing serves off disk publishes no sidecar and is
-        # asked for at its own URL, so its METADATA comes out of the wheel
-        # through the host's ``read_wheel``; without one the wheel reads back
-        # as no metadata.
+        # A wheel served off disk is asked for at its own URL, so read it there.
         wheel = self._served_wheel(package, url)
         try:
             text = (
@@ -403,13 +375,10 @@ class FakeFetchPort:
                 else self._serve_metadata(package, version, url)
             )
         except IndexAccessError as exc:
-            # A wheel the host cannot open lands as a per-slot error, the way
-            # the fetcher records a failed fetch.
             self.index.store_metadata_error(package, version, exc, url)
             return
 
-        # Store even when the read returns nothing: an empty fetch still
-        # marks the slot fetched.
+        # Storing ``None`` still marks the slot fetched.
         self.index.store_metadata(package, version, text, metadata_url=url)
 
     def _served_wheel(self, package: str, url: str) -> Path | None:
@@ -531,46 +500,33 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     Listing setup (one of):
 
     * ``wheels`` + ``package``: pre-load ``wheels`` under ``package``.
-      Passing ``None`` skips listing setup, e.g. for tests that only
-      need the coordinator handle.
+      ``None`` skips listing setup.
     * ``listings``: pre-load each ``(package, wheels)`` pair.  Overrides
       ``wheels``/``package``.
 
     What each request then serves:
 
     * ``request_listing`` always returns a set event.
-    * ``request_metadata`` and ``request_metadata_batch`` write
-      ``metadata_text`` (or the entry from ``metadata_by_url``, or from
-      ``metadata_by_version``, or auto-generated minimal METADATA when
-      ``auto_metadata`` is true) under the requested sidecar URL, as the
-      fetcher does.  When nothing resolves, ``None`` lands in the sidecar
-      slot, so the fetched-but-empty slot reads back the way it would in
-      production.  ``metadata_by_url`` is how sibling wheels of one
-      version are given different dependencies.
-    * ``request_sdist`` writes ``sdist_pkg_info``, or the entry from
-      ``sdist_pkg_info_by_version`` when sdists of several versions each need
-      their own PKG-INFO, and, if not ``None``, the ``sdist_pyproject`` table
-      (the parsed form of a bundled ``pyproject.toml``; the provider never
-      parses TOML, so the store holds the table rather than the text).
-    * ``request_range_metadata`` records the recovered METADATA (or an absent
-      read when its text is ``None``), or lands ``range_error`` as a per-wheel
-      metadata error.  ``range_by_url`` picks a result per wheel URL, so sibling
-      sidecar-less wheels of one version get different dependencies;
-      ``range_result`` is the single-result shortcut.  With none it writes
-      nothing, so rung 4 finds nothing.
+    * ``request_metadata`` and ``request_metadata_batch`` write METADATA under
+      the requested sidecar URL, from the first of ``metadata_by_url``,
+      ``metadata_by_version``, ``metadata_text`` and ``auto_metadata`` (a
+      generated minimal one) that is set.  ``None`` lands there when none is
+      set or the mapping has no entry, like a sidecar that was not served.
+    * ``request_sdist`` writes ``sdist_pkg_info``, or the matching
+      ``sdist_pkg_info_by_version`` entry, plus a parsed ``sdist_pyproject``
+      when one is passed.
+    * ``request_range_metadata`` records the recovered METADATA (an absent read
+      when its text is ``None``), or lands ``range_error`` as a per-wheel
+      metadata error.  ``range_by_url`` picks a result per wheel URL;
+      ``range_result`` answers every URL.  With neither it writes nothing.
     * ``request_sdist_archive`` and ``request_direct_archive`` write
       ``sdist_archive_error``, or ``sdist_archive`` as the fetched bytes.  With
-      neither they write nothing, which leaves whatever the test stored in the
-      index itself.
+      neither they write nothing, leaving whatever the test stored.
     * ``request_source_listing`` and ``request_built_metadata`` run
       ``materialize`` and ``build_sdist`` under ``build_config``, and raise
-      :class:`NotImplementedError` without them, the way a host that owns
-      neither answers.  ``read_wheel`` does the same for a listing that serves
-      a wheel off disk: without it the wheel reads back as no metadata.
-
-    A test that needs something these keywords cannot express replaces one
-    request with :meth:`FakeFetchPort.override`, and reads back what the
-    provider asked for with :meth:`FakeFetchPort.calls_to`.
+      :class:`NotImplementedError` without them.  ``read_wheel`` opens a wheel
+      the listing serves off disk; without it the metadata keywords answer
+      that request too.
     """
     index = InMemoryIndex()
 

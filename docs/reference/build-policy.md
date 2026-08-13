@@ -59,7 +59,7 @@ Adds PEP 517 backend invocation on local checkouts.  When a
 `[[tool.nab.local-sources]]` entry (or a workspace member) has
 `dynamic = ["dependencies"]`, the project's
 `[build-system].build-backend` runs inside an isolated venv via
-`nab_python._build.runner` and the
+`nab_project._build.runner` and the
 resulting wheel `METADATA` is used.  Remote PyPI sdists, VCS
 clones, and archive sources remain static-only.
 

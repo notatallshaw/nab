@@ -14,7 +14,7 @@ Freezing that view keeps one scan consistent with itself, but the scans
 of two runs can still disagree: what had landed when each scan opened is
 a fact about the HTTP cache.  ``decision-order = "stable"`` closes that.
 The classes here vary only which listings were already resident;
-``nab-python/tests/test_decision_order_engine.py`` runs the engine, where
+``nab-project/tests/test_decision_order_engine.py`` runs the engine, where
 the config reaches the provider.
 
 The scan is also where the resolver's two search counters reach the sort

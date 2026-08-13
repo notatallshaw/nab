@@ -18,8 +18,8 @@ from typing import Annotated
 
 import tyro
 
-from nab_python.download import DownloadError, download_lock
-from nab_python.resolve import build_lock_input
+from nab_project.download import DownloadError, download_lock
+from nab_project.resolve import build_lock_input
 
 from . import cli as _cli
 from ._lock import resolve_extra_selection, resolve_group_selection

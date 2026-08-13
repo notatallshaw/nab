@@ -118,7 +118,7 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     declaring ``2.0.0`` in its filename comes back as ``"2.0.0"``,
     not ``"2"``.
 
-    This accepts what nab-python's vendored ``parse_wheel_filename`` accepts,
+    This accepts what nab-provider's vendored ``parse_wheel_filename`` accepts,
     but discards the ``frozenset[Tag]`` the tag parser builds and nab does not
     use. The vendored copy is the one to match, not the released ``packaging``
     this package depends on, because the vendored tag parser ranks whatever is

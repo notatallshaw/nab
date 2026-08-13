@@ -7,9 +7,9 @@ pinned dependencies from ``.github/requirements``.
 
 The Python version comes from whoever launches nox, so CI drives the matrix
 through ``actions/setup-python`` and stays off the per-OS versioned-binary
-lookup. Run a single cell locally, for example::
+lookup. Run a single cell locally::
 
-    nox -s "tests(workspace='python')"
+    nox -s "tests(workspace='project')"
     nox -s "types(checker='mypy')"
     nox -s benchmarks
     nox -s dists
@@ -28,19 +28,13 @@ DISTS_LOCK = ".github/requirements/pylock.dists.toml"
 BUILD_LOCK = ".github/requirements/pylock.build.toml"
 
 # workspace -> (editable packages, pytest paths, coverage-gated packages).
-# Between them the entries gate every distribution the release builds. The
-# umbrella builds from the repo root, so it installs as ".".
-# nab-index rides with the python workspace: nab-python is its only consumer
-# and its tests supply most of nab-index's coverage, so the two are gated here
-# without running nab-python's suite twice.
+# The umbrella builds from the repo root, so it installs as ".".
 #
-# nab-provider rides there too, and gates nothing of its own. The provider
-# workspace installs nab-resolver and nothing else, which is the mechanical
-# proof that a host can take the provider without nab-index or nab-python, and
-# it runs the provider's own suite to prove it works there. It cannot also be
-# the coverage gate: full coverage of nab_provider needs nab-python's engine,
-# config and coordinator tests, so nab_provider is gated with the python
-# workspace, which runs both suites.
+# nab-index and nab-provider are both gated with the project workspace:
+# nab-project is nab-index's only consumer, and full coverage of nab_provider
+# needs nab-project's tests. The provider entry gates nothing, and installs
+# only nab-provider and nab-resolver, proving a host can take the provider
+# without nab-index or nab-project.
 WORKSPACES = {
     "resolver": (
         ["nab-resolver"],
@@ -52,22 +46,21 @@ WORKSPACES = {
         ["nab-provider/tests"],
         [],
     ),
-    "python": (
-        ["nab-resolver", "nab-provider", "nab-index", "nab-python"],
-        ["nab-provider/tests", "nab-python/tests", "nab-index/tests"],
-        ["nab_provider", "nab_python", "nab_index"],
+    "project": (
+        ["nab-resolver", "nab-provider", "nab-index", "nab-project"],
+        ["nab-provider/tests", "nab-project/tests", "nab-index/tests"],
+        ["nab_provider", "nab_project", "nab_index"],
     ),
     "umbrella": (
-        ["nab-resolver", "nab-provider", "nab-index", "nab-python", "."],
+        ["nab-resolver", "nab-provider", "nab-index", "nab-project", "."],
         ["tests"],
         ["nab"],
     ),
 }
 
-# nab-python is left out: it carries the vendored packaging tree, which is
-# rebuilt from upstream and cannot be edited to satisfy a checker. nab-provider
-# is left out too: its modules arrive from nab-python and are not yet held to
-# the strict configs.
+# nab-provider and nab-project are left out: neither is held to the strict
+# checker configs yet, and nab-provider carries the vendored packaging tree,
+# which is rebuilt from upstream and cannot be edited to satisfy a checker.
 TYPED_TREES = ["nab-resolver/src", "nab-index/src", "src"]
 
 # checker -> command; pyright reads its targets from [tool.pyright] in
@@ -125,9 +118,11 @@ def tests(session: nox.Session, workspace: str) -> None:
 def benchmarks(session: nox.Session) -> None:
     """Run the benchmark-harness tests the workspace sessions deselect."""
     # These cover the scripts under nab-resolver/benchmarks and
-    # nab-python/benchmarks, which no coverage gate owns.
+    # nab-project/benchmarks, which no coverage gate owns.
     _install(
-        session, TESTS_LOCK, ["nab-resolver", "nab-provider", "nab-index", "nab-python"]
+        session,
+        TESTS_LOCK,
+        ["nab-resolver", "nab-provider", "nab-index", "nab-project"],
     )
     session.run(
         "python",
@@ -136,7 +131,7 @@ def benchmarks(session: nox.Session) -> None:
         "-m",
         "benchmark",
         "nab-resolver/tests",
-        "nab-python/tests",
+        "nab-project/tests",
     )
 
 
