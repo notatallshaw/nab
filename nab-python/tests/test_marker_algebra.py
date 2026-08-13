@@ -164,6 +164,40 @@ def test_local_literal_padded_twin_refutes_subset() -> None:
     assert not eq.is_subset(le)
 
 
+def test_membership_reads_padded_twin_as_a_string() -> None:
+    # CPython 3.10.0 satisfies both: the swapped == builds the specifier ==3.10.0,
+    # which zero-pads the literal, while not in is a raw string test "3.10.0" passes.
+    swapped_eq = ms('"3.10" == python_full_version')
+    absent = ms('python_full_version not in "3.9 3.10"')
+    shared = {"python_full_version": "3.10.0", "python_version": "3.10"}
+
+    assert swapped_eq.evaluate(shared)
+    assert absent.evaluate(shared)
+    assert not swapped_eq.is_disjoint(absent)
+
+    both = swapped_eq & absent
+    assert not both.is_empty()
+
+    env = both.witness()
+    assert env is not None
+    assert Marker(
+        '"3.10" == python_full_version and python_full_version not in "3.9 3.10"'
+    ).evaluate(env)
+
+
+def test_membership_padded_twin_on_a_version_or_string_axis() -> None:
+    # platform_release dispatches as a version yet admits arbitrary strings, so its
+    # pool needs the padded twin as much as a version-only axis does.
+    marker = ms('"5.10" == platform_release and platform_release not in "5.10 5.11"')
+    assert not marker.is_empty()
+
+    env = marker.witness()
+    assert env is not None
+    assert Marker(
+        '"5.10" == platform_release and platform_release not in "5.10 5.11"'
+    ).evaluate(env)
+
+
 def test_m1_string_ordering_non_negation() -> None:
     less = ms('sys_platform < "linux"')
     greater_equal = ms('sys_platform >= "linux"')
