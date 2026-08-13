@@ -6,8 +6,9 @@ requirements and a ``{key: VersionRange}`` dict out, with no index, no
 coordinator and no provider involved.  The engine calls it once per
 target for the requirements and once for the constraints.
 
-The whole of its config dependency is ``config.vcs``, read to decide
-whether a direct-URL requirement is admitted at all.
+It takes a :class:`~nab_python.vcs_admission.VcsConfig` rather than the whole
+project config, because deciding whether a direct-URL requirement is admitted
+at all is the entirety of what it asks the config.
 
 Evaluating a root requirement's marker is the caller's, not this module's:
 :data:`MarkerHolds` arrives as an argument.  The predicate needs a
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 
     from ._vendor.packaging.markers import Marker
     from ._vendor.packaging.requirements import Requirement
-    from .config import NabProjectConfig
+    from .vcs_admission import VcsConfig
 
     # Whether a dependency marker holds for one environment.
     # :func:`nab_python.marker_holds.dependency_marker_holds` is nab's own;
@@ -107,7 +108,7 @@ class _ResolverInputs(NamedTuple):
 
 def build_resolver_inputs(
     requirements: Sequence[Requirement],
-    config: NabProjectConfig,
+    vcs: VcsConfig,
     *,
     environment: Mapping[str, str],
     marker_holds: MarkerHolds,
@@ -119,7 +120,7 @@ def build_resolver_inputs(
     Requirements whose PEP 508 marker ``marker_holds`` rejects under
     ``environment`` are skipped, matching pip/uv's root-requirement
     handling.  A direct-URL or VCS requirement is refused by
-    :func:`admit_vcs_url`; resolving one is not implemented.
+    :func:`admit_vcs_url` under ``vcs``; resolving one is not implemented.
 
     Each surviving requirement becomes its own
     :class:`~nab_resolver.types.RootRequirement`, tagged with the string the
@@ -148,7 +149,7 @@ def build_resolver_inputs(
             _warn_dropped_root_marker(req, already_warned)
             continue
         if req.url is not None:
-            admit_vcs_url(req.url, config.vcs)
+            admit_vcs_url(req.url, vcs)
             msg = (
                 f"VCS {kind} admitted by policy but resolver path is not"
                 f" implemented: {req.name} @ {req.url}"

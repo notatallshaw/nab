@@ -1063,7 +1063,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         out = build_resolver_inputs(
             _reqs('pkg; sys_platform == "linux"'),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1074,7 +1074,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         out = build_resolver_inputs(
             _reqs('pkg; sys_platform == "win32"'),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1085,7 +1085,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         out = build_resolver_inputs(
             _reqs('pkg ; "x" in extras'),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1096,7 +1096,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         out = build_resolver_inputs(
             _reqs("pkg[foo,bar]"),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1118,7 +1118,7 @@ class TestBuildResolverInputs:
         monkeypatch.setattr(req, "extras", sorted(req.extras, reverse=True))
         out = build_resolver_inputs(
             [req],
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1130,7 +1130,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         out = build_resolver_inputs(
             _reqs("pkg"),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1141,7 +1141,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         out = build_resolver_inputs(
             _reqs("pkg>=1.0,<2.0"),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1160,7 +1160,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         out = build_resolver_inputs(
             _reqs("pkg[ext]===1.0.special"),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1174,7 +1174,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         out = build_resolver_inputs(
             _reqs("pkg>=2.0", "pkg<3.0"),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1187,7 +1187,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         inputs = build_resolver_inputs(
             _reqs("pkg==1.0", "pkg==2.0"),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         )
@@ -1200,7 +1200,7 @@ class TestBuildResolverInputs:
         with pytest.raises(ConfigError, match="extras"):
             build_resolver_inputs(
                 _reqs("pkg[dev]<2.0"),
-                NabProjectConfig(),
+                VcsConfig(),
                 environment=env,
                 marker_holds=dependency_marker_holds,
                 kind="constraint",
@@ -1216,7 +1216,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         out = build_resolver_inputs(
             _reqs('pkg<2.0 ; sys_platform == "win32"'),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
             kind="constraint",
@@ -1228,7 +1228,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         out = build_resolver_inputs(
             _reqs('pkg<2.0 ; sys_platform == "linux"'),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
             kind="constraint",
@@ -1241,7 +1241,7 @@ class TestBuildResolverInputs:
         env = _linux_311().marker_env
         out = build_resolver_inputs(
             _reqs("pkg[My_Extra]"),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1253,7 +1253,7 @@ class TestBuildResolverInputs:
         with pytest.raises(UnsupportedVcsError, match="not a recognized VCS scheme"):
             build_resolver_inputs(
                 _reqs("pkg @ https://example.com/pkg.whl"),
-                NabProjectConfig(),
+                VcsConfig(),
                 environment=env,
                 marker_holds=dependency_marker_holds,
             )
@@ -1264,7 +1264,7 @@ class TestBuildResolverInputs:
         with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
-                NabProjectConfig(),
+                VcsConfig(),
                 environment=env,
                 marker_holds=dependency_marker_holds,
             )
@@ -1275,7 +1275,7 @@ class TestBuildResolverInputs:
         with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
             build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
-                NabProjectConfig(),
+                VcsConfig(),
                 environment=env,
                 marker_holds=dependency_marker_holds,
                 kind="constraint",
@@ -1284,17 +1284,15 @@ class TestBuildResolverInputs:
     def test_admitted_vcs_url_raises_not_implemented(self) -> None:
         """An admitted VCS requirement still has no resolver path."""
         env = _linux_311().marker_env
-        config = NabProjectConfig(
-            vcs=VcsConfig(
-                policy=VcsPolicy.ALLOW,
-                allowed_schemes=frozenset({"git+https"}),
-                allowed_repos=("https://example.com/",),
-            )
+        vcs = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://example.com/",),
         )
         with pytest.raises(NotImplementedError, match="not implemented"):
             build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
-                config,
+                vcs,
                 environment=env,
                 marker_holds=dependency_marker_holds,
             )
@@ -1337,7 +1335,7 @@ class TestSelfRefMarker:
         )
         excluded = build_resolver_inputs(
             reqs,
-            NabProjectConfig(),
+            VcsConfig(),
             environment=_linux_311().marker_env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1349,7 +1347,7 @@ class TestSelfRefMarker:
         }
         included = build_resolver_inputs(
             reqs,
-            NabProjectConfig(),
+            VcsConfig(),
             environment=included_env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -1363,7 +1361,7 @@ class TestRootExtras:
         env = _linux_311().marker_env
         root_extras = build_resolver_inputs(
             _reqs("pkg[My_Extra]", "other"),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).extras
@@ -1373,7 +1371,7 @@ class TestRootExtras:
         env = _linux_311().marker_env
         root_extras = build_resolver_inputs(
             _reqs("pkg"),
-            NabProjectConfig(),
+            VcsConfig(),
             environment=env,
             marker_holds=dependency_marker_holds,
         ).extras

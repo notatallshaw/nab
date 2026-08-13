@@ -23,9 +23,9 @@ from hypothesis import strategies as st
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.utils import canonicalize_name
 from nab_python._vendor.packaging.version import Version
-from nab_python.config import NabProjectConfig
 from nab_python.lockfile import IndexPin, TargetLock
 from nab_python.marker_holds import dependency_marker_holds
+from nab_python.provider import VcsConfig
 from nab_python.resolve import (
     ResolveResult,
     TargetResult,
@@ -90,7 +90,7 @@ class TestQuoteCanonicalDirectNames:
         """Variations of the same name canonicalise to a single canonical form."""
         out = build_resolver_inputs(
             [Requirement(name) for name in names],
-            NabProjectConfig(),
+            VcsConfig(),
             environment=_fake_target().marker_env,
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -151,7 +151,7 @@ class TestMarkerFiltering:
         try:
             out = build_resolver_inputs(
                 parsed,
-                NabProjectConfig(),
+                VcsConfig(),
                 environment=linux_env,
                 marker_holds=dependency_marker_holds,
             ).ranges

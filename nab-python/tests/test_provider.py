@@ -7159,7 +7159,7 @@ class TestExtrasPrereleaseAdmission:
     def _resolve(self, requirements: list[str]) -> dict[str, Version]:
         _, root_reqs, root_extras = build_resolver_inputs(
             [Requirement(r) for r in requirements],
-            NabProjectConfig(),
+            VcsConfig(),
             environment={},
             marker_holds=dependency_marker_holds,
         )

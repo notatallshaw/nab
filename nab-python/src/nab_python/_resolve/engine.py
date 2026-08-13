@@ -589,14 +589,14 @@ def _resolve_one_target(
     try:
         root_requirements, resolver_requirements, root_extras = build_resolver_inputs(
             requirements,
-            config,
+            config.vcs,
             environment=environment,
             marker_holds=settings.marker_holds,
             warned=settings.warned_root_markers,
         )
         constraint_ranges = build_resolver_inputs(
             constraints,
-            config,
+            config.vcs,
             environment=environment,
             marker_holds=settings.marker_holds,
             kind="constraint",
@@ -627,7 +627,6 @@ def _resolve_one_target(
         archive_cache_dir=(
             source_root / ARCHIVE_BUCKET if source_root is not None else None
         ),
-        build_config=config,
         decision_order=config.decision_order,
         resolution_strategy=settings.resolution,
         direct_packages=frozenset(

@@ -2662,7 +2662,6 @@ def test_build_benchmark_provider_forwards_project_config(
     assert kwargs["vcs_sources"] is None
     assert kwargs["archive_sources"] is None
 
-    assert kwargs["build_config"] is config
     assert kwargs["resolution_strategy"] is config.resolution
     assert kwargs["direct_packages"] == frozenset({"demo", "other"})
 

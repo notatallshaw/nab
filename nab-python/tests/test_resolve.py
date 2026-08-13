@@ -47,6 +47,7 @@ from nab_python.provider import (
     Provider,
     ResolutionStrategy,
     UnsupportedVcsError,
+    VcsConfig,
 )
 from nab_python.pyproject_files import (
     read_pyproject_groups,
@@ -144,7 +145,7 @@ def _build_constraints(
     """
     return build_resolver_inputs(
         [Requirement(text) for text in config.constraints],
-        config,
+        config.vcs,
         environment=environment,
         marker_holds=dependency_marker_holds,
         kind="constraint",
@@ -2410,7 +2411,7 @@ class TestLoadExtraRequirements:
 
         excluded = build_resolver_inputs(
             [req],
-            NabProjectConfig(),
+            VcsConfig(),
             environment={"python_version": "3.12", "python_full_version": "3.12.0"},
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -2425,7 +2426,7 @@ class TestBuildResolverInputs:
         reqs = [Requirement("foo>=2.0"), Requirement("foo<3.0")]
         resolver_requirements = build_resolver_inputs(
             reqs,
-            NabProjectConfig(),
+            VcsConfig(),
             environment={},
             marker_holds=dependency_marker_holds,
         ).ranges
@@ -2439,7 +2440,7 @@ class TestBuildResolverInputs:
         reqs = [Requirement("foo==1.0"), Requirement("foo==2.0")]
         inputs = build_resolver_inputs(
             reqs,
-            NabProjectConfig(),
+            VcsConfig(),
             environment={},
             marker_holds=dependency_marker_holds,
         )
@@ -2454,7 +2455,7 @@ class TestBuildResolverInputs:
         reqs = [Requirement("foo[dev]>1"), Requirement("foo[dev]<9")]
         inputs = build_resolver_inputs(
             reqs,
-            NabProjectConfig(),
+            VcsConfig(),
             environment={},
             marker_holds=dependency_marker_holds,
         )
@@ -2466,7 +2467,7 @@ class TestBuildResolverInputs:
         with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
-                NabProjectConfig(),
+                VcsConfig(),
                 environment={},
                 marker_holds=dependency_marker_holds,
             ).ranges
@@ -2481,7 +2482,7 @@ class TestBuildResolverInputs:
         with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
-                NabProjectConfig(),
+                VcsConfig(),
                 environment={},
                 marker_holds=dependency_marker_holds,
             ).ranges
@@ -2496,7 +2497,7 @@ class TestBuildResolverInputs:
         with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
-                NabProjectConfig(),
+                VcsConfig(),
                 environment={},
                 marker_holds=dependency_marker_holds,
             ).ranges
@@ -2511,7 +2512,7 @@ class TestBuildResolverInputs:
         with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
             build_resolver_inputs(
                 reqs,
-                NabProjectConfig(),
+                VcsConfig(),
                 environment={},
                 marker_holds=dependency_marker_holds,
             )
@@ -2525,7 +2526,7 @@ class TestBuildResolverInputs:
         with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
-                NabProjectConfig(),
+                VcsConfig(),
                 environment={},
                 marker_holds=dependency_marker_holds,
             ).ranges
@@ -2539,7 +2540,7 @@ class TestBuildResolverInputs:
         with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
-                NabProjectConfig(),
+                VcsConfig(),
                 environment=env,
                 marker_holds=dependency_marker_holds,
             ).ranges
@@ -2560,7 +2561,7 @@ class TestBuildResolverInputs:
         monkeypatch.setattr(req, "extras", ["z", "y", "x"])
         resolver_requirements = build_resolver_inputs(
             [req],
-            NabProjectConfig(),
+            VcsConfig(),
             environment={},
             marker_holds=dependency_marker_holds,
         ).ranges

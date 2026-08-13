@@ -78,8 +78,8 @@ if TYPE_CHECKING:
     from ._vendor.packaging.markers import Marker
     from ._vendor.packaging.requirements import Requirement
     from ._vendor.packaging.version import Version
-    from .config import IndexOverride, NabProjectConfig, PackageOverride
     from .fetch_port import FetchPort, Waitable
+    from .overrides import IndexOverride, PackageOverride
     from .tags import TagSet
     from .target import ResolveTarget
 
@@ -398,7 +398,6 @@ class Provider:
         vcs_cache_dir: Path | None = None,
         archive_sources: list[ArchiveSource] | None = None,
         archive_cache_dir: Path | None = None,
-        build_config: NabProjectConfig | None = None,
         resolution_strategy: ResolutionStrategy | str = ResolutionStrategy.HIGHEST,
         direct_packages: frozenset[str] | None = None,
         preferences: Mapping[str, Version] | None = None,
@@ -427,20 +426,16 @@ class Provider:
         # targets of this resolve.  ``None`` computes it here instead.
         self.listing_filter_cache = listing_filter_cache
 
-        # The backend runs behind the fetch port under the coordinator's own
-        # config; this copy only feeds the trust flag below.
-        self.build_config = build_config
         self.extras_mode = extras_mode
         self.root_extras = root_extras or set()
         self._dist_policy = dist_policy
         self.build_policy = build_policy
         # Opt-out: trust a pre-2.2 sdist's PKG-INFO deps as final instead of
         # routing through the dynamic path. Off by default (strict PEP 643).
-        # ``build_config`` carries the project's own setting; the argument is
-        # for a caller that has no config (a benchmark harness).
-        self.trust_unverified_sdist_deps = trust_unverified_sdist_deps or (
-            build_config is not None and build_config.trust_unverified_sdist_deps
-        )
+        # The project's own setting reaches here through the caller, which
+        # reads it off the config; a caller with no config (a benchmark
+        # harness) passes the flag directly.
+        self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
         self._resolution_strategy = resolution_strategy
         # The scan asks this once per package, so keep the answer.
         self.settle_listings = decision_order is DecisionOrder.STABLE

@@ -756,7 +756,6 @@ def build_benchmark_provider(
         local_sources=list(config.local_sources) or None,
         vcs_sources=list(config.vcs_sources) or None,
         archive_sources=list(config.archive_sources) or None,
-        build_config=config,
         resolution_strategy=config.resolution,
         direct_packages=direct_packages_from_requirements(inputs.requirements),
         constraints=inputs.constraints,

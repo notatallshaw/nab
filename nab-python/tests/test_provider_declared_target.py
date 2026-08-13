@@ -24,7 +24,6 @@ from nab_python._testing.overrides import pkg_override
 from nab_python._vendor.packaging.ranges import VersionRange
 from nab_python._vendor.packaging.requirements import Requirement
 from nab_python._vendor.packaging.version import Version
-from nab_python.config import NabProjectConfig
 from nab_python.provider import (
     BuildPolicy,
     DistPolicy,
@@ -185,19 +184,19 @@ class TestEnvironmentOverlay:
 
 
 class TestTrustUnverifiedSdistDeps:
-    """The trust-unverified flag is taken from ``build_config``."""
+    """The trust-unverified flag reaches the provider from its caller."""
 
-    def test_defaults_false_without_build_config(self) -> None:
+    def test_defaults_false(self) -> None:
         coordinator = _make_coordinator([])
         provider = Provider(coordinator, _LINUX_TARGET)
         assert provider.trust_unverified_sdist_deps is False
 
-    def test_taken_from_build_config(self) -> None:
+    def test_taken_from_the_argument(self) -> None:
         coordinator = _make_coordinator([])
         provider = Provider(
             coordinator,
             _LINUX_TARGET,
-            build_config=NabProjectConfig(trust_unverified_sdist_deps=True),
+            trust_unverified_sdist_deps=True,
         )
         assert provider.trust_unverified_sdist_deps is True
 
