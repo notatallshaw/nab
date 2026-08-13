@@ -24,10 +24,31 @@ from nab_index import vcs as vcs_mod
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
+from nab_provider._provider import listing as listing_mod
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
-from nab_python._provider import listing as listing_mod
+from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.metadata import WheelMetadata
+from nab_provider.provider import (
+    ArchiveSource,
+    BuildPolicy,
+    DistFile,
+    DistPolicy,
+    LocalSource,
+    MissingExtraError,
+    Provider,
+    ResolutionStrategy,
+    UnsupportedSdistError,
+    UnsupportedVcsError,
+    VcsConfig,
+    VcsPolicy,
+    VcsSource,
+)
+from nab_provider.requirements_file import expand_extra_requirements
+from nab_provider.resolver_inputs import ProxyConstraints
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import Matrix, ResolveTarget
 from nab_python._resolve import engine as engine_mod
 from nab_python._resolve.engine import _EngineSettings, _resolve_one_target, _run_pass
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
@@ -52,29 +73,11 @@ from nab_python.lockfile import (
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
-from nab_python.marker_holds import dependency_marker_holds
-from nab_python.metadata import WheelMetadata
-from nab_python.provider import (
-    ArchiveSource,
-    BuildPolicy,
-    DistFile,
-    DistPolicy,
-    LocalSource,
-    MissingExtraError,
-    Provider,
-    ResolutionStrategy,
-    UnsupportedSdistError,
-    UnsupportedVcsError,
-    VcsConfig,
-    VcsPolicy,
-    VcsSource,
-)
 from nab_python.pyproject_files import (
     read_pyproject_dependencies,
     read_pyproject_name,
     read_pyproject_optional_dependencies,
 )
-from nab_python.requirements_file import expand_extra_requirements
 from nab_python.resolve import (
     InstallContexts,
     ResolveFork,
@@ -84,9 +87,6 @@ from nab_python.resolve import (
     build_resolver_inputs,
     resolve_with_coordinator,
 )
-from nab_python.resolver_inputs import ProxyConstraints
-from nab_python.tags import PlatformSpec
-from nab_python.target import Matrix, ResolveTarget
 from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:
@@ -830,7 +830,7 @@ class TestDroppedRootMarkerWarnedOnce:
     def test_warned_once_across_targets_forks_and_base_pass(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
-        with caplog.at_level(logging.WARNING, logger="nab_python.resolver_inputs"):
+        with caplog.at_level(logging.WARNING, logger="nab_provider.resolver_inputs"):
             result = resolve_with_coordinator(
                 self._coordinator(),
                 self._two_targets(),
@@ -846,7 +846,7 @@ class TestDroppedRootMarkerWarnedOnce:
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         reqs = _reqs("base", 'gated ; extra == "test"', 'other ; "dev" in extras')
-        with caplog.at_level(logging.WARNING, logger="nab_python.resolver_inputs"):
+        with caplog.at_level(logging.WARNING, logger="nab_provider.resolver_inputs"):
             result = resolve_with_coordinator(
                 self._coordinator(),
                 self._two_targets(),

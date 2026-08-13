@@ -21,21 +21,23 @@ import tomli
 from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.extra_keys import split_extra
+from nab_provider.iso8601 import parse_iso_datetime
+from nab_provider.metadata import validate_specifier_versions
+from nab_provider.policy import DistPolicy
 from nab_provider.records import SdistFile, WheelFile
 
 from .._toml import tool_nab_section
-from ..extra_keys import split_extra
-from ..iso8601 import parse_iso_datetime
-from ..metadata import validate_specifier_versions
 from ..paths import path_state
-from ..policy import DistPolicy
 from .groups import BASE_MEMBER
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
     from nab_provider._vendor.packaging.version import Version
+    from nab_provider.policy import ArchiveSource, LocalSource, VcsSource
     from nab_provider.records import IndexConfig
+    from nab_provider.target import ResolveTarget
 
     from ..lockfile import (
         ArchivePin,
@@ -47,8 +49,6 @@ if TYPE_CHECKING:
         VcsPin,
         WheelArtifact,
     )
-    from ..policy import ArchiveSource, LocalSource, VcsSource
-    from ..target import ResolveTarget
 
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ class _LockInputCoordinator(Protocol):
 class LockInputProvider(Protocol):
     """Structural protocol for the provider slice the builder reads.
 
-    Mirrors the public surface :class:`~nab_python.provider.Provider`
+    Mirrors the public surface :class:`~nab_provider.provider.Provider`
     exposes that :func:`build_target_lock` consumes; tests
     may supply a stub without inheriting the full Provider class.
     """
@@ -155,7 +155,7 @@ class MissingHashError(ValueError):
 class MissingSdistError(ValueError):
     """A ``sdist-install`` package's pinned version has no sdist.
 
-    Under :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` the
+    Under :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` the
     resolver may read a wheel's metadata but the lock must pin only the
     sdist.  When the pinned version publishes wheels but no sdist, the
     wheels are dropped and nothing is left to pin.  Surface the package
@@ -495,7 +495,7 @@ def _index_pin_from_listing(
     URL.  A pinned package's serving index is always recorded and is
     one of ``indexes``, so the URL is always known.
 
-    Under :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` the
+    Under :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` the
     package's wheels stayed in ``versions_cache`` as a possible
     metadata source for the resolver; only the sdist is emitted
     into the lock so installers download and build that archive.
@@ -687,7 +687,7 @@ def _vcs_pin_from_source(
     """Build a :class:`VcsPin` from a :class:`VcsSource`.
 
     ``resolved_sha`` is the post-clone SHA recorded on the provider by
-    :meth:`~nab_python.provider.Provider.materialize_source`.  A VCS
+    :meth:`~nab_provider.provider.Provider.materialize_source`.  A VCS
     source cannot be pinned without first being materialised, so a
     ``None`` here is an internal invariant violation: raise
     :class:`MissingVcsCommitError` rather than emit a branch name or

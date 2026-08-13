@@ -9,6 +9,8 @@ import pytest
 
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
 from nab_python.lockfile import (
     BASE_MEMBER,
     IndexPin,
@@ -25,8 +27,6 @@ from nab_python.lockfile import (
     render_lock,
     summarize_lock,
 )
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

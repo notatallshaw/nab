@@ -18,10 +18,10 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
 from nab_python.download import DownloadError, download_lock
 from nab_python.lockfile import IndexPin, LockInput, TargetLock, WheelArtifact
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
 
 from .strategies import PROPERTY_SETTINGS
 

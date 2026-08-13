@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from nab_index.vcs import VcsRequest
-from nab_python.vcs_admission import (
+from nab_provider.vcs_admission import (
     UnsupportedVcsError,
     VcsConfig,
     VcsPolicy,

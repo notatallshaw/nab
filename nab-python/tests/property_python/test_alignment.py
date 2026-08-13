@@ -23,17 +23,17 @@ from hypothesis import strategies as st
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.provider import VcsConfig
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
 from nab_python.lockfile import IndexPin, TargetLock
-from nab_python.marker_holds import dependency_marker_holds
-from nab_python.provider import VcsConfig
 from nab_python.resolve import (
     ResolveResult,
     TargetResult,
     build_lock_input,
     build_resolver_inputs,
 )
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
 from nab_resolver.errors import ResolutionError
 
 from .strategies import LINUX_TARGET, PROPERTY_SETTINGS

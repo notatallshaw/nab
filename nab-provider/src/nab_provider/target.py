@@ -966,7 +966,7 @@ class ResolveTarget:
         ``extras`` and ``dependency_groups`` are defined only when
         consuming a lockfile, so a dependency marker that tests one
         evaluates False here rather than raising (see
-        :data:`~nab_python.conflict_kind.EMPTY_MEMBERSHIP_SETS`).
+        :data:`~nab_provider.conflict_kind.EMPTY_MEMBERSHIP_SETS`).
         """
         return {**self.marker_env, **EMPTY_MEMBERSHIP_SETS}
 
@@ -1198,7 +1198,7 @@ def declared_environment(
     Combines the platform's OS/arch markers and the implementation's
     interpreter-identity markers with the python-axis values derived from
     ``python_version``.  ``platform_release`` and ``platform_version``
-    come from the :class:`~nab_python.tags.PlatformSpec`; both default to
+    come from the :class:`~nab_provider.tags.PlatformSpec`; both default to
     ``""`` so kernel-conditioned markers evaluate False unless the user
     declares a target kernel or OS version.
 

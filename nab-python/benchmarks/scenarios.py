@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from nab_index.multi_index import IndexConfig
-    from nab_python.target import ResolveTarget
+    from nab_provider.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -65,12 +65,7 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name, is_normalized_name
 from nab_provider._vendor.packaging.version import Version
-from nab_python.config import NabProjectConfig, index_routes_from_config
-from nab_python.fetch import (
-    FetchCoordinator,
-    IndexRoute,
-)
-from nab_python.provider import (
+from nab_provider.provider import (
     BuildPolicy,
     DistPolicy,
     ResolutionStrategy,
@@ -78,7 +73,12 @@ from nab_python.provider import (
     VcsPolicy,
     split_extra,
 )
-from nab_python.vcs_admission import admit_vcs_url
+from nab_provider.vcs_admission import admit_vcs_url
+from nab_python.config import NabProjectConfig, index_routes_from_config
+from nab_python.fetch import (
+    FetchCoordinator,
+    IndexRoute,
+)
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
@@ -811,7 +811,7 @@ def parse_requirements(
     a top-level dependency with a marker is an opt-in per env.
 
     Direct-URL requirements (``pkg @ git+https://...``) are screened by
-    :func:`nab_python.vcs_admission.admit_vcs_url`; admission failures raise
+    :func:`nab_provider.vcs_admission.admit_vcs_url`; admission failures raise
     :class:`UnsupportedVcsError`.  Admitted VCS requirements raise
     :class:`NotImplementedError`.
     """

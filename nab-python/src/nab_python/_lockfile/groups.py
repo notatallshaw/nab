@@ -6,7 +6,7 @@ without importing each other.
 
 from __future__ import annotations
 
-from ..conflict_kind import KIND_GROUP
+from nab_provider.conflict_kind import KIND_GROUP
 
 BASE_MEMBER = (KIND_GROUP, "")
 """Stands for the project's own dependencies in a gate.

@@ -45,13 +45,13 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import ResolutionStrategy
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import Matrix, ResolveTarget, environment_declaration
 from nab_python.config import NabProjectConfig, enforce_build_policy_for_targets
 from nab_python.fetch import FetchCoordinator
 from nab_python.lockfile import LOCK_VERSION, build_pylock
-from nab_python.provider import ResolutionStrategy
 from nab_python.resolve import ResolveResult, build_lock_input, resolve_with_coordinator
-from nab_python.tags import PlatformSpec
-from nab_python.target import Matrix, ResolveTarget, environment_declaration
 from nab_resolver.errors import ResolutionError
 
 BENCHMARKS_DIR = Path(__file__).parent

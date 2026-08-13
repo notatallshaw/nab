@@ -1,9 +1,10 @@
 """In-memory fetch port for the nab-python test suite.
 
-:class:`FakeFetchPort` implements :class:`~nab_python.fetch_port.FetchPort`
-against a real :class:`~nab_python.store.InMemoryIndex`.  Its request methods
-write to that index and hand back an already-set :class:`threading.Event`, so
-the synchronous provider code under test sees every fetch resolve immediately.
+:class:`FakeFetchPort` implements
+:class:`~nab_provider.fetch_port.FetchPort` against a real
+:class:`~nab_provider.store.InMemoryIndex`.  Its request methods write to that
+index and hand back an already-set :class:`threading.Event`, so the
+synchronous provider code under test sees every fetch resolve immediately.
 
 It is a class rather than a mock so an unserved request cannot answer: a mock
 answers any attribute at any arity.  The request methods repeat the port's
@@ -18,19 +19,19 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from nab_index.local_index import UnreadableLocalIndexError, read_wheel_metadata
 from nab_provider.errors import UnsupportedWheelError
 from nab_provider.records import IndexConfig
+from nab_provider.store import InMemoryIndex
 from nab_python._build_remote import build_remote_sdist
 from nab_python._sources import materialize_source
 from nab_python._toml import parse_pyproject_table
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
-from nab_python.store import InMemoryIndex
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
+    from nab_provider.policy import SourceRequest
     from nab_provider.records import RangeMetadataResult, SdistFile, WheelFile
     from nab_python.config import NabProjectConfig
-    from nab_python.policy import SourceRequest
 
 _MINIMAL_METADATA = "Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\n"
 
@@ -187,7 +188,7 @@ def _make_archive_server(
 
 
 class FakeFetchPort:
-    """An in-memory :class:`~nab_python.fetch_port.FetchPort`.
+    """An in-memory :class:`~nab_provider.fetch_port.FetchPort`.
 
     Build one with :func:`make_coordinator` rather than directly: it assembles
     the four servers out of the keywords a test sets.

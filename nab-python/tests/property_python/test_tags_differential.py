@@ -1,9 +1,9 @@
 """Differential property tests: nab wheel selection vs upstream ``packaging.tags``.
 
-:mod:`nab_python.tags` implements `PEP 425`_ wheel-tag preference on top of
-the vendored ``packaging.tags``. The differential classes below re-derive one
-layer each with the upstream ``packaging`` distribution as the oracle and
-require agreement:
+:mod:`nab_provider.tags` implements `PEP 425`_ wheel-tag preference on
+top of the vendored ``packaging.tags``.
+Each test here re-derives one layer with the upstream ``packaging``
+distribution as the oracle and requires agreement:
 
 1. The tag order a :class:`TagSet` builds for a declared target must
    match the same order rebuilt with upstream
@@ -37,7 +37,7 @@ from packaging.version import InvalidVersion
 
 from nab_index.client import WheelFile, _parse_wheel_filename
 from nab_provider._vendor.packaging import tags as vendored_tags
-from nab_python.tags import (
+from nab_provider.tags import (
     _MACOS_TAG_FLOOR,
     _PLATFORM_ARCH,
     PlatformSpec,
@@ -323,7 +323,7 @@ class TestWheelTagSetMatchesUpstream:
 
 
 class TestAdmittedWheelsCarryTags:
-    """A wheel nab_index admits must be one ``nab_python.tags`` can rank.
+    """A wheel nab_index admits must be one ``nab_provider.tags`` can rank.
 
     nab_index applies its own copy of the tag rules and nab_python runs the
     vendored ``parse_tag``, so re-vendoring a stricter one is how the two come

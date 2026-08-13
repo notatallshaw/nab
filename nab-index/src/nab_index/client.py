@@ -24,7 +24,7 @@ from packaging.utils import canonicalize_name, parse_sdist_filename
 from packaging.version import Version
 
 from nab_provider.errors import (
-    HttpError,
+    MalformedSimpleResponseError,
     MetadataHashMismatchError,
     SdistHashMismatchError,
     WheelHashMismatchError,
@@ -67,16 +67,6 @@ _FileEntry = Mapping[Any, object]
 # 3.10.12 / 3.11.4; sdist extraction requires it (see extract_sdist_archive).
 # data_filter appears with the same change, so its presence detects support.
 _SUPPORTS_DATA_FILTER = hasattr(tarfile, "data_filter")
-
-
-class MalformedSimpleResponseError(HttpError):
-    """The index served a 200 response that is not a usable Simple-API body.
-
-    Covers a listing that is neither valid JSON nor decodable HTML, and a
-    PEP 658 metadata sidecar that is not valid UTF-8. Subclasses
-    :class:`HttpError` so a broken body is caught alongside transport and
-    4xx/5xx failures.
-    """
 
 
 # Mirrors packaging.utils._build_tag_regex: PEP 427 build numbers start with a digit.

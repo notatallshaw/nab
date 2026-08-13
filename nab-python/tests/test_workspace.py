@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from nab_python.provider import LocalSource
+from nab_provider.provider import LocalSource
 from nab_python.workspace import (
     WorkspaceDiscoveryError,
     discover_workspace_root,

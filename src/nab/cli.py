@@ -32,6 +32,19 @@ from nab_provider.errors import (
     SdistHashMismatchError,
     WheelHashMismatchError,
 )
+from nab_provider.provider import (
+    InvalidUploadTimeError,
+    MetadataError,
+    MissingExtraError,
+    SiblingMetadataDivergenceError,
+    SourceNameMismatchError,
+    UnsupportedVcsError,
+)
+from nab_provider.requirements_file import (
+    InvalidProjectRequirementError,
+    InvalidProjectTableError,
+)
+from nab_provider.target import NonIntervalMarkerError, UnevaluableMarkerError
 from nab_python.config import (
     ConfigError,
     NabProjectConfig,
@@ -58,20 +71,7 @@ from nab_python.config_sources import (
 )
 from nab_python.lockfile import MissingHashError, MissingSdistError
 from nab_python.paths import PathState, path_state
-from nab_python.provider import (
-    InvalidUploadTimeError,
-    MetadataError,
-    MissingExtraError,
-    SiblingMetadataDivergenceError,
-    SourceNameMismatchError,
-    UnsupportedVcsError,
-)
-from nab_python.requirements_file import (
-    InvalidProjectRequirementError,
-    InvalidProjectTableError,
-)
 from nab_python.resolve import resolve_for_targets
-from nab_python.target import NonIntervalMarkerError, UnevaluableMarkerError
 from nab_python.workspace import WorkspaceDiscoveryError
 from nab_resolver.errors import ResolutionError
 
@@ -88,7 +88,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from nab_index.transport import AsyncHttpTransport
-    from nab_python.provider import ResolutionStrategy
+    from nab_provider.provider import ResolutionStrategy
     from nab_python.resolve import ResolveResult
 
 __all__ = [

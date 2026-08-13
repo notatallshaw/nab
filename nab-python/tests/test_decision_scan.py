@@ -27,21 +27,21 @@ import threading
 from typing import TYPE_CHECKING, NamedTuple
 
 from nab_index.client import WheelFile
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.version import Version
-from nab_python._provider.priority import (
+from nab_provider._provider.priority import (
     _NO_LISTING_PRIOR,
     CONFLICT_THRESHOLD,
     CULPRIT_DEMOTE_THRESHOLD,
 )
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import BuildPolicy, DecisionOrder, Provider
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import Matrix
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python.config import NabProjectConfig
 from nab_python.fetch import DEFAULT_INDEX_NAME, InMemoryIndex
-from nab_python.provider import BuildPolicy, DecisionOrder, Provider
 from nab_python.resolve import resolve_with_coordinator
-from nab_python.tags import PlatformSpec
-from nab_python.target import Matrix
 from nab_resolver import decide
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term

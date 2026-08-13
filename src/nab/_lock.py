@@ -29,6 +29,13 @@ import tomli_w
 import tyro
 
 from nab._version import __version__
+from nab_provider.requirements_file import (
+    InvalidProjectRequirementError,
+    InvalidProjectTableError,
+    expand_extra_requirements,
+    resolve_groups_to_requirements,
+)
+from nab_provider.target import UnevaluableMarkerError
 from nab_python.config import (
     ConfigError,
     NabProjectConfig,
@@ -67,18 +74,11 @@ from nab_python.pyproject_files import (
     read_pyproject_name,
     read_pyproject_optional_dependencies,
 )
-from nab_python.requirements_file import (
-    InvalidProjectRequirementError,
-    InvalidProjectTableError,
-    expand_extra_requirements,
-    resolve_groups_to_requirements,
-)
 from nab_python.resolve import (
     active_group_names,
     build_lock_input,
     config_for_build_requirements,
 )
-from nab_python.target import UnevaluableMarkerError
 
 from . import cli as _cli
 from .cli import (
@@ -98,7 +98,7 @@ from .output import ProgressReporter
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
-    from nab_python.target import ResolveTarget
+    from nab_provider.target import ResolveTarget
 
 
 _DEFAULT_PROJECT_PATH = Path("pyproject.toml")

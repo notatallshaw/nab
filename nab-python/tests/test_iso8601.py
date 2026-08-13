@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from nab_python import iso8601
-from nab_python.iso8601 import _to_isoformat, parse_iso_datetime
+from nab_provider import iso8601
+from nab_provider.iso8601 import _to_isoformat, parse_iso_datetime
 
 # PEP 700 serves upload-time as an ISO 8601 UTC timestamp, so an index may use
 # any fractional-seconds width from 0 through 6 digits.

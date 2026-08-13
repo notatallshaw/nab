@@ -28,10 +28,10 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import BuildPolicy, DistPolicy
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
 from nab_python.config import PackageOverride
-from nab_python.provider import BuildPolicy, DistPolicy
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
 
 PACKAGE_NAMES = [f"pkg{i}" for i in range(10)]
 

@@ -67,7 +67,7 @@ ENGINE_GROUP = frozenset()
 # Modules in the engine's import closure that still import marker sets, each
 # with the item that takes it out. Nothing else may.
 EXEMPT = {
-    "nab_python.target": (
+    "nab_provider.target": (
         "P0.13: variable_names serves marker_variables, which only the lock "
         "writer calls. target.py leaves the vendored tree when Provider takes "
         "environment= instead of calling host_environment()."
@@ -84,7 +84,7 @@ EXEMPT = {
     # point. It stays in the closure only through target, requirements_file
     # (via _provider.metadata_resolver) and _lockfile.validate, so it clears
     # when those do.
-    "nab_python.marker_holds": (
+    "nab_provider.marker_holds": (
         "By design: the module that exists so the marker-set dependency has "
         "somewhere to live that the engine does not import. Reached here only "
         "through target, requirements_file and _lockfile.validate."

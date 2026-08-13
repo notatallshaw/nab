@@ -3,11 +3,11 @@
 The half of source handling that touches the world: it reads a directory,
 clones a repository, downloads and extracts an archive, and hands the tree to a
 :pep:`517` backend when the static read yields nothing and the policy permits
-it.  :mod:`nab_python._provider.sources` keeps the other half, which validates
+it.  :mod:`nab_provider._provider.sources` keeps the other half, which validates
 the declarations and turns one materialised tree into a synthetic listing.
 
 Reached only through
-:meth:`~nab_python.fetch_port.FetchPort.request_source_listing`, so a host that
+:meth:`~nab_provider.fetch_port.FetchPort.request_source_listing`, so a host that
 owns its own source handling runs none of it.
 """
 
@@ -24,18 +24,23 @@ from typing import TYPE_CHECKING
 from nab_index import vcs
 from nab_index.client import extract_sdist_archive, verify_sdist_hash
 from nab_provider.archive import ArchiveRequest
+from nab_provider.errors import SourceBuildPolicyError, UnsupportedSdistError
+from nab_provider.policy import (
+    BuildPolicy,
+    LocalSource,
+    SourceMaterialization,
+    VcsSource,
+)
 from nab_provider.vcs_request import VcsCloneError, VcsRequest
-
-from .errors import SourceBuildPolicyError, UnsupportedSdistError
-from .policy import BuildPolicy, LocalSource, SourceMaterialization, VcsSource
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from nab_provider.fetch_port import FetchPort
+    from nab_provider.metadata import WheelMetadata
+    from nab_provider.policy import ArchiveSource, SourceRequest
+
     from .config import NabProjectConfig
-    from .fetch_port import FetchPort
-    from .metadata import WheelMetadata
-    from .policy import ArchiveSource, SourceRequest
 
 # The archive names everything under _TREE_DIR, so the cache's own bookkeeping
 # sits beside that directory rather than inside it.

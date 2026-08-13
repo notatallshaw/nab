@@ -35,6 +35,8 @@ from nab._download import download
 from nab._lock import lock
 from nab.cli import app, effective_config
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import DecisionOrder, DistPolicy, ResolutionStrategy
+from nab_provider.target import ResolveTarget
 from nab_python.config import NabProjectConfig
 from nab_python.config_sources import OPTIONS, OptionSpec, Scope, SourceRoots
 from nab_python.lockfile import (
@@ -44,9 +46,7 @@ from nab_python.lockfile import (
     WheelArtifact,
     read_lockfile_anchor,
 )
-from nab_python.provider import DecisionOrder, DistPolicy, ResolutionStrategy
 from nab_python.resolve import ResolveResult, TargetResult
-from nab_python.target import ResolveTarget
 
 
 def _write(path: Path, body: str) -> Path:

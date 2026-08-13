@@ -12,14 +12,14 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
 from nab_python._lockfile.validate import (
     check_constraints,
     check_direct_requirements,
     check_envelope,
 )
 from nab_python.lockfile import LockDisqualification, RootRequirement
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
 
 
 def make_pylock(

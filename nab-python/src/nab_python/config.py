@@ -27,9 +27,41 @@ from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, Specifie
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.archive import ArchiveRequest, ArchiveRequestError
+from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP
+from nab_provider.errors import (
+    OverrideConflictError as OverrideConflictError,  # noqa: PLC0414  (public re-export)
+)
+from nab_provider.iso8601 import parse_iso_datetime
+from nab_provider.overrides import IndexOverride, PackageOverride
+from nab_provider.policy import (
+    ArchiveSource,
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    LocalSource,
+    ResolutionStrategy,
+    ResolveMode,
+    VcsSource,
+)
 from nab_provider.records import IndexConfig
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.subdir import subdirectory_escapes
+from nab_provider.tags import (
+    DEFAULT_LIBC,
+    LIBC_MAJOR,
+    Libc,
+    PlatformSpec,
+    platform_kind,
+)
+from nab_provider.target import (
+    PLATFORM_MARKERS,
+    Matrix,
+    ResolveTarget,
+    check_free_threaded,
+    host_environment,
+    python_axis_environment,
+)
+from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 
 from ._toml import tool_nab_section
 from .config_sources import (
@@ -45,34 +77,8 @@ from .config_sources import (
     resolve_anchor,
     resolve_config,
 )
-from .conflict_kind import KIND_EXTRA, KIND_GROUP
-from .errors import (
-    OverrideConflictError as OverrideConflictError,  # noqa: PLC0414  (public re-export)
-)
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
-from .iso8601 import parse_iso_datetime
-from .overrides import IndexOverride, PackageOverride
 from .paths import resolve_path
-from .policy import (
-    ArchiveSource,
-    BuildPolicy,
-    DecisionOrder,
-    DistPolicy,
-    LocalSource,
-    ResolutionStrategy,
-    ResolveMode,
-    VcsSource,
-)
-from .tags import DEFAULT_LIBC, LIBC_MAJOR, Libc, PlatformSpec, platform_kind
-from .target import (
-    PLATFORM_MARKERS,
-    Matrix,
-    ResolveTarget,
-    check_free_threaded,
-    host_environment,
-    python_axis_environment,
-)
-from .vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 from .workspace import (
     WorkspaceConfig,
     discover_workspace_root,
@@ -171,7 +177,7 @@ class EnvironmentConfig:
     and a table naming only ``python`` is the host machine running
     another Python.
 
-    ``platform`` is the same :class:`~nab_python.tags.PlatformSpec` a
+    ``platform`` is the same :class:`~nab_provider.tags.PlatformSpec` a
     ``matrix.platforms`` entry parses to, so the wheel-tag knobs (the libc
     family, the libc and macOS the lock must run on, the kernel
     marker values, the free-threaded build) are declarable here too.
@@ -1176,7 +1182,7 @@ def _check_requires_python_admits_target(
     rejects, so it fails loud and names the knob that moves the target.
 
     The declaration goes through
-    :meth:`~nab_python.target.ResolveTarget.admits_requires_python`, the
+    :meth:`~nab_provider.target.ResolveTarget.admits_requires_python`, the
     comparison every candidate's ``Requires-Python`` takes, so it is read at
     the language minor and a micro floor like ``>= "3.11.4"`` admits a 3.11
     target.  Which knob the error names depends on the target.  A matrix

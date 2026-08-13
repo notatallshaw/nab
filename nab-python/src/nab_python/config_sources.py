@@ -39,14 +39,10 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
-from nab_provider.records import IndexConfig
-from nab_provider.serialization import SimpleSerialization
-
-from ._toml import tool_nab_section
-from .errors import ConfigError as ConfigError  # noqa: PLC0414  (public re-export)
-from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
-from .paths import PathState, is_usable_path_name, path_state
-from .policy import (
+from nab_provider.errors import (
+    ConfigError as ConfigError,  # noqa: PLC0414  (public re-export)
+)
+from nab_provider.policy import (
     ArchiveSource,
     BuildPolicy,
     DecisionOrder,
@@ -56,7 +52,13 @@ from .policy import (
     ResolveMode,
     VcsSource,
 )
-from .vcs_admission import VcsConfig
+from nab_provider.records import IndexConfig
+from nab_provider.serialization import SimpleSerialization
+from nab_provider.vcs_admission import VcsConfig
+
+from ._toml import tool_nab_section
+from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
+from .paths import PathState, is_usable_path_name, path_state
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence

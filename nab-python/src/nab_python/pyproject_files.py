@@ -2,7 +2,7 @@
 
 The readers that take a path.  Every one of them parses TOML, which is why
 they sit here rather than beside the pure requirement algebra in
-:mod:`nab_python.requirements_file`.
+:mod:`nab_provider.requirements_file`.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import tomli
 
-from .requirements_file import (
+from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
     parse_requirements,

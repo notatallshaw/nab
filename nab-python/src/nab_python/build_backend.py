@@ -15,22 +15,22 @@ from typing import TYPE_CHECKING
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.metadata import (
+    WheelMetadata,
+    static_project_from_table,
+    validate_specifier_versions,
+)
+from nab_provider.requirements_file import (
+    InvalidProjectRequirementError,
+    parse_project_requirement,
+    require_string_list,
+)
 
 from ._build.errors import (
     BuildBackendError as BuildBackendError,  # noqa: PLC0414  (public re-export)
 )
 from ._toml import parse_pyproject_table
-from .metadata import (
-    WheelMetadata,
-    static_project_from_table,
-    validate_specifier_versions,
-)
 from .paths import is_absent_error, path_state
-from .requirements_file import (
-    InvalidProjectRequirementError,
-    parse_project_requirement,
-    require_string_list,
-)
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -1,4 +1,4 @@
-"""Property tests for the matrix-expansion logic in :mod:`nab_python.target`.
+"""Property tests for the matrix-expansion logic in :mod:`nab_provider.target`.
 
 The matrix expansion produces one ``ResolveTarget`` per
 ``(python_version, platform_id)`` pair admitted by a PEP 440
@@ -23,8 +23,8 @@ from hypothesis import strategies as st
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
-from nab_python.tags import PlatformSpec
-from nab_python.target import (
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import (
     KNOWN_PYTHON_MINORS,
     PLATFORM_MARKERS,
     Matrix,

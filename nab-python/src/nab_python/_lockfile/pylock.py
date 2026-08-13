@@ -41,9 +41,9 @@ from nab_provider._vendor.packaging.pylock import (
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name, is_normalized_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 
 from ..config import conflict_exclusion_groups, conflict_member_groups
-from ..conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from .builder import require_artifact_hashes
 from .coverage import validate_marker_coverage
 from .disjointness import validate_marker_disjointness
@@ -53,6 +53,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from collections.abc import Set as AbstractSet
 
+    from nab_provider.target import ResolveTarget
+
     from ..lockfile import (
         LockInput,
         PinShape,
@@ -60,7 +62,6 @@ if TYPE_CHECKING:
         TargetLock,
         WheelArtifact,
     )
-    from ..target import ResolveTarget
 
 
 __all__ = [
@@ -1371,7 +1372,7 @@ def _selection_marker(
     <variable>`` for every other member of every conflict set the
     selection draws from, so at most one fork installs.  With no
     ``dropped`` members this is the target's
-    :attr:`~nab_python.target.ResolveTarget.marker_string` plus the
+    :attr:`~nab_provider.target.ResolveTarget.marker_string` plus the
     negations, and a selection drawing from no exclusion group is
     ``marker_string`` unchanged.
 

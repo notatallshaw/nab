@@ -1,4 +1,4 @@
-"""The fetch interface a host supplies to :class:`~nab_python.provider.Provider`.
+"""The fetch interface a host supplies to :class:`~nab_provider.provider.Provider`.
 
 The provider reaches the world only through this interface: the index, the
 directory read, the VCS clone, the archive download and the :pep:`517` build
@@ -22,13 +22,13 @@ answered inline and report failure by raising rather than by writing an error
 slot.  There is nothing for the provider to do while one is outstanding.
 
 A request registers its waiter under a pending key.
-:func:`~nab_python.store.metadata_pending_key` and
-:func:`~nab_python.store.range_pending_key` build the ``metadata:`` and
+:func:`~nab_provider.store.metadata_pending_key` and
+:func:`~nab_provider.store.range_pending_key` build the ``metadata:`` and
 ``range:`` keys; the ``listing:``, ``sdist:`` and ``sdist-archive:`` keys have
 no builder.
 
 The store is a class, not a protocol: a protocol over it would restate
-:class:`~nab_python.store.InMemoryIndex` method for method. A reader wanting one
+:class:`~nab_provider.store.InMemoryIndex` method for method. A reader wanting one
 slot declares that slice itself, as :mod:`nab_python._lockfile.builder` does for
 the serving-index label.
 """
@@ -149,9 +149,9 @@ class FetchPort(Protocol):
         extracts the archive, reads the metadata it declares (running a
         :pep:`517` backend when ``request.build_policy`` permits it and the
         static read yields nothing), and stores the result under
-        :meth:`~nab_python.store.InMemoryIndex.store_source`.  Answered inline:
-        a failure raises :class:`~nab_python.errors.UnsupportedSdistError`, or
-        :class:`~nab_python.errors.SourceBuildPolicyError` when the policy is
+        :meth:`~nab_provider.store.InMemoryIndex.store_source`.  Answered inline:
+        a failure raises :class:`~nab_provider.errors.UnsupportedSdistError`, or
+        :class:`~nab_provider.errors.SourceBuildPolicyError` when the policy is
         what refused it.  A host that passes no declared sources never reaches
         it.
         """
@@ -169,7 +169,7 @@ class FetchPort(Protocol):
         ``url`` names the sdist the provider picked out of the listing and
         ``sdist_hashes`` are the digests the index published for it.  The
         result lands under
-        :meth:`~nab_python.store.InMemoryIndex.store_built_metadata` and the
+        :meth:`~nab_provider.store.InMemoryIndex.store_built_metadata` and the
         provider checks it against the candidate it asked for.  Answered
         inline, like :meth:`request_source_listing`.  A host that owns building
         above the port never reaches it.

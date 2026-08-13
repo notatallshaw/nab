@@ -3,7 +3,7 @@
 A "workspace" is a table of members declared by a project: either
 ``[tool.nab.workspace]`` in its ``pyproject.toml`` or ``[workspace]`` in
 the project-dir ``nab.toml``.  Every member is synthesised into a
-:class:`~nab_python.provider.LocalSource`.  The provider then prefers
+:class:`~nab_provider.provider.LocalSource`.  The provider then prefers
 those local sources over PyPI by canonical name, so a member package
 resolves against its in-tree source instead of being fetched from the
 index.
@@ -26,10 +26,10 @@ from typing import TYPE_CHECKING, Any
 import tomli
 
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.policy import LocalSource
 
 from ._toml import tool_nab_section
 from .paths import path_state, resolve_path
-from .policy import LocalSource
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

@@ -1,15 +1,10 @@
 """Validating declared sources and turning one into a synthetic listing.
 
-A ``LocalSource`` becomes the only candidate for a package: PyPI is
-not consulted.  A ``VcsSource`` clones the repo and an ``ArchiveSource``
-downloads and hash-verifies a ``.tar.gz`` and extracts it; both reuse the
-``LocalSource`` extraction path.  Each produces a single synthetic
-``SdistFile`` whose version is read from ``[project].version``.
-
-The clone, the download and the directory read are the host's, behind
-:meth:`~nab_python.fetch_port.FetchPort.request_source_listing`.  What is left
-here is the part that needs no world: checking the declarations at construction
-time, and turning the directory the host produced into one candidate.
+A declared source becomes the only candidate for its package: PyPI is not
+consulted.  The clone, the download and the directory read are the host's,
+behind :meth:`~nab_provider.fetch_port.FetchPort.request_source_listing`; what
+comes back becomes one synthetic ``SdistFile`` whose version is read from
+``[project].version``.
 """
 
 from __future__ import annotations
@@ -39,7 +34,7 @@ def index_local_sources(
 ) -> dict[str, LocalSource]:
     """Validate ``LocalSource`` entries and return a canonical-name map.
 
-    Admitted at every :class:`~nab_python.provider.BuildPolicy` level; the
+    Admitted at every :class:`~nab_provider.provider.BuildPolicy` level; the
     policy only governs whether the backend may run when the static
     pyproject read returns nothing usable.
     """
@@ -63,9 +58,6 @@ def seed_synthetic_listing(
     descriptor: str,
 ) -> list[tuple[Version, SdistFile]]:
     """Produce a one-version listing for a materialised source."""
-    # The source's own [project].name must canonicalise to the requested name;
-    # otherwise it declares a different project, and pinning it here would carry
-    # the wrong version and dependencies.
     actual = canonicalize_name(metadata.name)
     if actual != normalized:
         msg = (
@@ -98,14 +90,13 @@ def index_vcs_sources(
 ) -> dict[str, VcsSource]:
     """Validate VCS sources and return a canonical-name map.
 
-    Admitted at every :class:`~nab_python.provider.BuildPolicy` level; the
-    policy only governs whether the backend may run on the clone.
-    ``VcsPolicy.BLOCK`` still refuses any declaration up-front because that is
-    an independent decision about whether VCS fetching is permitted at all.
+    Admitted at every :class:`~nab_provider.provider.BuildPolicy` level, like a
+    local source.  ``VcsPolicy.BLOCK`` still refuses any declaration up-front:
+    whether VCS fetching is permitted at all is a separate decision.
 
-    Each URL is passed through :func:`admit_vcs_url` so the scheme,
-    repo, and pin allowlists apply to ``[[tool.nab.vcs-sources]]``
-    just like project-root direct-URL requirements.
+    Each URL is passed through :func:`admit_vcs_url` so the scheme, repo, and
+    pin allowlists apply to ``[[tool.nab.vcs-sources]]`` just like project-root
+    direct-URL requirements.
     """
     if not sources:
         return {}
@@ -135,10 +126,10 @@ def index_archive_sources(
 ) -> dict[str, ArchiveSource]:
     """Validate archive sources and return a canonical-name map.
 
-    Admitted at every :class:`~nab_python.provider.BuildPolicy` level; the
-    policy only governs whether the backend may run on the extracted tree.
-    There is no ``VcsPolicy``-style gate: the download is hash-verified, and
-    which archive URLs are permitted is decided at config parse.
+    Admitted at every :class:`~nab_provider.provider.BuildPolicy` level, like a
+    local source.  There is no ``VcsPolicy``-style gate: the download is
+    hash-verified, and which archive URLs are permitted is decided at config
+    parse.
     """
     if not sources:
         return {}

@@ -1,10 +1,8 @@
 """Parsing and vocabulary for a ``git+https://repo.git@ref#...`` requirement.
 
-The URL shapes and the records a clone is described by.  Running the clone
-is the host's job and lives in :mod:`nab_index.vcs`; deciding whether a URL
-is admitted at all is :func:`nab_python.vcs_admission.admit_vcs_url`.  Both
-of those need the same vocabulary, and neither should have to import the
-other to get it.
+Running the clone belongs to :mod:`nab_index.vcs`, admitting a URL at all to
+:func:`nab_provider.vcs_admission.admit_vcs_url`, and both need this
+vocabulary.
 """
 
 from __future__ import annotations
@@ -25,8 +23,7 @@ __all__ = [
     "VcsRequest",
 ]
 
-# Match a 40-char hex git/hg commit SHA (case-insensitive).  Exported so the
-# VCS-admission policy shares one definition with the clone-time validation.
+# Exported so VCS admission and clone-time validation share one definition.
 FULL_GIT_SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _VCS_PREFIX_RE = re.compile(r"^git\+")
 
@@ -56,9 +53,9 @@ class VcsRequest:
     """Parsed representation of a ``git+https://repo.git@ref#...`` URL.
 
     ``ref`` may be a 40-char SHA or a branch / tag name.  ``ref`` of
-    ``""`` means "HEAD"; the caller is expected to have decided
-    whether floating refs are permitted.  ``subdirectory`` is parsed
-    from the ``#subdirectory=...`` fragment if present.
+    ``""`` means HEAD; policing floating refs is the caller's job.
+    ``subdirectory`` is parsed from the ``#subdirectory=...`` fragment
+    if present.
     """
 
     scheme: str

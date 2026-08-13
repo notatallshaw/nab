@@ -1,12 +1,12 @@
 """Conflict-kind constants and PEP 508 marker-variable mapping.
 
-A leaf module that :mod:`nab_python.config`, :mod:`nab_python.target`, and
+A leaf module that :mod:`nab_python.config`, :mod:`nab_provider.target`, and
 :mod:`nab_python._lockfile.disjointness` can import without forming a
 cycle.  :class:`nab_python.config.ConflictKind` takes its enum values from
 ``KIND_EXTRA`` / ``KIND_GROUP`` so a rename here flows to every consumer.
 
 Nothing here imports :mod:`packaging.markersets`.  Evaluating a dependency
-marker does, and lives in :mod:`nab_python.marker_holds` for that reason.
+marker does, and lives in :mod:`nab_provider.marker_holds` for that reason.
 """
 
 from __future__ import annotations

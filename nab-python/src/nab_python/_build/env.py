@@ -42,14 +42,14 @@ from installer.sources import WheelFile
 from nab_index.client import extract_sdist_archive
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 
-from ..errors import MissingExtraError
-from ..policy import BuildPolicy, DistPolicy
-from ..vcs_admission import UnsupportedVcsError
+from nab_provider.errors import MissingExtraError
+from nab_provider.policy import BuildPolicy, DistPolicy
+from nab_provider.vcs_admission import UnsupportedVcsError
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from ..config import NabProjectConfig
 from ..download import DownloadError, download_lock
 from ..lockfile import IndexPin
-from ..requirements_file import InvalidProjectRequirementError
+from nab_provider.requirements_file import InvalidProjectRequirementError
 from .errors import BuildBackendError
 
 if TYPE_CHECKING:
@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 
     from ..config import IndexOverride, PackageOverride
     from ..lockfile import LockInput, PinShape, SdistArtifact, TargetLock
-    from ..tags import TagSet
+    from nab_provider.tags import TagSet
 
     _OverrideT = TypeVar("_OverrideT", PackageOverride, IndexOverride)
 

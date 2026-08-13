@@ -47,8 +47,8 @@ from nab_index.client import (
 )
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
 from nab_index.transport import HttpError
+from nab_provider.metadata import parse_metadata
 from nab_provider.serialization import SimpleSerialization
-from nab_python.metadata import parse_metadata
 
 LISTING = {
     "meta": {"api-version": "1.0"},

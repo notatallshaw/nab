@@ -26,15 +26,13 @@ from nab_provider._vendor.packaging.markersets import (
     MarkerSet,
     variable_names,
 )
-
-from ..target import UNBOUNDABLE_MARKER_VARIABLES, declared_range_marker
+from nab_provider.target import UNBOUNDABLE_MARKER_VARIABLES, declared_range_marker
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from nab_provider._vendor.packaging.markers import Marker
-
-    from ..target import ResolveTarget
+    from nab_provider.target import ResolveTarget
 
 
 __all__ = [

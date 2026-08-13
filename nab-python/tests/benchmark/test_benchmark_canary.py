@@ -16,8 +16,8 @@ from typing_extensions import Self
 
 from nab_index.multi_index import IndexConfig
 from nab_provider.serialization import SimpleSerialization
+from nab_provider.target import ResolveTarget
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
-from nab_python.target import ResolveTarget
 
 # canary.py imports its siblings by bare name.
 pytestmark = [

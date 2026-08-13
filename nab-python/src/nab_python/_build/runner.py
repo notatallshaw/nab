@@ -13,7 +13,7 @@ contains fields nab cannot read statically, run_build_backend:
    a full ``build_wheel`` and reading the wheel's own dist-info when
    the backend lacks ``prepare_metadata_for_build_wheel``.
 4. Parses the resulting ``METADATA`` file into
-   :class:`~nab_python.metadata.WheelMetadata`.
+   :class:`~nab_provider.metadata.WheelMetadata`.
 
 The hatchling-with-dynamic-deps quirk uv documents (the prepare
 hook can return data that does not match the eventual wheel) is
@@ -46,7 +46,7 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name, parse_wheel_filename
 from nab_provider._vendor.packaging.version import Version
-from ..metadata import WheelMetadata, validate_specifier_versions
+from nab_provider.metadata import WheelMetadata, validate_specifier_versions
 from ..paths import PathState, path_state
 from .env import BuildChain, BuildEnvError, NabBuildEnv
 from .errors import BuildBackendError
@@ -78,7 +78,7 @@ def run_build_backend(
 ) -> WheelMetadata:
     """Extract wheel metadata for ``source_dir`` via the build backend.
 
-    Returns a :class:`~nab_python.metadata.WheelMetadata` parsed from
+    Returns a :class:`~nab_provider.metadata.WheelMetadata` parsed from
     the ``METADATA`` file the backend produces.  Raises
     :class:`BuildBackendError` on any failure: backend import
     error, a rejected ``backend-path``, hook crash, malformed

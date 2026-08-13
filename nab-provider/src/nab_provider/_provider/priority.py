@@ -1,4 +1,4 @@
-"""Priority computation for :class:`nab_python.provider.Provider`.
+"""Priority computation for :class:`nab_provider.provider.Provider`.
 
 Owns the tier/matching/culprit logic that backs ``prioritize``.
 Affected packages with high conflict counts get tier 0 (decide
@@ -73,7 +73,7 @@ def compute_matching(
     arrival through ``arrived_listing`` so it agrees with ``is_ready`` for the
     whole decision scan.
 
-    Under :attr:`~nab_python.provider.DecisionOrder.STABLE` it waits for the
+    Under :attr:`~nab_provider.provider.DecisionOrder.STABLE` it waits for the
     listing instead, so the count is the real one and this sentinel is only
     reached by a package with no listing to count.
     """
@@ -164,7 +164,7 @@ def prioritize(
     the backtrack storm when the base is decided before the extras proxy).
 
     Blocks on I/O only under
-    :attr:`~nab_python.provider.DecisionOrder.STABLE`, which waits for a
+    :attr:`~nab_provider.provider.DecisionOrder.STABLE`, which waits for a
     listing rather than ranking its absence.
     """
     provider.stats.prioritize_calls += 1

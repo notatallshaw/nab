@@ -21,6 +21,7 @@ import tomli
 from nab._lock import _join_command, _join_for_cmd, _quote_for_cmd
 from nab.cli import app
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.target import ResolveTarget
 from nab_python.lockfile import (
     IndexPin,
     SdistArtifact,
@@ -28,7 +29,6 @@ from nab_python.lockfile import (
     WheelArtifact,
 )
 from nab_python.resolve import ResolveResult, TargetResult
-from nab_python.target import ResolveTarget
 
 V = Version
 

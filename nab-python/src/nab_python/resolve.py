@@ -3,7 +3,7 @@
 One engine serves every project.  ``[tool.nab.matrix]`` declares many
 environments and a bare project declares none (the host is the target),
 but either way :func:`~nab_python.config.plan_targets` hands back a list
-of :class:`~nab_python.target.ResolveTarget` and each one gets a
+of :class:`~nab_provider.target.ResolveTarget` and each one gets a
 single-environment resolve against a shared
 :class:`~nab_python.fetch.FetchCoordinator`, so metadata is fetched once
 across them.
@@ -38,6 +38,26 @@ from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.requirements_file import (
+    expand_extra_requirements,
+    expand_group_includes,
+    expand_self_extras,
+    resolve_groups_to_requirements,
+    self_extra_markers,
+)
+from nab_provider.resolver_inputs import (
+    build_resolver_inputs as build_resolver_inputs,  # noqa: PLC0414  (re-export)
+)
+from nab_provider.target import (
+    UNBOUNDABLE_MARKER_VARIABLES,
+    NonIntervalMarkerError,
+    ResolveTarget,
+    environment_declaration,
+    marker_variables,
+    micro_boundary_points,
+    slices_from_points,
+)
 from nab_resolver.errors import ResolutionError
 
 from ._resolve.engine import (
@@ -70,7 +90,6 @@ from .config import (
 )
 from .fetch import FetchCoordinator
 from .lockfile import LockInput, TargetLock
-from .marker_holds import dependency_marker_holds
 from .pyproject_files import (
     read_pyproject_build_requires,
     read_pyproject_dependencies,
@@ -78,34 +97,14 @@ from .pyproject_files import (
     read_pyproject_name,
     read_pyproject_optional_dependencies,
 )
-from .requirements_file import (
-    expand_extra_requirements,
-    expand_group_includes,
-    expand_self_extras,
-    resolve_groups_to_requirements,
-    self_extra_markers,
-)
-from .resolver_inputs import (
-    build_resolver_inputs as build_resolver_inputs,  # noqa: PLC0414  (re-export)
-)
-from .target import (
-    UNBOUNDABLE_MARKER_VARIABLES,
-    NonIntervalMarkerError,
-    ResolveTarget,
-    environment_declaration,
-    marker_variables,
-    micro_boundary_points,
-    slices_from_points,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
     from nab_index.transport import AsyncHttpTransport
     from nab_provider._vendor.packaging.version import Version
-
-    from .provider import ResolutionStrategy
-    from .resolver_inputs import MarkerHolds
+    from nab_provider.provider import ResolutionStrategy
+    from nab_provider.resolver_inputs import MarkerHolds
 
 
 __all__ = [
@@ -279,7 +278,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs a caller drives a bar
 
     ``marker_holds`` decides whether a root requirement's marker holds for
     a target's environment; it defaults to nab's own
-    :func:`~nab_python.marker_holds.dependency_marker_holds`.  A host
+    :func:`~nab_provider.marker_holds.dependency_marker_holds`.  A host
     driving the engine with its own marker machinery passes that instead,
     and then nothing below this call needs ``packaging.markersets``.
     """
@@ -425,14 +424,14 @@ def _declared_environments(
     dropped there, and an installer that answers one of those markers
     differently needs a different package set.  Each declaration is built
     from the markers that target's resolve actually read (see
-    :func:`~nab_python.target.environment_declaration`).
+    :func:`~nab_provider.target.environment_declaration`).
 
     A marker on an axis the lock cannot bound (see
-    :data:`~nab_python.target.UNBOUNDABLE_MARKER_VARIABLES`) is reported:
+    :data:`~nab_provider.target.UNBOUNDABLE_MARKER_VARIABLES`) is reported:
     the lock stays open on it, so an installer whose kernel differs will
     still accept the lock, with the dep that marker gated missing.  A marker
     on ``implementation_version`` under a non-CPython target is reported the
-    same way (see :func:`~nab_python.target.unboundable_variables`): the
+    same way (see :func:`~nab_provider.target.unboundable_variables`): the
     value there is synthetic, so the lock leaves the axis open.
     """
     variables: set[str] = set()
@@ -781,7 +780,7 @@ def _extra_requirements(
     is walked transitively, and its PEP 508 marker is carried onto the
     requirements it reaches, so a marker-gated self-reference activates
     its extra only on the targets whose environment satisfies it (see
-    :func:`~nab_python.requirements_file.expand_extra_requirements`).
+    :func:`~nab_provider.requirements_file.expand_extra_requirements`).
     """
     if not selected:
         return []

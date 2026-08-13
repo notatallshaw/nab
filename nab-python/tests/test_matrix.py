@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from nab_provider._vendor.packaging.markers import Marker, default_environment
-from nab_python.tags import PlatformSpec
-from nab_python.target import (
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import (
     KNOWN_PYTHON_MINORS,
     Matrix,
     _pythons_in_range,

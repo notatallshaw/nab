@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 from nab_index.transport import HttpError
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
 from nab_python.download import (
     DownloadEntry,
     DownloadError,
@@ -29,8 +31,6 @@ from nab_python.lockfile import (
     VcsPin,
     WheelArtifact,
 )
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
 
 
 def _target(

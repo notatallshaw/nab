@@ -1,4 +1,4 @@
-"""Decision-aware look-ahead for :class:`nab_python.provider.Provider`.
+"""Decision-aware look-ahead for :class:`nab_provider.provider.Provider`.
 
 Owns ``_look_ahead_ok`` and the pending-block tables that record why a
 candidate was rejected.  ``flush_pending_blocks`` turns those into

@@ -37,6 +37,7 @@ from nab_index.multi_index import IndexConfig, MultiIndexClient
 from nab_index.parsed_listing import encode as encode_parsed
 from nab_index.transport import HttpError, HttpResponse
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.metadata import WheelMetadata
 from nab_provider.serialization import SimpleSerialization
 from nab_python.config import NabProjectConfig
 from nab_python.fetch import (
@@ -49,7 +50,6 @@ from nab_python.fetch import (
     WarmSyncStats,
     _resolve_routes,
 )
-from nab_python.metadata import WheelMetadata
 
 
 @pytest.fixture

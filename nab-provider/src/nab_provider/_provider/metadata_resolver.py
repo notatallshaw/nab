@@ -2,7 +2,7 @@
 
 Owns the bulk of ``get_dependencies``'s implementation: fetching
 wheel METADATA / sdist PKG-INFO via the coordinator, parsing it
-into a :class:`~nab_python.metadata.WheelMetadata`, and classifying
+into a :class:`~nab_provider.metadata.WheelMetadata`, and classifying
 each ``Requires-Dist`` entry into base deps vs per-extra deps.
 """
 
@@ -156,7 +156,7 @@ def _ladder_failure(
     """Return the error for a version no rung of the ladder could answer.
 
     An unreadable local wheel takes precedence, and is deliberately not a
-    :class:`~nab_python.provider.MetadataError`: look-ahead treats those as a
+    :class:`~nab_provider.provider.MetadataError`: look-ahead treats those as a
     rejection, so the version would be dropped and an older release pinned
     instead of the resolve failing.
     """
@@ -357,7 +357,7 @@ def pick_dist(
     Among the wheels that remain the cheapest metadata source wins: a wheel
     with a :pep:`658` ``metadata_url``, then any wheel.  Only a version
     publishing no wheel is read from its sdist, which lets
-    :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` keep wheels in the
+    :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` keep wheels in the
     listing purely as a metadata source.
     """
     if len(dists) == 1:
@@ -403,14 +403,14 @@ def resolve_dynamic_sdist(
     ``[project]`` table statically declares ``dependencies`` and
     ``optional-dependencies``, those replace the dynamic PKG-INFO
     values.  When that fallback yields nothing and the effective
-    :class:`~nab_python.provider.BuildPolicy` is
-    :attr:`~nab_python.provider.BuildPolicy.BUILD_REMOTE`, the sdist is
+    :class:`~nab_provider.provider.BuildPolicy` is
+    :attr:`~nab_provider.provider.BuildPolicy.BUILD_REMOTE`, the sdist is
     fetched, extracted, and handed to a PEP 517 backend by
-    :func:`nab_python._provider.build_remote.build_remote_sdist`.  Any
+    :func:`nab_provider._provider.build_remote.build_remote_sdist`.  Any
     other effective policy raises
-    :class:`~nab_python.provider.UnsupportedSdistError`; the resolver
+    :class:`~nab_provider.provider.UnsupportedSdistError`; the resolver
     skips the version via
-    :func:`nab_python._provider.lookahead.look_ahead_ok` and surfaces the
+    :func:`nab_provider._provider.lookahead.look_ahead_ok` and surfaces the
     accumulated reasons if no candidate ultimately works.
     """
     # Imported in-function so tests can patch the module attribute.  It could
@@ -654,7 +654,7 @@ def parse_and_cache_metadata(
     :class:`UnsupportedSdistError` under :class:`BuildPolicy.NEVER`.
 
     The parsed :class:`WheelMetadata` is shared via the
-    :class:`~nab_python.store.InMemoryIndex` so that universal-mode
+    :class:`~nab_provider.store.InMemoryIndex` so that universal-mode
     resolves only run :func:`parse_metadata` once per
     ``(package, version)`` regardless of how many tuples ask for it.  The
     cache is keyed on ``metadata_text`` as well, so a tuple holding another
@@ -725,7 +725,7 @@ def _reject_incompatible_python(
 ) -> None:
     """Reject an index candidate whose METADATA Requires-Python excludes the target.
 
-    The listing gate (:func:`nab_python._provider.listing.excluded_by_python`)
+    The listing gate (:func:`nab_provider._provider.listing.excluded_by_python`)
     reads the optional Simple-API ``requires-python`` hint, so a version whose
     listing omits it reaches here unfiltered.  The wheel's own METADATA (or the
     sdist's PKG-INFO) carries the authoritative field; a per-package override
@@ -812,7 +812,7 @@ def cache_deps_from_metadata(
     local-source path (which already has a :class:`WheelMetadata` from
     :func:`nab_python.build_backend.extract_static_metadata`), and the
     skip-fetch branch of
-    :meth:`nab_python.provider.Provider.get_dependencies` (which hands in a
+    :meth:`nab_provider.provider.Provider.get_dependencies` (which hands in a
     bare :class:`WheelMetadata` for a complete ``dependencies`` override).
     """
     metadata = effective_metadata(provider, cache_key, metadata)
@@ -917,7 +917,7 @@ def target_dep_signature(
     wheel declares for itself.  The per-package override is applied first, so a
     ``provides-extra`` override is compared in the same view the resolver pins
     from.  A complete ``dependencies`` override takes the skip-fetch path in
-    :meth:`nab_python.provider.Provider.get_dependencies` and never reaches
+    :meth:`nab_provider.provider.Provider.get_dependencies` and never reaches
     here.  ``Requires-Python`` is left out: it gates admission, not the
     dependency edges a lock records.
 
@@ -961,9 +961,9 @@ def check_sibling_metadata_divergence(
 
     Only siblings already resident in the shared index are compared; this never
     fetches.  On the first tie sibling whose projection differs from the pick's,
-    a :class:`~nab_python.provider.SiblingMetadataDivergenceError` is raised.  It
-    is deliberately not a :class:`~nab_python.provider.MetadataError`, which
-    :meth:`~nab_python.provider.Provider._look_ahead_ok` would turn into a
+    a :class:`~nab_provider.provider.SiblingMetadataDivergenceError` is raised.  It
+    is deliberately not a :class:`~nab_provider.provider.MetadataError`, which
+    :meth:`~nab_provider.provider.Provider._look_ahead_ok` would turn into a
     dropped candidate: dropping would silently remove a version an installer can
     legitimately install.
     """
@@ -1105,7 +1105,7 @@ def _wheels_tie(
 
     With no tag axis nothing ranks the wheels that :func:`_python_axis_narrowed`
     left standing, so each of them is a real ambiguity.  Otherwise a sibling
-    ties only when its :meth:`~nab_python.tags.TagSet.wheel_rank` key equals
+    ties only when its :meth:`~nab_provider.tags.TagSet.wheel_rank` key equals
     the pick's and is not None; a sibling the pick ranks strictly below is
     never installed and is exempt.
     """

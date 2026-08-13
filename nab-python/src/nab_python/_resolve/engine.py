@@ -24,14 +24,14 @@ from typing import TYPE_CHECKING, Any, Protocol
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.provider import ListingFilterCache, Provider, join_extra, split_extra
+from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
+from nab_provider.target import micro_boundary_points, slices_from_points
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver, ResolverObserver
 from nab_resolver.types import IncompatibilityCause
 
 from ..lockfile import build_target_lock
-from ..provider import ListingFilterCache, Provider, join_extra, split_extra
-from ..resolver_inputs import ProxyConstraints, build_resolver_inputs
-from ..target import micro_boundary_points, slices_from_points
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -40,14 +40,14 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.markers import Marker
     from nab_provider._vendor.packaging.requirements import Requirement
     from nab_provider._vendor.packaging.version import Version
+    from nab_provider.provider import ResolutionStrategy
+    from nab_provider.resolver_inputs import MarkerHolds
+    from nab_provider.target import ResolveTarget
     from nab_resolver.types import Incompatibility
 
     from ..config import NabProjectConfig
     from ..fetch import FetchCoordinator
     from ..lockfile import TargetLock
-    from ..provider import ResolutionStrategy
-    from ..resolver_inputs import MarkerHolds
-    from ..target import ResolveTarget
 
 
 _logger = logging.getLogger(__name__)

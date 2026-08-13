@@ -6,7 +6,7 @@ the sdist and checks what the build declared;
 space and hands the tree to a :pep:`517` backend.
 
 Reached only through
-:meth:`~nab_python.fetch_port.FetchPort.request_built_metadata`, so a host that
+:meth:`~nab_provider.fetch_port.FetchPort.request_built_metadata`, so a host that
 builds sdists its own way runs none of it.
 """
 
@@ -17,13 +17,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nab_index.client import extract_sdist_archive
-
-from .errors import UnsupportedSdistError
+from nab_provider.errors import UnsupportedSdistError
 
 if TYPE_CHECKING:
+    from nab_provider.fetch_port import FetchPort
+    from nab_provider.metadata import WheelMetadata
+
     from .config import NabProjectConfig
-    from .fetch_port import FetchPort
-    from .metadata import WheelMetadata
 
 
 def build_remote_sdist(
@@ -40,7 +40,7 @@ def build_remote_sdist(
     which together key the archive slot in the store.  A fetch that recorded an
     integrity failure re-raises it; a fetch that produced nothing, an archive
     that will not extract, and a backend that fails all raise
-    :class:`~nab_python.errors.UnsupportedSdistError`.
+    :class:`~nab_provider.errors.UnsupportedSdistError`.
     """
     # Imported in-function so tests can patch the module attribute, and to
     # keep ``_build.runner`` (and the ``build`` package behind it) off the

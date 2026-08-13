@@ -21,7 +21,19 @@ from unittest.mock import patch
 import pytest
 
 from nab_index.multi_index import IndexConfig
+from nab_provider.provider import (
+    ArchiveSource,
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    ResolutionStrategy,
+    ResolveMode,
+    VcsConfig,
+    VcsPolicy,
+    VcsSource,
+)
 from nab_provider.serialization import SimpleSerialization
+from nab_provider.tags import PlatformSpec
 from nab_python.config import (
     _INDEX_KEYS,
     ConflictKind,
@@ -56,18 +68,6 @@ from nab_python.config_sources import (
     render_list,
     resolve_config,
 )
-from nab_python.provider import (
-    ArchiveSource,
-    BuildPolicy,
-    DecisionOrder,
-    DistPolicy,
-    ResolutionStrategy,
-    ResolveMode,
-    VcsConfig,
-    VcsPolicy,
-    VcsSource,
-)
-from nab_python.tags import PlatformSpec
 from nab_python.workspace import WorkspaceConfig
 
 

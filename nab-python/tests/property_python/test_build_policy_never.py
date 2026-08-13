@@ -25,17 +25,17 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from nab_index.client import SdistFile
+from nab_provider._provider import build_remote
 from nab_provider._vendor.packaging.version import Version
-from nab_python._provider import build_remote
-from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python.metadata import WheelMetadata
-from nab_python.provider import (
+from nab_provider.metadata import WheelMetadata
+from nab_provider.provider import (
     BuildPolicy,
     DistPolicy,
     Provider,
     UnsupportedSdistError,
 )
-from nab_python.target import ResolveTarget
+from nab_provider.target import ResolveTarget
+from nab_python._testing.coordinator_fake import make_coordinator
 
 from .strategies import PROPERTY_SETTINGS
 

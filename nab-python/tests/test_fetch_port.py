@@ -11,13 +11,19 @@ from pathlib import Path
 import pytest
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
+from nab_provider.fetch_port import FetchPort, Waitable
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_python.fetch import FetchCoordinator
-from nab_python.fetch_port import FetchPort, Waitable
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "nab_python"
+PROVIDER_SRC = (
+    Path(__file__).resolve().parents[2] / "nab-provider" / "src" / "nab_provider"
+)
 
-PROVIDER_SOURCES = (SRC / "provider.py", *sorted((SRC / "_provider").glob("*.py")))
+PROVIDER_SOURCES = (
+    PROVIDER_SRC / "provider.py",
+    *sorted((PROVIDER_SRC / "_provider").glob("*.py")),
+)
 """The modules the census reads for the ``coordinator`` handle.
 
 A module outside this list can read the handle unseen, so the list is part of

@@ -98,9 +98,7 @@ class InMemoryIndex:
         # a matrix does not rebuild one sdist per tuple.
         self._resolved_sdist_metadata: dict[tuple[str, str], Any] = {}
 
-        # What a host made of a declared local, VCS or archive source, and the
-        # metadata a PEP 517 build produced for a remote sdist.  Both are the
-        # results of the two port members the provider cannot serve itself.
+        # What a host made of a declared source, and of a remote sdist build.
         self._sources: dict[str, SourceMaterialization] = {}
         self._built_metadata: dict[tuple[str, str], Any] = {}
 
@@ -338,7 +336,7 @@ class InMemoryIndex:
         """Whether the caller owns ``package``'s one offline-skip warning.
 
         True for the first caller only.  Targets of a run share this index but
-        each builds its own :class:`~nab_python.provider.Provider`, so the
+        each builds its own :class:`~nab_provider.provider.Provider`, so the
         state lives here.
         """
         with self._lock:
@@ -435,9 +433,8 @@ class InMemoryIndex:
     ) -> None:
         """Store an sdist's parsed pyproject.toml for static-metadata fallback.
 
-        The fetcher writes both PKG-INFO and pyproject.toml when an sdist is
-        downloaded, and parses the TOML on the way in so the store stays free
-        of a TOML library.  ``None`` reads the same as never-fetched.
+        The host parses the TOML on the way in, so the store needs no TOML
+        library.  ``None`` reads the same as never-fetched.
         """
         with self._lock:
             self._sdist_pyproject[(package, version)] = data
@@ -521,7 +518,7 @@ class InMemoryIndex:
         """Return cached post-reconciliation sdist metadata or ``None``.
 
         The cached value is what
-        :func:`nab_python._provider.metadata_resolver.resolve_dynamic_sdist`
+        :func:`nab_provider._provider.metadata_resolver.resolve_dynamic_sdist`
         returned.
         """
         with self._lock:
@@ -552,9 +549,8 @@ class InMemoryIndex:
     def get_built_metadata(self, package: str, version: str) -> Any | None:
         """Return built METADATA for ``(package, version)``, or ``None``.
 
-        Unlike :meth:`get_resolved_sdist_metadata` this is what the build
-        declared, before the provider checks it against the candidate it asked
-        for, so a rejected build never reaches the reconciled cache.
+        Unlike :meth:`get_resolved_sdist_metadata`, this is what the build
+        declared, before the provider checks it against the candidate.
         """
         with self._lock:
             return self._built_metadata.get((package, version))

@@ -10,15 +10,8 @@ import pytest
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import InvalidName
-from nab_python.marker_holds import UnevaluableMarkerError
-from nab_python.pyproject_files import (
-    read_pyproject_build_requires,
-    read_pyproject_dependencies,
-    read_pyproject_groups,
-    read_pyproject_name,
-    read_pyproject_optional_dependencies,
-)
-from nab_python.requirements_file import (
+from nab_provider.marker_holds import UnevaluableMarkerError
+from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
     _add_extra_marker,
@@ -29,6 +22,13 @@ from nab_python.requirements_file import (
     raise_for_unsatisfiable,
     resolve_groups_to_requirements,
     self_extra_markers,
+)
+from nab_python.pyproject_files import (
+    read_pyproject_build_requires,
+    read_pyproject_dependencies,
+    read_pyproject_groups,
+    read_pyproject_name,
+    read_pyproject_optional_dependencies,
 )
 from nab_resolver.errors import ResolutionError
 
@@ -515,7 +515,9 @@ class TestExpandSelfExtras:
             monkeypatch.setattr(req, "extras", sorted(req.extras, reverse=True))
             return req
 
-        monkeypatch.setattr("nab_python.requirements_file.Requirement", reversed_extras)
+        monkeypatch.setattr(
+            "nab_provider.requirements_file.Requirement", reversed_extras
+        )
         assert expand_self_extras(opt, "mypkg", ["all"]) == ["all", "a", "b", "c"]
 
     def test_canonical_match_collapses_underscore_dot_hyphen(self) -> None:
@@ -766,7 +768,9 @@ class TestExpandExtraRequirements:
             monkeypatch.setattr(req, "extras", sorted(req.extras, reverse=True))
             return req
 
-        monkeypatch.setattr("nab_python.requirements_file.Requirement", reversed_extras)
+        monkeypatch.setattr(
+            "nab_provider.requirements_file.Requirement", reversed_extras
+        )
         out = expand_extra_requirements(opt, "mypkg", ["all"])
         assert [r.name for r in out] == ["depA", "depB", "depC"]
 

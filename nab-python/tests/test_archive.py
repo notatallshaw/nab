@@ -31,6 +31,15 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.archive import ArchiveRequest, ArchiveRequestError
+from nab_provider.metadata import WheelMetadata
+from nab_provider.provider import (
+    ArchiveSource,
+    BuildPolicy,
+    Provider,
+    SourceNameMismatchError,
+    UnsupportedSdistError,
+)
+from nab_provider.target import ResolveTarget
 from nab_python import _sources as sources
 from nab_python._sources import _fetch_archive_bytes
 from nab_python._testing.coordinator_fake import make_coordinator
@@ -43,15 +52,6 @@ from nab_python.download import (
 )
 from nab_python.fetch import FetchCoordinator
 from nab_python.lockfile import ArchivePin, LockInput, TargetLock
-from nab_python.metadata import WheelMetadata
-from nab_python.provider import (
-    ArchiveSource,
-    BuildPolicy,
-    Provider,
-    SourceNameMismatchError,
-    UnsupportedSdistError,
-)
-from nab_python.target import ResolveTarget
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -357,7 +357,7 @@ class TestArchiveIndexing:
             )
 
     def test_archive_collides_with_local_source(self, tmp_path: Path) -> None:
-        from nab_python.provider import LocalSource
+        from nab_provider.provider import LocalSource
 
         digest = "a" * 64
         with pytest.raises(ValueError, match="duplicate source"):

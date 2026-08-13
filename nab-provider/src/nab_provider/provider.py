@@ -1,7 +1,7 @@
 """Index-backed provider for nab-resolver.
 
 Fetches package metadata on demand through a
-:class:`~nab_python.fetch_port.FetchPort`, converting PEP 440/508
+:class:`~nab_provider.fetch_port.FetchPort`, converting PEP 440/508
 types into nab-resolver Range types.
 """
 
@@ -13,18 +13,9 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, cast
 
-from nab_index.client import MalformedSimpleResponseError
-from nab_index.transport import UnserveableUrlError
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider.errors import (
-    IndexAccessError,
-    MetadataHashMismatchError,
-    SdistHashMismatchError,
-    WheelHashMismatchError,
-)
-from nab_provider.records import DistFile, SdistFile, WheelFile
 
 from ._provider import extras as _extras
 from ._provider import listing as _listing
@@ -36,14 +27,20 @@ from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
+    IndexAccessError,
     InvalidUploadTimeError,
+    MalformedSimpleResponseError,
     MetadataError,
+    MetadataHashMismatchError,
     MissingExtraError,
     OverrideConflictError,
+    SdistHashMismatchError,
     SiblingMetadataDivergenceError,
     SourceBuildPolicyError,
     SourceNameMismatchError,
+    UnserveableUrlError,
     UnsupportedSdistError,
+    WheelHashMismatchError,
 )
 from .extra_keys import join_extra, split_extra
 from .metadata import WheelMetadata
@@ -61,6 +58,7 @@ from .policy import (
 from .policy import (
     ResolveMode as ResolveMode,  # noqa: PLC0414  (re-export: not in __all__, kept importable from here)
 )
+from .records import DistFile, SdistFile, WheelFile
 from .target import host_environment
 from .vcs_admission import (
     UnsupportedVcsError,
@@ -159,7 +157,7 @@ class ListingFilterCache:
     """Base listing-filter results shared across the targets of one resolve.
 
     The pre-tag half of the listing filter (see
-    :func:`nab_python._provider.listing.base_distributions`) reads the
+    :func:`nab_provider._provider.listing.base_distributions`) reads the
     listing's files, the policy config, and the target Python, and has no
     platform axis, so targets that differ only by platform recompute an
     identical list.  Memoising it per (package, Python) leaves only the
@@ -673,7 +671,7 @@ class Provider:
                 self.coordinator.request_listing(normalized)
 
     def fetch_versions(self, package: str) -> list[tuple[Version, DistFile]]:
-        """See :func:`nab_python._provider.listing.fetch_versions`."""
+        """See :func:`nab_provider._provider.listing.fetch_versions`."""
         return _listing.fetch_versions(self, package)
 
     def serving_index(self, canonical_name: str) -> str | None:
@@ -1036,7 +1034,7 @@ class Provider:
         normalized: str,
         version_list: list[tuple[Version, DistFile]],
     ) -> list[Version]:
-        """See :func:`nab_python._provider.listing.versions_only`."""
+        """See :func:`nab_provider._provider.listing.versions_only`."""
         return _listing.versions_only(self, normalized, version_list)
 
     def _wheel_by_version(
@@ -1044,7 +1042,7 @@ class Provider:
         normalized: str,
         version_list: list[tuple[Version, DistFile]],
     ) -> dict[Version, DistFile]:
-        """See :func:`nab_python._provider.listing.wheel_by_version`."""
+        """See :func:`nab_provider._provider.listing.wheel_by_version`."""
         return _listing.wheel_by_version(self, normalized, version_list)
 
     def speculative_prefetch(
@@ -1052,17 +1050,17 @@ class Provider:
         normalized: str,
         versions: list[tuple[Version, DistFile]],
     ) -> None:
-        """See :func:`nab_python._provider.listing.speculative_prefetch`."""
+        """See :func:`nab_provider._provider.listing.speculative_prefetch`."""
         _listing.speculative_prefetch(self, normalized, versions)
 
     def prefetch_walk_ahead(self, normalized: str) -> None:
-        """See :func:`nab_python._provider.listing.prefetch_walk_ahead`."""
+        """See :func:`nab_provider._provider.listing.prefetch_walk_ahead`."""
         _listing.prefetch_walk_ahead(self, normalized, self.DEEP_PREFETCH_COUNT)
 
     def filter_distributions(
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
     ) -> list[tuple[Version, DistFile]]:
-        """See :func:`nab_python._provider.listing.filter_distributions`."""
+        """See :func:`nab_provider._provider.listing.filter_distributions`."""
         return _listing.filter_distributions(self, normalized, files)
 
     def pick_best_candidate(
@@ -1070,7 +1068,7 @@ class Provider:
         normalized: str,
         versions: list[tuple[Version, DistFile]],
     ) -> tuple[Version, DistFile] | None:
-        """See :func:`nab_python._provider.listing.pick_best_candidate`."""
+        """See :func:`nab_provider._provider.listing.pick_best_candidate`."""
         return _listing.pick_best_candidate(self, normalized, versions)
 
     def choose_version(
@@ -1640,7 +1638,7 @@ class Provider:
         versions: list[Version],
         wheel_by_version: dict[Version, DistFile],
     ) -> list[tuple[Version, str, str, Waitable]]:
-        """See :func:`nab_python._provider.listing.prefetch_batch`."""
+        """See :func:`nab_provider._provider.listing.prefetch_batch`."""
         return _listing.prefetch_batch(self, package, versions, wheel_by_version)
 
     def _await_metadata_batch(
@@ -1648,7 +1646,7 @@ class Provider:
         package: str,
         submitted: list[tuple[Version, str, str, Waitable]],
     ) -> None:
-        """See :func:`nab_python._provider.listing.await_metadata_batch`."""
+        """See :func:`nab_provider._provider.listing.await_metadata_batch`."""
         _listing.await_metadata_batch(self, package, submitted)
 
     def receive_partial_solution_hint(
@@ -1671,13 +1669,13 @@ class Provider:
     def _look_ahead_ok(
         self, package: str, version: Version, *, check_decisions: bool = True
     ) -> bool:
-        """See :func:`nab_python._provider.lookahead.look_ahead_ok`."""
+        """See :func:`nab_provider._provider.lookahead.look_ahead_ok`."""
         return _lookahead.look_ahead_ok(
             self, package, version, check_decisions=check_decisions
         )
 
     def _flush_pending_blocks(self) -> None:
-        """See :func:`nab_python._provider.lookahead.flush_pending_blocks`."""
+        """See :func:`nab_provider._provider.lookahead.flush_pending_blocks`."""
         _lookahead.flush_pending_blocks(self)
 
     def consume_pending_clauses(self) -> list[Incompatibility[str, Version]]:
@@ -2000,7 +1998,7 @@ class Provider:
             raise MetadataError(msg) from exc
 
     def prefetch_new_deps(self, deps: dict[str, VersionRange]) -> None:
-        """See :func:`nab_python._provider.listing.prefetch_new_deps`."""
+        """See :func:`nab_provider._provider.listing.prefetch_new_deps`."""
         _listing.prefetch_new_deps(self, deps)
 
     def parse_and_cache_metadata(
@@ -2106,7 +2104,7 @@ class Provider:
         high ``culprit_counts`` are demoted to tier 2 (uv's
         deprioritise-on-conflict).  Everything else is tier 1.
 
-        See :mod:`nab_python._provider.priority` for the implementation.
+        See :mod:`nab_provider._provider.priority` for the implementation.
         """
         return _priority.prioritize(
             self, package, version_range, conflict_counts, culprit_counts

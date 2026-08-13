@@ -24,12 +24,8 @@ from nab_index.vcs import (
 )
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.vcs_request import _split_repo_ref
-from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_python.fetch import FetchCoordinator
-from nab_python.lockfile import VcsPin, build_target_lock
-from nab_python.metadata import WheelMetadata
-from nab_python.provider import (
+from nab_provider.metadata import WheelMetadata
+from nab_provider.provider import (
     BuildPolicy,
     LocalSource,
     Provider,
@@ -39,7 +35,11 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
-from nab_python.target import ResolveTarget
+from nab_provider.target import ResolveTarget
+from nab_provider.vcs_request import _split_repo_ref
+from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
+from nab_python.fetch import FetchCoordinator
+from nab_python.lockfile import VcsPin, build_target_lock
 
 
 def _mark_complete(clone_dir: Path) -> None:

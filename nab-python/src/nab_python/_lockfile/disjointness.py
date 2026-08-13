@@ -26,8 +26,7 @@ from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
-
-from ..conflict_kind import KIND_EXTRA, KIND_GROUP, MARKER_VARIABLE_FOR_KIND
+from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

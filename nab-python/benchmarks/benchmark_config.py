@@ -10,10 +10,7 @@ from nab_index.multi_index import IndexConfig
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
-from nab_provider.serialization import SimpleSerialization
-from nab_python.config import NabProjectConfig, PackageOverride
-from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
-from nab_python.provider import (
+from nab_provider.provider import (
     BuildPolicy,
     DistPolicy,
     Provider,
@@ -23,13 +20,16 @@ from nab_python.provider import (
     join_extra,
     split_extra,
 )
+from nab_provider.serialization import SimpleSerialization
+from nab_python.config import NabProjectConfig, PackageOverride
+from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 
 if TYPE_CHECKING:
     from collections.abc import AbstractSet, Mapping, Sequence
     from datetime import datetime
 
+    from nab_provider.target import ResolveTarget
     from nab_python.fetch import FetchCoordinator
-    from nab_python.target import ResolveTarget
 
 
 DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS = (

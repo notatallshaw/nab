@@ -1,9 +1,7 @@
 """Key shapes for extras: the ``name[extra]`` proxy the resolver decides under.
 
-An extra is resolved as its own package, keyed ``name[extra]``, so the
-key spelling is shared by the config loader, the provider, and the lock
-writer.  It lives here, below all three, because the spelling is a
-declaration rather than provider behaviour.
+An extra resolves as its own package, so the provider and the lock writer both
+have to spell its key the same way.
 """
 
 from __future__ import annotations

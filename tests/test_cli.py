@@ -57,6 +57,16 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import (
+    InvalidUploadTimeError,
+    MissingExtraError,
+    ResolutionStrategy,
+    SiblingMetadataDivergenceError,
+    UnsupportedVcsError,
+)
+from nab_provider.requirements_file import InvalidProjectRequirementError
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget, host_environment
 from nab_python._testing.coordinator_fake import make_coordinator
 from nab_python.config import ConfigError, read_pyproject_config
 from nab_python.config_sources import SourceRoots
@@ -75,17 +85,7 @@ from nab_python.lockfile import (
     TargetLock,
     WheelArtifact,
 )
-from nab_python.provider import (
-    InvalidUploadTimeError,
-    MissingExtraError,
-    ResolutionStrategy,
-    SiblingMetadataDivergenceError,
-    UnsupportedVcsError,
-)
-from nab_python.requirements_file import InvalidProjectRequirementError
 from nab_python.resolve import ResolveResult, TargetResult, env_signature
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget, host_environment
 from nab_resolver.errors import ResolutionError
 
 V = Version

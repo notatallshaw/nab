@@ -1,11 +1,10 @@
 """Evaluate a PEP 508 dependency marker for a resolve-time environment.
 
-Its own module because it is the resolve path's only marker-set
-dependency.  ``packaging.markers.Marker.evaluate`` binds ``extra`` to a
-single string, which cannot say "these three extras are active", so this
-goes through :class:`~packaging.markersets.MarkerSet` instead.  Everything
-that needs the predicate takes it as an argument, so the engine never
-imports the marker-set engine to get it.
+``packaging.markers.Marker.evaluate`` binds ``extra`` to a single string and
+cannot say that several extras are active, so this goes through
+:class:`~packaging.markersets.MarkerSet` instead.  Its own module so the
+resolve engine never imports ``packaging.markersets``;
+``tasks/check_engine_markersets.py`` enforces that.
 """
 
 from __future__ import annotations
@@ -28,26 +27,20 @@ class UnevaluableMarkerError(ValueError):
     """A dependency marker parses but no comparison decides it.
 
     PEP 508 accepts any operator between a variable and a literal, and PEP 440
-    gives the compatible-release operator a meaning only over a release with
-    at least two components.  So ``python_full_version ~= "3"`` is a valid
-    marker with nothing to evaluate, and ``sys_platform ~= "linux"`` is one on
-    a variable that holds no version at all.
-
-    A requirement the project declares is neither activated nor dropped by
-    such a marker, and either guess changes what gets locked, so the run stops
-    and names it.  A candidate's own metadata takes the other route:
-    ``Provider.get_dependencies`` already turns metadata it cannot read into a
-    candidate skip.
+    gives ``~=`` a meaning only over a release with at least two components.
+    So ``python_full_version ~= "3"`` is a valid marker with nothing to
+    evaluate, and ``sys_platform ~= "linux"`` is one on a variable that holds
+    no version at all.  Either guess about it changes what gets locked, so the
+    run stops.
     """
 
 
 def marker_set(marker: Marker) -> MarkerSet:
-    """Return the algebra form of ``marker``.
+    """Return ``marker`` as a :class:`MarkerSet`.
 
-    Each clause is checked against its operator while the set is built, so
-    this is the one place a marker with no meaning can be caught.  Raises
-    :class:`UnevaluableMarkerError` naming the whole marker, since the failing
-    clause alone does not say which dependency to edit.
+    Building the set checks each clause against its operator, so a marker with
+    no meaning is caught here.  The error names the whole marker, since the
+    failing clause alone does not say which dependency to edit.
     """
     try:
         return MarkerSet.from_marker(marker)
@@ -66,8 +59,7 @@ def dependency_marker_holds(
     normalised.  It defaults to the empty set when ``environment`` omits it.
 
     A standard variable a marker names but ``environment`` omits raises
-    ``UndefinedEnvironmentName``; callers pass a complete
-    ``ResolveTarget.marker_env``.  The lockfile-only set variables are seeded
+    ``UndefinedEnvironmentName``.  The lockfile-only set variables are seeded
     empty, so a marker that tests one evaluates to False rather than raising.
 
     A clause no comparison decides raises :class:`UnevaluableMarkerError`.

@@ -34,6 +34,8 @@ else:  # pragma: no cover - 3.10 fallback
     import tomli as tomllib  # type: ignore[no-redef]
 
 from nab_provider._vendor.packaging.pylock import Pylock
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
 from nab_python.lockfile import (
     IndexPin,
     LockInput,
@@ -42,8 +44,6 @@ from nab_python.lockfile import (
     WheelArtifact,
     write_lock,
 )
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
 
 from .strategies import PROPERTY_SETTINGS
 

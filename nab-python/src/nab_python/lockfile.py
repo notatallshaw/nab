@@ -56,9 +56,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from nab_provider._vendor.packaging.markers import Marker
+    from nab_provider.target import ResolveTarget
 
     from .config import ConflictSet, PackageOverride
-    from .target import ResolveTarget
 
 
 __all__ = [
@@ -384,7 +384,7 @@ class TargetLock:
 
     ``target`` is the environment the pins hold for.  The writer reads
     its markers and its
-    :attr:`~nab_python.target.ResolveTarget.selection` rather than being
+    :attr:`~nab_provider.target.ResolveTarget.selection` rather than being
     handed a projection of them, so a lock entry and the environment it
     was resolved for cannot drift apart.
 

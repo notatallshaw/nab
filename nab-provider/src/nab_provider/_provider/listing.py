@@ -129,7 +129,7 @@ def wheel_by_version(
     """Return the cached ``Version -> DistFile`` mapping for ``normalized``.
 
     Each version maps to the dist
-    :func:`~nab_python._provider.metadata_resolver.pick_dist` picks, so a
+    :func:`~nab_provider._provider.metadata_resolver.pick_dist` picks, so a
     prefetch keyed off this mapping warms the metadata the read asks for.
     """
     cached = provider.wheel_by_version_cache.get(normalized)
@@ -281,7 +281,7 @@ def filter_distributions(
     (:func:`excluded_by_wheel_tags`), and a version left with no
     compatible wheel and no sdist is dropped with it: the target cannot
     install it, so the resolver must not pin it.  An sdist keeps a
-    version alive at every :class:`~nab_python.provider.BuildPolicy`,
+    version alive at every :class:`~nab_provider.provider.BuildPolicy`,
     which is what stops the filter over-refusing a pure-source package;
     the tag check is a wheel's check, as it is in pip.  Look-ahead
     rejects the version later if the sdist's metadata cannot be read
@@ -292,7 +292,7 @@ def filter_distributions(
     requirement's range, so each version's policy is evaluated against
     its own :class:`Version`.
 
-    Under :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` a
+    Under :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` a
     version keeps its wheels in ``versions_cache`` as a cheap metadata
     source only when it also publishes an sdist; a version whose only
     surviving artifact is a wheel has no source to install, so it is
@@ -304,7 +304,7 @@ def filter_distributions(
     upload cutoff, sort order, equal-version canonicalization), and is
     memoised per (package, Python) across the targets of one resolve
     when the provider carries a
-    :class:`~nab_python.provider.ListingFilterCache`.  The wheel-tag
+    :class:`~nab_provider.provider.ListingFilterCache`.  The wheel-tag
     pass then runs per target on top of that shared list, so a
     linux-only wheel still stays off the Windows target.
     """
@@ -349,7 +349,7 @@ def _filter_base(
     representative version of an equal group is picked from the whole
     listing and does not vary with what a target's tags keep.
 
-    The :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL` drop of a
+    The :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` drop of a
     wheel-only version belongs here rather than in the tag pass: it asks
     whether the version publishes an installable source, and an sdist
     carries no tags, so no target can lose the sdist that keeps the
@@ -611,7 +611,7 @@ def excluded_by_python(
     keyed by the specifier string; the verdict depends only on that string
     and the fixed ``provider.target``.  The specifier is read at the language
     minor, so a micro segment never excludes a target
-    (see :meth:`~nab_python.target.ResolveTarget.admits_requires_python`).
+    (see :meth:`~nab_provider.target.ResolveTarget.admits_requires_python`).
     """
     override_rp = provider.effective_requires_python(normalized, version)
     effective = override_rp if override_rp is not None else dist.requires_python

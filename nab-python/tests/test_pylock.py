@@ -32,6 +32,8 @@ from nab_provider._vendor.packaging.markersets import (
 from nab_provider._vendor.packaging.pylock import Package, PackageWheel
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget, environment_declaration
 from nab_python._lockfile import pylock
 from nab_python._lockfile.coverage import CoverageError
 from nab_python._lockfile.disjointness import validate_marker_disjointness
@@ -51,8 +53,6 @@ from nab_python.lockfile import (
     TargetLock,
     WheelArtifact,
 )
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget, environment_declaration
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence

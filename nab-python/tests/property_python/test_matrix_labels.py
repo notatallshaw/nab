@@ -2,7 +2,7 @@
 
 Tuple labels are used downstream as dict keys for per-tuple pins, so
 two distinct matrix points must never share a label
-(:mod:`nab_python.target` docstrings make this claim for
+(:mod:`nab_provider.target` docstrings make this claim for
 both selections and platform specs).  A collision silently merges
 two tuples' pins under one key.
 """
@@ -15,14 +15,14 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from nab_python.tags import (
+from nab_provider.tags import (
     _MACOS_TAG_FLOOR,
     _PLATFORM_ARCH,
     _PLATFORM_KIND,
     LIBC_MAJOR,
     PlatformSpec,
 )
-from nab_python.target import (
+from nab_provider.target import (
     IMPLEMENTATION_MARKERS,
     KNOWN_PYTHON_MINORS,
     PLATFORM_MARKERS,

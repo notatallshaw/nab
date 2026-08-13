@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from nab_python.target import (
+from nab_provider.target import (
     IMPLEMENTATION_MARKERS,
     PEP508_MARKER_VARIABLES,
     PLATFORM_MARKERS,

@@ -1,4 +1,4 @@
-"""Tests for :class:`nab_python.target.ResolveTarget`.
+"""Tests for :class:`nab_provider.target.ResolveTarget`.
 
 The host constructors take their environment and tag sources as
 arguments, so every test here names the interpreter it means instead of
@@ -22,8 +22,8 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.tags import Tag
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
-from nab_python.tags import PlatformSpec
-from nab_python.target import (
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import (
     IMPLEMENTATION_MARKERS,
     PEP508_MARKER_VARIABLES,
     PLATFORM_MARKERS,

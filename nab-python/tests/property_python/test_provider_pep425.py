@@ -21,10 +21,10 @@ from hypothesis import strategies as st
 
 from nab_index.client import SdistFile, WheelFile
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import BuildPolicy, DistPolicy, Provider
+from nab_provider.tags import PlatformSpec, TagSet
+from nab_provider.target import ResolveTarget
 from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_python.provider import BuildPolicy, DistPolicy, Provider
-from nab_python.tags import PlatformSpec, TagSet
-from nab_python.target import ResolveTarget
 
 from .strategies import PROPERTY_SETTINGS
 

@@ -14,10 +14,10 @@ import pytest
 from typing_extensions import Self
 
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
 from nab_python.lockfile import IndexPin, TargetLock, WheelArtifact
 from nab_python.resolve import ResolveResult, TargetResult
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
 
 # universal_scenarios.py and universal_summary.py import their siblings by bare name.
 pytestmark = [

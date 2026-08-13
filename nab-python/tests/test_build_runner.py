@@ -38,9 +38,24 @@ from installer.utils import SCHEME_NAMES, Scheme
 
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
+from nab_provider._provider.metadata_resolver import pick_dist
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import (
+    ArchiveSource,
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    LocalSource,
+    MissingExtraError,
+    ResolutionStrategy,
+    VcsConfig,
+    VcsPolicy,
+    VcsSource,
+)
+from nab_provider.tags import PlatformSpec, TagSet
+from nab_provider.target import ResolveTarget
 from nab_python._build import env as env_mod
 from nab_python._build import runner as runner_mod
 from nab_python._build.env import (
@@ -57,7 +72,6 @@ from nab_python._build.runner import (
     build_wheel_for_install,
     run_build_backend,
 )
-from nab_python._provider.metadata_resolver import pick_dist
 from nab_python._testing.overrides import pkg_override
 from nab_python.config import (
     ConflictKind,
@@ -78,21 +92,7 @@ from nab_python.lockfile import (
     TargetLock,
     WheelArtifact,
 )
-from nab_python.provider import (
-    ArchiveSource,
-    BuildPolicy,
-    DecisionOrder,
-    DistPolicy,
-    LocalSource,
-    MissingExtraError,
-    ResolutionStrategy,
-    VcsConfig,
-    VcsPolicy,
-    VcsSource,
-)
 from nab_python.resolve import ResolveResult, TargetResult
-from nab_python.tags import PlatformSpec, TagSet
-from nab_python.target import ResolveTarget
 from nab_python.workspace import WorkspaceConfig
 from nab_resolver.errors import ResolutionError
 
@@ -468,7 +468,7 @@ class TestRunBuildBackend:
         branch by stubbing :class:`NabBuildEnv` and ``ProjectBuilder``
         so the test stays offline and fast.
         """
-        from nab_python.metadata import WheelMetadata
+        from nab_provider.metadata import WheelMetadata
 
         (tmp_path / "setup.py").write_text("from setuptools import setup\nsetup()\n")
 
@@ -1884,9 +1884,9 @@ class TestResolveAndDownload:
         Python would pick wheels for another ABI and evaluate the
         build requirements' markers against the wrong interpreter.
         """
+        from nab_provider.target import ResolveTarget
         from nab_python.lockfile import TargetLock
         from nab_python.resolve import ResolveResult, TargetResult
-        from nab_python.target import ResolveTarget
 
         env = NabBuildEnv(requires=["foo"], config=NabProjectConfig())
         env._tmpdir = MagicMock()  # type: ignore[attr-defined]
@@ -2043,9 +2043,9 @@ class TestResolveAndDownload:
         BuildEnvError, so the outer resolve skips the unbuildable sdist
         instead of aborting on the raw DownloadError.
         """
+        from nab_provider.target import ResolveTarget
         from nab_python.lockfile import TargetLock
         from nab_python.resolve import ResolveResult, TargetResult
-        from nab_python.target import ResolveTarget
 
         env = NabBuildEnv(requires=["foo"], config=NabProjectConfig())
         env._tmpdir = MagicMock()  # type: ignore[attr-defined]

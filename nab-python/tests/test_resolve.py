@@ -21,6 +21,18 @@ from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.provider import (
+    BuildPolicy,
+    LocalSource,
+    Provider,
+    ResolutionStrategy,
+    UnsupportedVcsError,
+    VcsConfig,
+)
+from nab_provider.requirements_file import InvalidProjectRequirementError
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
 from nab_python._resolve.engine import (
     _augment_resolution_error,
     _raise_for_source_python,
@@ -40,21 +52,11 @@ from nab_python.config import (
     read_pyproject_config,
 )
 from nab_python.lockfile import LockInput, PinShape, build_pylock
-from nab_python.marker_holds import dependency_marker_holds
-from nab_python.provider import (
-    BuildPolicy,
-    LocalSource,
-    Provider,
-    ResolutionStrategy,
-    UnsupportedVcsError,
-    VcsConfig,
-)
 from nab_python.pyproject_files import (
     read_pyproject_groups,
     read_pyproject_name,
     read_pyproject_optional_dependencies,
 )
-from nab_python.requirements_file import InvalidProjectRequirementError
 from nab_python.resolve import (
     ResolveFork,
     ResolveResult,
@@ -69,8 +71,6 @@ from nab_python.resolve import (
     config_for_build_requirements,
     resolve_for_targets,
 )
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
 from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -2464,7 +2464,7 @@ class TestBuildResolverInputs:
     def test_root_extra_marker_warns(self, caplog: pytest.LogCaptureFixture) -> None:
         """A root requirement gated on ``extra ==`` is dropped with a warning."""
         reqs = [Requirement('foo ; extra == "test"')]
-        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+        with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
                 VcsConfig(),
@@ -2479,7 +2479,7 @@ class TestBuildResolverInputs:
     ) -> None:
         """A root ``"x" in extras`` marker is dropped with a warning, not a crash."""
         reqs = [Requirement('foo ; "x" in extras')]
-        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+        with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
                 VcsConfig(),
@@ -2494,7 +2494,7 @@ class TestBuildResolverInputs:
     ) -> None:
         """A root ``in dependency_groups`` marker is dropped with a warning."""
         reqs = [Requirement('foo ; "dev" in dependency_groups')]
-        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+        with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
                 VcsConfig(),
@@ -2509,7 +2509,7 @@ class TestBuildResolverInputs:
     ) -> None:
         """packaging normalises the spelling, so the scan sees one form."""
         reqs = [Requirement('foo ; extra=="test"')]
-        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+        with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
             build_resolver_inputs(
                 reqs,
                 VcsConfig(),
@@ -2523,7 +2523,7 @@ class TestBuildResolverInputs:
     ) -> None:
         """``pkg[redis]`` is the syntax the warning points at; it must not warn."""
         reqs = [Requirement("foo[redis]")]
-        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+        with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
                 VcsConfig(),
@@ -2537,7 +2537,7 @@ class TestBuildResolverInputs:
         """A requirement dropped by a plain env marker stays silent."""
         reqs = [Requirement('foo ; python_version < "3.0"')]
         env = {"python_version": "3.11", "python_full_version": "3.11.2"}
-        with caplog.at_level("WARNING", logger="nab_python.resolver_inputs"):
+        with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
             resolver_requirements = build_resolver_inputs(
                 reqs,
                 VcsConfig(),

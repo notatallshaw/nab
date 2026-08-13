@@ -17,19 +17,19 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.version import Version
-from nab_python._provider.metadata_resolver import (
+from nab_provider._provider.metadata_resolver import (
     extend_with_extras,
     parse_pyproject_deps,
 )
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.version import Version
+from nab_provider.metadata import parse_metadata
+from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_python.build_backend import (
     BuildBackendError,
     extract_metadata,
     extract_static_metadata,
 )
-from nab_python.metadata import parse_metadata
-from nab_python.requirements_file import InvalidProjectRequirementError
 
 
 def _write_pyproject(tmp: Path, body: str) -> Path:

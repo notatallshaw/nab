@@ -24,12 +24,12 @@ from nab_index.lazy_wheel import RangeOutcome
 from nab_index.transport import HttpError
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import BuildPolicy
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
 from nab_python.config import NabProjectConfig
 from nab_python.fetch import FetchCoordinator
-from nab_python.provider import BuildPolicy
 from nab_python.resolve import ResolveResult, resolve_with_coordinator
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
 
 if TYPE_CHECKING:
     from pathlib import Path

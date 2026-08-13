@@ -34,11 +34,11 @@ from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.records import IndexConfig, SdistFile, WheelFile
 from nab_provider.serialization import SimpleSerialization
+from nab_provider.store import InMemoryIndex, metadata_pending_key, range_pending_key
 
 from ._build_remote import build_remote_sdist
 from ._sources import materialize_source
 from ._toml import parse_pyproject_table
-from .store import InMemoryIndex, metadata_pending_key, range_pending_key
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -74,10 +74,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from nab_index.transport import AsyncHttpTransport
+    from nab_provider.metadata import WheelMetadata
+    from nab_provider.policy import SourceRequest
 
     from .config import NabProjectConfig
-    from .metadata import WheelMetadata
-    from .policy import SourceRequest
 
 logger = logging.getLogger(__name__)
 
@@ -603,7 +603,7 @@ class FetchCoordinator:
     ) -> threading.Event:
         """Request the raw bytes of an sdist archive.
 
-        Used by the :class:`~nab_python.provider.BuildPolicy.BUILD_REMOTE`
+        Used by the :class:`~nab_provider.provider.BuildPolicy.BUILD_REMOTE`
         path; the bytes are extracted to a temp dir and handed to a
         PEP 517 backend.  Stored under a separate pending key so it can
         run concurrently with a PKG-INFO fetch for the same version. The

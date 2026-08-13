@@ -36,17 +36,10 @@ from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.multi_index import IndexConfig
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
-from nab_provider._vendor.packaging.specifiers import SpecifierSet
-from nab_provider._vendor.packaging.tags import Tag
-from nab_provider._vendor.packaging.version import InvalidVersion, Version
-from nab_python import _build_remote
-from nab_python._provider import build_remote, metadata_resolver
-from nab_python._provider import listing as listing_mod
-from nab_python._provider.lookahead import DepRangeUnion
-from nab_python._provider.metadata_resolver import (
+from nab_provider._provider import build_remote, metadata_resolver
+from nab_provider._provider import listing as listing_mod
+from nab_provider._provider.lookahead import DepRangeUnion
+from nab_provider._provider.metadata_resolver import (
     TargetDepSignature,
     add_classified_dep,
     cache_deps_from_metadata,
@@ -54,23 +47,15 @@ from nab_python._provider.metadata_resolver import (
     pick_dist_for_metadata,
     target_dep_signature,
 )
-from nab_python._resolve.engine import _raise_for_source_python
-from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_python._testing.overrides import pkg_override
-from nab_python.config import (
-    IndexOverride,
-    NabProjectConfig,
-    OverrideConflictError,
-    PackageOverride,
-)
-from nab_python.fetch import (
-    DEFAULT_INDEX_URL,
-    FetchCoordinator,
-    IndexRoute,
-)
-from nab_python.marker_holds import dependency_marker_holds
-from nab_python.metadata import WheelMetadata
-from nab_python.provider import (
+from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.ranges import VersionRange
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
+from nab_provider._vendor.packaging.tags import Tag
+from nab_provider._vendor.packaging.version import InvalidVersion, Version
+from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.metadata import WheelMetadata
+from nab_provider.provider import (
     BuildPolicy,
     DistPolicy,
     ExtrasMode,
@@ -90,9 +75,24 @@ from nab_python.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
+from nab_python import _build_remote
+from nab_python._resolve.engine import _raise_for_source_python
+from nab_python._testing.coordinator_fake import FakeFetchPort, make_coordinator
+from nab_python._testing.overrides import pkg_override
+from nab_python.config import (
+    IndexOverride,
+    NabProjectConfig,
+    OverrideConflictError,
+    PackageOverride,
+)
+from nab_python.fetch import (
+    DEFAULT_INDEX_URL,
+    FetchCoordinator,
+    IndexRoute,
+)
 from nab_python.resolve import build_resolver_inputs, resolve_with_coordinator
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -2415,7 +2415,7 @@ class TestGetDependencies:
             [make_wheel("1.0")], metadata_text=bad_metadata, package="foo"
         )
         provider = Provider(coordinator, target=_PY312)
-        with caplog.at_level("WARNING", logger="nab_python.provider"):
+        with caplog.at_level("WARNING", logger="nab_provider.provider"):
             with pytest.raises(MetadataError):
                 provider.get_dependencies("foo", V("1.0"))
             with pytest.raises(MetadataError):
@@ -8810,7 +8810,7 @@ class TestPickDistForMetadata:
         Range-fetching ``METADATA`` from a wheel is cheaper than
         building an sdist, so the picker only falls back to the sdist
         when no wheel exists at the version.  This matters for
-        :attr:`~nab_python.provider.DistPolicy.SDIST_INSTALL`: those
+        :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL`: those
         listings keep wheels purely so the resolver can read their
         metadata, and ``pick_dist_for_metadata`` must honour that.
         """
@@ -9718,7 +9718,7 @@ class _CleanupErrorTemporaryDirectory:
 
 
 class TestBuildRemoteFailureModes:
-    """Failure paths in :func:`nab_python._provider.build_remote.build_remote_sdist`.
+    """Failure paths in :func:`nab_provider._provider.build_remote.build_remote_sdist`.
 
     A skippable failure surfaces as :class:`UnsupportedSdistError`, which
     look-ahead either skips or folds into the eventual no-versions
@@ -10175,7 +10175,7 @@ class TestComputeTier:
     """Cover the tier-decision branches."""
 
     def test_force_backtracked_returns_culprit(self) -> None:
-        from nab_python._provider.priority import (
+        from nab_provider._provider.priority import (
             TIER_CULPRIT,
             compute_tier,
         )

@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
-    from nab_python.target import ResolveTarget
+    from nab_provider.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -64,10 +64,15 @@ from nab_provider._vendor.packaging.markers import default_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.provider import (
+    BuildPolicy,
+    ResolutionStrategy,
+    VcsConfig,
+    split_extra,
+)
+from nab_provider.vcs_admission import admit_vcs_url
 from nab_python.config import NabProjectConfig, index_routes_from_config
 from nab_python.fetch import FetchCoordinator
-from nab_python.provider import BuildPolicy, ResolutionStrategy, VcsConfig, split_extra
-from nab_python.vcs_admission import admit_vcs_url
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent

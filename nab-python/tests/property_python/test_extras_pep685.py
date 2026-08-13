@@ -1,4 +1,4 @@
-"""Property tests for the extras-handling implementation in :mod:`nab_python.provider`.
+"""Property tests for the extras-handling implementation in :mod:`nab_provider.provider`.
 
 `PEP 685`_ specifies how extra names are normalized for comparison
 and how distributions express dependencies that are conditional on an
@@ -20,15 +20,15 @@ from hypothesis import strategies as st
 
 from nab_index.client import WheelFile
 from nab_provider._vendor.packaging.version import Version
-from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python.provider import (
+from nab_provider.provider import (
     ExtrasMode,
     MissingExtraError,
     Provider,
     join_extra,
     split_extra,
 )
-from nab_python.target import ResolveTarget
+from nab_provider.target import ResolveTarget
+from nab_python._testing.coordinator_fake import make_coordinator
 
 from .strategies import PROPERTY_SETTINGS
 

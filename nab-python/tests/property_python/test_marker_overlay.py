@@ -1,4 +1,4 @@
-"""Property tests for :class:`nab_python.target.ResolveTarget`'s marker env.
+"""Property tests for :class:`nab_provider.target.ResolveTarget`'s marker env.
 
 A host-python target merges a fixed defaults dict (the host machine's
 PEP 508 environment), a ``python_version`` override derived from the
@@ -21,7 +21,7 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from nab_python.target import ResolveTarget
+from nab_provider.target import ResolveTarget
 
 from .strategies import PROPERTY_SETTINGS
 

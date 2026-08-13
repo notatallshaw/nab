@@ -1,20 +1,9 @@
 """Turn a project's PEP 508 requirements into the resolver's input shape.
 
-One step, drawn as its own module because it is the only part of a
-resolve that is pure: requirements plus a marker environment in, root
-requirements and a ``{key: VersionRange}`` dict out, with no index, no
-coordinator and no provider involved.  The engine calls it once per
-target for the requirements and once for the constraints.
-
-It takes a :class:`~nab_python.vcs_admission.VcsConfig` rather than the whole
-project config, because deciding whether a direct-URL requirement is admitted
-at all is the entirety of what it asks the config.
-
-Evaluating a root requirement's marker is the caller's, not this module's:
-:data:`MarkerHolds` arrives as an argument.  The predicate needs a
-set-valued ``extra`` and so needs :mod:`packaging.markersets`, which is the
-one part of packaging a host embedding the engine would otherwise have to
-carry.
+Pure: no index, coordinator or provider involved.  It asks the config only
+whether a direct-URL requirement is admitted, so it takes a
+:class:`~nab_provider.vcs_admission.VcsConfig` rather than the whole thing,
+and takes the marker predicate as an argument.
 """
 
 from __future__ import annotations
@@ -43,8 +32,6 @@ if TYPE_CHECKING:
     from .vcs_admission import VcsConfig
 
     # Whether a dependency marker holds for one environment.
-    # :func:`nab_python.marker_holds.dependency_marker_holds` is nab's own;
-    # a host embedding the engine supplies its own instead.
     MarkerHolds = Callable[[Marker, Mapping[str, str]], bool]
 
 
@@ -59,15 +46,14 @@ def raise_for_unsatisfiable(
 ) -> None:
     """Raise :class:`ResolutionError` if any folded range is empty.
 
-    ``ranges`` holds one intersected range per package and ``sources``
-    the requirement strings folded into each.  An empty range means
-    those requirements share no version; the error lists them.
-
-    ``kind`` ("requirement" or "constraint") only shapes the wording.
+    ``ranges`` holds one intersected range per package and ``sources`` the
+    requirement strings folded into each, which the error lists.  ``kind``
+    ("requirement" or "constraint") only shapes the wording.
     """
     unsatisfiable = [name for name, range_ in ranges.items() if range_.is_empty]
     if not unsatisfiable:
         return
+
     detail = "\n".join(
         f"  {name}: {', '.join(sources[name])}" for name in unsatisfiable
     )
@@ -78,18 +64,18 @@ def raise_for_unsatisfiable(
 def _warn_dropped_root_marker(req: Requirement, warned: set[str]) -> None:
     """Warn when a dropped root requirement tests an extra/group membership.
 
-    A root marker testing ``extra``, ``extras``, or ``dependency_groups``
-    evaluates False at resolve time (root activates no extra or group), so the
-    dep would otherwise be dropped silently.  ``warned`` carries the
-    requirements already reported in this run, so one mistaken requirement is
-    reported once rather than once per target per fork.
+    Root activates no extra or group, so a marker testing ``extra``,
+    ``extras`` or ``dependency_groups`` membership never holds.  ``warned``
+    holds the requirements already reported, so one mistake warns once.
     """
     marker_text = str(req.marker)
     if "extra ==" not in marker_text and not membership_set_in_marker(marker_text):
         return
+
     text = str(req)
     if text in warned:
         return
+
     warned.add(text)
     _logger.warning(
         "Root requirement %r tests an extra or dependency-group membership "
@@ -100,7 +86,7 @@ def _warn_dropped_root_marker(req: Requirement, warned: set[str]) -> None:
 
 
 class _ResolverInputs(NamedTuple):
-    """What one set of root requirements gives the resolver and the provider."""
+    """What one requirement set gives the resolver and the provider."""
 
     roots: list[RootRequirement[str, VersionRange]]
     ranges: dict[str, VersionRange]
@@ -118,37 +104,37 @@ def build_resolver_inputs(
 ) -> _ResolverInputs:
     """Convert PEP 508 requirements to the resolver's input shape.
 
-    Requirements whose PEP 508 marker ``marker_holds`` rejects under
-    ``environment`` are skipped, matching pip/uv's root-requirement
-    handling.  A direct-URL or VCS requirement is refused by
-    :func:`admit_vcs_url` under ``vcs``; resolving one is not implemented.
+    A requirement whose marker ``marker_holds`` rejects under ``environment``
+    is skipped.  A direct-URL or VCS one is checked against ``vcs`` by
+    :func:`admit_vcs_url` and then raises ``NotImplementedError``.
 
     Each surviving requirement becomes its own
     :class:`~nab_resolver.types.RootRequirement`, tagged with the string the
     user wrote, so a failure names the requirements rather than their
-    intersection.  ``ranges`` folds the same requirements per package for the
-    provider, which asks about one package at a time.
+    intersection.  ``ranges`` folds the same requirements per package.
 
-    ``kind`` is ``"requirement"`` or ``"constraint"``.  A constraint may not
-    carry extras, and the returned extras set is empty for one.  Constraints
-    do not become root clauses, so an empty constraint intersection is still
-    caught here by :func:`raise_for_unsatisfiable` rather than by the solver.
+    A ``"constraint"`` ``kind`` may not carry extras, and returns an empty
+    extras set.  Constraints do not become root clauses, so an empty
+    constraint intersection is caught here by :func:`raise_for_unsatisfiable`
+    rather than by the solver.
 
-    ``warned`` is the run's set of already-reported extra/group root
-    markers (see :func:`_warn_dropped_root_marker`); a caller that does
-    not share one gets a fresh set, so it warns per call.
+    ``warned`` collects the root markers already reported: callers sharing one
+    warn once between them, a caller that omits it warns per call.
     """
     roots: list[RootRequirement[str, VersionRange]] = []
     resolver_requirements: dict[str, VersionRange] = {}
     root_extras: set[tuple[str, str]] = set()
     already_warned = set() if warned is None else warned
+
     for req in requirements:
         if kind == "constraint" and req.extras:
             msg = f"Constraints cannot have extras: {req}"
             raise ConfigError(msg)
+
         if req.marker is not None and not marker_holds(req.marker, environment):
             _warn_dropped_root_marker(req, already_warned)
             continue
+
         if req.url is not None:
             admit_vcs_url(req.url, vcs)
             msg = (
@@ -156,6 +142,7 @@ def build_resolver_inputs(
                 f" implemented: {req.name} @ {req.url}"
             )
             raise NotImplementedError(msg)
+
         name = str(canonicalize_name(req.name))
         previous = resolver_requirements.get(name, VersionRange.full())
         term = (
@@ -165,36 +152,36 @@ def build_resolver_inputs(
         )
         resolver_requirements[name] = previous & term
         roots.append(RootRequirement(name, term, str(req)))
+
         for extra in sorted(req.extras):
             extra_key = join_extra(name, extra)
-            # A proxy key carries no version, so a second mention of the same
-            # extra would only repeat a line in the failure report.
+
+            # A proxy key carries no version, so a second mention would only
+            # repeat a line in the failure report.
             if extra_key not in resolver_requirements:
                 proxy = VersionRange.full(admit_arbitrary=False)
                 resolver_requirements[extra_key] = proxy
                 roots.append(RootRequirement(extra_key, proxy, str(req)))
+
             _, normalized_extra = split_extra(extra_key)
             assert normalized_extra is not None  # join_extra always sets one
             root_extras.add((name, normalized_extra))
+
     if kind == "constraint":
         sources: defaultdict[str, list[str]] = defaultdict(list)
         for root in roots:
             sources[root.package].append(root.origin)
         raise_for_unsatisfiable(resolver_requirements, sources, kind=kind)
+
     return _ResolverInputs(roots, resolver_requirements, root_extras)
 
 
 class ProxyConstraints(Mapping[str, VersionRange]):
     """The user's constraints, where an extras proxy's key reads its base's bound.
 
-    The resolver keys a constraint by the package it is deciding, and an
-    extras proxy decides under its own ``name[extra]`` key, so the base's
-    bound would not otherwise reach it.  Answering under both keys also
-    lets a failure blame the constraint that left the proxy nothing,
-    rather than the proxy's listing.
-
-    Iteration lists only the keys the user wrote, so a proxy key answers a
-    lookup but is never enumerated.
+    The resolver keys a constraint by the package it is deciding, and an extras
+    proxy decides under its own ``name[extra]`` key, which the user never wrote
+    a constraint for.
     """
 
     def __init__(self, ranges: Mapping[str, VersionRange]) -> None:
@@ -206,7 +193,7 @@ class ProxyConstraints(Mapping[str, VersionRange]):
         return self._ranges[split_extra(package)[0]]
 
     def __iter__(self) -> Iterator[str]:
-        """Enumerate only the keys the user wrote, never proxy keys."""
+        """Enumerate only the keys the user wrote."""
         return iter(self._ranges)
 
     def __len__(self) -> int:

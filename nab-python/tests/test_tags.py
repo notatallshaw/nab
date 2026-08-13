@@ -1,4 +1,4 @@
-"""Tests for ``nab_python.tags``: the tags a target accepts, and the wheel it picks.
+"""Tests for ``nab_provider.tags``: the tags a target accepts, and the wheel it picks.
 
 Pins:
 
@@ -20,7 +20,7 @@ import pytest
 
 from nab_index.client import WheelFile
 from nab_provider._vendor.packaging.tags import Tag
-from nab_python.tags import (
+from nab_provider.tags import (
     _PLATFORM_ARCH,
     _PLATFORM_KIND,
     PlatformSpec,
@@ -31,7 +31,7 @@ from nab_python.tags import (
     python_axis_accepts,
     wheel_tag_set,
 )
-from nab_python.target import PLATFORM_MARKERS
+from nab_provider.target import PLATFORM_MARKERS
 
 # numpy 2.5.1 ships one manylinux wheel (tagged 2.27 and 2.28, no older),
 # one musllinux wheel, and one free-threaded wheel per platform.
@@ -49,7 +49,7 @@ CRYPTOGRAPHY_ABI3 = "cryptography-44.0.0-cp37-abi3-manylinux_2_28_x86_64.whl"
 def _free_threaded_host() -> AbstractContextManager[MagicMock]:
     """Patch the config vars packaging reads to fake a free-threaded host."""
     return patch(
-        "nab_python.tags.ptags._get_config_var",
+        "nab_provider.tags.ptags._get_config_var",
         side_effect=lambda name, warn=False: 1 if name == "Py_GIL_DISABLED" else None,
     )
 
@@ -640,7 +640,7 @@ class TestWheelCompatibility:
         if hasattr(wheel_tag_set, "cache_clear"):
             wheel_tag_set.cache_clear()
 
-        with patch("nab_python.tags._parse_tag_str", wraps=_parse_tag_str) as parse:
+        with patch("nab_provider.tags._parse_tag_str", wraps=_parse_tag_str) as parse:
             first = wheel_tag_set(filename)
             repeats = [wheel_tag_set(filename) for _ in range(8)]
 
@@ -764,7 +764,7 @@ class TestWheelCompatibility:
         _parse_tag_str.cache_clear()
         try:
             with patch(
-                "nab_python.tags.ptags.parse_tag",
+                "nab_provider.tags.ptags.parse_tag",
                 side_effect=ValueError("forced"),
             ):
                 assert not _compatible(wheel, python_version="3.11", spec=spec)

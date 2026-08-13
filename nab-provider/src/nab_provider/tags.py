@@ -802,7 +802,7 @@ def python_axis_accepts(
     The platform axis is ignored.  That is what a target whose tags a marker
     overlay disowned can still be asked: an overlay cannot rebuild the
     platform tags, but ``python_version`` and ``implementation_name`` survive
-    it (see :meth:`~nab_python.target.ResolveTarget.with_marker_overrides`).
+    it (see :meth:`~nab_provider.target.ResolveTarget.with_marker_overrides`).
     A filename that does not parse as a wheel is admitted; it carries no tags
     to reject it by.
 

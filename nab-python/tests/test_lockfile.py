@@ -29,6 +29,23 @@ from nab_provider._vendor.packaging.pylock import Package, PackageWheel, Pylock
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import (
+    ArchiveSource,
+    BuildPolicy,
+    DistPolicy,
+    LocalSource,
+    Provider,
+    VcsConfig,
+    VcsPolicy,
+    VcsSource,
+)
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import (
+    ResolveTarget,
+    environment_declaration,
+    micro_boundary_points,
+    slices_from_points,
+)
 from nab_python._lockfile.builder import _common_requires_python
 from nab_python._lockfile.coverage import (
     CoverageError,
@@ -84,28 +101,11 @@ from nab_python.lockfile import (
     write_requirements_with_hashes,
     write_requirements_without_hashes,
 )
-from nab_python.provider import (
-    ArchiveSource,
-    BuildPolicy,
-    DistPolicy,
-    LocalSource,
-    Provider,
-    VcsConfig,
-    VcsPolicy,
-    VcsSource,
-)
 from nab_python.resolve import (
     ResolveResult,
     TargetResult,
     build_lock_input,
     resolve_with_coordinator,
-)
-from nab_python.tags import PlatformSpec
-from nab_python.target import (
-    ResolveTarget,
-    environment_declaration,
-    micro_boundary_points,
-    slices_from_points,
 )
 
 
@@ -3391,7 +3391,7 @@ class TestBuildTargetLock:
         could read the wheel's METADATA, but the lockfile must pin
         only the sdist so an installer downloads (and builds) that
         archive.  Mirrors what
-        :attr:`nab_python.provider.DistPolicy.SDIST_INSTALL` is for.
+        :attr:`nab_provider.provider.DistPolicy.SDIST_INSTALL` is for.
 
         The policy comes from the index that served the listing, so
         ``foo`` loses its wheel under ``internal`` while ``bar`` keeps

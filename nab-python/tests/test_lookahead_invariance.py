@@ -33,9 +33,9 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import Provider
+from nab_provider.target import ResolveTarget
 from nab_python._testing.coordinator_fake import make_coordinator
-from nab_python.provider import Provider
-from nab_python.target import ResolveTarget
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility

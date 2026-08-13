@@ -28,11 +28,11 @@ from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.pylock import Package
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP
 from nab_python._lockfile.disjointness import (
     DisjointnessError,
     validate_marker_disjointness,
 )
-from nab_python.conflict_kind import KIND_EXTRA, KIND_GROUP
 
 from .strategies import BRUTE_FORCE_SETTINGS
 

@@ -1,7 +1,7 @@
 """The per-package and per-index override records.
 
 Two declarations the config layer parses and the provider applies, for the
-same reason :mod:`nab_python.policy` exists: both need them, so neither may own
+same reason :mod:`nab_provider.policy` exists: both need them, so neither may own
 them.  With these in ``config.py`` the provider had to name the config module
 to type its own constructor arguments, which put the whole config ladder on the
 provider's import graph for two dataclasses.

@@ -14,7 +14,19 @@ from nab_index.multi_index import IndexConfig
 from nab_provider._vendor.packaging.markers import default_environment
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import (
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    LocalSource,
+    ResolutionStrategy,
+    VcsConfig,
+    VcsPolicy,
+    VcsSource,
+)
 from nab_provider.serialization import SimpleSerialization
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget, declared_range_marker, host_environment
 from nab_python.config import (
     _MATRIX_KEYS,
     _PEP508_MARKER_VARIABLES,
@@ -49,18 +61,6 @@ from nab_python.config_sources import (
     resolve_config,
 )
 from nab_python.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
-from nab_python.provider import (
-    BuildPolicy,
-    DecisionOrder,
-    DistPolicy,
-    LocalSource,
-    ResolutionStrategy,
-    VcsConfig,
-    VcsPolicy,
-    VcsSource,
-)
-from nab_python.tags import PlatformSpec
-from nab_python.target import ResolveTarget, declared_range_marker, host_environment
 from nab_python.workspace import WorkspaceConfig
 
 
