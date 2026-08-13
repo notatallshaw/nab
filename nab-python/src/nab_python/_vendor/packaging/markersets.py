@@ -8,8 +8,8 @@ complements the grammar cannot spell. It reconciles with the grammar at exactly
 one boundary, :meth:`~MarkerSet.to_marker_string`, which may return ``None`` or
 raise :class:`UnserializableMarkerSet`.
 
-Build one with :meth:`~packaging.markers.Marker.to_set`,
-:meth:`MarkerSet.from_marker`, :meth:`MarkerSet.full`, or :meth:`MarkerSet.empty`;
+Build one with :meth:`MarkerSet.from_marker`, :meth:`MarkerSet.full`, or
+:meth:`MarkerSet.empty`;
 combine with :meth:`intersection`, :meth:`union`, and :meth:`complement` (or
 ``&`` / ``|`` / ``~``); and query with the decision procedures. Equality is
 identity; :meth:`equivalent` tests whether two sets denote the same
@@ -103,7 +103,7 @@ class MarkerSet:
     """A set of environments: the denotation of a PEP 508 marker. Immutable.
 
     Instances are created only through the factories (:meth:`from_marker`,
-    :meth:`full`, :meth:`empty`, or :meth:`~packaging.markers.Marker.to_set`);
+    :meth:`full`, or :meth:`empty`);
     calling ``MarkerSet(...)`` raises :class:`TypeError`.
 
     The algebra is closed under :meth:`intersection`, :meth:`union`, and
@@ -117,7 +117,7 @@ class MarkerSet:
     def __new__(cls, *args: object, **kwargs: object) -> MarkerSet:  # noqa: PYI034
         raise TypeError(
             "cannot create 'MarkerSet' instances directly; use "
-            "Marker.to_set(), MarkerSet.from_marker(), MarkerSet.full(), or "
+            "MarkerSet.from_marker(), MarkerSet.full(), or "
             "MarkerSet.empty() instead"
         )
 

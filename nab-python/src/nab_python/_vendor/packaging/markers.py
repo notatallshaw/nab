@@ -22,8 +22,6 @@ from .utils import canonicalize_name
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from . import markersets
-
 __all__ = [
     "Environment",
     "EvaluateContext",
@@ -555,12 +553,6 @@ class Marker:
         return _evaluate_markers(
             self._markers, _repair_python_full_version(current_environment)
         )
-
-    def to_set(self) -> markersets.MarkerSet:
-        """Return this marker's denotation as a :class:`~packaging.markersets.MarkerSet`."""
-        from .markersets import MarkerSet  # noqa: PLC0415
-
-        return MarkerSet.from_marker(self)
 
 
 def _pep440_python_full_version(python_full_version: str) -> str:

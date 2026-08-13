@@ -1890,35 +1890,9 @@ index e312a1f..9a611c3 100644
      def __hash__(self) -> int:
          return hash((self.version, self.inclusive))
  
-diff --git a/nab-python/src/nab_python/_vendor/packaging/markers.py b/nab-python/src/nab_python/_vendor/packaging/markers.py
-index 609099c..25091f6 100644
---- a/nab-python/src/nab_python/_vendor/packaging/markers.py
-+++ b/nab-python/src/nab_python/_vendor/packaging/markers.py
-@@ -22,6 +22,8 @@ from .utils import canonicalize_name
- if TYPE_CHECKING:
-     from collections.abc import Mapping
- 
-+    from . import markersets
-+
- __all__ = [
-     "Environment",
-     "EvaluateContext",
-@@ -554,6 +556,12 @@ class Marker:
-             self._markers, _repair_python_full_version(current_environment)
-         )
- 
-+    def to_set(self) -> markersets.MarkerSet:
-+        """Return this marker's denotation as a :class:`~packaging.markersets.MarkerSet`."""
-+        from .markersets import MarkerSet  # noqa: PLC0415
-+
-+        return MarkerSet.from_marker(self)
-+
- 
- def _pep440_python_full_version(python_full_version: str) -> str:
-     """
 diff --git a/nab-python/src/nab_python/_vendor/packaging/markersets.py b/nab-python/src/nab_python/_vendor/packaging/markersets.py
 new file mode 100644
-index 0000000..c9a2883
+index 0000000..638bc9e
 --- /dev/null
 +++ b/nab-python/src/nab_python/_vendor/packaging/markersets.py
 @@ -0,0 +1,392 @@
@@ -1932,8 +1906,8 @@ index 0000000..c9a2883
 +one boundary, :meth:`~MarkerSet.to_marker_string`, which may return ``None`` or
 +raise :class:`UnserializableMarkerSet`.
 +
-+Build one with :meth:`~packaging.markers.Marker.to_set`,
-+:meth:`MarkerSet.from_marker`, :meth:`MarkerSet.full`, or :meth:`MarkerSet.empty`;
++Build one with :meth:`MarkerSet.from_marker`, :meth:`MarkerSet.full`, or
++:meth:`MarkerSet.empty`;
 +combine with :meth:`intersection`, :meth:`union`, and :meth:`complement` (or
 +``&`` / ``|`` / ``~``); and query with the decision procedures. Equality is
 +identity; :meth:`equivalent` tests whether two sets denote the same
@@ -2027,7 +2001,7 @@ index 0000000..c9a2883
 +    """A set of environments: the denotation of a PEP 508 marker. Immutable.
 +
 +    Instances are created only through the factories (:meth:`from_marker`,
-+    :meth:`full`, :meth:`empty`, or :meth:`~packaging.markers.Marker.to_set`);
++    :meth:`full`, or :meth:`empty`);
 +    calling ``MarkerSet(...)`` raises :class:`TypeError`.
 +
 +    The algebra is closed under :meth:`intersection`, :meth:`union`, and
@@ -2041,7 +2015,7 @@ index 0000000..c9a2883
 +    def __new__(cls, *args: object, **kwargs: object) -> MarkerSet:  # noqa: PYI034
 +        raise TypeError(
 +            "cannot create 'MarkerSet' instances directly; use "
-+            "Marker.to_set(), MarkerSet.from_marker(), MarkerSet.full(), or "
++            "MarkerSet.from_marker(), MarkerSet.full(), or "
 +            "MarkerSet.empty() instead"
 +        )
 +
