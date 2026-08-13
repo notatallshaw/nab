@@ -3374,6 +3374,141 @@ class TestAugmentResolutionError:
         assert "requires lib != 9.0" not in diagnostics
         assert "foo: no version matches the requirement" not in diagnostics
 
+    def test_metadata_ban_outlives_the_scan_that_accepted_an_older_version(
+        self, tmp_path: Path
+    ) -> None:
+        """A ban raised by a scan that succeeded still names its versions.
+
+        ``foo`` 5.0/4.0/3.0 advertise a sidecar the index does not serve and
+        have no sdist to fall back on, so the scan bans them and accepts 2.0.
+        Backtracking then drops 2.0 and 1.0, leaving the ban to close the
+        proof, and only it can say why those three versions went.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": _index_wheels("foo", "5.0", "4.0", "3.0", "2.0", "1.0"),
+                "lib": _index_wheels("lib", "6.0"),
+            },
+            metadata_by_version={
+                "5.0": None,
+                "4.0": None,
+                "3.0": None,
+                "2.0": _metadata("foo", "2.0", "lib==9.9"),
+                "1.0": _metadata("foo", "1.0", "lib==9.8"),
+                "6.0": _metadata("lib", "6.0"),
+            },
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        derivation, diagnostics = str(info.value).split("Diagnostics:")
+        assert "no versions of foo" in derivation
+        assert (
+            "foo: 3 versions failed metadata extraction (first: No metadata for"
+            " foo==5.0: no PEP 658 metadata and no sdist available)" in diagnostics
+        )
+        assert "every version in range was rejected" not in diagnostics
+
+    def test_a_sibling_requirement_does_not_bury_the_metadata_ban(
+        self, tmp_path: Path
+    ) -> None:
+        """A generic reason recorded first still loses to the ban.
+
+        ``bar`` 22.0 asks for ``foo>=6.0``, a range nothing matches, so ``foo``
+        gets the bare "no version matches" line before its own scan bans
+        5.0/4.0/3.0.  The failure closes on the ban, so that is what the
+        diagnostic must report.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo", "bar"]\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": _index_wheels("foo", "5.0", "4.0", "3.0", "2.0", "1.0"),
+                "bar": _index_wheels("bar", "22.0", "21.0"),
+                "lib": _index_wheels("lib", "6.0"),
+            },
+            metadata_by_version={
+                "5.0": None,
+                "4.0": None,
+                "3.0": None,
+                "2.0": _metadata("foo", "2.0", "lib==9.9"),
+                "1.0": _metadata("foo", "1.0", "lib==9.8"),
+                "22.0": _metadata("bar", "22.0", "foo>=6.0"),
+                "21.0": _metadata("bar", "21.0"),
+                "6.0": _metadata("lib", "6.0"),
+            },
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        diagnostics = str(info.value).split("Diagnostics:")[1]
+        assert (
+            "foo: 3 versions failed metadata extraction (first: No metadata for"
+            " foo==5.0: no PEP 658 metadata and no sdist available)" in diagnostics
+        )
+        assert "foo: no version matches the requirement" not in diagnostics
+
+    def test_bans_from_separate_scans_are_counted_together(
+        self, tmp_path: Path
+    ) -> None:
+        """Every scan's ban reaches the diagnostic, not just the first one's.
+
+        ``foo`` 5.0 is unreadable and 4.0 is not, so the first scan bans one
+        version; backtracking past 4.0 starts a second scan that bans 3.0.  The
+        derivation carries a ban clause from each.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": _index_wheels("foo", "5.0", "4.0", "3.0", "2.0"),
+                "lib": _index_wheels("lib", "6.0"),
+            },
+            metadata_by_version={
+                "5.0": None,
+                "4.0": _metadata("foo", "4.0", "lib==9.9"),
+                "3.0": None,
+                "2.0": _metadata("foo", "2.0", "lib==9.8"),
+                "6.0": _metadata("lib", "6.0"),
+            },
+        )
+
+        with patch("nab_python.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        derivation, diagnostics = str(info.value).split("Diagnostics:")
+        assert "no versions of foo <VersionRange '(4.0, +inf)'>" in derivation
+        assert "no versions of foo <VersionRange '(2.0, 4.0)'>" in derivation
+        assert (
+            "foo: 2 versions failed metadata extraction (first: No metadata for"
+            " foo==5.0: no PEP 658 metadata and no sdist available)" in diagnostics
+        )
+
     def test_cutoff_filtered_sdist_is_not_reported_as_never_published(
         self, tmp_path: Path
     ) -> None:
