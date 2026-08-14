@@ -18,7 +18,6 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import InvalidVersion
 from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
-from ..conflict_kind import EMPTY_MEMBERSHIP_SETS
 from ..errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
@@ -594,7 +593,7 @@ def marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> b
     result = provider.marker_base_cache.get(marker_id)
     if result is None:
         provider.consulted_markers.add(marker)
-        result = marker.evaluate({**provider.environment, **EMPTY_MEMBERSHIP_SETS})
+        result = marker.evaluate_prepared(provider.prepared_environment)
         provider.marker_base_cache[marker_id] = result
     return result
 
@@ -614,17 +613,22 @@ def marker_matched_extras(
     marker_id: int,
     provided_extras: set[str],
 ) -> set[str]:
-    """Return the extras for which the marker evaluates to True."""
+    """Return the extras for which the marker evaluates to True.
+
+    Writing ``extra`` straight into a prepared environment skips the
+    canonicalization ``prepare_environment`` does, so ``provided_extras`` must
+    already be canonical.
+    """
     per_marker = provider.marker_extra_cache.get(marker_id)
     if per_marker is None:
         per_marker = provider.marker_extra_cache[marker_id] = {}
-    env = provider.env_with_extra
+    env = provider.prepared_extra_environment
     matched: set[str] = set()
     for extra_name in provided_extras:
         result = per_marker.get(extra_name)
         if result is None:
             env["extra"] = extra_name
-            result = marker.evaluate(env)
+            result = marker.evaluate_prepared(env)
             per_marker[extra_name] = result
         if result:
             matched.add(extra_name)
@@ -876,15 +880,15 @@ def _classify_requirement_uncached(
     marker = req.marker
     if marker is None:
         return set()
-    if marker.evaluate({**provider.environment, **EMPTY_MEMBERSHIP_SETS}):
+    if marker.evaluate_prepared(provider.prepared_environment):
         return set()
     if "extra" not in str(marker):
         return None
-    env = dict(provider.env_with_extra)
+    env = dict(provider.prepared_extra_environment)
     matched: set[str] = set()
     for extra_name in provided_extras:
         env["extra"] = extra_name
-        if marker.evaluate(env):
+        if marker.evaluate_prepared(env):
             matched.add(extra_name)
     return matched or None
 

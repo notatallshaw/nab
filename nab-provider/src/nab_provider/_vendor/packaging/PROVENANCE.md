@@ -28,11 +28,16 @@ most one checked-in patch.
   - `markersets.py` and `_markersets.py`: the marker-algebra module and the
     private engine behind it, both new files, plus the `Marker.to_set`
     accessor on `markers.py`.
+  - `markers.py`: `prepare_environment` with its `__all__` entry, and the
+    `Marker.evaluate_prepared` it feeds, so code evaluating many markers
+    against one environment builds it once. `evaluate` is now the two of them
+    composed.
 
   Upstream PRs are planned for the bound ordering, the direct subset and
-  disjoint walks, `filter`'s `assume_sorted` fast path, and
-  `from_bounds`/`snap_bounds`/`release_intervals`. `relation` is not proposed
-  yet: most of its win is available from the direct walks alone.
+  disjoint walks, `filter`'s `assume_sorted` fast path,
+  `from_bounds`/`snap_bounds`/`release_intervals`, and the prepared marker
+  environment. `relation` is not proposed yet: most of its win is available
+  from the direct walks alone.
 - `tasks/vendor-packaging.sh` fetches `pypa/packaging` at the pin, replaces this
   package with the pristine `src/packaging/` tree plus the repo-root license
   texts, and reapplies the patch. `--check` rebuilds into a temp location and

@@ -30,6 +30,7 @@ __all__ = [
     "UndefinedComparison",
     "UndefinedEnvironmentName",
     "default_environment",
+    "prepare_environment",
 ]
 
 
@@ -378,6 +379,51 @@ def default_environment() -> Environment:
     return cast("Environment", dict(_cached_default_environment()))
 
 
+def prepare_environment(
+    environment: Mapping[str, str | AbstractSet[str]] | None = None,
+    context: EvaluateContext = "metadata",
+) -> dict[str, str | AbstractSet[str]]:
+    """Build the environment a marker is evaluated against.
+
+    The detected process environment merged with the ``context`` defaults and
+    ``environment``, with ``extra`` canonicalized. Code evaluating many markers
+    against one environment can build it once here and pass the result to
+    :meth:`Marker.evaluate_prepared`, rather than having :meth:`Marker.evaluate`
+    rebuild it on every call.
+
+    :param environment: Mapping containing keys and values to override the
+       detected environment.
+    :param EvaluateContext context: The context in which the marker is
+        evaluated, which influences what marker names are considered valid.
+        Accepted values are ``"metadata"`` (for core metadata; default),
+        ``"lock_file"``, and ``"requirement"`` (i.e. all other situations).
+    :returns: A fresh dict on every call, which the caller may mutate.
+
+    .. versionadded:: 26.3
+    """
+    current_environment = cast(
+        "dict[str, str | AbstractSet[str]]", default_environment()
+    )
+    if context == "lock_file":
+        current_environment |= {
+            "extras": frozenset(),
+            "dependency_groups": frozenset(),
+        }
+    elif context == "metadata":
+        current_environment["extra"] = ""
+
+    if environment is not None:
+        current_environment |= environment
+        if "extra" in current_environment:
+            # The API used to allow setting extra to None. We need to handle
+            # this case for backwards compatibility. Also skip running
+            # normalize name if extra is empty.
+            extra = cast("str | None", current_environment["extra"])
+            current_environment["extra"] = canonicalize_name(extra) if extra else ""
+
+    return _repair_python_full_version(current_environment)
+
+
 class Marker:
     """Represents a parsed dependency marker expression.
 
@@ -530,29 +576,22 @@ class Marker:
             Added the ``context`` parameter, which influences which marker names
             are considered valid.
         """
-        current_environment = cast(
-            "dict[str, str | AbstractSet[str]]", default_environment()
-        )
-        if context == "lock_file":
-            current_environment |= {
-                "extras": frozenset(),
-                "dependency_groups": frozenset(),
-            }
-        elif context == "metadata":
-            current_environment["extra"] = ""
+        return self.evaluate_prepared(prepare_environment(environment, context))
 
-        if environment is not None:
-            current_environment |= environment
-            if "extra" in current_environment:
-                # The API used to allow setting extra to None. We need to handle
-                # this case for backwards compatibility. Also skip running
-                # normalize name if extra is empty.
-                extra = cast("str | None", current_environment["extra"])
-                current_environment["extra"] = canonicalize_name(extra) if extra else ""
+    def evaluate_prepared(self, environment: dict[str, str | AbstractSet[str]]) -> bool:
+        """Evaluate a marker against an already-prepared environment.
 
-        return _evaluate_markers(
-            self._markers, _repair_python_full_version(current_environment)
-        )
+        :param environment: The result of a :func:`prepare_environment` call.
+        :raises UndefinedComparison: If the marker uses a comparison on values
+            that are not valid versions per the :ref:`specification of version
+            specifiers <pypug:version-specifiers>`.
+        :raises UndefinedEnvironmentName: If the marker references a value that
+            is missing from the evaluation environment.
+        :returns: ``True`` if the marker matches, otherwise ``False``.
+
+        .. versionadded:: 26.3
+        """
+        return _evaluate_markers(self._markers, environment)
 
 
 def _pep440_python_full_version(python_full_version: str) -> str:
