@@ -63,6 +63,20 @@ LISTING = {
 }
 LISTING_BYTES = json.dumps(LISTING).encode()
 
+# A page whose only file is in a format nab does not read.
+ZIP_ONLY_LISTING = {
+    "meta": {"api-version": "1.0"},
+    "name": "pkg",
+    "files": [
+        {
+            "filename": "pkg-1.0.zip",
+            "url": "https://files.example.com/pkg-1.0.zip",
+            "hashes": {"sha256": "deadbeef"},
+        },
+    ],
+}
+ZIP_ONLY_BYTES = json.dumps(ZIP_ONLY_LISTING).encode()
+
 # A digit run just past CPython's int-from-string limit.
 OVERSIZED_DIGITS = "9" * (sys.get_int_max_str_digits() + 1)
 
@@ -1180,6 +1194,73 @@ class TestGetFiles:
         assert cached is not None
         _, policy = cached
         assert policy.etag == "new"
+
+    def test_304_over_a_zip_only_listing_reports_the_format(
+        self, tmp_path: Path
+    ) -> None:
+        """A 304 keeps the cached body, so the format report comes from it."""
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", ZIP_ONLY_BYTES, _stale_etag_policy())
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=304, headers={"etag": "v1"})]
+        )
+
+        files, unreadable_only = _get_files_and_report(transport, cache, "pkg")
+
+        assert files == []
+        assert unreadable_only
+
+    def test_200_over_a_zip_only_listing_reports_the_fresh_body(
+        self, tmp_path: Path
+    ) -> None:
+        """The replacement body decides the format report, not the one it replaced."""
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", ZIP_ONLY_BYTES, _stale_etag_policy())
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES)])
+
+        files, unreadable_only = _get_files_and_report(transport, cache, "pkg")
+
+        assert [file.filename for file in files] == ["pkg-1.0-py3-none-any.whl"]
+        assert not unreadable_only
+
+    def test_404_over_a_zip_only_listing_reports_the_absent_name(
+        self, tmp_path: Path
+    ) -> None:
+        """A 404 drops the cached body, so the name reads absent, not unreadable."""
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", ZIP_ONLY_BYTES, _stale_etag_policy())
+        transport = _FakeTransport([_FakeResponse(b"", status=404)])
+
+        files, unreadable_only = _get_files_and_report(transport, cache, "pkg")
+
+        assert files == []
+        assert not unreadable_only
+        assert cache.get_negative("pkg") is not None
+
+    def test_304_parses_the_cached_body_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The 304 path parses the body it serves, and parses it once."""
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", LISTING_BYTES, _stale_etag_policy())
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=304, headers={"etag": "v1"})]
+        )
+
+        parsed: list[str] = []
+        real_parse_files = cached_client_mod._parse_files
+
+        def recording_parse_files(
+            data: object, index_url: str, package: str, *, page_url: str | None = None
+        ) -> list:
+            parsed.append(package)
+            return real_parse_files(data, index_url, package, page_url=page_url)
+
+        monkeypatch.setattr(cached_client_mod, "_parse_files", recording_parse_files)
+        files = _run_get_files(transport, cache, "pkg")
+
+        assert [file.filename for file in files] == ["pkg-1.0-py3-none-any.whl"]
+        assert parsed == ["pkg"]
 
     def test_stale_revalidates_no_etag_omits_header(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -3656,12 +3737,37 @@ def _run_get_files(
     return asyncio.run(go())
 
 
+def _get_files_and_report(
+    transport: object, cache: object, package: str
+) -> tuple[list, bool]:
+    """Return ``get_files``' records and the client's unreadable-only report.
+
+    The report is per-client state, so it is read while the client the call ran
+    on is still in scope.
+    """
+
+    async def go() -> tuple[list, bool]:
+        client = CachedAsyncSimpleClient(transport, cache)  # type: ignore[arg-type]
+        try:
+            files = await client.get_files(package)
+        finally:
+            await client.aclose()
+        return files, client.served_unreadable_only(package)
+
+    return asyncio.run(go())
+
+
 def _fresh_policy() -> CachePolicy:
     return CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None)
 
 
 def _stale_policy() -> CachePolicy:
     return CachePolicy(fetched_at=0, max_age=1, etag=None)
+
+
+def _stale_etag_policy() -> CachePolicy:
+    """A stale policy carrying the ETag a 304 answers."""
+    return CachePolicy(fetched_at=0, max_age=1, etag="v1")
 
 
 class TestNegativeCaching:
@@ -3965,7 +4071,8 @@ class TestCorruptCachedListing:
 
     A body that will not decode as JSON is treated as a miss: online it
     re-fetches, offline it raises ``OfflineError``. A body that decodes but
-    is the wrong shape raises the same error as the wire path.
+    is the wrong shape raises the same error as the wire path when it is
+    served, and is replaced or dropped when it is not.
     """
 
     _TRUNCATED = b'{"files": ['
@@ -4086,6 +4193,58 @@ class TestCorruptCachedListing:
                 json.loads(self._WRONG_SHAPE), "https://pypi.org/simple/", "pkg"
             )
         assert str(caught.value) == str(wire.value)
+
+    def test_stale_wrong_shape_is_replaced_by_a_200(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A 200 serves the replacement, so the body it replaces is never parsed."""
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", self._WRONG_SHAPE, _stale_etag_policy())
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES)])
+
+        with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
+            files = _run_get_files(transport, cache, "pkg")
+
+        assert [file.filename for file in files] == ["pkg-1.0-py3-none-any.whl"]
+        assert len(transport.calls) == 1
+
+        healed = cache.get_simple("pkg")
+        assert healed is not None
+        assert healed[0] == LISTING_BYTES
+
+        # The body decoded, so no self-heal warning is logged.
+        assert _cached_warnings(caplog) == []
+
+    def test_stale_wrong_shape_is_dropped_by_a_404(self, tmp_path: Path) -> None:
+        """A 404 serves nothing, so the cached body is never parsed."""
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", self._WRONG_SHAPE, _stale_etag_policy())
+        transport = _FakeTransport([_FakeResponse(b"", status=404)])
+
+        assert _run_get_files(transport, cache, "pkg") == []
+        assert len(transport.calls) == 1
+        assert cache.get_negative("pkg") is not None
+
+    def test_stale_wrong_shape_raises_on_a_304_and_stays_stale(
+        self, tmp_path: Path
+    ) -> None:
+        """A 304 serves the cached body, so it raises without extending freshness."""
+        cache = _make_cache(tmp_path)
+        stale = _stale_etag_policy()
+        cache.put_simple("pkg", self._WRONG_SHAPE, stale)
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=304, headers={"etag": "v1"})]
+        )
+
+        with pytest.raises(MalformedSimpleResponseError):
+            _run_get_files(transport, cache, "pkg")
+
+        assert len(transport.calls) == 1
+
+        # Still stale, so a later 200 can replace the body the 304 could not.
+        policy = cache.get_simple_policy("pkg")
+        assert policy is not None
+        assert policy.fetched_at == stale.fetched_at
 
 
 class TestOversizedListingInt:

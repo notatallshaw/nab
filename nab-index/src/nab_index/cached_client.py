@@ -365,11 +365,11 @@ class CachedAsyncSimpleClient:
                 body, policy = cached
                 data = self._decode_cached_listing(body, package)
                 if data is not None:
+                    if not serve_cached:
+                        return await self._revalidate_simple(package, data, policy)
                     files = self._parse_body(data, package, page_url=policy.page_url)
-                    if serve_cached:
-                        self._rebuild_parsed(package, body, policy, files)
-                        return files
-                    return await self._revalidate_simple(package, body, policy)
+                    self._rebuild_parsed(package, body, policy, files)
+                    return files
                 corrupt_positive = True
 
         if not corrupt_positive:
@@ -517,8 +517,9 @@ class CachedAsyncSimpleClient:
         """Return the parsed JSON of a cached Simple body, or ``None``.
 
         A body that will not decode as JSON is logged and treated as a miss.
-        A body that decodes but is the wrong shape is not caught here:
-        :func:`_parse_files` raises on it, the same as on the wire path.
+        A body that decodes but is the wrong shape is not caught here: only
+        the path that serves the body parses it, and :func:`_parse_files`
+        raises there, the same as on the wire path.
         """
         try:
             decoded: object = json.loads(body)
@@ -571,8 +572,14 @@ class CachedAsyncSimpleClient:
         return package in self._unreadable_only
 
     async def _revalidate_simple(
-        self, package: str, body: bytes, policy: CachePolicy
+        self, package: str, data: object, policy: CachePolicy
     ) -> list[WheelFile | SdistFile]:
+        """Revalidate a stale cached listing and return the records to serve.
+
+        ``data`` is the decoded cached body. Only a 304 serves it, parsing it
+        against the response's URL; a 200 serves the replacement body and a
+        404 serves nothing.
+        """
         url = f"{self._index_url}{package}/"
         headers = {"Accept": simple_accept_header(self._serialization)}
         # httpx raises on a non-ASCII header value.
@@ -580,6 +587,10 @@ class CachedAsyncSimpleClient:
             headers["If-None-Match"] = policy.etag
         response = await self._transport.get(url, headers=headers)
         if response.status_code == _HTTP_NOT_MODIFIED:
+            # Parse before refreshing the policy, so a body that will not parse
+            # keeps its stale window.
+            files = self._parse_body(data, package, page_url=response.url)
+
             # A 304 stating no freshness of its own keeps the stored max-age.
             new_policy = CachePolicy(
                 fetched_at=_freshness_start(response),
@@ -593,7 +604,7 @@ class CachedAsyncSimpleClient:
                 body_digest=_carried_digest(policy, response.url),
             )
             self._cache.refresh_simple_policy(package, new_policy)
-            return self._parse_listing(body, package, response.url)
+            return files
 
         if response.status_code == _HTTP_NOT_FOUND:
             self._cache.put_negative(package, self._negative_policy(response))
