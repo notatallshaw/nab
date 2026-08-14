@@ -5893,6 +5893,25 @@ class TestSkipFetch:
         assert not coordinator.calls_to("request_metadata")
         assert not coordinator.calls_to("request_metadata_batch")
 
+    def test_prefetch_transitive_best_skips_pick_for_cached_deps(self) -> None:
+        # The deps_cache guard runs before the artifact pick, so a candidate
+        # with cached deps never reaches pick_dist_for_metadata.
+        coordinator = make_coordinator(
+            [make_wheel("2.0"), make_wheel("1.0")], package="pkg"
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.deps_cache[("pkg", V("2.0"))] = {}
+
+        with patch.object(
+            listing_mod,
+            "pick_dist_for_metadata",
+            wraps=listing_mod.pick_dist_for_metadata,
+        ) as pick:
+            provider.fetch_versions("pkg")
+
+        assert not pick.called
+        assert not coordinator.calls_to("request_metadata")
+
     def test_prefetch_walk_ahead_skips_complete_override(self) -> None:
         # The walk-ahead batch excludes a version whose complete override
         # replaces its metadata, but keeps the un-overridden sibling.
