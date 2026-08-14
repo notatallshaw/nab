@@ -163,8 +163,14 @@ def _require_single_segment(component: str) -> str:
     an embedded separator expands to a nested path, and ``.`` or ``..``
     names a parent, so either would read or write a different file than
     the key describes and return the wrong cache entry.
+
+    Separator syntax follows the running platform: on Windows a backslash
+    separates segments and ``C:`` prefixes a drive, while POSIX reads both
+    as ordinary filename characters.
     """
-    if component in ("", ".", "..") or component != Path(component).name:
+    # A string test, not path handling: Path.name would build a path object per call.
+    basename = os.path.basename(component)  # noqa: PTH119
+    if component in ("", ".", "..") or component != basename:
         msg = f"cache key component is not a single path segment: {component!r}"
         raise ValueError(msg)
     return component
