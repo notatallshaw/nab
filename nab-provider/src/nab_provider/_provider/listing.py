@@ -215,6 +215,8 @@ def prefetch_transitive_best(
     if best is None:
         return
     version, _ = best
+    if (normalized, version) in provider.deps_cache:
+        return
     if _has_complete_override(provider, normalized, version):
         return
 
@@ -222,13 +224,7 @@ def prefetch_transitive_best(
     dist = pick_dist_for_metadata(
         versions, version, provider.wheel_tags, provider.target
     )
-
-    cache_key = (normalized, version)
-    if (
-        cache_key not in provider.deps_cache
-        and isinstance(dist, WheelFile)
-        and (url := dist.metadata_url) is not None
-    ):
+    if isinstance(dist, WheelFile) and (url := dist.metadata_url) is not None:
         provider.coordinator.request_metadata(
             normalized, dist.version, url, dist.metadata_hash
         )
