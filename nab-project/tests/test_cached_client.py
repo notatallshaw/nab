@@ -2643,6 +2643,108 @@ class TestSerializationCacheFlip:
         assert [f.filename for f in files] == ["pkg-1.0-py3-none-any.whl"]
 
 
+class _UnchangedPageTransport:
+    """Index whose page has not changed since it issued ``etag``.
+
+    A conditional request gets a 304; an unconditional one gets the page.
+    """
+
+    def __init__(self, page: bytes, etag: str) -> None:
+        self._page = page
+        self._etag = etag
+        self.calls: list[dict[str, str] | None] = []
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> _FakeResponse:
+        self.calls.append(headers)
+        if headers is not None and "If-None-Match" in headers:
+            return _FakeResponse(b"", status=304, headers={"etag": self._etag}, url=url)
+        return _FakeResponse(
+            self._page,
+            headers={"content-type": "text/html", "etag": self._etag},
+            url=url,
+        )
+
+    async def aclose(self) -> None:
+        return None
+
+
+class TestRetiredListingBucket:
+    """A body an older nab wrote into a retired bucket never answers.
+
+    A 304 keeps the stored body, so an obsolete rendering of a PEP 503
+    page is only retired by the bucket's version suffix.
+    """
+
+    _INDEX = "https://pypi.org/simple/"
+    _PAGE_URL = "https://pypi.org/simple/pkg/"
+    _ETAG = "unchanged"
+    _DIGEST = "b" * 64
+    _WHEEL = "pkg-1.0-py3-none-any.whl"
+    _PAGE = f'<a href="{_WHEEL}#sha256={_DIGEST}&amp;egg=pkg">pkg</a>'.encode()
+    # The page as an older nab rendered it, taking the fragment as one hash.
+    _RETIRED_BODY = json.dumps(
+        {
+            "files": [
+                {
+                    "filename": _WHEEL,
+                    "url": f"{_PAGE_URL}{_WHEEL}",
+                    "hashes": {"sha256": f"{_DIGEST}&egg=pkg"},
+                }
+            ]
+        }
+    ).encode()
+
+    def _seed_retired_bucket(self, root: Path) -> Path:
+        """Write the older body and a stale policy into ``simple-v1``.
+
+        Returns the seeded bucket directory.
+        """
+        bucket = root / "simple-v1" / "pypi"
+        bucket.mkdir(parents=True)
+        (bucket / "pkg.json").write_bytes(self._RETIRED_BODY)
+        (bucket / "pkg.policy").write_bytes(
+            json.dumps(
+                {
+                    "fetched_at": 0,
+                    "max_age": 1,
+                    "etag": self._ETAG,
+                    "page_url": self._PAGE_URL,
+                }
+            ).encode()
+        )
+        return bucket
+
+    def _get_files(self, root: Path, transport: _UnchangedPageTransport) -> list:
+        """Resolve ``pkg`` through a client backed by the cache under ``root``."""
+        cache = OnDiskCache(root, self._INDEX)
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache, self._INDEX)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        return asyncio.run(go())
+
+    def test_retired_body_is_refetched_not_revalidated(self, tmp_path: Path) -> None:
+        bucket = self._seed_retired_bucket(tmp_path)
+        transport = _UnchangedPageTransport(self._PAGE, self._ETAG)
+
+        (wheel,) = self._get_files(tmp_path, transport)
+
+        assert wheel.hashes == (("sha256", self._DIGEST),)
+
+        assert len(transport.calls) == 1
+        sent = transport.calls[0]
+        assert sent is not None
+        assert "If-None-Match" not in sent
+
+        assert (bucket / "pkg.json").read_bytes() == self._RETIRED_BODY
+
+
 class TestGetMetadataText:
     def test_cold_cache_fetches_and_stores(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
