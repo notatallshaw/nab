@@ -125,7 +125,11 @@ class DictProvider:
 
 
 class PromotingProvider(DictProvider):
-    """DictProvider that promotes packages with 5+ conflicts."""
+    """DictProvider that promotes packages with 5+ conflicts.
+
+    The threshold is the provider's own, not the resolver's restart
+    threshold.
+    """
 
     _CONFLICT_THRESHOLD = 5
 
@@ -1585,19 +1589,19 @@ class TestBackjumpToRoot:
 class TestRestart:
     """Verify the resolver restarts when a package causes many conflicts."""
 
-    def test_restart_reduces_decisions(self) -> None:
-        """Restart with conflict-driven promotion avoids re-deciding
-        downstream packages on every backtrack.
+    def test_restart_fires_on_repeated_conflicts(self) -> None:
+        """A package that keeps conflicting triggers a restart, and the
+        resolve still lands on the only solution.
 
         root -> a (any), b (any)
         a has versions 10..1, each requiring b >= v (so a@10 -> b>=10, etc.)
         b only has version 1.
         Only a@1 is compatible (b>=1 satisfied by b@1).
 
-        Without restart: resolver decides b first (fewer versions),
-        then tries a@10, conflict, backtracks, re-decides b, tries a@9, etc.
-        With restart: after 5 conflicts, a is promoted, decided first,
-        and b is only decided once at the end.
+        The resolver decides b first (fewer versions), then walks a down
+        from 10, conflicting on each version. Ten versions are too few
+        for a restart to pay for itself, so the decision count asserted
+        below is a ceiling rather than a saving.
         """
         a_versions = {}
         for v in range(10, 0, -1):
@@ -1619,12 +1623,12 @@ class TestRestart:
 
     def test_restarts_are_bounded(self) -> None:
         """Resolver stops restarting after _MAX_RESTARTS."""
-        # 50 versions of "a", each requiring b >= v. Only a@1 works.
-        # With threshold=5 and max_restarts=3, restarts fire at
-        # conflicts 5, 10, 20. After 3 restarts (exhausting the
-        # budget), resolution continues without further restarts.
+        # 70 versions of "a", each requiring b >= v. Only a@1 works.
+        # "a" takes every conflict and the threshold doubles per restart,
+        # so restarts fire at 8, 16 and 32. The corpus reaches the 64 a
+        # fourth would need, so the spent budget is what stops it.
         a_versions = {}
-        for v in range(50, 0, -1):
+        for v in range(70, 0, -1):
             a_versions[v] = {"b": Range.at_least(v)}
 
         provider = PromotingProvider(
