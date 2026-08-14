@@ -570,11 +570,11 @@ class Provider:
         # (base, extra, normalized_name) per input package string.
         self._package_parts: dict[str, tuple[str, str | None, str]] = {}
 
-        # Fast-path priority cache, keyed by package + Range identity +
-        # affected count.  Range identity is sound because solution.get
-        # returns the same object until it changes.
+        # Fast-path priority cache: (Range, normalized name, affected count,
+        # priority) per package string.  Range identity is sound because
+        # solution.get returns the same object until it changes.
         self.priority_cache: dict[
-            str, tuple[RangeProtocol[Version], int, tuple[int, int, bool]]
+            str, tuple[RangeProtocol[Version], str, int, tuple[int, int, bool]]
         ] = {}
 
         # Derived views of versions_cache, built lazily alongside the listing.

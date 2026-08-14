@@ -8542,6 +8542,42 @@ class TestPrioritizeMatchingFromIndex:
             (k, v[0]) for k, v in provider.priority_cache.items()
         ]
 
+    def test_priority_cache_hit_yields_to_force_backtrack(self) -> None:
+        """A force-backtrack after the entry was stored still demotes the package."""
+        wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        intervals = SpecifierSet(">=1.0").to_range()
+        assert provider.prioritize("foo", intervals, {}, {})[0] == Provider.TIER_NORMAL
+
+        provider._force_backtrack_counts["foo"] = 1
+
+        assert provider.prioritize("foo", intervals, {}, {})[0] == Provider.TIER_CULPRIT
+
+    def test_priority_cache_hit_yields_to_dominant_culprit(self) -> None:
+        """A culprit count that crosses the threshold still demotes the package."""
+        wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        intervals = SpecifierSet(">=1.0").to_range()
+        assert provider.prioritize("foo", intervals, {}, {})[0] == Provider.TIER_NORMAL
+
+        demoted = provider.prioritize("foo", intervals, {}, {"foo": 10})
+
+        assert demoted[0] == Provider.TIER_CULPRIT
+
+    def test_priority_cache_hit_yields_to_new_conflict_count(self) -> None:
+        """A conflict count that crosses the threshold still promotes the package."""
+        wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        intervals = SpecifierSet(">=1.0").to_range()
+        assert provider.prioritize("foo", intervals, {}, {})[0] == Provider.TIER_NORMAL
+
+        promoted = provider.prioritize("foo", intervals, {"foo": 5}, {})
+
+        assert promoted[0] == Provider.TIER_AFFECTED
+
     def test_matching_cache_inner_dict_reused_for_new_range(self) -> None:
         """Two distinct ranges for the same package share the inner dict."""
         wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
