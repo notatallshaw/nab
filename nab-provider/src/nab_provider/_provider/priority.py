@@ -168,6 +168,24 @@ def prioritize(
     listing rather than ranking its absence.
     """
     provider.stats.prioritize_calls += 1
+
+    # A cached entry holds while its Range, conflict count and two demotion
+    # signals are unchanged.  It stores the normalized name so that check can
+    # read the counts without splitting `package` first.
+    cached = provider.priority_cache.get(package)
+    if cached is not None:
+        cached_range, cached_name, cached_affected, cached_priority = cached
+        if (
+            cached_range is version_range
+            and conflict_counts.get(cached_name, 0) == cached_affected
+            and (
+                culprit_counts is None
+                or culprit_counts.get(cached_name, 0) < CULPRIT_DEMOTE_THRESHOLD
+            )
+            and provider.force_backtrack_count(cached_name) == 0
+        ):
+            return cached_priority
+
     _, extra, normalized = provider.split_and_normalize(package)
     affected_count = conflict_counts.get(normalized, 0)
     culprit_count = (
@@ -175,18 +193,8 @@ def prioritize(
     )
     force_backtracked = provider.force_backtrack_count(normalized) > 0
 
-    # Fast path: when culprit_count is below the demote threshold AND the
-    # package was not force-backtracked, the tier depends only on
-    # affected_count and is safe to cache by Range identity.
+    # With neither demotion signal firing the tier depends only on affected_count.
     cacheable = culprit_count < CULPRIT_DEMOTE_THRESHOLD and not force_backtracked
-    if cacheable:
-        cached = provider.priority_cache.get(package)
-        if (
-            cached is not None
-            and cached[0] is version_range
-            and cached[1] == affected_count
-        ):
-            return cached[2]
 
     tier = compute_tier(
         normalized,
@@ -201,5 +209,10 @@ def prioritize(
     # Don't cache the in-flight placeholder; compute_matching's listing-arrival
     # side effect (speculative prefetch) lives in the cache-miss branch.
     if cacheable and normalized in provider.versions_cache:
-        provider.priority_cache[package] = (version_range, affected_count, priority)
+        provider.priority_cache[package] = (
+            version_range,
+            normalized,
+            affected_count,
+            priority,
+        )
     return priority
