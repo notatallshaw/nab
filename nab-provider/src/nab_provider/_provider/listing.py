@@ -23,7 +23,7 @@ from ..iso8601 import parse_iso_datetime
 from ..metadata import intern_version as _intern_version
 from ..policy import DistPolicy
 from ..vcs_admission import UnsupportedVcsError
-from .metadata_resolver import pick_dist, pick_dist_for_metadata
+from .metadata_resolver import pick_dist_for_metadata, version_dists
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -111,31 +111,6 @@ def versions_only(
                 seen.add(version)
                 cached.append(version)
         provider.versions_only_cache[normalized] = cached
-    return cached
-
-
-def wheel_by_version(
-    provider: Provider,
-    normalized: str,
-    version_list: list[tuple[Version, DistFile]],
-) -> dict[Version, DistFile]:
-    """Return the cached ``Version -> DistFile`` mapping for ``normalized``.
-
-    Each version maps to the dist
-    :func:`~nab_provider._provider.metadata_resolver.pick_dist` picks, so a
-    prefetch keyed off this mapping warms the metadata the read asks for.
-    """
-    cached = provider.wheel_by_version_cache.get(normalized)
-    if cached is None:
-        grouped: dict[Version, list[DistFile]] = {}
-        for version, dist in version_list:
-            grouped.setdefault(version, []).append(dist)
-
-        cached = {
-            version: pick_dist(dists, provider.wheel_tags, provider.target)
-            for version, dists in grouped.items()
-        }
-        provider.wheel_by_version_cache[normalized] = cached
     return cached
 
 
@@ -671,7 +646,8 @@ def prefetch_walk_ahead(
     first ``PREFETCH_BATCH`` window hits cache instead of paying one RTT
     per visit.
 
-    Takes each version's artifact from :func:`wheel_by_version`, so the
+    Takes each version's artifact from
+    :func:`~nab_provider._provider.metadata_resolver.version_dists`, so the
     sidecar it warms is the one the read asks for.  Skips already-cached
     versions, versions whose artifact publishes no sidecar, and versions
     whose metadata the coordinator already holds.  Fire-and-forget.
@@ -679,7 +655,7 @@ def prefetch_walk_ahead(
     versions_list = provider.versions_cache.get(normalized)
     if not versions_list:
         return
-    picked = wheel_by_version(provider, normalized, versions_list)
+    picked = version_dists(provider, normalized, versions_list).picked
     coordinator_index = provider.coordinator.index
 
     # Reverse out of place: ``versions_list`` is the shared cached listing.

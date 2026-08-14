@@ -9,7 +9,7 @@ each ``Requires-Dist`` entry into base deps vs per-extra deps.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, TypeGuard
+from typing import TYPE_CHECKING, NamedTuple, TypeGuard
 from urllib.parse import urlsplit
 
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -88,9 +88,7 @@ def resolve_metadata(
     # Sibling wheels of one version can declare different dependencies, so the
     # read is keyed by the artifact this target would install.  ``versions`` is
     # the target's own tag-filtered listing, so the pick is per-target.
-    dist = pick_dist_for_metadata(
-        versions, version, provider.wheel_tags, provider.target
-    )
+    dist = version_dists(provider, normalized, versions).picked.get(version)
 
     # A wheel keys on its sidecar URL, or on its own URL when it publishes none.
     if isinstance(dist, WheelFile):
@@ -333,6 +331,53 @@ def pick_dist_for_metadata(
     """Pick the dist whose metadata answers for ``version``. See :func:`pick_dist`."""
     dists = [d for v, d in versions if v == version]
     return pick_dist(dists, tags, target) if dists else None
+
+
+class VersionDists(NamedTuple):
+    """One package's listing indexed by version.
+
+    ``picked`` is the dist :func:`pick_dist` answers with for each version.
+    ``sibling_wheels`` holds only the versions publishing more than one wheel:
+    the tie candidates for that version's pick.
+    """
+
+    picked: dict[Version, DistFile]
+    sibling_wheels: dict[Version, list[WheelFile]]
+
+
+def version_dists(
+    provider: Provider,
+    normalized: str,
+    version_list: Sequence[tuple[Version, DistFile]],
+) -> VersionDists:
+    """Index ``version_list`` by version, through the per-package memo.
+
+    Only the provider's own cached listing is memoised: another listing under
+    the same name is a different set of artifacts, so it is indexed fresh.
+    """
+    cacheable = version_list is provider.versions_cache.get(normalized)
+    if cacheable:
+        cached = provider.version_dists_cache.get(normalized)
+        if cached is not None:
+            return cached
+
+    grouped: dict[Version, list[DistFile]] = {}
+    for version, dist in version_list:
+        grouped.setdefault(version, []).append(dist)
+
+    picked: dict[Version, DistFile] = {}
+    sibling_wheels: dict[Version, list[WheelFile]] = {}
+    for version, dists in grouped.items():
+        picked[version] = pick_dist(dists, provider.wheel_tags, provider.target)
+        if len(dists) > 1:
+            wheels = [d for d in dists if isinstance(d, WheelFile)]
+            if len(wheels) > 1:
+                sibling_wheels[version] = wheels
+
+    indexed = VersionDists(picked, sibling_wheels)
+    if cacheable:
+        provider.version_dists_cache[normalized] = indexed
+    return indexed
 
 
 def pick_dist(
@@ -960,11 +1005,12 @@ def check_sibling_metadata_divergence(
     legitimately install.
     """
     tags = provider.wheel_tags
-    pick = pick_dist_for_metadata(versions, version, tags, provider.target)
+    _, _, normalized = provider.split_and_normalize(package)
+    indexed = version_dists(provider, normalized, versions)
+    pick = indexed.picked.get(version)
     if not isinstance(pick, WheelFile):
         return
 
-    _, _, normalized = provider.split_and_normalize(package)
     ver_str = str(version)
     index = provider.coordinator.index
 
@@ -972,10 +1018,7 @@ def check_sibling_metadata_divergence(
     if pick_text is None:
         return
 
-    wheels = [d for v, d in versions if v == version and isinstance(d, WheelFile)]
-    if tags is None:
-        # The pick came off the same narrowing, so it is one of these.
-        wheels = _python_axis_narrowed(provider.target, wheels)
+    wheels = _tie_candidate_wheels(provider, indexed, version, tags)
     if len(wheels) <= 1:
         return
 
@@ -1002,6 +1045,26 @@ def check_sibling_metadata_divergence(
             f" per-package dependencies override to resolve this version."
         )
         raise SiblingMetadataDivergenceError(msg)
+
+
+def _tie_candidate_wheels(
+    provider: Provider,
+    indexed: VersionDists,
+    version: Version,
+    tags: TagSet | None,
+) -> list[WheelFile]:
+    """Return the wheels of ``version`` that could tie the pick.
+
+    ``sibling_wheels`` holds only the versions publishing more than one wheel,
+    so a version missing from it ties nothing and answers empty.
+    """
+    wheels = indexed.sibling_wheels.get(version)
+    if wheels is None:
+        return []
+    if tags is None:
+        # The pick came off the same narrowing, so it is one of these.
+        return _python_axis_narrowed(provider.target, wheels)
+    return wheels
 
 
 def _tie_sibling_signature(

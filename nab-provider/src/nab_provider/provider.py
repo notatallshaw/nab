@@ -579,7 +579,7 @@ class Provider:
 
         # Derived views of versions_cache, built lazily alongside the listing.
         self.versions_only_cache: dict[str, list[Version]] = {}
-        self.wheel_by_version_cache: dict[str, dict[Version, DistFile]] = {}
+        self.version_dists_cache: dict[str, _metadata_resolver.VersionDists] = {}
 
         # Widening state: the ascending versions_only view per normalized
         # name, the span-widened parent range per decided (name, version),
@@ -1035,8 +1035,11 @@ class Provider:
         normalized: str,
         version_list: list[tuple[Version, DistFile]],
     ) -> dict[Version, DistFile]:
-        """See :func:`nab_provider._provider.listing.wheel_by_version`."""
-        return _listing.wheel_by_version(self, normalized, version_list)
+        """Return the picked-dist view of ``normalized``'s listing.
+
+        See :func:`nab_provider._provider.metadata_resolver.version_dists`.
+        """
+        return _metadata_resolver.version_dists(self, normalized, version_list).picked
 
     def speculative_prefetch(
         self,
