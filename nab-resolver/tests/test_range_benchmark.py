@@ -64,7 +64,7 @@ SUITE_PROFILE = {
         membership_tests=448,
         intervals_seen=892,
         largest_range=8,
-        hash_misses=116,
+        hash_misses=111,
         equality_calls=471,
     ),
     "conflict-free-fanout": Profile(
