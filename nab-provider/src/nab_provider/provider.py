@@ -67,7 +67,7 @@ from .vcs_admission import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     from datetime import datetime
     from pathlib import Path
 
@@ -1091,27 +1091,38 @@ class Provider:
 
         version_list = self.fetch_versions(package)
         all_versions = self.versions_only(normalized, version_list)
-        candidates = list(
-            version_range.filter(all_versions, assume_sorted="descending")
-        )
-
-        # VersionRange.filter yields newest-first; reverse for LOWEST so
-        # look-ahead walks oldest -> newest.
-        if self.wants_lowest(normalized):
-            candidates.reverse()
+        candidates = self._ordered_candidates(normalized, version_range, all_versions)
+        first = next(candidates, None)
+        if first is None:
+            self._record_no_versions_reason(
+                package, all_versions, version_range=version_range
+            )
+            return None
 
         no_lookahead = not self.root_requirements and not self.solution_decisions
-        if no_lookahead or not candidates:
-            if not candidates:
-                self._record_no_versions_reason(
-                    package, all_versions, version_range=version_range
-                )
-            return candidates[0] if candidates else None
+        if no_lookahead:
+            return first
 
         wheel_by_version = self._wheel_by_version(normalized, version_list)
         return self._run_full_scan(
-            normalized, candidates, wheel_by_version, package, all_versions
+            normalized, first, candidates, wheel_by_version, package, all_versions
         )
+
+    def _ordered_candidates(
+        self,
+        normalized: str,
+        version_range: VersionRange,
+        all_versions: list[Version],
+    ) -> Iterator[Version]:
+        """Return the in-range versions in the order the strategy walks them.
+
+        ``VersionRange.filter`` yields newest-first, which is the order
+        HIGHEST wants; LOWEST has to read the whole listing to reverse it.
+        """
+        matches = version_range.filter(all_versions, assume_sorted="descending")
+        if self.wants_lowest(normalized):
+            return reversed(list(matches))
+        return matches
 
     def _preferred_version(
         self,
@@ -1230,25 +1241,29 @@ class Provider:
     def _run_full_scan(
         self,
         normalized: str,
-        candidates: list[Version],
+        first: Version,
+        rest: Iterator[Version],
         wheel_by_version: dict[Version, DistFile],
         package: str,
         all_versions: list[Version],
     ) -> Version | None:
-        """Run the decision-aware look-ahead scan over candidates."""
+        """Run the decision-aware look-ahead scan over candidates.
+
+        ``rest`` is only drawn from once ``first`` has been rejected.
+        """
         broad_rejections = 0
-        if self._look_ahead_ok(normalized, candidates[0], check_decisions=True):
+        if self._look_ahead_ok(normalized, first, check_decisions=True):
             self._flush_pending_blocks()
-            return candidates[0]
+            return first
         self.stats.look_ahead_rejections += 1
         broad_rejections += 1
 
         found = self._scan_candidates_pipelined(
             normalized,
-            candidates[1:],
+            list(rest),
             wheel_by_version,
             broad_rejections,
-            first_candidate=candidates[0],
+            first_candidate=first,
         )
         if found is not None:
             self._flush_pending_blocks()
