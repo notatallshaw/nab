@@ -11,6 +11,7 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#result
 
 from __future__ import annotations
 
+from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from .types import IncompatibilityCause, PackageType, VersionType
@@ -60,9 +61,9 @@ def build_solution_data(
     # recording each dependency crossed on the way.
     edges: list[tuple[PackageType, PackageType]] = []
     reachable: set[PackageType] = set()
-    queue: list[PackageType] = list(root_required)
+    queue: deque[PackageType] = deque(root_required)
     while queue:
-        package = queue.pop(0)
+        package = queue.popleft()
         if package in reachable:
             continue
         reachable.add(package)
