@@ -260,8 +260,11 @@ class PartialSolution(Generic[PackageType, VersionType]):
         """
         self._contradiction_epoch += 1
 
+        # Trail levels never decrease, so this pops exactly the assignments above
+        # target_level; every other package keeps the positive and negative ranges
+        # its cached effective range was derived from.
         while self._assignments and self._assignments[-1].decision_level > target_level:
-            self._assignments.pop()
+            self._effective_range_cache.pop(self._assignments.pop().package, None)
 
         self._decision_level = target_level
 
@@ -281,8 +284,6 @@ class PartialSolution(Generic[PackageType, VersionType]):
 
         for package in empty_packages:
             del self._assignments_by_package[package]
-
-        self._effective_range_cache.clear()
 
     def _update_package_state_after_backtrack(
         self,
