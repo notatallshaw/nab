@@ -194,6 +194,23 @@ class TestMultipleDerivations:
         assert ps.decisions() == {"foo": 3}
         assert ps.undecided_packages() == set()
 
+    def test_backtrack_keeps_untouched_effective_ranges_cached(self) -> None:
+        """Only a package whose trail the backjump popped loses its cached range."""
+        ps = PartialSolution()
+        inc = Incompatibility([], cause=IncompatibilityCause.ROOT)
+        # foo sits at level 0; the decision on bar puts bar and baz above it.
+        ps.derive("foo", Range.at_least(1), positive=True, cause=inc)
+        ps.decide("bar", 1)
+        ps.derive("baz", Range.at_least(2), positive=True, cause=inc)
+
+        foo_range = ps.get("foo")
+        ps.backtrack(0)
+
+        assert ps._effective_range_cache["foo"] is foo_range
+
+        assert "bar" not in ps._effective_range_cache
+        assert "baz" not in ps._effective_range_cache
+
     def test_satisfier_with_multiple_positive_derivations(self) -> None:
         """satisfier walks through multiple positive derivations."""
         ps = PartialSolution()
