@@ -720,6 +720,18 @@ class TestFetchVersions:
         assert provider.stats.listings_fetched == 1
 
 
+class _CountingListing(list[Version]):
+    """A version listing that counts how many of its entries are read."""
+
+    def __init__(self, versions: list[Version]) -> None:
+        super().__init__(versions)
+        self.reads = 0
+
+    def __getitem__(self, index: Any) -> Any:
+        self.reads += 1
+        return super().__getitem__(index)
+
+
 class TestChooseVersion:
     def test_picks_newest_in_range(self) -> None:
         """choose_version returns the newest version passing the filter."""
@@ -728,6 +740,32 @@ class TestChooseVersion:
         provider = Provider(coordinator)
         spec = SpecifierSet(">=1.0,<3.0")
         assert provider.choose_version("foo", spec.to_range()) == V("2.0")
+
+    def test_accepted_pick_leaves_the_listing_tail_unread(self) -> None:
+        """An accepted look-ahead pick returns without reading the tail."""
+        versions = [f"1.{minor}" for minor in range(60)]
+        coordinator = make_coordinator(
+            [make_wheel(v) for v in versions],
+            metadata_by_version={
+                v: make_metadata("foo", v, "bar>=1.0") for v in versions
+            },
+            package="foo",
+        )
+        root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+
+        # The decided bar==3.0 satisfies bar>=1.0, so look-ahead accepts the pick.
+        provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
+
+        listing = _CountingListing(
+            provider.versions_only("foo", provider.fetch_versions("foo"))
+        )
+        provider.versions_only_cache["foo"] = listing
+
+        assert provider.choose_version("foo", VersionRange.full()) == V("1.59")
+
+        # filter's sortedness check reads both ends; the pick is the third read.
+        assert listing.reads == 3
 
     def test_returns_none_when_no_match(self) -> None:
         """choose_version returns None when nothing matches."""
