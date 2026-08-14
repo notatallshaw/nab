@@ -8542,8 +8542,21 @@ class TestPrioritizeMatchingFromIndex:
             (k, v[0]) for k, v in provider.priority_cache.items()
         ]
 
+    def test_priority_cache_hit_skips_the_name_split(self) -> None:
+        """A hit answers from the entry's own name, without re-splitting."""
+        wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        intervals = SpecifierSet(">=1.0").to_range()
+        first = provider.prioritize("foo", intervals, {}, {})
+
+        provider._package_parts.clear()
+
+        assert provider.prioritize("foo", intervals, {}, {}) == first
+        assert provider._package_parts == {}
+
     def test_priority_cache_hit_yields_to_force_backtrack(self) -> None:
-        """A force-backtrack after the entry was stored still demotes the package."""
+        """A force-backtrack recorded after the entry was cached still demotes."""
         wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
@@ -8551,11 +8564,12 @@ class TestPrioritizeMatchingFromIndex:
         assert provider.prioritize("foo", intervals, {}, {})[0] == Provider.TIER_NORMAL
 
         provider._force_backtrack_counts["foo"] = 1
+        demoted = provider.prioritize("foo", intervals, {}, {})
 
-        assert provider.prioritize("foo", intervals, {}, {})[0] == Provider.TIER_CULPRIT
+        assert demoted[0] == Provider.TIER_CULPRIT
 
     def test_priority_cache_hit_yields_to_dominant_culprit(self) -> None:
-        """A culprit count that crosses the threshold still demotes the package."""
+        """A package that becomes the dominant culprit after caching still demotes."""
         wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
@@ -8567,7 +8581,7 @@ class TestPrioritizeMatchingFromIndex:
         assert demoted[0] == Provider.TIER_CULPRIT
 
     def test_priority_cache_hit_yields_to_new_conflict_count(self) -> None:
-        """A conflict count that crosses the threshold still promotes the package."""
+        """A conflict count that reaches the threshold after caching still promotes."""
         wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
