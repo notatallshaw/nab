@@ -274,6 +274,52 @@ class TestSpeculativePrefetch:
         _package, version, _url, _hash = coordinator.calls_to("request_metadata")[-1]
         assert version == "2.0"
 
+    @pytest.mark.parametrize(
+        "strategy",
+        [ResolutionStrategy.LOWEST, ResolutionStrategy.LOWEST_DIRECT],
+    )
+    def test_transitive_prefetch_is_oldest_under_lowest(
+        self, strategy: ResolutionStrategy
+    ) -> None:
+        """Under a lowest strategy the warmed version is the one the scan starts on."""
+        wheels = [make_wheel(f"{i}.0") for i in range(20, 0, -1)]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            resolution_strategy=strategy,
+            direct_packages=frozenset({"foo"}),
+        )
+        provider.fetch_versions("foo")
+        _package, version, _url, _hash = coordinator.calls_to("request_metadata")[-1]
+        assert version == "1.0"
+
+    @pytest.mark.parametrize(
+        "strategy",
+        [ResolutionStrategy.LOWEST, ResolutionStrategy.LOWEST_DIRECT],
+    )
+    def test_unconstrained_root_prefetch_is_oldest_under_lowest(
+        self, strategy: ResolutionStrategy
+    ) -> None:
+        """A root requirement that constrains nothing takes the same oldest-first pick.
+
+        ``speculative_prefetch`` routes a full root range to the single-candidate
+        path, so ``pick_best_candidate`` is what reads the strategy here.
+        """
+        wheels = [make_wheel(f"{i}.0") for i in range(20, 0, -1)]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"foo": VersionRange.full()},
+            resolution_strategy=strategy,
+            direct_packages=frozenset({"foo"}),
+        )
+        provider.fetch_versions("foo")
+        assert not coordinator.calls_to("request_metadata_batch")
+        _package, version, _url, _hash = coordinator.calls_to("request_metadata")[-1]
+        assert version == "1.0"
+
     def test_get_dependencies_uses_speculative_future(self) -> None:
         """get_dependencies picks up the speculatively prefetched metadata."""
         coordinator = make_coordinator(
@@ -7992,8 +8038,10 @@ class TestPrefetchWalkAhead:
         provider.prefetch_walk_ahead("foo")
         items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
+        # fetch_versions already prefetched 1.0, the oldest; it fills a window
+        # slot but is skipped as already-held.
         assert versions == [
-            f"{i}.0" for i in range(1, provider.DEEP_PREFETCH_COUNT + 1)
+            f"{i}.0" for i in range(2, provider.DEEP_PREFETCH_COUNT + 1)
         ]
 
     def test_skips_versions_with_cached_deps(self) -> None:

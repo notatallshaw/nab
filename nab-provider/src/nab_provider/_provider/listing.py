@@ -26,7 +26,7 @@ from ..vcs_admission import UnsupportedVcsError
 from .metadata_resolver import pick_dist_for_metadata, version_dists
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
     from datetime import datetime
 
     from nab_provider._vendor.packaging.ranges import VersionRange
@@ -210,16 +210,21 @@ def pick_best_candidate(
     normalized: str,
     versions: list[tuple[Version, DistFile]],
 ) -> tuple[Version, DistFile] | None:
-    """Pick the version the resolver will most likely try first."""
-    if not versions:
-        return None
-    if normalized in provider.root_requirements:
-        version_range = provider.root_requirements[normalized]
-        for version, dist in versions:
-            if version in version_range:
-                return (version, dist)
-        return None
-    return versions[0]
+    """Pick the version the resolver will most likely try first.
+
+    ``versions`` is newest-first, the order a highest strategy scans, so a
+    package under a lowest strategy is read from the other end.
+    """
+    # Reverse out of place: ``versions`` is the shared cached listing.
+    ordered: Iterable[tuple[Version, DistFile]] = (
+        reversed(versions) if provider.wants_lowest(normalized) else versions
+    )
+
+    version_range = provider.root_requirements.get(normalized)
+    for version, dist in ordered:
+        if version_range is None or version in version_range:
+            return (version, dist)
+    return None
 
 
 def filter_distributions(
