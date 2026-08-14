@@ -32,8 +32,22 @@ __all__ = [
 ACCEPTED_HASH_ALGORITHMS: tuple[str, ...] = ("sha256", "sha384", "sha512")
 
 
+class _MetadataUrlMemo:
+    """Slot holding :attr:`WheelFile.metadata_url` once it has been derived.
+
+    A slot rather than a dataclass field keeps the memo out of ``fields()``, so
+    it reaches neither equality, the repr, nor the pickled state. It sits on a
+    base class because ``@dataclass(slots=True)`` rejects a class that declares
+    ``__slots__`` in its own body.
+    """
+
+    __slots__ = ("_metadata_url",)
+
+    _metadata_url: str
+
+
 @dataclass(frozen=True, slots=True)
-class WheelFile:
+class WheelFile(_MetadataUrlMemo):
     """Wheel file record returned by the Simple-API client.
 
     ``hashes`` is a tuple of ``(algorithm, hex_digest)`` pairs in the
@@ -70,8 +84,13 @@ class WheelFile:
         if not self.has_metadata:
             return None
 
-        parts = urlsplit(self.url)
-        return urlunsplit(parts._replace(path=parts.path + ".metadata", fragment=""))
+        try:
+            return self._metadata_url
+        except AttributeError:
+            parts = urlsplit(self.url)
+            url = urlunsplit(parts._replace(path=parts.path + ".metadata", fragment=""))
+            object.__setattr__(self, "_metadata_url", url)
+            return url
 
 
 @dataclass(frozen=True, slots=True)
