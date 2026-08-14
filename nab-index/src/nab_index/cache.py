@@ -614,6 +614,12 @@ def _policy_etag(value: object) -> str | None:
 
 
 def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
+    """Decode stored policy bytes, or ``None`` when they are not a policy.
+
+    ``json`` decodes a number outside float range (``1e400``, ``Infinity``) to
+    an infinity, and ``int()`` on one raises :class:`OverflowError` rather than
+    :class:`ValueError`.
+    """
     try:
         doc = json.loads(policy_bytes)
         return CachePolicy(
@@ -623,7 +629,7 @@ def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
             page_url=_policy_page_url(doc.get("page_url")),
             body_digest=doc.get("body_digest"),
         )
-    except (ValueError, KeyError, TypeError):
+    except (ValueError, KeyError, TypeError, OverflowError):
         return None
 
 
