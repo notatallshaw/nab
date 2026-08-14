@@ -29,7 +29,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.policy import LocalSource
 
 from ._toml import tool_nab_section
-from .paths import path_state, resolve_path
+from .paths import PathState, path_state, resolve_path
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -141,8 +141,9 @@ def workspace_local_sources(
     Each entry must be a literal path; any entry containing ``*``, ``?``
     or ``[`` raises :class:`WorkspaceDiscoveryError` with a message
     naming the offending entry.  For every member directory the function
-    opens ``<member>/pyproject.toml`` and requires ``[project].name``;
-    missing pyproject or missing name is a hard error.
+    opens ``<member>/pyproject.toml`` and requires ``[project].name``; a
+    pyproject that is missing or not a regular file, and a missing name,
+    are hard errors.
 
     Two members declaring the same canonical name raises
     :class:`WorkspaceDiscoveryError`.  The returned tuple preserves
@@ -174,10 +175,18 @@ def workspace_local_sources(
             raise WorkspaceDiscoveryError(msg)
 
         member_pyproject = member_dir / "pyproject.toml"
-        if not path_state(member_pyproject).should_read:
+        state = path_state(member_pyproject)
+        if state is PathState.ABSENT:
             msg = (
                 f"{declared_in}: workspace member {entry!r} has no"
                 f" pyproject.toml at {member_pyproject}"
+            )
+            raise WorkspaceDiscoveryError(msg)
+
+        if not state.should_read:
+            msg = (
+                f"{declared_in}: workspace member {entry!r}:"
+                f" {member_pyproject} exists but is not a regular file"
             )
             raise WorkspaceDiscoveryError(msg)
 

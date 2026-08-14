@@ -1553,6 +1553,24 @@ class TestLockCommandSpecific:
             lock(tmp_path)
         assert "is a directory" in capsys.readouterr().err
 
+    def test_pipe_path_exits(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        as_fifo: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        """A pipe is named for what it is, not reported as a missing file.
+
+        ``nab lock <(...)`` hands the CLI a FIFO.  The file is there, so
+        calling it absent sends the user looking for the wrong problem.
+        """
+        pyproject = _make_pyproject(tmp_path)
+        with as_fifo(pyproject), pytest.raises(SystemExit, match="1"):
+            lock(pyproject)
+        err = capsys.readouterr().err
+        assert f"{pyproject} exists but is not a regular file" in err
+        assert "not found" not in err
+
     def test_malformed_toml_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

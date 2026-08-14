@@ -322,6 +322,24 @@ class TestReadWorkspaceMembers:
         with pytest.raises(WorkspaceDiscoveryError, match="has no pyproject.toml"):
             read_workspace_members(root)
 
+    def test_member_pyproject_directory_raises(self, tmp_path: Path) -> None:
+        """A member pyproject that is a directory is there, so do not call it missing.
+
+        An accidental ``mkdir pkg/pyproject.toml`` reported as absent sends the
+        user looking for the wrong problem.
+        """
+        root = _write(
+            tmp_path / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\n"
+            'members = ["pkg"]\n',
+        )
+        (tmp_path / "pkg" / "pyproject.toml").mkdir(parents=True)
+        with pytest.raises(
+            WorkspaceDiscoveryError, match="exists but is not a regular file"
+        ):
+            read_workspace_members(root)
+
     def test_member_without_project_name_raises(self, tmp_path: Path) -> None:
         root = _write(
             tmp_path / "pyproject.toml",
