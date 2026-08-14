@@ -166,7 +166,8 @@ def _pick_for_user_extra(
     if constraint is not None:
         root_range = root_range & constraint
 
-    outside = [v for v in root_range.filter(all_versions) if v not in candidates]
+    admitted = set(candidates)
+    outside = [v for v in root_range.filter(all_versions) if v not in admitted]
     if not outside:
         return chosen
 
