@@ -3015,6 +3015,19 @@ class TestHashOrderIndependence:
 
 
 class TestRelationCache:
+    @staticmethod
+    def _token_key(
+        resolver: Resolver[str, Any], term: Term[str, Any]
+    ) -> tuple[bool, int, int]:
+        """Return the relation-cache key a positive ``term`` probes for."""
+        assignment = resolver.solution.get(term.package)
+        assert assignment is not None
+        return (
+            True,
+            resolver.range_tokens[assignment],
+            resolver.range_tokens[term.constraint],
+        )
+
     def test_caches_relation_and_reuses_it(self) -> None:
         resolver: Resolver[str, int] = Resolver(DictProvider({}))
         resolver.solution.decide("foo", 2)
@@ -3022,25 +3035,67 @@ class TestRelationCache:
 
         assert resolver.relation_cache == {}
         first = term_relation(resolver, term)
-        key = (True, resolver.solution.get("foo"), term.constraint)
+        key = self._token_key(resolver, term)
         assert resolver.relation_cache == {key: first}
 
         assert term_relation(resolver, term) is first
         assert resolver.relation_cache == {key: first}
 
+    def test_equal_ranges_share_a_token(self) -> None:
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+        term = Term("foo", Range.at_least(1), positive=True)
+        equal_term = Term("foo", Range.at_least(1), positive=True)
+        assert equal_term.constraint is not term.constraint
+
+        first = term_relation(resolver, term)
+
+        assert term_relation(resolver, equal_term) is first
+        assert len(resolver.relation_cache) == 1
+
     def test_clears_cache_on_overflow(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(propagate, "RELATION_CACHE_MAX", 1)
         resolver: Resolver[str, int] = Resolver(DictProvider({}))
         resolver.solution.decide("foo", 2)
-        resolver.relation_cache[(False, Range.full(), Range.full())] = (
-            SetRelation.SATISFIED
-        )
+        # Filler for another range pair, to put the cache at its cap.
+        resolver.relation_cache[(False, 0, 0)] = SetRelation.SATISFIED
 
         term = Term("foo", Range.at_least(1), positive=True)
         result = term_relation(resolver, term)
 
-        key = (True, resolver.solution.get("foo"), term.constraint)
-        assert resolver.relation_cache == {key: result}
+        assert resolver.relation_cache == {self._token_key(resolver, term): result}
+
+    def test_wiped_token_table_does_not_reissue_tokens(self) -> None:
+        """A token is minted once, so a wipe cannot point it at another range."""
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+        term_relation(resolver, Term("foo", Range.at_least(1), positive=True))
+        minted = set(resolver.range_tokens.values())
+
+        resolver.range_tokens.clear()
+        resolver.range_token_by_id.clear()
+        term_relation(resolver, Term("foo", Range.at_least(3), positive=True))
+
+        assert minted
+        assert minted.isdisjoint(resolver.range_tokens.values())
+
+    def test_clears_address_memo_on_overflow(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(propagate, "RANGE_ID_MEMO_MAX", 1)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+        term = Term("foo", Range.at_least(1), positive=True)
+
+        first = term_relation(resolver, term)
+        key = self._token_key(resolver, term)
+
+        assert len(resolver.range_token_by_id) == 1
+        assert len(resolver.interned_ranges) == 1
+
+        assert term_relation(resolver, term) is first
+        assert self._token_key(resolver, term) == key
+        assert resolver.relation_cache == {key: first}
 
 
 class LowestVersionProvider(DictProvider):
