@@ -1827,10 +1827,21 @@ index 0000000..d51010d
 +    )
 +    return make_and([*lead, inner])
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
-index e312a1f..9a611c3 100644
+index e312a1f..29c32bc 100644
 --- a/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
 +++ b/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
-@@ -186,6 +186,11 @@ class LowerBound:
+@@ -82,6 +82,10 @@ class BoundaryVersion:
+         "version",
+     )
+ 
++    #: A boundary has no PEP 440 comparison key. Bound ordering reads this off
++    #: either operand type, so a boundary falls back to the version operators.
++    _key_cache: None = None
++
+     def __init__(self, version: Version, kind: BoundaryKind) -> None:
+         self.version = version
+         self.kind = kind
+@@ -186,6 +190,11 @@ class LowerBound:
      __slots__ = ("_above", "inclusive", "version")
  
      def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
@@ -1842,7 +1853,19 @@ index e312a1f..9a611c3 100644
          self.version = version
          self.inclusive = inclusive
          # Pre-bind a predicate "is parsed at or above this lower
-@@ -223,6 +228,30 @@ class LowerBound:
+@@ -218,11 +227,51 @@ class LowerBound:
+             return other.version is not None
+         if other.version is None:
+             return False
+-        if self.version != other.version:
++        # A boundary has no key, and a version's is computed on first use.
++        self_key = self.version._key_cache
++        other_key = other.version._key_cache
++        if self_key is not None and other_key is not None:
++            if self_key != other_key:
++                return self_key < other_key
++        elif self.version != other.version:
+             return self.version < other.version
          # [v < (v: inclusive starts earlier.
          return self.inclusive and not other.inclusive
  
@@ -1855,7 +1878,12 @@ index e312a1f..9a611c3 100644
 +            return False
 +        if other.version is None:
 +            return True
-+        if self.version != other.version:
++        self_key = self.version._key_cache
++        other_key = other.version._key_cache
++        if self_key is not None and other_key is not None:
++            if self_key != other_key:
++                return not self_key < other_key
++        elif self.version != other.version:
 +            return not self.version < other.version
 +        return other.inclusive and not self.inclusive
 +
@@ -1866,14 +1894,19 @@ index e312a1f..9a611c3 100644
 +            return True
 +        if other.version is None:
 +            return False
-+        if self.version != other.version:
++        self_key = self.version._key_cache
++        other_key = other.version._key_cache
++        if self_key is not None and other_key is not None:
++            if self_key != other_key:
++                return self_key < other_key
++        elif self.version != other.version:
 +            return self.version < other.version
 +        return self.inclusive or not other.inclusive
 +
      def __hash__(self) -> int:
          return hash((self.version, self.inclusive))
  
-@@ -243,6 +272,10 @@ class UpperBound:
+@@ -243,6 +292,10 @@ class UpperBound:
      __slots__ = ("_below", "inclusive", "version")
  
      def __init__(self, version: _VersionOrBoundary, inclusive: bool) -> None:
@@ -1884,7 +1917,19 @@ index e312a1f..9a611c3 100644
          self.version = version
          self.inclusive = inclusive
          # Pre-bind a predicate "is parsed at or below this upper
-@@ -282,6 +315,18 @@ class UpperBound:
+@@ -277,11 +330,34 @@ class UpperBound:
+             return False
+         if other.version is None:
+             return True
+-        if self.version != other.version:
++        # See LowerBound.__lt__ for why this reads the cached keys.
++        self_key = self.version._key_cache
++        other_key = other.version._key_cache
++        if self_key is not None and other_key is not None:
++            if self_key != other_key:
++                return self_key < other_key
++        elif self.version != other.version:
+             return self.version < other.version
          # v) < v]: exclusive ends earlier.
          return not self.inclusive and other.inclusive
  
@@ -1896,7 +1941,12 @@ index e312a1f..9a611c3 100644
 +            return other.version is not None
 +        if other.version is None:
 +            return False
-+        if self.version != other.version:
++        self_key = self.version._key_cache
++        other_key = other.version._key_cache
++        if self_key is not None and other_key is not None:
++            if self_key != other_key:
++                return not self_key < other_key
++        elif self.version != other.version:
 +            return not self.version < other.version
 +        return self.inclusive and not other.inclusive
 +

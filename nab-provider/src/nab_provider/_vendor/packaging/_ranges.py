@@ -82,6 +82,10 @@ class BoundaryVersion:
         "version",
     )
 
+    #: A boundary has no PEP 440 comparison key. Bound ordering reads this off
+    #: either operand type, so a boundary falls back to the version operators.
+    _key_cache: None = None
+
     def __init__(self, version: Version, kind: BoundaryKind) -> None:
         self.version = version
         self.kind = kind
@@ -223,7 +227,13 @@ class LowerBound:
             return other.version is not None
         if other.version is None:
             return False
-        if self.version != other.version:
+        # A boundary has no key, and a version's is computed on first use.
+        self_key = self.version._key_cache
+        other_key = other.version._key_cache
+        if self_key is not None and other_key is not None:
+            if self_key != other_key:
+                return self_key < other_key
+        elif self.version != other.version:
             return self.version < other.version
         # [v < (v: inclusive starts earlier.
         return self.inclusive and not other.inclusive
@@ -237,7 +247,12 @@ class LowerBound:
             return False
         if other.version is None:
             return True
-        if self.version != other.version:
+        self_key = self.version._key_cache
+        other_key = other.version._key_cache
+        if self_key is not None and other_key is not None:
+            if self_key != other_key:
+                return not self_key < other_key
+        elif self.version != other.version:
             return not self.version < other.version
         return other.inclusive and not self.inclusive
 
@@ -248,7 +263,12 @@ class LowerBound:
             return True
         if other.version is None:
             return False
-        if self.version != other.version:
+        self_key = self.version._key_cache
+        other_key = other.version._key_cache
+        if self_key is not None and other_key is not None:
+            if self_key != other_key:
+                return self_key < other_key
+        elif self.version != other.version:
             return self.version < other.version
         return self.inclusive or not other.inclusive
 
@@ -310,7 +330,13 @@ class UpperBound:
             return False
         if other.version is None:
             return True
-        if self.version != other.version:
+        # See LowerBound.__lt__ for why this reads the cached keys.
+        self_key = self.version._key_cache
+        other_key = other.version._key_cache
+        if self_key is not None and other_key is not None:
+            if self_key != other_key:
+                return self_key < other_key
+        elif self.version != other.version:
             return self.version < other.version
         # v) < v]: exclusive ends earlier.
         return not self.inclusive and other.inclusive
@@ -323,7 +349,12 @@ class UpperBound:
             return other.version is not None
         if other.version is None:
             return False
-        if self.version != other.version:
+        self_key = self.version._key_cache
+        other_key = other.version._key_cache
+        if self_key is not None and other_key is not None:
+            if self_key != other_key:
+                return not self_key < other_key
+        elif self.version != other.version:
             return not self.version < other.version
         return self.inclusive and not other.inclusive
 

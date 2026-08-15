@@ -12,6 +12,7 @@ constructor collapses to one point.
 from __future__ import annotations
 
 import itertools
+import operator
 from typing import TYPE_CHECKING, TypeVar
 
 import pytest
@@ -199,13 +200,37 @@ class TestBoundOrdering:
         assert _relate_bounds(right, left) is RangeRelation.OVERLAPPING
         assert _subset_bounds(left, right)
 
-    @pytest.mark.parametrize("operator", ["__lt__", "__gt__", "__ge__", "__le__"])
+    @pytest.mark.parametrize("compare", [operator.lt, operator.gt, operator.le])
+    @pytest.mark.parametrize("cls", [LowerBound, UpperBound])
+    def test_the_order_is_the_same_before_and_after_the_key_is_cached(
+        self,
+        cls: type[BoundT],
+        compare: Callable[[BoundT, BoundT], bool],
+    ) -> None:
+        # A version gains its comparison key on first use, so the first compare
+        # runs the operator path and later ones the key path. Any compare caches
+        # both keys, so each operator needs a fresh pair to see the cold path.
+        versions = ("1.0", "1.0+local", "1.0.post1", "2.0")
+        cases = itertools.product(versions, versions, (True, False), (True, False))
+        for left_text, right_text, left_inclusive, right_inclusive in cases:
+            left = cls(V(left_text), left_inclusive)
+            right = cls(V(right_text), right_inclusive)
+            assert left.version._key_cache is None
+            assert right.version._key_cache is None
+
+            cold = compare(left, right)
+
+            assert left.version._key_cache is not None
+            assert right.version._key_cache is not None
+            assert compare(left, right) == cold, (left, right)
+
+    @pytest.mark.parametrize("method", ["__lt__", "__gt__", "__ge__", "__le__"])
     @pytest.mark.parametrize("cls", [LowerBound, UpperBound])
     def test_bound_returns_not_implemented_for_other_types(
-        self, cls: type[LowerBound | UpperBound], operator: str
+        self, cls: type[LowerBound | UpperBound], method: str
     ) -> None:
         bound = cls(V("1.0"), inclusive=True)
-        assert getattr(bound, operator)("1.0") is NotImplemented
+        assert getattr(bound, method)("1.0") is NotImplemented
         assert bound != "1.0"
 
     def test_mixing_bound_kinds_is_a_type_error(self) -> None:
