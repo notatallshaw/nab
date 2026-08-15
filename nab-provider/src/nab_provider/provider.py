@@ -13,6 +13,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, cast
 
+from nab_provider._vendor.packaging.markers import prepare_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
@@ -467,12 +468,11 @@ class Provider:
             self, archive_sources or []
         )
 
-        # ``environment`` backs every marker evaluation; ``env_with_extra``
-        # is the reused per-evaluation copy of it, seeded with the empty
+        # ``env_with_extra`` is the marker environment plus the empty
         # lockfile-only set variables (see EMPTY_MEMBERSHIP_SETS).  Without a
-        # target both come from the host and ``python_version`` stays None,
-        # which turns the Requires-Python filter off: nothing has declared
-        # the Python a candidate could be rejecting (see _provider.listing).
+        # target it comes from the host and ``python_version`` stays None,
+        # which turns the Requires-Python filter off: nothing has declared the
+        # Python a candidate could be rejecting (see _provider.listing).
         if target is None:
             self.python_version: str | None = None
             self.environment: dict[str, str] = host_environment()
@@ -566,6 +566,13 @@ class Provider:
         self.marker_extra_cache: dict[int, dict[str, bool]] = {}
         # Memoised str(marker) for the cheap "extra" in marker_text gate.
         self.marker_text_cache: dict[int, str] = {}
+
+        # ``Marker.evaluate`` rebuilds its environment on every call, and this
+        # resolve's is fixed, so prepare it up front.  The base environment is
+        # never mutated; the extras one has ``extra`` written into it before
+        # each evaluation.
+        self.prepared_environment = prepare_environment(self.env_with_extra)
+        self.prepared_extra_environment = prepare_environment(self.env_with_extra)
 
         # (base, extra, normalized_name) per input package string.
         self._package_parts: dict[str, tuple[str, str | None, str]] = {}
