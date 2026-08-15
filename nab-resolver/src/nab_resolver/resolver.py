@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Protocol
 
 from . import conflict, decide, incompat_index, propagate
+from .decision_queue import DecisionQueue
 from .errors import ResolutionError
 from .partial_solution import PartialSolution
 from .ranges import Range
@@ -482,6 +483,12 @@ class Resolver(Generic[PackageType, VersionType]):
         # Memoises the tiebreak tuple in choose_package_to_decide.
         self.tiebreak_cache: dict[PackageType, tuple[int, int, str]] = {}
 
+        # The undecided packages ordered by sort key. priority_epoch advances
+        # when a count a key reads moves: the conflict and culprit counts, and
+        # the provider's force-backtrack count. It invalidates every key.
+        self.decision_queue: DecisionQueue[PackageType] = DecisionQueue()
+        self.priority_epoch = 0
+
         # Memoises term_relation's pre-adjustment SetRelation, keyed by
         # (positive, assignment token, constraint token). Cleared on overflow.
         self.relation_cache: dict[tuple[bool, int, int], SetRelation] = {}
@@ -619,6 +626,7 @@ class Resolver(Generic[PackageType, VersionType]):
         # blockers before the candidate is decided.
         force_targets = list(self.provider.consume_force_backtrack_targets())
         if force_targets:
+            self.priority_epoch += 1
             triggering = conflict.force_targeted_backtrack(self, force_targets)
             if triggering is not None:
                 return triggering
@@ -702,6 +710,8 @@ class Resolver(Generic[PackageType, VersionType]):
         self.root_package_order.clear()
         self.pending_targeted_backtrack.clear()
         self.tiebreak_cache.clear()
+        self.decision_queue.clear()
+        self.priority_epoch = 0
         self.relation_cache.clear()
         self.range_tokens.clear()
         self.range_token_by_id.clear()
