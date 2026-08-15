@@ -31,13 +31,18 @@ most one checked-in patch.
   - `markers.py`: `prepare_environment` with its `__all__` entry, and the
     `Marker.evaluate_prepared` it feeds, so code evaluating many markers
     against one environment builds it once. `evaluate` is now the two of them
-    composed.
+    composed. `_format_marker` tests for a marker item first and serialises it
+    by unpacking its three nodes into an f-string instead of joining a list
+    comprehension, which puts the `[[...]]` unwrap under the list branch.
+    Upstream's opening `assert isinstance(marker, (list, tuple, str))` is
+    dropped, so a value of any other type now returns unchanged instead of
+    tripping the assertion.
 
   Upstream PRs are planned for the bound ordering, the direct subset and
   disjoint walks, `filter`'s `assume_sorted` fast path,
-  `from_bounds`/`snap_bounds`/`release_intervals`, and the prepared marker
-  environment. `relation` is not proposed yet: most of its win is available
-  from the direct walks alone.
+  `from_bounds`/`snap_bounds`/`release_intervals`, the prepared marker
+  environment, and the marker-item serialisation. `relation` is not proposed
+  yet: most of its win is available from the direct walks alone.
 - `tasks/vendor-packaging.sh` fetches `pypa/packaging` at the pin, replaces this
   package with the pristine `src/packaging/` tree plus the repo-root license
   texts, and reapplies the patch. `--check` rebuilds into a temp location and
