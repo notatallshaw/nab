@@ -13,7 +13,7 @@ import logging
 import subprocess
 import tarfile
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -2735,6 +2735,22 @@ class TestSharedListingFilter:
 
         return calls, counting
 
+    def _record_parse_passes(self) -> tuple[list[bool], object]:
+        """Return each parse pass's ``target_drops``, and the patch that records them.
+
+        False is the pass a matrix's Pythons share; True is the pass that
+        carries the drops, which a resolve with nothing to share runs per
+        Python.
+        """
+        passes: list[bool] = []
+        real = listing_mod._prepare_listing
+
+        def recording(*args: Any, **kwargs: Any) -> Any:
+            passes.append(bool(kwargs["target_drops"]))
+            return real(*args, **kwargs)
+
+        return passes, recording
+
     def test_platform_targets_share_one_base_filter(self) -> None:
         """Targets differing only by platform reuse the base filter result."""
         wheels = [self._wheel("1.0"), self._wheel("2.0")]
@@ -2797,6 +2813,60 @@ class TestSharedListingFilter:
             for tr in result.target_results
         }
         assert pinned == {"3.11": "1.0", "3.12": "2.0"}
+
+    def test_a_matrix_of_pythons_parses_the_listing_once(self) -> None:
+        """The Pythons filter separately over one shared parse-and-policy pass."""
+        wheels = [self._wheel("1.0"), self._wheel("2.0", requires_python=">=3.12")]
+        calls, counting = self._count_base_filters()
+        passes, recording = self._record_parse_passes()
+
+        with (
+            patch.object(listing_mod, "_filter_base", counting),
+            patch.object(listing_mod, "_prepare_listing", recording),
+        ):
+            result = resolve_with_coordinator(
+                self._coordinator(wheels),
+                self._targets(">=3.11,<3.13"),
+                _reqs("pkg"),
+                config=_no_build(),
+                align_across_targets=False,
+            )
+
+        assert result.success
+        assert sorted(calls) == ["pkg@3.11.0", "pkg@3.12.0"]
+        assert passes == [False]
+
+    def test_two_micros_of_one_minor_are_two_pythons(self) -> None:
+        """Sharing follows the release the memo keys on, not the PEP 508 minor."""
+        wheels = [self._wheel("1.0"), self._wheel("2.0")]
+        calls, counting = self._count_base_filters()
+        passes, recording = self._record_parse_passes()
+
+        with (
+            patch.object(listing_mod, "_filter_base", counting),
+            patch.object(listing_mod, "_prepare_listing", recording),
+        ):
+            result = resolve_with_coordinator(
+                self._coordinator(wheels),
+                [
+                    ResolveTarget.for_declared(
+                        python_version="3.11",
+                        spec=PlatformSpec(platform),
+                        python_full_version=micro,
+                    )
+                    for platform, micro in (
+                        ("linux_x86_64", "3.11.2"),
+                        ("windows_amd64", "3.11.5"),
+                    )
+                ],
+                _reqs("pkg"),
+                config=_no_build(),
+                align_across_targets=False,
+            )
+
+        assert result.success
+        assert sorted(calls) == ["pkg@3.11.2", "pkg@3.11.5"]
+        assert passes == [False]
 
     def test_reused_filter_still_counts_distributions_per_target(self) -> None:
         """Every target reports the files it saw, memo hit or not."""

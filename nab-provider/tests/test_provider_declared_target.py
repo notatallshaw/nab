@@ -14,10 +14,12 @@ from __future__ import annotations
 import random
 import threading
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, cast
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from nab_provider._provider import listing as listing_mod
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
@@ -54,6 +56,7 @@ def _make_wheel(
     *,
     package: str = "pkg",
     requires_python: str | None = None,
+    upload_time: str | None = None,
 ) -> WheelFile:
     return WheelFile(
         filename=f"{package}-{version}-py3-none-any.whl",
@@ -61,7 +64,7 @@ def _make_wheel(
         version=version,
         requires_python=requires_python,
         has_metadata=True,
-        upload_time=None,
+        upload_time=upload_time,
     )
 
 
@@ -808,6 +811,145 @@ class TestEqualVersionCanonicalization:
         assert windows.fetch_versions("pkg") == []
         assert windows.stats.excluded_by_wheel_tags == 2
         assert windows.stats.excluded_versions_no_compatible_wheel == 1
+
+
+class TestListingFilterSharedAcrossPythons:
+    """A matrix shares the parse and dist-policy pass, not the Python drops."""
+
+    @staticmethod
+    def _files() -> list[WheelFile | SdistFile]:
+        """Three releases: 1.0 for both Pythons, 2.0 from 3.12 up, 3.0 below it."""
+        return [
+            _make_wheel("1.0"),
+            _make_wheel("2.0", requires_python=">=3.12"),
+            _make_wheel("3.0", requires_python="<3.12"),
+        ]
+
+    def _providers(
+        self,
+        cache: ListingFilterCache,
+        *,
+        files: Sequence[WheelFile | SdistFile] | None = None,
+        uploaded_prior_to: datetime | None = None,
+        dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
+    ) -> tuple[Provider, Provider]:
+        """A 3.11 and a 3.12 provider over one listing, sharing ``cache``."""
+        coordinator = _index_with_files(self._files() if files is None else files)
+
+        def for_python(python: str) -> Provider:
+            return Provider(
+                coordinator,
+                ResolveTarget.for_declared(
+                    python_version=python, spec=PlatformSpec("linux_x86_64")
+                ),
+                uploaded_prior_to=uploaded_prior_to,
+                dist_policy=dist_policy,
+                listing_filter_cache=cache,
+            )
+
+        return for_python("3.11"), for_python("3.12")
+
+    def _parse_passes(
+        self, monkeypatch: pytest.MonkeyPatch, cache: ListingFilterCache
+    ) -> int:
+        """Count the parse-and-policy passes both Pythons run over ``cache``."""
+        passes = 0
+        real = listing_mod._prepare_listing
+
+        def counting(*args: Any, **kwargs: Any) -> Any:
+            nonlocal passes
+            passes += 1
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(listing_mod, "_prepare_listing", counting)
+        for provider in self._providers(cache):
+            provider.fetch_versions("pkg")
+        return passes
+
+    def test_the_matrix_walks_the_listing_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One parse and policy pass answers both Pythons."""
+        assert self._parse_passes(monkeypatch, ListingFilterCache(2)) == 1
+
+    def test_without_sharing_each_python_walks_the_listing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A one-Python cache keeps the drops in the pass, so it runs per Python."""
+        assert self._parse_passes(monkeypatch, ListingFilterCache()) == 2
+
+    def test_each_python_keeps_the_releases_it_admits(self) -> None:
+        """The shared pass carries no Requires-Python verdict between Pythons."""
+        py311, py312 = self._providers(ListingFilterCache(2))
+
+        assert [str(v) for v, _ in py311.fetch_versions("pkg")] == ["3.0", "1.0"]
+        assert [str(v) for v, _ in py312.fetch_versions("pkg")] == ["2.0", "1.0"]
+
+    def test_sharing_does_not_change_what_a_python_sees(self) -> None:
+        """Same answers and same counters as a resolve that shares nothing."""
+        shared_py311, shared_py312 = self._providers(ListingFilterCache(2))
+        alone_py311, alone_py312 = self._providers(ListingFilterCache())
+
+        for shared, alone in ((shared_py311, alone_py311), (shared_py312, alone_py312)):
+            assert shared.fetch_versions("pkg") == alone.fetch_versions("pkg")
+            assert shared.stats == alone.stats
+
+    def test_the_cutoff_and_policy_drops_reach_every_python(self) -> None:
+        """The shared drop and the per-Python drops both reach the right counters.
+
+        The dist policy drops the sdist in the shared pass, so both
+        Pythons count it.  The cutoff runs per Python, and only 3.11
+        reaches it, since 3.12 has already lost 3.0 to Requires-Python.
+        """
+        files: list[WheelFile | SdistFile] = [
+            _make_wheel("1.0", upload_time="2026-01-01T00:00:00Z"),
+            _make_wheel(
+                "2.0", requires_python=">=3.12", upload_time="2026-01-01T00:00:00Z"
+            ),
+            _make_wheel(
+                "3.0", requires_python="<3.12", upload_time="2026-06-01T00:00:00Z"
+            ),
+            _sdist("4.0"),
+        ]
+        cutoff = datetime(2026, 3, 1, tzinfo=timezone.utc)
+
+        shared = self._providers(
+            ListingFilterCache(2),
+            files=files,
+            uploaded_prior_to=cutoff,
+            dist_policy=DistPolicy.WHEEL_ONLY,
+        )
+        alone = self._providers(
+            ListingFilterCache(),
+            files=files,
+            uploaded_prior_to=cutoff,
+            dist_policy=DistPolicy.WHEEL_ONLY,
+        )
+
+        for one, other in zip(shared, alone, strict=True):
+            assert one.fetch_versions("pkg") == other.fetch_versions("pkg")
+            assert one.stats == other.stats
+
+        py311, py312 = shared
+        assert [str(v) for v, _ in py311.fetch_versions("pkg")] == ["1.0"]
+        assert py311.stats.excluded_by_time == 1
+        assert py312.stats.excluded_by_time == 0
+
+        assert py311.stats.excluded_by_dist_policy == 1
+        assert py312.stats.excluded_by_dist_policy == 1
+
+    def test_every_python_reports_the_files_it_walked(self) -> None:
+        """The memo replays its counters, so the second Python still sees three."""
+        py311, py312 = self._providers(ListingFilterCache(2))
+
+        py311.fetch_versions("pkg")
+        py312.fetch_versions("pkg")
+
+        assert py311.stats.distributions_seen == 3
+        assert py312.stats.distributions_seen == 3
+
+        assert py311.stats.excluded_by_python == 1
+        assert py312.stats.excluded_by_python == 1
 
 
 class TestUnsetKnobAcceptsAnyLevel:
