@@ -58,14 +58,14 @@ class Profile(NamedTuple):
 
 SUITE_PROFILE = {
     "wrong-package-backtracking": Profile(
-        rounds=41,
-        decisions=27,
+        rounds=40,
+        decisions=26,
         conflicts=14,
-        membership_tests=448,
-        intervals_seen=892,
+        membership_tests=435,
+        intervals_seen=827,
         largest_range=8,
-        hash_misses=111,
-        equality_calls=471,
+        hash_misses=102,
+        equality_calls=412,
     ),
     "conflict-free-fanout": Profile(
         rounds=8,

@@ -407,7 +407,8 @@ class Resolver(Generic[PackageType, VersionType]):
     Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#the-algorithm
     """
 
-    _RESTART_THRESHOLD = 5
+    # Compared against one package's conflict count, not the total.
+    _RESTART_THRESHOLD = 8
     _MAX_RESTARTS = 3
 
     # A package re-queues every multiple of CULPRIT_THRESHOLD so persistent
