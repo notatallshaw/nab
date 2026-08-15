@@ -9,7 +9,7 @@ The Python version comes from whoever launches nox, so CI drives the matrix
 through ``actions/setup-python`` and stays off the per-OS versioned-binary
 lookup. Run a single cell locally::
 
-    nox -s "tests(workspace='project')"
+    nox -s tests -- project
     nox -s "types(checker='mypy')"
     nox -s benchmarks
     nox -s dists
@@ -17,7 +17,10 @@ lookup. Run a single cell locally::
 
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import nox
+from nox.command import CommandFailed
 
 # Stdlib venv keeps the backend explicit; nab never resolves through uv.
 nox.options.default_venv_backend = "venv"
@@ -29,6 +32,9 @@ BUILD_LOCK = ".github/requirements/pylock.build.toml"
 
 # workspace -> (editable packages, pytest paths, coverage-gated packages).
 # The umbrella builds from the repo root, so it installs as ".".
+#
+# Order matters: each entry extends the packages of the one above it, so the
+# tests session can run them all in one environment.
 #
 # nab-index and nab-provider are both gated with the project workspace:
 # nab-project is nab-index's only consumer, and full coverage of nab_provider
@@ -74,44 +80,130 @@ TYPE_CHECKERS = {
 }
 
 
-def _install(session: nox.Session, lock: str, editables: list[str]) -> None:
-    """Install a pinned lock, then the given workspace packages editable."""
+def _install_lock(session: nox.Session, lock: str) -> None:
+    """Install a pinned dependency lock."""
     # Installing a PEP 751 lock needs a recent pip.
     session.install("--upgrade", "pip>=26.1")
     session.install("-r", lock)
 
-    # --no-deps keeps the run pinned to the locked closure above.
-    editable_args = [arg for package in editables for arg in ("-e", package)]
+
+def _install_editable(session: nox.Session, packages: list[str]) -> None:
+    """Install the given workspace packages editable."""
+    if not packages:
+        return
+
+    # --no-deps keeps the run pinned to the locked closure.
+    editable_args = [arg for package in packages for arg in ("-e", package)]
     session.install("--no-deps", *editable_args)
 
 
-@nox.session
-@nox.parametrize("workspace", list(WORKSPACES))
-def tests(session: nox.Session, workspace: str) -> None:
-    """Run one workspace's tests and gate each package it owns at 100 percent."""
-    editables, paths, packages = WORKSPACES[workspace]
-    _install(session, TESTS_LOCK, editables)
+def _install(session: nox.Session, lock: str, editables: list[str]) -> None:
+    """Install a pinned lock, then the given workspace packages editable."""
+    _install_lock(session, lock)
+    _install_editable(session, editables)
 
-    session.run("coverage", "erase")
 
-    # pytest-cov measures the xdist workers, which a bare `coverage run` cannot
-    # see, and combines their data files at the end. Its own gate is off because
-    # it scores every source package at once, and a workspace only imports the
-    # ones it owns.
-    session.run(
-        "python",
-        "-m",
-        "pytest",
-        "-n",
-        "auto",
-        "--cov",
-        "--cov-report=",
-        "--cov-fail-under=0",
-        *paths,
-    )
+class _Step(NamedTuple):
+    """One workspace's turn in the shared environment.
 
-    for package in packages:
-        session.run("coverage", "report", f"--include=*/{package}/*")
+    ``adds`` is what this workspace installs on top of what the steps before it
+    already put there. An unselected step still installs, so a later workspace
+    gets the whole chain.
+    """
+
+    workspace: str
+    adds: list[str]
+    paths: list[str]
+    gated: list[str]
+    selected: bool
+
+
+def _test_steps(session: nox.Session, selected: set[str]) -> list[_Step]:
+    """Order ``WORKSPACES`` into install steps, ending at the last one selected.
+
+    Fails the session, before anything is installed, if an entry does not
+    extend the one above it: one environment has to serve them all.
+    """
+    steps: list[_Step] = []
+    installed: list[str] = []
+    for workspace, (editables, paths, gated) in WORKSPACES.items():
+        if editables[: len(installed)] != installed:
+            session.error(
+                f"workspace {workspace!r} installs {editables}, "
+                f"which does not extend {installed}"
+            )
+
+        adds = editables[len(installed) :]
+        steps.append(_Step(workspace, adds, paths, gated, workspace in selected))
+        installed = list(editables)
+
+    last = max(index for index, step in enumerate(steps) if step.selected)
+    return steps[: last + 1]
+
+
+def _run_workspace(session: nox.Session, step: _Step) -> bool:
+    """Run one workspace's suites and coverage gates; True when they all passed.
+
+    Returns instead of raising so the caller can go on to the workspaces after
+    this one. Within a workspace the first failure stops the rest.
+    """
+    try:
+        session.run("coverage", "erase")
+
+        # pytest-cov measures the xdist workers, which a bare `coverage run`
+        # cannot see, and combines their data files at the end. Its own gate is
+        # off because it scores every source package at once, and a workspace
+        # only imports the ones it owns.
+        session.run(
+            "python",
+            "-m",
+            "pytest",
+            "-n",
+            "auto",
+            "--cov",
+            "--cov-report=",
+            "--cov-fail-under=0",
+            *step.paths,
+        )
+
+        for package in step.gated:
+            session.run("coverage", "report", f"--include=*/{package}/*")
+    except CommandFailed:
+        return False
+
+    return True
+
+
+@nox.session(reuse_venv=False)
+def tests(session: nox.Session) -> None:
+    """Run every workspace's tests and gate each package it owns at 100 percent.
+
+    Positional arguments select workspaces (``nox -s tests -- project``);
+    without them every workspace runs.
+
+    One environment serves them all: each workspace extends the one before it,
+    so installing what it adds right before its own suites leaves it importing
+    exactly the packages it declares. A reused environment would already hold
+    what the last run installed, so this session never reuses one.
+
+    A failing workspace does not stop the others, so one run reports them all.
+    """
+    selected = set(session.posargs) or set(WORKSPACES)
+    unknown = selected - set(WORKSPACES)
+    if unknown:
+        session.error(f"no such workspace: {', '.join(sorted(unknown))}")
+
+    steps = _test_steps(session, selected)
+    _install_lock(session, TESTS_LOCK)
+
+    failed: list[str] = []
+    for step in steps:
+        _install_editable(session, step.adds)
+        if step.selected and not _run_workspace(session, step):
+            failed.append(step.workspace)
+
+    if failed:
+        session.error(f"failing workspaces: {', '.join(failed)}")
 
 
 @nox.session

@@ -47,7 +47,7 @@ workspace, or all of them, with:
 
 ```bash
 nox -s tests                              # every workspace, each gated
-nox -s "tests(workspace='project')"       # just one workspace
+nox -s tests -- project                   # just one workspace
 ```
 
 Property-based tests are opt-in via marker:
