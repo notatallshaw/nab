@@ -102,6 +102,10 @@ class PartialSolution(Generic[PackageType, VersionType]):
         # Incrementally maintained as set(positive) - set(decided).
         self._undecided: set[PackageType] = set()
 
+        # Packages whose effective range or decided state moved since the last
+        # drain.
+        self._changed: set[PackageType] = set()
+
         # Memoises positive - negative per package.
         self._effective_range_cache: dict[
             PackageType, RangeProtocol[VersionType] | None
@@ -175,6 +179,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
     def _refresh_effective_range(self, package: PackageType) -> None:
         """Recompute the package's range, advancing the epoch if it emptied."""
         self._effective_range_cache.pop(package, None)
+        self._changed.add(package)
         effective = self.get(package)
         assert effective is not None
         if effective.is_empty:
@@ -264,7 +269,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
         # target_level; every other package keeps the positive and negative ranges
         # its cached effective range was derived from.
         while self._assignments and self._assignments[-1].decision_level > target_level:
-            self._effective_range_cache.pop(self._assignments.pop().package, None)
+            package = self._assignments.pop().package
+            self._effective_range_cache.pop(package, None)
+            self._changed.add(package)
 
         self._decision_level = target_level
 
@@ -333,6 +340,16 @@ class PartialSolution(Generic[PackageType, VersionType]):
     def decisions(self) -> dict[PackageType, VersionType]:
         """Return the current decision map: ``{package: version}``."""
         return dict(self._decided_versions)
+
+    def take_changed_packages(self) -> set[PackageType]:
+        """Return the packages whose state moved since the last call, and reset.
+
+        Every path that moves a package's effective range or its decided state
+        records it here, backtracking included.
+        """
+        changed = self._changed
+        self._changed = set()
+        return changed
 
     def undecided_packages(self) -> set[PackageType]:
         """Return packages with positive constraints but no decision yet.
