@@ -31,6 +31,8 @@ from nab_provider.policy import (
 )
 from nab_provider.vcs_request import VcsCloneError, VcsRequest
 
+from .paths import PathState, path_state
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -317,24 +319,34 @@ def _prepare_archive_tree(
     target = cache_dir / digest
 
     declared = set(parsed.hashes)
-    if (target / _COMPLETE_MARKER).is_file() and declared <= _verified_hashes(target):
+    if _is_published(target) and declared <= _verified_hashes(target):
         return _extracted_root(target), parsed
 
     data = _fetch_archive_bytes(request.package, source, parsed, port=port)
     return _extract_archive(cache_dir, digest, data, parsed.hashes), parsed
 
 
+def _is_published(target: Path) -> bool:
+    """Whether the entry at ``target`` holds a completed extraction.
+
+    A marker whose stat fails counts as unpublished, so an entry this process
+    cannot read is a miss rather than an error.
+    """
+    return path_state(target / _COMPLETE_MARKER) is PathState.FILE
+
+
 def _verified_hashes(target: Path) -> set[tuple[str, str]]:
     """Return the hashes the tree at ``target`` was verified against.
 
-    The record is written with the completion marker, so a tree with no record
-    covers nothing and is refetched rather than trusted.
+    The record is written with the completion marker, so a tree whose record is
+    missing or unreadable covers nothing and is refetched rather than trusted.
     """
     record = target / _HASHES_MARKER
-    if not record.is_file():
+    try:
+        lines = record.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
         return set()
 
-    lines = record.read_text(encoding="utf-8").splitlines()
     return {
         (algorithm, hex_digest)
         for algorithm, _, hex_digest in (line.partition("=") for line in lines)
@@ -399,9 +411,8 @@ def _extract_archive(
     cache path never holds a partial tree.
     """
     target = cache_dir / digest
-    marker = target / _COMPLETE_MARKER
 
-    if not marker.is_file():
+    if not _is_published(target):
         cache_dir.mkdir(parents=True, exist_ok=True)
         tmp = Path(tempfile.mkdtemp(dir=cache_dir, prefix=f"{digest}.", suffix=".tmp"))
 
@@ -433,11 +444,11 @@ def _extract_archive(
                 # The cache path is taken.  A marker there means another run
                 # got there first; without one it is a partial left by an
                 # interrupted run.
-                if not marker.is_file():
+                if not _is_published(target):
                     shutil.rmtree(target, ignore_errors=True)
                     with suppress(OSError):
                         tmp.rename(target)
-                if not marker.is_file():
+                if not _is_published(target):
                     msg = f"extracted archive could not be moved into place: {exc}"
                     raise UnsupportedSdistError(msg) from exc
         finally:
