@@ -881,7 +881,9 @@ def cache_deps_from_metadata(
                         (req, req.url)
                     )
             continue
-        add_classified_dep(req, req_extras, base_deps, extra_deps_map)
+        add_classified_dep(
+            req, req_extras, base_deps, extra_deps_map, provider.specifier_ranges
+        )
     provider.deps_cache[cache_key] = base_deps
     provider.extra_deps_map[cache_key] = extra_deps_map
     provider.deferred_url_extras[cache_key] = deferred_url_extras
@@ -982,7 +984,9 @@ def target_dep_signature(
             for key in req_extras or {None}:
                 url_buckets.setdefault(key, set()).add(entry)
             continue
-        add_classified_dep(req, req_extras, base_deps, extra_deps_map)
+        add_classified_dep(
+            req, req_extras, base_deps, extra_deps_map, provider.specifier_ranges
+        )
     return (base_deps, extra_deps_map, url_buckets)
 
 
@@ -1235,11 +1239,32 @@ def _flatten_signature(signature: TargetDepSignature) -> dict[str, object]:
     return flat
 
 
+def _specifier_range(
+    specifier: SpecifierSet, ranges: dict[str, VersionRange]
+) -> VersionRange:
+    """Return the range ``specifier`` accepts, memoized in ``ranges``.
+
+    Keyed by the specifier text: hashing a ``SpecifierSet`` instead would
+    canonicalize every version it holds on each lookup.
+    """
+    if not specifier:
+        # A bare dependency enters the solver without arbitrary-string admission.
+        return VersionRange.full(admit_arbitrary=False)
+
+    key = str(specifier)
+    cached = ranges.get(key)
+    if cached is None:
+        cached = specifier.to_range()
+        ranges[key] = cached
+    return cached
+
+
 def add_classified_dep(
     req: Requirement,
     req_extras: set[str],
     base_deps: dict[str, VersionRange],
     extra_deps_map: dict[str, dict[str, VersionRange]],
+    specifier_ranges: dict[str, VersionRange],
 ) -> None:
     """Add a classified requirement to the appropriate dep set.
 
@@ -1247,22 +1272,18 @@ def add_classified_dep(
     into one range.
     """
     name = canonicalize_name(req.name)
-    # A bare dependency enters the solver without arbitrary-string admission;
-    # the accumulator identities stay arbitrary-admitting for === literals.
-    vi = (
-        req.specifier.to_range()
-        if req.specifier
-        else VersionRange.full(admit_arbitrary=False)
-    )
+    dep_range = _specifier_range(req.specifier, specifier_ranges)
     dep_extras: set[str] = req.extras
 
     if not req_extras:
-        base_deps[name] = base_deps.get(name, VersionRange.full()) & vi
+        existing = base_deps.get(name)
+        base_deps[name] = dep_range if existing is None else existing & dep_range
         for re in sorted(dep_extras):
             base_deps[join_extra(name, re)] = VersionRange.full(admit_arbitrary=False)
     else:
         for extra_name in req_extras:
             edeps = extra_deps_map[extra_name]
-            edeps[name] = edeps.get(name, VersionRange.full()) & vi
+            existing = edeps.get(name)
+            edeps[name] = dep_range if existing is None else existing & dep_range
             for re in sorted(dep_extras):
                 edeps[join_extra(name, re)] = VersionRange.full(admit_arbitrary=False)
