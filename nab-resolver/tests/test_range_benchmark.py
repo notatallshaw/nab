@@ -61,8 +61,8 @@ SUITE_PROFILE = {
         rounds=40,
         decisions=26,
         conflicts=14,
-        membership_tests=435,
-        intervals_seen=827,
+        membership_tests=363,
+        intervals_seen=755,
         largest_range=8,
         hash_misses=102,
         equality_calls=412,
@@ -71,8 +71,8 @@ SUITE_PROFILE = {
         rounds=8,
         decisions=8,
         conflicts=0,
-        membership_tests=1058,
-        intervals_seen=1058,
+        membership_tests=308,
+        intervals_seen=308,
         largest_range=1,
         hash_misses=12,
         equality_calls=48,
@@ -169,10 +169,10 @@ def test_scenario_pins_its_search_and_membership_profile(
 
     The regime assertions pass on any graph that merely conflicts or merely
     fans out, and most of the membership tests come from ``GraphProvider``
-    scanning its own release lists rather than from the resolver. An edit that
-    leaves the answer correct can still move what a comparison between two
-    ``Range`` implementations is read off, so these numbers change deliberately
-    or not at all.
+    scanning a release list once per sort key the decision scan asks for. An
+    edit that leaves the answer correct can still move what a comparison
+    between two ``Range`` implementations is read off, so these numbers change
+    deliberately or not at all.
     """
     measurement = measure_small(benchmark, scenario_id)
     stats = measurement.resolution.stats
