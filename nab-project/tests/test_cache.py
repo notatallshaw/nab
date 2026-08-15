@@ -33,6 +33,7 @@ from nab_index.cache import (
     _atomic_write,
     _encode_policy,
     _index_dirname,
+    _require_single_segment,
 )
 from nab_index.vcs import VcsRequest, prepare_clone
 from nab_provider.serialization import SimpleSerialization
@@ -201,6 +202,32 @@ class TestAtomicWrite:
         monkeypatch.setattr("nab_index.atomic.os.replace", spy_replace)
         atomic_write_text(tmp_path / "x.txt", "data")
         assert calls == ["fsync", "replace"]
+
+
+class TestRequireSingleSegment:
+    def test_single_segment_component_is_returned(self) -> None:
+        assert _require_single_segment("foo-1.0") == "foo-1.0"
+
+    @pytest.mark.parametrize("component", ["", ".", "..", "foo/", "foo/bar"])
+    def test_component_that_is_not_one_segment_is_rejected(
+        self, component: str
+    ) -> None:
+        with pytest.raises(ValueError, match="not a single path segment"):
+            _require_single_segment(component)
+
+    @pytest.mark.parametrize("component", ["foo\\bar", "C:", "C:x"])
+    def test_windows_path_syntax_follows_the_running_platform(
+        self, component: str
+    ) -> None:
+        """Windows reads a backslash as a separator and ``C:`` as a drive prefix.
+
+        POSIX reads both as ordinary filename characters.
+        """
+        if os.sep == "\\":
+            with pytest.raises(ValueError, match="not a single path segment"):
+                _require_single_segment(component)
+        else:
+            assert _require_single_segment(component) == component
 
 
 class TestOnDiskCache:
