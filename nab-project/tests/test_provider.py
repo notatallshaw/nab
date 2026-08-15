@@ -3010,29 +3010,43 @@ class TestAddClassifiedDep:
 
     def test_base_deps_intersect(self) -> None:
         """A name seen twice as a base dep folds to the intersection."""
+        ranges: dict[str, VersionRange] = {}
         base: dict[str, VersionRange] = {}
         extra_map: dict[str, dict[str, VersionRange]] = {}
-        add_classified_dep(Requirement("bar>=2.0"), set(), base, extra_map)
-        add_classified_dep(Requirement("bar<5.0"), set(), base, extra_map)
+        add_classified_dep(Requirement("bar>=2.0"), set(), base, extra_map, ranges)
+        add_classified_dep(Requirement("bar<5.0"), set(), base, extra_map, ranges)
+
         assert V("3.0") in base["bar"]
         assert V("1.0") not in base["bar"]
         assert V("9.0") not in base["bar"]
+
+        # The memoized range is shared, so folding must leave it as it was.
+        assert V("9.0") in ranges[">=2.0"]
 
     def test_extra_deps_intersect(self) -> None:
         """A name seen twice under one extra folds to the intersection."""
         base: dict[str, VersionRange] = {}
         extra_map: dict[str, dict[str, VersionRange]] = {"x": {}}
-        add_classified_dep(Requirement("bar>=2.0"), {"x"}, base, extra_map)
-        add_classified_dep(Requirement("bar<5.0"), {"x"}, base, extra_map)
+        add_classified_dep(Requirement("bar>=2.0"), {"x"}, base, extra_map, {})
+        add_classified_dep(Requirement("bar<5.0"), {"x"}, base, extra_map, {})
         assert V("3.0") in extra_map["x"]["bar"]
         assert V("1.0") not in extra_map["x"]["bar"]
         assert V("9.0") not in extra_map["x"]["bar"]
+
+    def test_repeated_specifier_builds_one_range(self) -> None:
+        """Two deps spelling one specifier share the range built for it."""
+        ranges: dict[str, VersionRange] = {}
+        base: dict[str, VersionRange] = {}
+        add_classified_dep(Requirement("bar>=2.0"), set(), base, {}, ranges)
+        add_classified_dep(Requirement("baz >= 2.0"), set(), base, {}, ranges)
+        assert list(ranges) == [">=2.0"]
+        assert base["bar"] is base["baz"]
 
     def test_base_multi_extra_splits_into_one_proxy_each(self) -> None:
         """``bar[a,b]`` as a base dep records ``bar`` plus a proxy per extra."""
         base: dict[str, VersionRange] = {}
         extra_map: dict[str, dict[str, VersionRange]] = {}
-        add_classified_dep(Requirement("bar[a,b]>=1.0"), set(), base, extra_map)
+        add_classified_dep(Requirement("bar[a,b]>=1.0"), set(), base, extra_map, {})
         assert V("2.0") in base["bar"]
         assert V("0.5") not in base["bar"]
         assert base["bar[a]"] == VersionRange.full(admit_arbitrary=False)
@@ -3042,7 +3056,7 @@ class TestAddClassifiedDep:
         """``bar[a,b]`` under extra ``x`` records both proxies in that bucket."""
         base: dict[str, VersionRange] = {}
         extra_map: dict[str, dict[str, VersionRange]] = {"x": {}}
-        add_classified_dep(Requirement("bar[a,b]>=1.0"), {"x"}, base, extra_map)
+        add_classified_dep(Requirement("bar[a,b]>=1.0"), {"x"}, base, extra_map, {})
         assert V("2.0") in extra_map["x"]["bar"]
         assert extra_map["x"]["bar[a]"] == VersionRange.full(admit_arbitrary=False)
         assert extra_map["x"]["bar[b]"] == VersionRange.full(admit_arbitrary=False)
@@ -3052,7 +3066,7 @@ class TestAddClassifiedDep:
         """Proxy keys for the dep's extras are PEP 685 normalized."""
         base: dict[str, VersionRange] = {}
         extra_map: dict[str, dict[str, VersionRange]] = {}
-        add_classified_dep(Requirement("bar[A_x,B.y]"), set(), base, extra_map)
+        add_classified_dep(Requirement("bar[A_x,B.y]"), set(), base, extra_map, {})
         assert "bar[a-x]" in base
         assert "bar[b-y]" in base
 
@@ -3063,7 +3077,7 @@ class TestAddClassifiedDep:
         req = Requirement("bar[x,y,z]")
         monkeypatch.setattr(req, "extras", ["z", "y", "x"])
         base: dict[str, VersionRange] = {}
-        add_classified_dep(req, set(), base, {})
+        add_classified_dep(req, set(), base, {}, {})
         assert list(base) == ["bar", "bar[x]", "bar[y]", "bar[z]"]
 
     def test_extra_gated_multi_extra_proxy_keys_sorted(
@@ -3073,7 +3087,7 @@ class TestAddClassifiedDep:
         req = Requirement("bar[x,y,z]")
         monkeypatch.setattr(req, "extras", ["z", "y", "x"])
         extra_map: dict[str, dict[str, VersionRange]] = {"g": {}}
-        add_classified_dep(req, {"g"}, {}, extra_map)
+        add_classified_dep(req, {"g"}, {}, extra_map, {})
         assert list(extra_map["g"]) == ["bar", "bar[x]", "bar[y]", "bar[z]"]
 
 

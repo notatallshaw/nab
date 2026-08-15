@@ -513,6 +513,9 @@ class Provider:
         self.constraints: Mapping[str, VersionRange] = constraints or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
         self.deps_cache: dict[tuple[str, Version], dict[str, VersionRange]] = {}
+        # One range per distinct dependency specifier text, shared by every
+        # parent that names it.
+        self.specifier_ranges: dict[str, VersionRange] = {}
         # Deliberately unbounded and never evicted mid-resolve: it keeps every
         # parsed Requirement (hence every Marker) alive for the whole resolve,
         # which is what makes the id(marker)-keyed marker caches below safe
