@@ -48,9 +48,9 @@ jobs:
       - name: Install nox
         run: pip install -r .github/requirements/pylock.nox.toml
 
-      # Test and coverage logic lives in noxfile.py. The tests session is
-      # parametrized by workspace, so this runs all four, each in its own
-      # venv and gated on its own packages.
+      # Test and coverage logic lives in noxfile.py. One session runs every
+      # workspace in one venv, each gated on its own packages, and reports
+      # every failure rather than stopping at the first.
       - name: Test every workspace
         run: nox -s tests
 

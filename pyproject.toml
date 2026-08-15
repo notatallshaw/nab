@@ -99,7 +99,7 @@ types = [
 pre-commit = [
     "pre-commit>=4",
 ]
-# Nox drives the per-workspace test matrix and the type-check matrix; see
+# Nox drives the workspace tests and the type-check matrix; see
 # noxfile.py. Each session installs its own lock (pylock.tests.toml or
 # pylock.types.toml), so this only bootstraps the runner.
 nox = [

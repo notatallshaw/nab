@@ -199,6 +199,19 @@ def test_nox_workspaces_install_what_they_run_and_gate() -> None:
         assert _distributions(editables) == _closure(owned), workspace
 
 
+def test_nox_workspaces_form_an_install_chain() -> None:
+    """Each workspace's editables extend the entry above it in the table.
+
+    The tests session installs the whole table into one environment, adding
+    each workspace's packages right before its suites run. A workspace imports
+    only what it declares for as long as the table stays a chain.
+    """
+    installed: list[str] = []
+    for workspace, (editables, _, _) in _nox_workspaces().items():
+        assert editables[: len(installed)] == installed, workspace
+        installed = editables
+
+
 def test_umbrella_workspace_installs_every_released_package() -> None:
     """The umbrella entry installs every released package.
 
@@ -219,7 +232,7 @@ def test_nox_gates_every_released_package_at_full_coverage() -> None:
 
 
 def test_ci_runs_every_nox_workspace() -> None:
-    """CI runs ``nox -s tests`` unfiltered, which expands to every workspace.
+    """CI runs ``nox -s tests`` unfiltered, which runs every workspace.
 
     A filtered run still passes, leaving the packages the others gate
     unmeasured.
