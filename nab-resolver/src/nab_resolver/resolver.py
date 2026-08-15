@@ -483,10 +483,21 @@ class Resolver(Generic[PackageType, VersionType]):
         self.tiebreak_cache: dict[PackageType, tuple[int, int, str]] = {}
 
         # Memoises term_relation's pre-adjustment SetRelation, keyed by
-        # (positive, assignment, constraint). Cleared on overflow.
-        self.relation_cache: dict[
-            tuple[bool, RangeProtocol[Any], RangeProtocol[Any]], SetRelation
-        ] = {}
+        # (positive, assignment token, constraint token). Cleared on overflow.
+        self.relation_cache: dict[tuple[bool, int, int], SetRelation] = {}
+
+        # One token per distinct range, so a relation-cache probe compares ints
+        # rather than bound structures. The counter never rewinds, so clearing
+        # this table alone only strands relation_cache entries; it can never
+        # point a live one at a different range.
+        self.range_tokens: dict[RangeProtocol[Any], int] = {}
+        self.next_range_token = 0
+
+        # range_token_by_id is keyed by id(), and interned_ranges keeps those
+        # objects alive so an address is never reused under a live entry, which
+        # is why the two are wiped together.
+        self.range_token_by_id: dict[int, int] = {}
+        self.interned_ranges: list[RangeProtocol[Any]] = []
 
     def as_term_range(self, range_: RangeProtocol[Any]) -> RangeProtocol[VersionType]:
         """Return the term constraint to record for a supplied range.
@@ -692,6 +703,9 @@ class Resolver(Generic[PackageType, VersionType]):
         self.pending_targeted_backtrack.clear()
         self.tiebreak_cache.clear()
         self.relation_cache.clear()
+        self.range_tokens.clear()
+        self.range_token_by_id.clear()
+        self.interned_ranges.clear()
 
     def _add_root_requirements(
         self, requirements: Sequence[RootRequirement[PackageType, VersionType]]

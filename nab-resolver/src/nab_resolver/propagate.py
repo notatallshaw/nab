@@ -17,7 +17,7 @@ from .types import IncompatibilityState, SetRelation, Term
 
 if TYPE_CHECKING:
     from .resolver import Resolver
-    from .types import Incompatibility
+    from .types import Incompatibility, RangeProtocol
 
 __all__ = [
     "classify_relation",
@@ -28,6 +28,11 @@ __all__ = [
 
 # Upper bound on relation_cache size; cleared on overflow to bound memory.
 RELATION_CACHE_MAX = 100_000
+
+# Upper bound on the address-keyed token memo, cleared on overflow together
+# with the range objects it holds alive.  A larger cap wipes less often and so
+# holds on to more ranges, which costs peak memory.
+RANGE_ID_MEMO_MAX = 8_192
 
 
 def unit_propagation(
@@ -128,6 +133,31 @@ def evaluate_incompatibility(
     return IncompatibilityState.CONFLICT
 
 
+def _intern_range(resolver: Resolver[Any, Any], range_: RangeProtocol[Any]) -> int:
+    """Return the token for ``range_``, minting one the first time it is seen.
+
+    Equal ranges share a token, so the relation cache keys on range value
+    rather than on identity.  The address memo the caller reads first is only
+    sound while the object it answers for is alive, so ``interned_ranges``
+    holds on to every range that memo records.
+    """
+    tokens = resolver.range_tokens
+    token = tokens.get(range_)
+    if token is None:
+        token = resolver.next_range_token
+        resolver.next_range_token = token + 1
+        tokens[range_] = token
+
+    id_tokens = resolver.range_token_by_id
+    if len(id_tokens) >= RANGE_ID_MEMO_MAX:
+        id_tokens.clear()
+        resolver.interned_ranges.clear()
+    id_tokens[id(range_)] = token
+    resolver.interned_ranges.append(range_)
+
+    return token
+
+
 def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRelation:
     """Check how the partial solution relates to this term.
 
@@ -142,11 +172,23 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
         return SetRelation.UNDETERMINED
 
     positive = term.is_positive()
+    constraint = term.constraint
+
+    # Both lookups stay inline because the memo answers nearly every probe;
+    # only a miss pays for the call into _intern_range.
+    id_tokens = resolver.range_token_by_id
+    assignment_token = id_tokens.get(id(assignment))
+    if assignment_token is None:
+        assignment_token = _intern_range(resolver, assignment)
+    constraint_token = id_tokens.get(id(constraint))
+    if constraint_token is None:
+        constraint_token = _intern_range(resolver, constraint)
+
     cache = resolver.relation_cache
-    key = (positive, assignment, term.constraint)
+    key = (positive, assignment_token, constraint_token)
     result = cache.get(key)
     if result is None:
-        relation = assignment.relation(term.constraint)
+        relation = assignment.relation(constraint)
         result = classify_relation(
             term, subset=relation.is_subset, disjoint=relation.is_disjoint
         )
