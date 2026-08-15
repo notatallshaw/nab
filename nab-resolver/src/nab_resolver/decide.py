@@ -32,8 +32,9 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
     Prefers ``is_ready`` packages so resolution keeps making progress while
     other listings/metadata are still in flight.  ``begin_decision_scan`` marks
     the start of the scan so a provider fed by another thread can hold the
-    state behind its sort key still: ``min`` only picks correctly over a key
-    that does not move while it runs.
+    state behind its sort key still. The queue keeps that key across scans, so
+    one that moves without the solution or ``priority_epoch`` moving is never
+    read again.
     """
     undecided = resolver.solution.undecided_packages()
     undecided.discard(ROOT)
@@ -67,7 +68,12 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
             tiebreak_cache[package] = tiebreak
         return (ready_penalty, priority, tiebreak)
 
-    return min(undecided, key=sort_key)
+    return resolver.decision_queue.pick(
+        undecided,
+        sort_key,
+        resolver.solution.take_changed_packages(),
+        resolver.priority_epoch,
+    )
 
 
 def choose_version(resolver: Resolver[Any, Any], package: Any) -> Any | None:
