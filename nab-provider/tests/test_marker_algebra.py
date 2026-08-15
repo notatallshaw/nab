@@ -12,7 +12,7 @@ import traceback
 
 import pytest
 
-from nab_provider._vendor.packaging import markersets
+from nab_provider._vendor.packaging import _markersets, markersets
 from nab_provider._vendor.packaging.markers import (
     InvalidMarker,
     Marker,
@@ -1066,6 +1066,29 @@ def test_oversized_literal_allowed_when_int_limit_disabled() -> None:
         assert isinstance(ms(f'python_full_version >= "{lit}"').is_empty(), bool)
     finally:
         sys.set_int_max_str_digits(original)
+
+
+def test_apply_memo_reuses_a_repeated_comparison() -> None:
+    assert _markersets._apply("3.11.4", ">=", "3.9", key="python_full_version") is True
+
+    hits = _markersets._apply_memoised.cache_info().hits
+    assert _markersets._apply("3.11.4", ">=", "3.9", key="python_full_version") is True
+    assert _markersets._apply_memoised.cache_info().hits == hits + 1
+
+
+def test_apply_memo_misses_when_int_limit_changes() -> None:
+    # A version comparison parses both operands, so a result memoised under one
+    # int-string limit must not be replayed under a limit that forbids the parse.
+    lit = "1." + "9" * 5000
+    original = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(0)
+    try:
+        assert _markersets._apply(lit, ">=", "3.9", key="python_full_version") is False
+    finally:
+        sys.set_int_max_str_digits(original)
+
+    with pytest.raises(ValueError, match="limit"):
+        _markersets._apply(lit, ">=", "3.9", key="python_full_version")
 
 
 def test_mint_overflow_at_parse_limit_reports_complexity() -> None:

@@ -1,9 +1,9 @@
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/_markersets.py b/nab-provider/src/nab_provider/_vendor/packaging/_markersets.py
 new file mode 100644
-index 0000000..a1cd981
+index 0000000..d51010d
 --- /dev/null
 +++ b/nab-provider/src/nab_provider/_vendor/packaging/_markersets.py
-@@ -0,0 +1,1809 @@
+@@ -0,0 +1,1822 @@
 +"""Marker algebra engine: reason about PEP 508 markers as sets of environments.
 +
 +The private engine behind :class:`~packaging.markersets.MarkerSet`. Parses a
@@ -23,6 +23,7 @@ index 0000000..a1cd981
 +import re
 +import sys
 +import threading
++from functools import lru_cache
 +from itertools import pairwise, product
 +from typing import TYPE_CHECKING, NamedTuple, cast
 +
@@ -117,8 +118,20 @@ index 0000000..a1cd981
 +    return DOMAIN_REGISTRY[variable] == DOMAIN_VERSION
 +
 +
-+def _apply(lhs: str, op: str, rhs: str, key: str) -> bool:
++@lru_cache(maxsize=8192)
++def _apply_memoised(lhs: str, op: str, rhs: str, key: str, _limit: int) -> bool:
++    """Bounded memo behind :func:`_apply`; ``_limit`` only widens the cache key."""
 +    return _eval_op(lhs, Op(op), rhs, key=key)
++
++
++def _apply(lhs: str, op: str, rhs: str, key: str) -> bool:
++    """Evaluate ``op`` on a pair of literals under ``key``'s domain, memoised.
++
++    The int-string limit joins the four strings in the cache key: a version key
++    parses both operands, so a literal that compares under one limit raises
++    under another.
++    """
++    return _apply_memoised(lhs, op, rhs, key, sys.get_int_max_str_digits())
 +
 +
 +# --------------------------------------------------------------------- version util
@@ -178,7 +191,7 @@ index 0000000..a1cd981
 +    lazily from its own literal. Equality and hashing run off a field tuple
 +    precomputed at construction. A decision re-reads the same atom on the same point
 +    across partitions of one axis; that memo belongs to the operation, not here, so
-+    ``holds`` recomputes.
++    ``holds`` recomputes. The comparison it runs is memoised in :func:`_apply`.
 +    """
 +
 +    __slots__ = (

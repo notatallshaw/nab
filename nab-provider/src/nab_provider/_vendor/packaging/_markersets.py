@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import sys
 import threading
+from functools import lru_cache
 from itertools import pairwise, product
 from typing import TYPE_CHECKING, NamedTuple, cast
 
@@ -111,8 +112,20 @@ def is_pure_version(variable: str) -> bool:
     return DOMAIN_REGISTRY[variable] == DOMAIN_VERSION
 
 
-def _apply(lhs: str, op: str, rhs: str, key: str) -> bool:
+@lru_cache(maxsize=8192)
+def _apply_memoised(lhs: str, op: str, rhs: str, key: str, _limit: int) -> bool:
+    """Bounded memo behind :func:`_apply`; ``_limit`` only widens the cache key."""
     return _eval_op(lhs, Op(op), rhs, key=key)
+
+
+def _apply(lhs: str, op: str, rhs: str, key: str) -> bool:
+    """Evaluate ``op`` on a pair of literals under ``key``'s domain, memoised.
+
+    The int-string limit joins the four strings in the cache key: a version key
+    parses both operands, so a literal that compares under one limit raises
+    under another.
+    """
+    return _apply_memoised(lhs, op, rhs, key, sys.get_int_max_str_digits())
 
 
 # --------------------------------------------------------------------- version util
@@ -172,7 +185,7 @@ class Atom:
     lazily from its own literal. Equality and hashing run off a field tuple
     precomputed at construction. A decision re-reads the same atom on the same point
     across partitions of one axis; that memo belongs to the operation, not here, so
-    ``holds`` recomputes.
+    ``holds`` recomputes. The comparison it runs is memoised in :func:`_apply`.
     """
 
     __slots__ = (
