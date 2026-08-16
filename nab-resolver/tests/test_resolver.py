@@ -3097,6 +3097,81 @@ class TestRelationCache:
         assert self._token_key(resolver, term) == key
         assert resolver.relation_cache == {key: first}
 
+    def test_gate_switches_the_memo_off_when_probes_mostly_miss(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The window closes on probes alone, and the entries it collected go too."""
+        monkeypatch.setattr(propagate, "RELATION_GATE_WINDOW", 3)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+        # Filler for another range pair, to show the whole memo is dropped.
+        resolver.relation_cache[(False, 0, 0)] = SetRelation.SATISFIED
+
+        # A distinct constraint each time, so no probe in the window hits.
+        for lower in (1, 3, 5):
+            term_relation(resolver, Term("foo", Range.at_least(lower), positive=True))
+
+        assert resolver.relation_cache_on is False
+        assert resolver.relation_cache == {}
+        assert resolver.relation_gate_countdown == propagate.RELATION_GATE_RECHECK
+
+    def test_gate_keeps_the_memo_while_probes_hit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A window that closes well starts the next one, so the count restarts.
+
+        The final hit count is the probe that closed the window, counted after
+        the reset rather than the one asserted before it.
+        """
+        monkeypatch.setattr(propagate, "RELATION_GATE_MIN_HITS", 1)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+        term = Term("foo", Range.at_least(1), positive=True)
+        term_relation(resolver, term)
+        term_relation(resolver, term)
+        assert resolver.relation_gate_hits == 1
+
+        resolver.relation_gate_countdown = 1
+        term_relation(resolver, term)
+
+        assert resolver.relation_cache_on is True
+        assert resolver.relation_gate_countdown == propagate.RELATION_GATE_WINDOW
+        assert resolver.relation_gate_hits == 1
+
+    def test_gate_tries_the_memo_again_after_the_recheck_window(self) -> None:
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+        resolver.relation_cache_on = False
+        resolver.relation_gate_countdown = 1
+        term = Term("foo", Range.at_least(1), positive=True)
+
+        result = term_relation(resolver, term)
+
+        assert resolver.relation_cache_on is True
+        assert resolver.relation_gate_countdown == propagate.RELATION_GATE_WINDOW
+        assert resolver.relation_cache == {self._token_key(resolver, term): result}
+
+    def test_relation_is_unchanged_while_the_memo_is_off(self) -> None:
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+        term = Term("foo", Range.at_least(1), positive=True)
+        expected = term_relation(resolver, term)
+
+        resolver.relation_cache_on = False
+        resolver.relation_cache.clear()
+
+        assert term_relation(resolver, term) is expected
+        assert resolver.relation_cache == {}
+
+    def test_a_second_resolve_starts_with_the_memo_on(self) -> None:
+        resolver: Resolver[str, int] = Resolver(DictProvider({"foo": {1: {}}}))
+        resolver.resolve({"foo": Range.at_least(1)})
+        resolver.relation_cache_on = False
+
+        resolver.resolve({"foo": Range.at_least(1)})
+
+        assert resolver.relation_cache_on is True
+
 
 class LowestVersionProvider(DictProvider):
     """Provider that picks the lowest matching version rather than the highest."""

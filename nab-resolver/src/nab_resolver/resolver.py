@@ -493,6 +493,13 @@ class Resolver(Generic[PackageType, VersionType]):
         # (positive, assignment token, constraint token). Cleared on overflow.
         self.relation_cache: dict[tuple[bool, int, int], SetRelation] = {}
 
+        # relation_cache_on goes off while the memo's hit rate does not pay for
+        # the key it builds. relation_gate_countdown is the probes left in the
+        # window that rate is judged over, and relation_gate_hits its hits.
+        self.relation_cache_on = True
+        self.relation_gate_countdown = propagate.RELATION_GATE_WINDOW
+        self.relation_gate_hits = 0
+
         # One token per distinct range, so a relation-cache probe compares ints
         # rather than bound structures. The counter never rewinds, so clearing
         # this table alone only strands relation_cache entries; it can never
@@ -713,6 +720,9 @@ class Resolver(Generic[PackageType, VersionType]):
         self.decision_queue.clear()
         self.priority_epoch = 0
         self.relation_cache.clear()
+        self.relation_cache_on = True
+        self.relation_gate_countdown = propagate.RELATION_GATE_WINDOW
+        self.relation_gate_hits = 0
         self.range_tokens.clear()
         self.range_token_by_id.clear()
         self.interned_ranges.clear()
