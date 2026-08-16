@@ -3118,6 +3118,11 @@ class TestRelationCache:
     def test_gate_keeps_the_memo_while_probes_hit(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """A window that closes well starts the next one, so the count restarts.
+
+        The final hit count is the probe that closed the window, counted after
+        the reset rather than the one asserted before it.
+        """
         monkeypatch.setattr(propagate, "RELATION_GATE_MIN_HITS", 1)
         resolver: Resolver[str, int] = Resolver(DictProvider({}))
         resolver.solution.decide("foo", 2)
