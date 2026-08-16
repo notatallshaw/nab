@@ -929,9 +929,9 @@ class TestHasSatisfyingVersion:
     def test_true_when_a_usable_version_sits_past_the_abort_threshold(self) -> None:
         """Suppressing the abort still finds a usable version deep in the scan.
 
-        The newest eight candidates are rejected by the decided blocker, so a
-        fired abort would stop before the ninth, usable one.  The probe keeps
-        scanning and reports True.
+        The newest eight candidates are rejected by the decided blocker and the
+        trigger is pinned to that count, so a fired abort would stop before the
+        ninth, usable one.  The probe keeps scanning and reports True.
         """
         usable, blocked = "1.0", [f"{n}.0" for n in range(9, 1, -1)]
         wheels = [make_wheel(v) for v in [*blocked, usable]]
@@ -948,6 +948,7 @@ class TestHasSatisfyingVersion:
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("5.0")})
+        provider._LOOKAHEAD_ABORT_THRESHOLD = len(blocked)  # type: ignore[misc]
         assert provider.has_satisfying_version("foo", VersionRange.full())
 
     def test_false_when_conflicts_exceed_the_reject_cap(self) -> None:

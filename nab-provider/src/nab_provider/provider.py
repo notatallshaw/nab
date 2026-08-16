@@ -410,7 +410,7 @@ class Provider:
     # Set low because the trigger is conservative: a unique
     # ``(blocker_pkg, blocker_version)`` repeating across every rejection
     # is already a strong signal.
-    _LOOKAHEAD_ABORT_THRESHOLD = 8
+    _LOOKAHEAD_ABORT_THRESHOLD = 4
 
     # Max force-backtracks one blocker can drive per resolution.
     # One-shot misses sustained culprits; unlimited oscillates on
