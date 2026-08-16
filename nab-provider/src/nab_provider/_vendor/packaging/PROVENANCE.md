@@ -24,7 +24,11 @@ most one checked-in patch.
   - `_ranges.py`: an unbounded end canonicalizes its inclusivity, and
     `LowerBound.__gt__`, `LowerBound.__le__`, and `UpperBound.__gt__` are
     written out beside `functools.total_ordering`, which still derives the
-    rest.
+    rest. Those three, `LowerBound.__lt__`, and `UpperBound.__lt__` order two
+    versions by comparing their cached `Version._key_cache` tuples, and fall
+    back to the version operators when either side has no key yet.
+    `BoundaryVersion` carries a class-level `_key_cache = None` so a boundary
+    operand takes that fallback without a type check.
   - `markersets.py` and `_markersets.py`: the marker-algebra module and the
     private engine behind it, both new files, plus the `Marker.to_set`
     accessor on `markers.py`.
