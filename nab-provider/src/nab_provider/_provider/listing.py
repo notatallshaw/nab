@@ -37,6 +37,12 @@ if TYPE_CHECKING:
     from ..provider import DistFile, Provider
     from ..tags import TagSet
 
+    _PreparedListing = tuple[
+        list[tuple[Version, DistFile]],
+        Mapping[Version, DistPolicy],
+        bool,
+    ]
+
 
 # Matched to the provider's look-ahead abort threshold: prefetching 8 versions
 # covers the worst-case abort scan without overshooting.  Used by the
@@ -332,6 +338,75 @@ def _filter_base(
         provider.uploaded_prior_to is not None or provider.overrides_set_time
     )
 
+    cache = provider.listing_filter_cache
+    if cache is None or not cache.shares_pythons:
+        result, policy_by_version, sort_with_wheel_first = _prepare_listing(
+            provider,
+            normalized,
+            files,
+            index_name,
+            target_drops=True,
+            time_filter_active=time_filter_active,
+        )
+    else:
+        parsed, policy_by_version, sort_with_wheel_first = cache.prepared(
+            normalized,
+            provider.stats,
+            partial(
+                _prepare_listing,
+                provider,
+                normalized,
+                files,
+                index_name,
+                target_drops=False,
+                time_filter_active=time_filter_active,
+            ),
+        )
+        result = [
+            pair
+            for pair in parsed
+            if not _excluded_by_python_or_time(
+                provider,
+                normalized,
+                pair[0],
+                pair[1],
+                index_name=index_name,
+                time_filter_active=time_filter_active,
+            )
+        ]
+
+    result = _drop_sdist_install_wheel_only(result, policy_by_version)
+
+    if sort_with_wheel_first:
+        result.sort(
+            key=lambda pair: (pair[0], isinstance(pair[1], WheelFile)),
+            reverse=True,
+        )
+    else:
+        result.sort(key=lambda pair: pair[0], reverse=True)
+    return _canonicalize_equal_versions(result)
+
+
+def _prepare_listing(
+    provider: Provider,
+    normalized: str,
+    files: Sequence[WheelFile | SdistFile],
+    index_name: str | None,
+    *,
+    target_drops: bool,
+    time_filter_active: bool,
+) -> _PreparedListing:
+    """Parse and dist-policy-filter the listing.
+
+    With ``target_drops`` the Requires-Python and upload-cutoff drops run
+    here as well, which is what a one-Python resolve asks for.  A matrix
+    leaves them off so its Pythons can share the pass, and runs them over
+    the result instead.
+
+    Returns the surviving (version, file) pairs in listing order, the dist
+    policy every version that cleared that filter was judged under, and
+    whether any of those policies wants wheels sorted ahead of sdists.
+    """
     result: list[tuple[Version, DistFile]] = []
     sort_with_wheel_first = False
     policy_by_version: dict[Version, DistPolicy] = {}
@@ -360,7 +435,7 @@ def _filter_base(
         if effective_dist_policy in (DistPolicy.PREFER_WHEEL, DistPolicy.SDIST_INSTALL):
             sort_with_wheel_first = True
 
-        if _excluded_by_python_or_time(
+        if target_drops and _excluded_by_python_or_time(
             provider,
             normalized,
             version,
@@ -372,16 +447,7 @@ def _filter_base(
 
         result.append((version, dist))
 
-    result = _drop_sdist_install_wheel_only(result, policy_by_version)
-
-    if sort_with_wheel_first:
-        result.sort(
-            key=lambda pair: (pair[0], isinstance(pair[1], WheelFile)),
-            reverse=True,
-        )
-    else:
-        result.sort(key=lambda pair: pair[0], reverse=True)
-    return _canonicalize_equal_versions(result)
+    return result, policy_by_version, sort_with_wheel_first
 
 
 def _apply_wheel_tags(

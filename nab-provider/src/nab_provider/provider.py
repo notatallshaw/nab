@@ -11,7 +11,7 @@ import bisect
 import logging
 from collections import defaultdict, deque
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from nab_provider._vendor.packaging.markers import prepare_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -113,6 +113,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+_PreparedT = TypeVar("_PreparedT")
+
 
 @dataclass
 class ProviderStats:
@@ -154,6 +156,18 @@ def _counters(stats: ProviderStats) -> tuple[int, ...]:
     return tuple(getattr(stats, name) for name in _STAT_FIELDS)
 
 
+def _replay(stats: ProviderStats, delta: tuple[int, ...]) -> None:
+    """Add the counters a memoised pass raised to ``stats``."""
+    for name, count in zip(_STAT_FIELDS, delta, strict=True):
+        if count:
+            setattr(stats, name, getattr(stats, name) + count)
+
+
+def _since(before: tuple[int, ...], stats: ProviderStats) -> tuple[int, ...]:
+    """Return how far each counter of ``stats`` rose since ``before``."""
+    return tuple(now - was for now, was in zip(_counters(stats), before, strict=True))
+
+
 class ListingFilterCache:
     """Base listing-filter results shared across the targets of one resolve.
 
@@ -164,16 +178,28 @@ class ListingFilterCache:
     identical list.  Memoising it per (package, Python) leaves only the
     wheel-tag pass to run per target.
 
+    Most of that half reads no Python either: the version parse and the
+    dist-policy exclusion do the same work for every Python of a matrix,
+    and only the Requires-Python and upload-cutoff drops differ.  When the
+    resolve spans more than one Python, :attr:`shares_pythons` is set and
+    :meth:`prepared` memoises that inner pass per package, so a
+    three-Python matrix walks each listing's files once rather than three
+    times.  A one-Python resolve has nothing to share and skips the split,
+    since materialising the intermediate list would cost it a pass it does
+    not get back.
+
     One instance is only valid across providers that share a coordinator
     and a policy config, as the targets of one resolve do.
     """
 
-    def __init__(self) -> None:
-        """Create an empty cache."""
+    def __init__(self, pythons: int = 1) -> None:
+        """Create an empty cache for a resolve over ``pythons`` Python releases."""
+        self.shares_pythons = pythons > 1
         self._entries: dict[
             tuple[str, str | None],
             tuple[list[tuple[Version, DistFile]], tuple[int, ...]],
         ] = {}
+        self._prepared: dict[str, tuple[object, tuple[int, ...]]] = {}
 
     def filtered(
         self,
@@ -190,18 +216,38 @@ class ListingFilterCache:
         entry = self._entries.get((package, python_version))
         if entry is not None:
             result, delta = entry
-            for name, count in zip(_STAT_FIELDS, delta, strict=True):
-                if count:
-                    setattr(stats, name, getattr(stats, name) + count)
+            _replay(stats, delta)
             return list(result)
 
         before = _counters(stats)
         result = compute()
 
-        delta = tuple(
-            now - was for now, was in zip(_counters(stats), before, strict=True)
-        )
-        self._entries[(package, python_version)] = (list(result), delta)
+        self._entries[(package, python_version)] = (list(result), _since(before, stats))
+        return result
+
+    def prepared(
+        self,
+        package: str,
+        stats: ProviderStats,
+        compute: Callable[[], _PreparedT],
+    ) -> _PreparedT:
+        """Return the Python-invariant filter half, running ``compute`` once.
+
+        Keyed by package alone, so every Python of a matrix shares one
+        result.  A hit replays that pass's counters onto ``stats`` the way
+        :meth:`filtered` does, and the caller must treat the result as
+        read-only, since the other Pythons hold it too.
+        """
+        entry = self._prepared.get(package)
+        if entry is not None:
+            result, delta = entry
+            _replay(stats, delta)
+            return cast("_PreparedT", result)
+
+        before = _counters(stats)
+        result = compute()
+
+        self._prepared[package] = (result, _since(before, stats))
         return result
 
 

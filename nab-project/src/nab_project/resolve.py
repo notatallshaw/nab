@@ -34,6 +34,7 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.provider import ListingFilterCache
 from nab_provider.requirements_file import (
     expand_extra_requirements,
     expand_group_includes,
@@ -283,6 +284,9 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
                 dependency_marker_holds if marker_holds is None else marker_holds
             ),
             progress=progress,
+            listing_filter_cache=ListingFilterCache(
+                len({target.python_full_version for target in targets})
+            ),
         )
 
         fork_list = (
