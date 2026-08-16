@@ -188,7 +188,14 @@ def prefetch_transitive_best(
     normalized: str,
     versions: list[tuple[Version, DistFile]],
 ) -> None:
-    """Fire metadata prefetch for the single best transitive candidate."""
+    """Fire metadata prefetch for the single best transitive candidate.
+
+    Requests a candidate at most once. A dep with no root constraint reaches
+    here once per parent that names it, and within one resolve the artifact a
+    candidate resolves to is fixed. The mark goes on above the override and
+    artifact checks, so it records a candidate as seen even when no request
+    follows.
+    """
     # Routed through ``provider.pick_best_candidate`` so existing
     # ``patch.object(provider, "pick_best_candidate", ...)`` mocks
     # in the test suite still drive this prefetch path.
@@ -198,6 +205,11 @@ def prefetch_transitive_best(
     version, _ = best
     if (normalized, version) in provider.deps_cache:
         return
+
+    if (normalized, version) in provider.speculative_candidates:
+        return
+    provider.speculative_candidates.add((normalized, version))
+
     if _has_complete_override(provider, normalized, version):
         return
 
@@ -860,6 +872,9 @@ def prefetch_new_deps(provider: Provider, deps: Mapping[str, VersionRange]) -> N
     Local, VCS, and archive sources are skipped; they have no PyPI
     listing and the materialise path in ``fetch_versions`` will
     surface them when the resolver asks.
+
+    A dep named by several parents arrives once per parent, so only
+    the first of them requests its listing.
     """
     for dep in deps:
         _, _, normalized = provider.split_and_normalize(dep)
@@ -873,7 +888,9 @@ def prefetch_new_deps(provider: Provider, deps: Mapping[str, VersionRange]) -> N
             # Listing not cached: request it speculatively so its read work
             # overlaps resolver CPU on the fetcher thread. When it arrives,
             # prioritize() notices and fires metadata prefetch.
-            provider.coordinator.request_listing(normalized, speculative=True)
+            if normalized not in provider.speculative_listings:
+                provider.speculative_listings.add(normalized)
+                provider.coordinator.request_listing(normalized, speculative=True)
         else:
             # Listing cached: fire speculative metadata prefetch.
             speculative_prefetch(

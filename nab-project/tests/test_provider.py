@@ -260,6 +260,94 @@ class TestPrefetchListings:
         assert coordinator.calls_to("request_listing") == [("bar", True)]
 
 
+class TestSpeculativeRequestDedup:
+    """A repeat speculative request is dropped, the first one is not."""
+
+    def test_repeat_cascade_requests_each_listing_once(self) -> None:
+        """A dep named by three parents gets one speculative listing request."""
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(coordinator, target=_PY312)
+        coordinator.reset()
+
+        deps = {"bar": SpecifierSet(">=1.0").to_range()}
+        for _ in range(3):
+            provider.prefetch_new_deps(deps)
+
+        assert coordinator.calls_to("request_listing") == [("bar", True)]
+
+    def test_listing_requests_keep_their_first_occurrence_order(self) -> None:
+        """Every name still reaches the coordinator, in first-occurrence order."""
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(coordinator, target=_PY312)
+        coordinator.reset()
+
+        full = SpecifierSet(">=1.0").to_range()
+        provider.prefetch_new_deps({"bar": full})
+        provider.prefetch_new_deps({"bar": full, "baz": full})
+        provider.prefetch_new_deps({"baz": full, "qux": full})
+
+        assert coordinator.calls_to("request_listing") == [
+            ("bar", True),
+            ("baz", True),
+            ("qux", True),
+        ]
+
+    def test_repeat_cascade_requests_transitive_metadata_once(self) -> None:
+        """The best candidate's sidecar is asked for once, not once per parent."""
+        coordinator = make_coordinator(
+            [make_wheel("2.0"), make_wheel("1.0")], package="foo"
+        )
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("foo")
+
+        deps = {"foo": SpecifierSet(">=1.0").to_range()}
+        for _ in range(3):
+            provider.prefetch_new_deps(deps)
+
+        calls = coordinator.calls_to("request_metadata")
+        assert [version for _pkg, version, _url, _hash in calls] == ["2.0"]
+
+    def test_new_best_pick_for_the_same_package_is_still_requested(self) -> None:
+        """The candidate memo keys on the version, not on the package alone.
+
+        ``pick_best_candidate`` is patched because within one provider it is
+        constant per package: root requirements, the listing and the strategy
+        are all fixed once the resolve starts.
+        """
+        coordinator = make_coordinator(
+            [make_wheel("2.0"), make_wheel("1.0")], package="foo"
+        )
+        provider = Provider(coordinator, target=_PY312)
+        older = provider.fetch_versions("foo")[-1]
+
+        deps = {"foo": SpecifierSet(">=1.0").to_range()}
+        with patch.object(provider, "pick_best_candidate", return_value=older):
+            provider.prefetch_new_deps(deps)
+            provider.prefetch_new_deps(deps)
+
+        calls = coordinator.calls_to("request_metadata")
+        assert [version for _pkg, version, _url, _hash in calls] == ["2.0", "1.0"]
+
+    def test_metadata_requests_keep_their_first_occurrence_order(self) -> None:
+        """Every candidate still reaches the coordinator, in first-occurrence order."""
+        coordinator = make_coordinator(
+            listings={"foo": [make_wheel("2.0")], "bar": [make_wheel("3.0")]}
+        )
+        provider = Provider(coordinator, target=_PY312)
+        full = SpecifierSet(">=1.0").to_range()
+
+        provider.fetch_versions("foo")
+        provider.prefetch_new_deps({"foo": full})
+        provider.fetch_versions("bar")
+        provider.prefetch_new_deps({"foo": full, "bar": full})
+
+        calls = coordinator.calls_to("request_metadata")
+        assert [(pkg, version) for pkg, version, _url, _hash in calls] == [
+            ("foo", "2.0"),
+            ("bar", "3.0"),
+        ]
+
+
 class TestSpeculativePrefetch:
     def test_metadata_prefetched_after_listing(self) -> None:
         """After listing fetch, metadata for best candidate is in flight."""
