@@ -544,8 +544,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
 
         empty_packages: list[PackageType] = []
         for package, entries in self._assignments_by_package.items():
-            decision_popped = False
+            popped = decision_popped = False
             while entries and entries[-1].decision_level > target_level:
+                popped = True
                 if entries.pop().is_decision:
                     decision_popped = True
 
@@ -555,7 +556,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
                 self._negative_ranges.pop(package, None)
                 self._decided_versions.pop(package, None)
                 self._undecided.discard(package)
-            else:
+            # A package that kept every entry already holds what the rebuild
+            # would restore.
+            elif popped:
                 self._update_package_state_after_backtrack(
                     package, entries, decision_popped=decision_popped
                 )
