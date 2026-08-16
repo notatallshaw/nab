@@ -567,8 +567,11 @@ class Provider:
         # which is what makes the id(marker)-keyed marker caches below safe
         # against id reuse. Do not bound it without re-keying those caches.
         self.metadata_cache: dict[tuple[str, Version], WheelMetadata] = {}
-        self.extra_deps_map: dict[
-            tuple[str, Version], dict[str, dict[str, VersionRange]]
+        # Per-extra deps, split out of the cached metadata on first read: a
+        # release whose extras nothing selects never pays for the split.  Read
+        # it through ``extra_deps_map``.
+        self._extra_deps: dict[
+            tuple[str, Version], dict[str, dict[str, VersionRange]] | None
         ] = {}
         # Direct-URL deps gated behind a provided-but-unrequested extra. The
         # refusal is deferred until the extra is selected, so a plain resolve of
@@ -719,6 +722,20 @@ class Provider:
                 ):
                     continue
                 self.coordinator.request_listing(normalized)
+
+    @property
+    def extra_deps_map(self) -> _metadata_resolver.ExtraDepsMap:
+        """Per-extra deps per parsed release, split out when first read.
+
+        A new view over ``_extra_deps`` each time it is asked for.  A stored
+        one would hold this provider in a reference cycle, and a matrix resolve
+        would then keep every finished target's caches until the collector ran.
+        """
+        return _metadata_resolver.ExtraDepsMap(self, self._extra_deps)
+
+    def defer_extra_deps(self, cache_key: tuple[str, Version]) -> None:
+        """Record a release as parsed, with its per-extra split not built yet."""
+        self._extra_deps[cache_key] = None
 
     def fetch_versions(self, package: str) -> list[tuple[Version, DistFile]]:
         """See :func:`nab_provider._provider.listing.fetch_versions`."""

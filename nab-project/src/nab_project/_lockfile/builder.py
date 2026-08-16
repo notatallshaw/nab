@@ -93,8 +93,12 @@ class LockInputProvider(Protocol):
     deps_cache: Mapping[tuple[str, Version], Mapping[str, object]]
     """Direct dependencies per ``(canonical name, version)``."""
 
-    extra_deps_map: Mapping[tuple[str, Version], Mapping[str, Mapping[str, object]]]
-    """Per-extra dependencies per ``(canonical name, version)``."""
+    @property
+    def extra_deps_map(
+        self,
+    ) -> Mapping[tuple[str, Version], Mapping[str, Mapping[str, object]]]:
+        """Per-extra dependencies per ``(canonical name, version)``."""
+        ...
 
     @property
     def coordinator(self) -> _LockInputCoordinator:
@@ -405,6 +409,7 @@ def _reachable_names(
     reached: set[str] = set()
     seen: set[str] = set()
     stack = list(roots)
+    extra_deps_map = provider.extra_deps_map
 
     while stack:
         key = stack.pop()
@@ -422,7 +427,7 @@ def _reachable_names(
         cache_key = (canonical, version)
         stack.extend(provider.deps_cache.get(cache_key, {}))
         if extra is not None:
-            stack.extend(provider.extra_deps_map.get(cache_key, {}).get(extra, {}))
+            stack.extend(extra_deps_map.get(cache_key, {}).get(extra, {}))
 
     return reached
 
@@ -453,6 +458,7 @@ def _forward_dependency_graph(
     pinned = {canonicalize_name(name) for name in pins}
     graph: dict[str, tuple[str, ...]] = {}
     base_graph: dict[str, tuple[str, ...]] = {}
+    extra_deps_map = provider.extra_deps_map
     for raw_name, version in pins.items():
         canonical = canonicalize_name(raw_name)
         cache_key = (canonical, version)
@@ -461,12 +467,18 @@ def _forward_dependency_graph(
             for dep in provider.deps_cache.get(cache_key, {})
         }
         all_deps = set(base_deps)
-        extra_map = provider.extra_deps_map.get(cache_key, {})
-        for extra in activated_extras.get(canonical, ()):
-            all_deps.update(
-                canonicalize_name(split_extra(dep)[0])
-                for dep in extra_map.get(extra, {})
-            )
+
+        # Reading the per-extra map makes the provider split that release's
+        # extras out, so ask only for a package with an activated extra.
+        activated = activated_extras.get(canonical, ())
+        if activated:
+            extra_map = extra_deps_map.get(cache_key, {})
+            for extra in activated:
+                all_deps.update(
+                    canonicalize_name(split_extra(dep)[0])
+                    for dep in extra_map.get(extra, {})
+                )
+
         base_deps &= pinned
         all_deps &= pinned
         # An umbrella extra (pkg[all] pulling pkg[graphviz]) can name its own
