@@ -523,9 +523,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
         """Remove all assignments above target_level.
 
         Non-chronological backjumping: skips past irrelevant decision levels
-        directly to the cause of the conflict.  Relies on
-        ``Assignment.accumulated_range`` already being cumulative, so each
-        package's surviving state can be rebuilt without re-intersecting.
+        directly to the cause of the conflict.  A package that loses entries is
+        rebuilt from its last survivor, which already carries that package's
+        ``cum_positive`` and ``cum_negative``.
         See: https://github.com/dart-lang/pub/blob/master/doc/solver.md#conflict-resolution
         """
         self._contradiction_epoch += 1
@@ -544,8 +544,10 @@ class PartialSolution(Generic[PackageType, VersionType]):
 
         empty_packages: list[PackageType] = []
         for package, entries in self._assignments_by_package.items():
+            decision_popped = False
             while entries and entries[-1].decision_level > target_level:
-                entries.pop()
+                if entries.pop().is_decision:
+                    decision_popped = True
 
             if not entries:
                 empty_packages.append(package)
@@ -554,7 +556,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
                 self._decided_versions.pop(package, None)
                 self._undecided.discard(package)
             else:
-                self._update_package_state_after_backtrack(package, entries)
+                self._update_package_state_after_backtrack(
+                    package, entries, decision_popped=decision_popped
+                )
 
         for package in empty_packages:
             del self._assignments_by_package[package]
@@ -563,26 +567,20 @@ class PartialSolution(Generic[PackageType, VersionType]):
         self,
         package: PackageType,
         entries: list[Assignment[PackageType, VersionType]],
+        *,
+        decision_popped: bool,
     ) -> None:
-        """Recompute positive/negative/decided state for a package.
+        """Restore a package's state from its last surviving entry.
 
-        Each ``Assignment.accumulated_range`` is already cumulative, so the
-        latest entry of each kind is enough to rebuild state.  Trail levels
-        never decrease, so popping a decision pops every later entry for the
-        same package; a surviving decision is always the current one.
+        ``decide`` and ``derive`` stamp each entry with the package's positive
+        and negative ranges as of that entry, and a backtrack keeps a prefix of
+        the entries, so the last survivor already carries both.  A package holds
+        at most one decision at a time, so its decided version stands unless the
+        pop reached the decision itself.
         """
-        last_pos: RangeProtocol[VersionType] | None = None
-        last_neg: RangeProtocol[VersionType] | None = None
-        last_decision_version: VersionType | None = None
-
-        for assignment in entries:
-            if assignment.is_decision:
-                last_pos = assignment.accumulated_range
-                last_decision_version = assignment.version
-            elif assignment.positive:
-                last_pos = assignment.accumulated_range
-            else:
-                last_neg = assignment.accumulated_range
+        tail = entries[-1]
+        last_pos = tail.cum_positive
+        last_neg = tail.cum_negative
 
         if last_pos is None:
             self._positive_ranges.pop(package, None)
@@ -594,12 +592,10 @@ class PartialSolution(Generic[PackageType, VersionType]):
         else:
             self._negative_ranges[package] = last_neg
 
-        if last_decision_version is None:
+        if decision_popped:
             self._decided_versions.pop(package, None)
-        else:
-            self._decided_versions[package] = last_decision_version
 
-        if last_pos is not None and last_decision_version is None:
+        if last_pos is not None and package not in self._decided_versions:
             self._undecided.add(package)
         else:
             self._undecided.discard(package)
