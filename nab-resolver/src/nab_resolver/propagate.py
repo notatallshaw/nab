@@ -29,6 +29,14 @@ __all__ = [
 # Upper bound on relation_cache size; cleared on overflow to bound memory.
 RELATION_CACHE_MAX = 100_000
 
+# A probe that misses builds its key for nothing, and on a conflict-heavy
+# resolve most probes miss.  So the memo runs only while its hit rate over a
+# window of probes pays for the key, and a longer window re-samples it later in
+# case the resolve changes shape.
+RELATION_GATE_WINDOW = 4_096
+RELATION_GATE_MIN_HITS = 1_024
+RELATION_GATE_RECHECK = 65_536
+
 # Upper bound on the address-keyed token memo, cleared on overflow together
 # with the range objects it holds alive.  A larger cap wipes less often and so
 # holds on to more ranges, which costs peak memory.
@@ -158,6 +166,25 @@ def _intern_range(resolver: Resolver[Any, Any], range_: RangeProtocol[Any]) -> i
     return token
 
 
+def _resample_relation_gate(resolver: Resolver[Any, Any]) -> None:
+    """Judge the window of probes that just ended and open the next one.
+
+    While the memo is on, the window counts hits, and too few switch the memo
+    off and drop the entries it collected.  While it is off, the window is only
+    the wait before the memo is tried again.
+    """
+    if not resolver.relation_cache_on:
+        resolver.relation_cache_on = True
+    elif resolver.relation_gate_hits < RELATION_GATE_MIN_HITS:
+        resolver.relation_cache_on = False
+        resolver.relation_cache.clear()
+        resolver.relation_gate_countdown = RELATION_GATE_RECHECK
+        return
+
+    resolver.relation_gate_hits = 0
+    resolver.relation_gate_countdown = RELATION_GATE_WINDOW
+
+
 def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRelation:
     """Check how the partial solution relates to this term.
 
@@ -174,27 +201,41 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
     positive = term.is_positive()
     constraint = term.constraint
 
-    # Both lookups stay inline because the memo answers nearly every probe;
-    # only a miss pays for the call into _intern_range.
-    id_tokens = resolver.range_token_by_id
-    assignment_token = id_tokens.get(id(assignment))
-    if assignment_token is None:
-        assignment_token = _intern_range(resolver, assignment)
-    constraint_token = id_tokens.get(id(constraint))
-    if constraint_token is None:
-        constraint_token = _intern_range(resolver, constraint)
+    countdown = resolver.relation_gate_countdown - 1
+    if countdown:
+        resolver.relation_gate_countdown = countdown
+    else:
+        _resample_relation_gate(resolver)
 
     cache = resolver.relation_cache
-    key = (positive, assignment_token, constraint_token)
-    result = cache.get(key)
+    # key stays None while the memo is off, so a miss below stores nothing.
+    key = None
+    result = None
+    if resolver.relation_cache_on:
+        # Both lookups stay inline because most probes hit while the memo is
+        # on; only a miss pays for the call into _intern_range.
+        id_tokens = resolver.range_token_by_id
+        assignment_token = id_tokens.get(id(assignment))
+        if assignment_token is None:
+            assignment_token = _intern_range(resolver, assignment)
+        constraint_token = id_tokens.get(id(constraint))
+        if constraint_token is None:
+            constraint_token = _intern_range(resolver, constraint)
+
+        key = (positive, assignment_token, constraint_token)
+        result = cache.get(key)
+
     if result is None:
         relation = assignment.relation(constraint)
         result = classify_relation(
             term, subset=relation.is_subset, disjoint=relation.is_disjoint
         )
-        if len(cache) >= RELATION_CACHE_MAX:
-            cache.clear()
-        cache[key] = result
+        if key is not None:
+            if len(cache) >= RELATION_CACHE_MAX:
+                cache.clear()
+            cache[key] = result
+    else:
+        resolver.relation_gate_hits += 1
 
     needs_positive = (positive and result is SetRelation.SATISFIED) or (
         not positive and result is SetRelation.CONTRADICTED
