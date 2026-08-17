@@ -689,10 +689,11 @@ class TestFetchCoordinator:
         listing = {
             "meta": {"api-version": "1.0"},
             "name": "pkg",
+            # Oldest-first; the prefetch takes the newest wheels.
             "files": [
                 {
-                    "filename": "pkg-3.0-py3-none-any.whl",
-                    "url": "https://f.com/pkg-3.0-py3-none-any.whl",
+                    "filename": "pkg-1.0-py3-none-any.whl",
+                    "url": "https://f.com/pkg-1.0-py3-none-any.whl",
                     "dist-info-metadata": {"sha256": digest},
                 },
                 {
@@ -701,8 +702,8 @@ class TestFetchCoordinator:
                     "dist-info-metadata": {"sha256": digest},
                 },
                 {
-                    "filename": "pkg-1.0-py3-none-any.whl",
-                    "url": "https://f.com/pkg-1.0-py3-none-any.whl",
+                    "filename": "pkg-3.0-py3-none-any.whl",
+                    "url": "https://f.com/pkg-3.0-py3-none-any.whl",
                     "dist-info-metadata": {"sha256": digest},
                 },
             ],
@@ -716,10 +717,7 @@ class TestFetchCoordinator:
         with _coord() as coord:
             event = coord.request_listing("pkg")
             event.wait(timeout=5)
-            # Auto-prefetch should have fired for the newest 3 wheels
-            # Give them a moment to complete
-            import time
-
+            # Wait for the async prefetch of the newest wheel's sidecar.
             sidecar = "https://f.com/pkg-3.0-py3-none-any.whl.metadata"
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
@@ -773,7 +771,7 @@ class TestFetchCoordinator:
             assert coord.index.has_metadata("pkg", "15.0", sidecar)
 
         # The newest PREFETCH_METADATA_COUNT wheels, not all 15.
-        assert derived == [f"pkg-{n}.0-py3-none-any.whl" for n in range(6, 16)]
+        assert derived == [f"pkg-{n}.0-py3-none-any.whl" for n in range(14, 16)]
 
     def test_prefetch_after_listing_enqueues_newest_batch(
         self, monkeypatch: pytest.MonkeyPatch
@@ -828,7 +826,7 @@ class TestFetchCoordinator:
                 f"https://f.com/pkg-{n}.0-py3-none-any.whl.metadata",
                 ("sha256", f"h{n}.0"),
             )
-            for n in range(6, 16)
+            for n in range(14, 16)
         ]
         assert calls == expected
 
