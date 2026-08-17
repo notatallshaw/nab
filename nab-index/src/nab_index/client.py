@@ -441,6 +441,31 @@ def _parse_files(
     return files
 
 
+def _normalized_url(url: str) -> str:
+    """Return ``urlunsplit(urlsplit(url))``, skipping a rebuild that returns ``url``.
+
+    The parse still runs on every URL, so a malformed authority raises the
+    same ``ValueError`` as the round trip.  A nonempty netloc reassembles
+    as ``[scheme:]//netloc`` plus the remaining parts; when those parts and
+    their separators add back up to ``len(url)``, the parse stripped no
+    character and dropped no empty ``?``/``#`` marker, leaving an
+    upper-cased scheme as the one length-preserving rewrite to rule out.
+    """
+    parts = urlsplit(url)
+    scheme, netloc, path, query, fragment = parts
+    if netloc:
+        rebuilt_len = len(scheme) + len(netloc) + len(path) + 2
+        if scheme:
+            rebuilt_len += 1
+        if query:
+            rebuilt_len += 1 + len(query)
+        if fragment:
+            rebuilt_len += 1 + len(fragment)
+        if rebuilt_len == len(url) and url.startswith(scheme):
+            return url
+    return urlunsplit(parts)
+
+
 def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
     """Return the entry's absolute URL, or None when it is not usable.
 
@@ -461,7 +486,7 @@ def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
             if raw_url.startswith(("https://", "http://"))
             else urljoin(base_url, raw_url)
         )
-        file_url = urlunsplit(urlsplit(absolute))
+        file_url = _normalized_url(absolute)
 
         # Encode only to reject a string with no UTF-8 form.
         file_url.encode()
