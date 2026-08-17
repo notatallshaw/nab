@@ -633,6 +633,12 @@ class Provider:
             str, tuple[RangeProtocol[Version], str, int, tuple[int, int, bool]]
         ] = {}
 
+        # What the speculative prefetch has already seen: the names it
+        # requested listings for, and the candidates the transitive path
+        # walked. A dep named by several parents reaches both once per parent.
+        self.speculative_listings: set[str] = set()
+        self.speculative_candidates: set[tuple[str, Version]] = set()
+
         # Derived views of versions_cache, built lazily alongside the listing.
         self.versions_only_cache: dict[str, list[Version]] = {}
         self.version_dists_cache: dict[str, _metadata_resolver.VersionDists] = {}
