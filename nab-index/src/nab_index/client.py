@@ -395,11 +395,10 @@ def _parse_files(
     ``package`` is the package the index was queried for; files whose
     parsed canonical name does not match are dropped.  PyPI hosts a
     handful of legacy sdists with embedded build tags
-    (``cffi-1.0.2-2.tar.gz`` and similar) that
-    :func:`_parse_sdist_filename` interprets as a
-    different project (``cffi-1-0-2`` at version ``2``).  Without the
-    name check those leak into the listing as a phantom version, and
-    show up in the resolved lockfile as ``cffi==2``.
+    (``cffi-1.0.2-2.tar.gz`` and similar) that :func:`_parse_sdist_filename`
+    interprets as a different project (``cffi-1-0-2`` at version ``2``).
+    Without the name check those leak into the listing as a phantom
+    version, and show up in the resolved lockfile as ``cffi==2``.
 
     ``page_url`` is the URL the project page was retrieved from, the base a
     relative entry resolves against. ``None`` falls back to the page URL

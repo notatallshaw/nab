@@ -5,8 +5,10 @@ from __future__ import annotations
 import sys
 
 import pytest
+from packaging.utils import parse_sdist_filename
 
 from nab_index.client import (
+    _parse_sdist_filename,
     _sdist_member_top_level,
     holds_unreadable_format,
     is_readable_filename,
@@ -76,6 +78,46 @@ def test_holds_unreadable_format_finds_oversized_version() -> None:
 )
 def test_holds_unreadable_format_false(data: object) -> None:
     assert not holds_unreadable_format(data)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "foo-1.0.tar.gz",
+        "Foo_Bar.baz-1.0rc1.tar.gz",
+        "foo-1.0.post1.dev2+local.tag.tar.gz",
+        "foo-1!2.0.tar.gz",
+        "cffi-1.0.2-2.tar.gz",
+        "foo-1.0.zip",
+        "foo-1.0.tar.bz2",
+        "foo-1.5.win32.exe",
+        "foo.tar.gz",
+        "-1.0.tar.gz",
+        "foo-.tar.gz",
+        "foo-v1.0.tar.gz",
+        "foo--1.0.tar.gz",
+        "foo-1.0.TAR.GZ",
+        f"foo-{OVERSIZED}.tar.gz",
+    ],
+)
+def test_parse_sdist_filename_parity(filename: str) -> None:
+    """The inline parse matches the vendored parser on everything but ``.zip``.
+
+    Released ``parse_sdist_filename`` is the oracle, corrected on the two
+    known divergences: ``.zip`` sdists, which nab rejects, and an empty
+    project name, which packaging releases before 26.3 accept.
+    """
+    if filename.endswith(".zip"):
+        expected = None
+    else:
+        try:
+            name, version = parse_sdist_filename(filename)
+        except ValueError:
+            expected = None
+        else:
+            expected = (name, str(version)) if name else None
+
+    assert _parse_sdist_filename(filename) == expected
 
 
 def test_sdist_member_top_level_normal() -> None:
