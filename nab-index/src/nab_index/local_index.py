@@ -31,7 +31,7 @@ import zlib
 from email.parser import BytesParser, Parser
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urljoin, urlparse, urlsplit, urlunsplit
+from urllib.parse import unquote, urljoin, urlparse, urlsplit
 from urllib.request import url2pathname
 
 from packaging.utils import canonicalize_name as _canonical
@@ -44,6 +44,7 @@ from .client import (
     SdistFile,
     WheelFile,
     _extract_sdist_files,
+    _normalized_url,
     _parse_sdist_filename,
     _parse_wheel_filename,
     is_readable_filename,
@@ -310,7 +311,7 @@ def _resolve_local_link(
     # below.  urljoin leaves an href alone when its scheme differs from the
     # page's, so the split round trip is what drops a tab, CR or LF.
     try:
-        url = urlunsplit(urlsplit(urljoin(base_url, href_no_frag)))
+        url = _normalized_url(urljoin(base_url, href_no_frag))
         parsed = urlparse(url)
     except ValueError:
         return (None, href_no_frag, None, hashes)
