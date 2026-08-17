@@ -9,13 +9,14 @@ each ``Requires-Dist`` entry into base deps vs per-extra deps.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, NamedTuple, TypeGuard
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Literal, NamedTuple, TypeGuard
 from urllib.parse import urlsplit
 
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider._vendor.packaging.version import InvalidVersion
+from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
 from ..errors import (
@@ -44,11 +45,10 @@ from ..tags import python_axis_accepts
 from ..vcs_admission import admit_vcs_url
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from nab_provider._vendor.packaging.markers import Marker
     from nab_provider._vendor.packaging.requirements import Requirement
-    from nab_provider._vendor.packaging.version import Version
 
     from ..provider import DistFile, Provider
     from ..store import InMemoryIndex
@@ -60,6 +60,9 @@ TargetDepSignature = tuple[
     dict[str, dict[str, VersionRange]],
     dict[str | None, set[tuple[str, frozenset[str], str]]],
 ]
+
+Gating = Literal["base", "extra", "excluded"]
+"""Whether a requirement is a base dep, gated behind an extra, or excluded."""
 
 logger = logging.getLogger(__name__)
 
@@ -605,6 +608,24 @@ def fetch_sdist_metadata(
     return provider.coordinator.index.get_metadata_with_origin(package, version)
 
 
+def requirement_gating(provider: Provider, req: Requirement) -> Gating:
+    """Say whether ``req`` applies to the base environment, to an extra, or to neither.
+
+    ``"extra"`` reports only that some extra could select it.  Naming them is
+    :func:`marker_matched_extras`, which costs up to one marker evaluation per
+    provided extra.
+    """
+    marker = req.marker
+    if marker is None:
+        return "base"
+    marker_id = id(marker)
+    if marker_matches_base(provider, marker, marker_id):
+        return "base"
+    if "extra" not in marker_text(provider, marker, marker_id):
+        return "excluded"
+    return "extra"
+
+
 def classify_requirement(
     provider: Provider,
     req: Requirement,
@@ -619,12 +640,14 @@ def classify_requirement(
     marker = req.marker
     if marker is None:
         return set()
-    marker_id = id(marker)
-    if marker_matches_base(provider, marker, marker_id):
+    gating = requirement_gating(provider, req)
+    if gating == "base":
         return set()
-    if "extra" not in marker_text(provider, marker, marker_id):
+    if gating == "excluded":
         return None
-    matched_extras = marker_matched_extras(provider, marker, marker_id, provided_extras)
+    matched_extras = marker_matched_extras(
+        provider, marker, id(marker), provided_extras
+    )
     return matched_extras or None
 
 
@@ -687,11 +710,7 @@ def parse_and_cache_metadata(
     *,
     from_sdist: bool = False,
 ) -> None:
-    """Parse metadata text and pre-compute per-extra deps.
-
-    Evaluates markers once for all extras, then caches the base
-    deps and a per-extra mapping so that get_extra_dependencies
-    can do a dict lookup instead of re-iterating requires_dist.
+    """Parse metadata text and classify the deps it declares.
 
     When ``from_sdist`` is set and the PKG-INFO deps are not trusted as
     final (not :pep:`643` static, or a Dynamic dependency field under
@@ -851,42 +870,137 @@ def cache_deps_from_metadata(
     cache_key: tuple[str, Version],
     metadata: WheelMetadata,
 ) -> None:
-    """Populate ``deps_cache`` + ``extra_deps_map`` from a parsed metadata.
+    """Classify a parsed metadata's requirements and cache the base deps.
 
     ``metadata`` may have been parsed from METADATA text, declared by a
     materialised source, or built from a complete ``dependencies`` override.
+
+    Every marker is evaluated against the base environment here, so
+    ``consulted_markers`` sees them all.  Splitting the extra-gated
+    requirements across the extras that select them is left to
+    :class:`ExtraDepsMap`.  Direct-URL requirements are the exception: whether
+    one is refused now or deferred depends on which extras name it.
     """
     metadata = effective_metadata(provider, cache_key, metadata)
 
-    # Split the (possibly overridden) requirements into base deps and
-    # per-extra deps, deferring any direct-URL deps that aren't yet active.
     package = cache_key[0]
     provider.metadata_cache[cache_key] = metadata
     provided_extras: set[str] = {canonicalize_name(e) for e in metadata.provides_extra}
     base_deps: dict[str, VersionRange] = {}
+    deferred_url_extras: dict[str, list[tuple[Requirement, str]]] = {}
+
+    for req in metadata.requires_dist:
+        url = req.url
+        if url is not None:
+            _handle_url_dep(
+                provider, package, req, url, provided_extras, deferred_url_extras
+            )
+        elif requirement_gating(provider, req) == "base":
+            add_base_dep(req, base_deps, provider.specifier_ranges)
+
+    provider.deps_cache[cache_key] = base_deps
+    provider.defer_extra_deps(cache_key)
+    provider.deferred_url_extras[cache_key] = deferred_url_extras
+
+
+def _handle_url_dep(
+    provider: Provider,
+    package: str,
+    req: Requirement,
+    url: str,
+    provided_extras: set[str],
+    deferred_url_extras: dict[str, list[tuple[Requirement, str]]],
+) -> None:
+    """Refuse a direct-URL requirement, or record it against its extras.
+
+    A requirement the environment excludes is dropped.  Needs the full
+    classification rather than :func:`requirement_gating`: an extra-gated URL
+    dep is refused only once one of its own extras is wanted, so the extras
+    naming it have to be known now.
+    """
+    req_extras = classify_requirement(provider, req, provided_extras)
+    if req_extras is None:
+        return
+
+    if _url_dep_is_active(provider, package, req_extras):
+        refuse_url_dep(provider, req, url)
+    else:
+        for extra_name in req_extras:
+            deferred_url_extras.setdefault(extra_name, []).append((req, url))
+
+
+class ExtraDepsMap(Mapping[tuple[str, Version], dict[str, dict[str, VersionRange]]]):
+    """Per-release ``{extra: {name: range}}``, split out on first read.
+
+    One read splits one release, so ``items()`` and ``values()`` would split
+    every parsed release at once.  A key appears as soon as
+    :func:`cache_deps_from_metadata` has classified that release, so
+    membership still tells a parsed release from an unparsed one and testing
+    it splits nothing.
+
+    A view over the provider's store rather than the store itself;
+    :attr:`Provider.extra_deps_map` builds a fresh one per read.
+    """
+
+    def __init__(
+        self,
+        provider: Provider,
+        extra_deps: dict[
+            tuple[str, Version], dict[str, dict[str, VersionRange]] | None
+        ],
+    ) -> None:
+        self._provider = provider
+        self._extra_deps = extra_deps
+
+    def __getitem__(
+        self, cache_key: tuple[str, Version]
+    ) -> dict[str, dict[str, VersionRange]]:
+        built = self._extra_deps[cache_key]
+        if built is None:
+            built = self._extra_deps[cache_key] = build_extra_deps(
+                self._provider, cache_key
+            )
+        return built
+
+    def __contains__(self, cache_key: object) -> bool:
+        return cache_key in self._extra_deps
+
+    def __iter__(self) -> Iterator[tuple[str, Version]]:
+        return iter(self._extra_deps)
+
+    def __len__(self) -> int:
+        return len(self._extra_deps)
+
+
+def build_extra_deps(
+    provider: Provider, cache_key: tuple[str, Version]
+) -> dict[str, dict[str, VersionRange]]:
+    """Split a parsed release's extra-gated requirements by the extras selecting them.
+
+    Re-reads the metadata :func:`cache_deps_from_metadata` cached.  Every
+    marker on it was evaluated there, so ``marker_base_cache`` answers
+    :func:`requirement_gating` and nothing new reaches ``consulted_markers``.
+    Direct-URL requirements stay out: :func:`_handle_url_dep` settled them at
+    parse time.
+    """
+    metadata = provider.metadata_cache[cache_key]
+    provided_extras: set[str] = {canonicalize_name(e) for e in metadata.provides_extra}
     extra_deps_map: dict[str, dict[str, VersionRange]] = {
         e: {} for e in provided_extras
     }
-    deferred_url_extras: dict[str, list[tuple[Requirement, str]]] = {}
+
     for req in metadata.requires_dist:
-        req_extras = classify_requirement(provider, req, provided_extras)
-        if req_extras is None:
+        marker = req.marker
+        if req.url is not None or marker is None:
             continue
-        if req.url is not None:
-            if _url_dep_is_active(provider, package, req_extras):
-                refuse_url_dep(provider, req, req.url)
-            else:
-                for extra_name in req_extras:
-                    deferred_url_extras.setdefault(extra_name, []).append(
-                        (req, req.url)
-                    )
+        if requirement_gating(provider, req) != "extra":
             continue
-        add_classified_dep(
-            req, req_extras, base_deps, extra_deps_map, provider.specifier_ranges
-        )
-    provider.deps_cache[cache_key] = base_deps
-    provider.extra_deps_map[cache_key] = extra_deps_map
-    provider.deferred_url_extras[cache_key] = deferred_url_extras
+
+        matched = marker_matched_extras(provider, marker, id(marker), provided_extras)
+        if matched:
+            add_extra_dep(req, matched, extra_deps_map, provider.specifier_ranges)
+
+    return extra_deps_map
 
 
 def _url_dep_is_active(provider: Provider, package: str, req_extras: set[str]) -> bool:
@@ -1266,24 +1380,53 @@ def add_classified_dep(
     extra_deps_map: dict[str, dict[str, VersionRange]],
     specifier_ranges: dict[str, VersionRange],
 ) -> None:
-    """Add a classified requirement to the appropriate dep set.
+    """Add a classified requirement to the appropriate dep set."""
+    if req_extras:
+        add_extra_dep(req, req_extras, extra_deps_map, specifier_ranges)
+    else:
+        add_base_dep(req, base_deps, specifier_ranges)
+
+
+def add_base_dep(
+    req: Requirement,
+    base_deps: dict[str, VersionRange],
+    specifier_ranges: dict[str, VersionRange],
+) -> None:
+    """Add an ungated requirement to ``base_deps``.
 
     A name appearing on several ``Requires-Dist`` lines is intersected
     into one range.
     """
     name = canonicalize_name(req.name)
     dep_range = _specifier_range(req.specifier, specifier_ranges)
-    dep_extras: set[str] = req.extras
 
-    if not req_extras:
-        existing = base_deps.get(name)
-        base_deps[name] = dep_range if existing is None else existing & dep_range
-        for re in sorted(dep_extras):
-            base_deps[join_extra(name, re)] = VersionRange.full(admit_arbitrary=False)
-    else:
-        for extra_name in req_extras:
-            edeps = extra_deps_map[extra_name]
-            existing = edeps.get(name)
-            edeps[name] = dep_range if existing is None else existing & dep_range
-            for re in sorted(dep_extras):
-                edeps[join_extra(name, re)] = VersionRange.full(admit_arbitrary=False)
+    existing = base_deps.get(name)
+    base_deps[name] = dep_range if existing is None else existing & dep_range
+    for dep_extra in sorted(req.extras):
+        base_deps[join_extra(name, dep_extra)] = VersionRange.full(
+            admit_arbitrary=False
+        )
+
+
+def add_extra_dep(
+    req: Requirement,
+    req_extras: set[str],
+    extra_deps_map: dict[str, dict[str, VersionRange]],
+    specifier_ranges: dict[str, VersionRange],
+) -> None:
+    """Add a requirement to the dep set of each extra in ``req_extras``.
+
+    A name appearing on several ``Requires-Dist`` lines of one extra is
+    intersected into one range.
+    """
+    name = canonicalize_name(req.name)
+    dep_range = _specifier_range(req.specifier, specifier_ranges)
+
+    for extra_name in req_extras:
+        edeps = extra_deps_map[extra_name]
+        existing = edeps.get(name)
+        edeps[name] = dep_range if existing is None else existing & dep_range
+        for dep_extra in sorted(req.extras):
+            edeps[join_extra(name, dep_extra)] = VersionRange.full(
+                admit_arbitrary=False
+            )
