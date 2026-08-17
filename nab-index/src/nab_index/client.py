@@ -20,7 +20,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-from packaging.utils import canonicalize_name, parse_sdist_filename
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
 from nab_provider.digest import is_hex_digest
@@ -165,25 +165,34 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
 def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
     """Parse a ``.tar.gz`` sdist filename to ``(canonical_name, version)``.
 
-    Returns ``None`` for anything packaging rejects, for a version digit
-    run past CPython's int-from-string limit, and for ``.zip`` sdists,
-    which nab does not support (gzip-tar only, and not part of the PEP 625
-    standard).  Never raises.
+    Accepts what nab-provider's vendored ``parse_sdist_filename`` accepts,
+    except ``.zip`` sdists, which nab does not support (gzip-tar only, and
+    not part of the PEP 625 standard).  Returns ``None`` for everything
+    else, including a version digit run past CPython's int-from-string
+    limit, and never raises.  The vendored copy is the one to match, not
+    the released ``packaging`` this package depends on; the two can differ
+    on an empty project name, which releases before 26.3 accept.
 
     Legacy filenames with embedded build tags (e.g. ``cffi-1.0.2-2.tar.gz``)
     parse to a surprising ``(name="cffi-1-0-2", version="2")``, so callers
     MUST drop files whose canonical name does not match the queried
     package.  See :func:`_parse_files`.
     """
-    if filename.endswith(".zip"):
+    if not filename.endswith(".tar.gz"):
+        return None
+
+    stem = filename[: -len(".tar.gz")]
+    name_part, sep, version_part = stem.rpartition("-")
+    if not sep or not name_part:
         return None
 
     try:
-        name, version = parse_sdist_filename(filename)
+        version = _canonical_version(version_part)
     except ValueError:
-        # InvalidSdistFilename, or int() refusing a digit run past CPython's limit.
+        # InvalidVersion, or int() refusing a digit run past CPython's limit.
         return None
-    return (name, str(version))
+
+    return (_intern_name(name_part), version)
 
 
 def holds_unreadable_format(data: object) -> bool:
@@ -386,11 +395,10 @@ def _parse_files(
     ``package`` is the package the index was queried for; files whose
     parsed canonical name does not match are dropped.  PyPI hosts a
     handful of legacy sdists with embedded build tags
-    (``cffi-1.0.2-2.tar.gz`` and similar) that
-    :func:`packaging.utils.parse_sdist_filename` interprets as a
-    different project (``cffi-1-0-2`` at version ``2``).  Without the
-    name check those leak into the listing as a phantom version, and
-    show up in the resolved lockfile as ``cffi==2``.
+    (``cffi-1.0.2-2.tar.gz`` and similar) that :func:`_parse_sdist_filename`
+    interprets as a different project (``cffi-1-0-2`` at version ``2``).
+    Without the name check those leak into the listing as a phantom
+    version, and show up in the resolved lockfile as ``cffi==2``.
 
     ``page_url`` is the URL the project page was retrieved from, the base a
     relative entry resolves against. ``None`` falls back to the page URL
