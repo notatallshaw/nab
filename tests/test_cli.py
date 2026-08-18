@@ -47,7 +47,9 @@ from nab.cli import (
     _make_transport,
     _normalize_layered_bool_flags,
     _resolve,
+    _system_exit_status,
     app,
+    console_entry,
     main,
 )
 from nab.output import Printer, Verbosity
@@ -5167,6 +5169,85 @@ class TestMain:
                 failure_prefix="cannot lock",
             )
         assert gc.isenabled()
+
+
+class TestConsoleEntry:
+    """Tests for the installed ``nab`` command's entry point.
+
+    ``os._exit`` ends the process outright, so every test here patches it.
+    """
+
+    def test_exits_zero_when_main_returns(self) -> None:
+        """A command that returns normally exits 0 through ``os._exit``."""
+        with (
+            patch("nab.cli.main") as mock_main,
+            patch("nab.cli.os._exit") as mock_exit,
+        ):
+            console_entry()
+        mock_main.assert_called_once()
+        mock_exit.assert_called_once_with(0)
+
+    def test_carries_the_exit_code_through(self) -> None:
+        """``sys.exit(2)`` inside the command becomes exit status 2."""
+        with (
+            patch("nab.cli.main", side_effect=SystemExit(2)),
+            patch("nab.cli.os._exit") as mock_exit,
+        ):
+            console_entry()
+        mock_exit.assert_called_once_with(2)
+
+    def test_flushes_the_streams_before_exiting(self) -> None:
+        """Output written by the command is flushed, since ``os._exit`` will not."""
+        flushed: list[str] = []
+        with (
+            patch("nab.cli.main"),
+            patch.object(sys.stdout, "flush", lambda: flushed.append("out")),
+            patch.object(sys.stderr, "flush", lambda: flushed.append("err")),
+            patch("nab.cli.os._exit"),
+        ):
+            console_entry()
+        assert flushed == ["out", "err"]
+
+    def test_unflushed_output_exits_120(self) -> None:
+        """A stdout flush that fails still flushes stderr and exits 120."""
+        with (
+            patch("nab.cli.main"),
+            patch.object(sys.stdout, "flush", side_effect=OSError(28, "No space")),
+            patch.object(sys.stderr, "flush") as mock_stderr_flush,
+            patch("nab.cli.os._exit") as mock_exit,
+        ):
+            console_entry()
+        mock_stderr_flush.assert_called_once()
+        mock_exit.assert_called_once_with(120)
+
+    def test_a_crash_is_left_to_the_interpreter(self) -> None:
+        """Only ``SystemExit`` takes the fast exit; anything else propagates."""
+        with (
+            patch("nab.cli.main", side_effect=ValueError("boom")),
+            patch("nab.cli.os._exit") as mock_exit,
+            pytest.raises(ValueError, match="boom"),
+        ):
+            console_entry()
+        mock_exit.assert_not_called()
+
+
+class TestSystemExitStatus:
+    """Tests for mapping a ``SystemExit`` code to a process status."""
+
+    def test_bare_exit_is_zero(self) -> None:
+        """``sys.exit()`` raises ``SystemExit(None)``, which means success."""
+        assert _system_exit_status(None) == 0
+
+    def test_integer_passes_through(self) -> None:
+        """``sys.exit(3)`` becomes exit status 3."""
+        assert _system_exit_status(3) == 3
+
+    def test_message_prints_and_exits_one(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A string code is the message, printed to stderr as CPython does."""
+        assert _system_exit_status("boom") == 1
+        assert capsys.readouterr().err == "boom\n"
 
 
 class _TtyStderr(io.StringIO):

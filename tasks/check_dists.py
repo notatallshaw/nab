@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import email
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -136,18 +137,38 @@ def install_each_sdist(dist_root: Path, scratch: Path) -> None:
         _run([str(python), "-m", "pip", "install", *links, str(sdist)])
 
 
+def _console_script(python: Path) -> str:
+    """Return the installed ``nab`` command sitting beside a venv's interpreter."""
+    script = shutil.which("nab", path=str(python.parent))
+    if script is None:
+        msg = f"the wheel installed no nab command in {python.parent}"
+        raise SystemExit(msg)
+    return script
+
+
+def _check_version(command: list[str], version: str) -> None:
+    """Fail unless the command prints the built version and exits 0."""
+    output = _capture([*command, "--version"])
+    expected = f"nab {version}"
+    if expected not in output:
+        shown = " ".join(command)
+        msg = f"`{shown} --version` reported {output.strip()!r}, expected {expected!r}"
+        raise SystemExit(msg)
+
+
 def install_wheels(dist_root: Path, scratch: Path) -> None:
-    """Install every wheel together, then import each package and run the CLI."""
+    """Install every wheel together, then import each package and run the CLI.
+
+    ``python -m nab`` and the console script enter through different
+    functions, so both are run.
+    """
     wheels = [str(_wheel(dist_root, package)) for package in PACKAGES]
     version = _wheel_version(_wheel(dist_root, "nab"))
     python = _make_venv(scratch / "wheels")
     _run([str(python), "-m", "pip", "install", *wheels])
     _run([str(python), "-c", f"import {', '.join(MODULES)}"])
-    output = _capture([str(python), "-m", "nab", "--version"])
-    expected = f"nab {version}"
-    if expected not in output:
-        msg = f"`nab --version` reported {output.strip()!r}, expected {expected!r}"
-        raise SystemExit(msg)
+    _check_version([str(python), "-m", "nab"], version)
+    _check_version([_console_script(python)], version)
 
 
 def _wheel_version(wheel: Path) -> str:

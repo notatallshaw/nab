@@ -88,6 +88,7 @@ from .output import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
+    from typing import TextIO
 
     from nab_index.transport import AsyncHttpTransport
     from nab_project.resolve import ResolveResult
@@ -136,6 +137,9 @@ TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}", "{selection}")
 
 # Conventional KeyboardInterrupt exit code: 128 + SIGINT(2).
 _SIGINT_EXIT_CODE = 130
+
+# The status CPython exits with when it cannot flush the standard streams.
+_FLUSH_FAILED_EXIT_CODE = 120
 
 app = SubcommandApp()
 
@@ -791,7 +795,7 @@ from . import _lock as _lock_module  # noqa: E402, F401 - side-effect
 
 
 def main() -> None:
-    """Entry point for the nab command."""
+    """Parse the global flags and run the requested subcommand."""
     global _printer  # noqa: PLW0603 - the run's printer is a module singleton main() sets
     # Tyro's SubcommandApp does not surface global flags, so ``--version`` and
     # the output flags (-v/-q, --color, --no-progress) are parsed before
@@ -817,3 +821,53 @@ def main() -> None:
     except KeyboardInterrupt:
         _printer.error("interrupted")
         sys.exit(_SIGINT_EXIT_CODE)
+
+
+def _system_exit_status(code: object) -> int:
+    """Map a ``SystemExit`` code to the status the interpreter would exit with."""
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return code
+    sys.stderr.write(f"{code}\n")
+    return 1
+
+
+def _flush_stream(stream: TextIO) -> bool:
+    """Flush one stream, reporting whether its buffered output landed."""
+    try:
+        stream.flush()
+    except OSError:
+        return False
+    return True
+
+
+def _flush_std_streams() -> bool:
+    """Flush stdout and stderr, reporting whether both landed.
+
+    stderr is flushed even when stdout fails, so a command that could not
+    write its result still gets its error out.
+    """
+    out_flushed = _flush_stream(sys.stdout)
+    err_flushed = _flush_stream(sys.stderr)
+    return out_flushed and err_flushed
+
+
+def console_entry() -> NoReturn:
+    """Run the CLI, then end the process without freeing the resolve graph.
+
+    Only the installed ``nab`` command takes this path, because it owns its
+    process; :func:`main` returns normally for every other caller. No
+    ``atexit`` hook and no finalizer runs after this, so a command has to
+    finish any work it cannot lose before :func:`main` returns.
+    """
+    status = 0
+    try:
+        main()
+    except SystemExit as exc:
+        status = _system_exit_status(exc.code)
+
+    if not _flush_std_streams():
+        status = _FLUSH_FAILED_EXIT_CODE
+
+    os._exit(status)
