@@ -2,7 +2,7 @@
 
 Covers the ``body_digest`` policy field and its encode/decode, the
 policy-only ``get_simple_policy`` read, the opaque-bytes
-``get_simple_parsed``/``put_simple_parsed`` pair, and the ``.parsed`` arm
+``get_simple_parsed``/``put_simple_parsed`` pair, and the ``.parsed`` branch
 of ``read_cache_entry``, plus the write path that binds a parsed blob to
 the body just stored: :meth:`OnDiskCache.put_simple` computes the digest,
 and every :class:`CachedAsyncSimpleClient` write point emits a blob bound
@@ -69,6 +69,21 @@ _LISTING = {
     ],
 }
 _LISTING_BYTES = json.dumps(_LISTING).encode()
+
+# A replacement listing at a new version, so a swapped body shows in the records.
+_LISTING_V2_BYTES = json.dumps(
+    {
+        "meta": {"api-version": "1.0"},
+        "name": "pkg",
+        "files": [
+            {
+                "filename": "pkg-2.0-py3-none-any.whl",
+                "url": "https://files.example.com/pkg-2.0-py3-none-any.whl",
+                "hashes": {"sha256": "beef"},
+            }
+        ],
+    }
+).encode()
 
 
 def _run(coro: Coroutine[Any, Any, _T]) -> _T:
@@ -843,21 +858,8 @@ class TestReadPathRevalidate:
     def test_stale_online_200_replaces_body_and_blob(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache, fresh=False)
-        new_listing = json.dumps(
-            {
-                "meta": {"api-version": "1.0"},
-                "name": "pkg",
-                "files": [
-                    {
-                        "filename": "pkg-2.0-py3-none-any.whl",
-                        "url": "https://files.example.com/pkg-2.0-py3-none-any.whl",
-                        "hashes": {"sha256": "beef"},
-                    }
-                ],
-            }
-        ).encode()
         transport = _FakeTransport(
-            [_FakeResponse(new_listing, status=200, headers={"etag": "v2"})]
+            [_FakeResponse(_LISTING_V2_BYTES, status=200, headers={"etag": "v2"})]
         )
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
 
@@ -867,8 +869,30 @@ class TestReadPathRevalidate:
         result = cache.get_simple("pkg")
         assert result is not None
         body, policy = result
-        assert body == new_listing
+        assert body == _LISTING_V2_BYTES
         assert decode(cache.get_simple_parsed("pkg"), policy) == got
+
+    def test_stale_online_200_revalidates_without_reading_the_body(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache, fresh=False)
+        # The body is gone, so a read of it before revalidating would fetch
+        # unconditionally instead of sending the ETag.
+        tmp_path.joinpath(*_JSON_PATH_PARTS).unlink()
+        transport = _FakeTransport(
+            [_FakeResponse(_LISTING_V2_BYTES, status=200, headers={"etag": "v2"})]
+        )
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        got = _run(client.get_files("pkg"))
+
+        assert [f.version for f in got] == ["2.0"]
+
+        assert len(transport.calls) == 1
+        _, headers = transport.calls[0]
+        assert headers is not None
+        assert headers["If-None-Match"] == "e"
 
     def test_stale_online_304_reuses_blob(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
@@ -887,6 +911,84 @@ class TestReadPathRevalidate:
         assert result is not None
         _, policy = result
         assert decode(before, policy) == files
+
+    def test_stale_online_304_serves_the_blob_without_the_body(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _cache(tmp_path)
+        files, _ = _warm_bound(cache, fresh=False)
+        # The body is gone: a 304 must be answered from the blob alone.
+        tmp_path.joinpath(*_JSON_PATH_PARTS).unlink()
+        transport = _FakeTransport(
+            [_FakeResponse(b"", status=304, headers={"etag": "e"})]
+        )
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert len(transport.calls) == 1
+
+    def test_stale_online_304_without_body_or_blob_refetches(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            _LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=0, etag="e", page_url=_PAGE_URL),
+        )
+        tmp_path.joinpath(*_JSON_PATH_PARTS).unlink()
+        transport = _FakeTransport(
+            [
+                _FakeResponse(b"", status=304, headers={"etag": "e"}),
+                _FakeResponse(_LISTING_BYTES, headers={"etag": "e2"}),
+            ]
+        )
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        got = _run(client.get_files("pkg"))
+
+        assert [f.filename for f in got] == [f.filename for f in _PARSED]
+
+        assert len(transport.calls) == 2
+
+        # The second request is a full copy, not another conditional one.
+        _, headers = transport.calls[1]
+        assert headers is not None
+        assert "If-None-Match" not in headers
+
+        result = cache.get_simple("pkg")
+        assert result is not None
+        assert result[0] == _LISTING_BYTES
+
+    def test_stale_online_304_with_corrupt_body_refetches(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _cache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            b"<html>not json",
+            CachePolicy(fetched_at=0, max_age=0, etag="e", page_url=_PAGE_URL),
+        )
+        transport = _FakeTransport(
+            [
+                _FakeResponse(b"", status=304, headers={"etag": "e"}),
+                _FakeResponse(_LISTING_BYTES, headers={"etag": "e2"}),
+            ]
+        )
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        with caplog.at_level(logging.WARNING):
+            got = _run(client.get_files("pkg"))
+
+        assert [f.filename for f in got] == [f.filename for f in _PARSED]
+        assert len(transport.calls) == 2
+        assert "Corrupt cached Simple-API body" in caplog.text
+
+        result = cache.get_simple("pkg")
+        assert result is not None
+        assert result[0] == _LISTING_BYTES
 
 
 class TestParsedCorruptionReason:
