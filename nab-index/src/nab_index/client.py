@@ -20,9 +20,10 @@ from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
-from packaging.utils import canonicalize_name, parse_sdist_filename
+from packaging.utils import canonicalize_name
 from packaging.version import Version
 
+from nab_provider.digest import is_hex_digest
 from nab_provider.errors import (
     MalformedSimpleResponseError,
     MetadataHashMismatchError,
@@ -164,25 +165,34 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
 def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
     """Parse a ``.tar.gz`` sdist filename to ``(canonical_name, version)``.
 
-    Returns ``None`` for anything packaging rejects, for a version digit
-    run past CPython's int-from-string limit, and for ``.zip`` sdists,
-    which nab does not support (gzip-tar only, and not part of the PEP 625
-    standard).  Never raises.
+    Accepts what nab-provider's vendored ``parse_sdist_filename`` accepts,
+    except ``.zip`` sdists, which nab does not support (gzip-tar only, and
+    not part of the PEP 625 standard).  Returns ``None`` for everything
+    else, including a version digit run past CPython's int-from-string
+    limit, and never raises.  The vendored copy is the one to match, not
+    the released ``packaging`` this package depends on; the two can differ
+    on an empty project name, which releases before 26.3 accept.
 
     Legacy filenames with embedded build tags (e.g. ``cffi-1.0.2-2.tar.gz``)
     parse to a surprising ``(name="cffi-1-0-2", version="2")``, so callers
     MUST drop files whose canonical name does not match the queried
     package.  See :func:`_parse_files`.
     """
-    if filename.endswith(".zip"):
+    if not filename.endswith(".tar.gz"):
+        return None
+
+    stem = filename[: -len(".tar.gz")]
+    name_part, sep, version_part = stem.rpartition("-")
+    if not sep or not name_part:
         return None
 
     try:
-        name, version = parse_sdist_filename(filename)
+        version = _canonical_version(version_part)
     except ValueError:
-        # InvalidSdistFilename, or int() refusing a digit run past CPython's limit.
+        # InvalidVersion, or int() refusing a digit run past CPython's limit.
         return None
-    return (name, str(version))
+
+    return (_intern_name(name_part), version)
 
 
 def holds_unreadable_format(data: object) -> bool:
@@ -385,11 +395,10 @@ def _parse_files(
     ``package`` is the package the index was queried for; files whose
     parsed canonical name does not match are dropped.  PyPI hosts a
     handful of legacy sdists with embedded build tags
-    (``cffi-1.0.2-2.tar.gz`` and similar) that
-    :func:`packaging.utils.parse_sdist_filename` interprets as a
-    different project (``cffi-1-0-2`` at version ``2``).  Without the
-    name check those leak into the listing as a phantom version, and
-    show up in the resolved lockfile as ``cffi==2``.
+    (``cffi-1.0.2-2.tar.gz`` and similar) that :func:`_parse_sdist_filename`
+    interprets as a different project (``cffi-1-0-2`` at version ``2``).
+    Without the name check those leak into the listing as a phantom
+    version, and show up in the resolved lockfile as ``cffi==2``.
 
     ``page_url`` is the URL the project page was retrieved from, the base a
     relative entry resolves against. ``None`` falls back to the page URL
@@ -440,6 +449,31 @@ def _parse_files(
     return files
 
 
+def _normalized_url(url: str) -> str:
+    """Return ``urlunsplit(urlsplit(url))``, skipping a rebuild that returns ``url``.
+
+    The parse still runs on every URL, so a malformed authority raises the
+    same ``ValueError`` as the round trip.  A nonempty netloc reassembles
+    as ``[scheme:]//netloc`` plus the remaining parts; when those parts and
+    their separators add back up to ``len(url)``, the parse stripped no
+    character and dropped no empty ``?``/``#`` marker, leaving an
+    upper-cased scheme as the one length-preserving rewrite to rule out.
+    """
+    parts = urlsplit(url)
+    scheme, netloc, path, query, fragment = parts
+    if netloc:
+        rebuilt_len = len(scheme) + len(netloc) + len(path) + 2
+        if scheme:
+            rebuilt_len += 1
+        if query:
+            rebuilt_len += 1 + len(query)
+        if fragment:
+            rebuilt_len += 1 + len(fragment)
+        if rebuilt_len == len(url) and url.startswith(scheme):
+            return url
+    return urlunsplit(parts)
+
+
 def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
     """Return the entry's absolute URL, or None when it is not usable.
 
@@ -460,7 +494,7 @@ def _resolve_file_url(raw_url: str, base_url: str) -> str | None:
             if raw_url.startswith(("https://", "http://"))
             else urljoin(base_url, raw_url)
         )
-        file_url = urlunsplit(urlsplit(absolute))
+        file_url = _normalized_url(absolute)
 
         # Encode only to reject a string with no UTF-8 form.
         file_url.encode()
@@ -548,21 +582,20 @@ def _parse_hashes(value: object) -> tuple[tuple[str, str], ...]:
     # Both halves are lowercased: PEP 503/691 don't mandate a case, pip
     # treats them case-insensitively, and the acceptable-algorithm filter
     # and hashlib.hexdigest() both expect the lowercase form.
-    # An empty digest carries no integrity claim and can never match a real
-    # file, so it is dropped rather than recorded and later failed against.
+    # A digest that is not hex can never match a file's bytes, so it is dropped.
     if not isinstance(value, dict):
         return ()
 
     # The common case is a single hash; skip the list build.
     if len(value) == 1:
         ((algo, digest),) = value.items()
-        if isinstance(algo, str) and isinstance(digest, str) and digest:
+        if isinstance(algo, str) and isinstance(digest, str) and is_hex_digest(digest):
             return ((sys.intern(algo.lower()), digest.lower()),)
         return ()
 
     out: list[tuple[str, str]] = []
     for algo, digest in value.items():
-        if isinstance(algo, str) and isinstance(digest, str) and digest:
+        if isinstance(algo, str) and isinstance(digest, str) and is_hex_digest(digest):
             out.append((sys.intern(algo.lower()), digest.lower()))
 
     return tuple(out)
@@ -606,8 +639,8 @@ def _has_metadata(file_info: _FileEntry) -> bool:
 def _metadata_hash(file_info: _FileEntry) -> tuple[str, str] | None:
     """Return the sidecar's published ``(algo, hex)`` to verify, or None.
 
-    A bare ``true`` (sidecar exists, no hash), an empty digest, or a table with
-    no accepted algorithm yields None, so no check runs.
+    A bare ``true`` (sidecar exists, no hash), a digest that is not hex, or a
+    table with no accepted algorithm yields None, so no check runs.
     """
     value = _metadata_value(file_info)
     if not isinstance(value, dict):
@@ -616,7 +649,7 @@ def _metadata_hash(file_info: _FileEntry) -> tuple[str, str] | None:
     published = tuple(
         (algo, digest)
         for algo, digest in value.items()
-        if isinstance(algo, str) and isinstance(digest, str)
+        if isinstance(algo, str) and isinstance(digest, str) and is_hex_digest(digest)
     )
     return _select_artifact_hash(published)
 

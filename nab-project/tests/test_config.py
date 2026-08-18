@@ -2855,6 +2855,15 @@ class TestArchiveSources:
         with pytest.raises(ConfigError, match="has no hash"):
             read_pyproject_config(path)
 
+    def test_non_hex_digest_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.archive-sources]]\nname = "x"\n'
+            'url = "https://ex.com/foo-1.0.tar.gz#sha256=not-a-digest"\n',
+        )
+        with pytest.raises(ConfigError, match="is not hexadecimal"):
+            read_pyproject_config(path)
+
     def test_non_targz_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,

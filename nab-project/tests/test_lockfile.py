@@ -21,7 +21,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
-from nab_index.client import SdistFile, WheelFile
+from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.multi_index import IndexConfig
 from nab_project._lockfile.builder import _common_requires_python
 from nab_project._lockfile.coverage import (
@@ -4221,6 +4221,22 @@ class TestMissingHashFormatAware:
         lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
         with pytest.raises(MissingHashError, match="no acceptable hash"):
             write_lock(_lock_from(lock))
+
+    def test_listing_digest_carrying_a_newline_leaves_pin_hashless(self) -> None:
+        """The newline would otherwise reach requirements.txt inside the hash."""
+        entry = {
+            "filename": "foo-1.0-py3-none-any.whl",
+            "url": "https://example.com/foo-1.0-py3-none-any.whl",
+            "hashes": {"sha256": "0123abcd\nbar==2.0"},
+        }
+        (wheel,) = _parse_files(
+            {"files": [entry]}, "https://example.com/simple/", "foo"
+        )
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+
+        with pytest.raises(MissingHashError, match="no acceptable hash"):
+            write_requirements_with_hashes(_lock_from(lock))
 
 
 class TestDirectoryFields:

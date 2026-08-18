@@ -18,7 +18,7 @@ from dataclasses import replace
 from email.utils import formatdate
 from pathlib import Path
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import pytest
 from packaging.utils import canonicalize_name
@@ -41,6 +41,7 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelFile,
     WheelHashMismatchError,
+    _normalized_url,
     _parse_files,
     _parse_sdist_filename,
     _select_artifact_hash,
@@ -365,6 +366,11 @@ class TestMetadataHashParsing:
 
         assert _metadata_hash({"core-metadata": {"sha256": ""}}) is None
 
+    def test_non_hex_digest_yields_none(self) -> None:
+        from nab_index.client import _metadata_hash
+
+        assert _metadata_hash({"core-metadata": {"sha256": "not-a-digest"}}) is None
+
     def test_empty_digest_falls_through_to_valid_algo(self) -> None:
         from nab_index.client import _metadata_hash
 
@@ -665,6 +671,38 @@ class TestControlCharacterUrl:
         assert from_json.url == from_html.url == self._STRIPPED
 
 
+class TestNormalizedUrl:
+    """_normalized_url returns the same string as the split round trip."""
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://files.example.com/ab/foo-1.0-py3-none-any.whl",
+            "https://files.example.com/foo-1.0-py3-none-any.whl?token=x",
+            "https://files.example.com/foo-1.0-py3-none-any.whl#sha256=abc",
+            "//files.example.com/foo-1.0-py3-none-any.whl",
+            "file:///mirror/foo-1.0-py3-none-any.whl",
+            "file:/mirror/foo-1.0-py3-none-any.whl",
+            "https://files.example.com/a\tb/foo-1.0-py3-none-any.whl",
+            "https://files.example.com/foo-1.0-py3-none-any.whl?",
+            "https://files.example.com/foo-1.0-py3-none-any.whl#",
+            "HTTPS://files.example.com/foo-1.0-py3-none-any.whl",
+            "https://Files.Example.com/foo-1.0-py3-none-any.whl",
+            "https:foo-1.0-py3-none-any.whl",
+        ],
+    )
+    def test_matches_round_trip(self, url: str) -> None:
+        assert _normalized_url(url) == urlunsplit(urlsplit(url))
+
+    def test_clean_url_is_not_rebuilt(self) -> None:
+        url = "https://files.example.com/ab/foo-1.0-py3-none-any.whl"
+        assert _normalized_url(url) is url
+
+    def test_malformed_authority_raises(self) -> None:
+        with pytest.raises(ValueError, match="IPv6"):
+            _normalized_url("https://[::1/foo-1.0-py3-none-any.whl")
+
+
 class TestMetadataUrl:
     """PEP 658/714 sidecar URL derived from the PEP 691 file URL."""
 
@@ -809,6 +847,28 @@ class TestParseHashes:
         from nab_index.client import _parse_hashes, _select_artifact_hash
 
         assert _select_artifact_hash(_parse_hashes({"sha256": ""})) is None
+
+    def test_single_non_hex_digest_dropped(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": "not-a-digest"}) == ()
+
+    def test_hex_digest_split_by_whitespace_dropped(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": "0123abcd\nbeef"}) == ()
+
+    def test_non_hex_digest_falls_through_to_valid(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": "deadbeef ", "sha512": "f" * 128}) == (
+            ("sha512", "f" * 128),
+        )
+
+    def test_uppercase_digest_kept_lowercased(self) -> None:
+        from nab_index.client import _parse_hashes
+
+        assert _parse_hashes({"sha256": "A" * 64}) == (("sha256", "a" * 64),)
 
 
 class TestSelectArtifactHash:
