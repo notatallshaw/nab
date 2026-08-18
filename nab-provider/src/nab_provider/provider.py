@@ -559,6 +559,10 @@ class Provider:
         self.constraints: Mapping[str, VersionRange] = constraints or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
         self.deps_cache: dict[tuple[str, Version], dict[str, VersionRange]] = {}
+        # Metadata the pipelined scan prefetched, as ``(version string, sidecar
+        # URL)``, decoded on the first read of that candidate.  A candidate the
+        # solver never reads is never decoded.
+        self.pending_metadata_parses: dict[tuple[str, Version], tuple[str, str]] = {}
         # One range per distinct dependency specifier text, shared by every
         # parent that names it.
         self.specifier_ranges: dict[str, VersionRange] = {}
@@ -1988,6 +1992,11 @@ class Provider:
             return _extras.get_extra_dependencies(self, base, extra, version)
 
         cache_key = (normalized, version)
+
+        # Before the cache check: a queued prefetch lands in deps_cache only
+        # when this decodes it.
+        _listing.parse_prefetched_metadata(self, cache_key)
+
         if cache_key in self.deps_cache:
             return self.deps_cache[cache_key]
         cached_unsupported = self._unsupported_sdists.get(cache_key)

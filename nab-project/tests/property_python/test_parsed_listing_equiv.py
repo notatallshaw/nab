@@ -85,7 +85,7 @@ def _hash_table(draw: st.DrawFn) -> Any:
             "md5": draw(hex_digests),
         }
     if kind == 3:
-        # Non-string digest is dropped by _parse_hashes; exercise that path.
+        # Non-string digest is dropped by parse_hash_table; exercise that path.
         return {"sha256": draw(st.integers())}
     return draw(st.sampled_from([[], "notadict", 5]))
 

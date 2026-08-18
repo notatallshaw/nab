@@ -8577,7 +8577,7 @@ class TestAwaitMetadataBatchEdgeCases:
         Pre-empting the walk-ahead deep prefetch can land metadata for a
         version that the next pipelined batch also submits; by the time
         ``_await_metadata_batch`` runs, that version's deps are cached
-        already and re-parsing is wasted work.
+        already and queuing it for another parse is wasted work.
         """
         wheels = [make_wheel("1.0")]
         coordinator = make_coordinator(wheels, package="foo")
@@ -8587,6 +8587,8 @@ class TestAwaitMetadataBatchEdgeCases:
             "foo",
             [(V("1.0"), "1.0", _SIDECAR_URL, _done_event())],
         )
+
+        assert ("foo", V("1.0")) not in provider.pending_metadata_parses
         assert provider.deps_cache[("foo", V("1.0"))] == {"bar": VersionRange.full()}
 
     def test_batch_invalid_metadata_refuses_version(self) -> None:
@@ -8662,6 +8664,8 @@ class TestAwaitMetadataBatchEdgeCases:
             "foo",
             [(V("1.0"), "1.0", _SIDECAR_URL, _done_event())],
         )
+        listing_mod.parse_prefetched_metadata(provider, ("foo", V("1.0")))
+
         assert ("foo", V("1.0")) not in provider.deps_cache
         with pytest.raises(MetadataHashMismatchError):
             provider.get_dependencies("foo", V("1.0"))
@@ -8717,6 +8721,7 @@ class TestAwaitMetadataBatchEdgeCases:
         wheel_map = provider._wheel_by_version("pkg", version_list)
         submitted = provider._prefetch_batch("pkg", [V("1.0")], wheel_map)
         provider._await_metadata_batch("pkg", submitted)
+        listing_mod.parse_prefetched_metadata(provider, ("pkg", V("1.0")))
 
         assert ("pkg", V("1.0")) not in provider.deps_cache
         with pytest.raises(UnsupportedSdistError):
@@ -8744,8 +8749,65 @@ class TestAwaitMetadataBatchEdgeCases:
         wheel_map = provider._wheel_by_version("pkg", version_list)
         submitted = provider._prefetch_batch("pkg", [V("1.0")], wheel_map)
         provider._await_metadata_batch("pkg", submitted)
+        listing_mod.parse_prefetched_metadata(provider, ("pkg", V("1.0")))
 
         assert ("pkg", V("1.0")) not in provider.deps_cache
+
+
+class TestPipelinedScanDefersUnreadMetadata:
+    """The scan decodes what it reads and leaves the rest of the batch queued."""
+
+    @staticmethod
+    def _provider_over_twelve_versions() -> Provider:
+        """A provider whose scan rejects foo>=10.0 and settles on 9.0.
+
+        ``bar`` is decided at 1.0, which the top three versions exclude.  With
+        twelve versions the first prefetch batch reaches below 9.0, so it holds
+        candidates no read ever asks about.
+        """
+        versions = [f"{n}.0" for n in range(1, 13)]
+        metadata = {
+            v: (
+                "Metadata-Version: 2.1\nName: foo\n"
+                f"Version: {v}\n"
+                f"Requires-Dist: bar{'>=2' if V(v) >= V('10.0') else '<2'}\n"
+            )
+            for v in versions
+        }
+        coordinator = make_coordinator(
+            [make_wheel(v) for v in versions],
+            package="foo",
+            metadata_by_version=metadata,
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
+        )
+        provider.solution_decisions["bar"] = V("1.0")
+        return provider
+
+    def test_batch_below_the_pick_stays_undecoded(self) -> None:
+        """Versions the scan never reaches are queued, not parsed."""
+        provider = self._provider_over_twelve_versions()
+
+        assert provider.choose_version("foo", VersionRange.full()) == V("9.0")
+
+        assert ("foo", V("5.0")) in provider.pending_metadata_parses
+        assert ("foo", V("5.0")) not in provider.deps_cache
+        assert ("foo", V("9.0")) in provider.deps_cache
+
+    def test_later_read_serves_the_queued_metadata(self) -> None:
+        """A read of a queued version decodes it without a metadata fetch."""
+        provider = self._provider_over_twelve_versions()
+        provider.choose_version("foo", VersionRange.full())
+        fetched = provider.stats.metadata_fetched
+
+        deps = provider.get_dependencies("foo", V("5.0"))
+
+        assert deps == {"bar": SpecifierSet("<2").to_range()}
+        assert provider.stats.metadata_fetched == fetched
+        assert ("foo", V("5.0")) not in provider.pending_metadata_parses
 
 
 class TestIsReady:
