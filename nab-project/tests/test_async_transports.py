@@ -58,6 +58,7 @@ from nab_index.transport import (
     raise_for_error_status,
 )
 from nab_index.urllib3_async_transport import (
+    _REQUEST_THREADS,
     Urllib3AsyncTransport,
     _SSLContext,
     _Urllib3Response,
@@ -1140,6 +1141,57 @@ def _redirected_response(status: int, hops: list[tuple[str, str]]) -> MagicMock:
     return response
 
 
+_BLOCKED_SECONDS = 5.0
+"""How long a blocked request waits before the test gives up on it.
+
+The transport either reaches its thread count in a moment or never will, so a
+regression fails in seconds rather than hanging.
+"""
+
+
+class _BlockingPool:
+    """A PoolManager stand-in whose requests block until they are released.
+
+    ``high_water`` is the most requests that ran at once, which is the
+    concurrency the transport's executor delivered.
+    """
+
+    def __init__(self, response: MagicMock) -> None:
+        response.data = b"body"
+        response.headers = urllib3.HTTPHeaderDict()
+        self._response = response
+        self._lock = threading.Lock()
+        self._started = threading.Semaphore(0)
+        self._released = threading.Event()
+        self._in_flight = 0
+        self.high_water = 0
+
+    def request(self, *_args: Any, **_kwargs: Any) -> MagicMock:
+        with self._lock:
+            self._in_flight += 1
+            self.high_water = max(self.high_water, self._in_flight)
+
+        self._started.release()
+        assert self._released.wait(_BLOCKED_SECONDS), "requests were never released"
+
+        with self._lock:
+            self._in_flight -= 1
+        return self._response
+
+    def wait_for_starts(self, count: int) -> None:
+        """Block until ``count`` requests have entered ``request``."""
+        for _ in range(count):
+            assert self._started.acquire(timeout=_BLOCKED_SECONDS), (
+                f"fewer than {count} ran at once"
+            )
+
+    def release(self) -> None:
+        self._released.set()
+
+    def clear(self) -> None:
+        """Stand in for the ``clear`` that ``aclose`` calls on each pool."""
+
+
 class TestUrllib3AsyncTransport:
     def _fake_pool(self, body: bytes, status: int = 200) -> MagicMock:
         fake_response = _unredirected_response(status)
@@ -1643,6 +1695,62 @@ class TestUrllib3AsyncTransport:
         # Distinct worker threads -> distinct pools; all tracked for aclose.
         assert pools[0] is not pools[1]
         assert set(map(id, pools)) <= set(map(id, transport._pools))
+
+    def test_concurrent_gets_stop_at_the_request_thread_count(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """More gets than threads run ``_REQUEST_THREADS`` at a time.
+
+        The bound is a constant rather than a function of the CPU count, so
+        the high-water mark is the same number on every machine.
+        """
+        pool = _BlockingPool(_unredirected_response(200))
+        monkeypatch.setattr(
+            "nab_index.urllib3_async_transport.urllib3.PoolManager",
+            lambda **kw: pool,
+        )
+
+        async def go() -> None:
+            transport = Urllib3AsyncTransport()
+            gets = [
+                asyncio.create_task(transport.get(f"https://example.com/{i}/"))
+                for i in range(_REQUEST_THREADS + 4)
+            ]
+            try:
+                await asyncio.to_thread(pool.wait_for_starts, _REQUEST_THREADS)
+            finally:
+                pool.release()
+                await asyncio.gather(*gets)
+                await transport.aclose()
+
+        asyncio.run(go())
+        assert pool.high_water == _REQUEST_THREADS
+
+    def test_a_reused_transport_builds_a_second_executor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``aclose`` retires the executor, so a later get builds a fresh one."""
+        pool = self._fake_pool(b"body")
+        monkeypatch.setattr(
+            "nab_index.urllib3_async_transport.urllib3.PoolManager",
+            lambda **kw: pool,
+        )
+
+        async def go() -> list[bytes]:
+            transport = Urllib3AsyncTransport()
+            bodies = []
+            for url in ("https://example.com/a/", "https://example.com/b/"):
+                bodies.append((await transport.get(url)).content)
+                await transport.aclose()
+            return bodies
+
+        assert asyncio.run(go()) == [b"body", b"body"]
+
+    def test_aclose_before_any_get_retires_nothing(self) -> None:
+        """A transport that never ran a request has no executor to shut down."""
+        transport = Urllib3AsyncTransport()
+        asyncio.run(transport.aclose())
+        assert transport._executor is None
 
     def test_ssl_context_satisfies_urllib3_cert_check(self) -> None:
         """``_SSLContext`` returns a non-empty CA count for urllib3-future.

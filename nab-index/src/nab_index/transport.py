@@ -2,7 +2,7 @@
 
 Defines minimal protocols for async HTTP GET requests.
 Implementations can use any async HTTP library (httpx, or urllib3
-wrapped in to_thread, etc.).
+on worker threads, etc.).
 """
 
 from __future__ import annotations

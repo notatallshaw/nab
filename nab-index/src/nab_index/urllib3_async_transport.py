@@ -1,18 +1,20 @@
 """urllib3-based async HTTP transport for nab-index.
 
 urllib3 is sync. To present an async surface we run each request
-in a worker thread via ``asyncio.to_thread``. This is useful for
-benchmarking against the natively-async backends, and for cases
-where users already have urllib3 in their environment.
+on a worker thread. This is useful for benchmarking against the
+natively-async backends, and for cases where users already have
+urllib3 in their environment.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json as _json
 import ssl
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
@@ -40,6 +42,11 @@ __all__ = [
 
 # urllib3's default read timeout is None, so bound it against a stalled index.
 _DEFAULT_TIMEOUT_SECONDS = 5.0
+
+# How many requests a transport runs at once. Each thread builds its own
+# PoolManager and truststore SSLContext, so a higher count buys more waiting on
+# the index at once and costs memory and CPU per thread.
+_REQUEST_THREADS = 16
 
 
 class _SSLContext(truststore.SSLContext):
@@ -125,12 +132,16 @@ class _Urllib3Response:
 
 
 class Urllib3AsyncTransport:
-    """Async HTTP transport using urllib3 (sync) wrapped in to_thread.
+    """Async HTTP transport using urllib3 (sync) on its own worker threads.
 
-    Each ``get`` runs the underlying sync request on the asyncio default
-    executor.  A separate :class:`~urllib3.PoolManager` (and truststore
-    SSLContext) is kept per worker thread: truststore toggles the
-    context's ``verify_mode`` to ``CERT_NONE`` for the duration of each
+    Each ``get`` runs the underlying sync request on this transport's own
+    executor of ``_REQUEST_THREADS`` threads.  A request holds a thread for
+    its whole duration, waits included, so that count is how many requests
+    are ever in flight, whatever a caller queues up.
+
+    A separate :class:`~urllib3.PoolManager` (and truststore SSLContext)
+    is kept per worker thread: truststore toggles the context's
+    ``verify_mode`` to ``CERT_NONE`` for the duration of each
     ``wrap_socket`` (truststore#209), so sharing one context across the
     executor threads races that toggle and trips spurious
     ``InsecureRequestWarning``s.  One context per thread means no two
@@ -152,6 +163,21 @@ class Urllib3AsyncTransport:
         self._local = threading.local()
         self._pools: list[urllib3.PoolManager] = []
         self._pools_lock = threading.Lock()
+        self._executor: ThreadPoolExecutor | None = None
+        self._executor_lock = threading.Lock()
+
+    def _request_executor(self) -> ThreadPoolExecutor:
+        """Return the executor requests run on, creating it on first use.
+
+        ``aclose`` retires it, so a transport used again after that builds a
+        fresh one here.
+        """
+        with self._executor_lock:
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(
+                    max_workers=_REQUEST_THREADS, thread_name_prefix="nab-urllib3"
+                )
+            return self._executor
 
     def _pool(self) -> urllib3.PoolManager:
         """Return this worker thread's pool, creating it on first use."""
@@ -221,8 +247,19 @@ class Urllib3AsyncTransport:
         request_headers = dict(DEFAULT_HEADERS)
         if headers is not None:
             request_headers.update(headers)
+
+        loop = asyncio.get_running_loop()
+        # A request sees the context vars its caller set, not an empty context.
+        context = contextvars.copy_context()
+
         try:
-            return await asyncio.to_thread(self._request, url, request_headers)
+            return await loop.run_in_executor(
+                self._request_executor(),
+                context.run,
+                self._request,
+                url,
+                request_headers,
+            )
         except Exception as exc:
             # A malformed IPv6 host in a redirect's Location makes urllib3's
             # urljoin re-parse raise a bare ValueError, outside its HTTPError
@@ -231,7 +268,16 @@ class Urllib3AsyncTransport:
             raise HttpError(msg) from exc
 
     async def aclose(self) -> None:
-        """Close every per-thread pool."""
+        """Retire the worker threads, then close every per-thread pool.
+
+        The threads go first: a request still running can register a pool that
+        closing in the other order would miss.
+        """
+        with self._executor_lock:
+            executor, self._executor = self._executor, None
+        if executor is not None:
+            await asyncio.to_thread(executor.shutdown)
+
         with self._pools_lock:
             pools = list(self._pools)
         for pool in pools:
