@@ -5,9 +5,9 @@ The exact-equivalence contract is proved by the Hypothesis harness in
 is opt-in (``-m property``) and does not run under the coverage gate, so these
 plain unit tests drive every branch of the codec: the wheel/sdist tag split,
 present and absent ``requires_python``, present and absent ``metadata_hash``,
-each header / digest gate that turns a stale or foreign blob into a
-decode-to-``None`` miss, and the field checks that keep a hand-written row from
-reaching a record.
+the integrity cells in both their raw and their parsed form, each header /
+digest gate that turns a stale or foreign blob into a decode-to-``None`` miss,
+and the field checks that keep a hand-written row from reaching a record.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from nab_index.parsed_listing import (
     decode,
     encode,
 )
+from nab_provider.records import defer_hashes, defer_sidecar_hash
 
 DIGEST = "a" * 64
 
@@ -318,3 +319,70 @@ def test_foreign_build_header_is_not_corruption() -> None:
 
 def test_digest_mismatch_is_not_corruption() -> None:
     assert corruption_reason(encode(SAMPLE, "b" * 64)) is None
+
+
+def _deferred_wheel(hashes: object, *, sidecar: object) -> WheelFile:
+    """A wheel holding ``hashes`` and ``sidecar`` as the index served them."""
+    wheel = WheelFile(
+        filename="pkg-1.0-py3-none-any.whl",
+        url="https://files.example/pkg-1.0-py3-none-any.whl",
+        version="1.0",
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+    )
+    defer_hashes(wheel, hashes)
+    defer_sidecar_hash(wheel, sidecar)
+    return wheel
+
+
+def test_unparsed_tables_ride_the_wire_as_the_index_served_them() -> None:
+    wheel = _deferred_wheel({"SHA256": DIGEST.upper()}, sidecar={"sha256": DIGEST})
+
+    rows = json.loads(encode([wheel], DIGEST))[1]
+
+    assert rows[0][_W_HASHES] == {"SHA256": DIGEST.upper()}
+    assert rows[0][_W_METADATA_HASH] == {"sha256": DIGEST}
+
+
+def test_a_value_that_is_not_an_object_rides_as_its_parse() -> None:
+    """Only a table defers, so any other value writes what the record parsed."""
+    wheel = _deferred_wheel(["sha256", DIGEST], sidecar=True)
+
+    rows = json.loads(encode([wheel], DIGEST))[1]
+
+    assert rows[0][_W_HASHES] == []
+    assert rows[0][_W_METADATA_HASH] is None
+
+
+def test_a_many_algorithm_table_defers_as_the_index_served_it() -> None:
+    wheel = _deferred_wheel({"sha256": DIGEST, "sha512": "f" * 128}, sidecar=True)
+
+    rows = json.loads(encode([wheel], DIGEST))[1]
+
+    assert rows[0][_W_HASHES] == {"sha256": DIGEST, "sha512": "f" * 128}
+    assert wheel.hashes == ((SHA256, DIGEST), (SHA512, "f" * 128))
+
+
+def test_a_rehydrated_record_defers_the_same_parse() -> None:
+    blob = encode(
+        [_deferred_wheel({"SHA256": DIGEST.upper()}, sidecar={"sha256": DIGEST})],
+        DIGEST,
+    )
+
+    (wheel,) = decode(blob, _policy()) or []
+
+    assert wheel.raw_hashes() == {"SHA256": DIGEST.upper()}
+    assert wheel.raw_sidecar() == {"sha256": DIGEST}
+    assert wheel.hashes == ((SHA256, DIGEST),)
+    assert wheel.metadata_hash == (SHA256, DIGEST)
+
+
+def test_a_row_is_the_same_whether_or_not_the_record_was_read() -> None:
+    """A read record keeps its table, so encoding does not depend on read order."""
+    unread = _deferred_wheel({"sha256": DIGEST}, sidecar={"sha256": DIGEST})
+    read = _deferred_wheel({"sha256": DIGEST}, sidecar={"sha256": DIGEST})
+    assert read.hashes == ((SHA256, DIGEST),)
+    assert read.metadata_hash == (SHA256, DIGEST)
+
+    assert encode([read], DIGEST) == encode([unread], DIGEST)

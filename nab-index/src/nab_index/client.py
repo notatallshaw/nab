@@ -23,14 +23,19 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
-from nab_provider.digest import is_hex_digest
 from nab_provider.errors import (
     MalformedSimpleResponseError,
     MetadataHashMismatchError,
     SdistHashMismatchError,
     WheelHashMismatchError,
 )
-from nab_provider.records import ACCEPTED_HASH_ALGORITHMS, SdistFile, WheelFile
+from nab_provider.records import (
+    ACCEPTED_HASH_ALGORITHMS,
+    SdistFile,
+    WheelFile,
+    defer_hashes,
+    defer_sidecar_hash,
+)
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
 
 from ._pep503 import json_listing
@@ -523,7 +528,6 @@ def _parse_file_entry(
     if file_url is None:
         return None
 
-    hashes = _parse_hashes(file_info.get("hashes"))
     size = _parse_size(file_info.get("size"))
     # ``requires-python`` has only a few dozen distinct values across
     # all of PyPI (``>=3.7``, ``>=3.8`` etc.) but appears once per
@@ -543,22 +547,26 @@ def _parse_file_entry(
     upload_time_raw = file_info.get("upload-time")
     upload_time = upload_time_raw if isinstance(upload_time_raw, str) else None
 
+    raw_hashes = file_info.get("hashes")
+
     wheel_parsed = _parse_wheel_filename(filename)
     if wheel_parsed is not None:
         parsed_name, version = wheel_parsed
         if parsed_name != expected:
             return None
-        return WheelFile(
+        sidecar = _metadata_value(file_info)
+        wheel = WheelFile(
             filename=filename,
             url=file_url,
             version=version,
             requires_python=requires_python,
-            has_metadata=_has_metadata(file_info),
+            has_metadata=_advertises_sidecar(sidecar),
             upload_time=upload_time,
-            hashes=hashes,
             size=size,
-            metadata_hash=_metadata_hash(file_info),
         )
+        defer_hashes(wheel, raw_hashes)
+        defer_sidecar_hash(wheel, sidecar)
+        return wheel
 
     sdist_parsed = _parse_sdist_filename(filename)
     if sdist_parsed is None:
@@ -566,39 +574,16 @@ def _parse_file_entry(
     parsed_name, version = sdist_parsed
     if parsed_name != expected:
         return None
-    return SdistFile(
+    sdist = SdistFile(
         filename=filename,
         url=file_url,
         version=version,
         requires_python=requires_python,
         upload_time=upload_time,
-        hashes=hashes,
         size=size,
     )
-
-
-def _parse_hashes(value: object) -> tuple[tuple[str, str], ...]:
-    # Algo names are a tiny fixed vocabulary, so interning dedups them.
-    # Both halves are lowercased: PEP 503/691 don't mandate a case, pip
-    # treats them case-insensitively, and the acceptable-algorithm filter
-    # and hashlib.hexdigest() both expect the lowercase form.
-    # A digest that is not hex can never match a file's bytes, so it is dropped.
-    if not isinstance(value, dict):
-        return ()
-
-    # The common case is a single hash; skip the list build.
-    if len(value) == 1:
-        ((algo, digest),) = value.items()
-        if isinstance(algo, str) and isinstance(digest, str) and is_hex_digest(digest):
-            return ((sys.intern(algo.lower()), digest.lower()),)
-        return ()
-
-    out: list[tuple[str, str]] = []
-    for algo, digest in value.items():
-        if isinstance(algo, str) and isinstance(digest, str) and is_hex_digest(digest):
-            out.append((sys.intern(algo.lower()), digest.lower()))
-
-    return tuple(out)
+    defer_hashes(sdist, raw_hashes)
+    return sdist
 
 
 def _parse_size(value: object) -> int | None:
@@ -625,33 +610,14 @@ def _metadata_value(file_info: _FileEntry) -> object:
     return file_info.get(_LEGACY_METADATA_KEY)
 
 
-def _has_metadata(file_info: _FileEntry) -> bool:
-    """Return True when the file entry advertises a PEP 658/714 sidecar.
+def _advertises_sidecar(value: object) -> bool:
+    """Return True when a metadata value promises a PEP 658/714 sidecar.
 
-    PEP 691 allows either a ``true`` boolean (sidecar exists but no
-    hashes published) or a mapping carrying the digest table.  Either
-    flavour means the index will serve ``<file>.metadata``.
+    The value is either ``true`` (the sidecar exists, with no digest
+    published) or the digest table itself; both mean the index will serve
+    ``<file>.metadata``.
     """
-    value = _metadata_value(file_info)
     return value is True or isinstance(value, dict)
-
-
-def _metadata_hash(file_info: _FileEntry) -> tuple[str, str] | None:
-    """Return the sidecar's published ``(algo, hex)`` to verify, or None.
-
-    A bare ``true`` (sidecar exists, no hash), a digest that is not hex, or a
-    table with no accepted algorithm yields None, so no check runs.
-    """
-    value = _metadata_value(file_info)
-    if not isinstance(value, dict):
-        return None
-
-    published = tuple(
-        (algo, digest)
-        for algo, digest in value.items()
-        if isinstance(algo, str) and isinstance(digest, str) and is_hex_digest(digest)
-    )
-    return _select_artifact_hash(published)
 
 
 def _verify_metadata_hash(content: bytes, metadata_hash: tuple[str, str]) -> None:
@@ -661,23 +627,6 @@ def _verify_metadata_hash(content: bytes, metadata_hash: tuple[str, str]) -> Non
     if actual != expected:
         msg = f"metadata {algo} mismatch: expected {expected}, got {actual}"
         raise MetadataHashMismatchError(msg)
-
-
-def _select_artifact_hash(
-    hashes: tuple[tuple[str, str], ...],
-) -> tuple[str, str] | None:
-    """Pick the preferred ``(algo, hex)`` to verify, or ``None`` if none qualify.
-
-    Walks :data:`ACCEPTED_HASH_ALGORITHMS` in order, so sha256 is preferred,
-    then sha384, then sha512. An empty set, an empty digest, or only unaccepted
-    algorithms (md5) yields ``None``.
-    """
-    by_algo = {algo.lower(): digest.lower() for algo, digest in hashes}
-    for algo in ACCEPTED_HASH_ALGORITHMS:
-        digest = by_algo.get(algo)
-        if digest:
-            return (algo, digest)
-    return None
 
 
 def verify_sdist_hash(content: bytes, sdist_hash: tuple[str, str]) -> None:

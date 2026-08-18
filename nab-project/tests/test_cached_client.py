@@ -41,14 +41,20 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelFile,
     WheelHashMismatchError,
+    _advertises_sidecar,
+    _metadata_value,
     _normalized_url,
     _parse_files,
     _parse_sdist_filename,
-    _select_artifact_hash,
 )
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
 from nab_index.transport import HttpError
 from nab_provider.metadata import parse_metadata
+from nab_provider.records import (
+    parse_hash_table,
+    select_artifact_hash,
+    sidecar_hash,
+)
 from nab_provider.serialization import SimpleSerialization
 
 LISTING = {
@@ -195,44 +201,40 @@ def _build_tarball(members: list[tuple[str, bytes]]) -> bytes:
     return buf.getvalue()
 
 
+def _has_metadata(file_info: Mapping[Any, object]) -> bool:
+    """Whether ``file_info`` advertises a sidecar, read the way ingest reads it."""
+    return _advertises_sidecar(_metadata_value(file_info))
+
+
+def _metadata_hash(file_info: Mapping[Any, object]) -> tuple[str, str] | None:
+    """The sidecar hash ``file_info`` publishes, read the way ingest reads it."""
+    return sidecar_hash(_metadata_value(file_info))
+
+
 class TestHasMetadataFlag:
     """PEP 691 boolean variants of ``core-metadata`` / ``dist-info-metadata``."""
 
     def test_dict_value_advertises_metadata(self) -> None:
-        from nab_index.client import _has_metadata
-
         assert _has_metadata({"core-metadata": {"sha256": "abc"}})
 
     def test_true_value_advertises_metadata(self) -> None:
-        from nab_index.client import _has_metadata
-
         assert _has_metadata({"core-metadata": True})
 
     def test_legacy_json_key_true(self) -> None:
-        from nab_index.client import _has_metadata
-
         assert _has_metadata({"dist-info-metadata": True})
 
     def test_false_value_does_not_advertise(self) -> None:
-        from nab_index.client import _has_metadata
-
         assert not _has_metadata({"core-metadata": False})
 
     def test_missing_field(self) -> None:
-        from nab_index.client import _has_metadata
-
         assert not _has_metadata({})
 
     def test_core_metadata_false_suppresses_legacy_key(self) -> None:
-        from nab_index.client import _has_metadata
-
         assert not _has_metadata(
             {"core-metadata": False, "dist-info-metadata": {"sha256": "deadbeef"}}
         )
 
     def test_core_metadata_true_ignores_legacy_key(self) -> None:
-        from nab_index.client import _has_metadata
-
         assert _has_metadata({"core-metadata": True, "dist-info-metadata": False})
 
 
@@ -240,84 +242,60 @@ class TestMetadataHashParsing:
     """``_metadata_hash`` carries the published hash to verify, or None."""
 
     def test_sha256_lowercased(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash({"core-metadata": {"sha256": "ABCD"}}) == (
             "sha256",
             "abcd",
         )
 
     def test_uppercase_algo_name(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash({"core-metadata": {"SHA256": "ABCD"}}) == (
             "sha256",
             "abcd",
         )
 
     def test_legacy_key_used(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash({"dist-info-metadata": {"sha256": "ab"}}) == (
             "sha256",
             "ab",
         )
 
     def test_true_value_yields_none(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash({"core-metadata": True}) is None
 
     def test_other_algo_only_yields_none(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash({"core-metadata": {"blake2b": "ab"}}) is None
 
     def test_sha512_only_verified(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash({"core-metadata": {"sha512": "ABCD"}}) == (
             "sha512",
             "abcd",
         )
 
     def test_sha384_only_verified(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash({"core-metadata": {"sha384": "ABCD"}}) == (
             "sha384",
             "abcd",
         )
 
     def test_sha256_preferred_over_sha512(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash(
             {"core-metadata": {"sha512": "aaaa", "sha256": "bbbb"}}
         ) == ("sha256", "bbbb")
 
     def test_sha384_preferred_over_sha512(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash(
             {"core-metadata": {"sha512": "aaaa", "sha384": "bbbb"}}
         ) == ("sha384", "bbbb")
 
     def test_unsupported_with_supported_skips_unsupported(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash(
             {"core-metadata": {"blake2b": "aaaa", "sha512": "bbbb"}}
         ) == ("sha512", "bbbb")
 
     def test_missing_field_yields_none(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash({}) is None
 
     def test_core_metadata_false_ignores_legacy_hash(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert (
             _metadata_hash(
                 {"core-metadata": False, "dist-info-metadata": {"sha256": "deadbeef"}}
@@ -326,8 +304,6 @@ class TestMetadataHashParsing:
         )
 
     def test_core_metadata_true_ignores_legacy_hash(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert (
             _metadata_hash(
                 {"core-metadata": True, "dist-info-metadata": {"sha256": "cafef00d"}}
@@ -336,8 +312,6 @@ class TestMetadataHashParsing:
         )
 
     def test_core_metadata_hash_preferred_over_legacy(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash(
             {
                 "core-metadata": {"sha256": "AAAA"},
@@ -345,9 +319,34 @@ class TestMetadataHashParsing:
             }
         ) == ("sha256", "aaaa")
 
-    def test_parse_files_populates_metadata_hash(self) -> None:
-        from nab_index.client import WheelFile, _parse_files
+    def test_ingest_holds_the_tables_until_a_reader_asks(self) -> None:
+        data = {
+            "files": [
+                {
+                    "filename": "foo-1.0-py3-none-any.whl",
+                    "url": "https://example.com/foo-1.0-py3-none-any.whl",
+                    "hashes": {"SHA256": "A" * 64},
+                    "core-metadata": {"sha256": "b" * 64},
+                },
+                {
+                    "filename": "foo-1.0.tar.gz",
+                    "url": "https://example.com/foo-1.0.tar.gz",
+                    "hashes": {"sha256": "c" * 64},
+                },
+            ],
+        }
 
+        wheel, sdist = _parse_files(data, "https://example.com/simple/", "foo")
+
+        assert wheel.raw_hashes() == {"SHA256": "A" * 64}
+        assert wheel.raw_sidecar() == {"sha256": "b" * 64}
+        assert sdist.raw_hashes() == {"sha256": "c" * 64}
+
+        assert wheel.hashes == (("sha256", "a" * 64),)
+        assert wheel.metadata_hash == ("sha256", "b" * 64)
+        assert sdist.hashes == (("sha256", "c" * 64),)
+
+    def test_parse_files_populates_metadata_hash(self) -> None:
         data = {
             "files": [
                 {
@@ -362,18 +361,12 @@ class TestMetadataHashParsing:
         assert wheel.metadata_hash == ("sha256", "dead")
 
     def test_empty_digest_yields_none(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash({"core-metadata": {"sha256": ""}}) is None
 
     def test_non_hex_digest_yields_none(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash({"core-metadata": {"sha256": "not-a-digest"}}) is None
 
     def test_empty_digest_falls_through_to_valid_algo(self) -> None:
-        from nab_index.client import _metadata_hash
-
         assert _metadata_hash(
             {"core-metadata": {"sha256": "", "sha512": "a" * 128}}
         ) == ("sha512", "a" * 128)
@@ -800,104 +793,78 @@ class TestFragmentedUrlSidecarFetch:
 
 class TestParseHashes:
     def test_single_entry(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        assert _parse_hashes({"sha256": "a" * 64}) == (("sha256", "a" * 64),)
+        assert parse_hash_table({"sha256": "a" * 64}) == (("sha256", "a" * 64),)
 
     def test_single_entry_malformed(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        assert _parse_hashes({"sha256": 123}) == ()
+        assert parse_hash_table({"sha256": 123}) == ()
 
     def test_multiple_entries(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        result = _parse_hashes({"sha256": "a" * 64, "md5": "b" * 32})
+        result = parse_hash_table({"sha256": "a" * 64, "md5": "b" * 32})
         assert result == (("sha256", "a" * 64), ("md5", "b" * 32))
 
     def test_multiple_entries_skips_malformed(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        result = _parse_hashes({"sha256": "a" * 64, "md5": 123})
+        result = parse_hash_table({"sha256": "a" * 64, "md5": 123})
         assert result == (("sha256", "a" * 64),)
 
     def test_non_dict(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        assert _parse_hashes("sha256:abc") == ()
+        assert parse_hash_table("sha256:abc") == ()
 
     def test_empty_dict(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        assert _parse_hashes({}) == ()
+        assert parse_hash_table({}) == ()
 
     def test_single_empty_digest_dropped(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        assert _parse_hashes({"sha256": ""}) == ()
+        assert parse_hash_table({"sha256": ""}) == ()
 
     def test_empty_digest_falls_through_to_valid(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        assert _parse_hashes({"sha256": "", "sha512": "f" * 128}) == (
+        assert parse_hash_table({"sha256": "", "sha512": "f" * 128}) == (
             ("sha512", "f" * 128),
         )
 
     def test_empty_digest_yields_no_sdist_check(self) -> None:
-        from nab_index.client import _parse_hashes, _select_artifact_hash
-
-        assert _select_artifact_hash(_parse_hashes({"sha256": ""})) is None
+        assert select_artifact_hash(parse_hash_table({"sha256": ""})) is None
 
     def test_single_non_hex_digest_dropped(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        assert _parse_hashes({"sha256": "not-a-digest"}) == ()
+        assert parse_hash_table({"sha256": "not-a-digest"}) == ()
 
     def test_hex_digest_split_by_whitespace_dropped(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        assert _parse_hashes({"sha256": "0123abcd\nbeef"}) == ()
+        assert parse_hash_table({"sha256": "0123abcd\nbeef"}) == ()
 
     def test_non_hex_digest_falls_through_to_valid(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        assert _parse_hashes({"sha256": "deadbeef ", "sha512": "f" * 128}) == (
+        assert parse_hash_table({"sha256": "deadbeef ", "sha512": "f" * 128}) == (
             ("sha512", "f" * 128),
         )
 
     def test_uppercase_digest_kept_lowercased(self) -> None:
-        from nab_index.client import _parse_hashes
-
-        assert _parse_hashes({"sha256": "A" * 64}) == (("sha256", "a" * 64),)
+        assert parse_hash_table({"sha256": "A" * 64}) == (("sha256", "a" * 64),)
 
 
 class TestSelectArtifactHash:
     def test_prefers_sha256(self) -> None:
         hashes = (("sha512", "f" * 128), ("sha256", "a" * 64))
-        assert _select_artifact_hash(hashes) == ("sha256", "a" * 64)
+        assert select_artifact_hash(hashes) == ("sha256", "a" * 64)
 
     def test_falls_through_to_sha384(self) -> None:
         hashes = (("sha512", "f" * 128), ("sha384", "b" * 96))
-        assert _select_artifact_hash(hashes) == ("sha384", "b" * 96)
+        assert select_artifact_hash(hashes) == ("sha384", "b" * 96)
 
     def test_falls_through_to_sha512(self) -> None:
-        assert _select_artifact_hash((("sha512", "f" * 128),)) == (
+        assert select_artifact_hash((("sha512", "f" * 128),)) == (
             "sha512",
             "f" * 128,
         )
 
     def test_empty_returns_none(self) -> None:
-        assert _select_artifact_hash(()) is None
+        assert select_artifact_hash(()) is None
 
     def test_only_unacceptable_returns_none(self) -> None:
-        assert _select_artifact_hash((("md5", "d" * 32),)) is None
+        assert select_artifact_hash((("md5", "d" * 32),)) is None
 
     def test_empty_digest_returns_none(self) -> None:
-        assert _select_artifact_hash((("sha256", ""),)) is None
+        assert select_artifact_hash((("sha256", ""),)) is None
 
     def test_empty_digest_falls_through_to_valid_algo(self) -> None:
         hashes = (("sha256", ""), ("sha512", "f" * 128))
-        assert _select_artifact_hash(hashes) == ("sha512", "f" * 128)
+        assert select_artifact_hash(hashes) == ("sha512", "f" * 128)
 
 
 class TestMaxAgeDirective:

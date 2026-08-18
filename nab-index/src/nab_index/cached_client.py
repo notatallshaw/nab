@@ -19,6 +19,7 @@ from datetime import timezone
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
 
+from nab_provider.records import select_artifact_hash
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
 
 from .cache import CacheBackend, CachePolicy, OfflineError
@@ -32,7 +33,6 @@ from .client import (
     _header,
     _listing_body,
     _parse_files,
-    _select_artifact_hash,
     _verify_metadata_hash,
     holds_unreadable_format,
     verify_sdist_hash,
@@ -767,7 +767,7 @@ class CachedAsyncSimpleClient:
             wheel_url,
             canonical_name,
             self._range_memo,
-            wheel_hash=_select_artifact_hash(wheel_hashes),
+            wheel_hash=select_artifact_hash(wheel_hashes),
         )
         if result.text is not None:
             self._cache.put_metadata(package, wheel_url, result.text)
@@ -802,7 +802,7 @@ class CachedAsyncSimpleClient:
 
         response = await self._transport.get(sdist_url, headers=IDENTITY_HEADERS)
         raise_unless_ok(response, sdist_url)
-        selected = _select_artifact_hash(sdist_hashes)
+        selected = select_artifact_hash(sdist_hashes)
         if selected is not None:
             verify_sdist_hash(response.content, selected)
         pkg_info, pyproject_toml = _extract_sdist_files(response.content)
@@ -837,7 +837,7 @@ class CachedAsyncSimpleClient:
             raise OfflineError(msg)
         response = await self._transport.get(sdist_url, headers=IDENTITY_HEADERS)
         raise_unless_ok(response, sdist_url)
-        selected = _select_artifact_hash(sdist_hashes)
+        selected = select_artifact_hash(sdist_hashes)
         if selected is not None:
             verify_sdist_hash(response.content, selected)
         return response.content

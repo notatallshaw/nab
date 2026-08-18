@@ -20,6 +20,10 @@ Wire form (UTF-8 JSON of ``[header, rows]``):
   type-checked on the way back, and ``requires_python`` and hash-algorithm
   names are re-interned via ``sys.intern`` so the round trip reproduces the
   dedup the wire parse builds.
+* the two integrity cells carry the index's own table, as a JSON object, when
+  the record was built from one, and the parsed pairs otherwise. A rehydrated
+  record defers the same way, so a listing pays the integrity parse only for
+  the files a resolve reads.
 
 The blob is portable: one entry serves every interpreter that shares the cache,
 and a body this module will not parse is a miss, never an exception reaching
@@ -32,7 +36,7 @@ import json
 import sys
 from typing import TYPE_CHECKING
 
-from .client import SdistFile, WheelFile
+from nab_provider.records import SdistFile, WheelFile, defer_hashes, defer_sidecar_hash
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -45,7 +49,7 @@ __all__ = ["corruption_reason", "decode", "encode"]
 # blob surfacing under the current bucket. Bump it when the row shape changes
 # or when the same body parses to different records: ``body_digest`` pins only
 # the input.
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3
 # Serialization variant that wrote the rows, so a future codec switch
 # self-heals rather than misdecodes.
 CODEC = 1
@@ -62,6 +66,22 @@ _TAG_SDIST = 1
 
 class _BadRowError(ValueError):
     """A row whose tag, arity, or field types are not what this codec wrote."""
+
+
+def _hashes_cell(record: WheelFile | SdistFile) -> object:
+    """Return the row cell for ``hashes``: the raw table, or the parsed pairs.
+
+    A record built from the index's own table writes that table, so encoding a
+    fresh listing does not force the parse it deferred.
+    """
+    raw = record.raw_hashes()
+    return record.hashes if raw is None else raw
+
+
+def _sidecar_cell(wheel: WheelFile) -> object:
+    """Return the row cell for ``metadata_hash``, raw table or parsed pair."""
+    raw = wheel.raw_sidecar()
+    return wheel.metadata_hash if raw is None else raw
 
 
 def encode(files: list[WheelFile | SdistFile], body_digest: str) -> bytes:
@@ -85,9 +105,9 @@ def encode(files: list[WheelFile | SdistFile], body_digest: str) -> bytes:
                     record.requires_python,
                     record.has_metadata,
                     record.upload_time,
-                    record.hashes,
+                    _hashes_cell(record),
                     record.size,
-                    record.metadata_hash,
+                    _sidecar_cell(record),
                 ]
             )
         else:
@@ -99,7 +119,7 @@ def encode(files: list[WheelFile | SdistFile], body_digest: str) -> bytes:
                     record.version,
                     record.requires_python,
                     record.upload_time,
-                    record.hashes,
+                    _hashes_cell(record),
                     record.size,
                 ]
             )
@@ -202,6 +222,16 @@ def _decode_row(row: object) -> WheelFile | SdistFile:
     raise _BadRowError
 
 
+def _hashes_unless_deferred(cell: object) -> tuple[tuple[str, str], ...]:
+    """Return a ``hashes`` cell's pairs, or ``()`` when it is a table to defer."""
+    return () if isinstance(cell, dict) else _hashes(cell)
+
+
+def _sidecar_unless_deferred(cell: object) -> tuple[str, str] | None:
+    """Return a sidecar cell's pair, or ``None`` when it is a table to defer."""
+    return None if isinstance(cell, dict) else _pair_or_none(cell)
+
+
 def _decode_wheel(row: Sequence[object]) -> WheelFile:
     (
         _,
@@ -215,30 +245,35 @@ def _decode_wheel(row: Sequence[object]) -> WheelFile:
         size,
         metadata_hash,
     ) = row
-    return WheelFile(
+    wheel = WheelFile(
         filename=_text(filename),
         url=_text(url),
         version=_text(version),
         requires_python=_interned_or_none(requires_python),
         has_metadata=_flag(has_metadata),
         upload_time=_text_or_none(upload_time),
-        hashes=_hashes(hashes),
+        hashes=_hashes_unless_deferred(hashes),
         size=_count_or_none(size),
-        metadata_hash=_pair_or_none(metadata_hash),
+        metadata_hash=_sidecar_unless_deferred(metadata_hash),
     )
+    defer_hashes(wheel, hashes)
+    defer_sidecar_hash(wheel, metadata_hash)
+    return wheel
 
 
 def _decode_sdist(row: Sequence[object]) -> SdistFile:
     _, filename, url, version, requires_python, upload_time, hashes, size = row
-    return SdistFile(
+    sdist = SdistFile(
         filename=_text(filename),
         url=_text(url),
         version=_text(version),
         requires_python=_interned_or_none(requires_python),
         upload_time=_text_or_none(upload_time),
-        hashes=_hashes(hashes),
+        hashes=_hashes_unless_deferred(hashes),
         size=_count_or_none(size),
     )
+    defer_hashes(sdist, hashes)
+    return sdist
 
 
 # JSON hands back only its own types, so an exact type check is enough to keep a
