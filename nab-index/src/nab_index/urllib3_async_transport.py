@@ -252,14 +252,12 @@ class Urllib3AsyncTransport:
         # A request sees the context vars its caller set, not an empty context.
         context = contextvars.copy_context()
 
+        def run_request() -> _Urllib3Response:
+            """Carry the request and its context into the worker thread."""
+            return context.run(self._request, url, request_headers)
+
         try:
-            return await loop.run_in_executor(
-                self._request_executor(),
-                context.run,
-                self._request,
-                url,
-                request_headers,
-            )
+            return await loop.run_in_executor(self._request_executor(), run_request)
         except Exception as exc:
             # A malformed IPv6 host in a redirect's Location makes urllib3's
             # urljoin re-parse raise a bare ValueError, outside its HTTPError
