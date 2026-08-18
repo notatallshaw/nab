@@ -16,7 +16,7 @@ import enum
 import logging
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from packaging.utils import canonicalize_name as canonicalize_name_boundary
@@ -25,6 +25,7 @@ from nab_index.cache import CacheBackend, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
     ParsedCacheStats,
+    SdistArchiveHold,
     read_fresh_parsed_listing,
 )
 from nab_index.lazy_wheel import RangeCapabilityMemo
@@ -32,6 +33,8 @@ from nab_index.local_index import LocalIndexClient, is_file_url, parse_file_url
 from nab_index.multi_index import MultiIndexClient
 from nab_index.transport import IDENTITY_HEADERS, raise_unless_ok
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.metadata import static_project_from_table
+from nab_provider.policy import BuildPolicy
 from nab_provider.records import (
     DEFAULT_INDEX_NAME,
     DEFAULT_INDEX_URL,
@@ -126,6 +129,21 @@ def _resolve_routes(routes: list[IndexRoute]) -> dict[str, str]:
     routes for one name at parse time), so this is a straight projection.
     """
     return {canonicalize_name(entry.name): entry.index for entry in routes}
+
+
+def _builds_remote_sdists(config: NabProjectConfig | None) -> bool:
+    """Whether ``config`` names ``build-remote`` anywhere.
+
+    Coarser than :meth:`~nab_provider.provider.Provider.effective_build_policy`,
+    which decides per version. Holding sdist archives is a whole-run decision,
+    so an upper bound on what could reach a build is enough.
+    """
+    if config is None:
+        return False
+    if config.build_policy is BuildPolicy.BUILD_REMOTE:
+        return True
+    overrides = (*config.package_overrides, *config.index_overrides.values())
+    return any(o.build_policy is BuildPolicy.BUILD_REMOTE for o in overrides)
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,6 +306,10 @@ class FetchCoordinator:
         # index client the same way; rebuilt on the fetcher loop so each run
         # starts at zero.
         self._parsed_cache_stats = ParsedCacheStats()
+        # Only a resolve that can build a remote sdist holds archives, so
+        # nothing else pays the memory.
+        self._holds_sdist_archives = _builds_remote_sdists(build_config)
+        self._sdist_archive_hold: SdistArchiveHold | None = None
         self._warm_sync_stats = WarmSyncStats()
         self._warm_sync_min_blob_bytes = _WARM_SYNC_MIN_BLOB_BYTES
         self._thread: threading.Thread | None = None
@@ -785,6 +807,7 @@ class FetchCoordinator:
             serialization=cfg.serialization,
             min_fresh_seconds=self._index_cache_floors.get(cfg.name),
             parsed_stats=self._parsed_cache_stats,
+            sdist_archive_hold=self._sdist_archive_hold,
         )
 
     async def _async_fetcher(self) -> None:
@@ -794,6 +817,13 @@ class FetchCoordinator:
         # Fresh per-run parsed-listing counters, injected the same way, so a
         # reused coordinator starts each run at zero.
         self._parsed_cache_stats = ParsedCacheStats()
+        # Held archives are capped at the fetcher's in-flight width; a build
+        # past that downloads its own archive.
+        self._sdist_archive_hold = (
+            SdistArchiveHold(self._max_concurrency)
+            if self._holds_sdist_archives
+            else None
+        )
 
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         sem = asyncio.Semaphore(self._max_concurrency)
@@ -842,6 +872,10 @@ class FetchCoordinator:
             # A file:// index client owns no transport, but a direct archive
             # fetch can still have opened one.  aclose is idempotent.
             await self._transport.aclose()
+
+            # Nothing can take from the hold once the loop is gone.
+            if self._sdist_archive_hold is not None:
+                self._sdist_archive_hold.clear()
 
     def _dispatch(
         self,
@@ -1125,10 +1159,24 @@ class FetchCoordinator:
         # pending event, and a released waiter reads the pyproject slot
         # with no further synchronisation.
         if pyproject is not None:
-            self.index.store_sdist_pyproject(
-                req.package, req.version, parse_pyproject_table(pyproject)
-            )
+            table = parse_pyproject_table(pyproject)
+            self.index.store_sdist_pyproject(req.package, req.version, table)
+            self._release_archive_if_deps_are_static(req.package, req.version, table)
         self.index.store_sdist_metadata(req.package, req.version, pkg_info)
+
+    def _release_archive_if_deps_are_static(
+        self, package: str, version: str, table: Mapping[str, Any]
+    ) -> None:
+        """Release a held archive when ``table`` already declares the deps.
+
+        The hold exists for a build, and the metadata ladder builds only when
+        the bundled ``[project]`` table cannot supply the dependencies, so a
+        table that can means no build will ask for this archive.
+        """
+        if self._sdist_archive_hold is None:
+            return
+        if static_project_from_table(table) is not None:
+            self._sdist_archive_hold.take(package, version)
 
     async def _fetch_sdist_archive(
         self,
