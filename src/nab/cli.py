@@ -589,11 +589,22 @@ def _collector_paused() -> Iterator[None]:
     Only the CLI sets a collector policy, since it owns its process; the
     library entry points leave it alone. Exit enables the collector rather
     than restoring the state it found.
+
+    Everything the resolve allocated is in generation 0 by then, so the
+    collections that follow the enable walk the whole resolve graph. Freezing
+    empties every generation into the permanent one and unfreezing returns the
+    permanent generation to generation 2, which takes the graph out of
+    generation 0 and leaves those collections less to walk. Unfreezing also
+    returns anything frozen before the resolve; the CLI owns its process.
+    PyPy has no ``gc.freeze``.
     """
     gc.disable()
     try:
         yield
     finally:
+        if hasattr(gc, "freeze"):
+            gc.freeze()
+            gc.unfreeze()
         gc.enable()
 
 
