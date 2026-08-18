@@ -5149,6 +5149,76 @@ class TestMain:
         assert gc.isenabled()
 
     @pytest.mark.usefixtures("restored_gc_state")
+    def test_resolve_promotes_what_it_allocated(self, tmp_path: Path) -> None:
+        """Objects the resolve allocated end in generation 2, not generation 0.
+
+        Reads generations directly, so it needs a build whose
+        ``gc.get_objects(generation=...)`` filters by generation; the
+        free-threaded builds return every tracked object for any of them.
+        """
+        pyproject = _make_pyproject(tmp_path)
+        config = read_pyproject_config(pyproject)
+        allocated: list[object] = []
+
+        def allocate_tracked(*args: object, **kwargs: object) -> ResolveResult:
+            """Stand in for the resolve, leaving one tracked object behind."""
+            allocated.append(["resolve", "graph"])
+            return _stub_resolve_result(pins={})
+
+        # Zeroed generation counters keep the collection the re-enable triggers
+        # at generation 1, so without the promotion the object cannot reach
+        # generation 2 on the session's own schedule.
+        gc.collect()
+
+        with patch("nab.cli.resolve_for_targets", side_effect=allocate_tracked):
+            _resolve(
+                pyproject,
+                config=config,
+                cache_dir=None,
+                offline=False,
+                transport=MagicMock(),
+                failure_prefix="cannot lock",
+            )
+
+        # gc.get_objects allocates, and a collection it triggers would move the
+        # object out of the generation the resolve left it in.
+        gc.disable()
+
+        graph = allocated[0]
+        assert not any(obj is graph for obj in gc.get_objects(generation=0))
+        assert any(obj is graph for obj in gc.get_objects(generation=2))
+
+    @pytest.mark.usefixtures("restored_gc_state")
+    def test_resolve_without_gc_freeze_still_reenables_the_collector(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The collector comes back on an interpreter without ``gc.freeze``.
+
+        The resolve fails here because the promotion sits in a ``finally``: an
+        ``AttributeError`` raised there would replace the ``ResolutionError``,
+        and the command would print a traceback instead of exiting 1.
+        """
+        monkeypatch.delattr(gc, "freeze")
+        pyproject = _make_pyproject(tmp_path)
+        config = read_pyproject_config(pyproject)
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                side_effect=ResolutionError("no solution"),
+            ),
+            pytest.raises(SystemExit),
+        ):
+            _resolve(
+                pyproject,
+                config=config,
+                cache_dir=None,
+                offline=False,
+                transport=MagicMock(),
+                failure_prefix="cannot lock",
+            )
+        assert gc.isenabled()
+
+    @pytest.mark.usefixtures("restored_gc_state")
     def test_resolve_reenables_the_collector_on_failure(self, tmp_path: Path) -> None:
         """A resolve that exits on an error still leaves the collector enabled."""
         pyproject = _make_pyproject(tmp_path)
