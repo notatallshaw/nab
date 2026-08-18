@@ -63,6 +63,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CachedAsyncSimpleClient",
     "ParsedCacheStats",
+    "SdistArchiveHold",
     "read_fresh_parsed_listing",
 ]
 
@@ -100,6 +101,7 @@ _MAX_AGE_RE = re.compile(r'max-age\s*=\s*"?(\d+)', re.IGNORECASE)
 _AGE_RE = re.compile(r"\A\s*(\d+)\s*\Z")
 _SECONDS_CEILING = 2**31
 _SECONDS_CEILING_DIGITS = len(str(_SECONDS_CEILING))
+_DEFAULT_HELD_ARCHIVES = 50
 
 
 def _parse_seconds(digits: str) -> int:
@@ -256,6 +258,43 @@ def read_fresh_parsed_listing(
     return _decode_parsed(blob, policy) or None
 
 
+class SdistArchiveHold:
+    """Archive bytes read for a PKG-INFO, kept for a build of the same version.
+
+    A version taken down the ``BUILD_REMOTE`` path reads its sdist twice, once
+    for the PKG-INFO the metadata ladder reads and again for the whole archive
+    the backend builds. Holding what the first read downloaded lets the second
+    take those bytes rather than the URL.
+
+    At most ``max_entries`` archives are held, the oldest evicted first, so a
+    resolve whose sdists are read but never built has a ceiling rather than a
+    growing hold. A build whose archive was evicted, or never held, downloads
+    it.
+
+    Touched only on the fetcher loop's single thread, so its state needs no
+    lock.
+    """
+
+    def __init__(self, max_entries: int = _DEFAULT_HELD_ARCHIVES) -> None:
+        """Create a hold with room for ``max_entries`` archives."""
+        self._held: dict[tuple[str, str], bytes] = {}
+        self._max_entries = max_entries
+
+    def put(self, package: str, version: str, data: bytes) -> None:
+        """Hold ``data`` as the archive of ``package==version``."""
+        self._held[(package, version)] = data
+        while len(self._held) > self._max_entries:
+            del self._held[next(iter(self._held))]
+
+    def take(self, package: str, version: str) -> bytes | None:
+        """Release and return the archive held for ``package==version``."""
+        return self._held.pop((package, version), None)
+
+    def clear(self) -> None:
+        """Drop every archive still held."""
+        self._held.clear()
+
+
 class CachedAsyncSimpleClient:
     """Async PyPI Simple API client with on-disk caching.
 
@@ -263,7 +302,7 @@ class CachedAsyncSimpleClient:
     :class:`FetchCoordinator` actually needs rather than the Simple API.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 - the index's settings plus the run's shared state
         self,
         transport: AsyncHttpTransport,
         cache: CacheBackend,
@@ -274,6 +313,7 @@ class CachedAsyncSimpleClient:
         serialization: SimpleSerialization = SimpleSerialization.NEGOTIATE,
         min_fresh_seconds: int | None = None,
         parsed_stats: ParsedCacheStats | None = None,
+        sdist_archive_hold: SdistArchiveHold | None = None,
     ) -> None:
         """Create a cached client wrapping ``transport``.
 
@@ -294,6 +334,10 @@ class CachedAsyncSimpleClient:
         same way so hit/miss/rebuild counts total across every index client. A
         private sink is created when none is passed, so a stand-alone client
         still counts its own outcomes.
+
+        ``sdist_archive_hold`` is the run's :class:`SdistArchiveHold`; ``None``
+        holds nothing, which is what a resolve that never builds a remote sdist
+        wants.
         """
         self._transport = transport
         self._cache = cache
@@ -309,6 +353,7 @@ class CachedAsyncSimpleClient:
             parsed_stats if parsed_stats is not None else ParsedCacheStats()
         )
         self._parsed_store_failed = False
+        self._sdist_archive_hold = sdist_archive_hold
 
     async def aclose(self) -> None:
         """Close the underlying transport."""
@@ -791,6 +836,10 @@ class CachedAsyncSimpleClient:
         downloaded archive is verified against it before extraction. A
         mismatch raises :class:`SdistHashMismatchError` and nothing is
         cached.
+
+        A downloaded archive is handed to the client's
+        :class:`SdistArchiveHold`, when it has one, for a build of the same
+        version to take.
         """
         cached = self._cache.get_sdist_files(package, version)
         if cached is not None:
@@ -807,6 +856,9 @@ class CachedAsyncSimpleClient:
             verify_sdist_hash(response.content, selected)
         pkg_info, pyproject_toml = _extract_sdist_files(response.content)
 
+        if self._sdist_archive_hold is not None:
+            self._sdist_archive_hold.put(package, version, response.content)
+
         if pkg_info is not None or pyproject_toml is not None:
             self._cache.put_sdist_files(package, version, pkg_info, pyproject_toml)
 
@@ -822,22 +874,33 @@ class CachedAsyncSimpleClient:
         """Return the raw bytes of an sdist archive.
 
         Used by the ``BUILD_REMOTE`` path when a real backend invocation
-        is required.  No on-disk caching is performed: archives are
-        large, builds are rare, and the in-memory index already
-        deduplicates within a single resolve.  Offline mode raises
-        :class:`OfflineError` because there is no slot to read from.
+        is required.  A :class:`SdistArchiveHold` answers when this version's
+        PKG-INFO read already downloaded the archive.  No on-disk caching is
+        performed: archives are large, builds are rare, and the in-memory
+        index already deduplicates within a single resolve.  Offline mode
+        raises :class:`OfflineError` because there is no slot to read from.
 
         When ``sdist_hashes`` carries an acceptable published digest, the
-        downloaded archive is verified before its bytes are returned. A
-        mismatch raises :class:`SdistHashMismatchError`.
+        archive is verified before its bytes are returned, whether it was
+        downloaded here or held. A mismatch raises
+        :class:`SdistHashMismatchError`.
         """
-        del package, version  # offline check below is the only use
-        if self._offline:
-            msg = f"sdist archive fetch unavailable in offline mode ({sdist_url})"
-            raise OfflineError(msg)
-        response = await self._transport.get(sdist_url, headers=IDENTITY_HEADERS)
-        raise_unless_ok(response, sdist_url)
+        content = self._held_archive(package, version)
+        if content is None:
+            if self._offline:
+                msg = f"sdist archive fetch unavailable in offline mode ({sdist_url})"
+                raise OfflineError(msg)
+            response = await self._transport.get(sdist_url, headers=IDENTITY_HEADERS)
+            raise_unless_ok(response, sdist_url)
+            content = response.content
+
         selected = select_artifact_hash(sdist_hashes)
         if selected is not None:
-            verify_sdist_hash(response.content, selected)
-        return response.content
+            verify_sdist_hash(content, selected)
+        return content
+
+    def _held_archive(self, package: str, version: str) -> bytes | None:
+        """Take this version's archive out of the hold, when there is one."""
+        if self._sdist_archive_hold is None:
+            return None
+        return self._sdist_archive_hold.take(package, version)

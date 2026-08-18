@@ -29,6 +29,7 @@ from nab_index._pep503 import json_listing
 from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
+    SdistArchiveHold,
     _freshness_lifetime,
     _header,
     _max_age_directive,
@@ -3413,6 +3414,26 @@ class TestGetSdistFiles:
         assert "Name: pkg" in pkg_info
 
 
+class TestSdistArchiveHold:
+    def test_the_oldest_archive_goes_when_the_hold_is_full(self) -> None:
+        """A full hold evicts the oldest rather than growing."""
+        hold = SdistArchiveHold(2)
+        hold.put("pkg", "1.0", b"one")
+        hold.put("pkg", "2.0", b"two")
+        hold.put("pkg", "3.0", b"three")
+
+        assert hold.take("pkg", "1.0") is None
+        assert hold.take("pkg", "2.0") == b"two"
+        assert hold.take("pkg", "3.0") == b"three"
+
+    def test_clear_drops_every_archive(self) -> None:
+        hold = SdistArchiveHold()
+        hold.put("pkg", "1.0", b"one")
+        hold.clear()
+
+        assert hold.take("pkg", "1.0") is None
+
+
 class TestGetSdistArchive:
     def test_matching_hash_returns_bytes(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -3481,6 +3502,77 @@ class TestGetSdistArchive:
 
         with pytest.raises(OfflineError):
             asyncio.run(go())
+
+    def test_a_held_archive_answers_without_a_second_request(
+        self, tmp_path: Path
+    ) -> None:
+        """The PKG-INFO read's own download serves the build that follows."""
+        cache = _make_cache(tmp_path)
+        body = _build_tarball([("pkg-1.0/PKG-INFO", b"Name: pkg\n")])
+        transport = _FakeTransport([_FakeResponse(body)])
+        hold = SdistArchiveHold()
+
+        async def go() -> bytes:
+            client = CachedAsyncSimpleClient(transport, cache, sdist_archive_hold=hold)
+            try:
+                await client.get_sdist_files("pkg", "1.0", "https://x/pkg.tar.gz")
+                return await client.get_sdist_archive(
+                    "pkg", "1.0", "https://x/pkg.tar.gz"
+                )
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == body
+        assert len(transport.calls) == 1
+
+    def test_a_held_archive_is_verified_against_the_published_hash(
+        self, tmp_path: Path
+    ) -> None:
+        """Held bytes go through the same digest check a downloaded body does."""
+        cache = _make_cache(tmp_path)
+        published = _build_tarball([("pkg-1.0/PKG-INFO", b"Name: pkg\n")])
+        tampered = _build_tarball([("pkg-1.0/PKG-INFO", b"Name: evil\n")])
+        transport = _FakeTransport([])
+        hold = SdistArchiveHold()
+        hold.put("pkg", "1.0", tampered)
+
+        async def go() -> bytes:
+            client = CachedAsyncSimpleClient(transport, cache, sdist_archive_hold=hold)
+            try:
+                return await client.get_sdist_archive(
+                    "pkg",
+                    "1.0",
+                    "https://x/pkg.tar.gz",
+                    (("sha256", hashlib.sha256(published).hexdigest()),),
+                )
+            finally:
+                await client.aclose()
+
+        with pytest.raises(SdistHashMismatchError):
+            asyncio.run(go())
+        assert transport.calls == []
+
+    def test_a_hold_holding_another_version_is_not_consulted(
+        self, tmp_path: Path
+    ) -> None:
+        """The hold is keyed by version, so a sibling's archive is not served."""
+        cache = _make_cache(tmp_path)
+        body = _build_tarball([("pkg-2.0/PKG-INFO", b"Name: pkg\n")])
+        transport = _FakeTransport([_FakeResponse(body)])
+        hold = SdistArchiveHold()
+        hold.put("pkg", "1.0", b"the other version")
+
+        async def go() -> bytes:
+            client = CachedAsyncSimpleClient(transport, cache, sdist_archive_hold=hold)
+            try:
+                return await client.get_sdist_archive(
+                    "pkg", "2.0", "https://x/pkg-2.0.tar.gz"
+                )
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == body
+        assert hold.take("pkg", "1.0") == b"the other version"
 
 
 class TestContextManager:

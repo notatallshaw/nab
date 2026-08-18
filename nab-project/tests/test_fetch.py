@@ -22,7 +22,7 @@ import pytest
 import respx
 
 from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
-from nab_index.cached_client import CachedAsyncSimpleClient
+from nab_index.cached_client import CachedAsyncSimpleClient, SdistArchiveHold
 from nab_index.client import (
     MalformedSimpleResponseError,
     MetadataHashMismatchError,
@@ -45,11 +45,15 @@ from nab_project.fetch import (
     IndexRoute,
     InMemoryIndex,
     WarmSyncStats,
+    _builds_remote_sdists,
     _resolve_routes,
 )
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import WheelMetadata
+from nab_provider.overrides import IndexOverride
+from nab_provider.policy import BuildPolicy
 from nab_provider.serialization import SimpleSerialization
+from nab_provider.testing import pkg_override
 
 
 @pytest.fixture
@@ -3803,3 +3807,175 @@ class TestWarmSyncTailOffload:
             "listing prefetch tail failed" in record.getMessage()
             for record in caplog.records
         )
+
+
+class _SdistFilesClient:
+    """A client whose PKG-INFO read returns a fixed pair of files."""
+
+    def __init__(self, pyproject: str | None) -> None:
+        self._pyproject = pyproject
+
+    async def get_sdist_files(
+        self,
+        package: str,
+        version: str,
+        sdist_url: str,
+        sdist_hashes: tuple[tuple[str, str], ...] = (),
+    ) -> tuple[str | None, str | None]:
+        return ("Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n", self._pyproject)
+
+
+class TestSdistArchiveHolding:
+    """Which resolves hold an sdist archive after reading its PKG-INFO."""
+
+    @pytest.mark.parametrize(
+        ("config", "holds"),
+        [
+            (None, False),
+            (NabProjectConfig(), False),
+            (NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE), True),
+            (
+                NabProjectConfig(
+                    package_overrides=(
+                        pkg_override("foo", build_policy=BuildPolicy.BUILD_REMOTE),
+                    )
+                ),
+                True,
+            ),
+            (
+                NabProjectConfig(
+                    index_overrides={
+                        "pypi": IndexOverride(build_policy=BuildPolicy.BUILD_REMOTE)
+                    }
+                ),
+                True,
+            ),
+            (
+                NabProjectConfig(
+                    package_overrides=(
+                        pkg_override("foo", build_policy=BuildPolicy.NEVER),
+                    )
+                ),
+                False,
+            ),
+        ],
+    )
+    def test_build_remote_anywhere_in_the_config_holds(
+        self, config: NabProjectConfig | None, holds: bool
+    ) -> None:
+        assert _builds_remote_sdists(config) is holds
+
+    def _fetched_with_pyproject(
+        self, pyproject: str | None, config: NabProjectConfig | None
+    ) -> tuple[FetchCoordinator, SdistArchiveHold]:
+        """Fetch one version's sdist files with its archive already held.
+
+        The hold is attached to the coordinator only when ``config`` would give
+        it one, so it comes back untouched for a resolve that holds nothing.
+        Returns the coordinator and the hold.
+        """
+        coord = _coord(build_config=config)
+        hold = SdistArchiveHold()
+        hold.put("pkg", "1.0", b"archive bytes")
+        coord._sdist_archive_hold = hold if coord._holds_sdist_archives else None
+
+        asyncio.run(
+            coord._fetch_sdist(
+                client=_SdistFilesClient(pyproject),  # type: ignore[arg-type]
+                req=FetchRequest(
+                    kind=FetchKind.SDIST,
+                    package="pkg",
+                    version="1.0",
+                    url="https://f.example/pkg-1.0.tar.gz",
+                ),
+            )
+        )
+        return coord, hold
+
+    def test_a_static_pyproject_releases_the_archive(self) -> None:
+        """A pyproject that declares the deps means the version never builds."""
+        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+        coord, hold = self._fetched_with_pyproject(
+            '[project]\nname = "pkg"\ndependencies = []\n', config
+        )
+
+        assert hold.take("pkg", "1.0") is None
+        assert coord.index.get_sdist_pyproject("pkg", "1.0") is not None
+
+    def test_a_dynamic_pyproject_keeps_the_archive(self) -> None:
+        """A table that defers its deps leaves the build's bytes in place."""
+        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+        _, hold = self._fetched_with_pyproject(
+            '[project]\nname = "pkg"\ndynamic = ["dependencies"]\n', config
+        )
+
+        assert hold.take("pkg", "1.0") == b"archive bytes"
+
+    def test_an_sdist_without_a_pyproject_keeps_the_archive(self) -> None:
+        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+        _, hold = self._fetched_with_pyproject(None, config)
+
+        assert hold.take("pkg", "1.0") == b"archive bytes"
+
+    def test_a_resolve_that_holds_nothing_still_stores_the_pyproject(self) -> None:
+        """The release is skipped when there is no hold to release from."""
+        coord, hold = self._fetched_with_pyproject(
+            '[project]\nname = "pkg"\ndependencies = []\n', None
+        )
+
+        assert coord._sdist_archive_hold is None
+        assert hold.take("pkg", "1.0") == b"archive bytes"
+        assert coord.index.get_sdist_pyproject("pkg", "1.0") is not None
+
+    def _sdist_bytes(self) -> bytes:
+        """A gzipped sdist carrying a PKG-INFO and no pyproject.toml."""
+        body = b"Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            info = tarfile.TarInfo(name="pkg-1.0/PKG-INFO")
+            info.size = len(body)
+            tar.addfile(info, io.BytesIO(body))
+        return buf.getvalue()
+
+    @respx.mock
+    def test_a_build_remote_run_reads_the_archive_once(self) -> None:
+        """The build's archive is the PKG-INFO read's own download."""
+        archive = self._sdist_bytes()
+        url = "https://files.example.com/pkg-1.0.tar.gz"
+        route = respx.get(url).mock(return_value=httpx.Response(200, content=archive))
+        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+
+        with _coord(build_config=config) as coord:
+            coord.request_sdist("pkg", "1.0", url).wait(timeout=5)
+            coord.request_sdist_archive("pkg", "1.0", url).wait(timeout=5)
+
+            assert coord.index.get_sdist_archive("pkg", "1.0") == archive
+            assert route.call_count == 1
+
+    @respx.mock
+    def test_a_run_that_cannot_build_reads_the_archive_twice(self) -> None:
+        """A config without build-remote holds nothing, so the build downloads."""
+        archive = self._sdist_bytes()
+        url = "https://files.example.com/pkg-1.0.tar.gz"
+        route = respx.get(url).mock(return_value=httpx.Response(200, content=archive))
+
+        with _coord() as coord:
+            coord.request_sdist("pkg", "1.0", url).wait(timeout=5)
+            coord.request_sdist_archive("pkg", "1.0", url).wait(timeout=5)
+
+            assert coord.index.get_sdist_archive("pkg", "1.0") == archive
+            assert route.call_count == 2
+
+    def test_the_fetcher_loop_drops_what_it_still_holds(self) -> None:
+        """Nothing takes from the hold once the loop is gone."""
+        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+        coord = _coord(build_config=config)
+        coord.start()
+
+        hold = coord._sdist_archive_hold
+        assert hold is not None
+        hold.put("pkg", "1.0", b"archive bytes")
+
+        coord.shutdown()
+
+        assert hold.take("pkg", "1.0") is None
