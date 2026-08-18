@@ -56,7 +56,9 @@ answered from cache, offline included.
 Turning a listing body into records means a JSON decode plus wheel and
 sdist filename parsing, which a warm resolve would otherwise repeat on
 every run. The `simple-parsed-v0/` bucket stores those records so a warm
-hit rehydrates them and never reads the large raw body.
+hit rehydrates them and never reads the large raw body. A stale entry is
+served the same way once the index answers `304 Not Modified`, since that
+confirms the body the blob is bound to.
 
 Each parsed blob is bound to the exact body it came from by a `body_digest`
 that the `.policy` also carries. On a hit the two digests are compared;

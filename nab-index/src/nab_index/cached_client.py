@@ -77,11 +77,15 @@ class ParsedCacheStats:
     after it, so a benchmark can confirm a warm resolve serves parsed blobs
     rather than reparsing.
 
-    Each fresh-or-offline consult of ``get_files`` bumps exactly one counter:
-    ``hit`` when a present blob binds the policy's body and is served without
-    reading the raw body; ``miss`` when no blob was present; ``rebuild`` when a
-    blob was present but was not served (a stale digest, a different build,
-    corruption, or no records in it) and was rebuilt from the raw body.
+    Every consult of ``get_files`` that reaches the blob bumps exactly one
+    counter, on a cached read and on a revalidation alike: ``hit`` when a
+    present blob binds the policy's body and is served without reading the raw
+    body; ``miss`` when no blob was present; ``rebuild`` when a blob was
+    present but was not served (a stale digest, a different build, corruption,
+    or no records in it).
+
+    ``rebuild`` says the blob did not answer, not that one was written: on a
+    304 the fallback reparses the raw body and leaves the blob in place.
     """
 
     hit: int = 0
@@ -326,8 +330,9 @@ class CachedAsyncSimpleClient:
         the large raw body; on a blob miss, build/digest mismatch, corruption,
         or a blob holding no records the raw body is reparsed and the blob
         rebuilt (a WARNING self-heal on genuine corruption).
-        Cache hit + stale + online: conditional revalidation; on 304 the body
-        (and its parsed blob) are reused, on 200 both are replaced.
+        Cache hit + stale + online: conditional revalidation without reading
+        the body; on 304 the parsed blob answers and the body is read only
+        when the blob misses, on 200 body and blob are replaced.
         Cache miss + offline: raises :class:`OfflineError`.
         Cache miss + online: fetches, caches, returns.
 
@@ -354,19 +359,18 @@ class CachedAsyncSimpleClient:
                 or self._offline
                 or self._floor_keeps_fresh(policy, package, "listing")
             )
-            if serve_cached:
-                hit = self._parsed_hit(package, policy)
-                if hit is not None:
-                    return hit
-            # A parsed miss (serving cached) or a stale-online revalidation both
-            # need the raw body now, so read it once here.
+            if not serve_cached:
+                return await self._revalidate_simple(package, policy)
+
+            hit = self._parsed_hit(package, policy)
+            if hit is not None:
+                return hit
+
             cached = self._cache.get_simple(package)
             if cached is not None:
                 body, policy = cached
                 data = self._decode_cached_listing(body, package)
                 if data is not None:
-                    if not serve_cached:
-                        return await self._revalidate_simple(package, data, policy)
                     files = self._parse_body(data, package, page_url=policy.page_url)
                     self._rebuild_parsed(package, body, policy, files)
                     return files
@@ -416,10 +420,10 @@ class CachedAsyncSimpleClient:
 
         Returns the records only when a present blob decodes to at least one
         record and its header binds ``policy``'s body. An absent blob, a
-        build/digest mismatch, or a corrupt blob all return ``None`` so the
-        caller reparses the raw body; genuine corruption (garbage/truncated
-        bytes) is logged at WARNING as a self-heal, while a build/digest
-        mismatch is a silent rebuild.
+        build/digest mismatch, or a corrupt blob all return ``None``, leaving
+        the caller to answer from the raw body or the index; genuine corruption
+        (garbage/truncated bytes) is logged at WARNING, while a build/digest
+        mismatch is silent.
 
         A blob that rehydrates to no records also declines. An empty listing
         carries a second fact the blob does not hold: whether the page offered
@@ -445,8 +449,7 @@ class CachedAsyncSimpleClient:
         reason = _parsed_corruption(blob)
         if reason is not None:
             logger.warning(
-                "Corrupt parsed-listing cache blob for %r from %s: %s; "
-                "rebuilding from the raw body",
+                "Corrupt parsed-listing cache blob for %r from %s: %s; ignoring it",
                 package,
                 self._index_url,
                 reason,
@@ -571,14 +574,36 @@ class CachedAsyncSimpleClient:
         """Whether a listing for ``package`` held only files nab cannot read."""
         return package in self._unreadable_only
 
+    def _unmodified_records(
+        self, package: str, policy: CachePolicy
+    ) -> list[WheelFile | SdistFile] | None:
+        """Return the records a 304 confirms, or ``None`` when nothing holds them.
+
+        The blob answers a 304 the same way it answers a fresh read, so the raw
+        body is read only on a blob miss, and a body that is gone or will not
+        decode leaves nothing to serve.
+        """
+        hit = self._parsed_hit(package, policy)
+        if hit is not None:
+            return hit
+
+        cached = self._cache.get_simple(package)
+        if cached is None:
+            return None
+        body, _ = cached
+        data = self._decode_cached_listing(body, package)
+        if data is None:
+            return None
+        return self._parse_body(data, package, page_url=policy.page_url)
+
     async def _revalidate_simple(
-        self, package: str, data: object, policy: CachePolicy
+        self, package: str, policy: CachePolicy
     ) -> list[WheelFile | SdistFile]:
         """Revalidate a stale cached listing and return the records to serve.
 
-        ``data`` is the decoded cached body. Only a 304 serves it, parsing it
-        against the response's URL; a 200 serves the replacement body and a
-        404 serves nothing.
+        A 304 is answered from the parsed blob, falling back to the cached body
+        and then to a full fetch; a 200 serves the replacement body and a 404
+        serves nothing.
         """
         url = f"{self._index_url}{package}/"
         headers = {"Accept": simple_accept_header(self._serialization)}
@@ -587,10 +612,6 @@ class CachedAsyncSimpleClient:
             headers["If-None-Match"] = policy.etag
         response = await self._transport.get(url, headers=headers)
         if response.status_code == _HTTP_NOT_MODIFIED:
-            # Parse before refreshing the policy, so a body that will not parse
-            # keeps its stale window.
-            files = self._parse_body(data, package, page_url=response.url)
-
             # A 304 stating no freshness of its own keeps the stored max-age.
             new_policy = CachePolicy(
                 fetched_at=_freshness_start(response),
@@ -603,8 +624,16 @@ class CachedAsyncSimpleClient:
                 page_url=response.url,
                 body_digest=_carried_digest(policy, response.url),
             )
+
+            # Find the records before refreshing the policy, so a body that
+            # will not parse keeps its stale window.
+            unmodified = self._unmodified_records(package, new_policy)
+            if unmodified is None:
+                # The 304 confirmed a body the cache can no longer read.
+                return await self._fetch_simple(package)
+
             self._cache.refresh_simple_policy(package, new_policy)
-            return files
+            return unmodified
 
         if response.status_code == _HTTP_NOT_FOUND:
             self._cache.put_negative(package, self._negative_policy(response))
