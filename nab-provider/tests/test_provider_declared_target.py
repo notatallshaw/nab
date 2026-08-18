@@ -1353,6 +1353,7 @@ class TestSiblingWheelDependencies:
         submitted = linux._prefetch_batch("pkg", [Version("1.0")], linux_wheels)
         windows._prefetch_batch("pkg", [Version("1.0")], win_wheels)
         linux._await_metadata_batch("pkg", submitted)
+        listing_mod.parse_prefetched_metadata(linux, ("pkg", Version("1.0")))
 
         assert set(linux.deps_cache[("pkg", Version("1.0"))]) == {"linuxdep"}
 
@@ -1446,6 +1447,7 @@ class TestTwoInstallableSiblingWheels:
 
         submitted = provider._prefetch_batch("pkg", [Version("1.0")], mapping)
         provider._await_metadata_batch("pkg", submitted)
+        listing_mod.parse_prefetched_metadata(provider, ("pkg", Version("1.0")))
 
         assert set(provider.deps_cache[("pkg", Version("1.0"))]) == {"linuxdep"}
 

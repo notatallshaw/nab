@@ -815,50 +815,68 @@ def await_metadata_batch(
     package: str,
     submitted: list[tuple[Version, str, str, Waitable]],
 ) -> None:
-    """Wait for all submitted metadata to arrive, then parse into cache."""
+    """Wait for all submitted metadata to arrive and queue it for decoding.
+
+    A batch is scanned only until look-ahead accepts a candidate, so the rest
+    of it is often never read.  :func:`parse_prefetched_metadata` decodes an
+    entry when a caller asks for that candidate's dependencies.
+
+    The integrity check stays at await time: it also reads the version-level
+    error slot, which a later sdist failure can write, so a deferred check
+    would see a failure this sidecar fetch never had.
+    """
+    index = provider.coordinator.index
+    pending = provider.pending_metadata_parses
     for version, ver_str, metadata_url, event in submitted:
         cache_key = (package, version)
         if cache_key in provider.deps_cache:
             continue
         event.wait()
-        integrity_error = provider.coordinator.index.get_metadata_error(
-            package, ver_str, metadata_url
-        )
-        if integrity_error is not None:
-            # Leave the version un-cached instead of aborting the batch.
-            # The error stays recorded, so get_dependencies re-raises it
-            # only if the scan actually selects this version.
+        if index.get_metadata_error(package, ver_str, metadata_url) is not None:
             continue
-        text, from_sdist = provider.coordinator.index.get_metadata_with_origin(
-            package, ver_str, metadata_url
-        )
-        if text is None:
-            # No PEP 658 text arrived: leave the version un-cached so
-            # look-ahead's get_dependencies runs the sdist fallback (or
-            # refuses it) rather than pinning it as dependency-free.
-            continue
-        if from_sdist:
-            # The sidecar served nothing and the read fell back to sdist
-            # PKG-INFO; caching it here would skip the PEP 643 gate that
-            # get_dependencies applies on the from_sdist path.
-            continue
-        try:
-            provider.parse_and_cache_metadata(cache_key, text)
-        except (
-            ValueError,
-            InvalidVersion,
-            InvalidSpecifier,
-            ForeignMetadataError,
-            IncompatiblePythonError,
-            UnsupportedVcsError,
-            NotImplementedError,
-        ):
-            # Malformed metadata, metadata declaring another release, a
-            # Python-incompatible Requires-Python, or a refused base
-            # direct-URL/VCS dep: leave the version un-cached so
-            # get_dependencies re-raises at selection time instead of aborting
-            # the speculative prefetch of a candidate the scan may never pick.
-            continue
+        pending[cache_key] = (ver_str, metadata_url)
+
+
+def parse_prefetched_metadata(
+    provider: Provider, cache_key: tuple[str, Version]
+) -> None:
+    """Decode this version's queued prefetch into ``deps_cache``, if it has one.
+
+    Every rejection below returns without caching, leaving ``get_dependencies``
+    to read the metadata itself and decide what the failure means.
+    """
+    queued = provider.pending_metadata_parses.pop(cache_key, None)
+    if queued is None:
+        return
+
+    package, _version = cache_key
+    ver_str, metadata_url = queued
+    text, from_sdist = provider.coordinator.index.get_metadata_with_origin(
+        package, ver_str, metadata_url
+    )
+    if text is None:
+        # No PEP 658 text arrived, and caching nothing would pin the version
+        # as dependency-free.
+        return
+    if from_sdist:
+        # sdist PKG-INFO: caching it here would skip the PEP 643 gate.
+        return
+
+    try:
+        provider.parse_and_cache_metadata(cache_key, text)
+    except (
+        ValueError,
+        InvalidVersion,
+        InvalidSpecifier,
+        ForeignMetadataError,
+        IncompatiblePythonError,
+        UnsupportedVcsError,
+        NotImplementedError,
+    ):
+        # Malformed metadata, metadata declaring another release, a
+        # Python-incompatible Requires-Python, or a refused base
+        # direct-URL/VCS dep.
+        return
 
 
 def prefetch_new_deps(provider: Provider, deps: Mapping[str, VersionRange]) -> None:
