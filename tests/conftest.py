@@ -6,6 +6,7 @@ suites (which need not have ``nab`` installed) do not import it.
 
 from __future__ import annotations
 
+import gc
 import os
 import stat
 from contextlib import contextmanager
@@ -45,6 +46,23 @@ def _reset_nab_output(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
     cli._printer = None
     reset_log_handlers()
+
+
+@pytest.fixture
+def restored_gc_state() -> Iterator[None]:
+    """Put the cyclic collector back the way the test found it.
+
+    A test that lets the CLI switch the collector off leaks that state into
+    the rest of the session when the CLI's own restore is what broke.
+    """
+    enabled = gc.isenabled()
+    try:
+        yield
+    finally:
+        if enabled:
+            gc.enable()
+        else:
+            gc.disable()
 
 
 @pytest.fixture

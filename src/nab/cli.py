@@ -13,8 +13,10 @@ them so their ``@app.command`` decorators run before :func:`main` calls
 
 from __future__ import annotations
 
+import gc
 import os
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -85,7 +87,7 @@ from .output import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
 
     from nab_index.transport import AsyncHttpTransport
     from nab_project.resolve import ResolveResult
@@ -576,6 +578,21 @@ def _python_override_or_exit(
         sys.exit(1)
 
 
+@contextmanager
+def _collector_paused() -> Iterator[None]:
+    """Disable the cyclic collector for the duration of the resolve.
+
+    Only the CLI sets a collector policy, since it owns its process; the
+    library entry points leave it alone. Exit enables the collector rather
+    than restoring the state it found.
+    """
+    gc.disable()
+    try:
+        yield
+    finally:
+        gc.enable()
+
+
 def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targets kwarg / exit-mapped error
     path: Path,
     *,
@@ -604,18 +621,19 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     config = _python_override_or_exit(config, python)
     try:
         try:
-            result = resolve_for_targets(
-                path,
-                transport,
-                config=config,
-                cache_dir=cache_dir,
-                offline=offline,
-                groups=groups,
-                extras=extras,
-                build_requirements=build_requirements,
-                resolution_strategy=resolution_strategy,
-                progress=progress,
-            )
+            with _collector_paused():
+                result = resolve_for_targets(
+                    path,
+                    transport,
+                    config=config,
+                    cache_dir=cache_dir,
+                    offline=offline,
+                    groups=groups,
+                    extras=extras,
+                    build_requirements=build_requirements,
+                    resolution_strategy=resolution_strategy,
+                    progress=progress,
+                )
         finally:
             if progress is not None:
                 progress.clear()

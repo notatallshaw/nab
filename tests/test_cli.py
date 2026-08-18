@@ -6,6 +6,7 @@ import asyncio
 import builtins
 import contextlib
 import errno
+import gc
 import hashlib
 import importlib
 import inspect
@@ -5121,6 +5122,51 @@ class TestMain:
                 failure_prefix="cannot lock",
             )
         assert result.success
+
+    @pytest.mark.usefixtures("restored_gc_state")
+    def test_resolve_pauses_the_collector(self, tmp_path: Path) -> None:
+        """The cyclic collector is off while the resolver runs, back on after."""
+        pyproject = _make_pyproject(tmp_path)
+        config = read_pyproject_config(pyproject)
+        enabled_during: list[bool] = []
+
+        def record_gc_state(*args: object, **kwargs: object) -> ResolveResult:
+            enabled_during.append(gc.isenabled())
+            return _stub_resolve_result(pins={})
+
+        with patch("nab.cli.resolve_for_targets", side_effect=record_gc_state):
+            _resolve(
+                pyproject,
+                config=config,
+                cache_dir=None,
+                offline=False,
+                transport=MagicMock(),
+                failure_prefix="cannot lock",
+            )
+        assert enabled_during == [False]
+        assert gc.isenabled()
+
+    @pytest.mark.usefixtures("restored_gc_state")
+    def test_resolve_reenables_the_collector_on_failure(self, tmp_path: Path) -> None:
+        """A resolve that exits on an error still leaves the collector enabled."""
+        pyproject = _make_pyproject(tmp_path)
+        config = read_pyproject_config(pyproject)
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                side_effect=ResolutionError("no solution"),
+            ),
+            pytest.raises(SystemExit),
+        ):
+            _resolve(
+                pyproject,
+                config=config,
+                cache_dir=None,
+                offline=False,
+                transport=MagicMock(),
+                failure_prefix="cannot lock",
+            )
+        assert gc.isenabled()
 
 
 class _TtyStderr(io.StringIO):
