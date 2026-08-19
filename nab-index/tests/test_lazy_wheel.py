@@ -1188,7 +1188,7 @@ def test_reject_416_does_not_latch_netloc() -> None:
 def test_reject_statuses_disjoint_from_transport_retries() -> None:
     """A refused range must come back on the first answer, never retried."""
     from nab_index.lazy_wheel import _RANGE_REJECT_STATUSES
-    from nab_index.retry import RETRY_STATUSES
+    from nab_index.retry_limits import RETRY_STATUSES
 
     assert _RANGE_REJECT_STATUSES.isdisjoint(RETRY_STATUSES)
 

@@ -16,6 +16,7 @@ import logging
 import re
 import runpy
 import stat
+import subprocess
 import sys
 import tarfile
 import zipfile
@@ -5579,6 +5580,27 @@ class TestMakeTransport:
         assert "nab[httpx]" in err
         assert "HTTP/2" in err
         assert "httpx is not installed" not in err
+
+
+_HTTP_LIBRARY_PROBE = """
+import sys
+
+import nab.cli
+
+roots = {name.partition(".")[0] for name in sys.modules}
+leaked = sorted(roots & {"truststore", "urllib3"})
+assert not leaked, f"importing nab.cli loaded {leaked}"
+"""
+
+
+class TestCliImportPath:
+    """What importing :mod:`nab.cli` is allowed to pull in."""
+
+    def test_urllib3_and_truststore_stay_unimported(self) -> None:
+        """Neither library belongs on the path of a command that never fetches."""
+        subprocess.run(  # noqa: S603 - the probe is this file's own source
+            [sys.executable, "-c", _HTTP_LIBRARY_PROBE], check=True
+        )
 
 
 class TestDownloadCommand:

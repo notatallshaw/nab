@@ -27,7 +27,6 @@ import tyro
 from tyro.extras import SubcommandApp
 
 from nab._version import __version__
-from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project.config import (
     ConfigError,
     NabProjectConfig,
@@ -157,8 +156,12 @@ def printer() -> Printer:
 
 
 def _make_transport(backend: HttpBackend) -> AsyncHttpTransport:
-    # httpx is an optional extra; import lazily so a urllib3-only
-    # install doesn't need it.
+    """Return the transport for ``backend``.
+
+    Importing either transport module loads its HTTP library and truststore,
+    so both imports stay local: the CLI itself needs neither, and httpx is an
+    optional extra a urllib3-only install will not have.
+    """
     if backend == "httpx":
         try:
             from nab_index.httpx_async_transport import (  # noqa: PLC0415
@@ -177,6 +180,10 @@ def _make_transport(backend: HttpBackend) -> AsyncHttpTransport:
                 "run `pip install nab[httpx]`"
             )
             sys.exit(1)
+
+    from nab_index.urllib3_async_transport import (  # noqa: PLC0415
+        Urllib3AsyncTransport,
+    )
 
     return Urllib3AsyncTransport()
 

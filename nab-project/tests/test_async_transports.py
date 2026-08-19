@@ -37,13 +37,8 @@ from nab_index.client import (
     _extract_sdist_files,
 )
 from nab_index.httpx_async_transport import HttpxAsyncTransport, _HttpxResponse
-from nab_index.retry import (
-    GET_RETRY,
-    MAX_REDIRECTS,
-    MAX_RETRIES,
-    RETRY_STATUSES,
-    next_delay,
-)
+from nab_index.retry import GET_RETRY, next_delay
+from nab_index.retry_limits import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES
 from nab_index.transport import (
     DEFAULT_HEADERS,
     IDENTITY_HEADERS,
