@@ -16,6 +16,7 @@ from .digest import is_hex_digest
 from .serialization import SimpleSerialization
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 __all__ = [
@@ -223,7 +224,18 @@ def defer_sidecar_hash(wheel: WheelFile, table: object) -> None:
     object.__setattr__(wheel, "_raw_metadata", _compact_table(table))
 
 
-@dataclass(frozen=True, slots=True)
+def _slot_writer(cls: type, name: str) -> Callable[[object, object], None]:
+    """Return the setter for one of ``cls``'s slots.
+
+    A frozen dataclass refuses ``self.field = value``, so its generated
+    ``__init__`` writes every field through ``object.__setattr__``. A record
+    fills its slots through these instead, leaving ``__setattr__`` frozen for
+    callers.
+    """
+    return cls.__dict__[name].__set__
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class WheelFile(_WheelIntegrity):
     """Wheel file record returned by the Simple-API client.
 
@@ -255,6 +267,31 @@ class WheelFile(_WheelIntegrity):
     local_path: Path | None = None
     metadata_hash: tuple[str, str] | None = None
 
+    def __init__(  # noqa: PLR0913, PLR0917 - the dataclass's own fields, in its own order
+        self,
+        filename: str,
+        url: str,
+        version: str,
+        requires_python: str | None,
+        has_metadata: bool,  # noqa: FBT001 - a field, not a flag
+        upload_time: str | None,
+        hashes: tuple[tuple[str, str], ...] = (),
+        size: int | None = None,
+        local_path: Path | None = None,
+        metadata_hash: tuple[str, str] | None = None,
+    ) -> None:
+        """Write each field's slot directly, not through the frozen ``__setattr__``."""
+        _set_wheel_filename(self, filename)
+        _set_wheel_url(self, url)
+        _set_wheel_version(self, version)
+        _set_wheel_requires_python(self, requires_python)
+        _set_wheel_has_metadata(self, has_metadata)
+        _set_wheel_upload_time(self, upload_time)
+        _set_wheel_hashes(self, hashes)
+        _set_wheel_size(self, size)
+        _set_wheel_local_path(self, local_path)
+        _set_wheel_metadata_hash(self, metadata_hash)
+
     @property
     def metadata_url(self) -> str | None:
         """Return the PEP 658/714 metadata URL, or None when unsupported.
@@ -273,7 +310,19 @@ class WheelFile(_WheelIntegrity):
             return url
 
 
-@dataclass(frozen=True, slots=True)
+_set_wheel_filename = _slot_writer(WheelFile, "filename")
+_set_wheel_url = _slot_writer(WheelFile, "url")
+_set_wheel_version = _slot_writer(WheelFile, "version")
+_set_wheel_requires_python = _slot_writer(WheelFile, "requires_python")
+_set_wheel_has_metadata = _slot_writer(WheelFile, "has_metadata")
+_set_wheel_upload_time = _slot_writer(WheelFile, "upload_time")
+_set_wheel_hashes = _slot_writer(WheelFile, "hashes")
+_set_wheel_size = _slot_writer(WheelFile, "size")
+_set_wheel_local_path = _slot_writer(WheelFile, "local_path")
+_set_wheel_metadata_hash = _slot_writer(WheelFile, "metadata_hash")
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class SdistFile(_SdistIntegrity):
     """A source distribution from the Simple API.
 
@@ -289,6 +338,37 @@ class SdistFile(_SdistIntegrity):
     hashes: tuple[tuple[str, str], ...] = ()
     size: int | None = None
     local_path: Path | None = None
+
+    def __init__(
+        self,
+        filename: str,
+        url: str,
+        version: str,
+        requires_python: str | None,
+        upload_time: str | None,
+        hashes: tuple[tuple[str, str], ...] = (),
+        size: int | None = None,
+        local_path: Path | None = None,
+    ) -> None:
+        """Write each field's slot directly, not through the frozen ``__setattr__``."""
+        _set_sdist_filename(self, filename)
+        _set_sdist_url(self, url)
+        _set_sdist_version(self, version)
+        _set_sdist_requires_python(self, requires_python)
+        _set_sdist_upload_time(self, upload_time)
+        _set_sdist_hashes(self, hashes)
+        _set_sdist_size(self, size)
+        _set_sdist_local_path(self, local_path)
+
+
+_set_sdist_filename = _slot_writer(SdistFile, "filename")
+_set_sdist_url = _slot_writer(SdistFile, "url")
+_set_sdist_version = _slot_writer(SdistFile, "version")
+_set_sdist_requires_python = _slot_writer(SdistFile, "requires_python")
+_set_sdist_upload_time = _slot_writer(SdistFile, "upload_time")
+_set_sdist_hashes = _slot_writer(SdistFile, "hashes")
+_set_sdist_size = _slot_writer(SdistFile, "size")
+_set_sdist_local_path = _slot_writer(SdistFile, "local_path")
 
 
 # Either distribution shape a listing can offer for one version.
