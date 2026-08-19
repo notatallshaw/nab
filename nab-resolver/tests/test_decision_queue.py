@@ -20,6 +20,7 @@ marks a package whose listing has not settled.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from collections.abc import Set as AbstractSet
 from typing import Any
 
 from nab_resolver.decision_queue import DecisionQueue
@@ -256,7 +257,7 @@ class RecheckingDecisionQueue(DecisionQueue[str]):
 
     def pick(
         self,
-        undecided: set[str],
+        undecided: AbstractSet[str],
         sort_key: Callable[[str], tuple[Any, ...]],
         changed: set[str],
         epoch: int,

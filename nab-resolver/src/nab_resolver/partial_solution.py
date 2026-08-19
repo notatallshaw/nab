@@ -26,6 +26,7 @@ from .types import PackageType, RangeProtocol, VersionType
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
+    from collections.abc import Set as AbstractSet
     from typing import TypeAlias
 
     from .types import Incompatibility, Term
@@ -634,14 +635,15 @@ class PartialSolution(Generic[PackageType, VersionType]):
         self._changed = set()
         return changed
 
-    def undecided_packages(self) -> set[PackageType]:
+    def undecided_packages(self) -> AbstractSet[PackageType]:
         """Return packages with positive constraints but no decision yet.
 
         Packages with only negative derivations (learned exclusions) are not
-        yet known to be required.  Returns a fresh copy so callers can mutate
-        without disturbing solver state.
+        yet known to be required.  This is the live set, not a copy: callers
+        must not mutate it, and the solution must not change while one iterates
+        it.
         """
-        return set(self._undecided)
+        return self._undecided
 
     def has_positive_constraint(self, package: PackageType) -> bool:
         """Return True if the package has a positive constraint or decision."""

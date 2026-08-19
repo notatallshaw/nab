@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .incompat_index import add_incompatibility
-from .root import ROOT
 from .types import Incompatibility, IncompatibilityCause, RangeProtocol, Term
 
 if TYPE_CHECKING:
@@ -35,9 +34,12 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
     state behind its sort key still. The queue keeps that key across scans, so
     one that moves without the solution or ``priority_epoch`` moving is never
     read again.
+
+    ``ROOT`` never turns up in the undecided set: it is decided at level 1, a
+    targeted backtrack never aims lower, and conflict resolution raises rather
+    than backjumping to level 0.
     """
     undecided = resolver.solution.undecided_packages()
-    undecided.discard(ROOT)
     if not undecided:
         return None
 
