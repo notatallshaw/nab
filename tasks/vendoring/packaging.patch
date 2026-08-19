@@ -3324,3 +3324,16 @@ index 4fbf48e..d52f359 100644
      @classmethod
      def _from_specifier_set(cls, specifier_set: SpecifierSet) -> VersionRange:
          """Build the range accepted by ``specifier_set``.
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/version.py b/nab-provider/src/nab_provider/_vendor/packaging/version.py
+index 791c8ac..bc4f908 100644
+--- a/nab-provider/src/nab_provider/_vendor/packaging/version.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/version.py
+@@ -1023,7 +1023,7 @@ class Version(_BaseVersion):
+         >>> Version("1.2.3dev1").is_prerelease
+         True
+         """
+-        return self.dev is not None or self.pre is not None
++        return self._dev is not None or self._pre is not None
+ 
+     @property
+     def is_postrelease(self) -> bool:
