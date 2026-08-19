@@ -7,6 +7,7 @@ already-cached metadata where possible.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -323,6 +324,35 @@ def base_distributions(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _ListingPolicy:
+    """The policy config one listing's files are judged under.
+
+    ``overridden`` is true when a per-package or per-index override can
+    vary an answer by version, so the per-candidate lookups have to run.
+    Without one, the defaults here answer for every file in the listing.
+    """
+
+    index_name: str | None
+    overridden: bool
+    default_dist_policy: DistPolicy
+    default_cutoff: datetime | None
+    time_filter_active: bool
+
+
+def _listing_policy(provider: Provider, normalized: str) -> _ListingPolicy:
+    """Return the policy answers for one listing, for its per-file loop to consult."""
+    return _ListingPolicy(
+        index_name=provider.serving_index(normalized),
+        overridden=provider.has_overrides,
+        default_dist_policy=provider.dist_policy,
+        default_cutoff=provider.uploaded_prior_to,
+        time_filter_active=(
+            provider.uploaded_prior_to is not None or provider.overrides_set_time
+        ),
+    )
+
+
 def _filter_base(
     provider: Provider,
     normalized: str,
@@ -343,12 +373,7 @@ def _filter_base(
     version alive.  The answer is the same for every target that shares
     the listing and the policy config, which is what the memo assumes.
     """
-    index_name = provider.serving_index(normalized)
-
-    # Fast path: skip the time-filter dispatch entirely when no cutoff applies.
-    time_filter_active = (
-        provider.uploaded_prior_to is not None or provider.overrides_set_time
-    )
+    policy = _listing_policy(provider, normalized)
 
     cache = provider.listing_filter_cache
     if cache is None or not cache.shares_pythons:
@@ -356,9 +381,8 @@ def _filter_base(
             provider,
             normalized,
             files,
-            index_name,
+            policy,
             target_drops=True,
-            time_filter_active=time_filter_active,
         )
     else:
         parsed, policy_by_version, sort_with_wheel_first = cache.prepared(
@@ -369,21 +393,15 @@ def _filter_base(
                 provider,
                 normalized,
                 files,
-                index_name,
+                policy,
                 target_drops=False,
-                time_filter_active=time_filter_active,
             ),
         )
         result = [
             pair
             for pair in parsed
             if not _excluded_by_python_or_time(
-                provider,
-                normalized,
-                pair[0],
-                pair[1],
-                index_name=index_name,
-                time_filter_active=time_filter_active,
+                provider, normalized, pair[0], pair[1], policy
             )
         ]
 
@@ -403,10 +421,9 @@ def _prepare_listing(
     provider: Provider,
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
-    index_name: str | None,
+    policy: _ListingPolicy,
     *,
     target_drops: bool,
-    time_filter_active: bool,
 ) -> _PreparedListing:
     """Parse and dist-policy-filter the listing.
 
@@ -437,23 +454,23 @@ def _prepare_listing(
         except InvalidVersion:
             continue
 
-        effective_dist_policy = provider.effective_dist_policy(
-            normalized, version, index_name
-        )
+        if policy.overridden:
+            effective_dist_policy = provider.effective_dist_policy(
+                normalized, version, policy.index_name
+            )
+        else:
+            effective_dist_policy = policy.default_dist_policy
+
         if _excluded_by_dist_policy(dist, effective_dist_policy):
             provider.stats.excluded_by_dist_policy += 1
             continue
+
         policy_by_version[version] = effective_dist_policy
         if effective_dist_policy in (DistPolicy.PREFER_WHEEL, DistPolicy.SDIST_INSTALL):
             sort_with_wheel_first = True
 
         if target_drops and _excluded_by_python_or_time(
-            provider,
-            normalized,
-            version,
-            dist,
-            index_name=index_name,
-            time_filter_active=time_filter_active,
+            provider, normalized, version, dist, policy
         ):
             continue
 
@@ -500,16 +517,27 @@ def _excluded_by_python_or_time(
     normalized: str,
     version: Version,
     dist: DistFile,
-    *,
-    index_name: str | None,
-    time_filter_active: bool,
+    policy: _ListingPolicy,
 ) -> bool:
     """Return True when Requires-Python or the upload cutoff rejects ``dist``."""
-    if excluded_by_python(provider, normalized, version, dist):
+    if policy.overridden:
+        override_rp = provider.effective_requires_python(normalized, version)
+    else:
+        override_rp = None
+
+    if excluded_by_python(provider, dist, override_rp):
         return True
-    if not time_filter_active:
+
+    if not policy.time_filter_active:
         return False
-    cutoff = provider.effective_uploaded_prior_to(normalized, version, index_name)
+
+    if policy.overridden:
+        cutoff = provider.effective_uploaded_prior_to(
+            normalized, version, policy.index_name
+        )
+    else:
+        cutoff = policy.default_cutoff
+
     return excluded_by_time(provider, normalized, dist, cutoff)
 
 
@@ -649,18 +677,18 @@ def _excluded_by_dist_policy(dist: DistFile, policy: object) -> bool:
 
 
 def excluded_by_python(
-    provider: Provider, normalized: str, version: Version, dist: DistFile
+    provider: Provider, dist: DistFile, override_rp: str | None
 ) -> bool:
     """Return True when the target Python is excluded for this candidate.
 
-    A per-package ``requires-python`` override substitutes for
-    ``dist.requires_python`` and goes through the same cached comparison,
-    keyed by the specifier string; the verdict depends only on that string
-    and the fixed ``provider.target``.  The specifier is read at the language
-    minor, so a micro segment never excludes a target
-    (see :meth:`~nab_provider.target.ResolveTarget.admits_requires_python`).
+    ``override_rp`` is the candidate's per-package ``requires-python``
+    override and substitutes for ``dist.requires_python``.  Either goes
+    through the same cached comparison, keyed by the specifier string,
+    since the verdict depends only on that string and the fixed
+    ``provider.target``.  The specifier is read at the language minor, so
+    a micro segment never excludes a target (see
+    :meth:`~nab_provider.target.ResolveTarget.admits_requires_python`).
     """
-    override_rp = provider.effective_requires_python(normalized, version)
     effective = override_rp if override_rp is not None else dist.requires_python
     if not effective or provider.target is None:
         return False
