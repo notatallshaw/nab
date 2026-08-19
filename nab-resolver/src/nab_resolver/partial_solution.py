@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast, overload
 from weakref import ref
 
+from ._compat import override
 from .ranges import Range
 from .types import PackageType, RangeProtocol, VersionType
 
@@ -57,7 +58,9 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
 
     def __init__(self, live: dict[PackageType, _ValueType]) -> None:
         self._live = live
-        self._shadow: dict[PackageType, _ValueType | object] = {}
+        # A value or _ABSENT. Any rather than that union, which no checker
+        # narrows the sentinel back out of.
+        self._shadow: dict[PackageType, Any] = {}
 
     def freeze(self, package: PackageType) -> None:
         """Keep the package's current value before the live map moves on."""
@@ -79,6 +82,7 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
         self._live = frozen
         self._shadow = {}
 
+    @override
     def __getitem__(self, package: PackageType) -> _ValueType:
         frozen = self._shadow.get(package, _UNSET)
         if frozen is _UNSET:
@@ -87,14 +91,17 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
             raise KeyError(package)
         return cast("_ValueType", frozen)
 
+    # ``object`` rather than ``PackageType``: narrowing the key would not
+    # substitute for ``Mapping.get``.
     @overload
-    def get(self, package: PackageType, /) -> _ValueType | None: ...
+    def get(self, package: object, /) -> _ValueType | None: ...
     @overload
     def get(
-        self, package: PackageType, /, default: _ValueType | _DefaultType
+        self, package: object, /, default: _ValueType | _DefaultType
     ) -> _ValueType | _DefaultType: ...
+    @override
     def get(
-        self, package: PackageType, /, default: _ValueType | _DefaultType | None = None
+        self, package: Any, /, default: _ValueType | _DefaultType | None = None
     ) -> _ValueType | _DefaultType | None:
         """Return the package's value as of the snapshot, else ``default``.
 
@@ -108,12 +115,14 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
             return default
         return cast("_ValueType", frozen)
 
+    @override
     def __contains__(self, package: object) -> bool:
         frozen = self._shadow.get(cast("PackageType", package), _UNSET)
         if frozen is _UNSET:
             return package in self._live
         return frozen is not _ABSENT
 
+    @override
     def __iter__(self) -> Iterator[PackageType]:
         """Yield the snapshot's packages, in the order the live map holds them.
 
@@ -126,6 +135,7 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
             if shadow.get(package, _UNSET) is not _ABSENT:
                 yield package
 
+    @override
     def __len__(self) -> int:
         return sum(1 for _ in self)
 
