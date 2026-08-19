@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import gc
+
+import pytest
+
 from nab_resolver.partial_solution import PartialSolution
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -386,3 +390,137 @@ class TestContradictionEpoch:
         assert effective is not None
         assert effective.is_empty
         assert ps.contradiction_epoch == 1
+
+
+class TestSnapshots:
+    """A map handed out keeps reading as it did when it was taken."""
+
+    def test_a_snapshot_does_not_show_a_later_decision(self) -> None:
+        ps = PartialSolution()
+        ps.decide("foo", 3)
+        snapshot = ps.decisions()
+
+        ps.decide("bar", 1)
+
+        assert dict(snapshot) == {"foo": 3}
+        assert len(snapshot) == 1
+        assert "bar" not in snapshot
+        assert snapshot.get("bar") is None
+        assert snapshot.get("bar", 9) == 9
+
+        assert "foo" in snapshot
+        assert snapshot.get("foo") == 3
+        assert snapshot["foo"] == 3
+
+    def test_reading_a_package_the_snapshot_never_held(self) -> None:
+        ps = PartialSolution()
+        snapshot = ps.decisions()
+
+        ps.decide("foo", 3)
+
+        assert dict(snapshot) == {}
+        assert len(snapshot) == 0
+        with pytest.raises(KeyError):
+            snapshot["foo"]
+
+    def test_positive_ranges_keep_the_range_they_were_taken_with(self) -> None:
+        ps = PartialSolution()
+        inc = Incompatibility([], cause=IncompatibilityCause.ROOT)
+        ps.derive("foo", Range.at_least(1), positive=True, cause=inc)
+        snapshot = ps.positive_ranges()
+        taken_with = snapshot["foo"]
+
+        ps.derive("foo", Range.at_most(5), positive=True, cause=inc)
+        ps.derive("foo", Range.at_most(4), positive=True, cause=inc)
+
+        assert snapshot["foo"] is taken_with
+        assert snapshot.get("foo") is taken_with
+        assert list(snapshot) == ["foo"]
+        assert ps.positive_ranges()["foo"] != taken_with
+
+        ps.backtrack(0)
+
+        assert snapshot.get("foo") is taken_with
+
+    def test_backtracking_leaves_the_snapshot_alone(self) -> None:
+        ps = PartialSolution()
+        ps.decide("foo", 3)
+        ps.decide("bar", 1)
+        snapshot = ps.decisions()
+
+        ps.backtrack(1)
+        ps.decide("baz", 7)
+
+        assert dict(snapshot) == {"foo": 3, "bar": 1}
+        assert snapshot["bar"] == 1
+        assert "baz" not in snapshot
+
+    def test_backtracking_does_not_resurrect_a_package(self) -> None:
+        """A package absent when the snapshot was taken stays absent."""
+        ps = PartialSolution()
+        snapshot = ps.decisions()
+        ps.decide("foo", 3)
+
+        ps.backtrack(0)
+        ps.decide("foo", 4)
+
+        assert dict(snapshot) == {}
+        assert "foo" not in snapshot
+
+    def test_two_outstanding_snapshots_hold_their_own_state(self) -> None:
+        ps = PartialSolution()
+        ps.decide("foo", 3)
+        first = ps.decisions()
+        ps.decide("bar", 1)
+        second = ps.decisions()
+
+        ps.decide("baz", 7)
+
+        assert dict(first) == {"foo": 3}
+        assert dict(second) == {"foo": 3, "bar": 1}
+
+    def test_a_frozen_package_keeps_its_place_in_the_order(self) -> None:
+        ps = PartialSolution()
+        ps.decide("foo", 3)
+        ps.decide("bar", 1)
+        snapshot = ps.decisions()
+
+        assert list(snapshot) == ["foo", "bar"]
+
+        ps.decide("foo", 4)
+
+        assert list(snapshot) == ["foo", "bar"]
+        assert list(dict(snapshot)) == ["foo", "bar"]
+
+    def test_a_detached_snapshot_reads_as_of_its_own_moment(self) -> None:
+        ps = PartialSolution()
+        ps.decide("foo", 3)
+        ps.decide("bar", 1)
+        snapshot = ps.decisions()
+
+        ps.backtrack(1)
+        ps.decide("baz", 7)
+        ps.decide("foo", 4)
+
+        assert dict(snapshot) == {"foo": 3, "bar": 1}
+        assert list(snapshot) == ["foo", "bar"]
+        assert len(snapshot) == 2
+        assert snapshot["foo"] == 3
+        assert "baz" not in snapshot
+
+    def test_a_released_snapshot_drops_out_of_the_register(self) -> None:
+        """Freezing, detaching and taking all step over a dead reference."""
+        ps = PartialSolution()
+        ps.decide("foo", 3)
+        dropped = ps.decisions()
+        kept = ps.positive_ranges()
+        del dropped
+        gc.collect()
+
+        ps.decide("bar", 1)
+        ps.backtrack(1)
+        latest = ps.decisions()
+
+        assert len(ps._decision_snapshots) == 1
+        assert dict(latest) == {"foo": 3}
+        assert list(kept) == ["foo"]

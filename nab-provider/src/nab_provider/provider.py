@@ -1747,14 +1747,13 @@ class Provider:
         positive_ranges: Mapping[str, RangeProtocol[Version]],
         decisions: Mapping[str, Version],
     ) -> None:
-        """Accept a snapshot of the resolver's positive-range assignments.
+        """Accept a snapshot of the resolver's positive ranges and decisions.
 
         Decision-only forward checking is safer than reasoning over
         derivations because backjumping a decision also undoes its derivations.
 
-        The caller hands over fresh snapshots it does not retain or mutate, so
-        we store them directly. We only ever read these maps, never mutate them
-        in place; both are reassigned wholesale on the next hint.
+        Both maps are read-only and pinned to the moment the caller took them,
+        so storing the references is enough.
         """
         self.solution_ranges = positive_ranges
         self.solution_decisions = decisions
