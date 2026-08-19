@@ -32,6 +32,8 @@ __all__ = [
     "defer_hashes",
     "defer_sidecar_hash",
     "parse_hash_table",
+    "rehydrated_sdist",
+    "rehydrated_wheel",
     "select_artifact_hash",
     "sidecar_hash",
 ]
@@ -140,11 +142,10 @@ class _MetadataUrlMemo:
 class _DeferredIntegrity:
     """Parses a record's ``hashes`` table the first time something reads it.
 
-    :func:`defer_hashes` unsets the parsed slot and keeps the index's own table
+    A deferred record has nothing in the parsed slot and the index's own table
     beside it, so a listing pays the integrity parse only for the files a
     resolve reads.  ``__getattr__`` runs only once ordinary lookup has failed,
-    so a record built the ordinary way reads its fields straight out of their
-    slots.
+    so a record whose slot holds a parsed value reads it straight out.
 
     A read leaves the raw table in place.  The fetching and the resolving
     thread hold the same records, so both may run the parse at once, and both
@@ -253,7 +254,8 @@ class WheelFile(_WheelIntegrity):
     sidecar without a hash.
 
     A record built from a listing holds the index's own tables and parses
-    ``hashes`` and ``metadata_hash`` on first read (:func:`defer_hashes`).
+    ``hashes`` and ``metadata_hash`` on first read (:func:`defer_hashes`,
+    :func:`rehydrated_wheel`).
     """
 
     filename: str
@@ -321,6 +323,52 @@ _set_wheel_size = _slot_writer(WheelFile, "size")
 _set_wheel_local_path = _slot_writer(WheelFile, "local_path")
 _set_wheel_metadata_hash = _slot_writer(WheelFile, "metadata_hash")
 
+_set_wheel_raw_hashes = _slot_writer(_WheelIntegrity, "_raw_hashes")
+_set_wheel_raw_metadata = _slot_writer(_WheelIntegrity, "_raw_metadata")
+
+
+def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its own order
+    filename: str,
+    url: str,
+    version: str,
+    requires_python: str | None,
+    has_metadata: bool,  # noqa: FBT001 - a field, not a flag
+    upload_time: str | None,
+    hashes: tuple[tuple[str, str], ...] | dict[object, object],
+    size: int | None,
+    metadata_hash: tuple[str, str] | dict[object, object] | None,
+) -> WheelFile:
+    """Return a wheel rebuilt from a cached listing row.
+
+    ``hashes`` and ``metadata_hash`` each take either a parsed value or the
+    index's own table, and a table is held raw for the field's first read to
+    parse.  Deferring a field means leaving its slot unwritten, which
+    ``__init__`` cannot do, so this writes the slots directly.
+
+    ``local_path`` is ``None``: a cached listing row carries none.
+    """
+    wheel = WheelFile.__new__(WheelFile)
+    _set_wheel_filename(wheel, filename)
+    _set_wheel_url(wheel, url)
+    _set_wheel_version(wheel, version)
+    _set_wheel_requires_python(wheel, requires_python)
+    _set_wheel_has_metadata(wheel, has_metadata)
+    _set_wheel_upload_time(wheel, upload_time)
+    _set_wheel_size(wheel, size)
+    _set_wheel_local_path(wheel, None)
+
+    if isinstance(hashes, dict):
+        _set_wheel_raw_hashes(wheel, _compact_table(hashes))
+    else:
+        _set_wheel_hashes(wheel, hashes)
+
+    if isinstance(metadata_hash, dict):
+        _set_wheel_raw_metadata(wheel, _compact_table(metadata_hash))
+    else:
+        _set_wheel_metadata_hash(wheel, metadata_hash)
+
+    return wheel
+
 
 @dataclass(frozen=True, slots=True, init=False)
 class SdistFile(_SdistIntegrity):
@@ -369,6 +417,39 @@ _set_sdist_upload_time = _slot_writer(SdistFile, "upload_time")
 _set_sdist_hashes = _slot_writer(SdistFile, "hashes")
 _set_sdist_size = _slot_writer(SdistFile, "size")
 _set_sdist_local_path = _slot_writer(SdistFile, "local_path")
+
+_set_sdist_raw_hashes = _slot_writer(_SdistIntegrity, "_raw_hashes")
+
+
+def rehydrated_sdist(
+    filename: str,
+    url: str,
+    version: str,
+    requires_python: str | None,
+    upload_time: str | None,
+    hashes: tuple[tuple[str, str], ...] | dict[object, object],
+    size: int | None,
+) -> SdistFile:
+    """Return a source distribution rebuilt from a cached listing row.
+
+    See :func:`rehydrated_wheel`; a source distribution has only ``hashes``
+    to defer.
+    """
+    sdist = SdistFile.__new__(SdistFile)
+    _set_sdist_filename(sdist, filename)
+    _set_sdist_url(sdist, url)
+    _set_sdist_version(sdist, version)
+    _set_sdist_requires_python(sdist, requires_python)
+    _set_sdist_upload_time(sdist, upload_time)
+    _set_sdist_size(sdist, size)
+    _set_sdist_local_path(sdist, None)
+
+    if isinstance(hashes, dict):
+        _set_sdist_raw_hashes(sdist, _compact_table(hashes))
+    else:
+        _set_sdist_hashes(sdist, hashes)
+
+    return sdist
 
 
 # Either distribution shape a listing can offer for one version.

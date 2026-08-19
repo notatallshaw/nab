@@ -378,6 +378,22 @@ def test_a_rehydrated_record_defers_the_same_parse() -> None:
     assert wheel.metadata_hash == (SHA256, DIGEST)
 
 
+def test_a_rehydrated_sdist_defers_its_hashes() -> None:
+    sdist = SdistFile(
+        filename="pkg-1.0.tar.gz",
+        url="https://files.example/pkg-1.0.tar.gz",
+        version="1.0",
+        requires_python=None,
+        upload_time=None,
+    )
+    defer_hashes(sdist, {"SHA256": DIGEST.upper()})
+
+    (decoded,) = decode(encode([sdist], DIGEST), _policy()) or []
+
+    assert decoded.raw_hashes() == {"SHA256": DIGEST.upper()}
+    assert decoded.hashes == ((SHA256, DIGEST),)
+
+
 def test_a_row_is_the_same_whether_or_not_the_record_was_read() -> None:
     """A read record keeps its table, so encoding does not depend on read order."""
     unread = _deferred_wheel({"sha256": DIGEST}, sidecar={"sha256": DIGEST})
