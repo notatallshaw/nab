@@ -50,11 +50,21 @@ _SDIST_ROW_LEN = 8
 # Wheel row positions after the tag, for the field-check cases below.
 _W_FILENAME = 1
 _W_URL = 2
+_W_VERSION = 3
 _W_REQUIRES_PYTHON = 4
 _W_HAS_METADATA = 5
+_W_UPLOAD_TIME = 6
 _W_HASHES = 7
 _W_SIZE = 8
 _W_METADATA_HASH = 9
+
+# The same for an sdist row, which carries neither flag nor sidecar hash.
+_S_FILENAME = 1
+_S_URL = 2
+_S_VERSION = 3
+_S_REQUIRES_PYTHON = 4
+_S_UPLOAD_TIME = 5
+_S_SIZE = 7
 
 
 def _policy(digest: str | None = DIGEST) -> CachePolicy:
@@ -182,6 +192,13 @@ def _wheel_row_with(index: int, value: object) -> bytes:
     return _blob_with_rows(rows)
 
 
+def _sdist_row_with(index: int, value: object) -> bytes:
+    """A blob holding one sdist row with a single field replaced."""
+    _header, rows = json.loads(encode([SDIST_FULL], DIGEST))
+    rows[0][index] = value
+    return _blob_with_rows(rows)
+
+
 def test_valid_blob_decodes() -> None:
     assert decode(encode(SAMPLE, DIGEST), _policy()) is not None
 
@@ -263,10 +280,12 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
         (_W_FILENAME, 12345),
         (_W_FILENAME, None),
         (_W_URL, None),
+        (_W_VERSION, 1.0),
         (_W_REQUIRES_PYTHON, 3),
         (_W_HAS_METADATA, "yes"),
         # bool is a subclass of int, so an int must not pass as a flag.
         (_W_HAS_METADATA, 1),
+        (_W_UPLOAD_TIME, 20230101),
         (_W_SIZE, "1024"),
         # ... nor a bool as a count.
         (_W_SIZE, True),
@@ -281,6 +300,25 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
 def test_wrong_field_type_is_miss(index: int, value: object) -> None:
     """A field JSON allows but the record does not never reaches a record."""
     assert decode(_wheel_row_with(index, value), _policy()) is None
+
+
+@pytest.mark.parametrize(
+    ("index", "value"),
+    [
+        (_S_FILENAME, 12345),
+        (_S_URL, None),
+        (_S_VERSION, None),
+        (_S_REQUIRES_PYTHON, 3),
+        (_S_UPLOAD_TIME, 20230101),
+        (_S_SIZE, "10"),
+        # bool is a subclass of int here too.
+        (_S_SIZE, True),
+        (_S_SIZE, 1.5),
+    ],
+)
+def test_wrong_sdist_field_type_is_miss(index: int, value: object) -> None:
+    """An sdist row is checked on its own fields, not through the wheel's."""
+    assert decode(_sdist_row_with(index, value), _policy()) is None
 
 
 def test_absent_optional_fields_decode_as_none() -> None:
