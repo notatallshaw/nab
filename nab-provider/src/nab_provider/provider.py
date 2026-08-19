@@ -471,7 +471,7 @@ class Provider:
 
         self.extras_mode = extras_mode
         self.root_extras = root_extras or set()
-        self._dist_policy = dist_policy
+        self.dist_policy = dist_policy
         self.build_policy = build_policy
         # Opt-out: trust a pre-2.2 sdist's PKG-INFO deps as final instead of
         # routing through the dynamic path. Off by default (strict PEP 643).
@@ -492,7 +492,7 @@ class Provider:
         self._index_overrides: Mapping[str, IndexOverride] = index_overrides or {}
 
         # With no override on either surface, every lookup is the global default.
-        self._has_overrides = bool(self._package_overrides or self._index_overrides)
+        self.has_overrides = bool(self._package_overrides or self._index_overrides)
 
         # True when any override sets a time cutoff or disables one, so the
         # listing filter can skip the per-candidate dispatch otherwise.
@@ -810,8 +810,8 @@ class Provider:
         index_name: str | None = None,
     ) -> DistPolicy:
         """Return the dist policy for ``name==version`` served from ``index_name``."""
-        if not self._has_overrides:
-            return self._dist_policy
+        if not self.has_overrides:
+            return self.dist_policy
 
         result = self._effective_field(
             canonical_name,
@@ -821,7 +821,7 @@ class Provider:
             value=lambda o: _unset_if_none(o.dist_policy),
         )
         if result is _UNSET:
-            return self._dist_policy
+            return self.dist_policy
         assert isinstance(result, DistPolicy)
         return result
 
@@ -839,9 +839,6 @@ class Provider:
         field.  A per-package (range-matching) and a per-index override
         that both set the field are a conflict.
         """
-        if not self._has_overrides:
-            return self.uploaded_prior_to
-
         result = self._effective_field(
             canonical_name,
             version,
