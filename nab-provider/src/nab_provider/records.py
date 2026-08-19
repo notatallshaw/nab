@@ -9,7 +9,7 @@ from __future__ import annotations
 import enum
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
 from .digest import is_hex_digest
@@ -334,9 +334,9 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     requires_python: str | None,
     has_metadata: bool,  # noqa: FBT001 - a field, not a flag
     upload_time: str | None,
-    hashes: tuple[tuple[str, str], ...] | dict[object, object],
+    hashes: tuple[tuple[str, str], ...] | dict[Any, Any],
     size: int | None,
-    metadata_hash: tuple[str, str] | dict[object, object] | None,
+    metadata_hash: tuple[str, str] | dict[Any, Any] | None,
 ) -> WheelFile:
     """Return a wheel rebuilt from a cached listing row.
 
@@ -427,7 +427,7 @@ def rehydrated_sdist(
     version: str,
     requires_python: str | None,
     upload_time: str | None,
-    hashes: tuple[tuple[str, str], ...] | dict[object, object],
+    hashes: tuple[tuple[str, str], ...] | dict[Any, Any],
     size: int | None,
 ) -> SdistFile:
     """Return a source distribution rebuilt from a cached listing row.
