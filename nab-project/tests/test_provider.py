@@ -5575,6 +5575,17 @@ class TestUploadedPriorTo:
         with pytest.raises(InvalidUploadTimeError, match="2024-01-01T00:00:00"):
             provider.fetch_versions("foo")
 
+    def test_date_only_upload_time_reaches_the_rewriting_parser(self) -> None:
+        """A date-only ``Z`` time still parses, through the fallback, and is naive."""
+        wheels = [
+            make_wheel("1.0", upload_time="2024-01-01Z"),
+        ]
+        coordinator = make_coordinator(wheels, package="foo")
+        cutoff = datetime(2024, 3, 1, tzinfo=timezone.utc)
+        provider = Provider(coordinator, uploaded_prior_to=cutoff)
+        with pytest.raises(InvalidUploadTimeError, match="2024-01-01Z"):
+            provider.fetch_versions("foo")
+
     def test_naive_upload_time_not_metadata_error(self) -> None:
         """The error is not a MetadataError, so look-ahead cannot swallow it."""
         assert not issubclass(InvalidUploadTimeError, MetadataError)
