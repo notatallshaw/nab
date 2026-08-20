@@ -10,6 +10,7 @@ import pytest
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import (
+    _read_header_fields,
     metadata_deps_are_static,
     metadata_header_block,
     parse_metadata,
@@ -357,3 +358,81 @@ class TestOversizedClauseVersions:
         )
         with pytest.raises(ValueError, match="Exceeds the limit"):
             parse_metadata(text)
+
+
+class TestReadHeaderFields:
+    """``_read_header_fields``: folding, envelope lines, and where headers stop."""
+
+    def test_repeated_fields_keep_file_order(self) -> None:
+        """Repeats stack in order, and a re-declared single field keeps the first."""
+        fields = _read_header_fields(
+            "Name: foo\nRequires-Dist: a\nProvides-Extra: dev\n"
+            "Requires-Dist: b\nName: bar\nProvides-Extra: test\n"
+        )
+        assert fields["requires-dist"] == ["a", "b"]
+        assert fields["provides-extra"] == ["dev", "test"]
+        assert fields["name"] == ["foo", "bar"]
+
+        assert parse_metadata("Name: foo\nVersion: 1.0\nName: bar\n").name == "foo"
+
+    def test_continuation_line_keeps_its_line_ending(self) -> None:
+        """A folded value joins its lines verbatim, minus the last line ending."""
+        assert _read_header_fields("Requires-Dist: bar;\n extra == 'dev'\n") == {
+            "requires-dist": ["bar;\n extra == 'dev'"]
+        }
+        assert _read_header_fields("Requires-Dist: bar;\r\n\textra == 'dev'\r\n") == {
+            "requires-dist": ["bar;\r\n\textra == 'dev'"]
+        }
+
+    def test_value_may_start_on_a_continuation_line(self) -> None:
+        """A blank first line leaves the value starting at the fold's own text."""
+        assert _read_header_fields("Requires-Dist:\n  bar\n") == {
+            "requires-dist": ["bar"]
+        }
+
+    def test_continuation_with_nothing_to_continue_is_dropped(self) -> None:
+        """A fold before any field, or under one that is not read, adds nothing."""
+        assert _read_header_fields(" orphan\nName: foo\n") == {"name": ["foo"]}
+        assert _read_header_fields("Summary: s\n more of it\nName: foo\n") == {
+            "name": ["foo"]
+        }
+
+    def test_field_values_are_stripped_of_leading_blanks_only(self) -> None:
+        """The value starts after the colon's spaces and keeps its trailing ones."""
+        assert _read_header_fields("Name:\t  foo  \n") == {"name": ["foo  "]}
+
+    def test_envelope_from_line_is_not_a_field(self) -> None:
+        """``From `` lines are mbox envelope headers and carry no field."""
+        assert _read_header_fields(
+            "From nobody Wed Aug 20 03:00:00 2026\nName: foo\nFrom someone else\n"
+        ) == {"name": ["foo"]}
+
+    def test_bare_carriage_return_ends_a_line(self) -> None:
+        """A lone ``\\r`` ends a line, as it does in :mod:`email`'s own reader."""
+        assert _read_header_fields("Name: foo\rVersion: 1.0\r") == {
+            "name": ["foo"],
+            "version": ["1.0"],
+        }
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Name: foo\nnot a header at all\nVersion: 1.0\n",
+            "Name: foo\nBad Name: x\nVersion: 1.0\n",
+            "Name: foo\nNo\x7fnprintable: x\nVersion: 1.0\n",
+            "Name: foo\nnon-ascii-é: x\nVersion: 1.0\n",
+        ],
+    )
+    def test_headers_end_at_the_first_non_field_line(self, text: str) -> None:
+        """Anything but a continuation or ``name:`` ends the headers."""
+        assert _read_header_fields(text) == {"name": ["foo"]}
+
+    def test_field_name_is_checked_before_it_is_lowercased(self) -> None:
+        """U+212A lowercases to ASCII ``k``, which does not make it a field name."""
+        assert _read_header_fields("Name: foo\n\u212a: x\nVersion: 1.0\n") == {
+            "name": ["foo"]
+        }
+
+    def test_field_with_an_empty_name_is_skipped(self) -> None:
+        """A line starting with a colon has no name, and the headers continue."""
+        assert _read_header_fields(": stray\nName: foo\n") == {"name": ["foo"]}

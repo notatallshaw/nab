@@ -9,10 +9,10 @@ LRU cache so repeated dep strings parse once.
 
 from __future__ import annotations
 
-import email.parser
 from contextlib import suppress
 from dataclasses import dataclass, field
 from functools import lru_cache
+from io import StringIO
 from typing import TYPE_CHECKING, Any
 
 from nab_provider._vendor.packaging.requirements import Requirement
@@ -163,13 +163,27 @@ class WheelMetadata:
     dynamic: frozenset[str] = field(default_factory=frozenset)
 
 
+# The header names parse_metadata reads, lowercased.
+_READ_FIELDS = frozenset(
+    {
+        "dynamic",
+        "metadata-version",
+        "name",
+        "provides-extra",
+        "requires-dist",
+        "requires-python",
+        "version",
+    }
+)
+
+
 def metadata_header_block(text: str) -> str:
     r"""Return ``text`` cut after the earlier of its first ``\n\n`` and ``\r\n\r\n``.
 
-    ``email.parser`` closes the RFC 822 headers at the first blank line at the
-    latest, so the prefix holds every field :func:`parse_metadata` reads and
-    parses to the same :class:`WheelMetadata` as the whole document.  A
-    document with neither sequence comes back whole.
+    RFC 822 closes the headers at the first blank line at the latest, so the
+    prefix holds every field :func:`parse_metadata` reads and parses to the
+    same :class:`WheelMetadata` as the whole document.  A document with
+    neither sequence comes back whole.
 
     ``lf + 3`` bounds the second search: it is as far as a ``\r\n\r\n``
     starting before the ``\n\n`` hit can reach.
@@ -183,27 +197,88 @@ def metadata_header_block(text: str) -> str:
     return text
 
 
+def _first(fields: Mapping[str, list[str]], name: str) -> str | None:
+    """Return the first value of ``name``, or ``None`` when it is absent."""
+    values = fields.get(name)
+    return values[0] if values else None
+
+
+def _is_field_name(raw: str) -> bool:
+    """Report whether ``raw`` uses only the characters a field name may hold."""
+    return raw.isascii() and raw.isprintable() and " " not in raw
+
+
+def _read_header_fields(text: str) -> dict[str, list[str]]:
+    """Map each name in ``_READ_FIELDS`` that ``text`` carries to its values.
+
+    Reads ``text`` as RFC 822 headers. A line starting with whitespace continues
+    the value above it and keeps its own line ending, and a value loses the
+    whitespace in front of it and its trailing line ending. A ``From `` envelope
+    line carries no field. The headers stop at the first line that is neither a
+    continuation nor ``name:``. Repeats of a name stay in file order.
+
+    A value that begins on its continuation line loses that fold's leading
+    whitespace. Older ``email`` keeps it and newer ``email`` does not; taking the
+    newer reading parses such a value the same way on every supported
+    interpreter.
+    """
+    fields: dict[str, list[str]] = {}
+    name = ""
+    value: list[str] = []
+    # newline="" leaves a bare \r ending a line, which is what email splits on.
+    for line in StringIO(text, newline=""):
+        first = line[0]
+        if first in {" ", "\t"}:
+            if name:
+                value.append(line)
+            continue
+
+        if name:
+            joined = "".join(value).lstrip(" \t\r\n")
+            fields.setdefault(name, []).append(joined.rstrip("\r\n"))
+            name = ""
+
+        if first == "F" and line.startswith("From "):
+            continue
+
+        colon = line.find(":")
+        if colon < 0:
+            break
+        raw_name = line[:colon]
+        if not _is_field_name(raw_name):
+            break
+        candidate = raw_name.lower()
+        if candidate in _READ_FIELDS:
+            name = candidate
+            value = [line[colon + 1 :]]
+
+    if name:
+        joined = "".join(value).lstrip(" \t\r\n")
+        fields.setdefault(name, []).append(joined.rstrip("\r\n"))
+    return fields
+
+
 def parse_metadata(data: str | bytes) -> WheelMetadata:
     """Parse a METADATA file and return the fields needed for resolution."""
     if isinstance(data, bytes):
         data = data.decode("utf-8")
 
     # Nothing here reads the long description.
-    msg = email.parser.Parser().parsestr(metadata_header_block(data), headersonly=True)
+    fields = _read_header_fields(metadata_header_block(data))
 
-    name = msg.get("Name")
+    name = _first(fields, "name")
     if name is None:
         err = "METADATA missing required Name field"
         raise ValueError(err)
     # RFC 822 makes the whitespace around a header value insignificant.
     name = name.strip()
 
-    version_str = msg.get("Version")
+    version_str = _first(fields, "version")
     if version_str is None:
         err = "METADATA missing required Version field"
         raise ValueError(err)
 
-    requires_python_str = msg.get("Requires-Python")
+    requires_python_str = _first(fields, "requires-python")
     requires_python = None
     if requires_python_str:
         try:
@@ -219,15 +294,15 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
             raise ValueError(err) from exc
 
     requires_dist = [
-        _parse_requirement_cached(r) for r in msg.get_all("Requires-Dist") or []
+        _parse_requirement_cached(r) for r in fields.get("requires-dist", ())
     ]
 
-    provides_extra = [e.strip() for e in msg.get_all("Provides-Extra") or []]
+    provides_extra = [e.strip() for e in fields.get("provides-extra", ())]
 
-    metadata_version = msg.get("Metadata-Version")
+    metadata_version = _first(fields, "metadata-version")
     # PEP 643 field names are case-insensitive, and RFC 822 makes surrounding
     # whitespace insignificant.
-    dynamic = frozenset(d.strip().lower() for d in msg.get_all("Dynamic") or [])
+    dynamic = frozenset(d.strip().lower() for d in fields.get("dynamic", ()))
 
     return WheelMetadata(
         name=name,
