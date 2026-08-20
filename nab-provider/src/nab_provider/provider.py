@@ -1651,25 +1651,26 @@ class Provider:
         for cand, blocker_pkg, blocker_version in self.pending_blocks:
             if cand != normalized:
                 continue
-            dep_range = self.pending_decision_dep_ranges[
-                (cand, blocker_pkg, blocker_version)
-            ].union
+            declared = self._format_declared_ranges(
+                self.pending_decision_dep_ranges[(cand, blocker_pkg, blocker_version)]
+            )
+
             # The blocker is decided, so the line names that version rather
             # than a singleton range, which has no specifier spelling.
             out.append(
-                f"requires {blocker_pkg} in {self.format_range(dep_range)}"
+                f"requires {blocker_pkg} in {declared}"
                 f" but solution has it at {blocker_version}"
             )
 
         for cand, blocker_pkg, pos_range in self.pending_range_blocks:
             if cand != normalized:
                 continue
-            dep_range = self.pending_range_dep_ranges[
-                (cand, blocker_pkg, pos_range)
-            ].union
+            declared = self._format_declared_ranges(
+                self.pending_range_dep_ranges[(cand, blocker_pkg, pos_range)]
+            )
+            held = self._format_blocker_range(pos_range)
             out.append(
-                f"requires {blocker_pkg} in {self.format_range(dep_range)}"
-                f" but solution has it in {self.format_range(pos_range)}"
+                f"requires {blocker_pkg} in {declared} but solution has it in {held}"
             )
 
         for (
@@ -1680,9 +1681,10 @@ class Provider:
         ) in self.pending_root_blocks:
             if cand != normalized:
                 continue
+            declared = self._format_blocker_range(dep_range)
+            required = self._format_blocker_range(root_range)
             out.append(
-                f"requires {blocker_pkg} in {self.format_range(dep_range)}"
-                f" but root has it in {self.format_range(root_range)}"
+                f"requires {blocker_pkg} in {declared} but root has it in {required}"
             )
 
         meta = self.pending_metadata_blocks.get(normalized)
@@ -1977,6 +1979,23 @@ class Provider:
         if specifier_set is None:
             return str(constraint)
         return str(specifier_set)
+
+    def _format_blocker_range(self, constraint: RangeProtocol[Version]) -> str:
+        """Render one side of a blocker line, naming an unconstrained range.
+
+        :meth:`format_range` spells an unconstrained range as nothing, which
+        would end the line on a dangling ``in``.
+        """
+        return self.format_range(constraint) or "any version"
+
+    def _format_declared_ranges(self, recorded: _lookahead.DepRangeUnion) -> str:
+        """Render the ranges a blocker's rejected candidates declared on it.
+
+        Stating them one by one keeps the line spellable where their union is
+        not; a group that recorded no range falls back to its union.
+        """
+        declared = recorded.declared or (recorded.union,)
+        return " or ".join(self._format_blocker_range(part) for part in declared)
 
     def get_dependencies(
         self, package: str, version: Version

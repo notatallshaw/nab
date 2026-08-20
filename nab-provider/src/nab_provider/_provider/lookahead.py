@@ -42,10 +42,15 @@ class DepRangeUnion(NamedTuple):
     declared on the blocker; ``covered`` counts the rejections that
     contributed one.  Widening needs the whole group, so a flush declines
     when ``covered`` falls short of the group's rejection count.
+
+    ``declared`` keeps the distinct ranges in first-recorded order.  Ranges
+    that disagree can union into a disjunction no specifier set spells, so a
+    failure report states them one by one instead.
     """
 
     covered: int
     union: VersionRange
+    declared: tuple[VersionRange, ...] = ()
 
     @classmethod
     def zero(cls) -> DepRangeUnion:
@@ -54,7 +59,11 @@ class DepRangeUnion(NamedTuple):
 
     def record(self, dep_range: VersionRange) -> DepRangeUnion:
         """Return this accumulator with one more rejection's range folded in."""
-        return DepRangeUnion(self.covered + 1, self.union | dep_range)
+        if dep_range in self.declared:
+            return DepRangeUnion(self.covered + 1, self.union, self.declared)
+        return DepRangeUnion(
+            self.covered + 1, self.union | dep_range, (*self.declared, dep_range)
+        )
 
 
 def look_ahead_ok(

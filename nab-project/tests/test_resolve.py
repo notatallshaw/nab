@@ -3637,6 +3637,50 @@ class TestAugmentResolutionError:
             " requires b in ==1.0 but root has it in >=2"
         ) in diagnostics
 
+    def test_blocker_diagnostics_spell_each_declared_range(
+        self, tmp_path: Path
+    ) -> None:
+        """A blocker line reads as requirements when the pins disagree.
+
+        ``a`` 7.0 pins ``c==1.0`` and 7.1 pins ``c==2.0``, a union no
+        specifier set spells, so the line states the two pins one by one.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["a", "b"]\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "a": _index_wheels("a", "7.0", "7.1"),
+                "b": _index_wheels("b", "8.0"),
+                "c": _index_wheels("c", "1.0", "2.0", "3.0"),
+            },
+            metadata_by_version={
+                "7.0": _metadata("a", "7.0", "c==1.0"),
+                "7.1": _metadata("a", "7.1", "c==2.0"),
+                "8.0": _metadata("b", "8.0", "c==3.0"),
+                "1.0": _metadata("c", "1.0"),
+                "2.0": _metadata("c", "2.0"),
+                "3.0": _metadata("c", "3.0"),
+            },
+        )
+
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        diagnostics = str(info.value).split("Diagnostics:")[1]
+        assert "<VersionRange" not in diagnostics
+        assert "AFTER_LOCALS" not in diagnostics
+        assert (
+            "a: every version in range was rejected:"
+            " requires c in ==2.0 or ==1.0 but solution has it at 3.0"
+        ) in diagnostics
+
     def test_derivation_renders_readable_ranges(self, tmp_path: Path) -> None:
         """The derivation states ranges as requirements, like the diagnostics do.
 
