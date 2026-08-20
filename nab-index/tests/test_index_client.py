@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import sys
 
 import pytest
 from packaging.utils import parse_sdist_filename
 
 from nab_index.client import (
+    _parse_files,
     _parse_sdist_filename,
     _sdist_member_top_level,
     holds_unreadable_format,
@@ -45,6 +47,56 @@ def test_unreadable_filenames(filename: str) -> None:
 )
 def test_oversized_version_is_unreadable(filename: str) -> None:
     assert not is_readable_filename(filename)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        pytest.param("foo-1.0-1\ud800-py3-none-any.whl", id="wheel-build-tag"),
+        pytest.param("foo-1.0-py3-\ud800-any.whl", id="wheel-abi"),
+        pytest.param("foo-1.0-py3-none-\ud800.whl", id="wheel-platform"),
+        pytest.param("foo\ud800-1.0.tar.gz", id="sdist-name"),
+        # POSIX carries this range through surrogateescape, so a file on
+        # disk can be named that; a UTF-8 lockfile cannot record it.
+        pytest.param("foo-1.0-1\udc80-py3-none-any.whl", id="wheel-surrogateescape"),
+    ],
+)
+def test_filename_with_no_utf8_form_is_unreadable(filename: str) -> None:
+    assert not is_readable_filename(filename)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        pytest.param("foo-1.0-1\x00-py3-none-any.whl", id="wheel"),
+        pytest.param("foo\x00-1.0.tar.gz", id="sdist"),
+    ],
+)
+def test_filename_with_an_embedded_nul_is_unreadable(filename: str) -> None:
+    assert not is_readable_filename(filename)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        pytest.param("foo-1.0-1é-py3-none-any.whl", id="wheel"),
+        pytest.param("fooé-1.0.tar.gz", id="sdist"),
+    ],
+)
+def test_non_ascii_filename_stays_readable(filename: str) -> None:
+    assert is_readable_filename(filename)
+
+
+def test_listing_drops_a_file_with_no_utf8_form() -> None:
+    # An ASCII PEP 691 body still carries this name: json.loads turns the
+    # \ud800 escape into a lone surrogate.
+    body = json.loads(
+        '{"files": [{"filename": "foo-1.0-1\\ud800-py3-none-any.whl",'
+        ' "url": "https://e.example/foo-1.0.whl"}]}'
+    )
+
+    assert _parse_files(body, "https://e.example/simple/", "foo") == []
+    assert holds_unreadable_format(body)
 
 
 def test_holds_unreadable_format_finds_zip_sdist() -> None:

@@ -111,32 +111,49 @@ def _tag_triple_is_parseable(tag_str: str) -> bool:
     return all("" not in field.split(".") for field in (abis, platforms))
 
 
+def _is_usable_filename(filename: str) -> bool:
+    """Whether ``filename`` has a UTF-8 form and holds no NUL.
+
+    nab records the name in a UTF-8 lockfile and writes the artefact
+    under it, so a name failing either is unusable however well it
+    parses.  A lone surrogate has no UTF-8 form, including the
+    ``U+DC80``..``U+DCFF`` range POSIX carries through ``surrogateescape``.
+    """
+    if "\x00" in filename:
+        return False
+    try:
+        filename.encode()
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
 def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     """Parse a wheel filename per PEP 427.
 
     Returns ``(canonical_name, version_string)`` or ``None`` for any
-    filename packaging rejects (wrong extension, malformed, etc.) and
-    for a version digit run past CPython's int-from-string limit.
-    Never raises.
+    filename packaging rejects (wrong extension, malformed, etc.), for a
+    version digit run past CPython's int-from-string limit, and for a name
+    :func:`_is_usable_filename` refuses.  Never raises.
     The version string is the canonical form produced by
     :class:`packaging.version.Version`, so trailing-zero handling
     matches what packaging records on the file; e.g. a wheel
     declaring ``2.0.0`` in its filename comes back as ``"2.0.0"``,
     not ``"2"``.
 
-    This accepts what nab-provider's vendored ``parse_wheel_filename`` accepts,
-    but discards the ``frozenset[Tag]`` the tag parser builds and nab does not
-    use. The vendored copy is the one to match, not the released ``packaging``
-    this package depends on, because the vendored tag parser ranks whatever is
-    admitted here; the two can differ on an empty project name, which releases
-    before 26.3 accept.
+    Unusable names aside, this accepts what nab-provider's vendored
+    ``parse_wheel_filename`` accepts, but discards the ``frozenset[Tag]`` the
+    tag parser builds and nab does not use. The vendored copy is the one to
+    match, not the released ``packaging`` this package depends on, because the
+    vendored tag parser ranks whatever is admitted here; the two can differ on
+    an empty project name, which releases before 26.3 accept.
 
     A build tag past that same digit limit is admitted rather than rejected:
     ``parse_wheel_filename`` raises ``ValueError`` out of ``int()`` on one, but
     nab reads a build tag only to sort by it and sorts an unconvertible run
     lowest.
     """
-    if not filename.endswith(".whl"):
+    if not filename.endswith(".whl") or not _is_usable_filename(filename):
         return None
 
     stem = filename[:-4]
@@ -172,18 +189,19 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
 
     Accepts what nab-provider's vendored ``parse_sdist_filename`` accepts,
     except ``.zip`` sdists, which nab does not support (gzip-tar only, and
-    not part of the PEP 625 standard).  Returns ``None`` for everything
-    else, including a version digit run past CPython's int-from-string
-    limit, and never raises.  The vendored copy is the one to match, not
-    the released ``packaging`` this package depends on; the two can differ
-    on an empty project name, which releases before 26.3 accept.
+    not part of the PEP 625 standard), and names :func:`_is_usable_filename`
+    refuses.  Returns ``None`` for everything else, including a version digit
+    run past CPython's int-from-string limit, and never raises.  The vendored
+    copy is the one to match, not the released ``packaging`` this package
+    depends on; the two can differ on an empty project name, which releases
+    before 26.3 accept.
 
     Legacy filenames with embedded build tags (e.g. ``cffi-1.0.2-2.tar.gz``)
     parse to a surprising ``(name="cffi-1-0-2", version="2")``, so callers
     MUST drop files whose canonical name does not match the queried
     package.  See :func:`_parse_files`.
     """
-    if not filename.endswith(".tar.gz"):
+    if not filename.endswith(".tar.gz") or not _is_usable_filename(filename):
         return None
 
     stem = filename[: -len(".tar.gz")]
@@ -223,7 +241,7 @@ def holds_unreadable_format(data: object) -> bool:
 
 
 def is_readable_filename(filename: str) -> bool:
-    """Whether ``filename`` names a wheel or a ``.tar.gz`` sdist."""
+    """Whether ``filename`` names a wheel or ``.tar.gz`` sdist that nab can use."""
     return (
         _parse_wheel_filename(filename) is not None
         or _parse_sdist_filename(filename) is not None
