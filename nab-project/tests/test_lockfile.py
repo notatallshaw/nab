@@ -7,12 +7,12 @@ import logging
 import random
 import re
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import pytest
 
@@ -4594,6 +4594,111 @@ class TestRelativeArtifactPath:
         )
         wheel = tomllib.loads(text)["packages"][0]["wheels"][0]
         assert wheel["path"] == "../../wheelhouse/foo-1.0-py3-none-any.whl"
+
+
+def _string_leaves(value: object, prefix: str = "") -> Iterator[tuple[str, str]]:
+    """Yield ``(dotted key, text)`` for every string nested under ``value``."""
+    if isinstance(value, str):
+        yield prefix, value
+    elif isinstance(value, Mapping):
+        for key, item in value.items():
+            yield from _string_leaves(item, f"{prefix}.{key}" if prefix else str(key))
+    elif isinstance(value, list):
+        for item in value:
+            yield from _string_leaves(item, prefix)
+
+
+class TestPortablePaths:
+    """Which on-disk references the lock writes relative, and what the docs say.
+
+    Every pin points into one ``store`` directory beside the lock file, so
+    a difference between the keys comes from the emitter, not the input.
+    """
+
+    def _lock(self, tmp_path: Path) -> dict[str, Any]:
+        """Return the parsed lock for one pin of every source shape."""
+        store = tmp_path / "store"
+        wheel = store / "myindex-1.0-py3-none-any.whl"
+        sdist = store / "myindex-1.0.tar.gz"
+        repo = store / "myvcs"
+        commit = "d" * 40
+
+        pins: dict[str, PinShape] = {
+            "mylocal": LocalPin(
+                name="mylocal", version="1.0", path=str(store / "mylocal")
+            ),
+            "myindex": IndexPin(
+                name="myindex",
+                version="1.0",
+                index=store.as_uri(),
+                sdist=SdistArtifact(
+                    filename=sdist.name,
+                    url=sdist.as_uri(),
+                    hashes=(("sha256", "a" * 64),),
+                    local_path=sdist,
+                ),
+                wheels=(
+                    WheelArtifact(
+                        filename=wheel.name,
+                        url=wheel.as_uri(),
+                        hashes=(("sha256", "b" * 64),),
+                        local_path=wheel,
+                    ),
+                ),
+            ),
+            "myarchive": ArchivePin(
+                name="myarchive",
+                version="1.0",
+                url=(store / "myarchive-1.0.tar.gz").as_uri(),
+                hashes=(("sha256", "c" * 64),),
+            ),
+            "myvcs": VcsPin(
+                name="myvcs",
+                version="1.0",
+                repo_url=f"git+{repo.as_uri()}@{commit}",
+                bare_repo_url=repo.as_uri(),
+                commit_id=commit,
+            ),
+        }
+
+        text = write_lock(
+            LockInput(targets=_one(pins)), output_path=tmp_path / "pylock.toml"
+        )
+        return tomllib.loads(text)
+
+    def _on_disk_keys(self, tmp_path: Path) -> tuple[set[str], set[str]]:
+        """Return the keys naming ``store``, split into relative and absolute."""
+        prefix = (tmp_path / "store").as_uri()
+        relative: set[str] = set()
+        absolute: set[str] = set()
+        for package in self._lock(tmp_path)["packages"]:
+            for key, value in _string_leaves(package):
+                if value.startswith(prefix):
+                    absolute.add(key)
+                elif value.startswith("store/"):
+                    relative.add(key)
+        return relative, absolute
+
+    def _section(self) -> str:
+        """Return the "Portable paths" section of the lockfile reference."""
+        doc = Path(__file__).resolve().parents[2] / "docs" / "reference" / "lockfile.md"
+        text = doc.read_text(encoding="utf-8")
+        start = text.index("### Portable paths")
+        return text[start : text.index("\n### ", start + 1)]
+
+    def test_configured_file_urls_stay_absolute(self, tmp_path: Path) -> None:
+        """A path nab derives is relativised; a declared URL is not."""
+        relative, absolute = self._on_disk_keys(tmp_path)
+        assert relative == {"directory.path", "sdist.path", "wheels.path"}
+        assert absolute == {"archive.url", "index", "vcs.url"}
+
+    def test_every_on_disk_key_is_documented(self, tmp_path: Path) -> None:
+        relative, absolute = self._on_disk_keys(tmp_path)
+        section = self._section()
+        undocumented = {
+            key for key in relative | absolute if f"`packages.{key}`" not in section
+        }
+        assert not undocumented, f"undocumented keys: {sorted(undocumented)}"
 
 
 class TestPathHelpers:

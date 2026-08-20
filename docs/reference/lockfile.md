@@ -234,13 +234,22 @@ installers.
 
 ### Portable paths
 
-A lockfile can reference content on disk: a `LocalPin`'s
-directory, or a wheel or sdist served from a local find-links
-directory. nab writes those paths relative to the lockfile's
-own directory, with POSIX separators, as PEP 751 requires. A
-committed lockfile therefore stays usable on another machine as
-long as the surrounding layout is preserved; it never carries an
-absolute, machine-specific path.
+A lockfile can reference content on disk. A path nab derives from a
+filesystem location is written relative to the lockfile's own directory,
+with POSIX separators: a local source or workspace member in
+`packages.directory.path`, and a wheel or sdist read from a local index or
+find-links directory in `packages.wheels.path` and `packages.sdist.path`.
+PEP 751 reads a relative path against the lockfile itself, so the lock and
+the tree it points at survive a move as long as they move together. On
+Windows a path on another drive has no relative form, and the absolute
+path is written instead. `nab lock --output -` has no lockfile to be
+relative to and writes those paths relative to the current directory.
+
+A URL declared in the configuration is written as it was declared, minus
+any embedded credentials: an archive source in `packages.archive.url`, a
+local index in `packages.index`, and a local repository in
+`packages.vcs.url`. A `file://` URL is not made relative, so a lock that
+carries one is usable only where that location exists.
 
 ### The environments the lock is for
 
