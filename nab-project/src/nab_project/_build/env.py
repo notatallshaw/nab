@@ -29,7 +29,7 @@ import subprocess
 import sys
 import tempfile
 import venv
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
@@ -53,7 +53,7 @@ from ..lockfile import IndexPin
 from .errors import BuildBackendError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping
+    from collections.abc import Callable, Iterable, Iterator, Mapping
 
     from installer.records import RecordEntry
     from installer.utils import Scheme
@@ -136,9 +136,33 @@ _SCHEME_PROBE = (
 class BuildEnvError(Exception):
     """The build env could not be set up.
 
-    Covers venv creation, the interpreter scheme probe, and the inner
-    resolve, download, and install of ``[build-system].requires``.
+    Covers the temp tree the env lives in, venv creation, the
+    interpreter scheme probe, and the inner resolve, download, and
+    install of ``[build-system].requires``.
     """
+
+
+@contextmanager
+def _as_build_env_error(action: str) -> Iterator[None]:
+    """Re-raise an ``OSError`` from the block as :class:`BuildEnvError`.
+
+    ``action`` opens the message, so it names the entry point rather
+    than the individual write that failed.
+    """
+    try:
+        yield
+    except OSError as exc:
+        msg = f"{action}: {exc}"
+        raise BuildEnvError(msg) from exc
+
+
+def _build_tempdir(prefix: str) -> tempfile.TemporaryDirectory[str]:
+    """Return a temp directory for the build, or raise :class:`BuildEnvError`."""
+    try:
+        return tempfile.TemporaryDirectory(prefix=prefix, ignore_cleanup_errors=True)
+    except OSError as exc:
+        msg = f"could not create a temporary build directory: {exc}"
+        raise BuildEnvError(msg) from exc
 
 
 BuildChain = tuple[str, ...]
@@ -224,11 +248,10 @@ class NabBuildEnv:
 
     def __enter__(self) -> Self:
         """Build the venv, run the inner resolve, install build requirements."""
-        self._tmpdir = tempfile.TemporaryDirectory(
-            prefix="nab-build-env-", ignore_cleanup_errors=True
-        )
+        self._tmpdir = _build_tempdir("nab-build-env-")
         try:
-            self._provision(Path(self._tmpdir.name))
+            with _as_build_env_error("could not populate the build env"):
+                self._provision(Path(self._tmpdir.name))
         except BaseException:
             self._tmpdir.cleanup()
             self._tmpdir = None
@@ -351,13 +374,17 @@ class NabBuildEnv:
             raise BuildEnvError(msg)
         if not requirements:
             return
-        wheel_dir = self._venv_path.parent / "wheels"
-        # Append a fresh subdir so a re-install does not re-download
-        # the same wheel into the same path under a different version.
-        sub = wheel_dir / f"_extra_{len(list(wheel_dir.iterdir()))}"
-        sub.mkdir(parents=True, exist_ok=True)
-        wheel_paths = self._resolve_and_download(sub, extra=requirements)
-        self._install_wheels(wheel_paths, _venv_scheme_paths(self._python_executable))
+
+        with _as_build_env_error("could not install extra build requirements"):
+            wheel_dir = self._venv_path.parent / "wheels"
+            # Append a fresh subdir so a re-install does not re-download
+            # the same wheel into the same path under a different version.
+            sub = wheel_dir / f"_extra_{len(list(wheel_dir.iterdir()))}"
+            sub.mkdir(parents=True, exist_ok=True)
+
+            wheel_paths = self._resolve_and_download(sub, extra=requirements)
+            scheme_paths = _venv_scheme_paths(self._python_executable)
+            self._install_wheels(wheel_paths, scheme_paths)
 
     def _resolve_and_download(
         self,
@@ -556,9 +583,7 @@ class NabBuildEnv:
             msg = f"build requirement {label} could not be read at {archive}: {exc}"
             raise BuildEnvError(msg) from exc
 
-        with tempfile.TemporaryDirectory(
-            prefix="nab-build-req-", ignore_cleanup_errors=True
-        ) as td:
+        with _build_tempdir("nab-build-req-") as td:
             try:
                 source_dir = extract_sdist_archive(data, Path(td))
             except ValueError as exc:

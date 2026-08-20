@@ -21,6 +21,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+import tempfile
 import zipfile
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -28,6 +29,7 @@ from dataclasses import fields
 from datetime import datetime, timezone
 from importlib.util import cache_from_source
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import build
@@ -377,6 +379,23 @@ def _write_fake_backend_project(
     return tmp_path
 
 
+def _tempdir_denying(denied: str) -> Callable[..., tempfile.TemporaryDirectory[str]]:
+    """Return a ``TemporaryDirectory`` stand-in that refuses one prefix.
+
+    A full temp filesystem raises ``OSError`` out of ``mkdtemp``.  Calls
+    with any other prefix are delegated, so the rest of the build still
+    gets scratch space.
+    """
+    real = tempfile.TemporaryDirectory
+
+    def factory(*args: Any, **kwargs: Any) -> tempfile.TemporaryDirectory[str]:
+        if kwargs.get("prefix") == denied:
+            raise OSError(28, "No space left on device")
+        return real(*args, **kwargs)
+
+    return factory
+
+
 @pytest.fixture
 def config() -> NabProjectConfig:
     """A minimal :class:`NabProjectConfig` for the tests."""
@@ -706,6 +725,44 @@ class TestRunBuildBackend:
 
         monkeypatch.setattr(venv_mod, "EnvBuilder", _Builder)
         with pytest.raises(BuildBackendError, match="build env setup"):
+            run_build_backend(tmp_path, config=config)
+
+    def test_temp_root_oserror_wrapped(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An OSError creating the env's temp root is wrapped as BuildBackendError."""
+        _write_fake_backend_project(tmp_path)
+        monkeypatch.setattr(
+            env_mod.tempfile,
+            "TemporaryDirectory",
+            _tempdir_denying("nab-build-env-"),
+        )
+        with pytest.raises(
+            BuildBackendError,
+            match="build env setup.*could not create a temporary build directory",
+        ):
+            run_build_backend(tmp_path, config=config)
+
+    def test_metadata_directory_oserror_wrapped(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An OSError creating the metadata directory is wrapped the same way."""
+        _write_fake_backend_project(tmp_path)
+        monkeypatch.setattr(
+            runner_mod.tempfile,
+            "TemporaryDirectory",
+            _tempdir_denying("nab-build-meta-"),
+        )
+        with pytest.raises(
+            BuildBackendError,
+            match="temporary metadata directory for build backend 'nab_test_backend'",
+        ):
             run_build_backend(tmp_path, config=config)
 
     def test_non_string_build_requirement_wrapped(
@@ -1721,6 +1778,19 @@ class TestNabBuildEnvInstall:
         )
         env.install(["pip"])
         assert len(installer_calls) == 1
+
+    def test_install_wraps_unlistable_wheel_dir(self, tmp_path: Path) -> None:
+        """An OSError listing the wheel directory surfaces as BuildEnvError."""
+        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        venv_path = tmp_path / "venv"
+        venv_path.mkdir()
+        env._venv_path = venv_path  # type: ignore[attr-defined]
+        env._python_executable = venv_path / "python"  # type: ignore[attr-defined]
+
+        with pytest.raises(
+            BuildEnvError, match="could not install extra build requirements"
+        ):
+            env.install(["pip"])
 
 
 # Every ``NabProjectConfig`` field, grouped by what the inner build-requires
@@ -2842,6 +2912,22 @@ class TestBuildRequirementBuildFailures:
         with pytest.raises(BuildEnvError, match="could not be extracted"):
             self._env()._build_requirement(self.PENDING, tmp_path)
 
+    def test_unwritable_temp_filesystem(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The directory the nested build unpacks into cannot be created."""
+        (tmp_path / self.PENDING.sdist.filename).write_bytes(b"sdist")
+        monkeypatch.setattr(
+            env_mod.tempfile,
+            "TemporaryDirectory",
+            _tempdir_denying("nab-build-req-"),
+        )
+
+        with pytest.raises(
+            BuildEnvError, match="could not create a temporary build directory"
+        ):
+            self._env()._build_requirement(self.PENDING, tmp_path)
+
     def test_backend_failure(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -3163,6 +3249,47 @@ class TestNabBuildEnvEnterInstall:
         monkeypatch.setattr(venv_mod, "EnvBuilder", _Builder)
         env = NabBuildEnv(requires=[], config=NabProjectConfig())
         with pytest.raises(BuildEnvError, match="build venv"):
+            env.__enter__()
+        assert env._tmpdir is None  # type: ignore[attr-defined]
+
+    def test_enter_wraps_inner_project_write_oserror(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """An OSError writing the inner resolve's project raises BuildEnvError.
+
+        A full filesystem fails on a write, not on the ``mkdtemp`` that
+        made the empty temp root.
+        """
+
+        class _Builder:
+            def __init__(self, **_kw: object) -> None:
+                pass
+
+            def create(self, path: Path) -> None:
+                path.mkdir(parents=True, exist_ok=True)
+                (path / "bin").mkdir(exist_ok=True)
+                (path / "bin" / "python").touch()
+
+        import venv as venv_mod
+
+        monkeypatch.setattr(venv_mod, "EnvBuilder", _Builder)
+        monkeypatch.setattr(
+            env_mod, "_venv_scheme_paths", lambda _python: {"purelib": str(tmp_path)}
+        )
+
+        real_write_text = Path.write_text
+
+        def _deny_inner_project(self: Path, *args: Any, **kwargs: Any) -> int:
+            if self.parent.name == "_inner_project":
+                raise OSError(28, "No space left on device")
+            return real_write_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", _deny_inner_project)
+
+        env = NabBuildEnv(requires=["pip"], config=NabProjectConfig())
+        with pytest.raises(BuildEnvError, match="could not populate the build env"):
             env.__enter__()
         assert env._tmpdir is None  # type: ignore[attr-defined]
 

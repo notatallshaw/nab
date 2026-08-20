@@ -82,9 +82,10 @@ def run_build_backend(
     the ``METADATA`` file the backend produces.  Raises
     :class:`BuildBackendError` on any failure: backend import
     error, a rejected ``backend-path``, hook crash, METADATA that
-    is unreadable or malformed, an unreadable built wheel, a build
-    requirement that cannot be installed or built, or build
-    requirements ``offline`` bars from being fetched.
+    is unreadable or malformed, an unreadable built wheel, scratch
+    space that cannot be created, a build requirement that cannot be
+    installed or built, or build requirements ``offline`` bars from
+    being fetched.
 
     The build runs in an isolated venv driven by
     :class:`NabBuildEnv`; nothing in the user's main environment is
@@ -100,9 +101,7 @@ def run_build_backend(
         _prepared_project(
             source_dir, data, config=config, offline=offline, chain=chain
         ) as (project, backend),
-        tempfile.TemporaryDirectory(
-            prefix="nab-build-meta-", ignore_cleanup_errors=True
-        ) as out_str,
+        _metadata_output_dir(backend) as out_str,
     ):
         metadata_dir = _extract_metadata_dir(
             project,
@@ -146,6 +145,20 @@ def build_wheel_for_install(
                 f" from build_wheel: {exc}"
             )
             raise BuildBackendError(msg) from exc
+
+
+def _metadata_output_dir(backend: str) -> tempfile.TemporaryDirectory[str]:
+    """Return the temp directory ``backend`` writes its metadata into."""
+    try:
+        return tempfile.TemporaryDirectory(
+            prefix="nab-build-meta-", ignore_cleanup_errors=True
+        )
+    except OSError as exc:
+        msg = (
+            "could not create a temporary metadata directory for build"
+            f" backend {backend!r}: {exc}"
+        )
+        raise BuildBackendError(msg) from exc
 
 
 @contextmanager

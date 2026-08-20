@@ -10463,6 +10463,28 @@ class TestBuildRemoteFailureModes:
         with pytest.raises(UnsupportedSdistError, match="could not be extracted"):
             build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
 
+    def test_unwritable_temp_filesystem_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A temp directory nab cannot create raises ``UnsupportedSdistError``."""
+        provider = self._provider(with_sdist=True, sdist_archive=b"data")
+        provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
+
+        real = _build_remote.tempfile.TemporaryDirectory
+
+        def _no_space(*args: Any, **kwargs: Any) -> object:
+            if kwargs.get("prefix") == "nab-build-remote-":
+                raise OSError(28, "No space left on device")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(_build_remote.tempfile, "TemporaryDirectory", _no_space)
+
+        with pytest.raises(
+            UnsupportedSdistError,
+            match="could not create a temporary build directory",
+        ):
+            build_remote.build_remote_sdist(provider, "pkg", V("1.0"))
+
     def test_build_backend_failure_raises(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
