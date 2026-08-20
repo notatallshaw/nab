@@ -191,19 +191,55 @@ def test_default_groups_reordered_does_not_fire() -> None:
 
 
 def test_the_named_base_group_does_not_fire() -> None:
-    """The writer adds it to both arrays and no run selects it."""
+    """With no declared default-groups the writer puts it in both arrays."""
     committed = make_pylock(
         dependency_groups=("dev", "default"),
-        default_groups=("main", "default"),
+        default_groups=("default",),
     )
     assert (
         envelope(
             committed,
             dependency_groups=("dev",),
-            default_groups=("main",),
+            default_groups=(),
             base_group="default",
         )
         is None
+    )
+
+
+def test_the_base_group_declared_in_default_groups_does_not_fire() -> None:
+    """The run declares it, so it is not dropped from the committed array."""
+    committed = make_pylock(
+        dependency_groups=("default",),
+        default_groups=("main", "default"),
+    )
+    assert (
+        envelope(
+            committed,
+            dependency_groups=(),
+            default_groups=("main", "default"),
+            base_group="default",
+        )
+        is None
+    )
+
+
+def test_a_run_declaring_default_groups_fires_on_the_appended_base_group() -> None:
+    """The lock was written for a run that declared none, so it is stale."""
+    committed = make_pylock(
+        dependency_groups=("dev", "default"),
+        default_groups=("default",),
+    )
+    result = envelope(
+        committed,
+        dependency_groups=("dev",),
+        default_groups=("dev",),
+        base_group="default",
+    )
+    assert result is not None
+    assert result.reason == (
+        "the lockfile was built with default-groups {default} "
+        "but this run selects {dev}"
     )
 
 
