@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     _PreparedListing = tuple[
         list[tuple[Version, DistFile]],
-        Mapping[Version, DistPolicy],
+        set[Version],
         bool,
     ]
 
@@ -377,7 +377,7 @@ def _filter_base(
 
     cache = provider.listing_filter_cache
     if cache is None or not cache.shares_pythons:
-        result, policy_by_version, sort_with_wheel_first = _prepare_listing(
+        result, sdist_install_versions, sort_with_wheel_first = _prepare_listing(
             provider,
             normalized,
             files,
@@ -385,7 +385,7 @@ def _filter_base(
             target_drops=True,
         )
     else:
-        parsed, policy_by_version, sort_with_wheel_first = cache.prepared(
+        parsed, sdist_install_versions, sort_with_wheel_first = cache.prepared(
             normalized,
             provider.stats,
             partial(
@@ -405,7 +405,7 @@ def _filter_base(
             )
         ]
 
-    result = _drop_sdist_install_wheel_only(result, policy_by_version)
+    result = _drop_sdist_install_wheel_only(result, sdist_install_versions)
 
     if sort_with_wheel_first:
         result.sort(
@@ -432,13 +432,15 @@ def _prepare_listing(
     leaves them off so its Pythons can share the pass, and runs them over
     the result instead.
 
-    Returns the surviving (version, file) pairs in listing order, the dist
-    policy every version that cleared that filter was judged under, and
-    whether any of those policies wants wheels sorted ahead of sdists.
+    Returns the surviving (version, file) pairs in listing order, the
+    versions the dist-policy pass judged
+    :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL`, and whether
+    any version's policy wants wheels sorted ahead of sdists.
     """
     result: list[tuple[Version, DistFile]] = []
     sort_with_wheel_first = False
-    policy_by_version: dict[Version, DistPolicy] = {}
+    overridden = policy.overridden
+    sdist_install_versions: set[Version] = set()
     for dist in files:
         provider.stats.distributions_seen += 1
         if isinstance(dist, WheelFile):
@@ -454,7 +456,7 @@ def _prepare_listing(
         except InvalidVersion:
             continue
 
-        if policy.overridden:
+        if overridden:
             effective_dist_policy = provider.effective_dist_policy(
                 normalized, version, policy.index_name
             )
@@ -465,8 +467,10 @@ def _prepare_listing(
             provider.stats.excluded_by_dist_policy += 1
             continue
 
-        policy_by_version[version] = effective_dist_policy
-        if effective_dist_policy in (DistPolicy.PREFER_WHEEL, DistPolicy.SDIST_INSTALL):
+        if effective_dist_policy is DistPolicy.SDIST_INSTALL:
+            sdist_install_versions.add(version)
+            sort_with_wheel_first = True
+        elif effective_dist_policy is DistPolicy.PREFER_WHEEL:
             sort_with_wheel_first = True
 
         if target_drops and _excluded_by_python_or_time(
@@ -476,7 +480,7 @@ def _prepare_listing(
 
         result.append((version, dist))
 
-    return result, policy_by_version, sort_with_wheel_first
+    return result, sdist_install_versions, sort_with_wheel_first
 
 
 def _apply_wheel_tags(
@@ -609,20 +613,18 @@ def has_filtered_in_range_release(
 
 def _drop_sdist_install_wheel_only(
     result: list[tuple[Version, DistFile]],
-    policy_by_version: Mapping[Version, DistPolicy],
+    sdist_install_versions: set[Version],
 ) -> list[tuple[Version, DistFile]]:
     """Drop SDIST_INSTALL versions whose surviving artifacts are all wheels.
 
     Such a version has no source to install, so it must not reach the
     resolver even though its wheels stay as a cheap metadata source.
     """
+    if not sdist_install_versions:
+        return result
+
     versions_with_sdist = {v for v, d in result if isinstance(d, SdistFile)}
-    drop = {
-        v
-        for v in policy_by_version
-        if policy_by_version[v] is DistPolicy.SDIST_INSTALL
-        and v not in versions_with_sdist
-    }
+    drop = sdist_install_versions - versions_with_sdist
     if not drop:
         return result
     return [pair for pair in result if pair[0] not in drop]
