@@ -631,9 +631,16 @@ class TestRunBuildBackend:
     def test_build_system_table_rejected_wrapped(
         self, tmp_path: Path, config: NabProjectConfig
     ) -> None:
-        """build.BuildSystemTableValidationError from an invalid build-system table is wrapped as BuildBackendError."""
+        """build.BuildSystemTableValidationError is wrapped as BuildBackendError.
+
+        An unknown ``[build-system]`` key is build's rule rather than one
+        nab reads, so the table passes nab's own checks and fails in build.
+        """
         (tmp_path / "pyproject.toml").write_text(
-            '[build-system]\nbuild-backend = "setuptools.build_meta"\n',
+            "[build-system]\n"
+            "requires = []\n"
+            'build-backend = "setuptools.build_meta"\n'
+            "unknown-key = 1\n",
             encoding="utf-8",
         )
         env = MagicMock()
@@ -643,6 +650,35 @@ class TestRunBuildBackend:
             patch("nab_project._build.runner.NabBuildEnv", return_value=env),
             pytest.raises(BuildBackendError, match="setuptools.build_meta"),
         ):
+            run_build_backend(tmp_path, config=config)
+
+    @pytest.mark.parametrize(
+        ("table", "message"),
+        [
+            ('build-backend = "not-a-backend"\n', "requires is required by PEP 518"),
+            ('requires = "hatchling"\n', "requires.*array of strings"),
+            ('requires = ["hatchling", 42]\n', "requires.*array of strings"),
+            ('requires = {a = "b"}\n', "requires.*array of strings"),
+        ],
+    )
+    def test_bad_requires_fails_before_the_build_env(
+        self,
+        tmp_path: Path,
+        config: NabProjectConfig,
+        monkeypatch: pytest.MonkeyPatch,
+        table: str,
+        message: str,
+    ) -> None:
+        """An absent or malformed ``requires`` fails before an env is opened."""
+        (tmp_path / "pyproject.toml").write_text(
+            "[build-system]\n" + table, encoding="utf-8"
+        )
+
+        def _no_env(**_kwargs: object) -> NabBuildEnv:
+            raise AssertionError("the build env must not be opened")
+
+        monkeypatch.setattr(runner_mod, "NabBuildEnv", _no_env)
+        with pytest.raises(BuildBackendError, match=message):
             run_build_backend(tmp_path, config=config)
 
     def test_build_system_not_a_table(
@@ -895,7 +931,7 @@ class TestShouldSkipPrepare:
 
 
 class TestReadBuildSystem:
-    """Defaults for missing or wrongly-typed ``[build-system]`` fields."""
+    """Defaults for absent ``[build-system]`` fields, errors for malformed ones."""
 
     def test_no_build_system_table_returns_defaults(self) -> None:
         from nab_project._build.runner import (
@@ -914,21 +950,41 @@ class TestReadBuildSystem:
         with pytest.raises(BuildBackendError, match="must be a table"):
             _read_build_system({"build-system": value})
 
-    def test_build_backend_wrong_type_uses_default(self) -> None:
+    def test_absent_optional_keys_take_their_defaults(self) -> None:
+        """Only ``requires`` is mandatory; PEP 517 supplies the backend."""
         from nab_project._build.runner import _DEFAULT_BACKEND, _read_build_system
 
-        backend, _, _ = _read_build_system(
-            {"build-system": {"build-backend": 1234, "requires": []}}
+        assert _read_build_system({"build-system": {"requires": ["hatchling"]}}) == (
+            _DEFAULT_BACKEND,
+            ("hatchling",),
+            None,
         )
-        assert backend == _DEFAULT_BACKEND
 
-    def test_requires_wrong_type_uses_default(self) -> None:
-        from nab_project._build.runner import _DEFAULT_REQUIRES, _read_build_system
+    def test_build_backend_wrong_type_raises(self) -> None:
+        from nab_project._build.runner import _read_build_system
 
-        _, requires, _ = _read_build_system(
-            {"build-system": {"build-backend": "x", "requires": "not-a-list"}}
-        )
-        assert requires == _DEFAULT_REQUIRES
+        with pytest.raises(BuildBackendError, match="build-backend.*must be a string"):
+            _read_build_system(
+                {"build-system": {"build-backend": 1234, "requires": []}}
+            )
+
+    def test_requires_absent_raises(self) -> None:
+        """PEP 518 makes ``requires`` mandatory once the table is there."""
+        from nab_project._build.runner import _read_build_system
+
+        with pytest.raises(BuildBackendError, match="requires is required by PEP 518"):
+            _read_build_system({"build-system": {"build-backend": "x"}})
+
+    @pytest.mark.parametrize(
+        "value", ["not-a-list", ["hatchling", 42], {"a": "b"}, 1234]
+    )
+    def test_requires_wrong_type_raises(self, value: object) -> None:
+        from nab_project._build.runner import _read_build_system
+
+        with pytest.raises(BuildBackendError, match="requires.*array of strings"):
+            _read_build_system(
+                {"build-system": {"build-backend": "x", "requires": value}}
+            )
 
     def test_backend_path_returns_tuple_when_strings(self) -> None:
         from nab_project._build.runner import _read_build_system
@@ -944,19 +1000,19 @@ class TestReadBuildSystem:
         )
         assert backend_path == ("src", "vendor")
 
-    def test_backend_path_wrong_type_returns_none(self) -> None:
+    def test_backend_path_wrong_type_raises(self) -> None:
         from nab_project._build.runner import _read_build_system
 
-        _, _, backend_path = _read_build_system(
-            {
-                "build-system": {
-                    "build-backend": "x",
-                    "requires": [],
-                    "backend-path": "src",
+        with pytest.raises(BuildBackendError, match="backend-path.*array of strings"):
+            _read_build_system(
+                {
+                    "build-system": {
+                        "build-backend": "x",
+                        "requires": [],
+                        "backend-path": "src",
+                    }
                 }
-            }
-        )
-        assert backend_path is None
+            )
 
 
 class TestParseMetadata:
