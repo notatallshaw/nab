@@ -145,6 +145,13 @@ backend than `[build-system].requires` asked for without saying so.  The
 requirement resolves as written and the refusal names the version it
 landed on.
 
+What the build produces has to be the release nab resolved, because
+the dependencies installed beside it were resolved for that release.
+A backend that computes its own version and emits another one is
+refused, naming the requirement and the name and version its wheel
+filename carries.  Versions compare as PEP 440 does, so `1.0` and
+`1.0.0` are one release while `1.0+local` is another.
+
 A build already in the chain cannot be re-entered:
 
 ```text
