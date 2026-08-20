@@ -66,6 +66,7 @@ __all__ = [
     "host_environment",
     "marker_variables",
     "micro_boundary_points",
+    "names_a_micro",
     "python_axis_environment",
     "slices_from_points",
     "unboundable_variables",
@@ -718,7 +719,7 @@ def _language_minor(version: Version) -> str:
     return f"{epoch}{release[0]}.{minor}"
 
 
-def _names_a_micro(version: Version) -> bool:
+def names_a_micro(version: Version) -> bool:
     """Whether ``version`` names a point inside a minor rather than the minor.
 
     ``3.13.7`` and ``3.13.0`` name one micro, ``3.13rc1`` one prerelease of
@@ -758,7 +759,7 @@ def _prefix_at_the_minor(operator: str, raw: str) -> str | None:
     prefix = Version(raw.removesuffix(".*"))
     if len(prefix.release) < _PYTHON_VERSION_PARTS:
         return f"{operator}{raw}"
-    if operator == "!=" and _names_a_micro(prefix):
+    if operator == "!=" and names_a_micro(prefix):
         return None
     return f"{operator}{_language_minor(prefix)}"
 
@@ -794,7 +795,7 @@ def _language_level_clause(clause: Specifier) -> str | None:
     if operator in {">", ">=", "<", "<="}:
         return _bound_at_the_minor(operator, version, minor)
     if operator == "!=":
-        return None if _names_a_micro(version) else f"!={minor}"
+        return None if names_a_micro(version) else f"!={minor}"
 
     # ~= "3.13.4" is >= "3.13.4", == "3.13.*": exactly the 3.13 minor.
     if operator == "~=" and len(version.release) > _PYTHON_VERSION_PARTS:

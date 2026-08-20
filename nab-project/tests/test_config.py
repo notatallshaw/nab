@@ -46,7 +46,7 @@ from nab_project.config_sources import (
 )
 from nab_project.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from nab_project.workspace import WorkspaceConfig
-from nab_provider._vendor.packaging.markers import default_environment
+from nab_provider._vendor.packaging.markers import Marker, default_environment
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import (
@@ -1783,6 +1783,63 @@ class TestEnvironment:
         (target,) = plan_targets(read_pyproject_config(path))
         assert target.is_minor_interval
         assert "python_full_version" not in declared_range_marker(target)
+
+    @pytest.mark.parametrize(
+        ("declared", "full"),
+        [
+            ("3.14rc1", "3.14.0rc1"),
+            ("3.14a1", "3.14.0a1"),
+            ("3.14.post1", "3.14.0.post1"),
+            ("3.14+local", "3.14.0+local"),
+        ],
+    )
+    def test_environment_tagged_python_without_a_micro_pins_whole(
+        self, tmp_path: Path, declared: str, full: str
+    ) -> None:
+        """A tagged python names one build even when written without a micro."""
+        path = write(
+            tmp_path,
+            f'[tool.nab.environment]\npython = "{declared}"\n'
+            'platform = "linux_x86_64"\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        (target,) = plan_targets(read_pyproject_config(path))
+
+        assert target.python_full_version == full
+        assert target.marker_env["implementation_version"] == full
+        assert not target.is_minor_interval
+        assert f'python_full_version == "{full}"' in declared_range_marker(target)
+
+    def test_environment_release_candidate_is_below_its_release(
+        self, tmp_path: Path
+    ) -> None:
+        """``python_full_version >= "3.14"`` is False on a 3.14 candidate."""
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\npython = "3.14rc1"\n'
+            'platform = "linux_x86_64"\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        (target,) = plan_targets(read_pyproject_config(path))
+
+        assert not Marker('python_full_version >= "3.14"').evaluate(target.marker_env)
+        assert Marker('python_full_version == "3.14.0rc1"').evaluate(target.marker_env)
+
+    def test_python_override_keeps_a_release_candidate_tag(
+        self, tmp_path: Path
+    ) -> None:
+        """``--python 3.14rc1`` pins the candidate on a project with a platform."""
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\npython = "3.13"\n'
+            'platform = "linux_x86_64"\n'
+            '[tool.nab]\nbuild-policy = "never"\n',
+        )
+        config = read_pyproject_config(path)
+        (target,) = plan_targets(with_python_override(config, "3.14rc1"))
+
+        assert target.python_full_version == "3.14.0rc1"
+        assert not target.is_minor_interval
 
     def test_windows_arm64_bare_id_declares_a_target(self, tmp_path: Path) -> None:
         path = write(
