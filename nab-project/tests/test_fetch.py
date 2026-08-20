@@ -152,6 +152,21 @@ class TestInMemoryIndex:
         assert idx.get_metadata("foo", "1.0") == "Metadata-Version: 2.1"
         assert idx.has_metadata("foo", "1.0")
 
+    def test_metadata_slot_keeps_only_the_header_block(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_metadata(
+            "foo", "1.0", "Name: foo\nVersion: 1.0\n\nA long description.\n"
+        )
+        assert idx.get_metadata("foo", "1.0") == "Name: foo\nVersion: 1.0\n\n"
+
+    def test_sdist_metadata_slot_keeps_only_the_header_block(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_sdist_metadata(
+            "foo", "1.0", "Name: foo\nVersion: 1.0\n\nA long description.\n"
+        )
+        assert idx.get_metadata("foo", "1.0") == "Name: foo\nVersion: 1.0\n\n"
+        assert idx.metadata_from_sdist("foo", "1.0")
+
     def test_store_metadata_none(self) -> None:
         idx = InMemoryIndex()
         idx.store_metadata("foo", "1.0", None)
@@ -2762,6 +2777,7 @@ class TestSiblingWheelMetadata:
 
 
 _RANGE_META = b"Metadata-Version: 2.1\nName: widget\nVersion: 1.0\n\nBody.\n"
+_RANGE_META_HEADERS = "Metadata-Version: 2.1\nName: widget\nVersion: 1.0\n\n"
 _RANGE_URL = "https://files.example.org/packages/widget-1.0-py3-none-any.whl"
 
 
@@ -2975,7 +2991,7 @@ class TestRangeMetadataCoordinator:
             assert len(submitted) == 1
             assert (
                 coord.index.get_metadata("widget", "1.0", _RANGE_URL)
-                == _RANGE_META.decode()
+                == _RANGE_META_HEADERS
             )
 
     def test_distinct_wheel_urls_enqueue_separately(self) -> None:
@@ -3008,7 +3024,7 @@ class TestRangeMetadataCoordinator:
             assert event.wait(timeout=5)
             assert (
                 coord.index.get_metadata("widget", "1.0", _RANGE_URL)
-                == _RANGE_META.decode()
+                == _RANGE_META_HEADERS
             )
             assert not coord.index.metadata_from_sdist("widget", "1.0")
             assert coord.index.get_range_outcome("widget", "1.0", _RANGE_URL) in (

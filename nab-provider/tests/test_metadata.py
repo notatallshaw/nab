@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import email.parser
 import sys
 
 import pytest
@@ -9,8 +10,8 @@ import pytest
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import (
-    _header_block,
     metadata_deps_are_static,
+    metadata_header_block,
     parse_metadata,
     validate_specifier_versions,
 )
@@ -109,21 +110,6 @@ def test_requires_dist_parsed() -> None:
     assert [str(r) for r in md.requires_dist] == ["bar>=1.0", "baz<2"]
 
 
-def test_header_block_slice_bounds() -> None:
-    """The slice ends after the blank line; text without one comes back whole."""
-    assert (
-        _header_block("Name: foo\nVersion: 1.0\n\nbody\n")
-        == "Name: foo\nVersion: 1.0\n\n"
-    )
-
-    assert (
-        _header_block("Name: foo\r\nVersion: 1.0\r\n\r\nbody\r\n")
-        == "Name: foo\r\nVersion: 1.0\r\n\r\n"
-    )
-
-    assert _header_block("Name: foo\nVersion: 1.0\n") == "Name: foo\nVersion: 1.0\n"
-
-
 def test_long_description_is_not_read() -> None:
     """Header fields survive a description that repeats them as text."""
     text = (
@@ -187,6 +173,67 @@ def test_provides_extra_whitespace_stripped() -> None:
     )
     md = parse_metadata(text)
     assert md.provides_extra == ["dev", "docs"]
+
+
+_HEADER_BLOCK_DOCUMENTS = [
+    pytest.param(
+        "Metadata-Version: 2.1\nName: foo\nVersion: 1.2.3\n"
+        "Requires-Python: >=3.9\nRequires-Dist: bar>=2\n"
+        "Provides-Extra: docs\n\nName: not-a-header\nA description.\n",
+        id="lf",
+    ),
+    pytest.param(
+        "Metadata-Version: 2.1\r\nName: foo\r\nVersion: 1.2.3\r\n"
+        "Requires-Dist: bar>=2\r\n\r\nA description.\r\n",
+        id="crlf",
+    ),
+    pytest.param(
+        "Metadata-Version: 2.1\r\nName: foo\r\nVersion: 1.2.3\r\n"
+        "Requires-Dist: bar>=2\r\n\r\nFirst para.\n\nSecond para.\n",
+        id="crlf-headers-lf-description",
+    ),
+    pytest.param(
+        "Metadata-Version: 2.1\nName: foo\nVersion: 1.2.3\n"
+        "Summary: line one\nline two unfolded\nRequires-Dist: bar>=2\n"
+        "\nA description.\n",
+        id="unfolded-field-ends-the-headers-early",
+    ),
+    pytest.param("Metadata-Version: 2.1\nName: foo\nVersion: 1.2.3\n", id="no-body"),
+]
+
+
+class TestMetadataHeaderBlock:
+    """Cutting a document at its header boundary."""
+
+    def test_description_after_the_blank_line_is_dropped(self) -> None:
+        text = "Name: foo\nVersion: 1.0\n\nA long description.\n"
+        assert metadata_header_block(text) == "Name: foo\nVersion: 1.0\n\n"
+
+    def test_crlf_blank_line_ends_the_headers(self) -> None:
+        text = "Name: foo\r\nVersion: 1.0\r\n\r\nA long description.\r\n"
+        assert metadata_header_block(text) == "Name: foo\r\nVersion: 1.0\r\n\r\n"
+
+    def test_crlf_headers_cut_before_an_lf_description(self) -> None:
+        text = "Name: foo\r\nVersion: 1.0\r\n\r\nFirst para.\n\nSecond para.\n"
+        assert metadata_header_block(text) == "Name: foo\r\nVersion: 1.0\r\n\r\n"
+
+    def test_document_without_a_blank_line_comes_back_whole(self) -> None:
+        text = "Name: foo\nVersion: 1.0\n"
+        assert metadata_header_block(text) is text
+
+    def test_cuts_at_the_first_blank_line(self) -> None:
+        text = "Name: foo\nVersion: 1.0\n\nFirst para.\n\nSecond para.\n"
+        assert metadata_header_block(text) == "Name: foo\nVersion: 1.0\n\n"
+
+    @pytest.mark.parametrize("text", _HEADER_BLOCK_DOCUMENTS)
+    def test_the_cut_keeps_the_whole_header_block(self, text: str) -> None:
+        """The prefix ends at or after where ``email.parser`` ends the headers."""
+        cut = metadata_header_block(text)
+        assert text.startswith(cut)
+
+        parser = email.parser.Parser()
+        assert parser.parsestr(cut).items() == parser.parsestr(text).items()
+        assert parse_metadata(cut) == parse_metadata(text)
 
 
 class TestMetadataDepsAreStatic:

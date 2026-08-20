@@ -29,6 +29,7 @@ __all__ = [
     "WheelMetadata",
     "intern_version",
     "metadata_deps_are_static",
+    "metadata_header_block",
     "parse_metadata",
     "static_project_from_table",
     "validate_specifier_versions",
@@ -162,18 +163,23 @@ class WheelMetadata:
     dynamic: frozenset[str] = field(default_factory=frozenset)
 
 
-def _header_block(text: str) -> str:
-    """Return a prefix of ``text`` that holds all of its headers.
+def metadata_header_block(text: str) -> str:
+    r"""Return ``text`` cut after the earlier of its first ``\n\n`` and ``\r\n\r\n``.
 
-    Cuts after the first blank line, LF or CRLF, and returns ``text``
-    unchanged when there is none.
+    ``email.parser`` closes the RFC 822 headers at the first blank line at the
+    latest, so the prefix holds every field :func:`parse_metadata` reads and
+    parses to the same :class:`WheelMetadata` as the whole document.  A
+    document with neither sequence comes back whole.
+
+    ``lf + 3`` bounds the second search: it is as far as a ``\r\n\r\n``
+    starting before the ``\n\n`` hit can reach.
     """
-    end = text.find("\n\n")
-    if end != -1:
-        return text[: end + 2]
-    end = text.find("\r\n\r\n")
-    if end != -1:
-        return text[: end + 4]
+    lf = text.find("\n\n")
+    crlf = text.find("\r\n\r\n", 0, None if lf == -1 else lf + 3)
+    if crlf != -1:
+        return text[: crlf + 4]
+    if lf != -1:
+        return text[: lf + 2]
     return text
 
 
@@ -183,7 +189,7 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
         data = data.decode("utf-8")
 
     # Nothing here reads the long description.
-    msg = email.parser.Parser().parsestr(_header_block(data), headersonly=True)
+    msg = email.parser.Parser().parsestr(metadata_header_block(data), headersonly=True)
 
     name = msg.get("Name")
     if name is None:
