@@ -60,9 +60,18 @@ def build_remote_sdist(
         )
         raise UnsupportedSdistError(msg)
 
-    with tempfile.TemporaryDirectory(
-        prefix="nab-build-remote-", ignore_cleanup_errors=True
-    ) as td:
+    try:
+        scratch = tempfile.TemporaryDirectory(
+            prefix="nab-build-remote-", ignore_cleanup_errors=True
+        )
+    except OSError as exc:
+        msg = (
+            f"{package}=={version} build-remote could not create a temporary"
+            f" build directory: {exc}"
+        )
+        raise UnsupportedSdistError(msg) from exc
+
+    with scratch as td:
         try:
             source_dir = extract_sdist_archive(data, Path(td))
         except ValueError as exc:
