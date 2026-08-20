@@ -1025,6 +1025,11 @@ class TestHeader:
         resp = _FakeResponse(b"", headers={})
         assert _header(resp, "etag") is None
 
+    def test_line_folded_value_is_unfolded(self) -> None:
+        """RFC 9112 5.2: a receiver replaces a line fold with a space."""
+        resp = _FakeResponse(b"", headers={"etag": '"abc\r\n def"'})
+        assert _header(resp, "etag") == '"abc def"'
+
 
 class TestGetFiles:
     def test_cold_cache_fetches_and_stores(self, tmp_path: Path) -> None:
@@ -1342,6 +1347,47 @@ class TestGetFiles:
             "pkg",
             LISTING_BYTES,
             CachePolicy(fetched_at=0, max_age=1, etag='"é"'),
+        )
+        transport = _FakeTransport(
+            [_FakeResponse(LISTING_BYTES, headers={"etag": '"ok"'})]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+
+        sent = transport.calls[0][1]
+        assert sent is not None
+        assert "If-None-Match" not in sent
+
+    def test_line_folded_etag_revalidates_on_one_line(self, tmp_path: Path) -> None:
+        """A tag that arrives line-folded is stored and sent back on one line."""
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    LISTING_BYTES,
+                    headers={"etag": '"abc\r\n def"', "cache-control": "max-age=0"},
+                ),
+                _FakeResponse(b"", status=304, headers={}),
+            ]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+        stored = cache.get_simple("pkg")
+        assert stored is not None
+        assert stored[1].etag == '"abc def"'
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+        sent = transport.calls[1][1]
+        assert sent is not None
+        assert sent["If-None-Match"] == '"abc def"'
+
+    def test_stale_skips_folded_etag_kept_by_backend(self, tmp_path: Path) -> None:
+        """A folded tag a backend keeps on read still must not be sent."""
+        cache = _MemoryPolicyCache(tmp_path)
+        cache.put_simple(
+            "pkg",
+            LISTING_BYTES,
+            CachePolicy(fetched_at=0, max_age=1, etag='"abc\r\n def"'),
         )
         transport = _FakeTransport(
             [_FakeResponse(LISTING_BYTES, headers={"etag": '"ok"'})]

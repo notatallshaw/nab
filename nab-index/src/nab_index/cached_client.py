@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from nab_provider.records import select_artifact_hash
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
 
-from .cache import CacheBackend, CachePolicy, OfflineError
+from .cache import CacheBackend, CachePolicy, OfflineError, is_sendable_etag
 from .client import (
     _HTTP_NOT_FOUND,
     DEFAULT_INDEX,
@@ -652,8 +652,7 @@ class CachedAsyncSimpleClient:
         """
         url = f"{self._index_url}{package}/"
         headers = {"Accept": simple_accept_header(self._serialization)}
-        # httpx raises on a non-ASCII header value.
-        if policy.etag is not None and policy.etag.isascii():
+        if policy.etag is not None and is_sendable_etag(policy.etag):
             headers["If-None-Match"] = policy.etag
         response = await self._transport.get(url, headers=headers)
         if response.status_code == _HTTP_NOT_MODIFIED:

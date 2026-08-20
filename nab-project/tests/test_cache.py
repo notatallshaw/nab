@@ -748,7 +748,7 @@ class TestEncodePolicy:
         policy = CachePolicy(fetched_at=10, max_age=20, etag='"é"')
         assert json.loads(_encode_policy(policy))["etag"] is None
 
-    @pytest.mark.parametrize("etag", ['"é"', 123, []])
+    @pytest.mark.parametrize("etag", ['"é"', '"abc\r\n def"', 123, []])
     def test_unusable_etag_is_dropped(self, tmp_path: Path, etag: object) -> None:
         cache = OnDiskCache(tmp_path, "https://pypi.org/simple")
         cache.put_simple("foo", b"{}", _FRESH)
