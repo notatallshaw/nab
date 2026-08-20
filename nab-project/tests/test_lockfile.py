@@ -4045,6 +4045,30 @@ class TestBuildTargetLock:
         assert isinstance(pin, IndexPin)
         assert pin.wheels[0].upload_time is None
 
+    @pytest.mark.parametrize(
+        "upload_time",
+        ["9999-12-31T23:59:59-23:59", "0001-01-01T00:00:00+01:00"],
+    )
+    def test_upload_time_outside_datetime_range_in_utc_is_dropped(
+        self, upload_time: str
+    ) -> None:
+        """An offset can move a parseable timestamp out of range once in UTC."""
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://pypi.org/simple/foo/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=">=3.10",
+            has_metadata=False,
+            upload_time=upload_time,
+            hashes=(("sha256", "a" * 64),),
+            size=1234,
+        )
+        provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
+        lock = build_target_lock(provider, _HOST, {"foo": Version("1.0")})
+        pin = lock.pins["foo"]
+        assert isinstance(pin, IndexPin)
+        assert pin.wheels[0].upload_time is None
+
     def test_missing_acceptable_hash_raises(self) -> None:
         wheel = _wheel_file(sha256=None)
         provider = _FakeProvider(listings={"foo": [(Version("1.0"), wheel)]})
