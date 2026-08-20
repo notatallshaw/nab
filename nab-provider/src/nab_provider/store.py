@@ -1,7 +1,6 @@
 """Shared store for fetched package data.
 
-Stdlib-only: no network, no filesystem, no import of the index client at
-runtime.
+No network, no filesystem, no import of the index client at runtime.
 """
 
 from __future__ import annotations
@@ -10,6 +9,8 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from nab_provider.metadata import metadata_header_block
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -68,7 +69,8 @@ class InMemoryIndex:
 
         # Metadata text is keyed by the artifact it came from: the sidecar URL
         # for a wheel's METADATA, or None for text that stands for the version
-        # itself, such as an sdist's PKG-INFO.
+        # itself, such as an sdist's PKG-INFO.  Each is cut to its header block
+        # on the way in.
         self._metadata: dict[tuple[str, str, str | None], str | None] = {}
         self._metadata_errors: dict[tuple[str, str, str | None], BaseException] = {}
         # Versions whose version-level slot was written from an sdist PKG-INFO;
@@ -204,7 +206,7 @@ class InMemoryIndex:
     def get_metadata(
         self, package: str, version: str, metadata_url: str | None = None
     ) -> str | None:
-        """Return cached metadata text, or ``None`` if not yet stored."""
+        """Return the cached header block, or ``None`` if not yet stored."""
         with self._lock:
             return self._read_metadata(package, version, metadata_url)[0]
 
@@ -244,20 +246,21 @@ class InMemoryIndex:
         *,
         from_sdist: bool,
     ) -> None:
-        """Write one metadata slot. Caller holds the lock.
+        """Write one metadata slot, cut to its header block. Caller holds the lock.
 
         Reconciled sdist metadata is derived from the version-level text, so
         replacing that text drops it.
         """
         package, version, metadata_url = slot
+        text = None if data is None else metadata_header_block(data)
         if metadata_url is None:
-            if self._metadata.get(slot) != data:
+            if self._metadata.get(slot) != text:
                 self._resolved_sdist_metadata.pop((package, version), None)
             if from_sdist:
                 self._metadata_from_sdist.add((package, version))
             else:
                 self._metadata_from_sdist.discard((package, version))
-        self._metadata[slot] = data
+        self._metadata[slot] = text
 
     def store_metadata(
         self,
@@ -267,7 +270,7 @@ class InMemoryIndex:
         *,
         metadata_url: str | None = None,
     ) -> None:
-        """Cache metadata text, or ``None`` when no sidecar was served.
+        """Cache the header block of ``data``, or ``None`` when no sidecar was served.
 
         ``metadata_url`` is the sidecar the text came from; ``None`` stores it
         as standing for the version rather than one artifact.  It is
