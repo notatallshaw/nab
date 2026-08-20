@@ -77,10 +77,16 @@ def config_command(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag
     explain <key>`` prints the full shadowed source stack.
 
     ``--include-rejected`` sits on the command, so every action takes it.
-    It turns a refused source (a key set outside its scope, an unknown key,
-    an unknown or renamed ``NAB_*`` var) from a fatal config error into a
-    collected rejection, which ``list`` prints as a trailing section and
-    ``explain`` as a ``rejected`` row under the key it names.
+    Without it, a config file that sets an unknown key or a key outside its
+    scope is a fatal config error; the flag collects that refusal instead
+    and the command runs.  An unknown or renamed ``NAB_*`` var is never
+    fatal: it is dropped with a stderr warning, and the flag only moves
+    that warning into the collected refusals.
+
+    ``list`` prints the collected refusals in a trailing section, and
+    ``explain`` prints a ``rejected`` row only under the key a refusal
+    names, so one that names no key shows on ``list`` alone.  ``get``
+    prints the value and never a refusal.
 
     The same per-option flags the run commands accept (the USER
     ``--offline`` / ``--cache-dir`` / ``--http-backend`` /
