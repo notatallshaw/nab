@@ -36,7 +36,12 @@ import json
 import sys
 from typing import TYPE_CHECKING
 
-from nab_provider.records import SdistFile, WheelFile, defer_hashes, defer_sidecar_hash
+from nab_provider.records import (
+    SdistFile,
+    WheelFile,
+    rehydrated_sdist,
+    rehydrated_wheel,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -222,17 +227,12 @@ def _decode_row(row: object) -> WheelFile | SdistFile:
     raise _BadRowError
 
 
-def _hashes_unless_deferred(cell: object) -> tuple[tuple[str, str], ...]:
-    """Return a ``hashes`` cell's pairs, or ``()`` when it is a table to defer."""
-    return () if isinstance(cell, dict) else _hashes(cell)
-
-
-def _sidecar_unless_deferred(cell: object) -> tuple[str, str] | None:
-    """Return a sidecar cell's pair, or ``None`` when it is a table to defer."""
-    return None if isinstance(cell, dict) else _pair_or_none(cell)
-
-
 def _decode_wheel(row: Sequence[object]) -> WheelFile:
+    """Rehydrate a wheel row.
+
+    An integrity cell holding the index's own table passes through unparsed,
+    for the record to parse on first read; any other form is parsed here.
+    """
     (
         _,
         filename,
@@ -245,35 +245,33 @@ def _decode_wheel(row: Sequence[object]) -> WheelFile:
         size,
         metadata_hash,
     ) = row
-    wheel = WheelFile(
-        filename=_text(filename),
-        url=_text(url),
-        version=_text(version),
-        requires_python=_interned_or_none(requires_python),
-        has_metadata=_flag(has_metadata),
-        upload_time=_text_or_none(upload_time),
-        hashes=_hashes_unless_deferred(hashes),
-        size=_count_or_none(size),
-        metadata_hash=_sidecar_unless_deferred(metadata_hash),
+    return rehydrated_wheel(
+        _text(filename),
+        _text(url),
+        _text(version),
+        _interned_or_none(requires_python),
+        _flag(has_metadata),
+        _text_or_none(upload_time),
+        hashes if isinstance(hashes, dict) else _hashes(hashes),
+        _count_or_none(size),
+        metadata_hash
+        if isinstance(metadata_hash, dict)
+        else _pair_or_none(metadata_hash),
     )
-    defer_hashes(wheel, hashes)
-    defer_sidecar_hash(wheel, metadata_hash)
-    return wheel
 
 
 def _decode_sdist(row: Sequence[object]) -> SdistFile:
+    """Rehydrate a source-distribution row; see :func:`_decode_wheel`."""
     _, filename, url, version, requires_python, upload_time, hashes, size = row
-    sdist = SdistFile(
-        filename=_text(filename),
-        url=_text(url),
-        version=_text(version),
-        requires_python=_interned_or_none(requires_python),
-        upload_time=_text_or_none(upload_time),
-        hashes=_hashes_unless_deferred(hashes),
-        size=_count_or_none(size),
+    return rehydrated_sdist(
+        _text(filename),
+        _text(url),
+        _text(version),
+        _interned_or_none(requires_python),
+        _text_or_none(upload_time),
+        hashes if isinstance(hashes, dict) else _hashes(hashes),
+        _count_or_none(size),
     )
-    defer_hashes(sdist, hashes)
-    return sdist
 
 
 # JSON hands back only its own types, so an exact type check is enough to keep a
