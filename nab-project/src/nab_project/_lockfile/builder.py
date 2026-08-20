@@ -604,18 +604,19 @@ def _parse_upload_time(raw: str | None) -> datetime | None:
     Accepts the RFC 3339 form the Simple/JSON API serves (``Z`` or an
     explicit offset) and normalizes it to UTC (PEP 751 requires UTC for
     the emitted field). Returns ``None`` when the field is absent,
-    unparseable, or has no timezone; the timestamp is informational, so
-    a bad value is dropped rather than fatal.
+    unparseable, has no timezone, or lands outside the ``datetime``
+    range once shifted to UTC; the timestamp is informational, so a bad
+    value is dropped rather than fatal.
     """
     if raw is None:
         return None
     try:
         parsed = parse_iso_datetime(raw)
-    except ValueError:
+        if parsed.tzinfo is None:
+            return None
+        return parsed.astimezone(timezone.utc)
+    except (OverflowError, ValueError):
         return None
-    if parsed.tzinfo is None:
-        return None
-    return parsed.astimezone(timezone.utc)
 
 
 def _filter_acceptable_hashes(
