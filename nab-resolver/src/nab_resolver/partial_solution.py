@@ -15,14 +15,17 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#partial-so
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast, overload
+from weakref import ref
 
+from ._compat import override
 from .ranges import Range
 from .types import PackageType, RangeProtocol, VersionType
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     from .types import Incompatibility, Term
 
@@ -33,8 +36,132 @@ __all__ = [
 ]
 
 
-# Distinguishes "cached miss" from a legitimate cached None.
+# Marks a missing map entry, where None can itself be the stored value.
 _UNSET = object()
+
+# Marks a package that the live map did not hold when a snapshot was taken.
+_ABSENT = object()
+
+_ValueType = TypeVar("_ValueType")
+_DefaultType = TypeVar("_DefaultType")
+
+
+class _Snapshot(Mapping[PackageType, _ValueType]):
+    """A read-only view of one of the solution's maps, pinned to one moment.
+
+    Reads fall through to the live map, so nothing is copied up front.
+    Before the solution changes a package's entry it calls :meth:`freeze`,
+    which records the value this view has to keep.
+    """
+
+    __slots__ = ("__weakref__", "_live", "_shadow")
+
+    def __init__(self, live: dict[PackageType, _ValueType]) -> None:
+        self._live = live
+        # A value or _ABSENT. Any rather than that union, which no checker
+        # narrows the sentinel back out of.
+        self._shadow: dict[PackageType, Any] = {}
+
+    def freeze(self, package: PackageType) -> None:
+        """Keep the package's current value before the live map moves on."""
+        if package not in self._shadow:
+            self._shadow[package] = self._live.get(package, _ABSENT)
+
+    def detach(self) -> None:
+        """Take a copy of the live map, so later changes need no freezing.
+
+        Backtracking rewrites most of the map at once, where one copy beats
+        recording each package on its way out.
+        """
+        frozen = dict(self._live)
+        for package, value in self._shadow.items():
+            if value is _ABSENT:
+                frozen.pop(package, None)
+            else:
+                frozen[package] = value
+        self._live = frozen
+        self._shadow = {}
+
+    @override
+    def __getitem__(self, package: PackageType) -> _ValueType:
+        frozen = self._shadow.get(package, _UNSET)
+        if frozen is _UNSET:
+            return self._live[package]
+        if frozen is _ABSENT:
+            raise KeyError(package)
+        return cast("_ValueType", frozen)
+
+    # ``object`` rather than ``PackageType``: narrowing the key would not
+    # substitute for ``Mapping.get``.
+    @overload
+    def get(self, package: object, /) -> _ValueType | None: ...
+    @overload
+    def get(
+        self, package: object, /, default: _ValueType | _DefaultType
+    ) -> _ValueType | _DefaultType: ...
+    @override
+    def get(
+        self, package: Any, /, default: _ValueType | _DefaultType | None = None
+    ) -> _ValueType | _DefaultType | None:
+        """Return the package's value as of the snapshot, else ``default``.
+
+        Defined rather than inherited: ``Mapping.get`` routes every read
+        through ``__getitem__``, and every miss through a raised ``KeyError``.
+        """
+        frozen = self._shadow.get(package, _UNSET)
+        if frozen is _UNSET:
+            return self._live.get(package, default)
+        if frozen is _ABSENT:
+            return default
+        return cast("_ValueType", frozen)
+
+    @override
+    def __contains__(self, package: object) -> bool:
+        frozen = self._shadow.get(cast("PackageType", package), _UNSET)
+        if frozen is _UNSET:
+            return package in self._live
+        return frozen is not _ABSENT
+
+    @override
+    def __iter__(self) -> Iterator[PackageType]:
+        """Yield the snapshot's packages, in the order the live map holds them.
+
+        Freezing leaves a package where it is, and the only path that removes
+        one is ``backtrack``, which detaches first, so the live map still holds
+        every key of the snapshot in the order it arrived.
+        """
+        shadow = self._shadow
+        for package in self._live:
+            if shadow.get(package, _UNSET) is not _ABSENT:
+                yield package
+
+    @override
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+def _take_snapshot(
+    live: dict[PackageType, _ValueType],
+    holders: list[ref[_Snapshot[PackageType, _ValueType]]],
+) -> _Snapshot[PackageType, _ValueType]:
+    """Snapshot ``live`` and hold a weak reference to it in ``holders``.
+
+    Entries whose snapshot the caller has since released are dropped on the way.
+    """
+    snapshot = _Snapshot(live)
+    holders[:] = [holder for holder in holders if holder() is not None]
+    holders.append(ref(snapshot))
+    return snapshot
+
+
+def _detach_snapshots(
+    holders: list[ref[_Snapshot[PackageType, _ValueType]]],
+) -> None:
+    """Detach every outstanding snapshot from the map it reads through."""
+    for holder in holders:
+        snapshot = holder()
+        if snapshot is not None:
+            snapshot.detach()
 
 
 @dataclass(slots=True)
@@ -116,6 +243,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
             PackageType, list[Assignment[PackageType, VersionType]]
         ] = defaultdict(list)
 
+        # Weak references to the snapshots still outstanding.
+        self._range_snapshots: list[
+            ref[_Snapshot[PackageType, RangeProtocol[VersionType]]]
+        ] = []
+        self._decision_snapshots: list[ref[_Snapshot[PackageType, VersionType]]] = []
+
     @property
     def decision_level(self) -> int:
         """Return the current decision depth."""
@@ -190,6 +323,8 @@ class PartialSolution(Generic[PackageType, VersionType]):
         self._decision_level += 1
         exact_range = self._range_type.singleton(version)
 
+        self._freeze_ranges(package)
+        self._freeze_decisions(package)
         self._positive_ranges[package] = exact_range
         self._decided_versions[package] = version
         self._refresh_effective_range(package)
@@ -227,6 +362,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
                 new_range = self._positive_ranges[package] & constraint
             else:
                 new_range = self._range_type.full() & constraint
+            self._freeze_ranges(package)
             self._positive_ranges[package] = new_range
             if package not in self._decided_versions:
                 self._undecided.add(package)
@@ -264,6 +400,8 @@ class PartialSolution(Generic[PackageType, VersionType]):
         See: https://github.com/dart-lang/pub/blob/master/doc/solver.md#conflict-resolution
         """
         self._contradiction_epoch += 1
+        _detach_snapshots(self._range_snapshots)
+        _detach_snapshots(self._decision_snapshots)
 
         # Trail levels never decrease, so this pops exactly the assignments above
         # target_level; every other package keeps the positive and negative ranges
@@ -337,9 +475,26 @@ class PartialSolution(Generic[PackageType, VersionType]):
         else:
             self._undecided.discard(package)
 
-    def decisions(self) -> dict[PackageType, VersionType]:
-        """Return the current decision map: ``{package: version}``."""
-        return dict(self._decided_versions)
+    def decisions(self) -> Mapping[PackageType, VersionType]:
+        """Return the decision map ``{package: version}``.
+
+        Read-only, and pinned: later decisions and backtracking do not reach it.
+        """
+        return _take_snapshot(self._decided_versions, self._decision_snapshots)
+
+    def _freeze_decisions(self, package: PackageType) -> None:
+        """Preserve the package's decided version in outstanding snapshots."""
+        for holder in self._decision_snapshots:
+            snapshot = holder()
+            if snapshot is not None:
+                snapshot.freeze(package)
+
+    def _freeze_ranges(self, package: PackageType) -> None:
+        """Preserve the package's positive range in outstanding snapshots."""
+        for holder in self._range_snapshots:
+            snapshot = holder()
+            if snapshot is not None:
+                snapshot.freeze(package)
 
     def take_changed_packages(self) -> set[PackageType]:
         """Return the packages whose state moved since the last call, and reset.
@@ -364,9 +519,12 @@ class PartialSolution(Generic[PackageType, VersionType]):
         """Return True if the package has a positive constraint or decision."""
         return package in self._positive_ranges or package in self._decided_versions
 
-    def positive_ranges(self) -> dict[PackageType, RangeProtocol[VersionType]]:
-        """Return a copy of the positive-range map for each package."""
-        return dict(self._positive_ranges)
+    def positive_ranges(self) -> Mapping[PackageType, RangeProtocol[VersionType]]:
+        """Return each package's positive range.
+
+        Read-only, and pinned: later derivations and backtracking do not reach it.
+        """
+        return _take_snapshot(self._positive_ranges, self._range_snapshots)
 
     def positive_range(self, package: PackageType) -> RangeProtocol[VersionType] | None:
         """Return the package's accumulated positive range, or None if unset."""
