@@ -538,20 +538,75 @@ class _NamedWheel(Protocol):
 _WheelT = TypeVar("_WheelT", bound=_NamedWheel)
 
 
+# One line of a target's tag order with the platform axis projected out:
+# interpreter, abi, and either the entry's own platform or None where the
+# platform axis multiplies it.
+_AxisEntry = tuple[str, str, str | None]
+
+# Stands in for "not looked up yet" in ``TagSet._placed``, which holds a real
+# None for a tag set the target accepts nothing from.
+_UNPLACED = object()
+
+
+@dataclass(frozen=True)
+class _AxisIndex:
+    """Where a tag sits in a target's expanded tag order.
+
+    ``multiplied`` holds the first index of each interpreter/abi block the
+    platform axis multiplies, ``fixed`` the index of each tag that names a
+    platform of its own, and ``platforms`` each platform tag's offset within
+    a block.  A repeated entry overwrites the earlier one, which is also the
+    index :attr:`TagSet.rank` keeps for a repeated tag.
+    """
+
+    multiplied: Mapping[tuple[str, str], int]
+    fixed: Mapping[Tag, int]
+    platforms: Mapping[str, int]
+
+    def of(self, tag: Tag) -> int | None:
+        """Return ``tag``'s index in the expanded order, or None if unaccepted.
+
+        The interpreter-agnostic ``any`` platform is never on the platform
+        axis, so no tag is reachable both as a block member and as an entry
+        naming its own platform.
+        """
+        base = self.multiplied.get((tag.interpreter, tag.abi))
+        if base is not None:
+            offset = self.platforms.get(tag.platform)
+            if offset is not None:
+                return base + offset
+        return self.fixed.get(tag)
+
+
 @dataclass(frozen=True)
 class TagSet:
     """The wheel tags one target accepts, in install-preference order.
 
-    ``ordered`` is PEP 425 preference order, most specific first, so a
-    tag's index in it is the target's preference for the wheels
-    carrying it.
+    A target's tags are the cross product of its interpreter/abi axis with
+    its platform axis, and the product is far larger than either: a
+    ``macos_x86_64`` target with no declared macOS version crosses 29
+    multiplied interpreter/abi entries with 612 platform tags on CPython
+    3.13, for 17,764 tags.  So the set is held as the two axes and a wheel's
+    tags are placed by dict lookup, and the product is built only for a
+    caller that asks for :attr:`ordered`.
+
+    ``_entries`` is the interpreter/abi axis, as :func:`_tag_order_template`
+    returns it, and ``_platforms`` the platform axis.  ``ordered`` is PEP 425
+    preference order, most specific first, so a tag's index in it is the
+    target's preference for the wheels carrying it.
     """
 
-    ordered: tuple[Tag, ...]
+    _entries: tuple[_AxisEntry, ...]
+    _platforms: tuple[str, ...] = ()
+
+    @cached_property
+    def ordered(self) -> tuple[Tag, ...]:
+        """The accepted tags, most specific first."""
+        return tuple(_expand_axes(self._entries, self._platforms))
 
     @cached_property
     def members(self) -> frozenset[Tag]:
-        """The accepted tags as a set, for compatibility tests."""
+        """The accepted tags as a set."""
         return frozenset(self.ordered)
 
     @cached_property
@@ -559,13 +614,62 @@ class TagSet:
         """Preference index per accepted tag; the lowest index wins."""
         return {tag: i for i, tag in enumerate(self.ordered)}
 
+    @cached_property
+    def _index(self) -> _AxisIndex:
+        """The lookup tables that place one wheel tag in :attr:`ordered`."""
+        multiplied: dict[tuple[str, str], int] = {}
+        fixed: dict[Tag, int] = {}
+        base = 0
+
+        for interpreter, abi, platform_ in self._entries:
+            if platform_ is None:
+                multiplied[(interpreter, abi)] = base
+                base += len(self._platforms)
+            else:
+                fixed[ptags.Tag(interpreter, abi, platform_)] = base
+                base += 1
+
+        return _AxisIndex(
+            multiplied, fixed, {p: i for i, p in enumerate(self._platforms)}
+        )
+
+    @cached_property
+    def _placed(self) -> dict[frozenset[Tag], int | None]:
+        """The index this target gives each wheel tag set it has been asked about.
+
+        A resolve asks about far fewer tag sets than a target accepts tags,
+        and :func:`wheel_tag_set` hands out one shared set per distinct
+        ``python-abi-platform`` suffix, so the table fills from :attr:`_index`
+        as the wheels arrive.
+        """
+        return {}
+
+    def _place(self, wheel_tags: frozenset[Tag]) -> int | None:
+        """Work out the index this target gives ``wheel_tags``, and remember it.
+
+        Split out so a hit costs no Python call: the callers read
+        :attr:`_placed` inline and come here only on a miss.
+        """
+        index = self._index
+        rank_index = min(
+            (i for tag in wheel_tags if (i := index.of(tag)) is not None),
+            default=None,
+        )
+        self._placed[wheel_tags] = rank_index
+        return rank_index
+
     def accepts(self, wheel_filename: str) -> bool:
         """Return True when the target can install ``wheel_filename``.
 
         A filename that is not a parseable wheel is never accepted.
         """
         wheel_tags = wheel_tag_set(wheel_filename)
-        return wheel_tags is not None and not wheel_tags.isdisjoint(self.members)
+        if wheel_tags is None:
+            return False
+        rank_index = self._placed.get(wheel_tags, _UNPLACED)
+        if rank_index is _UNPLACED:
+            rank_index = self._place(wheel_tags)
+        return rank_index is not None
 
     def wheel_rank(self, wheel_filename: str) -> tuple[int, tuple[int, str]] | None:
         """Return the target's install-preference key for a wheel, or None.
@@ -581,8 +685,9 @@ class TagSet:
         wheel_tags = wheel_tag_set(wheel_filename)
         if not wheel_tags:
             return None
-        rank = self.rank
-        rank_index = min((rank[t] for t in wheel_tags if t in rank), default=None)
+        rank_index = self._placed.get(wheel_tags, _UNPLACED)
+        if rank_index is _UNPLACED:
+            rank_index = self._place(wheel_tags)
         if rank_index is None:
             return None
         return (rank_index, _build_tag_sort_key(wheel_filename))
@@ -624,16 +729,24 @@ class TagSet:
         implementation: str = "cpython",
     ) -> TagSet:
         """Return the tags a declared (python, platform, impl) target accepts."""
-        return cls(_ordered_tags_for_spec(python_version, spec, implementation))
+        return cls(
+            _tag_order_template(
+                python_version, implementation, free_threaded=spec.free_threaded
+            ),
+            _platform_axis(spec),
+        )
 
     @classmethod
     def for_host(cls, *, tags_source: TagsSource = ptags.sys_tags) -> TagSet:
         """Return the tags the running interpreter accepts.
 
         ``packaging.tags.sys_tags`` already answers this for the live
-        machine, libc probing and all, so nothing is re-derived here.
+        machine, libc probing and all, so nothing is re-derived here, and
+        each tag becomes an entry naming its own platform.
         """
-        return cls(tuple(tags_source()))
+        return cls(
+            tuple((tag.interpreter, tag.abi, tag.platform) for tag in tags_source())
+        )
 
     @classmethod
     def for_host_python(
@@ -671,35 +784,19 @@ class TagSet:
         ) and supports_free_threading(python)
 
         return cls(
-            tuple(
-                _tags_in_order(
-                    python,
-                    platforms,
-                    implementation,
-                    free_threaded=free_threaded,
-                )
-            )
+            _tag_order_template(python, implementation, free_threaded=free_threaded),
+            tuple(platforms),
         )
 
 
 @cache
-def _ordered_tags_for_spec(
-    python_version: str, spec: PlatformSpec, implementation: str
-) -> tuple[Tag, ...]:
-    """Build a declared target's ordered tags.
+def _platform_axis(spec: PlatformSpec) -> tuple[str, ...]:
+    """Return ``spec``'s platform tags, shared across the targets naming it.
 
-    Cached on the three immutable inputs (str, frozen dataclass, str):
-    the matrix rebuilds a target's tags per resolve pass, and the tag
-    list is identical every time.
+    A matrix pairs one platform spec with every Python minor it resolves for,
+    and the platform axis is the same list each time.
     """
-    return tuple(
-        _tags_in_order(
-            python_version,
-            _platform_tags_for_spec(spec),
-            implementation,
-            free_threaded=spec.free_threaded,
-        )
-    )
+    return tuple(_platform_tags_for_spec(spec))
 
 
 def _python_pair(python_version: str) -> tuple[int, int]:
@@ -740,14 +837,29 @@ def _tags_in_order(
 ) -> Iterable[Tag]:
     """Yield the tags a target accepts in install preference order.
 
-    The order comes from :func:`_tag_order_template`, and each tag is built
-    once and then shared across targets: the Python minors of one platform
-    spec re-derive most of each other's tags, and ``Tag.__init__`` lowercases
-    all three fields and precomputes a hash on every call.
+    The order comes from :func:`_tag_order_template`, expanded over
+    ``platforms``.
     """
-    for interpreter, abi, fixed_platform in _tag_order_template(
-        python_version, implementation, free_threaded=free_threaded
-    ):
+    yield from _expand_axes(
+        _tag_order_template(
+            python_version, implementation, free_threaded=free_threaded
+        ),
+        platforms,
+    )
+
+
+def _expand_axes(
+    entries: Sequence[_AxisEntry], platforms: Sequence[str]
+) -> Iterable[Tag]:
+    """Yield an interpreter/abi axis crossed with a platform axis.
+
+    An entry with no platform of its own is multiplied by ``platforms``.
+    Each tag is built once and then shared across targets: the Python minors
+    of one platform spec re-derive most of each other's tags, and
+    ``Tag.__init__`` lowercases all three fields and precomputes a hash on
+    every call.
+    """
+    for interpreter, abi, fixed_platform in entries:
         instances = _TARGET_TAGS.setdefault((interpreter, abi), {})
         axis_platforms = platforms if fixed_platform is None else (fixed_platform,)
         for platform_ in axis_platforms:
@@ -760,7 +872,7 @@ def _tags_in_order(
 @cache
 def _tag_order_template(
     python_version: str, implementation: str, *, free_threaded: bool
-) -> tuple[tuple[str, str, str | None], ...]:
+) -> tuple[_AxisEntry, ...]:
     """Return a target's tag order with the platform axis projected out.
 
     ``cpython_tags`` and ``compatible_tags`` pair each (interpreter, abi) with

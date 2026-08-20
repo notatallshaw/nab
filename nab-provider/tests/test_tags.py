@@ -25,7 +25,6 @@ from nab_provider.tags import (
     _PLATFORM_KIND,
     PlatformSpec,
     TagSet,
-    _ordered_tags_for_spec,
     _packaging_tags,
     _parse_tag_str,
     _platform_tags_for_spec,
@@ -379,7 +378,8 @@ class TestAbiIsHostIndependent:
         """A declared GIL target keeps its cp313 and abi3 tags on such a host."""
         spec = PlatformSpec("linux_x86_64")
         with _free_threaded_host():
-            tag_strs = {str(t) for t in _ordered_tags_for_spec("3.13", spec, "cpython")}
+            tags = TagSet.for_spec(python_version="3.13", spec=spec)
+            tag_strs = {str(t) for t in tags.ordered}
         assert "cp313-cp313-manylinux_2_28_x86_64" in tag_strs
         assert "cp313-abi3-manylinux_2_28_x86_64" in tag_strs
         assert not any("cp313t" in t for t in tag_strs)
@@ -398,7 +398,8 @@ class TestAbiIsHostIndependent:
     def test_free_threaded_target_reachable_from_any_host(self) -> None:
         """A declared free-threaded target gets its cp313t tag with no host help."""
         spec = PlatformSpec("linux_x86_64", free_threaded=True)
-        tag_strs = {str(t) for t in _ordered_tags_for_spec("3.13", spec, "cpython")}
+        tags = TagSet.for_spec(python_version="3.13", spec=spec)
+        tag_strs = {str(t) for t in tags.ordered}
         assert "cp313-cp313t-manylinux_2_28_x86_64" in tag_strs
 
 
@@ -1344,10 +1345,10 @@ class TestLinuxPlatformOrderMatchesSysTags:
         assert declared.rank[plain] < declared.rank[many]
 
 
-# The platform lists production hands ``_tags_in_order``: one per declared
-# platform id, the bare ``any`` axis ``_python_axis_tags`` projects over, and
-# the empty list ``TagSet.for_host_python`` builds when the host advertises no
-# platform but ``any``.
+# The platform axes production expands: one per declared platform id, the bare
+# ``any`` axis ``_python_axis_tags`` projects over, and the empty list
+# ``TagSet.for_host_python`` builds when the host advertises no platform but
+# ``any``.
 _ORDER_PLATFORM_LISTS = [
     *(
         pytest.param(_platform_tags_for_spec(PlatformSpec(platform_id)), id=platform_id)
@@ -1393,11 +1394,41 @@ class TestSharedTagInstances:
 
     def test_two_pythons_reuse_one_instance_per_tag(self) -> None:
         spec = PlatformSpec("linux_x86_64")
-        older = _ordered_tags_for_spec("3.12", spec, "cpython")
-        newer = _ordered_tags_for_spec("3.13", spec, "cpython")
+        older = TagSet.for_spec(python_version="3.12", spec=spec).ordered
+        newer = TagSet.for_spec(python_version="3.13", spec=spec).ordered
 
         shared = set(older) & set(newer)
         assert shared
 
         instances = {id(tag) for tag in older}
         assert all(id(tag) in instances for tag in newer if tag in shared)
+
+
+class TestWheelRankAgreesWithExpandedOrder:
+    """``wheel_rank`` places a wheel where the expanded order puts its tag.
+
+    ``rank`` reads the index off :attr:`TagSet.ordered`; ``wheel_rank`` adds
+    a platform's offset to its interpreter/abi block instead, and never
+    expands the product.  Two answers to one question, so every tag a target
+    accepts is asked both ways: an offset out by one would tie the last
+    platform of a block with the entry after it, and ``pick`` would then
+    break that pair on the build tag rather than on specificity.
+    """
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            pytest.param(PlatformSpec("windows_amd64"), id="one-platform"),
+            pytest.param(PlatformSpec("linux_x86_64"), id="many-platforms"),
+        ],
+    )
+    def test_every_accepted_tag_places_the_same_both_ways(
+        self, spec: PlatformSpec
+    ) -> None:
+        tags = TagSet.for_spec(python_version="3.13", spec=spec)
+
+        keys = {tag: tags.wheel_rank(f"p-1.0-{tag}.whl") for tag in tags.ordered}
+        assert None not in keys.values()
+
+        placed = {tag: key[0] for tag, key in keys.items() if key is not None}
+        assert placed == dict(tags.rank)
