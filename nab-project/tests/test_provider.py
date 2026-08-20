@@ -2091,6 +2091,104 @@ class TestNoVersionsReasons:
         assert "requires bar in ==2.0 but solution has it in <2.0" in reason
         assert "disjoint with current solution range" not in reason
 
+    @pytest.mark.parametrize("cache_listing", [True, False])
+    def test_range_block_rejection_spells_each_declared_range(
+        self, cache_listing: bool
+    ) -> None:
+        """Candidates that disagree on the blocker still read as requirements.
+
+        ``foo`` 2.0 requires ``bar==3.0`` and 1.0 requires ``bar==1.0``, a
+        union no specifier set spells, so the line states the two pins one by
+        one.  Neither pin names a version ``bar`` publishes, so its listing
+        cannot supply a spelling whether or not it is cached.
+        """
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel("1.0"), make_wheel("2.0")],
+                "bar": [make_wheel(version) for version in ("5.0", "6.0")],
+            },
+            metadata_by_version={
+                "1.0": make_metadata("foo", "1.0", "bar==1.0"),
+                "2.0": make_metadata("foo", "2.0", "bar==3.0"),
+            },
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
+        )
+        if cache_listing:
+            provider.fetch_versions("bar")
+        provider.solution_ranges["bar"] = SpecifierSet("==5.0").to_range()
+
+        assert provider.choose_version("foo", VersionRange.full()) is None
+
+        reason = provider.get_no_versions_reason("foo")
+        assert reason is not None
+        assert "<VersionRange" not in reason
+        assert "AFTER_LOCALS" not in reason
+        assert "requires bar in ==3.0 or ==1.0 but solution has it in ==5.0" in reason
+
+    def test_declared_pins_covering_the_listing_keep_their_spelling(self) -> None:
+        """Pins that between them cover every listed version stay on the line.
+
+        ``bar`` publishes only the two versions ``foo`` pins, so spelling
+        their union over that listing would name every version and leave no
+        requirement in the sentence.
+        """
+        coordinator = make_coordinator(
+            listings={
+                "foo": [make_wheel("1.0"), make_wheel("2.0")],
+                "bar": [make_wheel("1.0"), make_wheel("3.0")],
+            },
+            metadata_by_version={
+                "1.0": make_metadata("foo", "1.0", "bar==1.0"),
+                "2.0": make_metadata("foo", "2.0", "bar==3.0"),
+            },
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"foo": VersionRange.full(admit_arbitrary=False)},
+        )
+        provider.fetch_versions("bar")
+        provider.solution_ranges["bar"] = SpecifierSet("==2.0").to_range()
+
+        assert provider.choose_version("foo", VersionRange.full()) is None
+
+        reason = provider.get_no_versions_reason("foo")
+        assert reason is not None
+        assert "requires bar in  but" not in reason
+        assert "requires bar in ==3.0 or ==1.0 but solution has it in ==2.0" in reason
+
+    def test_root_blocker_names_an_unconstrained_root_range(self) -> None:
+        """The root side reads as "any version" rather than as nothing.
+
+        ``foo`` 1.0 requires ``bar>=2,<1``, which no version satisfies, so it
+        is disjoint with the root's unconstrained ``bar``.  An unconstrained
+        range spells as nothing, which would end the line on a dangling
+        ``in``.
+        """
+        coordinator = make_coordinator(
+            [make_wheel("1.0")],
+            metadata_text=make_metadata("foo", "1.0", "bar>=2,<1"),
+            package="foo",
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={
+                "foo": VersionRange.full(admit_arbitrary=False),
+                "bar": VersionRange.full(admit_arbitrary=False),
+            },
+        )
+
+        assert provider.choose_version("foo", VersionRange.full()) is None
+
+        reason = provider.get_no_versions_reason("foo")
+        assert reason is not None
+        assert "requires bar in no version but root has it in any version" in reason
+
     def test_post_release_pin_blocker_spells_both_sides_as_specifiers(self) -> None:
         """``bar>2.0`` excludes 2.0's post releases, so it is disjoint with
         ``==2.0.post1``.  Both sides read as the specifiers a user would write,
