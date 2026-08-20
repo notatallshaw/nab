@@ -26,8 +26,10 @@ from nab_provider.tags import (
     PlatformSpec,
     TagSet,
     _ordered_tags_for_spec,
+    _packaging_tags,
     _parse_tag_str,
     _platform_tags_for_spec,
+    _tags_in_order,
     python_axis_accepts,
     wheel_tag_set,
 )
@@ -1340,3 +1342,62 @@ class TestLinuxPlatformOrderMatchesSysTags:
         many = Tag("cp311", "cp311", "manylinux_2_28_x86_64")
         assert host.rank[plain] < host.rank[many]
         assert declared.rank[plain] < declared.rank[many]
+
+
+# The platform lists production hands ``_tags_in_order``: one per declared
+# platform id, the bare ``any`` axis ``_python_axis_tags`` projects over, and
+# the empty list ``TagSet.for_host_python`` builds when the host advertises no
+# platform but ``any``.
+_ORDER_PLATFORM_LISTS = [
+    *(
+        pytest.param(_platform_tags_for_spec(PlatformSpec(platform_id)), id=platform_id)
+        for platform_id in sorted(_PLATFORM_KIND)
+    ),
+    pytest.param(["any"], id="any-axis"),
+    pytest.param([], id="no-platforms"),
+]
+
+
+class TestSharedTagInstances:
+    """A target's platform axis is expanded from a template, over shared tags.
+
+    ``_tags_in_order`` derives the order once per (python, implementation,
+    build) against a placeholder platform, then expands each placeholder entry
+    over the real platform list.  That reproduces packaging's sequence only
+    while packaging pairs an (interpreter, abi) with every platform before
+    moving to the next, so the expansion is pinned against packaging's own
+    output: a reordering would silently change which wheel a target picks.
+    """
+
+    @pytest.mark.parametrize("platforms", _ORDER_PLATFORM_LISTS)
+    @pytest.mark.parametrize("python_version", ["3.10", "3.13"])
+    @pytest.mark.parametrize("implementation", ["cpython", "pypy"])
+    def test_order_matches_packaging(
+        self, platforms: list[str], python_version: str, implementation: str
+    ) -> None:
+        assert tuple(
+            _tags_in_order(
+                python_version, platforms, implementation, free_threaded=False
+            )
+        ) == tuple(
+            _packaging_tags(
+                python_version, platforms, implementation, free_threaded=False
+            )
+        )
+
+    def test_order_matches_packaging_free_threaded(self) -> None:
+        platforms = _platform_tags_for_spec(PlatformSpec("linux_x86_64"))
+        assert tuple(
+            _tags_in_order("3.13", platforms, "cpython", free_threaded=True)
+        ) == tuple(_packaging_tags("3.13", platforms, "cpython", free_threaded=True))
+
+    def test_two_pythons_reuse_one_instance_per_tag(self) -> None:
+        spec = PlatformSpec("linux_x86_64")
+        older = _ordered_tags_for_spec("3.12", spec, "cpython")
+        newer = _ordered_tags_for_spec("3.13", spec, "cpython")
+
+        shared = set(older) & set(newer)
+        assert shared
+
+        instances = {id(tag) for tag in older}
+        assert all(id(tag) in instances for tag in newer if tag in shared)
