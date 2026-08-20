@@ -45,6 +45,10 @@ from nab_provider._vendor.packaging.utils import canonicalize_name, parse_wheel_
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import UnsupportedWheelError
 from nab_provider.metadata import WheelMetadata, validate_specifier_versions
+from nab_provider.requirements_file import (
+    InvalidProjectRequirementError,
+    require_string_list,
+)
 from nab_resolver.errors import ResolutionError
 
 from ..paths import PathState, path_state
@@ -264,6 +268,8 @@ def _read_build_system(
 
     A missing ``[build-system]`` takes the PEP 517 defaults; a
     ``build-system`` that is not a table is malformed, not absent.
+    Inside the table a default stands in only for a key the file omits,
+    never for one it declares with the wrong shape.
     """
     if "build-system" not in data:
         return _DEFAULT_BACKEND, _DEFAULT_REQUIRES, None
@@ -271,25 +277,43 @@ def _read_build_system(
     table = data["build-system"]
     if not isinstance(table, dict):
         msg = (
-            "build-system in pyproject.toml must be a table,"
+            "[build-system] in pyproject.toml must be a table,"
             f" not {type(table).__name__}"
         )
         raise BuildBackendError(msg)
 
-    backend = table.get("build-backend")
+    if "requires" not in table:
+        msg = (
+            "[build-system].requires is required by PEP 518 and"
+            " pyproject.toml does not declare it"
+        )
+        raise BuildBackendError(msg)
+
+    requires = _read_string_array(table["requires"], "requires")
+
+    backend = table.get("build-backend", _DEFAULT_BACKEND)
     if not isinstance(backend, str):
-        backend = _DEFAULT_BACKEND
-    raw_requires = table.get("requires")
-    requires: tuple[str, ...]
-    if isinstance(raw_requires, list) and all(isinstance(r, str) for r in raw_requires):
-        requires = tuple(raw_requires)
-    else:
-        requires = _DEFAULT_REQUIRES
-    raw_path = table.get("backend-path")
-    backend_path: tuple[str, ...] | None = None
-    if isinstance(raw_path, list) and all(isinstance(p, str) for p in raw_path):
-        backend_path = tuple(raw_path)
+        msg = (
+            "[build-system].build-backend in pyproject.toml must be a string,"
+            f" not {type(backend).__name__}"
+        )
+        raise BuildBackendError(msg)
+
+    backend_path = (
+        _read_string_array(table["backend-path"], "backend-path")
+        if "backend-path" in table
+        else None
+    )
+
     return backend, requires, backend_path
+
+
+def _read_string_array(value: object, key: str) -> tuple[str, ...]:
+    """Return ``[build-system].<key>``, or raise if it is not an array of strings."""
+    try:
+        return tuple(require_string_list(value, f"[build-system].{key}"))
+    except InvalidProjectRequirementError as exc:
+        raise BuildBackendError(str(exc)) from exc
 
 
 def _validate_backend_path(
