@@ -84,9 +84,31 @@ so that the lockfile will be stable, even if mirrors are used
 
 ## VCS policy
 
-By default nab only allows git URLs that point to a specific
-commit. Using a floating branch as a dependency must be
-enabled in the configuration.
+By default nab refuses every git URL, pinned or not:
+
+```toml
+[tool.nab.vcs]
+policy = "block"
+allowed-schemes = []
+allowed-repos = []
+require-pin = true
+```
+
+Each of the first three refuses everything until you set it:
+
+ * `policy`: set to `allow` to consider git URLs at all
+ * `allowed-schemes`: the schemes you accept, e.g. `git+https`
+ * `allowed-repos`: the repository prefixes you accept, e.g.
+   `https://github.com/myorg/`
+
+`require-pin` is on by default, so a URL has to carry a
+40-character commit hash and a floating branch or tag is
+refused.
+
+A package is then taken from a repository through a
+`[[tool.nab.vcs-sources]]` entry. A `pkg @ git+...` requirement
+under `[project].dependencies` gets the same admission checks,
+but nab cannot resolve that form yet, so use a source entry.
 
 # Standards first behavior
 
