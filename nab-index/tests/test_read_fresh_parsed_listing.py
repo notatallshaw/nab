@@ -11,10 +11,12 @@ to ``get_files`` so a future edit to either cannot drift them.
 from __future__ import annotations
 
 import asyncio
+import errno
+import io
 import json
 from collections.abc import Coroutine, Mapping
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, BinaryIO, TypeVar
 
 import pytest
 
@@ -117,6 +119,32 @@ def _cache(root: Path) -> OnDiskCache:
     return OnDiskCache(root, _INDEX)
 
 
+def _parsed(cache: OnDiskCache, package: str) -> bytes | None:
+    """The stored blob's bytes, read back through the handle the cache opens."""
+    handle = cache.open_simple_parsed(package)
+    if handle is None:
+        return None
+    with handle:
+        return handle.read()
+
+
+class _FailingReads(io.RawIOBase):
+    """A readable stream whose every read raises, as a failing disk would."""
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: object) -> int:
+        raise OSError(errno.EIO, "read failed")
+
+
+class _UnreadableBlobCache(OnDiskCache):
+    """A cache whose parsed blob opens but fails once the codec reads it."""
+
+    def open_simple_parsed(self, package: str) -> BinaryIO | None:
+        return io.BufferedReader(_FailingReads())
+
+
 def _warm_bound(
     cache: OnDiskCache, *, fresh: bool = True, body: bytes = _LISTING_BYTES
 ) -> tuple[list, str]:
@@ -136,7 +164,7 @@ class TestParsedBlobSize:
     def test_size_matches_written_blob(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache)
-        blob = cache.get_simple_parsed("pkg")
+        blob = _parsed(cache, "pkg")
         assert blob is not None
         assert cache.get_simple_parsed_size("pkg") == len(blob)
 
@@ -189,7 +217,7 @@ class TestReadFreshParsedListing:
             _LISTING_BYTES,
             CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
         )
-        assert cache.get_simple_parsed("pkg") is None
+        assert _parsed(cache, "pkg") is None
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
     def test_digest_mismatch_returns_none(self, tmp_path: Path) -> None:
@@ -216,9 +244,16 @@ class TestReadFreshParsedListing:
     def test_hit_does_not_write(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache)
-        before = cache.get_simple_parsed("pkg")
+        before = _parsed(cache, "pkg")
         read_fresh_parsed_listing(cache, "pkg", offline=False)
-        assert cache.get_simple_parsed("pkg") == before
+        assert _parsed(cache, "pkg") == before
+
+    def test_unreadable_blob_declines_instead_of_raising(self, tmp_path: Path) -> None:
+        """A failed read is a decline, so the caller's pending is not stranded."""
+        cache = _UnreadableBlobCache(tmp_path, _INDEX)
+        _warm_bound(cache)
+
+        assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
     def test_decline_does_not_write(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
@@ -227,7 +262,7 @@ class TestReadFreshParsedListing:
         cache.put_simple_parsed("pkg", mismatched)
         read_fresh_parsed_listing(cache, "pkg", offline=False)
         # No rebuild: the mismatched blob is left exactly as it was.
-        assert cache.get_simple_parsed("pkg") == mismatched
+        assert _parsed(cache, "pkg") == mismatched
 
 
 class TestIdenticalByConstruction:

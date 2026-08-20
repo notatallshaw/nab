@@ -11,7 +11,7 @@ Layout under ``root``:
     simple-v2/<index>[-<serialization>]/<package>.policy  <- {fetched_at, max_age,
                                                               etag, page_url,
                                                               body_digest}
-    simple-parsed-v0/<index>[-<serialization>]/<package>.parsed  <- parsed blob
+    simple-parsed-v1/<index>[-<serialization>]/<package>.parsed  <- parsed blob
     simple-neg-v0/<index>[-<serialization>]/<package>.neg <- {fetched_at, max_age, etag}
     metadata-v1/<index>/<package>/<url digest>.metadata
     sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
@@ -37,6 +37,7 @@ source trees:
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 import os
@@ -55,6 +56,7 @@ from .parsed_listing import corruption_reason as _parsed_corruption
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from typing import BinaryIO
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +73,14 @@ __all__ = [
 
 
 CACHE_VERSION_SIMPLE = "v2"
-CACHE_VERSION_SIMPLE_PARSED = "v0"
+CACHE_VERSION_SIMPLE_PARSED = "v1"
 CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
 CACHE_VERSION_SDIST = "v1"
 CACHE_VERSION_VCS = "v1"
 CACHE_VERSION_ARCHIVE = "v1"
+
+_PARSED_BUCKET = f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}"
 
 # Buckets of nab-written records. simple-neg-* is covered by the simple- prefix.
 ENTRY_BUCKET_PREFIXES = ("simple-", "metadata-", "sdist-")
@@ -224,9 +228,7 @@ class OnDiskCache:
             else f"{self._index}-{serialization.value}"
         )
         self._simple_dir = root / f"simple-{CACHE_VERSION_SIMPLE}" / simple_index
-        self._parsed_dir = (
-            root / f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}" / simple_index
-        )
+        self._parsed_dir = root / _PARSED_BUCKET / simple_index
         self._neg_dir = root / f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}" / simple_index
         self._metadata_dir = root / f"metadata-{CACHE_VERSION_METADATA}" / self._index
         self._sdist_dir = root / f"sdist-{CACHE_VERSION_SDIST}" / self._index
@@ -346,21 +348,23 @@ class OnDiskCache:
             )
         return policy
 
-    def get_simple_parsed(self, package: str) -> bytes | None:
-        """Return the opaque parsed-listing blob for ``package``, or ``None``.
+    def open_simple_parsed(self, package: str) -> BinaryIO | None:
+        """Open the parsed-listing blob for ``package`` for reading, or ``None``.
 
-        The blob is bytes to this layer; the record codec lives in
-        ``parsed_listing``. An absent blob is a silent miss.
+        The blob is opaque bytes to this layer; the record codec lives in
+        ``parsed_listing`` and reads it a line at a time, so the file is handed
+        over open rather than read into memory. The caller closes it. An absent
+        blob is a silent miss.
         """
         try:
-            return self._parsed_path(package).read_bytes()
+            return self._parsed_path(package).open("rb")
         except OSError:
             return None
 
     def get_simple_parsed_size(self, package: str) -> int | None:
         """Return the on-disk size of the parsed-listing blob in bytes, or ``None``.
 
-        A single ``stat`` on the same path :meth:`get_simple_parsed` reads, so a
+        A single ``stat`` on the same path :meth:`open_simple_parsed` reads, so a
         caller can size the blob before deciding whether to read and decode it.
         An absent blob is a silent miss.
         """
@@ -527,12 +531,27 @@ class OnDiskCache:
         if suffix in (".policy", ".neg"):
             return None if _decode_policy(raw) is not None else "policy not decodable"
         if suffix == ".parsed":
-            return _read_parsed_reason(raw)
+            return self._read_parsed_reason(path, raw)
         if suffix == ".metadata":
             return _read_metadata_reason(raw)
         if suffix == ".json":
             return self._read_json_reason(path, raw)
         return None
+
+    def _read_parsed_reason(self, path: Path, raw: bytes) -> str | None:
+        """Return a corruption reason for a ``.parsed`` blob, or ``None``.
+
+        A blob under a retired parsed bucket is reported clean: an earlier
+        bucket holds a wire form this codec cannot read, so parsing it there
+        would call every stale entry corrupt.
+
+        Structure only: the digest binding retires a stale-but-valid blob at
+        read time. The codec owns the check so verify and the read path agree
+        on what is corrupt.
+        """
+        if self._bucket_of(path) != _PARSED_BUCKET:
+            return None
+        return _parsed_corruption(io.BytesIO(raw))
 
     def _read_json_reason(self, path: Path, raw: bytes) -> str | None:
         try:
@@ -582,13 +601,6 @@ def _read_metadata_reason(raw: bytes) -> str | None:
     except UnicodeDecodeError:
         return "not valid UTF-8"
     return None
-
-
-def _read_parsed_reason(raw: bytes) -> str | None:
-    # Structural decodability only; the digest binding retires a stale-but-valid
-    # blob at read time, so verify does not check it. The codec owns the check so
-    # verify and the read path agree on what counts as corrupt.
-    return _parsed_corruption(raw)
 
 
 def _encode_policy(policy: CachePolicy) -> bytes:
@@ -665,8 +677,11 @@ class CacheBackend(Protocol):
         """Return a Simple entry's freshness policy without its body, or ``None``."""
         ...
 
-    def get_simple_parsed(self, package: str) -> bytes | None:
-        """Return the opaque parsed-listing blob for ``package``, or ``None``."""
+    def open_simple_parsed(self, package: str) -> BinaryIO | None:
+        """Open the parsed-listing blob for ``package``, or ``None`` on a miss.
+
+        The stream is seekable and readable, and the caller closes it.
+        """
         ...
 
     def get_simple_parsed_size(self, package: str) -> int | None:
@@ -753,7 +768,7 @@ class NullCache:
     def get_simple_policy(self, package: str) -> CachePolicy | None:
         """Return ``None`` (always a miss)."""
 
-    def get_simple_parsed(self, package: str) -> bytes | None:
+    def open_simple_parsed(self, package: str) -> BinaryIO | None:
         """Return ``None`` (always a miss)."""
 
     def get_simple_parsed_size(self, package: str) -> int | None:

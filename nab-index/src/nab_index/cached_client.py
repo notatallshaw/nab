@@ -252,10 +252,11 @@ def read_fresh_parsed_listing(
         return None
     if not (policy.is_fresh() or offline):
         return None
-    blob = cache.get_simple_parsed(package)
-    if blob is None:
+    handle = cache.open_simple_parsed(package)
+    if handle is None:
         return None
-    return _decode_parsed(blob, policy) or None
+    with handle:
+        return _decode_parsed(handle, policy) or None
 
 
 class SdistArchiveHold:
@@ -480,18 +481,20 @@ class CachedAsyncSimpleClient:
         served blob counts a ``hit``, an absent one a ``miss``, and a
         present-but-not-served one a ``rebuild``.
         """
-        blob = self._cache.get_simple_parsed(package)
-        if blob is None:
+        handle = self._cache.open_simple_parsed(package)
+        if handle is None:
             self._parsed_stats.miss += 1
             return None
-        records = _decode_parsed(blob, policy)
-        if records:
-            self._parsed_stats.hit += 1
-            return records
-        self._parsed_stats.rebuild += 1
-        if records is not None:
-            return None
-        reason = _parsed_corruption(blob)
+        with handle:
+            records = _decode_parsed(handle, policy)
+            if records:
+                self._parsed_stats.hit += 1
+                return records
+            self._parsed_stats.rebuild += 1
+            if records is not None:
+                return None
+            handle.seek(0)
+            reason = _parsed_corruption(handle)
         if reason is not None:
             logger.warning(
                 "Corrupt parsed-listing cache blob for %r from %s: %s; ignoring it",

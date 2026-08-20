@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 from dataclasses import replace
 from typing import TYPE_CHECKING, TypeVar
@@ -35,7 +36,7 @@ from .strategies import PROPERTY_SETTINGS
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
-    from typing import Any
+    from typing import Any, BinaryIO
 
 pytestmark = pytest.mark.property
 
@@ -115,8 +116,9 @@ class DictCache:
         entry = self.simple.get(package)
         return None if entry is None else entry[1]
 
-    def get_simple_parsed(self, package: str) -> bytes | None:
-        return self.parsed.get(package)
+    def open_simple_parsed(self, package: str) -> BinaryIO | None:
+        blob = self.parsed.get(package)
+        return None if blob is None else io.BytesIO(blob)
 
     def put_simple_parsed(self, package: str, blob: bytes) -> None:
         self.parsed[package] = blob

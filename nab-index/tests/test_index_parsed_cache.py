@@ -1,8 +1,8 @@
 """Tests for the parsed-listing cache storage layer and write path.
 
 Covers the ``body_digest`` policy field and its encode/decode, the
-policy-only ``get_simple_policy`` read, the opaque-bytes
-``get_simple_parsed``/``put_simple_parsed`` pair, and the ``.parsed`` branch
+policy-only ``get_simple_policy`` read, the opaque-blob
+``open_simple_parsed``/``put_simple_parsed`` pair, and the ``.parsed`` branch
 of ``read_cache_entry``, plus the write path that binds a parsed blob to
 the body just stored: :meth:`OnDiskCache.put_simple` computes the digest,
 and every :class:`CachedAsyncSimpleClient` write point emits a blob bound
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import io
 import json
 import logging
 from collections.abc import Coroutine, Mapping
@@ -33,11 +34,51 @@ from nab_index.cache import (
     is_recognized_bucket,
 )
 from nab_index.cached_client import CachedAsyncSimpleClient, ParsedCacheStats
-from nab_index.client import _parse_files
+from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.parsed_listing import corruption_reason, decode, encode
 
 # Derived so a bucket-version bump does not need every path updated.
 _SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
+
+
+def _parsed(cache: OnDiskCache, package: str) -> bytes | None:
+    """The stored blob's bytes, read back through the handle the cache opens."""
+    handle = cache.open_simple_parsed(package)
+    if handle is None:
+        return None
+    with handle:
+        return handle.read()
+
+
+def _decode_stored(
+    cache: OnDiskCache, package: str, policy: CachePolicy
+) -> list[WheelFile | SdistFile] | None:
+    """Decode the blob the cache holds for ``package``, as the read path does."""
+    handle = cache.open_simple_parsed(package)
+    assert handle is not None
+    with handle:
+        return decode(handle, policy)
+
+
+def _decode(blob: bytes, policy: CachePolicy) -> list[WheelFile | SdistFile] | None:
+    """Decode a whole blob the way the read path decodes the open cache file."""
+    return decode(io.BytesIO(blob), policy)
+
+
+def _reason(blob: bytes) -> str | None:
+    """Report on a whole blob, as the read path does on the open cache file."""
+    return corruption_reason(io.BytesIO(blob))
+
+
+def _documents(blob: bytes) -> list:
+    """The blob's header and its row batches, one decoded document per line."""
+    return [json.loads(line) for line in blob.splitlines()]
+
+
+def _blob(header: object, rows: object) -> bytes:
+    """Write ``header`` and one batch of ``rows``, as the codec lays a blob out."""
+    return b"".join(json.dumps(doc).encode() + b"\n" for doc in (header, rows))
+
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
@@ -161,7 +202,7 @@ class TestGetSimpleParsedBucket:
     def test_round_trip(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         cache.put_simple_parsed("foo", b"\x00blob\x01")
-        assert cache.get_simple_parsed("foo") == b"\x00blob\x01"
+        assert _parsed(cache, "foo") == b"\x00blob\x01"
 
     def test_written_under_parsed_bucket(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
@@ -175,13 +216,13 @@ class TestGetSimpleParsedBucket:
         assert expected.read_bytes() == b"blob"
 
     def test_miss_returns_none(self, tmp_path: Path) -> None:
-        assert _cache(tmp_path).get_simple_parsed("absent") is None
+        assert _parsed(_cache(tmp_path), "absent") is None
 
     def test_reput_replaces(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         cache.put_simple_parsed("foo", b"old")
         cache.put_simple_parsed("foo", b"new")
-        assert cache.get_simple_parsed("foo") == b"new"
+        assert _parsed(cache, "foo") == b"new"
 
     def test_partial_write_leaves_prior_blob(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -195,7 +236,7 @@ class TestGetSimpleParsedBucket:
         monkeypatch.setattr("nab_index.atomic.os.replace", fail_replace)
         with pytest.raises(OSError, match="disk full"):
             cache.put_simple_parsed("foo", b"partial")
-        assert cache.get_simple_parsed("foo") == b"good"
+        assert _parsed(cache, "foo") == b"good"
         parent = tmp_path / f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}" / "pypi"
         assert [p.name for p in parent.iterdir()] == ["foo.parsed"]
 
@@ -255,13 +296,29 @@ class TestReadCacheEntryParsed:
         path.write_bytes(b"\xff\xfe not json")
         assert cache.read_cache_entry(path) is not None
 
+    def test_a_retired_bucket_blob_is_left_alone(self, tmp_path: Path) -> None:
+        """An entry a version bump retired is walked but never read as current.
+
+        A cache written before the bump keeps the old bucket until
+        ``nab cache clear`` reclaims it, and its wire form is one this codec
+        cannot read.
+        """
+        cache = _cache(tmp_path)
+        path = tmp_path / "simple-parsed-v0" / "pypi" / "foo.parsed"
+        path.parent.mkdir(parents=True)
+        # The whole-document form the v0 bucket held: header alongside rows.
+        path.write_bytes(json.dumps([[3, 1, 0, "a" * 64], []]).encode())
+
+        assert path in set(cache.iter_cache_entries())
+        assert cache.read_cache_entry(path) is None
+
 
 class TestNullCacheParsed:
     def test_get_simple_policy(self) -> None:
         assert NullCache().get_simple_policy("foo") is None
 
-    def test_get_simple_parsed(self) -> None:
-        assert NullCache().get_simple_parsed("foo") is None
+    def test_open_simple_parsed(self) -> None:
+        assert NullCache().open_simple_parsed("foo") is None
 
     def test_get_simple_parsed_size(self) -> None:
         assert NullCache().get_simple_parsed_size("foo") is None
@@ -337,14 +394,14 @@ class TestDroppedBodyWrite:
         files = _run(client.get_files("pkg"))
 
         assert files == _PARSED
-        assert cache.get_simple_parsed("pkg") is None
+        assert _parsed(cache, "pkg") is None
 
     def test_revalidation_keeps_the_blob_bound_to_the_stored_body(
         self, tmp_path: Path
     ) -> None:
         warm = _cache(tmp_path)
         _warm_bound(warm, fresh=False)
-        before = warm.get_simple_parsed("pkg")
+        before = _parsed(warm, "pkg")
         new_body = json.dumps({**_LISTING, "files": []}).encode()
         cache = _DroppingCache(tmp_path, _INDEX)
         transport = _FakeTransport([_FakeResponse(new_body, headers={"etag": "v2"})])
@@ -355,12 +412,12 @@ class TestDroppedBodyWrite:
         # The refused body never landed, so the old body, its policy, and the
         # blob bound to it stay coherent instead of being retired for a body
         # that is not there.
-        assert cache.get_simple_parsed("pkg") == before
+        assert _parsed(cache, "pkg") == before
         result = cache.get_simple("pkg")
         assert result is not None
         body, policy = result
         assert body == _LISTING_BYTES
-        assert decode(before, policy) is not None
+        assert _decode(before, policy) is not None
 
 
 _UNREADABLE_LISTING_BYTES = json.dumps(
@@ -391,14 +448,14 @@ class TestWritePathParsedBlob:
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
 
         assert _run(client.get_files("pkg")) == []
-        assert cache.get_simple_parsed("pkg") is None
+        assert _parsed(cache, "pkg") is None
 
         stats = ParsedCacheStats()
         warm = CachedAsyncSimpleClient(
             _FakeTransport([]), cache, _INDEX, parsed_stats=stats
         )
         assert _run(warm.get_files("pkg")) == []
-        assert cache.get_simple_parsed("pkg") is None
+        assert _parsed(cache, "pkg") is None
         assert (stats.hit, stats.miss, stats.rebuild) == (0, 1, 0)
 
     def test_fetch_writes_bound_parsed_blob(self, tmp_path: Path) -> None:
@@ -415,9 +472,9 @@ class TestWritePathParsedBlob:
         body, policy = result
         assert body == _LISTING_BYTES
         assert policy.body_digest == hashlib.sha256(_LISTING_BYTES).hexdigest()
-        blob = cache.get_simple_parsed("pkg")
+        blob = _parsed(cache, "pkg")
         assert blob is not None
-        decoded = decode(blob, policy)
+        decoded = _decode(blob, policy)
         assert decoded == files
         assert decoded == _parse_files(json.loads(body), _INDEX_NORM, "pkg")
 
@@ -438,9 +495,9 @@ class TestWritePathParsedBlob:
         body, policy = result
         assert body == _LISTING_BYTES
         assert policy.body_digest == hashlib.sha256(_LISTING_BYTES).hexdigest()
-        blob = cache.get_simple_parsed("pkg")
+        blob = _parsed(cache, "pkg")
         assert blob is not None
-        assert decode(blob, policy) == files
+        assert _decode(blob, policy) == files
 
     def test_revalidate_304_preserves_body_parsed_and_digest(
         self, tmp_path: Path
@@ -467,8 +524,8 @@ class TestWritePathParsedBlob:
         new_body, policy = result
         assert new_body == body
         assert policy.body_digest == digest
-        assert cache.get_simple_parsed("pkg") == old_blob
-        assert decode(old_blob, policy) == files
+        assert _parsed(cache, "pkg") == old_blob
+        assert _decode(old_blob, policy) == files
 
     def test_revalidate_304_from_a_new_page_retires_the_blob(
         self, tmp_path: Path
@@ -498,8 +555,8 @@ class TestWritePathParsedBlob:
         assert policy.body_digest is None
         # The blob is still on disk but no longer binds, so the next read
         # rebuilds it against the new page rather than serving stale URLs.
-        assert cache.get_simple_parsed("pkg") == old_blob
-        assert decode(old_blob, policy) is None
+        assert _parsed(cache, "pkg") == old_blob
+        assert _decode(old_blob, policy) is None
 
 
 _SURROGATE_REQUIRES_PYTHON = ">=3.8\ud800"
@@ -569,14 +626,14 @@ def _warm_bound(
 
 
 def _tamper_header(blob: bytes, index: int, value: object) -> bytes:
-    header, rows = json.loads(blob)
+    header, rows = _documents(blob)
     header[index] = value
-    return json.dumps([header, rows]).encode()
+    return _blob(header, rows)
 
 
-def _tamper_rows(blob: bytes, value: object) -> bytes:
-    header, _rows = json.loads(blob)
-    return json.dumps([header, value]).encode()
+def _tamper_rows(blob: bytes, rows: object) -> bytes:
+    header, _rows = _documents(blob)
+    return _blob(header, rows)
 
 
 class TestReadPathParsedHit:
@@ -596,13 +653,13 @@ class TestReadPathParsedHit:
     def test_hit_does_not_rewrite_the_blob(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache)
-        before = cache.get_simple_parsed("pkg")
+        before = _parsed(cache, "pkg")
         transport = _FakeTransport([])
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
 
         _run(client.get_files("pkg"))
 
-        assert cache.get_simple_parsed("pkg") == before
+        assert _parsed(cache, "pkg") == before
 
 
 class TestReadPathRebuild:
@@ -613,7 +670,7 @@ class TestReadPathRebuild:
             _LISTING_BYTES,
             CachePolicy(fetched_at=2_000_000_000, max_age=99999, etag=None),
         )
-        assert cache.get_simple_parsed("pkg") is None
+        assert _parsed(cache, "pkg") is None
         transport = _FakeTransport([])
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)
 
@@ -621,13 +678,13 @@ class TestReadPathRebuild:
 
         assert got == _PARSED
         assert transport.calls == []
-        blob = cache.get_simple_parsed("pkg")
+        blob = _parsed(cache, "pkg")
         assert blob is not None
         result = cache.get_simple("pkg")
         assert result is not None
         _, policy = result
         assert policy.body_digest == digest
-        assert decode(blob, policy) == got
+        assert _decode(blob, policy) == got
 
     def test_rebuild_on_digest_mismatch_no_warning(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -647,7 +704,7 @@ class TestReadPathRebuild:
         result = cache.get_simple("pkg")
         assert result is not None
         _, policy = result
-        assert decode(cache.get_simple_parsed("pkg"), policy) == files
+        assert _decode_stored(cache, "pkg", policy) == files
 
     @pytest.mark.parametrize(
         ("field", "value"),
@@ -681,7 +738,7 @@ class TestReadPathRebuild:
         assert result is not None
         _, policy = result
         # The rebuilt blob is now well-formed and hits.
-        assert decode(cache.get_simple_parsed("pkg"), policy) == files
+        assert _decode_stored(cache, "pkg", policy) == files
 
     @pytest.mark.parametrize("blob", [b"\xff\xfe not json", b"", b"\x00\x01\x02"])
     def test_garbage_blob_warns_and_reparses(
@@ -701,7 +758,7 @@ class TestReadPathRebuild:
         result = cache.get_simple("pkg")
         assert result is not None
         _, policy = result
-        assert decode(cache.get_simple_parsed("pkg"), policy) == files
+        assert _decode_stored(cache, "pkg", policy) == files
 
     def test_truncated_blob_warns_and_reparses(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -742,7 +799,7 @@ class TestReadPathRebuild:
         result = cache.get_simple("pkg")
         assert result is not None
         _, policy = result
-        assert decode(cache.get_simple_parsed("pkg"), policy) == files
+        assert _decode_stored(cache, "pkg", policy) == files
 
     def test_pre_c1_policy_without_digest_self_heals(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
@@ -768,7 +825,7 @@ class TestReadPathRebuild:
         got_policy = cache.get_simple_policy("pkg")
         assert got_policy is not None
         assert got_policy.body_digest == digest
-        assert decode(cache.get_simple_parsed("pkg"), got_policy) == _PARSED
+        assert _decode_stored(cache, "pkg", got_policy) == _PARSED
 
 
 class TestReadPathCorruptBody:
@@ -870,7 +927,7 @@ class TestReadPathRevalidate:
         assert result is not None
         body, policy = result
         assert body == _LISTING_V2_BYTES
-        assert decode(cache.get_simple_parsed("pkg"), policy) == got
+        assert _decode_stored(cache, "pkg", policy) == got
 
     def test_stale_online_200_revalidates_without_reading_the_body(
         self, tmp_path: Path
@@ -897,7 +954,7 @@ class TestReadPathRevalidate:
     def test_stale_online_304_reuses_blob(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache, fresh=False)
-        before = cache.get_simple_parsed("pkg")
+        before = _parsed(cache, "pkg")
         transport = _FakeTransport(
             [_FakeResponse(b"", status=304, headers={"etag": "e"})]
         )
@@ -906,11 +963,11 @@ class TestReadPathRevalidate:
         got = _run(client.get_files("pkg"))
 
         assert got == files
-        assert cache.get_simple_parsed("pkg") == before
+        assert _parsed(cache, "pkg") == before
         result = cache.get_simple("pkg")
         assert result is not None
         _, policy = result
-        assert decode(before, policy) == files
+        assert _decode(before, policy) == files
 
     def test_stale_online_304_serves_the_blob_without_the_body(
         self, tmp_path: Path
@@ -993,17 +1050,15 @@ class TestReadPathRevalidate:
 
 class TestParsedCorruptionReason:
     def test_garbage_is_corrupt(self) -> None:
-        assert corruption_reason(b"not json") is not None
+        assert _reason(b"not json") is not None
 
     def test_truncated_is_corrupt(self) -> None:
         blob = encode(_PARSED, "a" * 64)
-        assert corruption_reason(blob[: len(blob) // 2]) is not None
+        assert _reason(blob[: len(blob) // 2]) is not None
 
-    def test_wrong_top_shape_is_corrupt(self) -> None:
-        assert corruption_reason(json.dumps([1, 2, 3]).encode()) is not None
-
-    def test_wrong_header_shape_is_corrupt(self) -> None:
-        assert corruption_reason(json.dumps(["bad", "rows"]).encode()) is not None
+    @pytest.mark.parametrize("header", [7, [1, 2, 3], ["bad", "rows"]])
+    def test_unreadable_header_is_corrupt(self, header: object) -> None:
+        assert _reason(json.dumps(header).encode()) is not None
 
     @pytest.mark.parametrize(
         "rows",
@@ -1011,21 +1066,21 @@ class TestParsedCorruptionReason:
     )
     def test_wrong_row_shape_is_corrupt(self, rows: object) -> None:
         tampered = _tamper_rows(encode(_PARSED, "a" * 64), rows)
-        assert corruption_reason(tampered) is not None
+        assert _reason(tampered) is not None
 
     def test_well_formed_blob_is_clean(self) -> None:
-        assert corruption_reason(encode(_PARSED, "a" * 64)) is None
+        assert _reason(encode(_PARSED, "a" * 64)) is None
 
     def test_header_value_mismatch_is_clean(self) -> None:
         # A build/digest mismatch is a benign self-heal, not corruption.
         tampered = _tamper_header(encode(_PARSED, "a" * 64), 0, 99)
-        assert corruption_reason(tampered) is None
+        assert _reason(tampered) is None
 
     def test_foreign_build_with_wrong_rows_is_clean(self) -> None:
         # A future build may bump the codec and write a row shape this build
         # never wrote; that is benign version skew, not on-disk corruption.
         tampered = _tamper_rows(_tamper_header(encode(_PARSED, "a" * 64), 1, 99), [])
-        assert corruption_reason(tampered) is None
+        assert _reason(tampered) is None
 
 
 class TestParsedCacheStats:

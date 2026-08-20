@@ -15,7 +15,7 @@ directory is harmless and `nab cache clear` reclaims it.
 | Bucket | Holds |
 | ------ | ----- |
 | `simple-v2/` | the Simple-API listing body and a `.policy` sidecar |
-| `simple-parsed-v0/` | the parsed listing, an accelerator for the body |
+| `simple-parsed-v1/` | the parsed listing, an accelerator for the body |
 | `simple-neg-v0/` | a short-lived record that a name returned a 404 |
 | `metadata-v1/` | PEP 658 metadata and recovered wheel `METADATA`, immutable |
 | `sdist-v1/` | an sdist's `PKG-INFO` and `pyproject.toml`, immutable |
@@ -55,7 +55,7 @@ answered from cache, offline included.
 
 Turning a listing body into records means a JSON decode plus wheel and
 sdist filename parsing, which a warm resolve would otherwise repeat on
-every run. The `simple-parsed-v0/` bucket stores those records so a warm
+every run. The `simple-parsed-v1/` bucket stores those records so a warm
 hit rehydrates them and never reads the large raw body. A stale entry is
 served the same way once the index answers `304 Not Modified`, since that
 confirms the body the blob is bound to.
@@ -72,17 +72,21 @@ authoritative: the accelerator is only ever a derived copy, and a rebuild
 is a reparse of whatever body is on disk.
 
 Blobs are stored as JSON, so one entry serves every interpreter sharing
-the cache. A listing nab reads no files from gets no blob, since an empty
-one could never be served: only the raw body records whether the page held
-formats nab cannot read.
+the cache. Each is a header line followed by batches of rows, so a hit
+reads the file a batch at a time instead of holding the whole document. A
+listing nab reads no files from gets no blob, since an empty one could
+never be served: only the raw body records whether the page held formats
+nab cannot read.
 
 ## Verifying and clearing
 
 `nab cache verify` walks the record buckets read-only and reports any
-entry that will not parse, including a parsed blob that is not decodable.
-It checks structure only, not freshness: a stale-but-valid parsed blob is
-not corrupt, since the digest binding retires it at read time. Clones and
-extracted archives hold no nab records, so `verify` skips them.
+entry that will not parse, including a parsed blob in the current bucket
+that is not decodable. It checks structure only, not freshness: a
+stale-but-valid parsed blob is not corrupt, since the digest binding
+retires it at read time. A retired parsed bucket is left alone, since its
+blobs are in a form this build does not read. Clones and extracted
+archives hold no nab records, so `verify` skips them.
 
 `nab cache clear` removes every bucket, clones and archives included,
 returning the cache to cold. `verify` and `clear` both refuse a root that

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import io
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -63,6 +64,16 @@ hex_digests = st.text(alphabet="0123456789abcdefABCDEF", min_size=0, max_size=16
 
 def _digest_of(body: bytes) -> str:
     return hashlib.sha256(body).hexdigest()
+
+
+def _decode(blob: bytes, policy: CachePolicy) -> list[WheelFile | SdistFile] | None:
+    """Decode a whole blob the way the read path decodes the open cache file."""
+    return decode(io.BytesIO(blob), policy)
+
+
+def _documents(blob: bytes) -> list[Any]:
+    """The blob's header and its row batches, one decoded document per line."""
+    return [json.loads(line) for line in blob.splitlines()]
 
 
 def _policy_for(body: bytes) -> CachePolicy:
@@ -199,7 +210,7 @@ def _assert_roundtrip(package: str, body: bytes) -> None:
     parsed = _parse_files(json.loads(body), INDEX, package)
     policy = CachePolicy(fetched_at=0, max_age=0, etag=None, body_digest=digest)
     blob = encode(parsed, digest)
-    decoded = decode(blob, policy)
+    decoded = _decode(blob, policy)
     assert decoded is not None
     assert len(decoded) == len(parsed)
     for got, want in zip(decoded, parsed, strict=True):
@@ -238,46 +249,47 @@ def _sample_blob() -> tuple[bytes, CachePolicy]:
 def _retamper(header_index: int, value: object) -> tuple[bytes, CachePolicy]:
     """Re-encode a valid blob with one header field replaced."""
     blob, policy = _sample_blob()
-    header, rows = json.loads(blob)
-    header[header_index] = value
-    return json.dumps([header, rows]).encode(), policy
+    documents = _documents(blob)
+    documents[0][header_index] = value
+    rewritten = b"".join(json.dumps(doc).encode() + b"\n" for doc in documents)
+    return rewritten, policy
 
 
 def test_digest_mismatch_decodes_to_none() -> None:
     """A parsed blob whose header digest differs from the policy is a miss."""
     blob, _ = _sample_blob()
     other = CachePolicy(fetched_at=0, max_age=0, etag=None, body_digest="0" * 64)
-    assert decode(blob, other) is None
+    assert _decode(blob, other) is None
 
 
 def test_policy_without_digest_decodes_to_none() -> None:
     """An older policy carrying no digest can never bind a parsed blob."""
     blob, _ = _sample_blob()
     policy = CachePolicy(fetched_at=0, max_age=0, etag=None, body_digest=None)
-    assert decode(blob, policy) is None
+    assert _decode(blob, policy) is None
 
 
 def test_format_mismatch_decodes_to_none() -> None:
     blob, policy = _retamper(0, 99)
-    assert decode(blob, policy) is None
+    assert _decode(blob, policy) is None
 
 
 def test_codec_mismatch_decodes_to_none() -> None:
     blob, policy = _retamper(1, 99)
-    assert decode(blob, policy) is None
+    assert _decode(blob, policy) is None
 
 
 def test_key_scheme_mismatch_decodes_to_none() -> None:
     blob, policy = _retamper(2, 7)
-    assert decode(blob, policy) is None
+    assert _decode(blob, policy) is None
 
 
 def test_blob_carries_no_interpreter_tag() -> None:
     """The wire form is portable, so a blob written anywhere decodes here."""
     blob, policy = _sample_blob()
-    header, _rows = json.loads(blob)
+    header, *_batches = _documents(blob)
     assert not any(isinstance(field, list) for field in header)
-    assert decode(blob, policy) is not None
+    assert _decode(blob, policy) is not None
 
 
 @pytest.mark.parametrize(
@@ -294,13 +306,13 @@ def test_blob_carries_no_interpreter_tag() -> None:
 def test_garbage_blob_decodes_to_none(blob: bytes) -> None:
     """Truncated, non-JSON, or wrong-shaped blobs are misses, not crashes."""
     _, policy = _sample_blob()
-    assert decode(blob, policy) is None
+    assert _decode(blob, policy) is None
 
 
 def test_truncated_blob_decodes_to_none() -> None:
     """A valid blob cut short raises inside json and is treated as a miss."""
     blob, policy = _sample_blob()
-    assert decode(blob[: len(blob) // 2], policy) is None
+    assert _decode(blob[: len(blob) // 2], policy) is None
 
 
 def test_malformed_body_never_reaches_encode() -> None:

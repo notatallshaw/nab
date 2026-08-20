@@ -5,21 +5,27 @@ resolve skips ``json.loads`` and wheel/sdist filename parsing. This module
 owns the record<->bytes translation; :class:`~nab_index.cache.OnDiskCache`
 treats the blob as opaque and knows nothing about record shapes.
 
-Wire form (UTF-8 JSON of ``[header, rows]``):
+Wire form (UTF-8 JSON, one document per line):
 
-* header ``[format, codec, key_scheme, body_digest]`` is checked before
-  anything is trusted. A reader on a different ``format``, ``codec``, or
-  ``key_scheme`` treats the entry as a miss and rebuilds, so a cache written by
-  an older build self-heals instead of misdecoding. ``body_digest`` binds the
-  blob to the raw body it was parsed from; :func:`decode` rejects a blob whose
-  digest does not equal the policy's, so a raw-body update invalidates the
-  derived form.
-* rows hold one entry per surviving record, in the order the wire parse
-  returned them, so a downstream stable-sort tie-break stays identical. Each
-  row is a flat list tagged wheel or sdist by its first element. Every field is
-  type-checked on the way back, and ``requires_python`` and hash-algorithm
-  names are re-interned via ``sys.intern`` so the round trip reproduces the
-  dedup the wire parse builds.
+* the first line is the header
+  ``[format, codec, key_scheme, body_digest, rows]``, checked before anything
+  is trusted. A reader on a different ``format``, ``codec``, or ``key_scheme``
+  treats the entry as a miss and rebuilds, so a cache written by an older build
+  self-heals instead of misdecoding. ``body_digest`` binds the blob to the raw
+  body it was parsed from; :func:`decode` rejects a blob whose digest does not
+  equal the policy's, so a raw-body update invalidates the derived form.
+  ``rows`` is how many rows were written, and a reader that decodes a different
+  number rejects the blob, so bytes lost at a line boundary are a miss rather
+  than a silently short listing.
+* every later line is a batch of up to ``_ROWS_PER_LINE`` rows, one entry per
+  surviving record, in the order the wire parse returned them, so a downstream
+  stable-sort tie-break stays identical. Each row is a flat list tagged wheel
+  or sdist by its first element. Every field is type-checked on the way back,
+  and ``requires_python`` and hash-algorithm names are re-interned via
+  ``sys.intern`` so the round trip reproduces the dedup the wire parse builds.
+* batching lets :func:`decode` read straight from the cache file, one line at
+  a time, rather than holding the whole document and the copy ``json.loads``
+  makes of it.
 * the two integrity cells carry the index's own table, as a JSON object, when
   the record was built from one, and the parsed pairs otherwise. A rehydrated
   record defers the same way, so a listing pays the integrity parse only for
@@ -44,7 +50,7 @@ from nab_provider.records import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Iterator, Sequence
 
     from .cache import CachePolicy
 
@@ -57,13 +63,15 @@ __all__ = ["corruption_reason", "decode", "encode"]
 FORMAT_VERSION = 3
 # Serialization variant that wrote the rows, so a future codec switch
 # self-heals rather than misdecodes.
-CODEC = 1
+CODEC = 2
 # Version sort-key scheme the rows carry; 0 == no precomputed keys. A later
 # scheme bumps this and self-heals via a reparse.
 KEY_SCHEME = 0
 
-_TOP_LEN = 2
-_HEADER_LEN = 4
+_HEADER_LEN = 5
+# Rows per wire line. A smaller batch holds fewer decoded rows at once and costs
+# more ``json.loads`` calls.
+_ROWS_PER_LINE = 1024
 _PAIR_LEN = 2
 _TAG_WHEEL = 0
 _TAG_SDIST = 1
@@ -98,118 +106,151 @@ def encode(files: list[WheelFile | SdistFile], body_digest: str) -> bytes:
     remote body) and ``metadata_url`` is a derived property, so neither rides
     the wire.
     """
-    rows: list[list[object]] = []
+    header = [FORMAT_VERSION, CODEC, KEY_SCHEME, body_digest, len(files)]
+    blob = bytearray(_line(header))
+    batch: list[list[object]] = []
     for record in files:
         if isinstance(record, WheelFile):
-            rows.append(
-                [
-                    _TAG_WHEEL,
-                    record.filename,
-                    record.url,
-                    record.version,
-                    record.requires_python,
-                    record.has_metadata,
-                    record.upload_time,
-                    _hashes_cell(record),
-                    record.size,
-                    _sidecar_cell(record),
-                ]
-            )
+            row: list[object] = [
+                _TAG_WHEEL,
+                record.filename,
+                record.url,
+                record.version,
+                record.requires_python,
+                record.has_metadata,
+                record.upload_time,
+                _hashes_cell(record),
+                record.size,
+                _sidecar_cell(record),
+            ]
         else:
-            rows.append(
-                [
-                    _TAG_SDIST,
-                    record.filename,
-                    record.url,
-                    record.version,
-                    record.requires_python,
-                    record.upload_time,
-                    _hashes_cell(record),
-                    record.size,
-                ]
-            )
-    header = [FORMAT_VERSION, CODEC, KEY_SCHEME, body_digest]
+            row = [
+                _TAG_SDIST,
+                record.filename,
+                record.url,
+                record.version,
+                record.requires_python,
+                record.upload_time,
+                _hashes_cell(record),
+                record.size,
+            ]
 
-    # Escape non-ASCII: a field kept verbatim from the listing, such as
-    # ``requires_python``, can hold a lone surrogate with no UTF-8 form.
-    return json.dumps([header, rows], separators=(",", ":")).encode()
+        batch.append(row)
+        if len(batch) == _ROWS_PER_LINE:
+            blob += _line(batch)
+            batch.clear()
+
+    if batch:
+        blob += _line(batch)
+    return bytes(blob)
 
 
-def decode(blob: bytes, policy: CachePolicy) -> list[WheelFile | SdistFile] | None:
-    """Decode a cache blob back to parsed records, or ``None`` to force a miss.
+def _line(document: object) -> bytes:
+    """Serialize one wire document as its own line.
+
+    ``json.dumps`` escapes control characters, so a serialized document carries
+    no newline of its own for the line split to trip over. Non-ASCII is escaped
+    as well, because a field kept verbatim from the listing, such as
+    ``requires_python``, can hold a lone surrogate with no UTF-8 form.
+    """
+    return json.dumps(document, separators=(",", ":")).encode() + b"\n"
+
+
+def decode(
+    lines: Iterable[bytes], policy: CachePolicy
+) -> list[WheelFile | SdistFile] | None:
+    """Decode a cache blob's ``lines`` to parsed records, or ``None`` for a miss.
+
+    ``lines`` is the blob read line by line, so an open cache file can be
+    passed straight in and the document is never held whole.
 
     Returns ``None`` (treat as a cache miss and rebuild from the raw body) when
-    the blob does not decode, is the wrong shape, was written by a different
-    build (``format`` / ``codec`` / ``key_scheme``), or is not bound to
-    ``policy``'s body (``body_digest``).  Otherwise rehydrates the records,
+    the blob does not decode, cannot be read, is the wrong shape, holds a
+    different number of rows than its header declares, was written by a
+    different build (``format`` / ``codec`` / ``key_scheme``), or is not bound
+    to ``policy``'s body (``body_digest``). Otherwise rehydrates the records,
     re-interning ``requires_python`` and hash-algorithm names so string identity
     matches a fresh parse.
     """
+    stream = iter(lines)
+    # Every failure is a miss, a read error included: this must not raise.
     try:
-        loaded = json.loads(blob)
-    except ValueError:
+        header = _read_header(stream)
+        if isinstance(header, str):
+            return None
+
+        format_, codec, key_scheme, body_digest, count = header
+        if (
+            format_ != FORMAT_VERSION
+            or codec != CODEC
+            or key_scheme != KEY_SCHEME
+            or policy.body_digest is None
+            or body_digest != policy.body_digest
+        ):
+            return None
+
+        records: list[WheelFile | SdistFile] = []
+        for batch in stream:
+            # A list rather than a generator into ``extend``: measured cheaper.
+            records.extend([_decode_row(row) for row in json.loads(batch)])
+    except (OSError, ValueError, TypeError):
         return None
-    if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
-        return None
-    header, rows = loaded
-    if not (isinstance(header, list) and len(header) == _HEADER_LEN):
-        return None
-    format_, codec, key_scheme, body_digest = header
-    if (
-        format_ != FORMAT_VERSION
-        or codec != CODEC
-        or key_scheme != KEY_SCHEME
-        or policy.body_digest is None
-        or body_digest != policy.body_digest
-    ):
-        return None
-    # A blob whose header matches this build but whose rows are the wrong shape
-    # must rebuild, not crash the resolve; the rows are untrusted too.
-    try:
-        return _decode_rows(rows)
-    except (ValueError, TypeError):
-        return None
+    return records if len(records) == count else None
 
 
-def corruption_reason(blob: bytes) -> str | None:
-    """Return a reason if ``blob`` is structurally corrupt, else ``None``.
+def corruption_reason(lines: Iterable[bytes]) -> str | None:
+    """Return a reason if a blob's ``lines`` are structurally corrupt, else ``None``.
 
     Distinguishes genuine corruption (garbage or truncated bytes, or a
-    same-build blob whose rows are the wrong shape) from a benign miss, where
-    the header names a different build or binds a different body. The read path
-    warns only on the former. The row check runs only once the header names this
-    exact build, since a foreign build may have written a shape this one never
-    did; checking it earlier would misreport version skew as corruption. This is
-    a second pass used only to gate that warning; :func:`decode` returns ``None``
-    for every miss reason alike.
+    same-build blob whose rows are the wrong shape or the wrong number) from a
+    benign miss, where the header names a different build or binds a different
+    body. The read path warns only on the former. The row checks run only once
+    the header names this exact build, since a foreign build may have written a
+    shape this one never did; checking earlier would misreport version skew as
+    corruption. This second pass only gates that warning; :func:`decode`
+    returns ``None`` for every miss reason alike.
     """
+    stream = iter(lines)
+    seen = 0
     try:
-        loaded = json.loads(blob)
-    except ValueError:
-        return "not valid JSON"
-    if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
-        return "unexpected top-level shape"
-    header, rows = loaded
-    if not (isinstance(header, list) and len(header) == _HEADER_LEN):
-        return "unexpected header shape"
-    format_, codec, key_scheme, _body_digest = header
-    if format_ != FORMAT_VERSION or codec != CODEC or key_scheme != KEY_SCHEME:
-        # A different-build header is benign version skew, not corruption; its
-        # rows may be a shape this build never wrote. A same-build body_digest
-        # mismatch decodes cleanly below and returns None silently.
-        return None
-    try:
-        _decode_rows(rows)
+        header = _read_header(stream)
+        if isinstance(header, str):
+            return header
+
+        format_, codec, key_scheme, _body_digest, count = header
+        if format_ != FORMAT_VERSION or codec != CODEC or key_scheme != KEY_SCHEME:
+            # Version skew: another build may write a row shape this one never did.
+            return None
+
+        for batch in stream:
+            for row in json.loads(batch):
+                _decode_row(row)
+                seen += 1
     except (ValueError, TypeError):
         return "unexpected row shape"
-    return None
+    except OSError:
+        # A blob the filesystem will not hand over is unreadable, not corrupt.
+        return None
+    return None if seen == count else "unexpected row count"
 
 
-def _decode_rows(rows: object) -> list[WheelFile | SdistFile]:
-    """Rehydrate every row, raising :class:`_BadRowError` on the first bad one."""
-    if not isinstance(rows, list):
-        raise _BadRowError
-    return [_decode_row(row) for row in rows]
+def _read_header(lines: Iterator[bytes]) -> list[object] | str:
+    """Consume the first of ``lines``, returning the header or a reason.
+
+    A ``str`` is the corruption reason for a first line that is missing, is not
+    JSON, or is not this codec's header shape. Shared so the read path and
+    :func:`corruption_reason` cannot disagree on what a header is.
+    """
+    line = next(lines, None)
+    if line is None:
+        return "not valid JSON"
+    try:
+        header = json.loads(line)
+    except ValueError:
+        return "not valid JSON"
+    if not (isinstance(header, list) and len(header) == _HEADER_LEN):
+        return "unexpected header shape"
+    return header
 
 
 def _decode_row(row: object) -> WheelFile | SdistFile:

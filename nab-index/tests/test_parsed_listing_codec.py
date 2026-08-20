@@ -13,6 +13,8 @@ and the field checks that keep a hand-written row from reaching a record.
 from __future__ import annotations
 
 import dataclasses
+import errno
+import io
 import json
 import sys
 
@@ -21,6 +23,7 @@ import pytest
 from nab_index.cache import CachePolicy
 from nab_index.client import SdistFile, WheelFile
 from nab_index.parsed_listing import (
+    _ROWS_PER_LINE,
     _TAG_SDIST,
     _TAG_WHEEL,
     CODEC,
@@ -42,6 +45,7 @@ RP = sys.intern(">=3.8")
 _H_FORMAT = 0
 _H_CODEC = 1
 _H_KEY_SCHEME = 2
+_H_ROWS = 4
 
 # An sdist row is tag plus seven fields; the unknown-tag case relies on keeping
 # that arity so the tag check is what rejects it, not the unpack.
@@ -116,8 +120,28 @@ SDIST_BARE = SdistFile(
 SAMPLE: list[WheelFile | SdistFile] = [WHEEL_FULL, SDIST_FULL, WHEEL_BARE, SDIST_BARE]
 
 
+def _decode(blob: bytes, policy: CachePolicy) -> list[WheelFile | SdistFile] | None:
+    """Decode a whole blob the way the read path decodes the open cache file."""
+    return decode(io.BytesIO(blob), policy)
+
+
+def _reason(blob: bytes) -> str | None:
+    """Report on a whole blob, as the read path does on the open cache file."""
+    return corruption_reason(io.BytesIO(blob))
+
+
+def _documents(blob: bytes) -> list:
+    """The blob's header and its row batches, one decoded document per line."""
+    return [json.loads(line) for line in blob.splitlines()]
+
+
+def _blob(header: object, rows: object) -> bytes:
+    """Write ``header`` and one batch of ``rows``, as the codec lays a blob out."""
+    return b"".join(json.dumps(doc).encode() + b"\n" for doc in (header, rows))
+
+
 def _roundtrip(files: list[WheelFile | SdistFile]) -> list[WheelFile | SdistFile]:
-    decoded = decode(encode(files, DIGEST), _policy())
+    decoded = _decode(encode(files, DIGEST), _policy())
     assert decoded is not None
     return decoded
 
@@ -146,6 +170,18 @@ def test_empty_listing_roundtrips() -> None:
     assert _roundtrip([]) == []
 
 
+def test_a_listing_past_one_batch_roundtrips() -> None:
+    """Records spanning several wire lines come back in one flat list, in order."""
+    files: list[WheelFile | SdistFile] = [
+        dataclasses.replace(WHEEL_FULL, filename=f"pkg-{n}-py3-none-any.whl")
+        for n in range(_ROWS_PER_LINE + 1)
+    ]
+    blob = encode(files, DIGEST)
+
+    assert len(blob.splitlines()) == 3
+    assert _roundtrip(files) == files
+
+
 def test_metadata_hash_present_and_absent() -> None:
     decoded = _roundtrip([WHEEL_FULL, WHEEL_BARE])
     full, bare = decoded[0], decoded[1]
@@ -163,64 +199,69 @@ def test_lone_surrogate_in_field_round_trips() -> None:
     """
     record = dataclasses.replace(SDIST_FULL, requires_python=f"{RP}\ud800")
 
-    assert decode(encode([record], DIGEST), _policy()) == [record]
+    assert _decode(encode([record], DIGEST), _policy()) == [record]
 
 
 def test_blob_is_portable_json() -> None:
     """The wire form carries no interpreter tag, so any reader can decode it."""
-    header, rows = json.loads(encode(SAMPLE, DIGEST))
-    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST]
+    header, rows = _documents(encode(SAMPLE, DIGEST))
+    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST, len(SAMPLE)]
     assert [row[0] for row in rows] == [_TAG_WHEEL, _TAG_SDIST, _TAG_WHEEL, _TAG_SDIST]
 
 
 def _tamper_header(index: int, value: object) -> bytes:
-    header, rows = json.loads(encode(SAMPLE, DIGEST))
+    header, rows = _documents(encode(SAMPLE, DIGEST))
     header[index] = value
-    return json.dumps([header, rows]).encode()
+    return _blob(header, rows)
 
 
 def _blob_with_rows(rows: object) -> bytes:
-    """A blob whose header names this exact build, over caller-supplied rows."""
-    header, _rows = json.loads(encode(SAMPLE, DIGEST))
-    return json.dumps([header, rows]).encode()
+    """A blob whose header names this exact build, over caller-supplied rows.
+
+    The header's row count is set to match, so the row checks are what these
+    cases exercise rather than the count.
+    """
+    header, _rows = _documents(encode(SAMPLE, DIGEST))
+    header[_H_ROWS] = len(rows) if isinstance(rows, list) else 0
+    return _blob(header, rows)
 
 
 def _wheel_row_with(index: int, value: object) -> bytes:
     """A blob holding one wheel row with a single field replaced."""
-    _header, rows = json.loads(encode([WHEEL_FULL], DIGEST))
+    _header, rows = _documents(encode([WHEEL_FULL], DIGEST))
     rows[0][index] = value
     return _blob_with_rows(rows)
 
 
 def _sdist_row_with(index: int, value: object) -> bytes:
     """A blob holding one sdist row with a single field replaced."""
-    _header, rows = json.loads(encode([SDIST_FULL], DIGEST))
+    _header, rows = _documents(encode([SDIST_FULL], DIGEST))
     rows[0][index] = value
     return _blob_with_rows(rows)
 
 
 def test_valid_blob_decodes() -> None:
-    assert decode(encode(SAMPLE, DIGEST), _policy()) is not None
+    assert _decode(encode(SAMPLE, DIGEST), _policy()) is not None
 
 
 def test_format_mismatch_is_miss() -> None:
-    assert decode(_tamper_header(_H_FORMAT, FORMAT_VERSION + 1), _policy()) is None
+    assert _decode(_tamper_header(_H_FORMAT, FORMAT_VERSION + 1), _policy()) is None
 
 
 def test_codec_mismatch_is_miss() -> None:
-    assert decode(_tamper_header(_H_CODEC, CODEC + 1), _policy()) is None
+    assert _decode(_tamper_header(_H_CODEC, CODEC + 1), _policy()) is None
 
 
 def test_key_scheme_mismatch_is_miss() -> None:
-    assert decode(_tamper_header(_H_KEY_SCHEME, KEY_SCHEME + 1), _policy()) is None
+    assert _decode(_tamper_header(_H_KEY_SCHEME, KEY_SCHEME + 1), _policy()) is None
 
 
 def test_digest_mismatch_is_miss() -> None:
-    assert decode(encode(SAMPLE, DIGEST), _policy("b" * 64)) is None
+    assert _decode(encode(SAMPLE, DIGEST), _policy("b" * 64)) is None
 
 
 def test_policy_without_digest_is_miss() -> None:
-    assert decode(encode(SAMPLE, DIGEST), _policy(None)) is None
+    assert _decode(encode(SAMPLE, DIGEST), _policy(None)) is None
 
 
 @pytest.mark.parametrize(
@@ -236,12 +277,52 @@ def test_policy_without_digest_is_miss() -> None:
     ],
 )
 def test_malformed_blob_is_miss(blob: bytes) -> None:
-    assert decode(blob, _policy()) is None
+    assert _decode(blob, _policy()) is None
 
 
 def test_truncated_blob_is_miss() -> None:
     blob = encode(SAMPLE, DIGEST)
-    assert decode(blob[: len(blob) // 2], _policy()) is None
+    assert _decode(blob[: len(blob) // 2], _policy()) is None
+
+
+def test_a_blob_short_by_a_whole_line_is_a_miss() -> None:
+    """Rows lost at a line boundary are a miss, not a silently short listing.
+
+    Every line still parses, so only the header's row count catches it.
+    """
+    files: list[WheelFile | SdistFile] = [
+        dataclasses.replace(WHEEL_FULL, filename=f"pkg-{n}-py3-none-any.whl")
+        for n in range(_ROWS_PER_LINE * 2)
+    ]
+    blob = encode(files, DIGEST)
+    short = b"".join(blob.splitlines(keepends=True)[:-1])
+
+    assert _decode(short, _policy()) is None
+    assert _reason(short) == "unexpected row count"
+
+
+class _FailingReads(io.RawIOBase):
+    """A readable stream whose every read raises, as a failing disk would."""
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: object) -> int:
+        raise OSError(errno.EIO, "read failed")
+
+
+def _unreadable_blob() -> io.BufferedReader:
+    """An open blob that raises on the first line the codec asks for."""
+    return io.BufferedReader(_FailingReads())
+
+
+def test_an_unreadable_blob_is_a_miss() -> None:
+    assert decode(_unreadable_blob(), _policy()) is None
+
+
+def test_an_unreadable_blob_is_not_corruption() -> None:
+    """A read that fails says nothing about the bytes, so verify stays quiet."""
+    assert corruption_reason(_unreadable_blob()) is None
 
 
 @pytest.mark.parametrize(
@@ -258,7 +339,7 @@ def test_truncated_blob_is_miss() -> None:
 )
 def test_rows_corrupt_but_header_valid_is_miss(rows: object) -> None:
     """A same-build header over wrong-shape rows self-heals to a miss, not a crash."""
-    assert decode(_blob_with_rows(rows), _policy()) is None
+    assert _decode(_blob_with_rows(rows), _policy()) is None
 
 
 @pytest.mark.parametrize("tag", [7, -1, "0", None, True])
@@ -268,10 +349,10 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
     The row keeps sdist arity, so a codec that fell through to the sdist branch
     instead of rejecting would decode it happily. That is what this pins.
     """
-    _header, rows = json.loads(encode([SDIST_FULL], DIGEST))
+    _header, rows = _documents(encode([SDIST_FULL], DIGEST))
     assert len(rows[0]) == _SDIST_ROW_LEN
     rows[0][0] = tag
-    assert decode(_blob_with_rows(rows), _policy()) is None
+    assert _decode(_blob_with_rows(rows), _policy()) is None
 
 
 @pytest.mark.parametrize(
@@ -299,7 +380,7 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
 )
 def test_wrong_field_type_is_miss(index: int, value: object) -> None:
     """A field JSON allows but the record does not never reaches a record."""
-    assert decode(_wheel_row_with(index, value), _policy()) is None
+    assert _decode(_wheel_row_with(index, value), _policy()) is None
 
 
 @pytest.mark.parametrize(
@@ -318,12 +399,12 @@ def test_wrong_field_type_is_miss(index: int, value: object) -> None:
 )
 def test_wrong_sdist_field_type_is_miss(index: int, value: object) -> None:
     """An sdist row is checked on its own fields, not through the wheel's."""
-    assert decode(_sdist_row_with(index, value), _policy()) is None
+    assert _decode(_sdist_row_with(index, value), _policy()) is None
 
 
 def test_absent_optional_fields_decode_as_none() -> None:
     blob = _wheel_row_with(_W_METADATA_HASH, None)
-    decoded = decode(blob, _policy())
+    decoded = _decode(blob, _policy())
     assert decoded is not None
     wheel = decoded[0]
     assert isinstance(wheel, WheelFile)
@@ -334,29 +415,29 @@ def test_absent_optional_fields_decode_as_none() -> None:
     ("blob", "reason"),
     [
         (b"not json", "not valid JSON"),
-        (json.dumps(7).encode(), "unexpected top-level shape"),
+        (json.dumps(7).encode(), "unexpected header shape"),
         (json.dumps(["bad-header", []]).encode(), "unexpected header shape"),
     ],
 )
 def test_corruption_reason_names_the_structural_fault(blob: bytes, reason: str) -> None:
-    assert corruption_reason(blob) == reason
+    assert _reason(blob) == reason
 
 
 def test_corruption_reason_flags_same_build_bad_rows() -> None:
-    assert corruption_reason(_blob_with_rows([[7]])) == "unexpected row shape"
+    assert _reason(_blob_with_rows([[7]])) == "unexpected row shape"
 
 
 def test_corruption_reason_passes_a_valid_blob() -> None:
-    assert corruption_reason(encode(SAMPLE, DIGEST)) is None
+    assert _reason(encode(SAMPLE, DIGEST)) is None
 
 
 def test_foreign_build_header_is_not_corruption() -> None:
     """Version skew is a benign miss, so the read path rebuilds without warning."""
-    assert corruption_reason(_tamper_header(_H_CODEC, CODEC + 1)) is None
+    assert _reason(_tamper_header(_H_CODEC, CODEC + 1)) is None
 
 
 def test_digest_mismatch_is_not_corruption() -> None:
-    assert corruption_reason(encode(SAMPLE, "b" * 64)) is None
+    assert _reason(encode(SAMPLE, "b" * 64)) is None
 
 
 def _deferred_wheel(hashes: object, *, sidecar: object) -> WheelFile:
@@ -377,7 +458,7 @@ def _deferred_wheel(hashes: object, *, sidecar: object) -> WheelFile:
 def test_unparsed_tables_ride_the_wire_as_the_index_served_them() -> None:
     wheel = _deferred_wheel({"SHA256": DIGEST.upper()}, sidecar={"sha256": DIGEST})
 
-    rows = json.loads(encode([wheel], DIGEST))[1]
+    rows = _documents(encode([wheel], DIGEST))[1]
 
     assert rows[0][_W_HASHES] == {"SHA256": DIGEST.upper()}
     assert rows[0][_W_METADATA_HASH] == {"sha256": DIGEST}
@@ -387,7 +468,7 @@ def test_a_value_that_is_not_an_object_rides_as_its_parse() -> None:
     """Only a table defers, so any other value writes what the record parsed."""
     wheel = _deferred_wheel(["sha256", DIGEST], sidecar=True)
 
-    rows = json.loads(encode([wheel], DIGEST))[1]
+    rows = _documents(encode([wheel], DIGEST))[1]
 
     assert rows[0][_W_HASHES] == []
     assert rows[0][_W_METADATA_HASH] is None
@@ -396,7 +477,7 @@ def test_a_value_that_is_not_an_object_rides_as_its_parse() -> None:
 def test_a_many_algorithm_table_defers_as_the_index_served_it() -> None:
     wheel = _deferred_wheel({"sha256": DIGEST, "sha512": "f" * 128}, sidecar=True)
 
-    rows = json.loads(encode([wheel], DIGEST))[1]
+    rows = _documents(encode([wheel], DIGEST))[1]
 
     assert rows[0][_W_HASHES] == {"sha256": DIGEST, "sha512": "f" * 128}
     assert wheel.hashes == ((SHA256, DIGEST), (SHA512, "f" * 128))
@@ -408,7 +489,7 @@ def test_a_rehydrated_record_defers_the_same_parse() -> None:
         DIGEST,
     )
 
-    (wheel,) = decode(blob, _policy()) or []
+    (wheel,) = _decode(blob, _policy()) or []
 
     assert wheel.raw_hashes() == {"SHA256": DIGEST.upper()}
     assert wheel.raw_sidecar() == {"sha256": DIGEST}
@@ -426,7 +507,7 @@ def test_a_rehydrated_sdist_defers_its_hashes() -> None:
     )
     defer_hashes(sdist, {"SHA256": DIGEST.upper()})
 
-    (decoded,) = decode(encode([sdist], DIGEST), _policy()) or []
+    (decoded,) = _decode(encode([sdist], DIGEST), _policy()) or []
 
     assert decoded.raw_hashes() == {"SHA256": DIGEST.upper()}
     assert decoded.hashes == ((SHA256, DIGEST),)

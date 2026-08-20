@@ -8,12 +8,18 @@ import pytest
 
 from nab import cli as nab_cli
 from nab.cli import app
-from nab_index.cache import CACHE_VERSION_SIMPLE, CachePolicy, OnDiskCache
+from nab_index.cache import (
+    CACHE_VERSION_SIMPLE,
+    CACHE_VERSION_SIMPLE_PARSED,
+    CachePolicy,
+    OnDiskCache,
+)
 from nab_index.parsed_listing import encode as _encode_parsed
 from nab_project.config_sources import SourceRoots
 
 # Derived so a bucket-version bump does not need every path updated.
 SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
+PARSED_BUCKET = f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}"
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
@@ -284,7 +290,7 @@ class TestCacheVerify:
     ) -> None:
         root = tmp_path / "cache"
         _populate(root)
-        parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
+        parsed_path = root / PARSED_BUCKET / "pypi" / "foo.parsed"
         parsed_path.write_bytes(b"not json data")
         _run_cache(["verify", "--cache-dir", str(root)])
         err = capsys.readouterr().err
