@@ -426,6 +426,14 @@ _TAG_RULE_IMPLEMENTATIONS = frozenset(_IMPLEMENTATION_FOR_PREFIX.values())
 # machine, so it never seeds the platform axis of another target.
 _ANY_PLATFORM = "any"
 
+# Stands in for the platform axis while a target's tag order is derived.  No
+# platform tag can contain a NUL, so it never collides with a real one.
+_PLATFORM_PLACEHOLDER = "\x00platform"
+
+# The shared Tag instances every target's tag order draws from, keyed by
+# (interpreter, abi) and then by platform.
+_TARGET_TAGS: dict[tuple[str, str], dict[str, Tag]] = {}
+
 
 @lru_cache(maxsize=4096)
 def _intern_tag(tag: Tag) -> Tag:
@@ -731,6 +739,66 @@ def _tags_in_order(
     free_threaded: bool,
 ) -> Iterable[Tag]:
     """Yield the tags a target accepts in install preference order.
+
+    The order comes from :func:`_tag_order_template`, and each tag is built
+    once and then shared across targets: the Python minors of one platform
+    spec re-derive most of each other's tags, and ``Tag.__init__`` lowercases
+    all three fields and precomputes a hash on every call.
+    """
+    for interpreter, abi, fixed_platform in _tag_order_template(
+        python_version, implementation, free_threaded=free_threaded
+    ):
+        instances = _TARGET_TAGS.setdefault((interpreter, abi), {})
+        axis_platforms = platforms if fixed_platform is None else (fixed_platform,)
+        for platform_ in axis_platforms:
+            tag = instances.get(platform_)
+            if tag is None:
+                tag = instances[platform_] = ptags.Tag(interpreter, abi, platform_)
+            yield tag
+
+
+@cache
+def _tag_order_template(
+    python_version: str, implementation: str, *, free_threaded: bool
+) -> tuple[tuple[str, str, str | None], ...]:
+    """Return a target's tag order with the platform axis projected out.
+
+    ``cpython_tags`` and ``compatible_tags`` pair each (interpreter, abi) with
+    the whole platform list before moving to the next, so deriving the order
+    against a single placeholder platform and expanding each placeholder entry
+    back over the real list reproduces the sequence tag for tag.  A ``None``
+    platform marks an entry the platform axis multiplies; the rest
+    (``cpXY-none-any``, ``py3-none-any``) name a platform of their own.
+
+    That pairing is not guaranteed by construction: ``cpython_tags`` loops the
+    platforms outside the abi choice in its abi3 backfill, and holds the
+    pairing there only because ``abi3`` and ``abi3t`` never apply to the same
+    build.  ``TestSharedTagInstances`` pins the expansion against packaging's
+    own output rather than trusting it.
+    """
+    return tuple(
+        (
+            tag.interpreter,
+            tag.abi,
+            None if tag.platform == _PLATFORM_PLACEHOLDER else tag.platform,
+        )
+        for tag in _packaging_tags(
+            python_version,
+            (_PLATFORM_PLACEHOLDER,),
+            implementation,
+            free_threaded=free_threaded,
+        )
+    )
+
+
+def _packaging_tags(
+    python_version: str,
+    platforms: Sequence[str],
+    implementation: str,
+    *,
+    free_threaded: bool,
+) -> Iterable[Tag]:
+    """Yield a target's tags as packaging derives them.
 
     CPython targets use ``packaging.tags.cpython_tags`` (cpXY-cpXY,
     cpXY-abi3 forward-compat, cpXY-none), with the abi named from the
