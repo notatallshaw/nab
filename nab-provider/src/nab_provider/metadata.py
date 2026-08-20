@@ -162,12 +162,28 @@ class WheelMetadata:
     dynamic: frozenset[str] = field(default_factory=frozenset)
 
 
+def _header_block(text: str) -> str:
+    """Return a prefix of ``text`` that holds all of its headers.
+
+    Cuts after the first blank line, LF or CRLF, and returns ``text``
+    unchanged when there is none.
+    """
+    end = text.find("\n\n")
+    if end != -1:
+        return text[: end + 2]
+    end = text.find("\r\n\r\n")
+    if end != -1:
+        return text[: end + 4]
+    return text
+
+
 def parse_metadata(data: str | bytes) -> WheelMetadata:
     """Parse a METADATA file and return the fields needed for resolution."""
     if isinstance(data, bytes):
         data = data.decode("utf-8")
 
-    msg = email.parser.Parser().parsestr(data)
+    # Nothing here reads the long description.
+    msg = email.parser.Parser().parsestr(_header_block(data), headersonly=True)
 
     name = msg.get("Name")
     if name is None:

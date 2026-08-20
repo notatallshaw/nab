@@ -9,6 +9,7 @@ import pytest
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import (
+    _header_block,
     metadata_deps_are_static,
     parse_metadata,
     validate_specifier_versions,
@@ -106,6 +107,44 @@ def test_requires_dist_parsed() -> None:
     )
     md = parse_metadata(text)
     assert [str(r) for r in md.requires_dist] == ["bar>=1.0", "baz<2"]
+
+
+def test_header_block_slice_bounds() -> None:
+    """The slice ends after the blank line; text without one comes back whole."""
+    assert (
+        _header_block("Name: foo\nVersion: 1.0\n\nbody\n")
+        == "Name: foo\nVersion: 1.0\n\n"
+    )
+
+    assert (
+        _header_block("Name: foo\r\nVersion: 1.0\r\n\r\nbody\r\n")
+        == "Name: foo\r\nVersion: 1.0\r\n\r\n"
+    )
+
+    assert _header_block("Name: foo\nVersion: 1.0\n") == "Name: foo\nVersion: 1.0\n"
+
+
+def test_long_description_is_not_read() -> None:
+    """Header fields survive a description that repeats them as text."""
+    text = (
+        "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar>=1.0\n"
+        "\nName: not-a-header\nRequires-Dist: nope\n"
+    )
+    md = parse_metadata(text)
+    assert md.name == "foo"
+    assert [str(r) for r in md.requires_dist] == ["bar>=1.0"]
+
+
+def test_crlf_document_with_long_description() -> None:
+    """A CRLF document ends its header block at the blank CRLF line."""
+    text = (
+        "Metadata-Version: 2.1\r\nName: foo\r\nVersion: 1.0\r\n"
+        "Requires-Dist: bar>=1.0\r\n\r\nName: not-a-header\r\n"
+    )
+    md = parse_metadata(text)
+    assert md.name == "foo"
+    assert md.version == Version("1.0")
+    assert [str(r) for r in md.requires_dist] == ["bar>=1.0"]
 
 
 def test_equal_markers_are_interned() -> None:
