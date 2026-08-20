@@ -1165,15 +1165,17 @@ class FetchCoordinator:
         self.index.store_sdist_metadata(req.package, req.version, pkg_info)
 
     def _release_archive_if_deps_are_static(
-        self, package: str, version: str, table: Mapping[str, Any]
+        self, package: str, version: str, table: Mapping[str, Any] | None
     ) -> None:
         """Release a held archive when ``table`` already declares the deps.
 
         The hold exists for a build, and the metadata ladder builds only when
         the bundled ``[project]`` table cannot supply the dependencies, so a
-        table that can means no build will ask for this archive.
+        table that can means no build will ask for this archive.  A ``None``
+        table is a pyproject that did not parse and declares nothing, so the
+        archive stays held.
         """
-        if self._sdist_archive_hold is None:
+        if self._sdist_archive_hold is None or table is None:
             return
         if static_project_from_table(table) is not None:
             self._sdist_archive_hold.take(package, version)
