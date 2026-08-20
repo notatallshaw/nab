@@ -693,7 +693,7 @@ class TestFetchCoordinator:
         listing = {
             "meta": {"api-version": "1.0"},
             "name": "pkg",
-            # Oldest-first; the prefetch takes the newest wheels.
+            # Oldest-first; the prefetch takes the newest wheel.
             "files": [
                 {
                     "filename": "pkg-1.0-py3-none-any.whl",
@@ -774,33 +774,38 @@ class TestFetchCoordinator:
                 time.sleep(0.01)
             assert coord.index.has_metadata("pkg", "15.0", sidecar)
 
-        # The newest PREFETCH_METADATA_COUNT wheels, not all 15.
-        assert derived == [f"pkg-{n}.0-py3-none-any.whl" for n in range(14, 16)]
+        # Only the newest version's wheel, not all 15.
+        assert derived == ["pkg-15.0-py3-none-any.whl"]
 
-    def test_prefetch_after_listing_enqueues_newest_batch(
+    def test_prefetch_after_listing_enqueues_the_newest_version(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The extracted tail picks the newest N, one wheel per version."""
+        """The extracted tail picks the newest version's first sidecar wheel."""
 
-        def _wheel(version: str, *, has_meta: bool = True) -> WheelFile:
+        def _wheel(
+            version: str, *, build: str = "", has_meta: bool = True
+        ) -> WheelFile:
+            """A wheel for ``version``; ``build`` also varies the sidecar hash."""
+            tag = f"-{build}" if build else ""
+            name = f"pkg-{version}{tag}-py3-none-any.whl"
             return WheelFile(
-                filename=f"pkg-{version}-py3-none-any.whl",
-                url=f"https://f.com/pkg-{version}-py3-none-any.whl",
+                filename=name,
+                url=f"https://f.com/{name}",
                 version=version,
                 requires_python=None,
                 has_metadata=has_meta,
                 upload_time=None,
-                metadata_hash=("sha256", f"h{version}") if has_meta else None,
+                metadata_hash=("sha256", f"h{version}{tag}") if has_meta else None,
             )
 
-        # Oldest-first, more versions than PREFETCH_METADATA_COUNT, plus a
-        # second wheel for one version (first-with-sidecar wins), a
-        # sidecar-less wheel, and an sdist that the tail must skip.
+        # Oldest-first, with more versions than the prefetch takes.
         files: list[WheelFile | SdistFile] = []
         for n in range(1, 16):
             files.append(_wheel(f"{n}.0"))
-        files.append(_wheel("15.0"))  # duplicate version, must not re-enqueue
-        files.append(_wheel("16.0", has_meta=False))  # no sidecar, skipped
+
+        # The three the tail must pass over.
+        files.append(_wheel("15.0", build="1"))  # second wheel of 15.0
+        files.append(_wheel("16.0", has_meta=False))  # no sidecar
         files.append(
             SdistFile(
                 filename="pkg-17.0.tar.gz",
@@ -823,16 +828,14 @@ class TestFetchCoordinator:
         monkeypatch.setattr(coord, "request_metadata", _spy)
         coord._prefetch_metadata_after_listing("pkg", files)
 
-        expected = [
+        assert calls == [
             (
                 "pkg",
-                f"{n}.0",
-                f"https://f.com/pkg-{n}.0-py3-none-any.whl.metadata",
-                ("sha256", f"h{n}.0"),
+                "15.0",
+                "https://f.com/pkg-15.0-py3-none-any.whl.metadata",
+                ("sha256", "h15.0"),
             )
-            for n in range(14, 16)
         ]
-        assert calls == expected
 
     @respx.mock
     def test_listing_entry_with_unsplittable_url_is_dropped(self) -> None:
@@ -874,12 +877,17 @@ class TestFetchCoordinator:
         assert [f.version for f in files] == ["2.0", "3.0"]
         assert coord.index.get_listing_error("pkg") is None
 
-        for version in ("2.0", "3.0"):
-            sidecar = f"https://f.com/pkg-{version}-py3-none-any.whl.metadata"
-            _, prefetched = coord.index.get_or_create_pending(
-                f"metadata:pkg:{version}:{sidecar}"
-            )
-            assert prefetched
+        newest = "https://f.com/pkg-3.0-py3-none-any.whl.metadata"
+        _, newest_prefetched = coord.index.get_or_create_pending(
+            f"metadata:pkg:3.0:{newest}"
+        )
+        assert newest_prefetched
+
+        older = "https://f.com/pkg-2.0-py3-none-any.whl.metadata"
+        _, older_prefetched = coord.index.get_or_create_pending(
+            f"metadata:pkg:2.0:{older}"
+        )
+        assert not older_prefetched
 
     @respx.mock
     def test_fetch_error_logged_not_raised(self) -> None:
@@ -3654,7 +3662,7 @@ class TestWarmSyncTailOffload:
 
     @respx.mock
     def test_sync_hit_runs_tail_off_the_caller_thread(self, tmp_path: Path) -> None:
-        """The newest-N selection walk executes on the fetcher thread only."""
+        """The newest-version selection walk executes on the fetcher thread only."""
         cache = OnDiskCache(tmp_path, _PYPI)
         files: list[WheelFile | SdistFile] = [_sync_wheel("1.0"), _sync_wheel("2.0")]
         _warm_parsed(cache, "pkg", files)
@@ -3700,7 +3708,7 @@ class TestWarmSyncTailOffload:
 
     @respx.mock
     def test_offloaded_tail_prefetches_metadata(self, tmp_path: Path) -> None:
-        """The offloaded tail enqueues the newest-N metadata and it lands."""
+        """The offloaded tail enqueues the newest version's metadata and it lands."""
         respx.get(url__regex=r".*\.whl\.metadata$").mock(
             return_value=httpx.Response(200, text="Metadata-Version: 2.1\n")
         )
@@ -3727,19 +3735,15 @@ class TestWarmSyncTailOffload:
                 for item in calls
                 if isinstance(item, FetchRequest) and item.kind is FetchKind.METADATA
             }
-            assert meta_submits == {
-                ("pkg", "1.0", "https://f.example/pkg-1.0-py3-none-any.whl.metadata"),
-                ("pkg", "2.0", "https://f.example/pkg-2.0-py3-none-any.whl.metadata"),
-            }
+            sidecar = "https://f.example/pkg-2.0-py3-none-any.whl.metadata"
+            assert meta_submits == {("pkg", "2.0", sidecar)}
 
-            for version in ("1.0", "2.0"):
-                sidecar = f"https://f.example/pkg-{version}-py3-none-any.whl.metadata"
-                deadline = time.monotonic() + 5
-                while time.monotonic() < deadline and not coord.index.has_metadata(
-                    "pkg", version, sidecar
-                ):
-                    time.sleep(0.01)
-                assert coord.index.has_metadata("pkg", version, sidecar)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and not coord.index.has_metadata(
+                "pkg", "2.0", sidecar
+            ):
+                time.sleep(0.01)
+            assert coord.index.has_metadata("pkg", "2.0", sidecar)
 
     @respx.mock
     def test_dead_loop_runs_tail_inline(self, tmp_path: Path) -> None:

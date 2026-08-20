@@ -197,7 +197,7 @@ class FetchCoordinator:
             ...
     """
 
-    PREFETCH_METADATA_COUNT = 2
+    PREFETCH_METADATA_COUNT = 1
 
     def __init__(  # noqa: PLR0913 - the per-index knobs a coordinator wires up
         self,
