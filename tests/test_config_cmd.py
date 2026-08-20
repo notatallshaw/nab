@@ -5,9 +5,10 @@ These tests drive it through tyro's ``app.cli`` (so the real flag surface
 is exercised) with injected search roots, and assert the tyro CLI surface
 matches the registry one-for-one (the conformance test that guards the
 one place the CLI surface is not registry-derived: tyro deriving flags
-from a function signature).  They also pin
-the ``--resolution`` -> ``--project-resolution`` rename, the lock-ladder
-config-error exit, and a byte-identical no-op lock at defaults.
+from a function signature).  One class reads the rendered ``config`` help
+back and checks it against what each refused source really does.
+They also pin the ``--resolution`` -> ``--project-resolution`` rename, the
+lock-ladder config-error exit, and a byte-identical no-op lock at defaults.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import inspect
 import io
 import logging
+import re
 from collections.abc import Callable, Mapping
 from contextlib import (
     AbstractContextManager,
@@ -99,6 +101,24 @@ def _run_config(args: list[str]) -> str:
     with redirect_stdout(buf):
         app.cli(args=["config", *args], prog="nab")
     return buf.getvalue()
+
+
+def _config_help() -> str:
+    """What ``nab config --help`` prints."""
+    buf = io.StringIO()
+    with redirect_stdout(buf), suppress(SystemExit):
+        app.cli(args=["config", "--help"], prog="nab")
+    return buf.getvalue()
+
+
+def _help_sentences(needle: str) -> list[str]:
+    """The help's sentences naming ``needle``, with tyro's wrapping undone.
+
+    tyro renders ``config_command``'s docstring above the flag listing, so
+    the prose is everything before that listing.
+    """
+    prose = _config_help().partition("positional arguments")[0]
+    return [s for s in re.split(r"(?<=\.)\s+", " ".join(prose.split())) if needle in s]
 
 
 def test_config_search_roots_uses_symlink_dir_not_target(tmp_path: Path) -> None:
@@ -348,6 +368,72 @@ class TestConfigExplain:
         assert "unknown config key" in capsys.readouterr().err
 
 
+class TestConfigHelpRefusalSeverity:
+    """The ``config`` help states what each refused source really does.
+
+    A refused key in a config file is fatal without ``--include-rejected``,
+    an unknown or renamed ``NAB_*`` var never is, and a refusal naming no
+    option reaches ``list`` only.
+    """
+
+    def test_only_a_file_refusal_is_fatal(
+        self,
+        hermetic_roots: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _project(hermetic_roots)
+        monkeypatch.setenv("NAB_OFLINE", "1")
+        path = str(hermetic_roots / "pyproject.toml")
+
+        # A typo'd NAB_* var warns and the command still runs.
+        with caplog.at_level(logging.WARNING, logger="nab_project"):
+            listed = _run_config(["list", "--path", path])
+
+        assert "offline" in listed
+        assert "NAB_OFLINE" in caplog.text
+
+        # The same typo in a nab.toml exits instead.
+        _write(hermetic_roots / "nab.toml", "ofline = true\n")
+        with pytest.raises(SystemExit) as exc:
+            _run_config(["list", "--path", path])
+
+        assert exc.value.code == 1
+        assert "not a valid nab setting" in capsys.readouterr().err
+
+        # The help says which of the two is fatal.
+        [fatal] = _help_sentences("fatal config error")
+        assert "config file" in fatal
+        assert "NAB_" not in fatal
+
+        [env] = _help_sentences("``NAB_*``")
+        assert "never fatal" in env
+        assert "warning" in env
+
+    def test_a_refusal_naming_no_option_reaches_list_only(
+        self, hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _project(hermetic_roots)
+        monkeypatch.setenv("NAB_OFLINE", "1")
+        monkeypatch.setenv("NAB_RESOLUTION", "lowest")
+        path = str(hermetic_roots / "pyproject.toml")
+        flag = "--include-rejected"
+
+        listed = _run_config(["list", flag, "--path", path])
+        named = _run_config(["explain", "resolution", flag, "--path", path])
+        unnamed = _run_config(["explain", "offline", flag, "--path", path])
+
+        # NAB_RESOLUTION names a registry key, NAB_OFLINE names none.
+        assert "NAB_OFLINE" in listed
+        assert "NAB_RESOLUTION" in named
+        assert "NAB_OFLINE" not in unnamed
+
+        [row] = _help_sentences("``rejected`` row")
+        assert "only" in row
+        assert "``list``" in row
+
+
 _STRUCTURED_PROJECT_TABLES = frozenset(
     {
         "archive-sources",
@@ -545,14 +631,8 @@ class TestTyroConformance:
     backing parameter names must match the rows.
     """
 
-    def _config_help(self) -> str:
-        buf = io.StringIO()
-        with redirect_stdout(buf), suppress(SystemExit):
-            app.cli(args=["config", "--help"], prog="nab")
-        return buf.getvalue()
-
     def test_every_registry_flag_present_in_help(self) -> None:
-        help_text = self._config_help()
+        help_text = _config_help()
         for spec in OPTIONS:
             if spec.cli_flag is None:
                 # File-only rows (vcs/workspace/marker-environment) carry
@@ -631,7 +711,7 @@ class TestTyroConformance:
         patched = (*OPTIONS, bogus)
         sig = inspect.signature(config_command)
         params = set(sig.parameters)
-        help_text = self._config_help()
+        help_text = _config_help()
 
         def check_params() -> None:
             for spec in patched:
