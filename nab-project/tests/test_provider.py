@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import gc
+import hashlib
 import io
 import json
 import logging
@@ -119,6 +120,7 @@ def make_wheel(
     has_metadata: bool = True,
     upload_time: str | None = None,
     local_path: Path | None = None,
+    metadata_hash: tuple[str, str] | None = None,
 ) -> WheelFile:
     """Build a WheelFile for testing."""
     return WheelFile(
@@ -129,6 +131,7 @@ def make_wheel(
         has_metadata=has_metadata,
         upload_time=upload_time,
         local_path=local_path,
+        metadata_hash=metadata_hash,
     )
 
 
@@ -171,11 +174,32 @@ def make_sdist(
     )
 
 
+def _sidecar_hash(version: str) -> tuple[str, str]:
+    """A published ``core-metadata`` digest, distinct per version."""
+    return ("sha256", hashlib.sha256(version.encode()).hexdigest())
+
+
 def _prefetched_batch_versions(coordinator: FakeFetchPort) -> list[str]:
     """Versions of the one batch metadata prefetch, in submission order."""
     batches = coordinator.calls_to("request_metadata_batch")
     assert len(batches) == 1
     return [version for _package, version, _url, _hash in batches[0][0]]
+
+
+def _requested_digests(
+    coordinator: FakeFetchPort,
+) -> list[tuple[str, tuple[str, str] | None]]:
+    """``(version, digest)`` for every single metadata request, in call order."""
+    calls = coordinator.calls_to("request_metadata")
+    return [(version, digest) for _package, version, _url, digest in calls]
+
+
+def _batched_digests(
+    coordinator: FakeFetchPort,
+) -> list[tuple[str, tuple[str, str] | None]]:
+    """``(version, digest)`` for the last metadata batch, in submission order."""
+    items = coordinator.calls_to("request_metadata_batch")[-1][0]
+    return [(version, digest) for _package, version, _url, digest in items]
 
 
 def _done_event() -> threading.Event:
@@ -521,6 +545,81 @@ class TestSpeculativePrefetch:
         # v2.0 was prefetched, but we ask for v1.0
         deps = provider.get_dependencies("foo", V("1.0"))
         assert "bar" in deps
+
+
+class TestSidecarDigestForwarding:
+    """Each metadata request carries the sidecar digest its listing published.
+
+    A request that drops the listing's ``core-metadata`` value is fetched
+    without a hash check and reports nothing, so there is one test per request
+    site the provider owns.
+    """
+
+    def _coordinator(self, *versions: str) -> FakeFetchPort:
+        """A ``foo`` listing whose wheels each publish their own digest."""
+        return make_coordinator(
+            [make_wheel(v, metadata_hash=_sidecar_hash(v)) for v in versions],
+            auto_metadata=True,
+            package="foo",
+        )
+
+    def test_transitive_best_prefetch_forwards_the_digest(self) -> None:
+        """The single-candidate prefetch carries the picked wheel's digest."""
+        coordinator = self._coordinator("2.0", "1.0")
+        provider = Provider(coordinator, target=_PY312)
+
+        provider.fetch_versions("foo")
+
+        assert _requested_digests(coordinator) == [("2.0", _sidecar_hash("2.0"))]
+
+    def test_root_batch_prefetch_forwards_the_digest(self) -> None:
+        """The root-range batch carries a digest per item, not one for the batch."""
+        coordinator = self._coordinator("2.0", "1.0")
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            root_requirements={"foo": SpecifierSet(">=1.0").to_range()},
+        )
+
+        provider.fetch_versions("foo")
+
+        assert _batched_digests(coordinator) == [
+            ("2.0", _sidecar_hash("2.0")),
+            ("1.0", _sidecar_hash("1.0")),
+        ]
+
+    def test_walk_ahead_prefetch_forwards_the_digest(self) -> None:
+        """The deep walk-ahead batch carries the digest of each version it warms."""
+        coordinator = self._coordinator("2.0", "1.0")
+        provider = Provider(coordinator, target=_PY312)
+        provider.fetch_versions("foo")
+        coordinator.reset()
+
+        provider.prefetch_walk_ahead("foo")
+
+        assert _batched_digests(coordinator) == [("1.0", _sidecar_hash("1.0"))]
+
+    def test_pipelined_batch_forwards_the_digest(self) -> None:
+        """The scan's own batch carries the digest of the version it submits."""
+        coordinator = self._coordinator("2.0", "1.0")
+        provider = Provider(coordinator, target=_PY312)
+        versions = provider.fetch_versions("foo")
+        coordinator.reset()
+
+        provider._prefetch_batch(
+            "foo", [V("1.0")], provider._wheel_by_version("foo", versions)
+        )
+
+        assert _batched_digests(coordinator) == [("1.0", _sidecar_hash("1.0"))]
+
+    def test_synchronous_read_forwards_the_digest(self) -> None:
+        """The blocking read of a version no prefetch warmed carries its digest."""
+        coordinator = self._coordinator("2.0", "1.0")
+        provider = Provider(coordinator, target=_PY312)
+
+        provider.get_dependencies("foo", V("1.0"))
+
+        assert _requested_digests(coordinator)[-1] == ("1.0", _sidecar_hash("1.0"))
 
 
 class TestBatchPrefetchUrlDepRefusal:

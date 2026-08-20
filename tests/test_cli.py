@@ -61,6 +61,7 @@ from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.config import ConfigError, read_pyproject_config
 from nab_project.config_sources import SourceRoots
 from nab_project.download import DownloadError
+from nab_project.fetch import FetchCoordinator
 from nab_project.lockfile import (
     ArchivePin,
     DisjointnessError,
@@ -1405,6 +1406,69 @@ class TestLockCommandSpecific:
         assert "sha256 mismatch" in err
         assert "0" * 64 in err
         assert "Traceback" not in err
+
+    def test_metadata_hash_mismatch_below_prefetch_window_exits(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A pin no prefetch covers still has its sidecar checked.
+
+        The coordinator warms the newest ``PREFETCH_METADATA_COUNT`` versions
+        as soon as a listing lands and forwards the published digest itself.
+        Pinning an older version leaves the provider's own request as the only
+        carrier of that digest.
+        """
+        monkeypatch.setattr(
+            "nab.cli._config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+
+        # Guards the premise: the pin has to sit outside the prefetch window.
+        versions = ("1.0", "2.0", "3.0")
+        pinned = versions[0]
+        assert len(versions) > FetchCoordinator.PREFETCH_METADATA_COUNT
+
+        pyproject = _make_pyproject(
+            tmp_path, f'[project]\ndependencies = ["foo=={pinned}"]\n'
+        )
+
+        files: list[dict[str, object]] = []
+        bodies: dict[str, bytes] = {}
+        for version in versions:
+            url = f"https://files.example.com/foo-{version}-py3-none-any.whl"
+            sidecar = f"Metadata-Version: 2.1\nName: foo\nVersion: {version}\n\n"
+            bodies[f"{url}.metadata"] = sidecar.encode()
+
+            # Only the pin advertises a digest its sidecar bytes do not match.
+            published = (
+                "0" * 64
+                if version == pinned
+                else hashlib.sha256(sidecar.encode()).hexdigest()
+            )
+            files.append(
+                {
+                    "filename": f"foo-{version}-py3-none-any.whl",
+                    "url": url,
+                    "core-metadata": {"sha256": published},
+                }
+            )
+
+        bodies["https://pypi.org/simple/foo/"] = json.dumps({"files": files}).encode()
+        transport = _SidecarTransport(bodies)
+
+        with (
+            patch("nab.cli._make_transport", return_value=transport),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock.toml", cache=False)
+
+        err = capsys.readouterr().err
+        assert "cannot lock" in err
+        assert "sha256 mismatch" in err
+        assert "0" * 64 in err
+        assert not (tmp_path / "pylock.toml").exists()
 
     def test_wheel_hash_mismatch_exits(
         self,
