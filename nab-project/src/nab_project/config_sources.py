@@ -310,16 +310,12 @@ def _parse_path(value: Any, where: str) -> Path:
 
 
 def _parse_resolution(value: Any, where: str) -> ResolutionStrategy:
-    # TOML/env supply a string; the CLI layer also passes the string spelling.
-    if not isinstance(value, str):
-        msg = f"{where} must be a string, got {type(value).__name__}"
-        raise SourceConfigError(msg)
-    try:
-        return ResolutionStrategy(value)
-    except ValueError as exc:
-        valid = sorted(s.value for s in ResolutionStrategy)
-        msg = f"{where} must be one of {valid!r}, got {value!r}"
-        raise SourceConfigError(msg) from exc
+    from .config import _parse_enum as _impl  # noqa: PLC0415 (config import cycle)
+
+    # Unlike the other enum rows, this message names the source location, not the key.
+    return _delegate(
+        lambda: _impl(where, value, ResolutionStrategy, ResolutionStrategy.HIGHEST)
+    )
 
 
 _HTTP_BACKENDS = ("httpx", "urllib3")
@@ -362,13 +358,10 @@ def _parse_max_concurrency(value: Any, where: str) -> int:
 def _delegate(call: Callable[[], Any]) -> Any:
     """Run a ``config.py`` parse helper, re-typing its error for the registry.
 
-    The registry rows reuse the single-environment parsers in
-    :mod:`nab_project.config` verbatim, so the value and every validation
-    message are identical to the pyproject parse path.  Those helpers raise
-    :class:`config.ConfigError`; the registry contract is
-    :class:`SourceConfigError`, and the CLI and loader catch only the latter.
-    Re-raise with the same message so behaviour is preserved and the error is
-    caught by the ladder.
+    The rows reuse the parse helpers in :mod:`nab_project.config`, so a value
+    and its validation wording match the pyproject parse path where there is
+    one.  Those helpers raise :class:`config.ConfigError` and the registry
+    contract is :class:`SourceConfigError`, so re-raise with the same message.
     """
     try:
         return call()
@@ -376,14 +369,11 @@ def _delegate(call: Callable[[], Any]) -> Any:
         raise SourceConfigError(str(exc)) from exc
 
 
-def _parse_mode(value: Any, where: str) -> Any:
-    # Delegates to config._parse_mode (enum specific|universal).  ``where``
-    # is unused: the helper owns the (config-keyed) message wording, kept
-    # identical to the pyproject path.
+def _parse_mode(value: Any, where: str) -> ResolveMode:
     del where
-    from .config import _parse_mode as _impl  # noqa: PLC0415 (config import cycle)
+    from .config import _parse_enum as _impl  # noqa: PLC0415 (config import cycle)
 
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: _impl("mode", value, ResolveMode, ResolveMode.SPECIFIC))
 
 
 def _parse_requires_python(value: Any, where: str) -> str | None:

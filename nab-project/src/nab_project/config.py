@@ -1213,18 +1213,6 @@ def _check_requires_python_admits_target(
     raise ConfigError(msg)
 
 
-def _parse_mode(value: object) -> ResolveMode:
-    if not isinstance(value, str):
-        msg = f"mode must be a string, got {type(value).__name__}"
-        raise ConfigError(msg)
-    try:
-        return ResolveMode(value)
-    except ValueError as exc:
-        valid = sorted(m.value for m in ResolveMode)
-        msg = f"mode must be one of {valid!r}, got {value!r}"
-        raise ConfigError(msg) from exc
-
-
 def _parse_string_list(key: str, value: object) -> tuple[str, ...]:
     if not isinstance(value, list):
         msg = f"{key} must be a list of strings, got {type(value).__name__}"
@@ -3091,17 +3079,9 @@ def _parse_conflict_set(item: object, index: int) -> ConflictSet:
 
 def _parse_conflict_policy(value: object, where: str) -> ConflictPolicy:
     """Parse the ``policy`` value of a conflict-set table; default at-most-one."""
-    if value is None:
-        return ConflictPolicy.AT_MOST_ONE
-    if not isinstance(value, str):
-        msg = f"{where}.policy must be a string, got {type(value).__name__}"
-        raise ConfigError(msg)
-    policy = _CONFLICT_POLICY_VALUES.get(value)
-    if policy is None:
-        valid = sorted(_CONFLICT_POLICY_VALUES)
-        msg = f"{where}.policy must be one of {valid!r}, got {value!r}"
-        raise ConfigError(msg)
-    return policy
+    return _parse_enum(
+        f"{where}.policy", value, ConflictPolicy, ConflictPolicy.AT_MOST_ONE
+    )
 
 
 def _parse_conflict_members(value: object, where: str) -> tuple[ConflictMember, ...]:
