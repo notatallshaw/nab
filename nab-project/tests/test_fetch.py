@@ -3917,6 +3917,22 @@ class TestSdistArchiveHolding:
 
         assert hold.take("pkg", "1.0") == b"archive bytes"
 
+    def test_an_unparseable_pyproject_keeps_the_archive_and_the_pkg_info(self) -> None:
+        """A pyproject that will not parse reads as one the sdist never shipped.
+
+        The source here starts with a UTF-8 BOM, which tomli rejects.
+        """
+        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+        coord, hold = self._fetched_with_pyproject(
+            '\ufeff[project]\nname = "pkg"\ndependencies = []\n', config
+        )
+
+        assert hold.take("pkg", "1.0") == b"archive bytes"
+        assert coord.index.get_sdist_pyproject("pkg", "1.0") is None
+        assert coord.index.get_metadata("pkg", "1.0") == (
+            "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+        )
+
     def test_a_resolve_that_holds_nothing_still_stores_the_pyproject(self) -> None:
         """The release is skipped when there is no hold to release from."""
         coord, hold = self._fetched_with_pyproject(
