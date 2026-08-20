@@ -413,8 +413,13 @@ def _extract_archive(
     target = cache_dir / digest
 
     if not _is_published(target):
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        tmp = Path(tempfile.mkdtemp(dir=cache_dir, prefix=f"{digest}.", suffix=".tmp"))
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            tmp = Path(
+                tempfile.mkdtemp(dir=cache_dir, prefix=f"{digest}.", suffix=".tmp")
+            )
+        except OSError as exc:
+            raise _cache_write_error(exc) from exc
 
         try:
             unpacked = tmp / "unpacked"
@@ -451,12 +456,19 @@ def _extract_archive(
                 if not _is_published(target):
                     msg = f"extracted archive could not be moved into place: {exc}"
                     raise UnsupportedSdistError(msg) from exc
+        except OSError as exc:
+            raise _cache_write_error(exc) from exc
         finally:
             # A successful rename leaves nothing here; any other exit, an
             # interrupt included, would leak the temp tree.
             shutil.rmtree(tmp, ignore_errors=True)
 
     return _extracted_root(target)
+
+
+def _cache_write_error(exc: OSError) -> UnsupportedSdistError:
+    """Return the error for an archive-cache write that failed with ``exc``."""
+    return UnsupportedSdistError(f"archive cache entry could not be written: {exc}")
 
 
 def _extracted_root(target: Path) -> Path:
