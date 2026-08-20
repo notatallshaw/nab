@@ -11197,15 +11197,31 @@ class TestSiblingMetadataDivergence:
             provider, [(self._V, make_sdist("1.0"))], "pkg", self._V
         )
 
-    def test_local_wheel_pick_returns_early(self) -> None:
-        """A local wheel keeps no index text, so the pick reads as not resident."""
-        local = _sib_wheel(
-            "py3-none-any", has_metadata=False, local_path=Path("/w/pkg.whl")
+    def test_local_wheel_pick_returns_early(self, tmp_path: Path) -> None:
+        """A local wheel pick is skipped, so its divergent tie sibling is ignored.
+
+        Only text the check treats as resident is compared, and a local
+        wheel's METADATA is not, so the resolve answers with the local
+        wheel's own deps.
+        """
+        wheel_path = tmp_path / "pkg-1.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel_path, "w") as zf:
+            zf.writestr("pkg-1.0.dist-info/METADATA", _sib_meta("alpha>=1"))
+
+        local = _sib_wheel("py3-none-any", has_metadata=False, local_path=wheel_path)
+        sibling = _sib_wheel("py2.py3-none-any", has_metadata=False)
+
+        coordinator = make_coordinator([local, sibling], package="pkg")
+        # A sidecar-less wheel's resident text sits under the wheel's own url.
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("beta>=1"), metadata_url=sibling.url
         )
-        provider = Provider(make_coordinator([local], package="pkg"), target=_LINUX311)
-        metadata_resolver.check_sibling_metadata_divergence(
-            provider, [(self._V, local)], "pkg", self._V
-        )
+        provider = Provider(coordinator, target=_LINUX311)
+
+        deps = provider.get_dependencies("pkg", self._V)
+
+        assert "alpha" in deps
+        assert "beta" not in deps
 
     def test_no_tag_axis_divergent_siblings_crash(self) -> None:
         """With no tag axis every resident sibling wheel is a real ambiguity."""
