@@ -68,5 +68,4 @@ For multi-platform / multi-Python locks see
 * [CLI](../reference/cli.md): every subcommand, flag, exit code, and
   environment variable.
 * [Lockfile](../reference/lockfile.md): what is in `pylock.toml`, the
-  `requirements.txt --hash` shape, and how `nab download` consumes
-  them.
+  `requirements.txt --hash` shape, and what `nab download` fetches.
