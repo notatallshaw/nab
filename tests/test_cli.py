@@ -5550,6 +5550,35 @@ class TestDownloadCommand:
             download(pyproject, output=out, offline=offline)
         assert mock_dl.call_args.kwargs["offline"] is offline
 
+    def test_http_backend_reaches_both_transports(self, tmp_path: Path) -> None:
+        """``--http-backend`` must reach the download, not just the resolve."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "vendor"
+        download_result = MagicMock(written=(), skipped=())
+
+        resolve_transport = MagicMock(name="resolve_transport")
+        fetch_transport = MagicMock(name="fetch_transport")
+
+        with (
+            patch(
+                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
+            ) as mock_resolve,
+            patch(
+                "nab._download.download_lock", return_value=download_result
+            ) as mock_dl,
+            patch(
+                "nab.cli._make_transport",
+                side_effect=[resolve_transport, fetch_transport],
+            ) as mock_transport,
+        ):
+            download(pyproject, output=out, http_backend="httpx")
+
+        backends = [call.args[0] for call in mock_transport.call_args_list]
+        assert backends == ["httpx", "httpx"]
+
+        assert mock_resolve.call_args.args[1] is resolve_transport
+        assert mock_dl.call_args.args[1] is fetch_transport
+
     @pytest.mark.parametrize("cap", [1, 2])
     def test_max_concurrency_flag_caps_parallel_fetches(
         self, tmp_path: Path, cap: int
