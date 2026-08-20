@@ -245,15 +245,29 @@ def _decode_wheel(row: Sequence[object]) -> WheelFile:
         size,
         metadata_hash,
     ) = row
+
+    # ``type() is`` rather than ``isinstance``: bool is a subclass of int, so
+    # ``True`` would pass as a size.
+    if (
+        type(filename) is not str
+        or type(url) is not str
+        or type(version) is not str
+        or type(has_metadata) is not bool
+        or (requires_python is not None and type(requires_python) is not str)
+        or (upload_time is not None and type(upload_time) is not str)
+        or (size is not None and type(size) is not int)
+    ):
+        raise _BadRowError
+
     return rehydrated_wheel(
-        _text(filename),
-        _text(url),
-        _text(version),
-        _interned_or_none(requires_python),
-        _flag(has_metadata),
-        _text_or_none(upload_time),
+        filename,
+        url,
+        version,
+        None if requires_python is None else sys.intern(requires_python),
+        has_metadata,
+        upload_time,
         hashes if isinstance(hashes, dict) else _hashes(hashes),
-        _count_or_none(size),
+        size,
         metadata_hash
         if isinstance(metadata_hash, dict)
         else _pair_or_none(metadata_hash),
@@ -263,47 +277,32 @@ def _decode_wheel(row: Sequence[object]) -> WheelFile:
 def _decode_sdist(row: Sequence[object]) -> SdistFile:
     """Rehydrate a source-distribution row; see :func:`_decode_wheel`."""
     _, filename, url, version, requires_python, upload_time, hashes, size = row
+
+    if (
+        type(filename) is not str
+        or type(url) is not str
+        or type(version) is not str
+        or (requires_python is not None and type(requires_python) is not str)
+        or (upload_time is not None and type(upload_time) is not str)
+        or (size is not None and type(size) is not int)
+    ):
+        raise _BadRowError
+
     return rehydrated_sdist(
-        _text(filename),
-        _text(url),
-        _text(version),
-        _interned_or_none(requires_python),
-        _text_or_none(upload_time),
+        filename,
+        url,
+        version,
+        None if requires_python is None else sys.intern(requires_python),
+        upload_time,
         hashes if isinstance(hashes, dict) else _hashes(hashes),
-        _count_or_none(size),
+        size,
     )
 
 
 # JSON hands back only its own types, so an exact type check is enough to keep a
-# hand-written or corrupt blob from reaching a record's fields. ``type() is``
-# rather than ``isinstance`` because ``bool`` is a subclass of ``int`` and the
-# two are not interchangeable in a record.
+# hand-written or corrupt blob from reaching a record's fields.
 def _text(value: object) -> str:
     if type(value) is not str:
-        raise _BadRowError
-    return value
-
-
-def _text_or_none(value: object) -> str | None:
-    return None if value is None else _text(value)
-
-
-def _interned_or_none(value: object) -> str | None:
-    # JSON builds a fresh string per occurrence, so interning here is what
-    # reproduces the dedup the wire parse leaves behind.
-    return None if value is None else sys.intern(_text(value))
-
-
-def _flag(value: object) -> bool:
-    if type(value) is not bool:
-        raise _BadRowError
-    return value
-
-
-def _count_or_none(value: object) -> int | None:
-    if value is None:
-        return None
-    if type(value) is not int:
         raise _BadRowError
     return value
 
