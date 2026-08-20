@@ -20,7 +20,7 @@ from ..errors import (
     IncompatiblePythonError,
     InvalidUploadTimeError,
 )
-from ..iso8601 import parse_iso_datetime
+from ..iso8601 import fast_iso_parser, parse_iso_datetime
 from ..metadata import intern_version as _intern_version
 from ..policy import DistPolicy
 from ..vcs_admission import UnsupportedVcsError
@@ -722,20 +722,27 @@ def excluded_by_time(
     if dist.local_path is not None:
         # A local file:// artifact has no upload time, so the cutoff cannot apply.
         return False
-    if dist.upload_time is None:
+    raw = dist.upload_time
+    if raw is None:
         provider.stats.excluded_by_time += 1
         return True
+
     try:
-        upload_dt = parse_iso_datetime(dist.upload_time)
+        upload_dt = fast_iso_parser(raw)
     except ValueError:
-        provider.stats.excluded_by_time += 1
-        return True
+        # The fast parser can be the stricter of the two, so what it rejects
+        # still gets the rewriting parse.
+        try:
+            upload_dt = parse_iso_datetime(raw)
+        except ValueError:
+            provider.stats.excluded_by_time += 1
+            return True
 
     # PEP 700 mandates timezone-aware UTC upload times; refuse to guess.
     if upload_dt.tzinfo is None:
         msg = (
             f"{normalized} {dist.version} has a timezone-naive upload time "
-            f"{dist.upload_time!r}; the Simple API requires "
+            f"{raw!r}; the Simple API requires "
             f"timezone-aware (UTC) upload times"
         )
         raise InvalidUploadTimeError(msg)

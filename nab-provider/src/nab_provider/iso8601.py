@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 import sys
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _FRACTIONAL_SECONDS = re.compile(r"\.(\d+)")
 
@@ -26,6 +30,14 @@ def parse_iso_datetime(raw: str) -> datetime:
             pass
 
     return datetime.fromisoformat(_to_isoformat(raw))
+
+
+# The cheapest parser for one timestamp per record: on 3.11+ the native one,
+# skipping the ``parse_iso_datetime`` wrapper. It rejects the shapes
+# ``_to_isoformat`` rewrites, so callers keep ``parse_iso_datetime`` as a fallback.
+fast_iso_parser: Callable[[str], datetime] = (
+    datetime.fromisoformat if _NATIVE_ACCEPTS_PEP_700 else parse_iso_datetime
+)
 
 
 def _to_isoformat(raw: str) -> str:
