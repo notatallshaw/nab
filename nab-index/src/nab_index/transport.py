@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from nab_provider.errors import HttpError, UnserveableUrlError
 
-from .retry import RETRY_STATUSES
+from .retry_limits import RETRY_STATUSES
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -195,9 +195,10 @@ class AsyncHttpTransport(Protocol):
 def raise_for_error_status(status: int, url: str) -> None:
     """Raise :class:`HttpError` for a 4xx/5xx ``status``.
 
-    A client error outside :data:`~nab_index.retry.RETRY_STATUSES` raises the
-    :class:`UnserveableUrlError` subclass: the retry policy calls those the
-    index's answer rather than a blip, so they name the URL, not the moment.
+    A client error outside :data:`~nab_index.retry_limits.RETRY_STATUSES`
+    raises the :class:`UnserveableUrlError` subclass: the retry policy calls
+    those the index's answer rather than a blip, so they name the URL, not the
+    moment.
     """
     if status < _HTTP_BAD_REQUEST:
         return

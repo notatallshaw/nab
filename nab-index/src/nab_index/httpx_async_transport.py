@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import truststore
 
-from .retry import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES, next_delay
+from .retry import next_delay
+from .retry_limits import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES
 from .transport import (
     DEFAULT_HEADERS,
     ContentDecodingError,

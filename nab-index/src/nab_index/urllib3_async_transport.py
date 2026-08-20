@@ -20,7 +20,8 @@ import truststore
 import urllib3
 from typing_extensions import override
 
-from .retry import GET_RETRY, MAX_RETRIES, next_delay
+from .retry import GET_RETRY, next_delay
+from .retry_limits import MAX_RETRIES
 from .transport import (
     DEFAULT_HEADERS,
     ContentDecodingError,
