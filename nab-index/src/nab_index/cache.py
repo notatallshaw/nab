@@ -46,7 +46,7 @@ import time
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from nab_provider.serialization import SimpleSerialization
 
@@ -581,7 +581,8 @@ def _sdist_record_pair(doc: object) -> tuple[str | None, str | None] | None:
     """
     if not isinstance(doc, dict) or "pkg_info" not in doc or "pyproject" not in doc:
         return None
-    pkg_info, pyproject = doc["pkg_info"], doc["pyproject"]
+    fields = cast("dict[str, object]", doc)
+    pkg_info, pyproject = fields["pkg_info"], fields["pyproject"]
     if not isinstance(pkg_info, str | None) or not isinstance(pyproject, str | None):
         return None
     return (pkg_info, pyproject)
