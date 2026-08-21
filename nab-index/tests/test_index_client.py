@@ -6,7 +6,7 @@ import json
 import sys
 
 import pytest
-from packaging.utils import parse_sdist_filename
+from packaging.utils import canonicalize_name, parse_sdist_filename
 
 from nab_index.client import (
     _parse_files,
@@ -14,6 +14,8 @@ from nab_index.client import (
     _sdist_member_top_level,
     holds_unreadable_format,
     is_readable_filename,
+    zip_sdist_version,
+    zip_sdist_versions,
 )
 
 # A version digit run past CPython's int-from-string limit.
@@ -130,6 +132,52 @@ def test_holds_unreadable_format_finds_oversized_version() -> None:
 )
 def test_holds_unreadable_format_false(data: object) -> None:
     assert not holds_unreadable_format(data)
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        pytest.param("foo-1.0.zip", "1.0", id="canonical"),
+        pytest.param("Foo_Bar-1.0.zip", None, id="another-project"),
+        pytest.param("foo-1.0.0.zip", "1.0.0", id="version-spelled-out"),
+        pytest.param("foo-1.0RC1.zip", "1.0rc1", id="version-normalized"),
+        pytest.param("foo-1.0.tar.gz", None, id="readable-sdist"),
+        pytest.param("foo-1.5.win32.exe", None, id="installer"),
+        pytest.param("foo.zip", None, id="no-version"),
+        pytest.param("-1.0.zip", None, id="no-name"),
+        pytest.param("foo-notaversion.zip", None, id="unparseable-version"),
+        pytest.param(f"foo-{OVERSIZED}.zip", None, id="oversized-version"),
+        pytest.param("foo\x00-1.0.zip", None, id="nul-does-not-name-the-package"),
+    ],
+)
+def test_zip_sdist_version(filename: str, expected: str | None) -> None:
+    assert zip_sdist_version(filename, canonicalize_name("foo")) == expected
+
+
+def test_zip_sdist_versions_collects_every_release() -> None:
+    data = {
+        "files": [
+            {"filename": "foo-1.0.zip"},
+            {"filename": "foo-2.0.zip"},
+            {"filename": "foo-2.0-py3-none-any.whl"},
+        ]
+    }
+    assert zip_sdist_versions(data, "Foo") == frozenset({"1.0", "2.0"})
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(["files"], id="body-not-an-object"),
+        pytest.param({"files": [{"filename": "bar-1.0.zip"}]}, id="another-project"),
+        pytest.param(
+            {"files": [{"filename": "foo-1.0.zip", "yanked": True}]},
+            id="yanked-entry",
+        ),
+    ],
+)
+def test_zip_sdist_versions_empty(data: object) -> None:
+    assert zip_sdist_versions(data, "foo") == frozenset()
 
 
 @pytest.mark.parametrize(

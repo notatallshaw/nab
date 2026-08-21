@@ -42,6 +42,7 @@ RP = sys.intern(">=3.8")
 _H_FORMAT = 0
 _H_CODEC = 1
 _H_KEY_SCHEME = 2
+_H_ZIP_SDISTS = 4
 
 # An sdist row is tag plus seven fields; the unknown-tag case relies on keeping
 # that arity so the tag check is what rejects it, not the unpack.
@@ -119,7 +120,7 @@ SAMPLE: list[WheelFile | SdistFile] = [WHEEL_FULL, SDIST_FULL, WHEEL_BARE, SDIST
 def _roundtrip(files: list[WheelFile | SdistFile]) -> list[WheelFile | SdistFile]:
     decoded = decode(encode(files, DIGEST), _policy())
     assert decoded is not None
-    return decoded
+    return decoded.files
 
 
 def test_roundtrip_preserves_records_and_order() -> None:
@@ -163,13 +164,13 @@ def test_lone_surrogate_in_field_round_trips() -> None:
     """
     record = dataclasses.replace(SDIST_FULL, requires_python=f"{RP}\ud800")
 
-    assert decode(encode([record], DIGEST), _policy()) == [record]
+    assert _roundtrip([record]) == [record]
 
 
 def test_blob_is_portable_json() -> None:
     """The wire form carries no interpreter tag, so any reader can decode it."""
     header, rows = json.loads(encode(SAMPLE, DIGEST))
-    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST]
+    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST, []]
     assert [row[0] for row in rows] == [_TAG_WHEEL, _TAG_SDIST, _TAG_WHEEL, _TAG_SDIST]
 
 
@@ -325,7 +326,7 @@ def test_absent_optional_fields_decode_as_none() -> None:
     blob = _wheel_row_with(_W_METADATA_HASH, None)
     decoded = decode(blob, _policy())
     assert decoded is not None
-    wheel = decoded[0]
+    wheel = decoded.files[0]
     assert isinstance(wheel, WheelFile)
     assert wheel.metadata_hash is None
 
@@ -340,6 +341,30 @@ def test_absent_optional_fields_decode_as_none() -> None:
 )
 def test_corruption_reason_names_the_structural_fault(blob: bytes, reason: str) -> None:
     assert corruption_reason(blob) == reason
+
+
+def test_zip_sdists_round_trip_sorted() -> None:
+    """The dropped releases ride the header, sorted so a blob is byte-stable."""
+    blob = encode(SAMPLE, DIGEST, frozenset({"2.0", "1.0"}))
+    header = json.loads(blob)[0]
+    decoded = decode(blob, _policy())
+
+    assert header[_H_ZIP_SDISTS] == ["1.0", "2.0"]
+    assert decoded is not None
+    assert decoded.zip_sdists == frozenset({"1.0", "2.0"})
+
+
+@pytest.mark.parametrize("cell", ["1.0", {"1.0": True}, [1.0], [None]])
+def test_bad_zip_sdists_cell_is_miss(cell: object) -> None:
+    """A cell JSON allows but the header does not rebuilds rather than crashes."""
+    assert decode(_tamper_header(_H_ZIP_SDISTS, cell), _policy()) is None
+
+
+def test_corruption_reason_flags_a_bad_zip_sdists_cell() -> None:
+    assert (
+        corruption_reason(_tamper_header(_H_ZIP_SDISTS, "1.0"))
+        == "unexpected header shape"
+    )
 
 
 def test_corruption_reason_flags_same_build_bad_rows() -> None:
@@ -403,12 +428,9 @@ def test_a_many_algorithm_table_defers_as_the_index_served_it() -> None:
 
 
 def test_a_rehydrated_record_defers_the_same_parse() -> None:
-    blob = encode(
-        [_deferred_wheel({"SHA256": DIGEST.upper()}, sidecar={"sha256": DIGEST})],
-        DIGEST,
+    (wheel,) = _roundtrip(
+        [_deferred_wheel({"SHA256": DIGEST.upper()}, sidecar={"sha256": DIGEST})]
     )
-
-    (wheel,) = decode(blob, _policy()) or []
 
     assert wheel.raw_hashes() == {"SHA256": DIGEST.upper()}
     assert wheel.raw_sidecar() == {"sha256": DIGEST}
@@ -426,7 +448,7 @@ def test_a_rehydrated_sdist_defers_its_hashes() -> None:
     )
     defer_hashes(sdist, {"SHA256": DIGEST.upper()})
 
-    (decoded,) = decode(encode([sdist], DIGEST), _policy()) or []
+    (decoded,) = _roundtrip([sdist])
 
     assert decoded.raw_hashes() == {"SHA256": DIGEST.upper()}
     assert decoded.hashes == ((SHA256, DIGEST),)

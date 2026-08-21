@@ -36,6 +36,7 @@ from .client import (
     _verify_metadata_hash,
     holds_unreadable_format,
     verify_sdist_hash,
+    zip_sdist_versions,
 )
 from .lazy_wheel import (
     RangeCapabilityMemo,
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
     from packaging.utils import NormalizedName
     from typing_extensions import Self
 
+    from .parsed_listing import ParsedListing
     from .transport import AsyncHttpTransport, HttpResponse
 
 __all__ = [
@@ -230,17 +232,17 @@ def _carried_digest(policy: CachePolicy, page_url: str) -> str | None:
 
 def read_fresh_parsed_listing(
     cache: CacheBackend, package: str, *, offline: bool
-) -> list[WheelFile | SdistFile] | None:
+) -> ParsedListing | None:
     """Read a fresh (or offline) parsed listing for ``package``, or ``None``.
 
     The write-free subset of :meth:`CachedAsyncSimpleClient.get_files`' fresh-hit
     branch: same policy, same ``is_fresh() or offline`` test, same blob, same
     :func:`parsed_listing.decode`, so on a hit it returns the records
-    ``get_files`` would. Every other case (no policy, stale-online, no blob, a
-    non-binding digest, a corrupt blob, a blob holding no records) declines to
-    ``None`` and, unlike ``get_files``, never reads the raw body, revalidates,
-    rebuilds, writes, or logs. It never raises, so a caller's pending is never
-    stranded.
+    ``get_files`` would, plus the releases whose sdist the parse dropped. Every
+    other case (no policy, stale-online, no blob, a non-binding digest, a
+    corrupt blob, a blob holding no records) declines to ``None`` and, unlike
+    ``get_files``, never reads the raw body, revalidates, rebuilds, writes, or
+    logs. It never raises, so a caller's pending is never stranded.
 
     A blob that rehydrates to no records declines for the same reason
     :meth:`CachedAsyncSimpleClient._parsed_hit` does: an empty listing also has
@@ -255,7 +257,10 @@ def read_fresh_parsed_listing(
     blob = cache.get_simple_parsed(package)
     if blob is None:
         return None
-    return _decode_parsed(blob, policy) or None
+    parsed = _decode_parsed(blob, policy)
+    if parsed is None or not parsed.files:
+        return None
+    return parsed
 
 
 class SdistArchiveHold:
@@ -345,6 +350,7 @@ class CachedAsyncSimpleClient:
         self._offline = offline
         self._serialization = serialization
         self._unreadable_only: set[str] = set()
+        self._zip_sdists: dict[str, frozenset[str]] = {}
         self._range_memo = (
             range_memo if range_memo is not None else RangeCapabilityMemo()
         )
@@ -476,6 +482,8 @@ class CachedAsyncSimpleClient:
         package" and the "nothing nab reads" report. Only the raw body answers
         that, and an empty listing is small enough to reparse.
 
+        A served blob also restores the releases whose sdist the parse dropped.
+
         This is the one place that reads the blob, so it records the outcome: a
         served blob counts a ``hit``, an absent one a ``miss``, and a
         present-but-not-served one a ``rebuild``.
@@ -484,12 +492,13 @@ class CachedAsyncSimpleClient:
         if blob is None:
             self._parsed_stats.miss += 1
             return None
-        records = _decode_parsed(blob, policy)
-        if records:
+        parsed = _decode_parsed(blob, policy)
+        if parsed is not None and parsed.files:
+            self._zip_sdists[package] = parsed.zip_sdists
             self._parsed_stats.hit += 1
-            return records
+            return parsed.files
         self._parsed_stats.rebuild += 1
-        if records is not None:
+        if parsed is not None:
             return None
         reason = _parsed_corruption(blob)
         if reason is not None:
@@ -512,13 +521,16 @@ class CachedAsyncSimpleClient:
         none, so writing one would rebuild and rewrite it on every later read
         without ever serving it.
 
+        The blob also carries the releases whose sdist the parse dropped,
+        since no record survives to name them.
+
         A refused write is dropped: the blob only accelerates a read the raw
         body already answers. Only the first refusal warns.
         """
         if digest is None or not files:
             return
 
-        blob = _encode_parsed(files, digest)
+        blob = _encode_parsed(files, digest, self._zip_sdists.get(package, frozenset()))
         try:
             self._cache.put_simple_parsed(package, blob)
         except OSError as exc:
@@ -605,7 +617,7 @@ class CachedAsyncSimpleClient:
     def _parse_body(
         self, data: object, package: str, *, page_url: str | None = None
     ) -> list[WheelFile | SdistFile]:
-        """Parse a decoded listing body, marking one with no readable file.
+        """Parse a decoded listing body, recording what nab could not read in it.
 
         ``page_url`` is the URL the body was served from, which its relative
         entries resolve against.
@@ -613,11 +625,17 @@ class CachedAsyncSimpleClient:
         files = _parse_files(data, self._index_url, package, page_url=page_url)
         if not files and holds_unreadable_format(data):
             self._unreadable_only.add(package)
+
+        self._zip_sdists[package] = zip_sdist_versions(data, package)
         return files
 
     def served_unreadable_only(self, package: str) -> bool:
         """Whether a listing for ``package`` held only files nab cannot read."""
         return package in self._unreadable_only
+
+    def unreadable_sdist_versions(self, package: str) -> frozenset[str]:
+        """Versions ``package`` was served as an sdist in a format nab drops."""
+        return self._zip_sdists.get(package, frozenset())
 
     def _unmodified_records(
         self, package: str, policy: CachePolicy

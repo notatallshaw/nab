@@ -29,6 +29,7 @@ from nab_index._pep503 import json_listing
 from nab_index.cache import CachePolicy, NullCache, OfflineError, OnDiskCache
 from nab_index.cached_client import (
     CachedAsyncSimpleClient,
+    ParsedCacheStats,
     SdistArchiveHold,
     _freshness_lifetime,
     _header,
@@ -49,6 +50,7 @@ from nab_index.client import (
     _parse_sdist_filename,
 )
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
+from nab_index.parsed_listing import encode as encode_parsed
 from nab_index.transport import HttpError
 from nab_provider.metadata import parse_metadata
 from nab_provider.records import (
@@ -84,6 +86,21 @@ ZIP_ONLY_LISTING = {
     ],
 }
 ZIP_ONLY_BYTES = json.dumps(ZIP_ONLY_LISTING).encode()
+
+# A release published as a wheel and a .zip sdist, so the parse keeps one file
+# and drops the other.
+WHEEL_AND_ZIP_LISTING = {
+    "meta": {"api-version": "1.0"},
+    "name": "pkg",
+    "files": [
+        *LISTING["files"],
+        {
+            "filename": "pkg-1.0.zip",
+            "url": "https://files.example.com/pkg-1.0.zip",
+        },
+    ],
+}
+WHEEL_AND_ZIP_BYTES = json.dumps(WHEEL_AND_ZIP_LISTING).encode()
 
 # A digit run just past CPython's int-from-string limit.
 OVERSIZED_DIGITS = "9" * (sys.get_int_max_str_digits() + 1)
@@ -1269,6 +1286,65 @@ class TestGetFiles:
         assert files == []
         assert not unreadable_only
         assert cache.get_negative("pkg") is not None
+
+    def test_zip_sdist_beside_a_wheel_names_its_release(self, tmp_path: Path) -> None:
+        """The wheel survives the parse, so only the version records the ``.zip``."""
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(WHEEL_AND_ZIP_BYTES)])
+
+        files, zip_sdists = _get_files_and_zip_sdists(transport, cache, "pkg")
+
+        assert [file.filename for file in files] == ["pkg-1.0-py3-none-any.whl"]
+        assert zip_sdists == frozenset({"1.0"})
+
+    def test_readable_listing_names_no_release(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES)])
+
+        _, zip_sdists = _get_files_and_zip_sdists(transport, cache, "pkg")
+
+        assert zip_sdists == frozenset()
+
+    def test_zip_sdist_survives_a_cached_read(self, tmp_path: Path) -> None:
+        """The blob names the dropped release, so a warm read reports it too.
+
+        No record survives the parse to say the release published an sdist, so
+        a blob holding records alone would report it as never published.
+        """
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(WHEEL_AND_ZIP_BYTES)])
+        _get_files_and_zip_sdists(transport, cache, "pkg")
+
+        stats = ParsedCacheStats()
+        offline = _FakeTransport()
+        files, zip_sdists = _get_files_and_zip_sdists(
+            offline, cache, "pkg", parsed_stats=stats
+        )
+
+        assert offline.calls == []
+        assert stats.hit == 1
+        assert [file.filename for file in files] == ["pkg-1.0-py3-none-any.whl"]
+        assert zip_sdists == frozenset({"1.0"})
+
+    def test_a_seeded_blob_names_the_dropped_release(self, tmp_path: Path) -> None:
+        """A blob already on disk answers the read, dropped releases and all."""
+        cache = _make_cache(tmp_path)
+        policy = CachePolicy(fetched_at=int(time.time()), max_age=99999, etag=None)
+        digest = cache.put_simple("pkg", WHEEL_AND_ZIP_BYTES, policy)
+        assert digest is not None
+
+        files = _parse_files(
+            json.loads(WHEEL_AND_ZIP_BYTES), "https://pypi.org/simple/", "pkg"
+        )
+        cache.put_simple_parsed("pkg", encode_parsed(files, digest, frozenset({"1.0"})))
+
+        stats = ParsedCacheStats()
+        _, zip_sdists = _get_files_and_zip_sdists(
+            _FakeTransport(), cache, "pkg", parsed_stats=stats
+        )
+
+        assert stats.hit == 1
+        assert zip_sdists == frozenset({"1.0"})
 
     def test_304_parses_the_cached_body_once(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -3918,6 +3994,34 @@ def _get_files_and_report(
         finally:
             await client.aclose()
         return files, client.served_unreadable_only(package)
+
+    return asyncio.run(go())
+
+
+def _get_files_and_zip_sdists(
+    transport: object,
+    cache: object,
+    package: str,
+    parsed_stats: ParsedCacheStats | None = None,
+) -> tuple[list, frozenset[str]]:
+    """Return ``get_files``' records and the releases dropped for their format.
+
+    Both are per-client state, so they are read while the client the call ran
+    on is still in scope.  ``parsed_stats``, when given, records whether the
+    read was served from the parsed blob.
+    """
+
+    async def go() -> tuple[list, frozenset[str]]:
+        client = CachedAsyncSimpleClient(
+            transport,  # type: ignore[arg-type]
+            cache,  # type: ignore[arg-type]
+            parsed_stats=parsed_stats,
+        )
+        try:
+            files = await client.get_files(package)
+        finally:
+            await client.aclose()
+        return files, client.unreadable_sdist_versions(package)
 
     return asyncio.run(go())
 

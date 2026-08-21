@@ -30,12 +30,11 @@ import zipfile
 import zlib
 from email.parser import BytesParser, Parser
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import unquote, urljoin, urlparse, urlsplit
 from urllib.request import url2pathname
 
 from packaging.utils import canonicalize_name as _canonical
-from packaging.utils import parse_sdist_filename
 
 from nab_provider.errors import IndexAccessError, UnsupportedWheelError
 
@@ -48,6 +47,7 @@ from .client import (
     _parse_sdist_filename,
     _parse_wheel_filename,
     is_readable_filename,
+    zip_sdist_version,
 )
 
 if TYPE_CHECKING:
@@ -215,21 +215,31 @@ def _is_dir(path: Path) -> bool:
 _FLAT_EXTS = re.compile(r"\.(whl|tar\.gz)$", re.IGNORECASE)
 
 
+class _ScanResult(NamedTuple):
+    """What one scan of a local index found for a package.
+
+    ``unreadable`` says the listing offered a file in a format nab does not
+    read, and ``zip_sdists`` names the releases it offered as ``.zip``
+    sdists.  Neither leaves a record in ``files``.
+    """
+
+    files: list[WheelFile | SdistFile]
+    unreadable: bool
+    zip_sdists: frozenset[str]
+
+
 def _scan_pep503_directory(
     package_dir: Path,
-    canonical: str,
-) -> tuple[list[WheelFile | SdistFile], bool]:
+    canonical: NormalizedName,
+) -> _ScanResult:
     """Parse ``<package>/index.html`` and return file records.
 
     ``package_dir`` has to be absolute, because the page's URI is the base
     for its relative links.
-
-    The second element says the page linked a file in a format nab does
-    not read, which tells a page of ``.zip`` sdists from an empty one.
     """
     index_html = package_dir / "index.html"
     if not _is_file(index_html):
-        return [], False
+        return _ScanResult([], unreadable=False, zip_sdists=frozenset())
 
     try:
         text = index_html.read_text(encoding="utf-8")
@@ -238,23 +248,11 @@ def _scan_pep503_directory(
         raise MalformedLocalListingError(msg) from exc
 
     anchors, base_href = read_page(text)
-
-    # RFC 3986 section 5.1.3: the base is the URI the page was read from, not
-    # its realpath.
-    base_url = index_html.as_uri()
-    if base_href is not None:
-        # A base href every relative anchor resolves against, so one that
-        # cannot be parsed leaves the whole page's targets unknown. Fail
-        # loudly rather than fall back to the page URL, which would resolve
-        # each link to a different file than the page names.
-        try:
-            base_url = urljoin(base_url, base_href)
-        except ValueError as exc:
-            msg = f"{index_html} has an unparseable <base href>: {exc}"
-            raise MalformedLocalListingError(msg) from exc
+    base_url = _page_base_url(index_html, base_href)
 
     files: list[WheelFile | SdistFile] = []
     unreadable = False
+    zip_sdists: set[str] = set()
 
     for anchor in anchors:
         # PEP 592: a yanked link never reaches the listing.
@@ -268,6 +266,9 @@ def _scan_pep503_directory(
             continue
         if not is_readable_filename(filename):
             unreadable = True
+            zip_version = zip_sdist_version(filename, canonical)
+            if zip_version is not None:
+                zip_sdists.add(zip_version)
             continue
 
         record = _make_record(
@@ -281,7 +282,26 @@ def _scan_pep503_directory(
         )
         if record is not None:
             files.append(record)
-    return files, unreadable
+    return _ScanResult(files, unreadable=unreadable, zip_sdists=frozenset(zip_sdists))
+
+
+def _page_base_url(index_html: Path, base_href: str | None) -> str:
+    """Return the URI a page's relative anchors resolve against.
+
+    RFC 3986 section 5.1.3: the base is the URI the page was read from, not
+    its realpath.  A ``<base href>`` overrides it; one that cannot be parsed
+    fails loudly rather than falling back to the page URL, which would
+    resolve every link to a different file than the page names.
+    """
+    page_url = index_html.as_uri()
+    if base_href is None:
+        return page_url
+
+    try:
+        return urljoin(page_url, base_href)
+    except ValueError as exc:
+        msg = f"{index_html} has an unparseable <base href>: {exc}"
+        raise MalformedLocalListingError(msg) from exc
 
 
 def _resolve_local_link(
@@ -332,25 +352,27 @@ def _resolve_local_link(
 def _scan_flat_wheelhouse(
     root: Path,
     package: str,
-) -> tuple[list[WheelFile | SdistFile], bool]:
+) -> _ScanResult:
     """Find all dists for ``package`` in a flat directory of files.
 
     Entries are sorted because the listing order breaks ties between dists at
     one version, and ``iterdir`` order comes from the filesystem.
 
-    The second element says the directory holds a ``.zip`` sdist for
-    ``package``, a format nab does not read.  One directory serves every
-    package, so a file that does not name ``package`` says nothing about it.
+    One directory serves every package, so a file that does not name
+    ``package`` says nothing about it: only a ``.zip`` sdist of ``package``
+    makes the scan unreadable.
     """
     canonical = _canonical(package)
     files: list[WheelFile | SdistFile] = []
-    unreadable = False
+    zip_sdists: set[str] = set()
 
     for entry in sorted(root.iterdir()):
         if not _is_file(entry):
             continue
         if _FLAT_EXTS.search(entry.name) is None:
-            unreadable = unreadable or _is_zip_sdist(entry.name, canonical)
+            zip_version = zip_sdist_version(entry.name, canonical)
+            if zip_version is not None:
+                zip_sdists.add(zip_version)
             continue
         requires_python = _flat_requires_python(entry, canonical)
         record = _make_record(
@@ -364,19 +386,9 @@ def _scan_flat_wheelhouse(
         )
         if record is not None:
             files.append(record)
-    return files, unreadable
-
-
-def _is_zip_sdist(filename: str, canonical: str) -> bool:
-    """Whether ``filename`` is a ``.zip`` sdist belonging to ``canonical``."""
-    if not filename.endswith(".zip"):
-        return False
-    try:
-        name, _ = parse_sdist_filename(filename)
-    except ValueError:
-        # InvalidSdistFilename, or int() refusing a digit run past CPython's limit.
-        return False
-    return name == canonical
+    return _ScanResult(
+        files, unreadable=bool(zip_sdists), zip_sdists=frozenset(zip_sdists)
+    )
 
 
 def _flat_requires_python(entry: Path, canonical: str) -> str | None:
@@ -576,6 +588,7 @@ class LocalIndexClient:
         root = parse_file_url(index_url)
         self._root = Path(os.path.abspath(root))  # noqa: PTH100
         self._unreadable_only: set[str] = set()
+        self._zip_sdists: dict[str, frozenset[str]] = {}
 
     async def aclose(self) -> None:
         """No-op; nothing to release."""
@@ -600,22 +613,27 @@ class LocalIndexClient:
 
         try:
             if _is_file(package_dir / "index.html"):
-                files, unreadable = _scan_pep503_directory(package_dir, canonical)
+                scan = _scan_pep503_directory(package_dir, canonical)
             elif not _is_dir(self._root):
-                files, unreadable = [], False
+                scan = _ScanResult([], unreadable=False, zip_sdists=frozenset())
             else:
-                files, unreadable = _scan_flat_wheelhouse(self._root, package)
+                scan = _scan_flat_wheelhouse(self._root, package)
         except OSError as exc:
             msg = f"cannot read local index {self._root}: {exc}"
             raise UnreadableLocalIndexError(msg) from exc
 
-        if not files and unreadable:
+        if not scan.files and scan.unreadable:
             self._unreadable_only.add(package)
-        return files
+        self._zip_sdists[package] = scan.zip_sdists
+        return scan.files
 
     def served_unreadable_only(self, package: str) -> bool:
         """Whether a listing for ``package`` held only files nab cannot read."""
         return package in self._unreadable_only
+
+    def unreadable_sdist_versions(self, package: str) -> frozenset[str]:
+        """Versions ``package`` was served as an sdist in a format nab drops."""
+        return self._zip_sdists.get(package, frozenset())
 
     async def get_metadata_text(
         self,

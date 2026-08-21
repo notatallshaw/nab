@@ -46,6 +46,9 @@ class _RecordingClient:
     def served_unreadable_only(self, package: str) -> bool:
         return False
 
+    def unreadable_sdist_versions(self, package: str) -> frozenset[str]:
+        return frozenset()
+
     async def get_sdist_archive(
         self,
         package: str,

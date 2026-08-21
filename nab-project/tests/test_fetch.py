@@ -1650,6 +1650,7 @@ class TestFetchCoordinator:
                 *,
                 offline_miss: bool = False,
                 unreadable_only: bool = False,
+                unreadable_sdist_versions: frozenset[str] = frozenset(),
             ) -> None:
                 serving_at_event.append(self.get_listing_index(package))
                 super().store_listing(
@@ -1657,6 +1658,7 @@ class TestFetchCoordinator:
                     data,
                     offline_miss=offline_miss,
                     unreadable_only=unreadable_only,
+                    unreadable_sdist_versions=unreadable_sdist_versions,
                 )
 
         with _coord() as coord:
@@ -2395,6 +2397,25 @@ class TestMultiIndexCoordinator:
             assert [f.filename for f in listing] == ["foo-1.0-py3-none-any.whl"]
             assert coord.index.get_listing_error("foo") is None
             assert coord.index.get_listing_index("foo") == "local"
+
+    def test_local_zip_sdist_reaches_the_store(self, tmp_path: Path) -> None:
+        """A ``.zip`` sdist leaves no record, so its release rides beside them.
+
+        The wheel keeps the listing non-empty, which is the case the
+        package-level unreadable-format flag cannot report.
+        """
+        wheelhouse = tmp_path / "wheelhouse"
+        wheelhouse.mkdir()
+        (wheelhouse / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        (wheelhouse / "foo-1.0.zip").write_bytes(b"")
+
+        with _coord(indexes=[IndexConfig("local", wheelhouse.as_uri())]) as coord:
+            coord.request_listing("foo").wait(timeout=5)
+            listing = coord.index.get_listing("foo")
+            assert listing is not None
+            assert [f.filename for f in listing] == ["foo-1.0-py3-none-any.whl"]
+            assert not coord.index.is_unreadable_only_listing("foo")
+            assert coord.index.unreadable_sdist_versions("foo") == frozenset({"1.0"})
 
     def test_local_index(self, tmp_path: Path) -> None:
         """A file:// index uses LocalIndexClient."""
@@ -3144,11 +3165,13 @@ def _warm_parsed(
     fresh: bool = True,
     blob: bool = True,
     digest_override: str | None = None,
+    zip_sdists: frozenset[str] = frozenset(),
 ) -> None:
     """Write a policy sidecar, raw body, and parsed blob for ``package``.
 
     ``fresh`` controls the freshness window; ``blob`` omits the parsed blob;
-    ``digest_override`` binds the blob to a foreign body so ``decode`` misses.
+    ``digest_override`` binds the blob to a foreign body so ``decode`` misses;
+    ``zip_sdists`` seeds the releases the blob says the parse dropped.
     """
     if body is None:
         body = json.dumps(LISTING_JSON).encode()
@@ -3160,7 +3183,7 @@ def _warm_parsed(
     digest = cache.put_simple(package, body, policy)
     if blob:
         bound = digest_override if digest_override is not None else digest
-        cache.put_simple_parsed(package, encode_parsed(list(files), bound))
+        cache.put_simple_parsed(package, encode_parsed(list(files), bound, zip_sdists))
 
 
 def _spy_submit(coord: FetchCoordinator) -> list[object]:
@@ -3620,6 +3643,29 @@ class TestWarmSyncListingPath:
             assert _listing_submits(calls) == []
             assert coord.warm_sync_stats.listing_hits == 1
 
+    def test_warm_hit_stores_the_releases_the_parse_dropped(
+        self, tmp_path: Path
+    ) -> None:
+        """The blob carries them, so an inline serve reports them as a fetch does.
+
+        Nothing else on this path reads the body a ``.zip`` sdist was listed in.
+        """
+        cache = OnDiskCache(tmp_path, _PYPI)
+        files: list[WheelFile | SdistFile] = [_sync_sdist("1.0")]
+        _warm_parsed(cache, "pkg", files, zip_sdists=frozenset({"1.0"}))
+
+        with _coord(cache_dir=tmp_path) as coord:
+            coord._prefetch_metadata_after_listing = (  # type: ignore[method-assign]
+                lambda package, records: None
+            )
+            calls = _spy_submit(coord)
+
+            coord.request_listing("pkg").wait(timeout=5)
+
+            assert _listing_submits(calls) == []
+            assert coord.warm_sync_stats.listing_hits == 1
+            assert coord.index.unreadable_sdist_versions("pkg") == frozenset({"1.0"})
+
     def test_skew_reader_never_serves_torn_pair(self, tmp_path: Path) -> None:
         """Interleaved writer/reader: every non-None probe is a bound pair."""
         cache = OnDiskCache(tmp_path, _PYPI)
@@ -3667,7 +3713,7 @@ class TestWarmSyncListingPath:
 
             assert not errors
             for value in results:
-                assert value is None or value in (files_a, files_b)
+                assert value is None or value.files in (files_a, files_b)
         finally:
             stop.set()
             coord.shutdown()

@@ -66,6 +66,8 @@ class InMemoryIndex:
         self._offline_listing_misses: set[str] = set()
         # Packages whose empty listing stands for a page of formats nab cannot read.
         self._unreadable_only_listings: set[str] = set()
+        # Versions an index served as an sdist in a format nab does not read.
+        self._unreadable_sdists: dict[str, frozenset[str]] = {}
 
         # Metadata text is keyed by the artifact it came from: the sidecar URL
         # for a wheel's METADATA, or None for text that stands for the version
@@ -128,6 +130,7 @@ class InMemoryIndex:
         *,
         offline_miss: bool = False,
         unreadable_only: bool = False,
+        unreadable_sdist_versions: frozenset[str] = frozenset(),
     ) -> None:
         """Cache the listing for ``package`` and unblock any waiter.
 
@@ -136,6 +139,9 @@ class InMemoryIndex:
         ``offline_miss`` marks an empty listing as an index skipped offline
         rather than one that served no files; ``unreadable_only`` marks it as
         a page of formats nab does not read.
+
+        ``unreadable_sdist_versions`` names the releases whose sdist was
+        dropped for its format; nothing in ``data`` records them.
         """
         key = f"listing:{package}"
         materialised = list(data)
@@ -145,6 +151,8 @@ class InMemoryIndex:
                 self._offline_listing_misses.add(package)
             if unreadable_only:
                 self._unreadable_only_listings.add(package)
+            if unreadable_sdist_versions:
+                self._unreadable_sdists[package] = unreadable_sdist_versions
 
     def is_offline_listing_miss(self, package: str) -> bool:
         """Whether ``package``'s empty listing is an offline cold-cache miss."""
@@ -155,6 +163,11 @@ class InMemoryIndex:
         """Whether ``package``'s empty listing held only unreadable formats."""
         with self._lock:
             return package in self._unreadable_only_listings
+
+    def unreadable_sdist_versions(self, package: str) -> frozenset[str]:
+        """Versions of ``package`` whose sdist the index served in a dropped format."""
+        with self._lock:
+            return self._unreadable_sdists.get(package, frozenset())
 
     def store_listing_error(self, package: str, error: BaseException) -> None:
         """Record a failed listing fetch and unblock any waiter.

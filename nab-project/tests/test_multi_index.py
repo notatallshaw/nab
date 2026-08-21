@@ -44,6 +44,7 @@ class FakeClient:
     def __init__(self, listing: dict[str, list[WheelFile | SdistFile]]) -> None:
         self.listing = listing
         self.unreadable: set[str] = set()
+        self.zip_sdists: dict[str, frozenset[str]] = {}
         self.get_files_calls: list[str] = []
         self.metadata_calls: list[tuple[str, str, str]] = []
         self.sdist_calls: list[tuple[str, str, str]] = []
@@ -60,6 +61,9 @@ class FakeClient:
 
     def served_unreadable_only(self, package: str) -> bool:
         return package in self.unreadable
+
+    def unreadable_sdist_versions(self, package: str) -> frozenset[str]:
+        return self.zip_sdists.get(package, frozenset())
 
     async def get_metadata_text(
         self,
@@ -189,6 +193,20 @@ class TestPresenceBased:
         assert run(client.get_files("foo")) == []
         assert client.served_unreadable_only("foo")
         assert not client.served_unreadable_only("bar")
+
+    def test_zip_sdists_collected_from_every_walked_index(self) -> None:
+        """The index serving the wheel need not be the one serving the ``.zip``."""
+        first = FakeClient({"foo": [_wheel("foo")]})
+        second = FakeClient({})
+        second.zip_sdists["foo"] = frozenset({"1.0"})
+        client = MultiIndexClient(
+            {"a": first, "b": second},
+            ["a", "b"],
+            {},
+        )
+        assert len(run(client.get_files("foo"))) == 1
+        assert client.unreadable_sdist_versions("foo") == frozenset({"1.0"})
+        assert client.unreadable_sdist_versions("bar") == frozenset()
 
     def test_route_cache_subsequent_calls(self) -> None:
         first = FakeClient({})

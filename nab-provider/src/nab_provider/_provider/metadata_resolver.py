@@ -181,11 +181,27 @@ def _ladder_failure(
             "no PEP 658 metadata and the sdist was filtered by"
             " requires-python, dist-policy, or upload-time"
         )
+    elif _index_dropped_sdist(index, normalized, version):
+        reason = (
+            "no PEP 658 metadata and the sdist is not a .tar.gz (the format nab reads)"
+        )
     else:
         reason = "no PEP 658 metadata and no sdist available"
 
     msg = f"No metadata for {package}=={version}: {reason}"
     return MetadataError(msg)
+
+
+def _released_version(version_str: str) -> Version | None:
+    """Parse a version an index reported, or ``None`` when it is not PEP 440.
+
+    A filename or a cache blob can carry anything, so a string that will not
+    parse names no release rather than failing the resolve.
+    """
+    try:
+        return intern_version(version_str)
+    except InvalidVersion:
+        return None
 
 
 def _index_published_sdist(
@@ -196,15 +212,27 @@ def _index_published_sdist(
     The ladder only sees the post-filter listing, where an sdist the filter
     dropped and one that was never published both read as absent.
     """
-    for dist in index.get_listing(normalized) or ():
-        if not isinstance(dist, SdistFile):
-            continue
-        try:
-            if intern_version(dist.version) == version:
-                return True
-        except InvalidVersion:
-            continue
-    return False
+    return any(
+        _released_version(dist.version) == version
+        for dist in index.get_listing(normalized) or ()
+        if isinstance(dist, SdistFile)
+    )
+
+
+def _index_dropped_sdist(
+    index: InMemoryIndex, normalized: str, version: Version
+) -> bool:
+    """Whether the index served ``version``'s sdist in a format nab drops.
+
+    A ``.zip`` sdist is dropped while the listing is parsed, so no record of
+    it survives for :func:`_index_published_sdist` to find.  The versions ride
+    alongside the listing instead, and are compared as parsed versions, since
+    ``1.0`` and ``1.0.0`` name one release.
+    """
+    return any(
+        _released_version(dropped) == version
+        for dropped in index.unreadable_sdist_versions(normalized)
+    )
 
 
 def _report_offline_skip(

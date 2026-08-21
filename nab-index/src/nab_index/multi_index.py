@@ -64,6 +64,10 @@ class IndexClient(Protocol):
         """Whether a listing for ``package`` held only files nab cannot read."""
         ...
 
+    def unreadable_sdist_versions(self, package: str) -> frozenset[str]:
+        """Versions ``package`` was served as an sdist in a format nab drops."""
+        ...
+
     async def get_metadata_text(
         self,
         package: str,
@@ -234,6 +238,19 @@ class MultiIndexClient:
         """
         return any(
             client.served_unreadable_only(package) for client in self._clients.values()
+        )
+
+    def unreadable_sdist_versions(self, package: str) -> frozenset[str]:
+        """Versions any walked index served as an sdist in a format nab drops.
+
+        Every client is asked, for the same reason as
+        :meth:`served_unreadable_only`: the routed one need not be the one
+        that served the dropped file.
+        """
+        return frozenset(
+            version
+            for client in self._clients.values()
+            for version in client.unreadable_sdist_versions(package)
         )
 
     async def get_metadata_text(

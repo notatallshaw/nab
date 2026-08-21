@@ -42,6 +42,7 @@ from ._pep503 import json_listing
 from .transport import IDENTITY_HEADERS, raise_unless_ok
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from packaging.utils import NormalizedName
@@ -63,6 +64,8 @@ __all__ = [
     "holds_unreadable_format",
     "is_readable_filename",
     "verify_sdist_hash",
+    "zip_sdist_version",
+    "zip_sdist_versions",
 ]
 
 # One decoded PEP 691 ``files`` entry.  Neither its keys nor its values
@@ -218,26 +221,76 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
     return (_intern_name(name_part), version)
 
 
-def holds_unreadable_format(data: object) -> bool:
-    """Whether a Simple-API body offers a file nab cannot read.
+def zip_sdist_version(filename: str, package: NormalizedName) -> str | None:
+    """Return the version when ``filename`` is ``package``'s ``.zip`` sdist.
 
-    nab reads wheels and ``.tar.gz`` sdists, so a page of ``.zip`` sdists
-    or ``.exe`` installers parses to no files at all.  A body that is not
-    a list of file entries answers ``False``.
+    nab reads gzip-tar sdists only, so a ``.zip`` never becomes a file
+    record and nothing else names the release it belongs to.
+
+    Returns the canonical version string, and ``None`` for any other suffix,
+    a stem carrying no version, a version that will not parse (including a
+    digit run past CPython's int-from-string limit), and a file belonging to
+    another project.  Never raises.
+    """
+    if not filename.endswith(".zip"):
+        return None
+
+    stem = filename[: -len(".zip")]
+    name_part, sep, version_part = stem.rpartition("-")
+    if not sep or not name_part:
+        return None
+
+    try:
+        version = _canonical_version(version_part)
+    except ValueError:
+        # InvalidVersion, or int() refusing a digit run past CPython's limit.
+        return None
+
+    return version if _intern_name(name_part) == package else None
+
+
+def _listed_filenames(data: object) -> Iterator[str]:
+    """Yield the unyanked filenames a Simple-API body offers.
+
+    A body that is not a list of file entries yields nothing.
     """
     if not isinstance(data, dict):
-        return False
+        return
     raw_files = data.get("files")
     if not isinstance(raw_files, list):
-        return False
+        return
 
     for file_info in raw_files:
         if not isinstance(file_info, dict) or file_info.get("yanked"):
             continue
         filename = file_info.get("filename")
-        if isinstance(filename, str) and not is_readable_filename(filename):
-            return True
-    return False
+        if isinstance(filename, str):
+            yield filename
+
+
+def holds_unreadable_format(data: object) -> bool:
+    """Whether a Simple-API body offers a file nab cannot read.
+
+    nab reads wheels and ``.tar.gz`` sdists, so a page of ``.zip`` sdists
+    or ``.exe`` installers parses to no files at all.
+    """
+    return any(
+        not is_readable_filename(filename) for filename in _listed_filenames(data)
+    )
+
+
+def zip_sdist_versions(data: object, package: str) -> frozenset[str]:
+    """Versions of ``package`` a Simple-API body offers as ``.zip`` sdists.
+
+    The parse drops these, so the set is the only record that the release
+    published an sdist.
+    """
+    expected = canonicalize_name(package)
+    return frozenset(
+        version
+        for filename in _listed_filenames(data)
+        if (version := zip_sdist_version(filename, expected)) is not None
+    )
 
 
 def is_readable_filename(filename: str) -> bool:

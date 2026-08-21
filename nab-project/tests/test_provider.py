@@ -8370,6 +8370,20 @@ class TestLadderSdistAvailability:
         " requires-python, dist-policy, or upload-time"
     )
     _ABSENT = "no PEP 658 metadata and no sdist available"
+    _DROPPED_FORMAT = (
+        "no PEP 658 metadata and the sdist is not a .tar.gz (the format nab reads)"
+    )
+
+    @staticmethod
+    def _with_zip_sdists(
+        files: list[WheelFile | SdistFile], versions: frozenset[str]
+    ) -> FakeFetchPort:
+        """Serve ``files`` for pkg, with ``versions`` also published as ``.zip``."""
+        coordinator = make_coordinator()
+        coordinator.index.store_listing(
+            "pkg", files, unreadable_sdist_versions=versions
+        )
+        return coordinator
 
     def test_upload_cutoff_filtered_sdist_names_the_filter(self) -> None:
         """A cutoff keeping the wheel and dropping the sdist names the filter."""
@@ -8444,6 +8458,74 @@ class TestLadderSdistAvailability:
             provider.get_dependencies("pkg", V("1.0"))
 
         assert self._ABSENT in str(excinfo.value)
+
+    def test_zip_sdist_names_the_format_instead_of_denying_the_sdist(self) -> None:
+        """A ``.zip`` sdist leaves no record, and must not read as absent.
+
+        The repair differs: no sdist sends the user to another release or
+        another index, while a ``.zip`` is a file nab declines to read.
+        """
+        coordinator = self._with_zip_sdists(
+            [make_wheel("1.0", has_metadata=False)], frozenset({"1.0"})
+        )
+        provider = Provider(coordinator, target=_PY312)
+
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+
+        assert self._DROPPED_FORMAT in str(excinfo.value)
+
+    def test_zip_sdist_of_another_release_is_reported_as_absent(self) -> None:
+        """Only this release's own ``.zip`` says anything about this release."""
+        coordinator = self._with_zip_sdists(
+            [make_wheel("1.0", has_metadata=False)], frozenset({"2.0"})
+        )
+        provider = Provider(coordinator, target=_PY312)
+
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+
+        assert self._ABSENT in str(excinfo.value)
+
+    def test_zip_version_matches_on_release_not_on_spelling(self) -> None:
+        """``1.0`` and ``1.0.0`` are one release, so the ``.zip`` still counts."""
+        coordinator = self._with_zip_sdists(
+            [make_wheel("1.0.0", has_metadata=False)], frozenset({"1.0"})
+        )
+        provider = Provider(coordinator, target=_PY312)
+
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0.0"))
+
+        assert self._DROPPED_FORMAT in str(excinfo.value)
+
+    def test_unparseable_zip_version_is_reported_as_absent(self) -> None:
+        """A blob can carry any string, so a version that will not parse is skipped."""
+        coordinator = self._with_zip_sdists(
+            [make_wheel("1.0", has_metadata=False)], frozenset({"not-a-version"})
+        )
+        provider = Provider(coordinator, target=_PY312)
+
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+
+        assert self._ABSENT in str(excinfo.value)
+
+    def test_filtered_tar_gz_beside_a_zip_names_the_filter(self) -> None:
+        """A filtered ``.tar.gz`` is the one the user can bring back."""
+        coordinator = self._with_zip_sdists(
+            [
+                make_wheel("1.0", has_metadata=False),
+                make_sdist("1.0", requires_python=">=3.13"),
+            ],
+            frozenset({"1.0"}),
+        )
+        provider = Provider(coordinator, target=_PY312)
+
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+
+        assert self._FILTERED in str(excinfo.value)
 
 
 class TestFetchVersionsNotInIndex:

@@ -75,6 +75,9 @@ class _Stub:
     def served_unreadable_only(self, package: str) -> bool:
         return False
 
+    def unreadable_sdist_versions(self, package: str) -> frozenset[str]:
+        return frozenset()
+
     async def get_metadata_text(
         self,
         package: str,

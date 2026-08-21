@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, TypeVar
 
+from packaging.utils import canonicalize_name
+
 from nab_index.local_index import LocalIndexClient, _scan_pep503_directory
 
 if TYPE_CHECKING:
@@ -56,7 +58,11 @@ def test_scan_directory_without_index_html_returns_empty(tmp_path: Path) -> None
     # exercised directly here.
     package_dir = tmp_path / "foo"
     package_dir.mkdir()
-    assert _scan_pep503_directory(package_dir, "foo") == ([], False)
+    assert _scan_pep503_directory(package_dir, canonicalize_name("foo")) == (
+        [],
+        False,
+        frozenset(),
+    )
 
 
 def test_get_sdist_archive_returns_file_bytes(tmp_path: Path) -> None:
