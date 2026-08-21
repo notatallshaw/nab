@@ -55,13 +55,16 @@ all.
 
 ## `build-local` (default)
 
-Adds PEP 517 backend invocation on local checkouts.  When a
-`[[tool.nab.local-sources]]` entry (or a workspace member) has
-`dynamic = ["dependencies"]`, the project's
+Adds PEP 517 backend invocation on local checkouts.  When the
+static read of a `[[tool.nab.local-sources]]` entry (or a
+workspace member) comes up empty, the project's
 `[build-system].build-backend` runs inside an isolated venv via
-`nab_project._build.runner` and the
-resulting wheel `METADATA` is used.  Remote PyPI sdists, VCS
-clones, and archive sources remain static-only.
+`nab_project._build.runner` and the resulting wheel `METADATA` is
+used.  Empty means a missing or malformed `[project]`, or a
+`dynamic` list naming `version`, `requires-python`,
+`dependencies`, or `optional-dependencies`, the same cases that
+end the resolve under `never`.  Remote PyPI sdists, VCS clones,
+and archive sources remain static-only.
 
 ## `build-remote`
 

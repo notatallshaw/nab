@@ -3,7 +3,8 @@
 Covers the static path (``extract_static_metadata``) and the
 dynamic dispatch in ``extract_metadata``, including the
 ``BuildBackendError`` raised when the caller did not supply the
-``NabProjectConfig`` the runner needs.
+``NabProjectConfig`` the runner needs, and the build-policy page's
+account of when the dynamic path runs.
 """
 
 from __future__ import annotations
@@ -35,6 +36,11 @@ from nab_provider.requirements_file import InvalidProjectRequirementError
 def _write_pyproject(tmp: Path, body: str) -> Path:
     (tmp / "pyproject.toml").write_text(body, encoding="utf-8")
     return tmp
+
+
+DOCS_BUILD_POLICY = (
+    Path(__file__).resolve().parents[2] / "docs" / "reference" / "build-policy.md"
+)
 
 
 class TestExtractStaticMetadata:
@@ -607,3 +613,48 @@ class TestStaticExtractAugmentParity:
         )
         with pytest.raises(ValueError, match="Expected"):
             parse_metadata(md)
+
+
+class TestBuildLocalDocSection:
+    """The build-policy page's ``build-local`` section against the static read.
+
+    A local checkout goes to a backend when ``extract_static_metadata``
+    returns ``None`` for it, so the section names the shapes that produce
+    one.  A read that raises instead, on an unreadable file or a corrupt
+    static value, never reaches a backend and is outside that claim.
+    """
+
+    @staticmethod
+    def _build_local_section() -> str:
+        """Return the ``build-local`` section, down to the next heading."""
+        text = DOCS_BUILD_POLICY.read_text(encoding="utf-8")
+        start = text.index("## `build-local` (default)")
+        return text[start:].split("\n## ", 1)[0]
+
+    @pytest.mark.parametrize(
+        "field",
+        ["dependencies", "optional-dependencies", "version", "requires-python"],
+    )
+    def test_section_names_every_dynamic_field(
+        self, field: str, tmp_path: Path
+    ) -> None:
+        _write_pyproject(
+            tmp_path,
+            f"""
+            [project]
+            name = "foo"
+            version = "1.0"
+            dynamic = ["{field}"]
+            """,
+        )
+        assert extract_static_metadata(tmp_path) is None
+
+        assert f"`{field}`" in self._build_local_section()
+
+    def test_section_names_a_missing_project_table(self, tmp_path: Path) -> None:
+        _write_pyproject(tmp_path, '[build-system]\nrequires = ["setuptools"]\n')
+        assert extract_static_metadata(tmp_path) is None
+
+        section = self._build_local_section()
+        assert "missing" in section
+        assert "`[project]`" in section

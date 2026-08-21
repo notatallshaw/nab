@@ -2,9 +2,10 @@
 
 Hand a source directory to :func:`extract_metadata` and get back a
 :class:`WheelMetadata`. The static pyproject.toml reader runs first;
-dynamic ``project.dependencies`` fall through to a PEP 517 backend
-invocation inside :class:`~nab_project._build.env.NabBuildEnv`. The
-dynamic path needs a :class:`NabProjectConfig`.
+a directory :func:`extract_static_metadata` returns ``None`` for falls
+through to a PEP 517 backend invocation inside
+:class:`~nab_project._build.env.NabBuildEnv`. The dynamic path needs a
+:class:`NabProjectConfig`.
 """
 
 from __future__ import annotations
