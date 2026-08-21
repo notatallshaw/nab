@@ -209,6 +209,7 @@ class FakeFetchPort:
         serve_range: Callable[[str, str, str], None],
         serve_archive: Callable[[str, str], None],
         build_config: object = None,
+        offline: bool = False,
         materialize: Callable[..., SourceMaterialization] | None = None,
         build_sdist: Callable[..., WheelMetadata] | None = None,
         read_wheel: Callable[[Path], str | None] | None = None,
@@ -217,7 +218,7 @@ class FakeFetchPort:
         self.index = index
         # Not on the port: the engine reads it off its coordinator.
         self.indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
-        self.offline = False
+        self.offline = offline
         self.build_config = build_config
 
         self._serve_metadata = serve_metadata
@@ -491,6 +492,7 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     sdist_archive: bytes | None = None,
     sdist_archive_error: BaseException | None = None,
     build_config: object = None,
+    offline: bool = False,
     materialize: Callable[..., SourceMaterialization] | None = None,
     build_sdist: Callable[..., WheelMetadata] | None = None,
     read_wheel: Callable[[Path], str | None] | None = None,
@@ -527,6 +529,8 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
       :class:`NotImplementedError` without them.  ``read_wheel`` opens a wheel
       the listing serves off disk; without it the metadata keywords answer
       that request too.
+
+    ``offline`` starts the port offline, as ``--offline`` does for a real run.
     """
     index = InMemoryIndex()
 
@@ -558,6 +562,7 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
             sdist_archive_error=sdist_archive_error,
         ),
         build_config=build_config,
+        offline=offline,
         materialize=materialize,
         build_sdist=build_sdist,
         read_wheel=read_wheel,
