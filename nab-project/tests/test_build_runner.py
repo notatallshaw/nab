@@ -25,7 +25,7 @@ import tempfile
 import zipfile
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import datetime, timezone
 from importlib.util import cache_from_source
 from pathlib import Path
@@ -2944,7 +2944,8 @@ class TestBuildRequirementBuildFailures:
     """
 
     PENDING = _PendingBuild(
-        label="demo 1.0",
+        name="demo",
+        version="1.0",
         sdist=SdistArtifact(
             filename="demo-1.0.tar.gz",
             url="https://pypi.example/demo-1.0.tar.gz",
@@ -3067,6 +3068,97 @@ class TestBuildRequirementBuildFailures:
             build_wheel_for_install(
                 source_dir, output_dir=tmp_path / "out", config=NabProjectConfig()
             )
+
+
+class TestBuiltWheelIdentity:
+    """``_build_requirement`` refuses a wheel naming another release.
+
+    The backend picks the name and version it emits, and the env's
+    other wheels were resolved for the release the pin names.
+    """
+
+    PENDING = _PendingBuild(
+        name="build-stub",
+        version="1.0",
+        sdist=SdistArtifact(
+            filename="build_stub-1.0.tar.gz",
+            url="https://pypi.example/build_stub-1.0.tar.gz",
+            hashes=(("sha256", "1" * 64),),
+        ),
+    )
+
+    def _built(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        filename: str,
+        pending: _PendingBuild | None = None,
+    ) -> Path:
+        """Run ``_build_requirement`` over a build emitting ``filename``.
+
+        ``pending`` defaults to :attr:`PENDING`, whose name is already
+        canonical.
+        """
+        pending = pending or self.PENDING
+        (tmp_path / pending.sdist.filename).write_bytes(b"sdist")
+
+        monkeypatch.setattr(
+            env_mod, "extract_sdist_archive", lambda _data, target: target
+        )
+        monkeypatch.setattr(
+            runner_mod,
+            "build_wheel_for_install",
+            MagicMock(return_value=tmp_path / filename),
+        )
+        env = NabBuildEnv(requires=[], config=NabProjectConfig(build_requires_depth=1))
+
+        return env._build_requirement(pending, tmp_path)
+
+    def test_another_version_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A backend computing a version other than the one pinned."""
+        with pytest.raises(BuildEnvError, match=r"names build-stub==0\.0\.0"):
+            self._built(monkeypatch, tmp_path, "build_stub-0.0.0-py3-none-any.whl")
+
+    def test_another_project_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A wheel for another project, leaving the requirement unmet."""
+        with pytest.raises(BuildEnvError, match=r"names otherpkg==9\.9"):
+            self._built(monkeypatch, tmp_path, "otherpkg-9.9-py3-none-any.whl")
+
+    def test_output_that_is_not_a_wheel_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``build`` joins the hook's result on without checking it."""
+        with pytest.raises(BuildEnvError, match="not a wheel filename"):
+            self._built(monkeypatch, tmp_path, "dist.zip")
+
+    @pytest.mark.parametrize(
+        ("pinned", "filename"),
+        [
+            ("build-stub", "build_stub-1.0-py3-none-any.whl"),
+            ("Build.Stub", "build_stub-1.0-py3-none-any.whl"),
+            ("build-stub", "build_stub-1.0.0-py3-none-any.whl"),
+        ],
+        ids=["as-pinned", "spelled-differently", "same-release"],
+    )
+    def test_the_pinned_release_is_installed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        pinned: str,
+        filename: str,
+    ) -> None:
+        """The comparison is by canonical name and PEP 440 version.
+
+        A wheel filename escapes the project name, and ``1.0`` and
+        ``1.0.0`` are one release.
+        """
+        pending = replace(self.PENDING, name=pinned)
+
+        assert self._built(monkeypatch, tmp_path, filename, pending).name == filename
 
 
 class _CleanupErrorTemporaryDirectory:

@@ -41,7 +41,11 @@ from installer.sources import WheelFile
 
 from nab_index.client import extract_sdist_archive
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.utils import (
+    canonicalize_name,
+    parse_wheel_filename,
+)
+from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import MissingExtraError
 from nab_provider.policy import BuildPolicy, DistPolicy
 from nab_provider.requirements_file import InvalidProjectRequirementError
@@ -185,8 +189,14 @@ def chain_label(name: str, version: str) -> str:
 class _PendingBuild:
     """A build requirement this env has to build before it can install it."""
 
-    label: str
+    name: str
+    version: str
     sdist: SdistArtifact
+
+    @property
+    def label(self) -> str:
+        """The chain entry naming this build."""
+        return chain_label(self.name, self.version)
 
 
 class NabBuildEnv:
@@ -561,14 +571,17 @@ class NabBuildEnv:
             )
             raise BuildEnvError(msg)
 
-        to_build.append(_PendingBuild(label=label, sdist=pin.sdist))
+        to_build.append(
+            _PendingBuild(name=pin.name, version=pin.version, sdist=pin.sdist)
+        )
         return replace(pin, wheels=())
 
     def _build_requirement(self, pending: _PendingBuild, wheel_dir: Path) -> Path:
         """Build the downloaded sdist of ``pending`` and return the wheel's path.
 
         The wheel lands beside the downloaded artifacts, which live as
-        long as the env does.
+        long as the env does.  A wheel naming another release is
+        refused.
         """
         # Late import: ``runner`` imports this module at module load.
         from .runner import build_wheel_for_install
@@ -590,7 +603,7 @@ class NabBuildEnv:
                 msg = f"build requirement {label} could not be extracted: {exc}"
                 raise BuildEnvError(msg) from exc
             try:
-                return build_wheel_for_install(
+                built = build_wheel_for_install(
                     source_dir,
                     output_dir=wheel_dir,
                     config=self._config,
@@ -600,6 +613,32 @@ class NabBuildEnv:
             except BuildBackendError as exc:
                 msg = f"build requirement {label} could not be built: {exc}"
                 raise BuildEnvError(msg) from exc
+
+            _check_built_identity(pending, built)
+            return built
+
+
+def _check_built_identity(pending: _PendingBuild, wheel: Path) -> None:
+    """Raise unless ``wheel``'s filename names the release ``pending`` pinned.
+
+    A backend picks the name and version it emits, and the env's other
+    wheels were resolved for the release the pin names.
+    """
+    try:
+        name, version, _build, _tags = parse_wheel_filename(wheel.name)
+    except ValueError as exc:
+        msg = (
+            f"build requirement {pending.label} produced {wheel.name!r},"
+            f" which is not a wheel filename: {exc}"
+        )
+        raise BuildEnvError(msg) from exc
+
+    if name != canonicalize_name(pending.name) or version != Version(pending.version):
+        msg = (
+            f"build requirement {pending.label} built a wheel whose filename"
+            f" names {name}=={version}, not the release the resolve pinned"
+        )
+        raise BuildEnvError(msg)
 
 
 def _chain_suffix(chain: BuildChain) -> str:
