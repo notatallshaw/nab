@@ -768,6 +768,31 @@ def test_the_store_reaches_the_engine_from_simplify(
     assert partitions() == first
 
 
+def test_the_store_reaches_both_emptiness_decisions_under_serialisation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The store :meth:`MarkerSet.to_marker_string` is handed reaches its two decisions.
+
+    Warmed by an :meth:`MarkerSet.is_full` over the same three axes, the pair
+    partitions none of them again; the three left are the round-trip check's, which
+    keeps a memo of its own.
+    """
+    marker = ms('python_version < "3.12"' + _SPREAD)
+    text = marker.to_marker_string()
+
+    partitions = _partition_counter(monkeypatch)
+    assert marker.to_marker_string(store=DecisionStore()) == text
+    cold = partitions()
+
+    warm = DecisionStore()
+    marker.is_full(store=warm)
+    before = partitions()
+    assert marker.to_marker_string(store=warm) == text
+
+    assert cold == 6
+    assert partitions() - before == 3
+
+
 def test_a_shared_store_answers_what_fresh_stores_answer() -> None:
     """One store across a run of decisions answers as a fresh store per decision.
 

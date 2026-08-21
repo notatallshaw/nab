@@ -186,21 +186,25 @@ class MarkerSet:
     # ---- decision procedures
 
     @_bounded
-    def is_empty(self) -> bool:
+    def is_empty(self, *, store: DecisionStore | None = None) -> bool:
         """Whether no environment satisfies this set (the marker is a contradiction).
+
+        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
 
         :raises IntractableMarkerSet: if deciding the set exceeds the internal
             cell budget, or the marker nests past the stack.
         """
-        return _markersets.is_empty(self._tree, _MAX_CELLS)
+        return _markersets.is_empty(self._tree, _MAX_CELLS, store)
 
     @_bounded
-    def is_full(self) -> bool:
+    def is_full(self, *, store: DecisionStore | None = None) -> bool:
         """Whether every environment satisfies this set (the marker is a tautology).
+
+        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
 
         :raises IntractableMarkerSet: see :meth:`is_empty`.
         """
-        return _markersets.is_empty(_markersets.make_not(self._tree), _MAX_CELLS)
+        return _markersets.is_empty(_markersets.make_not(self._tree), _MAX_CELLS, store)
 
     @_bounded
     def is_disjoint(self, other: MarkerSet) -> bool:
@@ -365,17 +369,23 @@ class MarkerSet:
     # ---- serialisation
 
     @_bounded
-    def to_marker_string(self) -> str | None:
+    def to_marker_string(self, *, store: DecisionStore | None = None) -> str | None:
         """Return a marker string that re-parses to an equivalent set, or ``None``.
 
         ``None`` means the full set (no marker needed). The empty set, and any set
         whose complement structure the marker grammar cannot express, raise
         :class:`UnserializableMarkerSet` rather than emit a wrong string. The
         produced string is verified equivalent to this set before it is returned.
+
+        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
+        The two emptiness decisions read the same atoms, so they share one
+        partition memo whether or not one is passed.
         """
-        if self.is_full():
+        if store is None:
+            store = _markersets.Memo()
+        if self.is_full(store=store):
             return None
-        if self.is_empty():
+        if self.is_empty(store=store):
             msg = "the empty set has no marker string"
             raise UnserializableMarkerSet(msg)
 

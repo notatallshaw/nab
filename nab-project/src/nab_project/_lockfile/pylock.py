@@ -275,8 +275,8 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
 
     base = (lock_dir if lock_dir is not None else Path.cwd()).resolve()
     exclusion_groups = conflict_exclusion_groups(lock_input.conflicts)
-    universe = _emission_universe(lock_input)
     store = DecisionStore()
+    universe = _emission_universe(lock_input, store)
     package_records = _build_packages(
         lock_input, base, exclusion_groups, universe, store
     )
@@ -539,7 +539,9 @@ def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
     )
 
 
-def _emission_universe(lock_input: LockInput) -> MarkerSet:
+def _emission_universe(
+    lock_input: LockInput, store: DecisionStore | None = None
+) -> MarkerSet:
     """Return the environment universe simplification must agree over.
 
     The union of the declared ``environments`` rows, or the full set when none
@@ -557,7 +559,7 @@ def _emission_universe(lock_input: LockInput) -> MarkerSet:
         return MarkerSet.full()
     rows = [MarkerSet.from_marker(m) for m in lock_input.environments]
     try:
-        uninhabited = all(row.is_empty() for row in rows)
+        uninhabited = all(row.is_empty(store=store) for row in rows)
     except IntractableMarkerSet:
         uninhabited = False
     if uninhabited:
@@ -589,7 +591,7 @@ def _finalize_marker(
         return None
     try:
         simplified = MarkerSet.from_marker(raw).simplify(within=within, store=store)
-        text = simplified.to_marker_string()
+        text = simplified.to_marker_string(store=store)
         rebuilt = None if text is None else Marker(text)
         emitted = (
             MarkerSet.full() if rebuilt is None else MarkerSet.from_marker(rebuilt)
