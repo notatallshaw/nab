@@ -1147,9 +1147,9 @@ class TestProjectCliOverrides:
             self._lock_config(
                 proj, hermetic_roots / "pylock.toml", ["--project-mode", "universal"]
             )
-        assert "--project-mode universal needs a [tool.nab.matrix] table" in (
-            capsys.readouterr().err
-        )
+        err = capsys.readouterr().err
+        assert "--project-mode universal needs a matrix table" in err
+        assert "a top-level [matrix] table to the project's nab.toml" in err
 
     def test_project_decision_order_reaches_resolve(self, hermetic_roots: Path) -> None:
         # The file declares stable, so a resolve seeing arrival read the flag.

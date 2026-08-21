@@ -202,8 +202,25 @@ class TestCliOverridesFold:
                 path, discover_workspace=False, cli_overrides={"mode": "universal"}
             )
         message = str(excinfo.value)
-        assert "[tool.nab.matrix]" in message
         assert "there is no --project-matrix" in message
+        assert "[tool.nab.matrix] to the project's pyproject.toml" in message
+        assert "top-level [matrix] table to the project's nab.toml" in message
+
+    def test_cli_mode_universal_satisfied_by_nab_toml_matrix(
+        self, tmp_path: Path
+    ) -> None:
+        """A top-level [matrix] in nab.toml satisfies --project-mode universal."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        (tmp_path / "nab.toml").write_text(
+            '[matrix]\npython = ">=3.11,<3.13"\nplatforms = ["linux_x86_64"]\n',
+            encoding="utf-8",
+        )
+        config = read_pyproject_config(
+            path, discover_workspace=False, cli_overrides={"mode": "universal"}
+        )
+        assert config.mode is ResolveMode.UNIVERSAL
+        assert config.matrix is not None
+        assert config.matrix.platforms == (PlatformSpec("linux_x86_64"),)
 
     def test_cli_mode_specific_shadows_declared_matrix(self, tmp_path: Path) -> None:
         path = write(
@@ -254,8 +271,21 @@ class TestMode:
         with pytest.raises(ConfigError) as excinfo:
             read_pyproject_config(path)
         message = str(excinfo.value)
-        assert "requires a [tool.nab.matrix]" in message
+        assert "requires a [tool.nab.matrix] table in pyproject.toml" in message
         assert "--project-matrix" not in message
+
+    def test_universal_from_nab_toml_requires_top_level_matrix(
+        self, tmp_path: Path
+    ) -> None:
+        """A mode set in nab.toml is told to add [matrix] there, not to pyproject."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        (tmp_path / "nab.toml").write_text('mode = "universal"\n', encoding="utf-8")
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+        message = str(excinfo.value)
+        assert "requires a top-level [matrix] table in nab.toml" in message
+        assert "[tool.nab.matrix]" not in message
+        assert "pyproject.toml" not in message
 
     def test_matrix_without_universal_mode_rejected(self, tmp_path: Path) -> None:
         path = write(
@@ -265,9 +295,25 @@ class TestMode:
         with pytest.raises(ConfigError) as excinfo:
             read_pyproject_config(path)
         message = str(excinfo.value)
+        assert "[tool.nab.matrix] in pyproject.toml is set" in message
         assert "set mode = 'universal'" in message
         assert "resolve for every target the matrix declares" in message
         assert "matrix-based resolver" not in message
+
+    def test_nab_toml_matrix_without_universal_mode_names_its_own_table(
+        self, tmp_path: Path
+    ) -> None:
+        """A matrix declared in nab.toml is named as the [matrix] table there."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        (tmp_path / "nab.toml").write_text(
+            '[matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n',
+            encoding="utf-8",
+        )
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+        message = str(excinfo.value)
+        assert "[matrix] in nab.toml is set" in message
+        assert "[tool.nab.matrix]" not in message
 
     def test_matrix_with_specific_mode_in_same_file_rejected(
         self, tmp_path: Path
