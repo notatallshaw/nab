@@ -415,15 +415,13 @@ class OnDiskCache:
             raw = path.read_bytes()
         except OSError:
             return None
-        try:
-            doc = json.loads(raw)
-            return (doc["pkg_info"], doc["pyproject"])
-        except (ValueError, KeyError, TypeError):
+        record = _decode_sdist_record(raw)
+        if record is None:
             logger.warning(
-                "Corrupt sdist cache record %s: not parseable; treating as a miss",
+                "Corrupt sdist cache record %s: not decodable; treating as a miss",
                 path,
             )
-            return None
+        return record
 
     def put_sdist_files(
         self,
@@ -516,8 +514,8 @@ class OnDiskCache:
 
         Parses by suffix, matching each kind's read path: ``.policy`` and
         ``.neg`` decode as a policy, ``.metadata`` as UTF-8, ``.json`` as
-        JSON (an sdist record also carries its two fields), ``.parsed`` as a
-        parsed-listing blob. Any other suffix is not a nab entry and is
+        JSON (an sdist record also carries its two text fields), ``.parsed``
+        as a parsed-listing blob. Any other suffix is not a nab entry and is
         reported clean.
         """
         try:
@@ -541,10 +539,8 @@ class OnDiskCache:
         except ValueError:
             return "not valid JSON"
         bucket = self._bucket_of(path)
-        if bucket.startswith("sdist-") and not (
-            isinstance(doc, dict) and "pkg_info" in doc and "pyproject" in doc
-        ):
-            return "sdist record missing fields"
+        if bucket.startswith("sdist-") and _sdist_record_pair(doc) is None:
+            return "sdist record fields missing or not text"
         return None
 
     def _bucket_of(self, path: Path) -> str:
@@ -575,6 +571,29 @@ class OnDiskCache:
                 continue
             removed.append(bucket.name)
         return removed
+
+
+def _sdist_record_pair(doc: object) -> tuple[str | None, str | None] | None:
+    """Return a decoded sdist record's ``(pkg_info, pyproject)`` pair, or ``None``.
+
+    Each field holds a file's text, or ``null`` for a file the sdist does not
+    ship; any other JSON type is corruption.
+    """
+    if not isinstance(doc, dict) or "pkg_info" not in doc or "pyproject" not in doc:
+        return None
+    pkg_info, pyproject = doc["pkg_info"], doc["pyproject"]
+    if not isinstance(pkg_info, str | None) or not isinstance(pyproject, str | None):
+        return None
+    return (pkg_info, pyproject)
+
+
+def _decode_sdist_record(raw: bytes) -> tuple[str | None, str | None] | None:
+    """Decode stored sdist-record bytes, or ``None`` when they are not a record."""
+    try:
+        doc = json.loads(raw)
+    except ValueError:
+        return None
+    return _sdist_record_pair(doc)
 
 
 def _read_metadata_reason(raw: bytes) -> str | None:

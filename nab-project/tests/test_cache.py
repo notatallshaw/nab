@@ -368,6 +368,30 @@ class TestOnDiskCache:
         path.write_text("not-json", encoding="utf-8")
         assert cache.get_sdist_files("foo", "1.0") is None
 
+    @pytest.mark.parametrize(
+        "record",
+        [
+            {"pkg_info": 5, "pyproject": None},
+            {"pkg_info": [], "pyproject": None},
+            {"pkg_info": "Name: foo\n", "pyproject": 5},
+        ],
+    )
+    def test_sdist_record_non_text_field_is_a_miss(
+        self, tmp_path: Path, record: dict[str, object]
+    ) -> None:
+        cache = self._make(tmp_path)
+        path = cache._sdist_path("foo", "1.0")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+        assert cache.get_sdist_files("foo", "1.0") is None
+
+    def test_sdist_record_not_an_object_is_a_miss(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        path = cache._sdist_path("foo", "1.0")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('["Name: foo\\n", null]', encoding="utf-8")
+        assert cache.get_sdist_files("foo", "1.0") is None
+
     def test_put_metadata_rejects_multi_segment_package(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
         with pytest.raises(ValueError, match="not a single path segment"):
@@ -633,6 +657,19 @@ class TestCorruptEntryLogging:
         assert len(warnings) == 1
         assert str(path) in warnings[0].getMessage()
 
+    def test_non_text_sdist_field_logs_one_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._make(tmp_path)
+        path = cache._sdist_path("foo", "1.0")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"pkg_info": 5, "pyproject": null}', encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            assert cache.get_sdist_files("foo", "1.0") is None
+        warnings = _warnings(caplog)
+        assert len(warnings) == 1
+        assert str(path) in warnings[0].getMessage()
+
     def test_non_utf8_sdist_record_is_logged_miss(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -833,7 +870,23 @@ class TestReadCacheEntry:
         path = tmp_path / "sdist-v1" / "pypi" / "foo" / "1.0.json"
         path.parent.mkdir(parents=True)
         path.write_bytes(b'{"pkg_info": "x"}')
-        assert cache.read_cache_entry(path) is not None
+        assert cache.read_cache_entry(path) == "sdist record fields missing or not text"
+
+    @pytest.mark.parametrize(
+        "record",
+        [
+            {"pkg_info": 5, "pyproject": None},
+            {"pkg_info": "Name: foo\n", "pyproject": []},
+        ],
+    )
+    def test_sdist_record_non_text_field(
+        self, tmp_path: Path, record: dict[str, object]
+    ) -> None:
+        cache = self._cache(tmp_path)
+        path = tmp_path / "sdist-v1" / "pypi" / "foo" / "1.0.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+        assert cache.read_cache_entry(path) == "sdist record fields missing or not text"
 
     def test_valid_sdist_record(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
