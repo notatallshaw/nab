@@ -28,6 +28,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import marshal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -42,7 +43,14 @@ from nab_index.client import (
     WheelFile,
     _parse_files,
 )
-from nab_index.parsed_listing import decode, encode
+from nab_index.parsed_listing import (
+    _MARSHAL_VERSION,
+    _PAYLOAD_AT,
+    _WIRE_FORM,
+    _frame,
+    decode,
+    encode,
+)
 
 from .strategies import PROPERTY_SETTINGS
 
@@ -235,12 +243,22 @@ def _sample_blob() -> tuple[bytes, CachePolicy]:
     return encode(parsed, digest), policy
 
 
+def _document(blob: bytes) -> Any:
+    """The document ``blob`` carries, read the way :func:`decode` reads it."""
+    return marshal.loads(blob[_PAYLOAD_AT:])  # noqa: S302
+
+
+def _reframe(document: object) -> bytes:
+    """A blob this build will read, carrying ``document`` whatever its shape."""
+    return _frame(marshal.dumps(document, _MARSHAL_VERSION))
+
+
 def _retamper(header_index: int, value: object) -> tuple[bytes, CachePolicy]:
     """Re-encode a valid blob with one header field replaced."""
     blob, policy = _sample_blob()
-    header, rows = json.loads(blob)
+    header, rows = _document(blob)
     header[header_index] = value
-    return json.dumps([header, rows]).encode(), policy
+    return _reframe([header, rows]), policy
 
 
 def test_digest_mismatch_decodes_to_none() -> None:
@@ -272,10 +290,12 @@ def test_key_scheme_mismatch_decodes_to_none() -> None:
     assert decode(blob, policy) is None
 
 
-def test_blob_carries_no_interpreter_tag() -> None:
-    """The wire form is portable, so a blob written anywhere decodes here."""
+def test_corpus_blob_names_its_wire_form_and_build() -> None:
+    """``marshal`` is not portable, so the preamble pins the wire form."""
     blob, policy = _sample_blob()
-    header, _rows = json.loads(blob)
+    assert blob.startswith(_WIRE_FORM)
+
+    header, _rows = _document(blob)
     *build, digest, zip_sdists = header
 
     assert all(isinstance(cell, int) for cell in build)
@@ -288,21 +308,22 @@ def test_blob_carries_no_interpreter_tag() -> None:
     "blob",
     [
         b"",
-        b"not-json-bytes",
+        b"no preamble",
         b"\xff\xfe not utf-8",
-        json.dumps(42).encode(),
-        json.dumps([1, 2, 3]).encode(),
-        json.dumps(["shorthdr", "rows"]).encode(),
+        _frame(b"\xff\xfe not a payload"),
+        _reframe(42),
+        _reframe([1, 2, 3]),
+        _reframe(["shorthdr", "rows"]),
     ],
 )
 def test_garbage_blob_decodes_to_none(blob: bytes) -> None:
-    """Truncated, non-JSON, or wrong-shaped blobs are misses, not crashes."""
+    """Garbage, unreadable, and wrong-shaped blobs are misses, not crashes."""
     _, policy = _sample_blob()
     assert decode(blob, policy) is None
 
 
 def test_truncated_blob_decodes_to_none() -> None:
-    """A valid blob cut short raises inside json and is treated as a miss."""
+    """A valid blob cut short fails its checksum and is treated as a miss."""
     blob, policy = _sample_blob()
     assert decode(blob[: len(blob) // 2], policy) is None
 
