@@ -15,7 +15,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from urllib.parse import urlsplit
 
 import tomli
@@ -88,7 +88,7 @@ from .workspace import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
     from collections.abc import Set as AbstractSet
     from pathlib import Path
 
@@ -1892,53 +1892,85 @@ def _environment_from_effective(
     return environment
 
 
-_INDEX_KEYS = frozenset({"name", "url", "serialization"})
+_NAME_URL_KEYS = frozenset({"name", "url"})
 
 
-def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
+class _NameUrlTable(NamedTuple):
+    """One checked entry of a ``name``/``url`` array of tables.
+
+    ``table`` is the raw entry, for a caller that reads further keys.
+    """
+
+    index: int
+    name: str
+    url: str
+    table: dict[str, Any]
+
+
+def _iter_name_url_tables(
+    label: str, value: object, *, keys: frozenset[str] = _NAME_URL_KEYS
+) -> Iterator[_NameUrlTable]:
+    """Yield each entry of a ``name``/``url`` array of tables, rejecting bad ones.
+
+    Lazy, so a caller's own check on an entry runs before the next is checked.
+    """
     if not isinstance(value, list):
-        msg = f"indexes must be an array of tables, got {type(value).__name__}"
+        msg = f"{label} must be an array of tables, got {type(value).__name__}"
         raise ConfigError(msg)
 
-    if not value:
-        msg = "indexes must contain at least one entry when present"
-        raise ConfigError(msg)
-
-    out: list[IndexConfig] = []
     for i, entry in enumerate(value):
         if not isinstance(entry, dict):
-            msg = f"indexes[{i}] must be a table, got {type(entry).__name__}"
+            msg = f"{label}[{i}] must be a table, got {type(entry).__name__}"
             raise ConfigError(msg)
-        unknown = sorted(set(entry) - _INDEX_KEYS)
+
+        unknown = sorted(set(entry) - keys)
         if unknown:
-            msg = (
-                f"unknown indexes[{i}] keys: {unknown!r};"
-                f" expected {sorted(_INDEX_KEYS)!r}"
-            )
+            msg = f"unknown {label}[{i}] keys: {unknown!r}; expected {sorted(keys)!r}"
             raise ConfigError(msg)
+
         try:
             name = entry["name"]
             url = entry["url"]
         except KeyError as missing:
-            msg = f"indexes[{i}] missing required key {missing!s}"
+            msg = f"{label}[{i}] missing required key {missing!s}"
             raise ConfigError(msg) from None
+
         if not isinstance(name, str) or not isinstance(url, str):
-            msg = f"indexes[{i}] name and url must be strings"
+            msg = f"{label}[{i}] name and url must be strings"
             raise ConfigError(msg)
-        if "serialization" in entry and is_file_url(url):
+
+        yield _NameUrlTable(index=i, name=name, url=url, table=entry)
+
+
+_INDEX_KEYS = frozenset({"name", "url", "serialization"})
+
+
+def _parse_indexes(value: object) -> tuple[IndexConfig, ...]:
+    out: list[IndexConfig] = []
+    for entry in _iter_name_url_tables("indexes", value, keys=_INDEX_KEYS):
+        if "serialization" in entry.table and is_file_url(entry.url):
             msg = (
-                f"indexes[{i}].serialization is not settable on a file:// index:"
-                " a local index is read from disk with no Accept negotiation,"
-                f" so the pin would do nothing.  Drop it from index {name!r}."
+                f"indexes[{entry.index}].serialization is not settable on a"
+                " file:// index: a local index is read from disk with no"
+                " Accept negotiation, so the pin would do nothing."
+                f"  Drop it from index {entry.name!r}."
             )
             raise ConfigError(msg)
+
         serialization = _parse_enum(
-            f"indexes[{i}].serialization",
-            entry.get("serialization"),
+            f"indexes[{entry.index}].serialization",
+            entry.table.get("serialization"),
             SimpleSerialization,
             SimpleSerialization.NEGOTIATE,
         )
-        out.append(IndexConfig(name=name, url=url, serialization=serialization))
+        out.append(
+            IndexConfig(name=entry.name, url=entry.url, serialization=serialization)
+        )
+
+    if not out:
+        msg = "indexes must contain at least one entry when present"
+        raise ConfigError(msg)
+
     _check_index_name_uniqueness(out)
     return tuple(out)
 
@@ -2684,68 +2716,18 @@ def _parse_local_sources(
     )
 
 
-_VCS_SOURCE_KEYS = frozenset({"name", "url"})
-
-
 def _parse_vcs_sources(value: object) -> tuple[VcsSource, ...]:
-    if not isinstance(value, list):
-        msg = f"vcs-sources must be an array of tables, got {type(value).__name__}"
-        raise ConfigError(msg)
-    out: list[VcsSource] = []
-    for i, entry in enumerate(value):
-        if not isinstance(entry, dict):
-            msg = f"vcs-sources[{i}] must be a table, got {type(entry).__name__}"
-            raise ConfigError(msg)
-        unknown = sorted(set(entry) - _VCS_SOURCE_KEYS)
-        if unknown:
-            msg = (
-                f"unknown vcs-sources[{i}] keys: {unknown!r};"
-                f" expected {sorted(_VCS_SOURCE_KEYS)!r}"
-            )
-            raise ConfigError(msg)
-        try:
-            name = entry["name"]
-            url = entry["url"]
-        except KeyError as missing:
-            msg = f"vcs-sources[{i}] missing required key {missing!s}"
-            raise ConfigError(msg) from None
-        if not isinstance(name, str) or not isinstance(url, str):
-            msg = f"vcs-sources[{i}] name and url must be strings"
-            raise ConfigError(msg)
-        out.append(VcsSource(name=name, url=url))
-    return tuple(out)
-
-
-_ARCHIVE_SOURCE_KEYS = frozenset({"name", "url"})
+    return tuple(
+        VcsSource(name=entry.name, url=entry.url)
+        for entry in _iter_name_url_tables("vcs-sources", value)
+    )
 
 
 def _parse_archive_sources(value: object) -> tuple[ArchiveSource, ...]:
-    if not isinstance(value, list):
-        msg = f"archive-sources must be an array of tables, got {type(value).__name__}"
-        raise ConfigError(msg)
     out: list[ArchiveSource] = []
-    for i, entry in enumerate(value):
-        if not isinstance(entry, dict):
-            msg = f"archive-sources[{i}] must be a table, got {type(entry).__name__}"
-            raise ConfigError(msg)
-        unknown = sorted(set(entry) - _ARCHIVE_SOURCE_KEYS)
-        if unknown:
-            msg = (
-                f"unknown archive-sources[{i}] keys: {unknown!r};"
-                f" expected {sorted(_ARCHIVE_SOURCE_KEYS)!r}"
-            )
-            raise ConfigError(msg)
-        try:
-            name = entry["name"]
-            url = entry["url"]
-        except KeyError as missing:
-            msg = f"archive-sources[{i}] missing required key {missing!s}"
-            raise ConfigError(msg) from None
-        if not isinstance(name, str) or not isinstance(url, str):
-            msg = f"archive-sources[{i}] name and url must be strings"
-            raise ConfigError(msg)
-        _validate_archive_url(i, url)
-        out.append(ArchiveSource(name=name, url=url))
+    for entry in _iter_name_url_tables("archive-sources", value):
+        _validate_archive_url(entry.index, entry.url)
+        out.append(ArchiveSource(name=entry.name, url=entry.url))
     return tuple(out)
 
 
