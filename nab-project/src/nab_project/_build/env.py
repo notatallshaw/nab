@@ -278,10 +278,12 @@ class NabBuildEnv:
         builder = venv.EnvBuilder(
             with_pip=False, symlinks=_supports_symlinks(), clear=False
         )
+
+        # From 3.11, venv refuses an env path containing os.pathsep with a ValueError.
         try:
             wheel_dir.mkdir()
             builder.create(self._venv_path)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             msg = f"could not create build venv at {self._venv_path}: {exc}"
             raise BuildEnvError(msg) from exc
 
