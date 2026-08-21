@@ -356,9 +356,9 @@ class TestMetadataHashParsing:
 
         wheel, sdist = _parse_files(data, "https://example.com/simple/", "foo")
 
-        assert wheel.raw_hashes() == {"SHA256": "A" * 64}
-        assert wheel.raw_sidecar() == {"sha256": "b" * 64}
-        assert sdist.raw_hashes() == {"sha256": "c" * 64}
+        assert wheel.held_hashes() == ("SHA256", "A" * 64)
+        assert wheel.held_sidecar() == ("sha256", "b" * 64)
+        assert sdist.held_hashes() == ("sha256", "c" * 64)
 
         assert wheel.hashes == (("sha256", "a" * 64),)
         assert wheel.metadata_hash == ("sha256", "b" * 64)

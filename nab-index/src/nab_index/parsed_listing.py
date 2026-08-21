@@ -25,10 +25,12 @@ Wire form (a preamble line, then ``marshal`` of ``[header, rows]``):
   type-checked on the way back, and ``requires_python`` and hash-algorithm
   names are re-interned via ``sys.intern`` so the round trip reproduces the
   dedup the wire parse builds.
-* the two integrity cells carry the index's own table, as a mapping, when the
-  record was built from one, and the parsed pairs otherwise. A rehydrated
-  record defers the same way, so a listing pays the integrity parse only for
-  the files a resolve reads.
+* the two integrity cells carry the table a record holds unparsed, when it was
+  built from one, and the parsed pairs otherwise. A one-algorithm table rides
+  as the ``(algo, digest)`` tuple the record holds, anything else as the
+  mapping the index served; a held digest is judged when the field is read,
+  not here. A rehydrated record defers the same way, so a listing pays the
+  integrity parse only for the files a resolve reads.
 
 An entry serves the one interpreter the cache keys its bucket on, and a body
 this module will not parse is a miss, never an exception reaching the caller.
@@ -42,6 +44,7 @@ import zlib
 from typing import TYPE_CHECKING, NamedTuple
 
 from nab_provider.records import (
+    HeldTable,
     SdistFile,
     WheelFile,
     rehydrated_sdist,
@@ -66,7 +69,7 @@ __all__ = [
 # blob surfacing under the current bucket. Bump it when the header or row shape
 # changes, or when the same body parses to different records: ``body_digest``
 # pins only the input.
-FORMAT_VERSION = 4
+FORMAT_VERSION = 5
 # Serialization variant that wrote the rows, so a future codec switch
 # self-heals rather than misdecodes.
 CODEC = 2
@@ -128,24 +131,24 @@ class ParsedListing(NamedTuple):
 
 
 def _hashes_cell(record: WheelFile | SdistFile) -> object:
-    """Return the row cell for ``hashes``: the raw table, or the parsed pairs.
+    """Return the row cell for ``hashes``: the held table, or the parsed pairs.
 
-    A record built from the index's own table writes that table, so encoding a
-    fresh listing does not force the parse it deferred. The parsed pairs go out
-    as lists, the one shape the row checks accept, since ``marshal`` round-trips
-    a tuple as a tuple.
+    A record built from the index's own table writes what it holds, so encoding
+    a fresh listing does not force the parse it deferred. The parsed pairs go
+    out as lists, which is what tells them from a held pair: ``marshal``
+    round-trips a tuple as a tuple.
     """
-    raw = record.raw_hashes()
-    if raw is not None:
-        return raw
+    held = record.held_hashes()
+    if held is not None:
+        return held
     return [list(pair) for pair in record.hashes]
 
 
 def _sidecar_cell(wheel: WheelFile) -> object:
-    """Return the row cell for ``metadata_hash``, raw table or parsed pair."""
-    raw = wheel.raw_sidecar()
-    if raw is not None:
-        return raw
+    """Return the row cell for ``metadata_hash``, held table or parsed pair."""
+    held = wheel.held_sidecar()
+    if held is not None:
+        return held
     return None if wheel.metadata_hash is None else list(wheel.metadata_hash)
 
 
@@ -367,8 +370,8 @@ def _decode_row(row: object) -> WheelFile | SdistFile:
 def _decode_wheel(row: Sequence[object]) -> WheelFile:
     """Rehydrate a wheel row.
 
-    An integrity cell holding the index's own table passes through unparsed,
-    for the record to parse on first read; any other form is parsed here.
+    An integrity cell the row carries as a table reaches the record unparsed,
+    for its first read to parse; any other form is parsed here.
     """
     (
         _,
@@ -396,6 +399,9 @@ def _decode_wheel(row: Sequence[object]) -> WheelFile:
     ):
         raise _BadRowError
 
+    held_hashes = _held_table(hashes)
+    held_sidecar = _held_table(metadata_hash)
+
     return rehydrated_wheel(
         filename,
         url,
@@ -403,11 +409,11 @@ def _decode_wheel(row: Sequence[object]) -> WheelFile:
         None if requires_python is None else sys.intern(requires_python),
         has_metadata,
         upload_time,
-        hashes if isinstance(hashes, dict) else _hashes(hashes),
+        () if held_hashes is not None else _hashes(hashes),
+        held_hashes,
         size,
-        metadata_hash
-        if isinstance(metadata_hash, dict)
-        else _pair_or_none(metadata_hash),
+        None if held_sidecar is not None else _pair_or_none(metadata_hash),
+        held_sidecar,
     )
 
 
@@ -425,13 +431,16 @@ def _decode_sdist(row: Sequence[object]) -> SdistFile:
     ):
         raise _BadRowError
 
+    held_hashes = _held_table(hashes)
+
     return rehydrated_sdist(
         filename,
         url,
         version,
         None if requires_python is None else sys.intern(requires_python),
         upload_time,
-        hashes if isinstance(hashes, dict) else _hashes(hashes),
+        () if held_hashes is not None else _hashes(hashes),
+        held_hashes,
         size,
     )
 
@@ -452,6 +461,22 @@ def _pair(value: object) -> tuple[str, str]:
 
 def _pair_or_none(value: object) -> tuple[str, str] | None:
     return None if value is None else _pair(value)
+
+
+def _held_table(cell: object) -> HeldTable:
+    """Return the table ``cell`` carries for the record to hold, else ``None``.
+
+    A tuple is the ``(algo, digest)`` pair a one-algorithm table compacts to,
+    and its algorithm is interned here so a rehydrated record dedups names the
+    way a fresh parse does. The digest is left as it stands: a held table is
+    judged when the field is read.
+    """
+    if type(cell) is tuple:
+        algo, digest = cell
+        if type(algo) is not str:
+            raise _BadRowError
+        return (sys.intern(algo), digest)
+    return cell if type(cell) is dict else None
 
 
 def _hashes(value: object) -> tuple[tuple[str, str], ...]:

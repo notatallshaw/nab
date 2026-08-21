@@ -5,7 +5,7 @@ The exact-equivalence contract is proved by the Hypothesis harness in
 is opt-in (``-m property``) and does not run under the coverage gate, so these
 plain unit tests drive every branch of the codec: the wheel/sdist tag split,
 present and absent ``requires_python``, present and absent ``metadata_hash``,
-the integrity cells in both their raw and their parsed form, the preamble and
+the integrity cells in both their held and their parsed form, the preamble and
 checksum gates, each header / digest gate that turns a stale or foreign blob
 into a decode-to-``None`` miss, and the field checks that keep a hand-written
 row from reaching a record.
@@ -170,6 +170,22 @@ def test_requires_python_and_algo_reinterned_by_identity() -> None:
     assert decoded[2].requires_python is None
 
 
+def test_a_held_pair_interns_an_algorithm_the_blob_did_not() -> None:
+    """A blob need not carry interned names, so the decode interns them itself."""
+    algo = b"sha256".decode()
+    assert algo is not SHA256
+
+    decoded = decode(_wheel_row_with(_W_HASHES, (algo, DIGEST)), _policy())
+
+    assert decoded is not None
+    wheel = decoded.files[0]
+    assert isinstance(wheel, WheelFile)
+
+    held = wheel.held_hashes()
+    assert isinstance(held, tuple)
+    assert held[0] is SHA256
+
+
 def test_empty_listing_roundtrips() -> None:
     assert _roundtrip([]) == []
 
@@ -326,8 +342,12 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
         (_W_HASHES, [["sha256"]]),
         (_W_HASHES, [["sha256", 5]]),
         (_W_HASHES, ["sha256"]),
+        # A held pair is two cells, the first of them a string.
+        (_W_HASHES, (5, "dead")),
+        (_W_HASHES, ("sha256",)),
         (_W_METADATA_HASH, "sha256"),
         (_W_METADATA_HASH, ["sha256", "dead", "extra"]),
+        (_W_METADATA_HASH, ("sha256", "dead", "extra")),
     ],
 )
 def test_wrong_field_type_is_miss(index: int, value: object) -> None:
@@ -472,13 +492,27 @@ def _deferred_wheel(hashes: object, *, sidecar: object) -> WheelFile:
     return wheel
 
 
-def test_unparsed_tables_ride_the_wire_as_the_index_served_them() -> None:
+def _deferred_sdist(hashes: object) -> SdistFile:
+    """An sdist holding ``hashes`` as the index served them."""
+    sdist = SdistFile(
+        filename="pkg-1.0.tar.gz",
+        url="https://files.example/pkg-1.0.tar.gz",
+        version="1.0",
+        requires_python=None,
+        upload_time=None,
+    )
+    defer_hashes(sdist, hashes)
+    return sdist
+
+
+def test_a_one_algorithm_table_rides_the_wire_as_a_pair() -> None:
+    """The row carries the pair the record holds, not the mapping it came from."""
     wheel = _deferred_wheel({"SHA256": DIGEST.upper()}, sidecar={"sha256": DIGEST})
 
     rows = _document(encode([wheel], DIGEST))[1]
 
-    assert rows[0][_W_HASHES] == {"SHA256": DIGEST.upper()}
-    assert rows[0][_W_METADATA_HASH] == {"sha256": DIGEST}
+    assert rows[0][_W_HASHES] == ("SHA256", DIGEST.upper())
+    assert rows[0][_W_METADATA_HASH] == (SHA256, DIGEST)
 
 
 def test_a_value_that_is_not_an_object_rides_as_its_parse() -> None:
@@ -491,13 +525,34 @@ def test_a_value_that_is_not_an_object_rides_as_its_parse() -> None:
     assert rows[0][_W_METADATA_HASH] is None
 
 
+def test_a_held_pair_carries_a_digest_the_parse_will_drop() -> None:
+    """A held table is judged on read, so a bad digest rides the wire intact."""
+    (wheel,) = _roundtrip([_deferred_wheel({"sha256": 5}, sidecar=True)])
+
+    assert wheel.held_hashes() == (SHA256, 5)
+    assert wheel.hashes == ()
+
+
 def test_a_many_algorithm_table_defers_as_the_index_served_it() -> None:
-    wheel = _deferred_wheel({"sha256": DIGEST, "sha512": "f" * 128}, sidecar=True)
+    table = {"sha256": DIGEST, "sha512": "f" * 128}
+    wheel = _deferred_wheel(table, sidecar=table)
 
     rows = _document(encode([wheel], DIGEST))[1]
 
-    assert rows[0][_W_HASHES] == {"sha256": DIGEST, "sha512": "f" * 128}
+    assert rows[0][_W_HASHES] == table
+    assert rows[0][_W_METADATA_HASH] == table
     assert wheel.hashes == ((SHA256, DIGEST), (SHA512, "f" * 128))
+
+
+def test_a_many_algorithm_table_survives_the_round_trip_deferred() -> None:
+    table = {"sha256": DIGEST, "sha512": "f" * 128}
+
+    (wheel,) = _roundtrip([_deferred_wheel(table, sidecar=table)])
+
+    assert wheel.held_hashes() == table
+    assert wheel.held_sidecar() == table
+    assert wheel.hashes == ((SHA256, DIGEST), (SHA512, "f" * 128))
+    assert wheel.metadata_hash == (SHA256, DIGEST)
 
 
 def test_a_rehydrated_record_defers_the_same_parse() -> None:
@@ -505,26 +560,26 @@ def test_a_rehydrated_record_defers_the_same_parse() -> None:
         [_deferred_wheel({"SHA256": DIGEST.upper()}, sidecar={"sha256": DIGEST})]
     )
 
-    assert wheel.raw_hashes() == {"SHA256": DIGEST.upper()}
-    assert wheel.raw_sidecar() == {"sha256": DIGEST}
+    assert wheel.held_hashes() == ("SHA256", DIGEST.upper())
+    assert wheel.held_sidecar() == (SHA256, DIGEST)
     assert wheel.hashes == ((SHA256, DIGEST),)
     assert wheel.metadata_hash == (SHA256, DIGEST)
 
 
 def test_a_rehydrated_sdist_defers_its_hashes() -> None:
-    sdist = SdistFile(
-        filename="pkg-1.0.tar.gz",
-        url="https://files.example/pkg-1.0.tar.gz",
-        version="1.0",
-        requires_python=None,
-        upload_time=None,
-    )
-    defer_hashes(sdist, {"SHA256": DIGEST.upper()})
+    (decoded,) = _roundtrip([_deferred_sdist({"SHA256": DIGEST.upper()})])
 
-    (decoded,) = _roundtrip([sdist])
-
-    assert decoded.raw_hashes() == {"SHA256": DIGEST.upper()}
+    assert decoded.held_hashes() == ("SHA256", DIGEST.upper())
     assert decoded.hashes == ((SHA256, DIGEST),)
+
+
+def test_a_rehydrated_sdist_defers_a_many_algorithm_table() -> None:
+    table = {"sha256": DIGEST, "sha512": "f" * 128}
+
+    (decoded,) = _roundtrip([_deferred_sdist(table)])
+
+    assert decoded.held_hashes() == table
+    assert decoded.hashes == ((SHA256, DIGEST), (SHA512, "f" * 128))
 
 
 def test_a_row_is_the_same_whether_or_not_the_record_was_read() -> None:

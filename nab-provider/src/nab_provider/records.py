@@ -24,6 +24,7 @@ __all__ = [
     "DEFAULT_INDEX_NAME",
     "DEFAULT_INDEX_URL",
     "DistFile",
+    "HeldTable",
     "IndexConfig",
     "RangeMetadataResult",
     "RangeOutcome",
@@ -103,6 +104,12 @@ def sidecar_hash(value: object) -> tuple[str, str] | None:
     return select_artifact_hash(published)
 
 
+# What a record holds for a field it has not parsed yet: the ``(algo, digest)``
+# pair a one-algorithm table compacts to, or the mapping the index served.
+# ``None`` where the caller has a parsed value instead.
+HeldTable = tuple[str, object] | dict[Any, Any] | None
+
+
 def _compact_table(table: dict[object, object]) -> object:
     """Return the form of ``table`` a record holds until something reads it.
 
@@ -154,7 +161,7 @@ class _DeferredIntegrity:
 
     __slots__ = ()
 
-    _raw_hashes: object
+    _raw_hashes: HeldTable
 
     def __getattr__(self, name: str) -> object:
         if name != "hashes":
@@ -164,10 +171,10 @@ class _DeferredIntegrity:
         object.__setattr__(self, "hashes", value)
         return value
 
-    def raw_hashes(self) -> object:
-        """Return the ``hashes`` table this record was built from, else ``None``."""
+    def held_hashes(self) -> HeldTable:
+        """Return the ``hashes`` table this record holds unparsed, else ``None``."""
         try:
-            return _expand_table(self._raw_hashes)
+            return self._raw_hashes
         except AttributeError:
             return None
 
@@ -177,7 +184,7 @@ class _WheelIntegrity(_DeferredIntegrity, _MetadataUrlMemo):
 
     __slots__ = ("_raw_hashes", "_raw_metadata")
 
-    _raw_metadata: object
+    _raw_metadata: HeldTable
 
     def __getattr__(self, name: str) -> object:
         if name != "metadata_hash":
@@ -187,10 +194,10 @@ class _WheelIntegrity(_DeferredIntegrity, _MetadataUrlMemo):
         object.__setattr__(self, "metadata_hash", value)
         return value
 
-    def raw_sidecar(self) -> object:
-        """Return the sidecar value this wheel was built from, else ``None``."""
+    def held_sidecar(self) -> HeldTable:
+        """Return the sidecar table this wheel holds unparsed, else ``None``."""
         try:
-            return _expand_table(self._raw_metadata)
+            return self._raw_metadata
         except AttributeError:
             return None
 
@@ -327,23 +334,26 @@ _set_wheel_raw_hashes = _slot_writer(_WheelIntegrity, "_raw_hashes")
 _set_wheel_raw_metadata = _slot_writer(_WheelIntegrity, "_raw_metadata")
 
 
-def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its own order
+def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, plus held tables
     filename: str,
     url: str,
     version: str,
     requires_python: str | None,
     has_metadata: bool,  # noqa: FBT001 - a field, not a flag
     upload_time: str | None,
-    hashes: tuple[tuple[str, str], ...] | dict[Any, Any],
+    hashes: tuple[tuple[str, str], ...],
+    held_hashes: HeldTable,
     size: int | None,
-    metadata_hash: tuple[str, str] | dict[Any, Any] | None,
+    metadata_hash: tuple[str, str] | None,
+    held_sidecar: HeldTable,
 ) -> WheelFile:
     """Return a wheel rebuilt from a cached listing row.
 
-    ``hashes`` and ``metadata_hash`` each take either a parsed value or the
-    index's own table, and a table is held raw for the field's first read to
-    parse.  Deferring a field means leaving its slot unwritten, which
-    ``__init__`` cannot do, so this writes the slots directly.
+    A field arrives either parsed, in ``hashes`` / ``metadata_hash``, or as the
+    table to hold, in ``held_hashes`` / ``held_sidecar``, which the record
+    parses on first read.  A held mapping is compacted on the way in, a held
+    pair stored as it stands.  Deferring a field means leaving its slot
+    unwritten, which ``__init__`` cannot do, so this writes the slots directly.
 
     ``local_path`` is ``None``: a cached listing row carries none.
     """
@@ -357,15 +367,19 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     _set_wheel_size(wheel, size)
     _set_wheel_local_path(wheel, None)
 
-    if isinstance(hashes, dict):
-        _set_wheel_raw_hashes(wheel, _compact_table(hashes))
-    else:
+    if type(held_hashes) is tuple:
+        _set_wheel_raw_hashes(wheel, held_hashes)
+    elif held_hashes is None:
         _set_wheel_hashes(wheel, hashes)
-
-    if isinstance(metadata_hash, dict):
-        _set_wheel_raw_metadata(wheel, _compact_table(metadata_hash))
     else:
+        _set_wheel_raw_hashes(wheel, _compact_table(held_hashes))
+
+    if type(held_sidecar) is tuple:
+        _set_wheel_raw_metadata(wheel, held_sidecar)
+    elif held_sidecar is None:
         _set_wheel_metadata_hash(wheel, metadata_hash)
+    else:
+        _set_wheel_raw_metadata(wheel, _compact_table(held_sidecar))
 
     return wheel
 
@@ -427,7 +441,8 @@ def rehydrated_sdist(
     version: str,
     requires_python: str | None,
     upload_time: str | None,
-    hashes: tuple[tuple[str, str], ...] | dict[Any, Any],
+    hashes: tuple[tuple[str, str], ...],
+    held_hashes: HeldTable,
     size: int | None,
 ) -> SdistFile:
     """Return a source distribution rebuilt from a cached listing row.
@@ -444,10 +459,12 @@ def rehydrated_sdist(
     _set_sdist_size(sdist, size)
     _set_sdist_local_path(sdist, None)
 
-    if isinstance(hashes, dict):
-        _set_sdist_raw_hashes(sdist, _compact_table(hashes))
-    else:
+    if type(held_hashes) is tuple:
+        _set_sdist_raw_hashes(sdist, held_hashes)
+    elif held_hashes is None:
         _set_sdist_hashes(sdist, hashes)
+    else:
+        _set_sdist_raw_hashes(sdist, _compact_table(held_hashes))
 
     return sdist
 

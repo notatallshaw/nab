@@ -79,10 +79,10 @@ def test_a_read_keeps_the_table_it_parsed() -> None:
     wheel = _deferred_wheel({"sha256": DIGEST}, sidecar={"sha256": DIGEST})
 
     assert wheel.hashes == ((SHA256, DIGEST),)
-    assert wheel.raw_hashes() == {"sha256": DIGEST}
+    assert wheel.held_hashes() == (SHA256, DIGEST)
 
     assert wheel.metadata_hash == (SHA256, DIGEST)
-    assert wheel.raw_sidecar() == {"sha256": DIGEST}
+    assert wheel.held_sidecar() == (SHA256, DIGEST)
 
 
 @pytest.mark.parametrize(
@@ -131,8 +131,8 @@ def test_two_threads_reading_one_deferred_field_both_get_it(
 def test_a_value_that_is_not_a_table_defers_nothing() -> None:
     wheel = _deferred_wheel(["sha256", DIGEST], sidecar=True)
 
-    assert wheel.raw_hashes() is None
-    assert wheel.raw_sidecar() is None
+    assert wheel.held_hashes() is None
+    assert wheel.held_sidecar() is None
     assert wheel.hashes == ()
     assert wheel.metadata_hash is None
 
@@ -140,7 +140,7 @@ def test_a_value_that_is_not_a_table_defers_nothing() -> None:
 def test_a_table_keyed_by_a_non_string_defers_as_it_stands() -> None:
     wheel = _deferred_wheel({7: DIGEST}, sidecar=True)
 
-    assert wheel.raw_hashes() == {7: DIGEST}
+    assert wheel.held_hashes() == {7: DIGEST}
     assert wheel.hashes == ()
 
 
