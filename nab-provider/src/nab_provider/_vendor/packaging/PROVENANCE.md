@@ -41,12 +41,17 @@ most one checked-in patch.
     Upstream's opening `assert isinstance(marker, (list, tuple, str))` is
     dropped, so a value of any other type now returns unchanged instead of
     tripping the assertion.
+  - `_parser.py`: `process_python_str` returns the body between the token's
+    quotes when that body is ASCII and holds no backslash, newline, carriage
+    return or NUL, and calls `ast.literal_eval` otherwise. The `QUOTED_STRING`
+    rule admits no string prefix, so a token takes the same value either way.
 
   Upstream PRs are planned for the bound ordering, the direct subset and
   disjoint walks, `filter`'s `assume_sorted` fast path,
   `from_bounds`/`snap_bounds`/`release_intervals`, the prepared marker
   environment, and the marker-item serialisation. `relation` is not proposed
-  yet: most of its win is available from the direct walks alone.
+  yet: most of its win is available from the direct walks alone. The
+  quoted-string slice is not proposed anywhere yet.
 - `tasks/vendor-packaging.sh` fetches `pypa/packaging` at the pin, replaces this
   package with the pristine `src/packaging/` tree plus the repo-root license
   texts, and reapplies the patch. `--check` rebuilds into a temp location and
@@ -121,11 +126,12 @@ Not reachable:
   id it knows.
 
 pypa/packaging#1213 merged `Value.serialize`'s quote handling in the form nab
-already carried, so the patch's `_parser.py` hunk is gone. It still does not
-re-escape a backslash, so a value holding one does not survive a `str()` round
-trip; pypa/packaging#1374 proposes the fix and this pin is behind it. Its
-`ValueError` on a value holding both quote characters is unreachable: nab never
-constructs a `Value`, and a parsed value cannot hold its own delimiter.
+already carried, so the patch's `_parser.py` serialisation hunk is gone. It
+still does not re-escape a backslash, so a value holding one does not survive a
+`str()` round trip; pypa/packaging#1374 proposes the fix and this pin is behind
+it. Its `ValueError` on a value holding both quote characters is unreachable:
+nab never constructs a `Value`, and a parsed value cannot hold its own
+delimiter.
 
 `nab_index` used `[\w\d._]*` for the wheel name where the vendored copy has used
 `[\w._]+` since before the previous pin, so `-1.0-py3-none-any.whl` parsed to an

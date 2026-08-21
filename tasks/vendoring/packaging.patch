@@ -1949,6 +1949,28 @@ index 0000000..9e908b1
 +        _clause_formula(sorted(clause, key=_atom_key)) for clause in residual
 +    )
 +    return make_and([*lead, inner])
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/_parser.py b/nab-provider/src/nab_provider/_vendor/packaging/_parser.py
+index 245ed43..1efb387 100644
+--- a/nab-provider/src/nab_provider/_vendor/packaging/_parser.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/_parser.py
+@@ -394,8 +394,15 @@ def process_env_var(env_var: str) -> Variable:
+ 
+ 
+ def process_python_str(python_str: str) -> Value:
+-    value = ast.literal_eval(python_str)
+-    return Value(str(value))
++    # QUOTED_STRING admits no prefix and no embedded delimiter, so an ASCII body
++    # holding no backslash, line break or NUL is what the literal parse returns.
++    # The rest keeps that parse, for the escapes it expands and the bodies it rejects.
++    body = python_str[1:-1]
++    if body.isascii() and not (
++        "\\" in body or "\n" in body or "\r" in body or "\0" in body
++    ):
++        return Value(body)
++    return Value(str(ast.literal_eval(python_str)))
+ 
+ 
+ def _parse_marker_op(tokenizer: Tokenizer) -> Op:
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
 index e312a1f..29c32bc 100644
 --- a/nab-provider/src/nab_provider/_vendor/packaging/_ranges.py
