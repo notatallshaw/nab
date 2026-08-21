@@ -1038,6 +1038,21 @@ class TestMainGroup:
         with pytest.raises(ConfigError, match="nothing could install that extra"):
             read_pyproject_config(path)
 
+    def test_a_base_group_extra_set_is_refused_under_exactly_one(
+        self, tmp_path: Path
+    ) -> None:
+        """The extra makes the pair impossible, whichever exclusive policy is set."""
+        path = write(
+            tmp_path,
+            '[project.optional-dependencies]\ncli = ["clitool"]\n'
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'conflicts = [{ members = [{ group = "main" }, { extra = "cli" }],'
+            ' policy = "exactly-one" }]\n',
+        )
+        with pytest.raises(ConfigError, match="nothing could install that extra"):
+            read_pyproject_config(path)
+
     def test_a_build_group_may_conflict_with_an_extra(self, tmp_path: Path) -> None:
         """The project's dependencies stay in every fork of that set."""
         path = write(
@@ -1050,6 +1065,10 @@ class TestMainGroup:
             'conflicts = [[{ group = "build" }, { extra = "cli" }]]\n',
         )
         assert read_pyproject_config(path).build_group == "build"
+
+    def test_doc_states_the_base_group_extra_refusal(self) -> None:
+        page = " ".join(DOCS_CONFLICTS.read_text(encoding="utf-8").lower().split())
+        assert "pairing `base-group` with an extra is refused" in page
 
     def test_build_group_rejects_the_base_group_name(self, tmp_path: Path) -> None:
         path = write(
