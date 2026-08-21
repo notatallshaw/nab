@@ -50,6 +50,7 @@ from nab_provider.records import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from typing import TypeGuard
 
     from .cache import CachePolicy
 
@@ -302,7 +303,7 @@ def _checksum_holds(blob: bytes, payload: memoryview) -> bool:
     return len(payload) == length and zlib.crc32(payload) == crc
 
 
-def _names_this_build(header: object) -> bool:
+def _names_this_build(header: object) -> TypeGuard[list[object]]:
     """Whether ``header`` is this build's shape and names its codec."""
     return (
         isinstance(header, list)
