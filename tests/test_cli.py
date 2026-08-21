@@ -488,11 +488,20 @@ def _universal_result(
 
 
 def _multi_tuple_universal_result() -> ResolveResult:
-    """Build a successful ResolveResult with two tuples (3.11 and 3.12)."""
-    tuples = tuple(_target(py_minor) for py_minor in ("3.11", "3.12"))
+    """Build a successful ResolveResult with two tuples (3.11 and 3.12).
+
+    Only 3.11 pins ``bar``, so the two tuples' pins and counts differ.
+    """
+    pins = {
+        "3.11": {"bar": V("2.0"), "foo": V("1.0")},
+        "3.12": {"foo": V("1.0")},
+    }
+    results = [
+        _resolved(_target(py_minor), tuple_pins)
+        for py_minor, tuple_pins in pins.items()
+    ]
     return ResolveResult(
-        targets=tuples,
-        target_results=[_resolved(tup, {"foo": V("1.0")}) for tup in tuples],
+        targets=tuple(result.target for result in results), target_results=results
     )
 
 
@@ -506,11 +515,20 @@ def _multi_tuple_failed_result(error: ResolutionError | None) -> ResolveResult:
 
 
 def _forked_universal_result() -> ResolveResult:
-    """One matrix tuple that ``[tool.nab].conflicts`` forked into two."""
-    tuples = tuple(_target(selection=(("extra", extra),)) for extra in ("cpu", "gpu"))
+    """One matrix tuple that ``[tool.nab].conflicts`` forked into two.
+
+    Only the ``cpu`` fork pins ``bar``, so the two forks differ.
+    """
+    pins = {
+        "cpu": {"bar": V("2.0"), "foo": V("1.0")},
+        "gpu": {"foo": V("1.0")},
+    }
+    results = [
+        _resolved(_target(selection=(("extra", extra),)), fork_pins)
+        for extra, fork_pins in pins.items()
+    ]
     return ResolveResult(
-        targets=tuples,
-        target_results=[_resolved(tup, {"foo": V("1.0")}) for tup in tuples],
+        targets=tuple(result.target for result in results), target_results=results
     )
 
 
@@ -2589,9 +2607,11 @@ class TestLockCommandUniversal:
         assert "experimental" in captured.err
         assert "lockfile format" in captured.err
         assert "resolver loop" not in captured.err
-        assert "# py311-linux_x86_64" in captured.out
-        assert "# py312-linux_x86_64" in captured.out
-        assert "foo==1.0" in captured.out
+
+        assert captured.out == (
+            "# py311-linux_x86_64\nbar==2.0\nfoo==1.0\n\n"
+            "# py312-linux_x86_64\nfoo==1.0\n"
+        )
 
     def test_per_tuple_pins_to_explicit_file_single_tuple(self, tmp_path: Path) -> None:
         """Single-tuple matrix + fixed path: just the pins, no header.
@@ -2880,8 +2900,10 @@ class TestLockCommandUniversal:
         assert "#   ResolutionError: base unresolvable" in err
         assert "#   Diagnostics: missing" in err
 
-    def test_template_writes_one_file_per_tuple(self, tmp_path: Path) -> None:
-        """``{python_version}`` in --output expands to one file per tuple."""
+    def test_template_writes_one_file_per_tuple(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Each file holds its own tuple's pins, and its summary line names it."""
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "constraints-{python_version}.txt"
         with patch(
@@ -2889,11 +2911,16 @@ class TestLockCommandUniversal:
             return_value=_multi_tuple_universal_result(),
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
-        a = tmp_path / "constraints-3.11.txt"
-        b = tmp_path / "constraints-3.12.txt"
-        assert a.read_text().strip() == "foo==1.0"
-        assert b.read_text().strip() == "foo==1.0"
+
+        py311 = tmp_path / "constraints-3.11.txt"
+        py312 = tmp_path / "constraints-3.12.txt"
+        assert py311.read_text() == "bar==2.0\nfoo==1.0\n"
+        assert py312.read_text() == "foo==1.0\n"
         assert not (tmp_path / "constraints-{python_version}.txt").exists()
+
+        err = capsys.readouterr().err
+        assert f"Wrote {py311} (2 packages, tuple py311-linux_x86_64)" in err
+        assert f"Wrote {py312} (1 packages, tuple py312-linux_x86_64)" in err
 
     def test_template_with_platform_id(self, tmp_path: Path) -> None:
         """``{platform_id}`` is also a valid template variable."""
@@ -2904,10 +2931,13 @@ class TestLockCommandUniversal:
             return_value=_multi_tuple_universal_result(),
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
-        assert (tmp_path / "constraints-3.11-linux_x86_64.txt").exists()
-        assert (tmp_path / "constraints-3.12-linux_x86_64.txt").exists()
+        py311 = tmp_path / "constraints-3.11-linux_x86_64.txt"
+        py312 = tmp_path / "constraints-3.12-linux_x86_64.txt"
+        assert py311.read_text() == "bar==2.0\nfoo==1.0\n"
+        assert py312.read_text() == "foo==1.0\n"
 
     def test_template_with_hashes(self, tmp_path: Path) -> None:
+        """With hashes, each file still pins only its own tuple."""
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "req-{python_version}.txt"
         with patch(
@@ -2915,9 +2945,15 @@ class TestLockCommandUniversal:
             return_value=_multi_tuple_universal_result(),
         ):
             lock(pyproject, format="requirements", output=out)
-        text = (tmp_path / "req-3.11.txt").read_text()
-        assert "foo==1.0" in text
-        assert "--hash=sha256:" in text
+
+        py311_text = (tmp_path / "req-3.11.txt").read_text()
+        assert "foo==1.0" in py311_text
+        assert "bar==2.0" in py311_text
+        assert "--hash=sha256:" in py311_text
+
+        py312_text = (tmp_path / "req-3.12.txt").read_text()
+        assert "foo==1.0" in py312_text
+        assert "bar==" not in py312_text
 
     def test_multi_tuple_without_template_errors(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -3048,9 +3084,9 @@ class TestLockCommandUniversal:
         assert (tmp_path / "constraints-3.11.txt").read_text().strip() == "foo==1.0"
 
     def test_template_with_selection_writes_one_file_per_fork(
-        self, tmp_path: Path
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """``{selection}`` in --output expands to one file per conflict fork."""
+        """``{selection}`` in --output gives each conflict fork its own pins."""
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "req-{selection}.txt"
         with patch(
@@ -3058,8 +3094,15 @@ class TestLockCommandUniversal:
             return_value=_forked_universal_result(),
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
-        assert (tmp_path / "req-extra-cpu.txt").read_text().strip() == "foo==1.0"
-        assert (tmp_path / "req-extra-gpu.txt").read_text().strip() == "foo==1.0"
+
+        cpu = tmp_path / "req-extra-cpu.txt"
+        gpu = tmp_path / "req-extra-gpu.txt"
+        assert cpu.read_text() == "bar==2.0\nfoo==1.0\n"
+        assert gpu.read_text() == "foo==1.0\n"
+
+        err = capsys.readouterr().err
+        assert f"Wrote {cpu} (2 packages, tuple py311-linux_x86_64-extra-cpu)" in err
+        assert f"Wrote {gpu} (1 packages, tuple py311-linux_x86_64-extra-gpu)" in err
 
     def test_forked_collision_points_at_selection(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -3270,7 +3313,7 @@ class TestLockCommandUniversal:
             return_value=_multi_tuple_universal_result(),
         ):
             lock(pyproject, format="requirements-without-hashes", output=out)
-        assert first.read_text().strip() == "foo==1.0"
+        assert first.read_text() == "bar==2.0\nfoo==1.0\n"
         assert stat.S_IMODE(first.stat().st_mode) == before
         fresh = stat.S_IMODE((tmp_path / "req-3.12.txt").stat().st_mode)
         assert fresh == before
