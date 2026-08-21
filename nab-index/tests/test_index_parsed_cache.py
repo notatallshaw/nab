@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import marshal
 from collections.abc import Coroutine, Mapping
 from pathlib import Path
 from typing import Any, TypeVar
@@ -34,10 +35,24 @@ from nab_index.cache import (
 )
 from nab_index.cached_client import CachedAsyncSimpleClient, ParsedCacheStats
 from nab_index.client import SdistFile, WheelFile, _parse_files
-from nab_index.parsed_listing import corruption_reason, decode, encode
+from nab_index.parsed_listing import (
+    _MARSHAL_VERSION,
+    _PAYLOAD_AT,
+    INTERPRETER_TAG,
+    _frame,
+    corruption_reason,
+    decode,
+    encode,
+)
 
 # Derived so a bucket-version bump does not need every path updated.
 _SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
+# The parsed bucket keys the interpreter under the index directory.
+_PARSED_PARTS = (
+    f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}",
+    "pypi",
+    INTERPRETER_TAG,
+)
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
@@ -171,15 +186,11 @@ class TestGetSimpleParsedBucket:
         cache.put_simple_parsed("foo", b"\x00blob\x01")
         assert cache.get_simple_parsed("foo") == b"\x00blob\x01"
 
-    def test_written_under_parsed_bucket(self, tmp_path: Path) -> None:
+    def test_written_under_the_interpreter_keyed_bucket(self, tmp_path: Path) -> None:
+        """The interpreter is a path segment, so two never share an entry."""
         cache = _cache(tmp_path)
         cache.put_simple_parsed("foo", b"blob")
-        expected = (
-            tmp_path
-            / f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}"
-            / "pypi"
-            / "foo.parsed"
-        )
+        expected = tmp_path.joinpath(*_PARSED_PARTS, "foo.parsed")
         assert expected.read_bytes() == b"blob"
 
     def test_miss_returns_none(self, tmp_path: Path) -> None:
@@ -204,7 +215,7 @@ class TestGetSimpleParsedBucket:
         with pytest.raises(OSError, match="disk full"):
             cache.put_simple_parsed("foo", b"partial")
         assert cache.get_simple_parsed("foo") == b"good"
-        parent = tmp_path / f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}" / "pypi"
+        parent = tmp_path.joinpath(*_PARSED_PARTS)
         assert [p.name for p in parent.iterdir()] == ["foo.parsed"]
 
 
@@ -243,24 +254,14 @@ class TestReadCacheEntryParsed:
     def test_valid_parsed_is_clean(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         cache.put_simple_parsed("foo", encode(_PARSED, "a" * 64))
-        path = (
-            tmp_path
-            / f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}"
-            / "pypi"
-            / "foo.parsed"
-        )
+        path = tmp_path.joinpath(*_PARSED_PARTS, "foo.parsed")
         assert cache.read_cache_entry(path) is None
 
     def test_structurally_corrupt_parsed(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
-        path = (
-            tmp_path
-            / f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}"
-            / "pypi"
-            / "foo.parsed"
-        )
+        path = tmp_path.joinpath(*_PARSED_PARTS, "foo.parsed")
         path.parent.mkdir(parents=True)
-        path.write_bytes(b"\xff\xfe not json")
+        path.write_bytes(b"\xff\xfe not a parsed-listing blob")
         assert cache.read_cache_entry(path) is not None
 
 
@@ -576,15 +577,25 @@ def _warm_bound(
     return files, digest
 
 
+def _rewrap(document: object) -> bytes:
+    """A blob this build reads, carrying ``document`` whatever its shape."""
+    return _frame(marshal.dumps(document, _MARSHAL_VERSION))
+
+
+def _document(blob: bytes) -> object:
+    """The document ``blob`` carries."""
+    return marshal.loads(blob[_PAYLOAD_AT:])  # noqa: S302
+
+
 def _tamper_header(blob: bytes, index: int, value: object) -> bytes:
-    header, rows = json.loads(blob)
+    header, rows = _document(blob)
     header[index] = value
-    return json.dumps([header, rows]).encode()
+    return _rewrap([header, rows])
 
 
 def _tamper_rows(blob: bytes, value: object) -> bytes:
-    header, _rows = json.loads(blob)
-    return json.dumps([header, value]).encode()
+    header, _rows = _document(blob)
+    return _rewrap([header, value])
 
 
 class TestReadPathParsedHit:
@@ -1001,17 +1012,17 @@ class TestReadPathRevalidate:
 
 class TestParsedCorruptionReason:
     def test_garbage_is_corrupt(self) -> None:
-        assert corruption_reason(b"not json") is not None
+        assert corruption_reason(b"not a parsed-listing blob") is not None
 
     def test_truncated_is_corrupt(self) -> None:
         blob = encode(_PARSED, "a" * 64)
         assert corruption_reason(blob[: len(blob) // 2]) is not None
 
     def test_wrong_top_shape_is_corrupt(self) -> None:
-        assert corruption_reason(json.dumps([1, 2, 3]).encode()) is not None
+        assert corruption_reason(_rewrap([1, 2, 3])) is not None
 
     def test_wrong_header_shape_is_corrupt(self) -> None:
-        assert corruption_reason(json.dumps(["bad", "rows"]).encode()) is not None
+        assert corruption_reason(_rewrap(["bad", "rows"])) is not None
 
     @pytest.mark.parametrize(
         "rows",

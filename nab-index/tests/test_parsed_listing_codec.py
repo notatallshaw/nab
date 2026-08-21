@@ -5,15 +5,16 @@ The exact-equivalence contract is proved by the Hypothesis harness in
 is opt-in (``-m property``) and does not run under the coverage gate, so these
 plain unit tests drive every branch of the codec: the wheel/sdist tag split,
 present and absent ``requires_python``, present and absent ``metadata_hash``,
-the integrity cells in both their raw and their parsed form, each header /
-digest gate that turns a stale or foreign blob into a decode-to-``None`` miss,
-and the field checks that keep a hand-written row from reaching a record.
+the integrity cells in both their raw and their parsed form, the preamble and
+checksum gates, each header / digest gate that turns a stale or foreign blob
+into a decode-to-``None`` miss, and the field checks that keep a hand-written
+row from reaching a record.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import json
+import marshal
 import sys
 
 import pytest
@@ -21,11 +22,17 @@ import pytest
 from nab_index.cache import CachePolicy
 from nab_index.client import SdistFile, WheelFile
 from nab_index.parsed_listing import (
+    _HEX_LEN,
+    _LEN_AT,
+    _MARSHAL_VERSION,
+    _PAYLOAD_AT,
     _TAG_SDIST,
     _TAG_WHEEL,
+    _WIRE_FORM,
     CODEC,
     FORMAT_VERSION,
     KEY_SCHEME,
+    _frame,
     corruption_reason,
     decode,
     encode,
@@ -33,6 +40,26 @@ from nab_index.parsed_listing import (
 from nab_provider.records import defer_hashes, defer_sidecar_hash
 
 DIGEST = "a" * 64
+
+# A preamble naming another interpreter. It carries no checksum, since the
+# prefix check rejects it before anything reads one.
+_FOREIGN_PREAMBLE = b"nab-parsed-listing m4.some-other-interpreter "
+
+
+def _blob(document: object) -> bytes:
+    """A blob this build will read, carrying ``document`` whatever its shape."""
+    return _frame(marshal.dumps(document, _MARSHAL_VERSION))
+
+
+def _document(blob: bytes) -> object:
+    """The document ``blob`` carries, read the way :func:`decode` reads it."""
+    return marshal.loads(blob[_PAYLOAD_AT:])  # noqa: S302
+
+
+def _flip_bit(blob: bytes, offset: int) -> bytes:
+    """``blob`` with the low bit of the byte at ``offset`` inverted."""
+    return blob[:offset] + bytes([blob[offset] ^ 1]) + blob[offset + 1 :]
+
 
 SHA256 = sys.intern("sha256")
 SHA512 = sys.intern("sha512")
@@ -157,45 +184,48 @@ def test_metadata_hash_present_and_absent() -> None:
 
 
 def test_lone_surrogate_in_field_round_trips() -> None:
-    """A field with no UTF-8 form still round-trips, escaped in the blob.
+    """A field with no UTF-8 form still round-trips.
 
-    ``json.loads`` accepts an unpaired ``\\udXXX`` escape, so a listing can put
-    one in ``requires-python``, which ``_parse_files`` keeps verbatim.
+    A listing can put an unpaired surrogate in ``requires-python``, which
+    ``_parse_files`` keeps verbatim.
     """
     record = dataclasses.replace(SDIST_FULL, requires_python=f"{RP}\ud800")
 
     assert _roundtrip([record]) == [record]
 
 
-def test_blob_is_portable_json() -> None:
-    """The wire form carries no interpreter tag, so any reader can decode it."""
-    header, rows = json.loads(encode(SAMPLE, DIGEST))
+def test_blob_names_its_wire_form_and_the_build_inside() -> None:
+    """The preamble pins the wire form; the header names the build."""
+    blob = encode(SAMPLE, DIGEST)
+    assert blob.startswith(_WIRE_FORM)
+
+    header, rows = _document(blob)
     assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST, []]
     assert [row[0] for row in rows] == [_TAG_WHEEL, _TAG_SDIST, _TAG_WHEEL, _TAG_SDIST]
 
 
 def _tamper_header(index: int, value: object) -> bytes:
-    header, rows = json.loads(encode(SAMPLE, DIGEST))
+    header, rows = _document(encode(SAMPLE, DIGEST))
     header[index] = value
-    return json.dumps([header, rows]).encode()
+    return _blob([header, rows])
 
 
 def _blob_with_rows(rows: object) -> bytes:
     """A blob whose header names this exact build, over caller-supplied rows."""
-    header, _rows = json.loads(encode(SAMPLE, DIGEST))
-    return json.dumps([header, rows]).encode()
+    header, _rows = _document(encode(SAMPLE, DIGEST))
+    return _blob([header, rows])
 
 
 def _wheel_row_with(index: int, value: object) -> bytes:
     """A blob holding one wheel row with a single field replaced."""
-    _header, rows = json.loads(encode([WHEEL_FULL], DIGEST))
+    _header, rows = _document(encode([WHEEL_FULL], DIGEST))
     rows[0][index] = value
     return _blob_with_rows(rows)
 
 
 def _sdist_row_with(index: int, value: object) -> bytes:
     """A blob holding one sdist row with a single field replaced."""
-    _header, rows = json.loads(encode([SDIST_FULL], DIGEST))
+    _header, rows = _document(encode([SDIST_FULL], DIGEST))
     rows[0][index] = value
     return _blob_with_rows(rows)
 
@@ -228,12 +258,14 @@ def test_policy_without_digest_is_miss() -> None:
     "blob",
     [
         b"",
-        b"not json",
+        b"no preamble",
         b"\xff\xfe not utf-8",
-        json.dumps(7).encode(),
-        json.dumps([1, 2, 3]).encode(),
-        json.dumps(["bad-header", []]).encode(),
-        json.dumps([[0, 1, 0], []]).encode(),
+        _frame(b"\xff\xfe not a payload"),
+        _FOREIGN_PREAMBLE + b"whatever that build wrote",
+        _blob(7),
+        _blob([1, 2, 3]),
+        _blob(["bad-header", []]),
+        _blob([[0, 1, 0], []]),
     ],
 )
 def test_malformed_blob_is_miss(blob: bytes) -> None:
@@ -269,7 +301,7 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
     The row keeps sdist arity, so a codec that fell through to the sdist branch
     instead of rejecting would decode it happily. That is what this pins.
     """
-    _header, rows = json.loads(encode([SDIST_FULL], DIGEST))
+    _header, rows = _document(encode([SDIST_FULL], DIGEST))
     assert len(rows[0]) == _SDIST_ROW_LEN
     rows[0][0] = tag
     assert decode(_blob_with_rows(rows), _policy()) is None
@@ -299,7 +331,7 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
     ],
 )
 def test_wrong_field_type_is_miss(index: int, value: object) -> None:
-    """A field JSON allows but the record does not never reaches a record."""
+    """A field the wire form allows but the record does not never reaches one."""
     assert decode(_wheel_row_with(index, value), _policy()) is None
 
 
@@ -334,9 +366,10 @@ def test_absent_optional_fields_decode_as_none() -> None:
 @pytest.mark.parametrize(
     ("blob", "reason"),
     [
-        (b"not json", "not valid JSON"),
-        (json.dumps(7).encode(), "unexpected top-level shape"),
-        (json.dumps(["bad-header", []]).encode(), "unexpected header shape"),
+        (b"no preamble", "not this codec's wire form"),
+        (_frame(b"\xff\xfe not a payload"), "unreadable payload"),
+        (_blob(7), "unexpected top-level shape"),
+        (_blob(["bad-header", []]), "unexpected header shape"),
     ],
 )
 def test_corruption_reason_names_the_structural_fault(blob: bytes, reason: str) -> None:
@@ -344,9 +377,9 @@ def test_corruption_reason_names_the_structural_fault(blob: bytes, reason: str) 
 
 
 def test_zip_sdists_round_trip_sorted() -> None:
-    """The dropped releases ride the header, sorted so a blob is byte-stable."""
+    """The dropped releases ride the header, sorted rather than in set order."""
     blob = encode(SAMPLE, DIGEST, frozenset({"2.0", "1.0"}))
-    header = json.loads(blob)[0]
+    header = _document(blob)[0]
     decoded = decode(blob, _policy())
 
     assert header[_H_ZIP_SDISTS] == ["1.0", "2.0"]
@@ -356,7 +389,7 @@ def test_zip_sdists_round_trip_sorted() -> None:
 
 @pytest.mark.parametrize("cell", ["1.0", {"1.0": True}, [1.0], [None]])
 def test_bad_zip_sdists_cell_is_miss(cell: object) -> None:
-    """A cell JSON allows but the header does not rebuilds rather than crashes."""
+    """A cell the wire form allows but the header does not rebuilds, not crashes."""
     assert decode(_tamper_header(_H_ZIP_SDISTS, cell), _policy()) is None
 
 
@@ -378,6 +411,46 @@ def test_corruption_reason_passes_a_valid_blob() -> None:
 def test_foreign_build_header_is_not_corruption() -> None:
     """Version skew is a benign miss, so the read path rebuilds without warning."""
     assert corruption_reason(_tamper_header(_H_CODEC, CODEC + 1)) is None
+
+
+def test_foreign_preamble_is_a_miss_and_not_corruption() -> None:
+    """A blob another interpreter wrote is never handed to ``marshal``."""
+    blob = _FOREIGN_PREAMBLE + b"whatever that build wrote"
+
+    assert decode(blob, _policy()) is None
+    assert corruption_reason(blob) is None
+
+
+def test_a_flipped_length_field_is_a_miss() -> None:
+    """A length that no longer matches the payload stops the decode.
+
+    ``marshal`` reads a container's element count straight out of the buffer
+    and allocates from it, so a payload nothing has vouched for can ask for a
+    billion-element list rather than raise.
+    """
+    blob = _flip_bit(encode(SAMPLE, DIGEST), _LEN_AT)
+
+    assert decode(blob, _policy()) is None
+    assert corruption_reason(blob) == "unreadable payload"
+
+
+def test_a_flipped_payload_byte_is_a_miss_not_altered_records() -> None:
+    """A flip inside a filename still unmarshals, to a document that is wrong."""
+    blob = encode(SAMPLE, DIGEST)
+    flipped = _flip_bit(blob, blob.index(b"pkg-1.0-py3-none-any.whl"))
+    assert _document(flipped) != _document(blob)
+
+    assert decode(flipped, _policy()) is None
+    assert corruption_reason(flipped) == "unreadable payload"
+
+
+def test_a_non_hex_length_field_is_a_miss() -> None:
+    """A preamble whose length field is not a number reads as corruption."""
+    blob = encode(SAMPLE, DIGEST)
+    blob = blob[:_LEN_AT] + b"." * _HEX_LEN + blob[_LEN_AT + _HEX_LEN :]
+
+    assert decode(blob, _policy()) is None
+    assert corruption_reason(blob) == "unreadable payload"
 
 
 def test_digest_mismatch_is_not_corruption() -> None:
@@ -402,7 +475,7 @@ def _deferred_wheel(hashes: object, *, sidecar: object) -> WheelFile:
 def test_unparsed_tables_ride_the_wire_as_the_index_served_them() -> None:
     wheel = _deferred_wheel({"SHA256": DIGEST.upper()}, sidecar={"sha256": DIGEST})
 
-    rows = json.loads(encode([wheel], DIGEST))[1]
+    rows = _document(encode([wheel], DIGEST))[1]
 
     assert rows[0][_W_HASHES] == {"SHA256": DIGEST.upper()}
     assert rows[0][_W_METADATA_HASH] == {"sha256": DIGEST}
@@ -412,7 +485,7 @@ def test_a_value_that_is_not_an_object_rides_as_its_parse() -> None:
     """Only a table defers, so any other value writes what the record parsed."""
     wheel = _deferred_wheel(["sha256", DIGEST], sidecar=True)
 
-    rows = json.loads(encode([wheel], DIGEST))[1]
+    rows = _document(encode([wheel], DIGEST))[1]
 
     assert rows[0][_W_HASHES] == []
     assert rows[0][_W_METADATA_HASH] is None
@@ -421,7 +494,7 @@ def test_a_value_that_is_not_an_object_rides_as_its_parse() -> None:
 def test_a_many_algorithm_table_defers_as_the_index_served_it() -> None:
     wheel = _deferred_wheel({"sha256": DIGEST, "sha512": "f" * 128}, sidecar=True)
 
-    rows = json.loads(encode([wheel], DIGEST))[1]
+    rows = _document(encode([wheel], DIGEST))[1]
 
     assert rows[0][_W_HASHES] == {"sha256": DIGEST, "sha512": "f" * 128}
     assert wheel.hashes == ((SHA256, DIGEST), (SHA512, "f" * 128))

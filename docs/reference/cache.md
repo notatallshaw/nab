@@ -15,12 +15,13 @@ directory is harmless and `nab cache clear` reclaims it.
 | Bucket | Holds |
 | ------ | ----- |
 | `simple-v2/` | the Simple-API listing body and a `.policy` sidecar |
-| `simple-parsed-v0/` | the parsed listing, an accelerator for the body |
+| `simple-parsed-v1/` | the parsed listing, an accelerator for the body |
 | `simple-neg-v0/` | a short-lived record that a name returned a 404 |
 | `metadata-v1/` | PEP 658 metadata and recovered wheel `METADATA`, immutable |
 | `sdist-v1/` | an sdist's `PKG-INFO` and `pyproject.toml`, immutable |
 
-Record buckets are keyed per index, so two indexes never share an entry.
+Record buckets are keyed per index, so two indexes never share an entry,
+and the parsed bucket is keyed per interpreter under that.
 A listing body is stored as PEP 691 JSON; when the index answers in PEP
 503 HTML the stored body is nab's own JSON rendering of the page. An
 index pinned to one `serialization` gets its own listing directories,
@@ -55,7 +56,7 @@ answered from cache, offline included.
 
 Turning a listing body into records means a JSON decode plus wheel and
 sdist filename parsing, which a warm resolve would otherwise repeat on
-every run. The `simple-parsed-v0/` bucket stores those records so a warm
+every run. The `simple-parsed-v1/` bucket stores those records so a warm
 hit rehydrates them and never reads the large raw body. A stale entry is
 served the same way once the index answers `304 Not Modified`, since that
 confirms the body the blob is bound to.
@@ -71,18 +72,23 @@ written by a different nab build, or is corrupt. The raw body remains
 authoritative: the accelerator is only ever a derived copy, and a rebuild
 is a reparse of whatever body is on disk.
 
-Blobs are stored as JSON, so one entry serves every interpreter sharing
-the cache. A listing nab reads no files from gets no blob, since an empty
-one could never be served: only the raw body records whether the page held
-formats nab cannot read.
+Blobs are stored with `marshal`, whose format is not portable across
+Python versions. So the bucket is keyed by interpreter as well as by
+index, and each blob names the wire form it was written in along with
+its own length and CRC32; one whose preamble or checksum does not match
+is rebuilt rather than decoded. A listing nab reads no files from gets
+no blob, since an empty one could never be served: only the raw body
+records whether the page held formats nab cannot read.
 
 ## Verifying and clearing
 
 `nab cache verify` walks the record buckets read-only and reports any
 entry that will not parse, including a parsed blob that is not decodable.
 It checks structure only, not freshness: a stale-but-valid parsed blob is
-not corrupt, since the digest binding retires it at read time. Clones and
-extracted archives hold no nab records, so `verify` skips them.
+not corrupt, since the digest binding retires it at read time. It reads
+only the bucket versions this nab writes, so a directory an upgrade
+retired is left alone rather than reported. Clones and extracted archives
+hold no nab records, so `verify` skips them.
 
 `nab cache clear` removes every bucket, clones and archives included,
 returning the cache to cold. `verify` and `clear` both refuse a root that

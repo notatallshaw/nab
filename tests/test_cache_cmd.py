@@ -8,12 +8,19 @@ import pytest
 
 from nab import cli as nab_cli
 from nab.cli import app
-from nab_index.cache import CACHE_VERSION_SIMPLE, CachePolicy, OnDiskCache
+from nab_index.cache import (
+    CACHE_VERSION_SIMPLE,
+    CACHE_VERSION_SIMPLE_PARSED,
+    CachePolicy,
+    OnDiskCache,
+)
+from nab_index.parsed_listing import INTERPRETER_TAG
 from nab_index.parsed_listing import encode as _encode_parsed
 from nab_project.config_sources import SourceRoots
 
 # Derived so a bucket-version bump does not need every path updated.
 SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
+PARSED_PARTS = (f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}", "pypi", INTERPRETER_TAG)
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
@@ -284,12 +291,32 @@ class TestCacheVerify:
     ) -> None:
         root = tmp_path / "cache"
         _populate(root)
-        parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
-        parsed_path.write_bytes(b"not json data")
+        parsed_path = root.joinpath(*PARSED_PARTS, "foo.parsed")
+        parsed_path.write_bytes(b"not a parsed-listing blob")
         _run_cache(["verify", "--cache-dir", str(root)])
         err = capsys.readouterr().err
         assert str(parsed_path) in err
-        assert "not valid JSON" in err
+        assert "not this codec's wire form" in err
+
+    def test_retired_bucket_is_not_read(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An upgrade leaves the old bucket behind; verify must not judge it.
+
+        Its files are in a shape this build never wrote, so reading them would
+        report one corruption per cached package until ``clear`` runs.
+        """
+        root = tmp_path / "cache"
+        _populate(root)
+        retired = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
+        retired.parent.mkdir(parents=True)
+        # The JSON wire form the retired bucket version held.
+        retired.write_bytes(b'[[4, 1, 0, "' + b"a" * 64 + b'", []], []]')
+
+        _run_cache(["verify", "--cache-dir", str(root)])
+
+        assert capsys.readouterr().err == ""
+        assert retired.exists()
 
     def test_does_not_read_through_symlinked_bucket(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

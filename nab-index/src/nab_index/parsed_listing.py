@@ -5,8 +5,12 @@ resolve skips ``json.loads`` and wheel/sdist filename parsing. This module
 owns the record<->bytes translation; :class:`~nab_index.cache.OnDiskCache`
 treats the blob as opaque and knows nothing about record shapes.
 
-Wire form (UTF-8 JSON of ``[header, rows]``):
+Wire form (a preamble line, then ``marshal`` of ``[header, rows]``):
 
+* the preamble names the marshal version and interpreter that wrote the
+  payload, then the payload's length and CRC32. ``marshal``'s format is not
+  portable across Python versions, so a blob whose preamble or checksum does
+  not match is a miss and never reaches ``marshal.loads``.
 * header ``[format, codec, key_scheme, body_digest, zip_sdists]`` is checked
   before anything is trusted. A reader on a different ``format``, ``codec``, or
   ``key_scheme`` treats the entry as a miss and rebuilds, so a cache written by
@@ -21,20 +25,20 @@ Wire form (UTF-8 JSON of ``[header, rows]``):
   type-checked on the way back, and ``requires_python`` and hash-algorithm
   names are re-interned via ``sys.intern`` so the round trip reproduces the
   dedup the wire parse builds.
-* the two integrity cells carry the index's own table, as a JSON object, when
-  the record was built from one, and the parsed pairs otherwise. A rehydrated
+* the two integrity cells carry the index's own table, as a mapping, when the
+  record was built from one, and the parsed pairs otherwise. A rehydrated
   record defers the same way, so a listing pays the integrity parse only for
   the files a resolve reads.
 
-The blob is portable: one entry serves every interpreter that shares the cache,
-and a body this module will not parse is a miss, never an exception reaching
-the caller.
+An entry serves the one interpreter the cache keys its bucket on, and a body
+this module will not parse is a miss, never an exception reaching the caller.
 """
 
 from __future__ import annotations
 
-import json
+import marshal
 import sys
+import zlib
 from typing import TYPE_CHECKING, NamedTuple
 
 from nab_provider.records import (
@@ -49,7 +53,13 @@ if TYPE_CHECKING:
 
     from .cache import CachePolicy
 
-__all__ = ["ParsedListing", "corruption_reason", "decode", "encode"]
+__all__ = [
+    "INTERPRETER_TAG",
+    "ParsedListing",
+    "corruption_reason",
+    "decode",
+    "encode",
+]
 
 # Record version, redundant with the bucket suffix but guards against a stale
 # blob surfacing under the current bucket. Bump it when the header or row shape
@@ -58,10 +68,34 @@ __all__ = ["ParsedListing", "corruption_reason", "decode", "encode"]
 FORMAT_VERSION = 4
 # Serialization variant that wrote the rows, so a future codec switch
 # self-heals rather than misdecodes.
-CODEC = 1
+CODEC = 2
 # Version sort-key scheme the rows carry; 0 == no precomputed keys. A later
 # scheme bumps this and self-heals via a reparse.
 KEY_SCHEME = 0
+
+# Pinned rather than taken from ``marshal.version`` so the wire form is a
+# property of this module and not of the interpreter reading it.
+_MARSHAL_VERSION = 4
+
+# What ``__pycache__`` keys on, and what the cache keys the parsed bucket on.
+# ``cache_tag`` is None on an implementation with no bytecode cache.
+INTERPRETER_TAG = sys.implementation.cache_tag or "unknown"
+
+# The magic every blob opens with, whoever wrote it.
+_MAGIC = b"nab-parsed-listing "
+
+# The preamble a blob this build can read opens with.
+_WIRE_FORM = _MAGIC + f"m{_MARSHAL_VERSION}.{INTERPRETER_TAG} ".encode()
+# The payload's length and CRC32, as two zero-padded 32-bit hex fields.
+_CHECK = b"%08x %08x\n"
+_HEX_LEN = 8
+_LEN_AT = len(_WIRE_FORM)
+_CRC_AT = _LEN_AT + _HEX_LEN + 1
+_PAYLOAD_AT = _CRC_AT + _HEX_LEN + 1
+
+# Tells "this blob carries no document" apart from a document that is itself
+# ``None``, which no encode writes but a hand-written blob could.
+_UNREADABLE = object()
 
 _TOP_LEN = 2
 _HEADER_LEN = 5
@@ -96,16 +130,22 @@ def _hashes_cell(record: WheelFile | SdistFile) -> object:
     """Return the row cell for ``hashes``: the raw table, or the parsed pairs.
 
     A record built from the index's own table writes that table, so encoding a
-    fresh listing does not force the parse it deferred.
+    fresh listing does not force the parse it deferred. The parsed pairs go out
+    as lists, the one shape the row checks accept, since ``marshal`` round-trips
+    a tuple as a tuple.
     """
     raw = record.raw_hashes()
-    return record.hashes if raw is None else raw
+    if raw is not None:
+        return raw
+    return [list(pair) for pair in record.hashes]
 
 
 def _sidecar_cell(wheel: WheelFile) -> object:
     """Return the row cell for ``metadata_hash``, raw table or parsed pair."""
     raw = wheel.raw_sidecar()
-    return wheel.metadata_hash if raw is None else raw
+    if raw is not None:
+        return raw
+    return None if wheel.metadata_hash is None else list(wheel.metadata_hash)
 
 
 def encode(
@@ -154,25 +194,21 @@ def encode(
             )
     header = [*_BUILD_ID, body_digest, sorted(zip_sdists)]
 
-    # Escape non-ASCII: a field kept verbatim from the listing, such as
-    # ``requires_python``, can hold a lone surrogate with no UTF-8 form.
-    return json.dumps([header, rows], separators=(",", ":")).encode()
+    return _frame(marshal.dumps([header, rows], _MARSHAL_VERSION))
 
 
 def decode(blob: bytes, policy: CachePolicy) -> ParsedListing | None:
     """Decode a cache blob back to a parsed listing, or ``None`` to force a miss.
 
     Returns ``None`` (treat as a cache miss and rebuild from the raw body) when
-    the blob does not decode, is the wrong shape, was written by a different
-    build (``format`` / ``codec`` / ``key_scheme``), or is not bound to
-    ``policy``'s body (``body_digest``).  Otherwise rehydrates the records,
-    re-interning ``requires_python`` and hash-algorithm names so string identity
-    matches a fresh parse.
+    the preamble names another interpreter, the payload fails its checksum or
+    does not unmarshal, the document is the wrong shape, the header names a
+    different build (``format`` / ``codec`` / ``key_scheme``), or the blob is
+    not bound to ``policy``'s body (``body_digest``). Otherwise rehydrates the
+    records, re-interning ``requires_python`` and hash-algorithm names so string
+    identity matches a fresh parse.
     """
-    try:
-        loaded = json.loads(blob)
-    except ValueError:
-        return None
+    loaded = _payload(blob)
     if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
         return None
     header, rows = loaded
@@ -195,17 +231,29 @@ def corruption_reason(blob: bytes) -> str | None:
 
     Distinguishes genuine corruption (garbage or truncated bytes, or a
     same-build blob whose rows are the wrong shape) from a benign miss, where
-    the header names a different build or binds a different body. The read path
-    warns only on the former. Every check past the build cells runs only once
-    the header names this exact build, since a foreign build may have written a
-    shape this one never did; checking earlier would misreport version skew as
-    corruption. This is a second pass used only to gate that warning;
-    :func:`decode` returns ``None`` for every miss reason alike.
+    the preamble names another interpreter, the header names another build, or
+    the blob binds a different body. The read path warns only on the former.
+
+    Every check past the build cells runs only once the header names this exact
+    build, since a foreign build may have written a shape this one never did;
+    checking earlier would misreport version skew as corruption. This is a
+    second pass used only to gate that warning; :func:`decode` returns ``None``
+    for every miss reason alike.
     """
-    try:
-        loaded = json.loads(blob)
-    except ValueError:
-        return "not valid JSON"
+    if not blob.startswith(_WIRE_FORM):
+        return None if blob.startswith(_MAGIC) else "not this codec's wire form"
+    loaded = _payload(blob)
+    if loaded is _UNREADABLE:
+        return "unreadable payload"
+    return _document_fault(loaded)
+
+
+def _document_fault(loaded: object) -> str | None:
+    """Return the fault in the decoded document ``loaded``, else ``None``.
+
+    Reached only once the preamble names this build, so all that is left to
+    judge is the document's own shape.
+    """
     if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
         return "unexpected top-level shape"
     header, rows = loaded
@@ -218,6 +266,40 @@ def corruption_reason(blob: bytes) -> str | None:
     except (ValueError, TypeError):
         return "unexpected row shape"
     return None
+
+
+def _frame(payload: bytes) -> bytes:
+    """Prefix ``payload`` with the wire form it is in, its length and its CRC32."""
+    return _WIRE_FORM + _CHECK % (len(payload), zlib.crc32(payload)) + payload
+
+
+def _payload(blob: bytes) -> object:
+    """Return the document ``blob`` carries, or ``_UNREADABLE``.
+
+    ``marshal.loads`` sizes an allocation from a length prefix it reads out of
+    the buffer it is handed, so a payload whose own length and CRC32 do not
+    match the preamble never reaches it.
+    """
+    if not blob.startswith(_WIRE_FORM):
+        return _UNREADABLE
+    payload = memoryview(blob)[_PAYLOAD_AT:]
+    if not _checksum_holds(blob, payload):
+        return _UNREADABLE
+    try:
+        return marshal.loads(payload)  # noqa: S302
+    # marshal's failure modes on a payload it rejects are not a documented set.
+    except Exception:  # noqa: BLE001
+        return _UNREADABLE
+
+
+def _checksum_holds(blob: bytes, payload: memoryview) -> bool:
+    """Whether the preamble's length and CRC32 match the payload behind it."""
+    try:
+        length = int(blob[_LEN_AT : _LEN_AT + _HEX_LEN], 16)
+        crc = int(blob[_CRC_AT : _CRC_AT + _HEX_LEN], 16)
+    except ValueError:
+        return False
+    return len(payload) == length and zlib.crc32(payload) == crc
 
 
 def _names_this_build(header: object) -> bool:
@@ -353,8 +435,8 @@ def _decode_sdist(row: Sequence[object]) -> SdistFile:
     )
 
 
-# JSON hands back only its own types, so an exact type check is enough to keep a
-# hand-written or corrupt blob from reaching a record's fields.
+# An exact type check keeps a hand-written or corrupt blob from reaching a
+# record's fields.
 def _text(value: object) -> str:
     if type(value) is not str:
         raise _BadRowError

@@ -11,7 +11,7 @@ Layout under ``root``:
     simple-v2/<index>[-<serialization>]/<package>.policy  <- {fetched_at, max_age,
                                                               etag, page_url,
                                                               body_digest}
-    simple-parsed-v0/<index>[-<serialization>]/<package>.parsed  <- parsed blob
+    simple-parsed-v1/<index>[-<serialization>]/<interpreter>/<package>.parsed  <- blob
     simple-neg-v0/<index>[-<serialization>]/<package>.neg <- {fetched_at, max_age, etag}
     metadata-v1/<index>/<package>/<url digest>.metadata
     sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Protocol
 from nab_provider.serialization import SimpleSerialization
 
 from .atomic import atomic_write
+from .parsed_listing import INTERPRETER_TAG
 from .parsed_listing import corruption_reason as _parsed_corruption
 
 if TYPE_CHECKING:
@@ -72,7 +73,7 @@ __all__ = [
 
 
 CACHE_VERSION_SIMPLE = "v2"
-CACHE_VERSION_SIMPLE_PARSED = "v0"
+CACHE_VERSION_SIMPLE_PARSED = "v1"
 CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
 CACHE_VERSION_SDIST = "v1"
@@ -81,6 +82,19 @@ CACHE_VERSION_ARCHIVE = "v1"
 
 # Buckets of nab-written records. simple-neg-* is covered by the simple- prefix.
 ENTRY_BUCKET_PREFIXES = ("simple-", "metadata-", "sdist-")
+
+# The record buckets this build writes. A retired version keeps its prefix, so
+# nab cache clear still reclaims it, but nothing parses records written in a
+# shape this build never wrote.
+_CURRENT_ENTRY_BUCKETS = frozenset(
+    {
+        f"simple-{CACHE_VERSION_SIMPLE}",
+        f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}",
+        f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}",
+        f"metadata-{CACHE_VERSION_METADATA}",
+        f"sdist-{CACHE_VERSION_SDIST}",
+    }
+)
 
 # Buckets a resolve fills with upstream source trees. nab owns the directories,
 # not the files inside them.
@@ -133,14 +147,15 @@ class CachePolicy:
         return current - self.fetched_at < self.max_age
 
 
-def _is_entry_bucket(name: str) -> bool:
-    """Whether ``name`` is a bucket of records nab writes and parses."""
-    return any(name.startswith(prefix) for prefix in ENTRY_BUCKET_PREFIXES)
-
-
 def is_recognized_bucket(name: str) -> bool:
-    """Whether ``name`` is a bucket directory nab owns under a cache root."""
-    return _is_entry_bucket(name) or name in _RECOGNIZED_SOURCE_BUCKETS
+    """Whether ``name`` is a bucket directory nab owns under a cache root.
+
+    Retired bucket versions are included, so ``nab cache clear`` reclaims one.
+    """
+    return (
+        any(name.startswith(prefix) for prefix in ENTRY_BUCKET_PREFIXES)
+        or name in _RECOGNIZED_SOURCE_BUCKETS
+    )
 
 
 def _index_dirname(index_url: str) -> str:
@@ -225,8 +240,14 @@ class OnDiskCache:
             else f"{self._index}-{serialization.value}"
         )
         self._simple_dir = root / f"simple-{CACHE_VERSION_SIMPLE}" / simple_index
+        # Keyed by interpreter as well as by index: the blob's wire form is
+        # not portable across Python versions, so two interpreters sharing a
+        # root would otherwise overwrite each other's entry on every run.
         self._parsed_dir = (
-            root / f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}" / simple_index
+            root
+            / f"simple-parsed-{CACHE_VERSION_SIMPLE_PARSED}"
+            / simple_index
+            / INTERPRETER_TAG
         )
         self._neg_dir = root / f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}" / simple_index
         self._metadata_dir = root / f"metadata-{CACHE_VERSION_METADATA}" / self._index
@@ -486,13 +507,16 @@ class OnDiskCache:
         ]
 
     def _entry_bucket_dirs(self) -> list[Path]:
-        """Return the bucket entries holding records nab wrote.
+        """Return the bucket entries holding records this build wrote.
 
-        The source buckets are excluded: they hold upstream files, not
-        nab records.
+        The source buckets hold upstream files rather than nab records, and a
+        retired bucket version holds a record shape this build cannot judge.
+        Neither is walked.
         """
         return [
-            child for child in self._root_children() if _is_entry_bucket(child.name)
+            child
+            for child in self._root_children()
+            if child.name in _CURRENT_ENTRY_BUCKETS
         ]
 
     def iter_cache_entries(self) -> Iterator[Path]:
