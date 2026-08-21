@@ -88,14 +88,16 @@ DecisionStore = _markersets.Memo
 """Scratch that several decisions can share.
 
 Each decision partitions the axes its atoms sit on and reads those atoms on
-the points of the resulting cells. Two decisions over the same universe
-mostly repeat that, so passing one store to both keeps the work; passing
-none is correct and starts each cold.
+the points of the resulting cells. A run over related sets also asks the same
+question of the same tree shape more than once. Two decisions over the same
+universe mostly repeat all of that, so passing one store to both keeps the
+work; passing none is correct and starts each cold.
 
-Answers do not depend on it: the partitions and truths it holds are
-functions of their keys alone. It grows with the atoms it has read, and
-holds them, so give one to the decisions of a single piece of work and drop
-it after. Not safe to share across threads.
+Answers do not depend on it: the emptiness verdicts, partitions and truths it
+holds are functions of their keys alone. It grows with the atoms it has read
+and the tree shapes it has decided, and holds both, so give one to the
+decisions of a single piece of work and drop it after. Not safe to share
+across threads.
 """
 
 

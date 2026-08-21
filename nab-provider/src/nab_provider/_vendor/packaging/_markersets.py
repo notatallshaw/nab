@@ -310,50 +310,89 @@ def _holds_value(atom: Atom, text: str) -> bool:
 
 # --------------------------------------------------------------------- the op-tree
 
+# Every node carries a structural ``key()``: two trees with the same key have the same
+# shape and the same atoms, so a decision recorded under one tree's key can be served
+# for the other. A node mints its key on first use and keeps it.
+
 
 class BoolConst:
     """A first-class TRUE/FALSE, produced eagerly wherever a combination collapses."""
 
-    __slots__ = ("value",)
+    __slots__ = ("_key", "value")
 
     def __init__(self, value: bool) -> None:
         self.value = value
+        self._key: tuple | None = None
+
+    def key(self) -> tuple:
+        """Return this node's structural key."""
+        if self._key is None:
+            self._key = ("c", self.value)
+        return self._key
 
 
 class AtomLeaf:
     """A single atom."""
 
-    __slots__ = ("atom",)
+    __slots__ = ("_key", "atom")
 
     def __init__(self, atom: Atom) -> None:
         self.atom = atom
+        self._key: tuple | None = None
+
+    def key(self) -> tuple:
+        """Return this node's structural key."""
+        if self._key is None:
+            self._key = ("a", self.atom)
+        return self._key
 
 
 class AndNode:
     """A conjunction of two or more non-constant formulas."""
 
-    __slots__ = ("children",)
+    __slots__ = ("_key", "children")
 
     def __init__(self, children: tuple[Formula, ...]) -> None:
         self.children = children
+        self._key: tuple | None = None
+
+    def key(self) -> tuple:
+        """Return this node's structural key."""
+        if self._key is None:
+            self._key = ("&", tuple(child.key() for child in self.children))
+        return self._key
 
 
 class OrNode:
     """A disjunction of two or more non-constant formulas."""
 
-    __slots__ = ("children",)
+    __slots__ = ("_key", "children")
 
     def __init__(self, children: tuple[Formula, ...]) -> None:
         self.children = children
+        self._key: tuple | None = None
+
+    def key(self) -> tuple:
+        """Return this node's structural key."""
+        if self._key is None:
+            self._key = ("|", tuple(child.key() for child in self.children))
+        return self._key
 
 
 class NotNode:
     """A structural complement, negated per cell at decision time."""
 
-    __slots__ = ("child",)
+    __slots__ = ("_key", "child")
 
     def __init__(self, child: Formula) -> None:
         self.child = child
+        self._key: tuple | None = None
+
+    def key(self) -> tuple:
+        """Return this node's structural key."""
+        if self._key is None:
+            self._key = ("n", self.child.key())
+        return self._key
 
 
 Formula = BoolConst | AtomLeaf | AndNode | OrNode | NotNode
@@ -640,18 +679,27 @@ class Cell(NamedTuple):
     vector: tuple[bool, ...]
 
 
-class Memo:
-    """The partitions and atom truths a decision re-reads.
+class _Decision(NamedTuple):
+    """An emptiness verdict and the cell work charged for reaching it."""
 
-    A decision re-partitions one axis for overlapping atom sets and re-reads one
-    atom on one point across those partitions. Both are memoised here. One
+    empty: bool
+    units: int
+
+
+class Memo:
+    """The emptiness verdicts, partitions and atom truths a decision re-reads.
+
+    A run over related trees decides the same tree shape more than once. Within one
+    decision, one axis is re-partitioned for overlapping atom sets and one atom
+    re-read on one point across those partitions. All three are memoised here. One
     decision makes its own unless the caller passes one to share; see
     :class:`~packaging.markersets.DecisionStore` for the sharing contract.
     """
 
-    __slots__ = ("partitions", "truths")
+    __slots__ = ("decisions", "partitions", "truths")
 
     def __init__(self) -> None:
+        self.decisions: dict[tuple, _Decision] = {}
         self.partitions: dict[tuple, list[Cell]] = {}
         self.truths: dict[tuple[Atom, str], bool] = {}
 
@@ -1193,52 +1241,86 @@ def _eval_cell(node: Formula, truth: Mapping[Atom, bool]) -> bool:
     return any(_eval_cell(child, truth) for child in node.children)
 
 
-def _satisfying_cells(
-    node: Formula, max_cells: int, store: Memo
-) -> Iterator[dict[tuple[str, ...], Cell]]:
+class _CellSpace(NamedTuple):
+    """The axes a tree is decided over, their atoms and cells, and the work charged."""
+
+    axes: list[tuple[str, ...]]
+    atomlists: list[list[Atom]]
+    partitions: list[list[Cell]]
+    units: int
+
+
+def _cell_space(node: Formula, max_cells: int, store: Memo) -> _CellSpace:
+    """Partition each axis a tree mentions and charge the enumeration it implies.
+
+    The charged units come back with the cells, so a repeat of the same decision can
+    charge them again without enumerating.
+    """
     atoms = collect_atoms(node)
     grouped = _atoms_by_axis(atoms)
-    if not grouped:
-        if _eval_cell(node, {}):
-            yield {}
-        return
-
     axes = list(grouped)
     atomlists = [grouped[axis] for axis in axes]
     partitions = [
-        partition_axis(axis, atoms, max_cells, store)
-        for axis, atoms in zip(axes, atomlists, strict=True)
+        partition_axis(axis, axis_atoms, max_cells, store)
+        for axis, axis_atoms in zip(axes, atomlists, strict=True)
     ]
+
+    if not axes:
+        return _CellSpace(axes, atomlists, partitions, 0)
 
     # The enumeration walks the whole op-tree once per cell, so guard the cell
     # product times the leaf-occurrence count: a marker that repeats atoms inflates
     # the walk without inflating the distinct-atom count or the cell product.
-    leaf_occurrences = len(atoms)
-    charge_work(
-        guarded_product_size(
-            (*(len(part) for part in partitions), leaf_occurrences), max_cells
-        )
+    units = guarded_product_size(
+        (*(len(part) for part in partitions), len(atoms)), max_cells
     )
+    charge_work(units)
+    return _CellSpace(axes, atomlists, partitions, units)
 
-    for combo in product(*partitions):
+
+def _enumerate_cells(
+    node: Formula, space: _CellSpace
+) -> Iterator[dict[tuple[str, ...], Cell]]:
+    """Yield the cells of a partitioned space on which the tree holds."""
+    for combo in product(*space.partitions):
         truth: dict[Atom, bool] = {
             atom: value
-            for atoms, cell in zip(atomlists, combo, strict=True)
+            for atoms, cell in zip(space.atomlists, combo, strict=True)
             for atom, value in zip(atoms, cell.vector, strict=True)
         }
         if _eval_cell(node, truth):
-            yield dict(zip(axes, combo, strict=True))
+            yield dict(zip(space.axes, combo, strict=True))
+
+
+def _decide_empty(node: Formula, max_cells: int, store: Memo) -> _Decision:
+    """Decide emptiness, returning the verdict with the work charged for it."""
+    space = _cell_space(node, max_cells, store)
+    return _Decision(
+        next(_enumerate_cells(node, space), _MISSING) is _MISSING, space.units
+    )
 
 
 def is_empty(node: Formula, max_cells: int, store: Memo | None = None) -> bool:
     """Whether a tree denotes the empty set.
 
-    ``store`` is the caller's partition memo when this decision is one of a run
-    over related trees; a lone decision partitions each axis once either way and
-    passes nothing.
+    ``store`` is the caller's memo when this decision is one of a run over related
+    trees, and a verdict it already holds for this tree shape is reused. A lone
+    decision has no repeat to serve and partitions each axis once either way.
+
+    A reused verdict is still charged the work its enumeration cost, so a shared
+    store saves time and not budget.
     """
-    cells = _satisfying_cells(node, max_cells, Memo() if store is None else store)
-    return next(cells, _MISSING) is _MISSING
+    if store is None:
+        return _decide_empty(node, max_cells, Memo()).empty
+
+    key = (node.key(), max_cells)
+    decided = store.decisions.get(key)
+    if decided is None:
+        decided = store.decisions[key] = _decide_empty(node, max_cells, store)
+    else:
+        charge_work(decided.units)
+
+    return decided.empty
 
 
 def witness(
@@ -1254,7 +1336,8 @@ def witness(
     ``python_version`` and ``python_full_version`` share one axis, so those
     constraints can sit on different variables.
     """
-    for cell in _satisfying_cells(node, max_cells, Memo() if store is None else store):
+    memo = Memo() if store is None else store
+    for cell in _enumerate_cells(node, _cell_space(node, max_cells, memo)):
         env = _materialize(cell)
         if evaluate_tree(node, env):
             return env
