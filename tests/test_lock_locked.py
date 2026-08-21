@@ -538,6 +538,31 @@ def test_satisfiable_and_reproducible_falls_through_up_to_date(
     assert out.read_bytes() == before
 
 
+def test_the_base_group_named_in_default_groups_falls_through(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A declared default-groups keeps the name, so the tier must not fire."""
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0.1"\ndependencies = ["foo"]\n'
+        "[dependency-groups]\n"
+        'dev = ["bb"]\n'
+        "[tool.nab]\n"
+        'base-group = "base"\n'
+        'default-groups = ["dev", "base"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0", "bb": "1.0"}))
+    capsys.readouterr()
+    assert tomli.loads(out.read_text())["default-groups"] == ["dev", "base"]
+
+    mock = _locked_mock(_result({"foo": "1.0", "bb": "1.0"}))
+    _run_locked(pyproject, out, mock)
+
+    assert f"Lockfile {out} is up to date." in capsys.readouterr().err
+    mock.assert_called_once()
+
+
 def test_non_sticky_stale_falls_through_out_of_date(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

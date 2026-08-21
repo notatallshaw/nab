@@ -104,8 +104,10 @@ def check_envelope(
 
     ``base_group`` and ``build_group`` are the names this run would give
     the project's own dependencies and its build requirements. No run
-    selects either, so both are checked before the arrays are compared and
-    then dropped from them: a reason names only groups the caller asked for.
+    selects either, so both are checked on their own and then dropped
+    before the arrays are compared: a reason names only groups the caller
+    asked for. ``base_group`` leaves ``default-groups`` only when this run
+    declares none, since the writer appends it only then.
     """
     requires_python_result = _check_requires_python(
         committed.requires_python, requires_python
@@ -130,7 +132,7 @@ def check_envelope(
         ),
         (
             "default-groups",
-            _without(committed.default_groups, base_group),
+            _without(committed.default_groups, None if default_groups else base_group),
             default_groups,
         ),
     ):
