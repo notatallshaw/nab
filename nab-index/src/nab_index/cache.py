@@ -67,6 +67,7 @@ __all__ = [
     "OfflineError",
     "OnDiskCache",
     "is_recognized_bucket",
+    "is_sendable_etag",
 ]
 
 
@@ -108,8 +109,8 @@ class CachePolicy:
     ``fetched_at`` is the start of the freshness window: when nab received the
     response, less any Age a relaying shared cache reported.
 
-    ``etag`` is the entity tag to revalidate with. A non-ASCII tag is dropped,
-    since nab cannot send it back.
+    ``etag`` is the entity tag to revalidate with. A tag nab cannot send back
+    in a request header is dropped.
 
     ``page_url`` is the URL the stored body was retrieved from, the base its
     relative entries resolve against. It is ``None`` for the negative
@@ -610,13 +611,20 @@ def _policy_page_url(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _policy_etag(value: object) -> str | None:
-    """Entity tag from a policy, or None when it cannot be sent back.
+def is_sendable_etag(value: str) -> bool:
+    """Whether an entity tag can go back out in a request header.
 
-    RFC 9110 8.8.3 admits obs-text in an entity-tag, and httpx raises on a
-    non-ASCII request header value.
+    Only printable ASCII passes. RFC 9110 8.8.3 admits obs-text in an
+    entity-tag, and httpx raises on a non-ASCII request header value; a tag
+    read out of a line-folded field carries the fold's CR and LF, which
+    RFC 9112 5.2 forbids a sender to generate.
     """
-    return value if isinstance(value, str) and value.isascii() else None
+    return value.isascii() and value.isprintable()
+
+
+def _policy_etag(value: object) -> str | None:
+    """Entity tag from a policy, or None when it cannot be sent back."""
+    return value if isinstance(value, str) and is_sendable_etag(value) else None
 
 
 def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:

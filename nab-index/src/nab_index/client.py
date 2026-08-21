@@ -253,8 +253,13 @@ _HTTP_NOT_FOUND = 404
 DEFAULT_INDEX = "https://pypi.org/simple/"
 
 
+# RFC 9112 5.2: a receiver replaces a line fold with a space before reading the
+# field value. h11 does it for httpx; http.client, which urllib3 uses, does not.
+_OBS_FOLD = re.compile(r"[\r\n]+[ \t]+")
+
+
 def _header(response: HttpResponse, key: str) -> str | None:
-    """Case-insensitive header lookup.
+    """Case-insensitive header lookup, returning an unfolded field value.
 
     The :class:`HttpResponse` Protocol only promises a plain
     :class:`Mapping`. Both real transports (httpx, urllib3) return
@@ -265,7 +270,7 @@ def _header(response: HttpResponse, key: str) -> str | None:
     target = key.lower()
     for name, value in headers.items():
         if name.lower() == target:
-            return value
+            return _OBS_FOLD.sub(" ", value)
     return None
 
 
