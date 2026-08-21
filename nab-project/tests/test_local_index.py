@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, TypeVar
 
 import pytest
 
-from nab_index.client import SdistFile, WheelFile
+from nab_index.client import SdistFile, WheelFile, zip_sdist_version
 from nab_index.local_index import (
     LocalIndexClient,
     LocalIndexError,
@@ -23,7 +23,6 @@ from nab_index.local_index import (
     NonLocalArtifactError,
     UnreadableLocalIndexError,
     UnsupportedWheelError,
-    _is_zip_sdist,
     _make_record,
     _read_sdist_requires_python,
     parse_file_url,
@@ -452,14 +451,14 @@ class TestFlatWheelhouse:
         assert run(client.get_files("foo")) == []
         assert not client.served_unreadable_only("foo")
 
-    def test_zip_sdist_check_rejects_oversized_version(self) -> None:
-        """An oversized version answers False instead of raising.
+    def test_zip_sdist_version_rejects_an_oversized_version(self) -> None:
+        """An oversized version answers None instead of raising.
 
         Called directly because the filename is longer than any filesystem
         allows, so it cannot arrive from a directory scan.
         """
         oversized = "1" * (sys.get_int_max_str_digits() + 1)
-        assert not _is_zip_sdist(f"foo-{oversized}.zip", "foo")
+        assert zip_sdist_version(f"foo-{oversized}.zip", "foo") is None
 
     def test_zip_beside_readable_wheel_is_not_unreadable_only(
         self, tmp_path: Path
@@ -469,6 +468,26 @@ class TestFlatWheelhouse:
         client = LocalIndexClient(tmp_path.as_uri())
         assert len(run(client.get_files("foo"))) == 1
         assert not client.served_unreadable_only("foo")
+
+    def test_zip_beside_readable_wheel_names_its_release(self, tmp_path: Path) -> None:
+        """The listing is not empty, so only the version set records the ``.zip``."""
+        (tmp_path / "foo-1.0.zip").write_bytes(b"")
+        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        run(client.get_files("foo"))
+        assert client.served_zip_sdists("foo") == frozenset({"1.0"})
+
+    def test_zip_of_another_package_names_no_release(self, tmp_path: Path) -> None:
+        (tmp_path / "bar-1.0.zip").write_bytes(b"")
+        (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        run(client.get_files("foo"))
+        assert client.served_zip_sdists("foo") == frozenset()
+
+    def test_unlisted_package_names_no_release(self, tmp_path: Path) -> None:
+        """A package the client was never asked for has nothing recorded."""
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert client.served_zip_sdists("foo") == frozenset()
 
     def test_filters_other_packages(self, tmp_path: Path) -> None:
         (tmp_path / "foo-1.0-py3-none-any.whl").write_bytes(b"")
@@ -886,6 +905,31 @@ class TestPep503Directory:
         client = LocalIndexClient(tmp_path.as_uri())
         assert run(client.get_files("foo")) == []
         assert client.served_unreadable_only("foo")
+
+    def test_page_zip_beside_a_wheel_names_its_release(self, tmp_path: Path) -> None:
+        """A page keeping one readable file still records the ``.zip``'s release."""
+        body = (
+            '<a href="foo-1.0.zip">foo-1.0</a>'
+            '<a href="foo-2.0-py3-none-any.whl">foo-2.0</a>'
+        )
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-2.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert len(run(client.get_files("foo"))) == 1
+        assert not client.served_unreadable_only("foo")
+        assert client.served_zip_sdists("foo") == frozenset({"1.0"})
+
+    def test_page_installer_names_no_release(self, tmp_path: Path) -> None:
+        """An ``.exe`` is unreadable but is not an sdist, so it names nothing."""
+        body = (
+            '<a href="foo-1.0.win32.exe">foo-1.0</a>'
+            '<a href="foo-2.0-py3-none-any.whl">foo-2.0</a>'
+        )
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-2.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert len(run(client.get_files("foo"))) == 1
+        assert client.served_zip_sdists("foo") == frozenset()
 
     def test_page_of_other_names_is_not_an_unreadable_listing(
         self, tmp_path: Path

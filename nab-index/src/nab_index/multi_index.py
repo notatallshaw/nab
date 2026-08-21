@@ -66,6 +66,10 @@ class IndexClient(Protocol):
         """Whether a listing for ``package`` held files and yanked every one."""
         ...
 
+    def served_zip_sdists(self, package: str) -> frozenset[str]:
+        """Versions ``package`` was served as a ``.zip`` sdist."""
+        ...
+
     async def get_metadata_text(
         self,
         package: str,
@@ -252,6 +256,19 @@ class MultiIndexClient:
         """
         return any(
             client.served_all_yanked(package) for client in self._clients.values()
+        )
+
+    def served_zip_sdists(self, package: str) -> frozenset[str]:
+        """Versions any walked index served as a ``.zip`` sdist.
+
+        Asked of every client for the same reason
+        :meth:`served_unreadable_only` is: the routed index need not be the
+        one that served the ``.zip``.
+        """
+        return frozenset(
+            version
+            for client in self._clients.values()
+            for version in client.served_zip_sdists(package)
         )
 
     async def get_metadata_text(

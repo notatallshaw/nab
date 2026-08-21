@@ -3928,6 +3928,43 @@ class TestAugmentResolutionError:
             in diagnostics
         )
 
+    def test_zip_sdist_is_not_reported_as_never_published(self, tmp_path: Path) -> None:
+        """The diagnostics name the format, rather than reporting no sdist.
+
+        ``foo`` 1.0 publishes a sidecar-less wheel beside a ``.zip`` sdist,
+        which the listing parse drops.  Reading the report as no sdist would
+        send the user looking for a release that has one.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n',
+            encoding="utf-8",
+        )
+
+        wheel = WheelFile(
+            filename="foo-1.0-py3-none-any.whl",
+            url="https://example.com/foo-1.0-py3-none-any.whl",
+            version="1.0",
+            requires_python=None,
+            has_metadata=False,
+            upload_time=None,
+        )
+        coordinator = make_coordinator()
+        coordinator.index.store_listing("foo", [wheel], zip_sdists=frozenset({"1.0"}))
+
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        diagnostics = _diagnostics(info.value)
+        assert "foo: every version in range was rejected on its metadata" in diagnostics
+        assert (
+            "No metadata for foo==1.0: no PEP 658 metadata and the sdist is a"
+            " .zip, a format nab drops" in diagnostics
+        )
+
     def test_a_resolve_that_survives_the_ladder_never_walks_the_listing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

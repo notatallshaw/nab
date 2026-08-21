@@ -124,6 +124,9 @@ class FakeClient:
     def served_all_yanked(self, package: str) -> bool:
         return False
 
+    def served_zip_sdists(self, package: str) -> frozenset[str]:
+        return frozenset()
+
     async def get_metadata_text(
         self,
         package: str,

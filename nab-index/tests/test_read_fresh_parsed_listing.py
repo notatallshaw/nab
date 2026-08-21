@@ -136,6 +136,12 @@ def _warm_bound(
     return files, digest
 
 
+def _read_files(cache: OnDiskCache, *, offline: bool) -> list | None:
+    """The records the helper serves for ``pkg``, or ``None`` on a decline."""
+    parsed = read_fresh_parsed_listing(cache, "pkg", offline=offline)
+    return None if parsed is None else parsed.files
+
+
 class TestParsedBlobSize:
     def test_size_matches_written_blob(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
@@ -152,17 +158,17 @@ class TestReadFreshParsedListing:
     def test_fresh_hit_returns_records(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache)
-        assert read_fresh_parsed_listing(cache, "pkg", offline=False) == files
+        assert _read_files(cache, offline=False) == files
 
     def test_fresh_offline_returns_records(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache)
-        assert read_fresh_parsed_listing(cache, "pkg", offline=True) == files
+        assert _read_files(cache, offline=True) == files
 
     def test_stale_offline_returns_records(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache, fresh=False)
-        assert read_fresh_parsed_listing(cache, "pkg", offline=True) == files
+        assert _read_files(cache, offline=True) == files
 
     def test_absent_policy_returns_none(self, tmp_path: Path) -> None:
         assert read_fresh_parsed_listing(_cache(tmp_path), "pkg", offline=False) is None
@@ -265,7 +271,7 @@ class TestIdenticalByConstruction:
         client = CachedAsyncSimpleClient(_FakeTransport([]), cache, _INDEX)
 
         served = _run(client.get_files("pkg"))
-        helper = read_fresh_parsed_listing(cache, "pkg", offline=False)
+        helper = _read_files(cache, offline=False)
 
         assert helper == served == files
 

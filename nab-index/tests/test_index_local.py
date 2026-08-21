@@ -68,7 +68,7 @@ def test_scan_directory_without_index_html_returns_empty(tmp_path: Path) -> None
     # exercised directly here.
     package_dir = tmp_path / "foo"
     package_dir.mkdir()
-    assert _scan_pep503_directory(package_dir, "foo") == ([], False, False)
+    assert _scan_pep503_directory(package_dir, "foo") == ([], False, False, frozenset())
 
 
 def _anchor(filename: str, *, yanked: bool = False) -> str:
@@ -106,9 +106,9 @@ def test_the_all_yanked_flag_counts_the_yanked_links(
     package_dir = _make_index(tmp_path, body)
     (package_dir / "foo-3.0-py3-none-any.whl").write_bytes(b"")
 
-    _files, _unreadable, all_yanked = _scan_pep503_directory(package_dir, "foo")
+    scan = _scan_pep503_directory(package_dir, "foo")
 
-    assert all_yanked is expected
+    assert scan.all_yanked is expected
 
 
 def test_a_page_of_yanked_misnamed_links_reads_as_yanked(tmp_path: Path) -> None:
@@ -119,11 +119,11 @@ def test_a_page_of_yanked_misnamed_links_reads_as_yanked(tmp_path: Path) -> None
     """
     package_dir = _make_index(tmp_path, _anchor("foo-1.0.zip", yanked=True))
 
-    files, unreadable, all_yanked = _scan_pep503_directory(package_dir, "foo")
+    scan = _scan_pep503_directory(package_dir, "foo")
 
-    assert files == []
-    assert not unreadable
-    assert all_yanked
+    assert scan.files == []
+    assert not scan.unreadable
+    assert scan.all_yanked
 
 
 def test_get_sdist_archive_returns_file_bytes(tmp_path: Path) -> None:
@@ -379,10 +379,10 @@ def test_a_declining_listing_is_settled_once(
     package_dir = _make_index(tmp_path, body)
 
     monkeypatch.setattr(local_index, "_merged_href", _record)
-    files, _, _ = _scan_pep503_directory(package_dir, "foo")
+    scan = _scan_pep503_directory(package_dir, "foo")
 
     assert len(offered) == 2
-    assert [file.url for file in files] == urls
+    assert [file.url for file in scan.files] == urls
 
 
 def test_a_plain_listing_never_reaches_urljoin(
@@ -411,7 +411,7 @@ def test_a_plain_listing_never_reaches_urljoin(
         wheel.write_bytes(b"")
 
     monkeypatch.setattr(local_index, "urljoin", _refuse)
-    files, unreadable, _ = _scan_pep503_directory(package_dir, "foo")
+    scan = _scan_pep503_directory(package_dir, "foo")
 
-    assert not unreadable
-    assert [file.url for file in files] == [wheel.as_uri() for wheel in wheels]
+    assert not scan.unreadable
+    assert [file.url for file in scan.files] == [wheel.as_uri() for wheel in wheels]
