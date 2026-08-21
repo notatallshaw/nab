@@ -53,7 +53,7 @@ from nab.cli import (
     console_entry,
     main,
 )
-from nab.output import Printer, Verbosity
+from nab.output import Printer, ProgressReporter, Verbosity
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError
@@ -5523,6 +5523,155 @@ class TestMainWiresOutputOptions:
         monkeypatch.setenv("NAB_NO_PROGRESS", "1")
         printer, _stderr = self._run_lock(tmp_path, monkeypatch)
         assert printer.progress_allowed is False
+
+
+class TestProgressReachesTheResolve:
+    """``nab lock`` and ``nab download`` hand the resolve a progress reporter.
+
+    test_output.py covers the reporter and the flags that decide whether it
+    draws; nab-project's TestProgressReporting covers the sink
+    ``resolve_for_targets`` threads to the coordinator. These run the real
+    entry point against a terminal stderr, so the hand-off between the two is
+    pinned as well.
+    """
+
+    def _run_main(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        argv: list[str],
+        command_patch: AbstractContextManager[object],
+    ) -> tuple[list[ProgressReporter | None], str]:
+        """Run ``main()`` over ``argv`` with stderr a terminal.
+
+        Returns the reporters the resolve was handed, ``None`` for a command
+        that passed none, and everything the run wrote to stderr.
+        """
+        received: list[ProgressReporter | None] = []
+
+        def resolve(
+            *_args: object,
+            progress: ProgressReporter | None = None,
+            **_kwargs: object,
+        ) -> ResolveResult:
+            """Stand in for ``resolve_for_targets``, driving the reporter.
+
+            One fetch is enough: repaints are throttled, so a second would
+            not reach stderr.
+            """
+            received.append(progress)
+            if progress is not None:
+                progress.on_fetch()
+            return _stub_resolve_result(pins={})
+
+        monkeypatch.setattr(sys, "argv", argv)
+        stderr = _TtyStderr()
+        monkeypatch.setattr(sys, "stderr", stderr)
+
+        with (
+            patch("nab.cli.resolve_for_targets", side_effect=resolve),
+            command_patch,
+        ):
+            main()
+
+        return received, stderr.getvalue()
+
+    def test_lock_reporter_draws_the_resolve_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``nab lock`` paints the live resolve line on a terminal stderr."""
+        pyproject = _make_pyproject(tmp_path)
+        received, stderr = self._run_main(
+            monkeypatch,
+            ["nab", "lock", str(pyproject), "--output", str(tmp_path / "pylock.toml")],
+            patch("nab._lock.write_lock"),
+        )
+
+        assert len(received) == 1
+        assert isinstance(received[0], ProgressReporter)
+
+        assert "Resolving... 1 fetched, 0 pinned" in stderr
+
+    def test_download_reporter_draws_the_resolve_line(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``nab download`` paints the same live line while it resolves."""
+        pyproject = _make_pyproject(tmp_path)
+        received, stderr = self._run_main(
+            monkeypatch,
+            ["nab", "download", str(pyproject), "--output", str(tmp_path / "vendor")],
+            patch(
+                "nab._download.download_lock",
+                return_value=MagicMock(written=(), skipped=()),
+            ),
+        )
+
+        assert len(received) == 1
+        assert isinstance(received[0], ProgressReporter)
+
+        assert "Resolving... 1 fetched, 0 pinned" in stderr
+
+    def test_no_progress_keeps_lock_from_drawing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--no-progress`` reaches the reporter ``nab lock`` hands over."""
+        pyproject = _make_pyproject(tmp_path)
+        received, stderr = self._run_main(
+            monkeypatch,
+            [
+                "nab",
+                "--no-progress",
+                "lock",
+                str(pyproject),
+                "--output",
+                str(tmp_path / "pylock.toml"),
+            ],
+            patch("nab._lock.write_lock"),
+        )
+
+        assert isinstance(received[0], ProgressReporter)
+        assert "Resolving..." not in stderr
+
+    def test_no_progress_keeps_download_from_drawing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--no-progress`` reaches the reporter ``nab download`` hands over."""
+        pyproject = _make_pyproject(tmp_path)
+        received, stderr = self._run_main(
+            monkeypatch,
+            [
+                "nab",
+                "--no-progress",
+                "download",
+                str(pyproject),
+                "--output",
+                str(tmp_path / "vendor"),
+            ],
+            patch(
+                "nab._download.download_lock",
+                return_value=MagicMock(written=(), skipped=()),
+            ),
+        )
+
+        assert isinstance(received[0], ProgressReporter)
+        assert "Resolving..." not in stderr
+
+    def test_line_is_wiped_when_the_resolve_ends(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The live line is cleared, not left on the terminal.
+
+        ``--output -`` sends the lock to stdout, so the wipe is the last
+        thing written to stderr.
+        """
+        pyproject = _make_pyproject(tmp_path)
+        _received, stderr = self._run_main(
+            monkeypatch,
+            ["nab", "lock", str(pyproject), "--output", "-"],
+            patch("nab._lock.write_lock", return_value=""),
+        )
+
+        assert "Resolving... 1 fetched, 0 pinned" in stderr
+        assert stderr.endswith("\r\033[K")
 
 
 class TestMakeTransport:
