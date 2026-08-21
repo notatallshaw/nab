@@ -1227,7 +1227,7 @@ class Provider:
         if preferred is None or self.wants_lowest(normalized):
             return None
 
-        all_versions = self.versions_only(normalized, self.fetch_versions(package))
+        version_list = self.fetch_versions(package)
 
         # The proxy's range is built full(), so intersect it with the base's
         # positive range, which carries the pre-release admission granted by
@@ -1239,8 +1239,9 @@ class Provider:
             if base_range is not None:
                 admit_range = version_range & base_range
 
-        in_range = admit_range.filter(all_versions, assume_sorted="descending")
-        if preferred not in in_range:
+        if not self._admits_preference(
+            normalized, version_list, admit_range, preferred
+        ):
             return None
 
         usable = (
@@ -1249,6 +1250,29 @@ class Provider:
             else self._look_ahead_ok(normalized, preferred, check_decisions=True)
         )
         return preferred if usable else None
+
+    def _admits_preference(
+        self,
+        normalized: str,
+        version_list: list[tuple[Version, DistFile]],
+        admit_range: VersionRange,
+        preferred: Version,
+    ) -> bool:
+        """Report whether ``preferred`` is one of the listing's in-range versions.
+
+        A final release is answered by ``contains`` on the range plus a lookup
+        in the listing's picked-dist view.  A pre-release needs the ``filter``
+        walk instead: ``contains`` reads only the configured pre-release policy,
+        while ``filter`` also applies the PEP 440 buffering and the range's
+        opt-in region.
+        """
+        if preferred.is_prerelease:
+            all_versions = self.versions_only(normalized, version_list)
+            in_range = admit_range.filter(all_versions, assume_sorted="descending")
+            return preferred in in_range
+        return preferred in admit_range and preferred in self._wheel_by_version(
+            normalized, version_list
+        )
 
     def has_satisfying_version(
         self, package: str, version_range: RangeProtocol[Version]
