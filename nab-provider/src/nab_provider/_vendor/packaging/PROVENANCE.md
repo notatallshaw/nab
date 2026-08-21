@@ -40,7 +40,9 @@ most one checked-in patch.
     comprehension, which puts the `[[...]]` unwrap under the list branch.
     Upstream's opening `assert isinstance(marker, (list, tuple, str))` is
     dropped, so a value of any other type now returns unchanged instead of
-    tripping the assertion.
+    tripping the assertion. `Marker.__str__` holds its result in a
+    `_serialized` slot, so the `__hash__` and `__eq__` built on it walk the
+    node tree once per instance instead of once per call.
   - `_parser.py`: `process_python_str` returns the body between the token's
     quotes when that body is ASCII and holds no backslash, newline, carriage
     return or NUL, and calls `ast.literal_eval` otherwise. The `QUOTED_STRING`
@@ -51,7 +53,8 @@ most one checked-in patch.
   `from_bounds`/`snap_bounds`/`release_intervals`, the prepared marker
   environment, and the marker-item serialisation. `relation` is not proposed
   yet: most of its win is available from the direct walks alone. The
-  quoted-string slice is not proposed anywhere yet.
+  quoted-string slice is not proposed anywhere yet, and neither is the
+  `Marker.__str__` memo.
 - `tasks/vendor-packaging.sh` fetches `pypa/packaging` at the pin, replaces this
   package with the pristine `src/packaging/` tree plus the repo-root license
   texts, and reapplies the patch. `--check` rebuilds into a temp location and

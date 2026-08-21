@@ -2099,7 +2099,7 @@ index e312a1f..29c32bc 100644
          return hash((self.version, self.inclusive))
  
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/markers.py b/nab-provider/src/nab_provider/_vendor/packaging/markers.py
-index 609099c..fa29c65 100644
+index 609099c..07c7d81 100644
 --- a/nab-provider/src/nab_provider/_vendor/packaging/markers.py
 +++ b/nab-provider/src/nab_provider/_vendor/packaging/markers.py
 @@ -30,6 +30,7 @@ __all__ = [
@@ -2203,7 +2203,31 @@ index 609099c..fa29c65 100644
  class Marker:
      """Represents a parsed dependency marker expression.
  
-@@ -530,29 +572,22 @@ class Marker:
+@@ -398,7 +440,7 @@ class Marker:
+         release.
+     """
+ 
+-    __slots__ = ("_markers",)
++    __slots__ = ("_markers", "_serialized")
+ 
+     def __init__(self, marker: str) -> None:
+         # Note: We create a Marker object without calling this constructor in
+@@ -441,7 +483,13 @@ class Marker:
+         return new
+ 
+     def __str__(self) -> str:
+-        return _format_marker(self._markers)
++        # _markers is never rebound after construction, so serialise once.
++        try:
++            return self._serialized
++        except AttributeError:
++            serialized = _format_marker(self._markers)
++            self._serialized = serialized
++            return serialized
+ 
+     def __repr__(self) -> str:
+         return f"<{self.__class__.__name__}({str(self)!r})>"
+@@ -530,29 +578,22 @@ class Marker:
              Added the ``context`` parameter, which influences which marker names
              are considered valid.
          """
