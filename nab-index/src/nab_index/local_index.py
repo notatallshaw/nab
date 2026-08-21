@@ -228,8 +228,8 @@ def _scan_pep503_directory(
 
     The second element says the page linked a file in a format nab does
     not read, which tells a page of ``.zip`` sdists from an empty one.  The
-    third says every link on it was yanked, which tells a page of yanked
-    releases from a package this index does not carry.
+    third says every anchor naming a file was yanked, which tells a page of
+    yanked releases from a package this index does not carry.
     """
     index_html = package_dir / "index.html"
     if not _is_file(index_html):
@@ -260,6 +260,7 @@ def _scan_pep503_directory(
     files: list[WheelFile | SdistFile] = []
     unreadable = False
     yanked = 0
+    nameless = 0
 
     for anchor in anchors:
         # PEP 592: a yanked link never reaches the listing.
@@ -271,6 +272,7 @@ def _scan_pep503_directory(
             anchor.href, base_url
         )
         if filename is None:
+            nameless += 1
             continue
         if not is_readable_filename(filename):
             unreadable = True
@@ -287,7 +289,10 @@ def _scan_pep503_directory(
         )
         if record is not None:
             files.append(record)
-    return files, unreadable, bool(anchors) and yanked == len(anchors)
+
+    # A navigation link is not a release, so the all-yanked test counts only
+    # the anchors that name a file.
+    return files, unreadable, yanked > 0 and yanked == len(anchors) - nameless
 
 
 def _resolve_local_link(
@@ -295,6 +300,8 @@ def _resolve_local_link(
     base_url: str,
 ) -> tuple[str | None, str, Path | None, tuple[tuple[str, str], ...]]:
     """Resolve an anchor href to ``(filename, url, local_path, hashes)``.
+
+    ``filename`` is ``None`` when the href names no file.
 
     ``base_url`` is the page's ``<base href>`` when it carries one, else the
     ``index.html`` URL.  An href is a URL reference, so only its path
@@ -319,12 +326,25 @@ def _resolve_local_link(
     try:
         url = _normalized_url(urljoin(base_url, href_no_frag))
         parsed = urlparse(url)
+        page = urlparse(base_url)
     except ValueError:
         return (None, href_no_frag, None, hashes)
 
+    # An autoindex's navigation links name no file: "../" leaves no last
+    # segment, and a sort link is a bare query ("?C=N;O=D") resolving back to
+    # the page.
+    last_segment = parsed.path.rsplit("/", 1)[-1]
+    points_at_page = (parsed.scheme, parsed.netloc, parsed.path) == (
+        page.scheme,
+        page.netloc,
+        page.path,
+    )
+
+    if not last_segment or points_at_page:
+        return (None, url, None, hashes)
+
     if parsed.scheme in {"http", "https"}:
-        filename = unquote(parsed.path.rsplit("/", 1)[-1]) or None
-        return (filename, url, None, hashes)
+        return (unquote(last_segment), url, None, hashes)
 
     # Drop an anchor naming no local file rather than fail the whole listing.
     try:
@@ -630,7 +650,7 @@ class LocalIndexClient:
         return package in self._unreadable_only
 
     def served_all_yanked(self, package: str) -> bool:
-        """Whether a listing for ``package`` held links and yanked every one."""
+        """Whether a listing for ``package`` held file links and yanked every one."""
         return package in self._all_yanked
 
     async def get_metadata_text(
