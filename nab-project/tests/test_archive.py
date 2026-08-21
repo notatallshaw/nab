@@ -214,6 +214,22 @@ def _deny_access(monkeypatch: pytest.MonkeyPatch, method: str, target: Path) -> 
     monkeypatch.setattr(Path, method, failing)
 
 
+def _deny_disk_space(monkeypatch: pytest.MonkeyPatch, method: str, name: str) -> None:
+    """Make every ``Path`` call on a path named ``name`` fail with ENOSPC.
+
+    ``mkdtemp`` picks the entry's directory name, so paths beneath it cannot
+    be named up front and the denial matches on the basename instead.
+    """
+    original = getattr(Path, method)
+
+    def failing(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name == name:
+            raise OSError(errno.ENOSPC, "No space left on device", str(self))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, method, failing)
+
+
 def _lock_input(pins: Mapping[str, PinShape]) -> LockInput:
     """Wrap ``pins`` as the one-target lock input the downloader reads."""
     target = ResolveTarget.for_host()
@@ -501,6 +517,41 @@ class TestArchiveMaterialize:
         with pytest.raises(UnsupportedSdistError, match="could not be extracted"):
             provider.fetch_versions("foo")
         assert list((tmp_path / "arch").iterdir()) == []
+
+    def test_unwritable_cache_dir_reports_the_os_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A cache directory this process cannot write fails the resolve the
+        # way an unextractable archive does.
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        cache = tmp_path / "arch"
+        _deny_access(monkeypatch, "mkdir", cache)
+        provider = _archive_provider(data, cache)
+
+        with pytest.raises(
+            UnsupportedSdistError, match="could not be written"
+        ) as excinfo:
+            provider.fetch_versions("foo")
+
+        assert "Permission denied" in str(excinfo.value)
+
+    def test_full_cache_filesystem_reports_the_os_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # "unpacked" is the first write inside the entry's temporary directory,
+        # so this failure lands after ``mkdtemp`` succeeded.
+        data = _make_sdist("foo", "1.0.0", _PYPROJECT)
+        cache = tmp_path / "arch"
+        _deny_disk_space(monkeypatch, "mkdir", "unpacked")
+        provider = _archive_provider(data, cache)
+
+        with pytest.raises(
+            UnsupportedSdistError, match="could not be written"
+        ) as excinfo:
+            provider.fetch_versions("foo")
+
+        assert "No space left on device" in str(excinfo.value)
+        assert list(cache.iterdir()) == []
 
     @requires_data_filter
     def test_reextraction_replaces_stale_partial_tree(self, tmp_path: Path) -> None:
