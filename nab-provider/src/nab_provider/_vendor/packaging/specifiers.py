@@ -829,9 +829,15 @@ class SpecifierSet(BaseSpecifier):
         self._prereleases = prereleases
 
     def _canonical_specs(self) -> tuple[Specifier, ...]:
-        """Deduplicate, sort, and cache specs for order-sensitive operations."""
+        """Deduplicate, sort, and cache specs for order-sensitive operations.
+
+        Sorting on each clause's equality key rather than its text gives two equal
+        sets the same order, so ``__eq__`` and ``__hash__`` agree across respellings.
+        """
         if not self._canonicalized:
-            self._specs = tuple(dict.fromkeys(sorted(self._specs, key=str)))
+            self._specs = tuple(
+                dict.fromkeys(sorted(self._specs, key=lambda s: s._canonical_spec))
+            )
             self._canonicalized = True
         return self._specs
 

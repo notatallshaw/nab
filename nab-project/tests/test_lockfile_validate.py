@@ -83,6 +83,19 @@ def test_requires_python_reformatted_but_equal_does_not_fire() -> None:
     assert envelope(committed, requires_python="<4,>=3.8") is None
 
 
+def test_requires_python_respelled_clause_does_not_fire() -> None:
+    committed = make_pylock(requires_python=">=3.8,!=3.9.0,!=3.9.1")
+    assert envelope(committed, requires_python=">=3.8,!=v3.9.0,!=3.9.1") is None
+    assert envelope(committed, requires_python=">=3.8,!=3.9.0,!=0!3.9.1") is None
+
+
+def test_requires_python_respelled_with_a_changed_bound_fires() -> None:
+    committed = make_pylock(requires_python=">=3.8,!=3.9.0,!=3.9.1")
+    result = envelope(committed, requires_python=">=3.8,!=v3.9.0,!=3.9.2")
+    assert result is not None
+    assert "requires-python" in result.reason
+
+
 def test_requires_python_both_absent_does_not_fire() -> None:
     committed = make_pylock(requires_python=None)
     assert envelope(committed, requires_python=None) is None
