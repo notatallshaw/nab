@@ -39,7 +39,7 @@ Source = "https://github.com/notatallshaw/nab"
 Changelog = "https://github.com/notatallshaw/nab/releases"
 
 [project.scripts]
-nab = "nab.cli:console_entry"
+nab = "nab._entry:console_entry"
 
 [build-system]
 requires = ["hatchling"]
