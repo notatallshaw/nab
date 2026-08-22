@@ -1625,3 +1625,74 @@ class TestArchiveBuildPolicyLevels:
     def test_level_docstring_names_archive_sources(self, member: str) -> None:
         docstring = _attribute_docstrings(BuildPolicy)[member]
         assert "archive" in docstring.lower()
+
+
+class TestSourceWithoutProjectFile:
+    """A declared source whose tree holds no pyproject.toml and no setup.py.
+
+    The static reader returns ``None`` for it just as it does for a dynamic
+    tree, but no policy level gives the backend anything to invoke, so a
+    build-policy refusal would name a remedy that cannot work.
+    """
+
+    def _extract(self, path: Path, *, kind: str, policy: BuildPolicy) -> WheelMetadata:
+        return sources.extract_source_metadata(
+            path,
+            descriptor=f"{kind} source 'pkg'",
+            policy=policy,
+            kind=kind,
+            offline=False,
+            build_config=None,
+        )
+
+    @pytest.mark.parametrize(
+        ("kind", "policy"),
+        [
+            ("archive", BuildPolicy.NEVER),
+            ("archive", BuildPolicy.BUILD_LOCAL),
+            ("archive", BuildPolicy.BUILD_REMOTE),
+            ("local", BuildPolicy.NEVER),
+            ("local", BuildPolicy.BUILD_LOCAL),
+            ("vcs", BuildPolicy.BUILD_REMOTE),
+        ],
+    )
+    def test_tree_without_a_project_file_names_the_missing_file(
+        self, kind: str, policy: BuildPolicy, tmp_path: Path
+    ) -> None:
+        with pytest.raises(UnsupportedSdistError) as excinfo:
+            self._extract(tmp_path, kind=kind, policy=policy)
+        assert str(excinfo.value) == (
+            f"{kind} source 'pkg': no pyproject.toml or setup.py at {tmp_path}"
+        )
+
+    def test_missing_subdirectory_names_the_missing_file(self, tmp_path: Path) -> None:
+        """A mistyped ``subdirectory`` lands on a path that is not there at all."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "pkg"\nversion = "1.0.0"\n', encoding="utf-8"
+        )
+        subdirectory = tmp_path / "nope"
+        with pytest.raises(UnsupportedSdistError) as excinfo:
+            self._extract(subdirectory, kind="archive", policy=BuildPolicy.BUILD_LOCAL)
+        assert str(excinfo.value) == (
+            f"archive source 'pkg': no pyproject.toml or setup.py at {subdirectory}"
+        )
+
+    def test_setup_py_tree_is_still_a_policy_refusal(self, tmp_path: Path) -> None:
+        """A legacy setup.py tree has a project file, so the policy refuses it."""
+        (tmp_path / "setup.py").write_text(
+            "from setuptools import setup\n\nsetup()\n", encoding="utf-8"
+        )
+        with pytest.raises(UnsupportedSdistError) as excinfo:
+            self._extract(tmp_path, kind="local", policy=BuildPolicy.NEVER)
+        assert "has dynamic metadata" in str(excinfo.value)
+
+    def test_pyproject_without_a_project_table_is_still_a_policy_refusal(
+        self, tmp_path: Path
+    ) -> None:
+        """A pyproject with no ``[project]`` is a project file, so policy decides."""
+        (tmp_path / "pyproject.toml").write_text(
+            '[build-system]\nrequires = ["setuptools"]\n', encoding="utf-8"
+        )
+        with pytest.raises(UnsupportedSdistError) as excinfo:
+            self._extract(tmp_path, kind="local", policy=BuildPolicy.NEVER)
+        assert "has dynamic metadata" in str(excinfo.value)

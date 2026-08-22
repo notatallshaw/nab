@@ -190,6 +190,19 @@ def _materialize_vcs(
     )
 
 
+def _has_no_project_file(path: Path) -> bool:
+    """Whether ``path`` gives a :pep:`517` backend nothing to invoke.
+
+    Tests the same states as ``_build.runner._read_pyproject``, so a tree
+    refused here and one the build path gives up on are described in the
+    same words.
+    """
+    return (
+        path_state(path / "pyproject.toml") is PathState.ABSENT
+        and not path_state(path / "setup.py").should_read
+    )
+
+
 def extract_source_metadata(
     path: Path,
     *,
@@ -212,7 +225,9 @@ def extract_source_metadata(
     keep using the caller's path.
 
     An unreadable ``pyproject.toml`` is a read failure at every policy level,
-    since the build path cannot read it either.
+    since the build path cannot read it either.  A tree holding neither a
+    ``pyproject.toml`` nor a ``setup.py`` is refused the same way: no policy
+    level gives the backend anything to invoke.
     """
     # Imported in-function so tests can patch the module attribute, and to keep
     # ``_build.runner`` (and the ``build`` package behind it) off the import
@@ -228,6 +243,10 @@ def extract_source_metadata(
 
     if metadata is not None:
         return metadata
+
+    if _has_no_project_file(path):
+        msg = f"{descriptor}: no pyproject.toml or setup.py at {path}"
+        raise UnsupportedSdistError(msg)
 
     if kind == "local":
         allowed = {BuildPolicy.BUILD_LOCAL, BuildPolicy.BUILD_REMOTE}
