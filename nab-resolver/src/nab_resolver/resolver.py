@@ -124,14 +124,21 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         """
         ...
 
-    def begin_decision_scan(self) -> None:
-        """Announce the start of one decision scan.
+    def begin_decision_scan(self) -> Callable[[PackageType], bool] | None:
+        """Announce the start of one decision scan, and offer a readiness probe.
 
         ``choose_package_to_decide`` builds every undecided package's sort key
         from ``prioritize`` and ``is_ready``, so both must answer from state
         that does not move until the next call.  Providers whose answers depend
-        on another thread freeze that state here; for providers with no such
-        state this is a no-op.
+        on another thread freeze that state here; providers with no such state
+        have nothing to freeze.
+
+        The probe returns whether the state a not-ready package waits on has
+        landed.  Returning one promises that the package's key holds while the
+        probe stays false and nothing else moves it, so the scan can keep the
+        key it already has; a solution change or a new ``priority_epoch`` still
+        rebuilds it.  Return ``None`` to have every not-ready key built again on
+        every scan.
         """
         ...
 
@@ -253,8 +260,9 @@ class BaseProvider(Generic[PackageType, VersionType]):
     ``from nab_resolver.resolver import BaseProvider``.
     """
 
-    def begin_decision_scan(self) -> None:
-        """Freeze nothing: no state moves between scans."""
+    def begin_decision_scan(self) -> Callable[[PackageType], bool] | None:
+        """Freeze nothing and offer no probe: no state moves between scans."""
+        return None
 
     def is_ready(self, package: PackageType) -> bool:
         """Report every package ready, since answers do not wait on a fetch."""

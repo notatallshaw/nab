@@ -2162,13 +2162,33 @@ class Provider:
         self._package_parts[package] = result
         return result
 
-    def begin_decision_scan(self) -> None:
+    def begin_decision_scan(self) -> Callable[[str], bool] | None:
         """Open a decision scan, expiring the last one's in-flight answers.
 
         The coming scan re-reads the index, then holds any name it finds still
         in flight that way until the next call.
+
+        Hands back :meth:`listing_landed` as the queue's readiness probe, or
+        ``None`` under :attr:`DecisionOrder.STABLE`, where a scan waits for a
+        listing instead of ranking its absence and so has nothing to wait on
+        between scans.
         """
         self._scan_generation += 1
+        return None if self.settle_listings else self.listing_landed
+
+    def listing_landed(self, package: str) -> bool:
+        """Return whether ``package``'s listing has arrived.
+
+        The decision queue's readiness probe: a package whose listing is in
+        flight scores a placeholder version count, and only the arrival changes
+        it.  ``is_ready`` is not enough for an extras proxy, which reads the
+        base's ``versions_cache`` entry that ``prioritize`` fills only after
+        the arrival.
+        """
+        _, _, normalized = self.split_and_normalize(package)
+        if normalized in self.versions_cache:
+            return True
+        return self.arrived_listing(normalized) is not None
 
     def arrived_listing(self, normalized: str) -> list[DistFile] | None:
         """Return ``normalized``'s listing, or None while it is in flight.
