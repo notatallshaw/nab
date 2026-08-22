@@ -119,6 +119,11 @@ def _root_ranges(mock_resolver: MagicMock) -> dict[str, VersionRange]:
     return folded
 
 
+def _scanned_groups(mock_check: MagicMock) -> list[tuple[str, ...]]:
+    """The groups each ``_check_group_disjointness`` call scanned, in call order."""
+    return [tuple(call.args[0]) for call in mock_check.call_args_list]
+
+
 def _locked(lock_input: LockInput) -> dict[str, PinShape]:
     """The pins a single-environment lock carries."""
     (lock,) = lock_input.targets.values()
@@ -1600,7 +1605,10 @@ class TestResolveUniversalPyproject:
         mock_engine.assert_called_once()
 
     @patch("nab_project.resolve.resolve_with_coordinator")
-    @patch("nab_project.resolve._check_group_disjointness")
+    @patch(
+        "nab_project.resolve._check_group_disjointness",
+        wraps=_check_group_disjointness,
+    )
     def test_repeated_active_groups_check_once(
         self,
         mock_check: MagicMock,
@@ -1625,8 +1633,96 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64"]\n'
         )
         _resolved(pyproject, extras=["cpu", "gpu"], groups=["dev", "lint"])
-        # Two forks, both with active_groups=("dev", "lint"): scan once.
-        assert mock_check.call_count == 1
+        assert _scanned_groups(mock_check) == [("dev", "lint")]
+
+    @patch("nab_project.resolve.resolve_with_coordinator")
+    @patch(
+        "nab_project.resolve._check_group_disjointness",
+        wraps=_check_group_disjointness,
+    )
+    def test_distinct_active_groups_check_each(
+        self,
+        mock_check: MagicMock,
+        mock_engine: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Group-conflict forks carry different group sets, so each is scanned."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'dev = ["pytest"]\n'
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ group = "cpu" }, { group = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        _resolved(pyproject, groups=["dev", "cpu", "gpu"])
+        assert _scanned_groups(mock_check) == [("dev", "cpu"), ("dev", "gpu")]
+
+    def test_conflict_in_a_later_fork_raises(self, tmp_path: Path) -> None:
+        """A pair that conflicts only in the second fork raises before the resolve."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'dev = ["pkg>=2"]\n'
+            'cpu = ["other"]\n'
+            'gpu = ["pkg<1"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ group = "cpu" }, { group = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
+            pytest.raises(ResolutionError) as info,
+        ):
+            _resolved(pyproject, groups=["dev", "cpu", "gpu"])
+        mock_universal.assert_not_called()
+
+        assert str(info.value) == (
+            "Dependency groups 'dev' and 'gpu' conflict on 'pkg': "
+            "group 'dev' requires pkg>=2 but group 'gpu' requires pkg<1."
+        )
+
+    def test_conflict_in_the_last_of_four_forks_raises(self, tmp_path: Path) -> None:
+        """Two conflict sets fork four ways, and the last fork's conflict raises."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'cpu = ["other"]\n'
+            'gpu = ["pkg>=2"]\n'
+            'test = ["thing"]\n'
+            'docs = ["pkg<1"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "conflicts = [\n"
+            '    [{ group = "cpu" }, { group = "gpu" }],\n'
+            '    [{ group = "test" }, { group = "docs" }],\n'
+            "]\n"
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
+            pytest.raises(ResolutionError) as info,
+        ):
+            _resolved(pyproject, groups=["cpu", "gpu", "test", "docs"])
+        mock_universal.assert_not_called()
+
+        assert str(info.value) == (
+            "Dependency groups 'docs' and 'gpu' conflict on 'pkg': "
+            "group 'docs' requires pkg<1 but group 'gpu' requires pkg>=2."
+        )
 
     def test_umbrella_extra_co_selecting_conflict_raises(self, tmp_path: Path) -> None:
         """An umbrella extra forcing both members cannot fork, so it raises."""
