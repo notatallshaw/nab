@@ -287,6 +287,63 @@ class TestOneKeyHoldsTogether:
         assert provider.prioritize("foo", rng, {})[1] == 2
 
 
+class TestTheArrivalProbe:
+    """The probe ``begin_decision_scan`` hands back for in-flight keys."""
+
+    def test_a_name_still_in_flight_denies_the_probe(self) -> None:
+        provider = Provider(_coordinator({"foo": [_wheel("foo")]}))
+
+        probe = provider.begin_decision_scan()
+
+        assert probe is not None
+        assert probe("foo") is False
+
+    def test_the_next_scan_probes_the_arrival(self) -> None:
+        provider = Provider(_coordinator({"foo": [_wheel("foo")]}))
+        provider.begin_decision_scan()
+        assert provider.is_ready("foo") is False
+
+        probe = provider.begin_decision_scan()
+
+        assert probe is not None
+        assert probe("foo") is True
+
+    def test_an_extras_proxy_lands_with_the_listing_not_the_cache(self) -> None:
+        """Why the probe asks about the base rather than the proxy.
+
+        A proxy's own ``is_ready`` reads its base's ``versions_cache`` entry,
+        and ``prioritize`` writes that only once the listing lands, so a probe
+        reading it would hold the proxy past the arrival it waits on.
+        """
+        provider = Provider(_coordinator({"foo": [_wheel("foo")]}))
+        provider.begin_decision_scan()
+        assert provider.is_ready("foo") is False
+
+        probe = provider.begin_decision_scan()
+
+        assert probe is not None
+        assert probe("foo[socks]") is True
+        assert provider.is_ready("foo[socks]") is False
+
+    def test_a_cached_base_lands_without_the_index(self) -> None:
+        provider = Provider(_coordinator({}))
+        provider.versions_cache["foo"] = [(Version("1.0"), _wheel("foo"))]
+
+        probe = provider.begin_decision_scan()
+
+        assert probe is not None
+        assert probe("foo[socks]") is True
+
+    def test_settling_listings_offers_no_probe(self) -> None:
+        """A scan that waits for the listing has nothing to wait on between scans."""
+        provider = Provider(
+            _coordinator({"foo": [_wheel("foo")]}),
+            decision_order=DecisionOrder.STABLE,
+        )
+
+        assert provider.begin_decision_scan() is None
+
+
 class TestScanKeysShareOneView:
     """Every key a scan compares is built against one view of what has landed."""
 

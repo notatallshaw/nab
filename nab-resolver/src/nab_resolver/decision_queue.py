@@ -30,8 +30,10 @@ class DecisionQueue(Generic[PackageType]):
     A key is re-evaluated when the partial solution reports the package's range
     or decided state as moved, when the caller passes a new ``epoch``, and on
     every scan while the package is not ready, since a listing lands without the
-    solution seeing it. Superseded heap entries stay in place until they reach
-    the top, or until a rebuild drops the ones that never do.
+    solution seeing it. A caller that supplies a probe narrows that last case
+    to the scan the package's key inputs arrive on. Superseded heap entries
+    stay in place until they reach the top, or until a rebuild drops the ones
+    that never do.
     """
 
     def __init__(self) -> None:
@@ -57,6 +59,7 @@ class DecisionQueue(Generic[PackageType]):
         sort_key: Callable[[PackageType], tuple[Any, ...]],
         changed: set[PackageType],
         epoch: int,
+        key_inputs_arrived: Callable[[PackageType], bool] | None = None,
     ) -> PackageType:
         """Return the undecided package with the smallest sort key.
 
@@ -69,9 +72,18 @@ class DecisionQueue(Generic[PackageType]):
 
         ``sort_key`` must lead with the ready penalty: a truthy first field
         keeps the package on the re-evaluate list until it clears.
+
+        ``key_inputs_arrived`` answers whether the state behind a package's key
+        has landed. A caller that supplies one promises the unready key it
+        already gave stands until that answer turns true, which lets the scan
+        keep the key instead of building it again.
         """
+        # _stale_packages overwrites the stored epoch, so compare before it
+        # runs: a new epoch re-evaluates every key, probe or not.
+        probe = key_inputs_arrived if epoch == self._epoch else None
+
         stale = self._stale_packages(undecided, changed, epoch)
-        self._refresh(undecided, stale, sort_key)
+        self._refresh(undecided, stale, sort_key, changed, probe)
         self._compact()
         return self._live_top()
 
@@ -106,12 +118,19 @@ class DecisionQueue(Generic[PackageType]):
         undecided: AbstractSet[PackageType],
         stale: set[PackageType],
         sort_key: Callable[[PackageType], tuple[Any, ...]],
+        changed: set[PackageType],
+        key_inputs_arrived: Callable[[PackageType], bool] | None,
     ) -> None:
         """Re-evaluate the stale keys, pushing an entry for each one that moved.
 
         Walks ``undecided`` rather than ``stale`` so which packages are stale
         cannot change the order ``sort_key`` is called in, since a provider can
         fetch while answering one.
+
+        Given ``key_inputs_arrived``, an unready package the solution left
+        alone reaches ``sort_key`` only once its key's inputs have landed. The
+        probe runs at that package's own place in the walk, so a listing
+        landing mid-scan is still seen by the packages after it.
         """
         keys = self._keys
         heap = self._heap
@@ -120,6 +139,14 @@ class DecisionQueue(Generic[PackageType]):
 
         for package in undecided:
             if package not in stale:
+                continue
+
+            if (
+                key_inputs_arrived is not None
+                and package in unready
+                and package not in changed
+                and not key_inputs_arrived(package)
+            ):
                 continue
 
             key = sort_key(package)
