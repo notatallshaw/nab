@@ -32,7 +32,6 @@ from email.parser import BytesParser, Parser
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import unquote, urljoin, urlparse, urlsplit
-from urllib.request import url2pathname
 
 from packaging.utils import canonicalize_name as _canonical
 from packaging.utils import parse_sdist_filename
@@ -128,6 +127,9 @@ def parse_file_url(url: str) -> Path:
     if parsed.scheme != "file":
         msg = f"expected file:// URL, got {url!r}"
         raise ValueError(msg)
+
+    # Deferred to keep urllib.request off the CLI's import path.
+    from urllib.request import url2pathname  # noqa: PLC0415
 
     netloc = parsed.netloc
     if not netloc or netloc == "localhost":
