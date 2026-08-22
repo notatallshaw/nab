@@ -3938,11 +3938,12 @@ class TestConfigErrors:
     def test_symlink_loop_in_the_path_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A loop is left to the pyproject read, which names the errno."""
+        """A loop in the project path exits 1 naming the path, rather than raising."""
         (tmp_path / "loop").symlink_to("loop")
+        pyproject = tmp_path / "loop" / "pyproject.toml"
         with pytest.raises(SystemExit, match="1"):
-            lock(tmp_path / "loop" / "pyproject.toml")
-        assert "cannot read" in capsys.readouterr().err
+            lock(pyproject)
+        assert str(pyproject) in capsys.readouterr().err
 
 
 class TestCliDocstringCommandModules:

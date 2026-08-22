@@ -91,8 +91,8 @@ def realpath(path: Path) -> Path:
     """Resolve ``path``, leaving a symlink loop along it unresolved.
 
     :meth:`Path.resolve` raises ``RuntimeError`` on a loop below Python
-    3.13.  A loop is filesystem state, so it is left for the read to
-    report by errno.
+    3.13.  A loop is filesystem state, so it is left for the stat or the
+    read to report.
     """
     return Path(os.path.realpath(path))
 

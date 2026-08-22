@@ -323,7 +323,11 @@ class TestReadWorkspaceMembers:
             read_workspace_members(root)
 
     def test_member_through_a_symlink_loop_raises(self, tmp_path: Path) -> None:
-        """A loop reaches the member read, so the error names the errno."""
+        """A loop below a member is reported against the member's path.
+
+        Whether the loop stats as unreadable or as absent varies by
+        platform, so only the path is asserted.
+        """
         root = _write(
             tmp_path / "pyproject.toml",
             '[project]\nname = "ws"\nversion = "0"\n'
@@ -333,8 +337,7 @@ class TestReadWorkspaceMembers:
         (tmp_path / "loop").symlink_to("loop")
         member_pyproject = tmp_path.resolve() / "loop" / "pyproject.toml"
         with pytest.raises(
-            WorkspaceDiscoveryError,
-            match=re.escape(f"cannot read {member_pyproject}"),
+            WorkspaceDiscoveryError, match=re.escape(str(member_pyproject))
         ):
             read_workspace_members(root)
 
