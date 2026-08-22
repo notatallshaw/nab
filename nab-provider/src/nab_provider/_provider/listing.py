@@ -633,11 +633,27 @@ def _apply_wheel_tags(
 
     result: list[tuple[Version, DistFile]] = []
     tag_rejected_versions: set[Version] = set()
+    run_version: Version | None = None
+    run_length = 0
+
     for version, dist in base:
-        if excluded_by_wheel_tags(provider, normalized, version, dist, tags):
-            tag_rejected_versions.add(version)
+        if not excluded_by_wheel_tags(dist, tags):
+            result.append((version, dist))
             continue
-        result.append((version, dist))
+
+        # ``base`` is sorted by version, so a version's rejected wheels arrive
+        # together and fold into one tally update.  Identity is enough for the
+        # boundary: a split run tallies twice and the counts still add up.
+        if version is not run_version:
+            if run_version is not None:
+                _tally_tag_exclusions(provider, normalized, run_version, run_length)
+            tag_rejected_versions.add(version)
+            run_version = version
+            run_length = 0
+        run_length += 1
+
+    if run_version is not None:
+        _tally_tag_exclusions(provider, normalized, run_version, run_length)
 
     if tag_rejected_versions:
         # A version whose every wheel the target refused, and which ships no
@@ -692,27 +708,30 @@ def python_or_time_cause(
     return cause
 
 
-def excluded_by_wheel_tags(
-    provider: Provider,
-    normalized: str,
-    version: Version,
-    dist: DistFile,
-    tags: TagSet,
-) -> bool:
+def excluded_by_wheel_tags(dist: DistFile, tags: TagSet) -> bool:
     """Return True when ``dist`` is a wheel the target cannot install.
 
     An sdist is never excluded here: it carries no tags, and building it
-    produces a wheel for whatever machine runs the build.  Tallied per
-    ``(package, version)`` for the lock's omitted-wheel count.
+    produces a wheel for whatever machine runs the build.
     """
-    if not isinstance(dist, WheelFile) or tags.accepts(dist.filename):
-        return False
-    provider.stats.excluded_by_wheel_tags += 1
+    return isinstance(dist, WheelFile) and not tags.accepts(dist.filename)
+
+
+def _tally_tag_exclusions(
+    provider: Provider,
+    normalized: str,
+    version: Version,
+    count: int,
+) -> None:
+    """Add one version's ``count`` tag-rejected wheels to the diagnostic tallies.
+
+    The per-``(package, version)`` count feeds the lock's omitted-wheel count.
+    """
+    provider.stats.excluded_by_wheel_tags += count
     key = (normalized, version)
     provider.tag_excluded_wheels_by_version[key] = (
-        provider.tag_excluded_wheels_by_version.get(key, 0) + 1
+        provider.tag_excluded_wheels_by_version.get(key, 0) + count
     )
-    return True
 
 
 def parsed_version(raw: str) -> Version | None:
