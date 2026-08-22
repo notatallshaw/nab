@@ -7,13 +7,14 @@ translation that only :mod:`nab._lock` and :mod:`nab._download` use.
 
 The subcommands live in :mod:`nab._lock`, :mod:`nab._download`,
 :mod:`nab._config_cmd`, and :mod:`nab._cache_cmd`; this module imports
-them so their ``@app.command`` decorators run before :func:`main` calls
-``app.cli()``.
+them so their ``@app.command`` decorators run before :func:`main` runs
+the CLI.
 """
 
 from __future__ import annotations
 
 import gc
+import io
 import os
 import sys
 from contextlib import contextmanager
@@ -24,6 +25,7 @@ from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
 import tomli
 import tyro
+from typing_extensions import override
 from tyro.extras import SubcommandApp
 
 from nab._version import __version__
@@ -875,8 +877,24 @@ from . import _lock as _lock_module  # noqa: E402, F401 - side-effect
 
 
 def main() -> None:
+    """Run the CLI, exiting 120 when output went to a stream closed at startup."""
+    _replace_closed_std_streams()
+
+    try:
+        _run_cli()
+    except SystemExit:
+        if _output_was_dropped():
+            raise SystemExit(_FLUSH_FAILED_EXIT_CODE) from None
+        raise
+
+    if _output_was_dropped():
+        raise SystemExit(_FLUSH_FAILED_EXIT_CODE)
+
+
+def _run_cli() -> None:
     """Parse the global flags and run the requested subcommand."""
-    global _printer  # noqa: PLW0603 - the run's printer is a module singleton main() sets
+    global _printer  # noqa: PLW0603 - the run's printer is a module singleton, set here
+
     # Tyro's SubcommandApp does not surface global flags, so ``--version`` and
     # the output flags (-v/-q, --color, --no-progress) are parsed before
     # ``app.cli()`` sees the sub-command.
@@ -911,6 +929,43 @@ def _system_exit_status(code: object) -> int:
         return code
     sys.stderr.write(f"{code}\n")
     return 1
+
+
+class _ClosedStream(io.StringIO):
+    """Stands in for a standard stream CPython left unset.
+
+    ``sys.stdout`` and ``sys.stderr`` are ``None`` when their descriptor was
+    closed before the process started. Text written here goes nowhere, and
+    ``dropped`` records that a write reached it.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.dropped = False
+
+    @override
+    def write(self, text: str, /) -> int:
+        self.dropped = True
+        return len(text)
+
+
+def _replace_closed_std_streams() -> None:
+    """Give each standard stream CPython left unset something to write to."""
+    # typeshed types these as never None, so widen before testing.
+    stdout: TextIO | None = sys.stdout
+    stderr: TextIO | None = sys.stderr
+    if stdout is None:
+        sys.stdout = _ClosedStream()
+    if stderr is None:
+        sys.stderr = _ClosedStream()
+
+
+def _output_was_dropped() -> bool:
+    """Report whether the run wrote to a stream that could not take it."""
+    return any(
+        isinstance(stream, _ClosedStream) and stream.dropped
+        for stream in (sys.stdout, sys.stderr)
+    )
 
 
 def _flush_stream(stream: TextIO) -> bool:
