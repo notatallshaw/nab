@@ -6,7 +6,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, NoReturn
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -60,6 +60,7 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.metadata import WheelMetadata
 from nab_provider.provider import (
     BuildPolicy,
     LocalSource,
@@ -5947,3 +5948,67 @@ class TestConfiguredGroupConflictDivergentPins:
         assert versions() == {"23.2"}
         assert versions(dependency_groups=["main"]) == {"23.2"}
         assert versions(dependency_groups=["build"]) == {"24.2"}
+
+
+class _NoIndexTransport:
+    """Transport that fails the test on any request: this resolve needs no index."""
+
+    async def get(self, url: str, *, headers: dict[str, str] | None = None) -> NoReturn:
+        msg = f"unexpected index request to {url}"
+        raise AssertionError(msg)
+
+    async def aclose(self) -> None:
+        return None
+
+
+class TestBuildConfigPlumbing:
+    """A resolve's own config is the one its PEP 517 builds run under.
+
+    Only a dynamic-metadata source reaches a build: the static reader
+    returns ``None`` for it, so materialising the source falls through to
+    ``build_backend.extract_metadata``, which refuses without a config.
+    The backend run itself is stubbed, so no build venv is created.
+    """
+
+    def _project(self, tmp_path: Path) -> Path:
+        """Write a project whose only dependency is a dynamic local source."""
+        source = tmp_path / "dyn"
+        source.mkdir()
+        (source / "pyproject.toml").write_text(
+            '[project]\nname = "dyn"\ndynamic = ["version"]\n', encoding="utf-8"
+        )
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\nversion = "0"\ndependencies = ["dyn"]\n'
+            "[tool.nab]\n"
+            'build-policy = "build-local"\n'
+            "[[tool.nab.local-sources]]\n"
+            'name = "dyn"\n'
+            'path = "dyn"\n',
+            encoding="utf-8",
+        )
+        return pyproject
+
+    def test_dynamic_local_source_builds_under_the_project_config(
+        self, tmp_path: Path
+    ) -> None:
+        """``resolve_for_targets`` hands its config to the coordinator it opens."""
+        pyproject = self._project(tmp_path)
+        config = read_pyproject_config(pyproject)
+        built = WheelMetadata(name="dyn", version=Version("7.0"))
+
+        with patch(
+            "nab_project._build.runner.run_build_backend", return_value=built
+        ) as runner:
+            result = resolve_for_targets(
+                pyproject,
+                _NoIndexTransport(),
+                config=config,
+                cache_dir=tmp_path / "cache",
+            )
+
+        assert result.success
+        assert _pins(result) == {"dyn": Version("7.0")}
+
+        assert runner.call_args.kwargs["config"] is config
