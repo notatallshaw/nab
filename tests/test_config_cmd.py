@@ -26,7 +26,7 @@ from contextlib import (
 )
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -38,6 +38,7 @@ from nab._lock import lock
 from nab.cli import app, effective_config
 from nab_project.config import NabProjectConfig
 from nab_project.config_sources import OPTIONS, OptionSpec, Scope, SourceRoots
+from nab_project.download import DownloadResult
 from nab_project.lockfile import (
     IndexPin,
     SdistArtifact,
@@ -1143,7 +1144,7 @@ class TestDownloadLadder:
     def _resolve_kwargs(
         self, proj: Path, out: Path, *, offline: bool | None = None
     ) -> Mapping[str, object]:
-        download_result = MagicMock(written=(), skipped=())
+        download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
