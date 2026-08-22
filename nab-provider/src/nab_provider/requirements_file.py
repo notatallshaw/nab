@@ -8,17 +8,19 @@ from typing import TYPE_CHECKING
 from nab_provider._vendor.packaging.dependency_groups import resolve_dependency_groups
 from nab_provider._vendor.packaging.errors import ExceptionGroup
 from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 
 from .marker_holds import dependency_marker_holds, intractable_as_error, marker_set
 from .metadata import validate_specifier_versions
+from .pep508 import NESTED_MARKER_MESSAGE, parse_requirement
 from .resolver_inputs import (
     raise_for_unsatisfiable as raise_for_unsatisfiable,  # noqa: PLC0414  (re-export)
 )
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from nab_provider._vendor.packaging.requirements import Requirement
 
 __all__ = [
     "InvalidProjectRequirementError",
@@ -62,7 +64,7 @@ def _add_extra_marker(dep_str: str, extra_name: str) -> str:
     :class:`InvalidName` instead of producing a marker that gates the dep
     wrongly.
     """
-    req = Requirement(dep_str)
+    req = parse_requirement(dep_str)
     canonical_extra = canonicalize_name(extra_name, validate=True)
     extra_marker = f'extra == "{canonical_extra}"'
     if req.marker is not None:
@@ -86,7 +88,7 @@ def parse_project_requirement(
     """
     try:
         text = _add_extra_marker(dep_str, extra) if extra is not None else dep_str
-        req = Requirement(text)
+        req = parse_requirement(text)
         validate_specifier_versions(req.specifier)
     except ValueError as exc:
         msg = f"invalid requirement in {source}: {exc}"
@@ -200,7 +202,7 @@ def _self_references(
     """
     for req_str in canonical_deps.get(extra, ()):
         try:
-            req = Requirement(req_str)
+            req = parse_requirement(req_str)
         except (ValueError, TypeError):
             continue
         if canonicalize_name(req.name) == canonical_project:
@@ -402,6 +404,11 @@ def resolve_groups_to_requirements(
         return []
     try:
         resolved = resolve_dependency_groups(groups, *selected)
+    except RecursionError as exc:
+        # The vendored loader parses each entry itself, so an over-nested
+        # marker never reaches the guarded parse below.
+        msg = f"invalid requirement in [dependency-groups]: {NESTED_MARKER_MESSAGE}"
+        raise InvalidProjectRequirementError(msg) from exc
     except ExceptionGroup as group:
         detail = "; ".join(str(e) for e in group.exceptions)
         if all(isinstance(e, LookupError) for e in group.exceptions):

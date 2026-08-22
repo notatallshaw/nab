@@ -38,7 +38,6 @@ import tomli
 
 from nab_provider._vendor.packaging.markers import UndefinedEnvironmentName
 from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.marker_holds import (
@@ -47,6 +46,7 @@ from nab_provider.marker_holds import (
     dependency_marker_holds,
 )
 from nab_provider.metadata import validate_specifier_versions
+from nab_provider.pep508 import parse_requirement
 from nab_provider.target import NonIntervalMarkerError, micro_boundary_points
 
 from .. import toml_io
@@ -57,6 +57,7 @@ if TYPE_CHECKING:
 
     from nab_provider._vendor.packaging.markers import Marker
     from nab_provider._vendor.packaging.pylock import Package
+    from nab_provider._vendor.packaging.requirements import Requirement
     from nab_provider._vendor.packaging.version import Version
     from nab_provider.target import ResolveTarget
 
@@ -446,7 +447,7 @@ def check_locked(  # noqa: PLR0913 - the envelope fields and the validity inputs
     )
     if direct is not None:
         return direct
-    parsed = [Requirement(text) for text in constraints]
+    parsed = [parse_requirement(text) for text in constraints]
     return check_constraints(
         committed,
         parsed,

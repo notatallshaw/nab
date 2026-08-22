@@ -45,6 +45,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name, parse_wheel_
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import UnsupportedWheelError
 from nab_provider.metadata import WheelMetadata, validate_specifier_versions
+from nab_provider.pep508 import parse_requirement
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     require_string_list,
@@ -511,7 +512,7 @@ def _parse_metadata(metadata_path: Path) -> WheelMetadata:
     requires_dist: list[Requirement] = []
     for raw in msg_obj.get_all("Requires-Dist") or ():
         try:
-            req = Requirement(raw)
+            req = parse_requirement(raw)
             validate_specifier_versions(req.specifier)
         except ValueError as exc:
             msg = f"backend METADATA has an invalid Requires-Dist: {exc}"

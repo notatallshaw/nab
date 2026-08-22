@@ -32,9 +32,9 @@ from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.pep508 import parse_requirement
 from nab_provider.provider import ListingFilterCache
 from nab_provider.requirements_file import (
     expand_extra_requirements,
@@ -99,6 +99,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
     from nab_index.transport import AsyncHttpTransport
+    from nab_provider._vendor.packaging.requirements import Requirement
     from nab_provider._vendor.packaging.version import Version
     from nab_provider.provider import ResolutionStrategy
     from nab_provider.resolver_inputs import MarkerHolds
@@ -293,7 +294,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
         fork_list = (
             list(forks) if forks is not None else [ResolveFork((), tuple(requirements))]
         )
-        constraints = [Requirement(text) for text in effective.constraints]
+        constraints = [parse_requirement(text) for text in effective.constraints]
 
         return _resolve_with_micro_narrowing(
             list(targets),
