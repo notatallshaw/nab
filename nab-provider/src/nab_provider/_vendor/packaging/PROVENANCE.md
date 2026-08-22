@@ -21,6 +21,9 @@ most one checked-in patch.
     `_bisect_predicate`, `_partition_indexes`, `_make_project`, `_check_order`,
     `_lattice_release`, `_release_boundary_point`); the `RangeRelation` and
     `SortedOrder` `__all__` entries; and the class-docstring lines naming them.
+    `VersionRange._build` takes a `canonical` keyword that skips the bound
+    fold for callers whose bounds are folded already: the set algebra, `full`,
+    and `empty`.
   - `_ranges.py`: an unbounded end canonicalizes its inclusivity, and
     `LowerBound.__gt__`, `LowerBound.__le__`, and `UpperBound.__gt__` are
     written out beside `functools.total_ordering`, which still derives the

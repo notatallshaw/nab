@@ -2638,7 +2638,7 @@ index 0000000..a5e2740
 +    def __repr__(self) -> str:
 +        return f"<{type(self).__name__} {_markersets.describe(self._tree)!r}>"
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
-index 4fbf48e..d52f359 100644
+index 4fbf48e..c92e4df 100644
 --- a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
 +++ b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
 @@ -24,6 +24,7 @@ import typing
@@ -2966,7 +2966,83 @@ index 4fbf48e..d52f359 100644
          )
  
      @classmethod
-@@ -1189,6 +1449,73 @@ class VersionRange:
+@@ -1010,6 +1270,7 @@ class VersionRange:
+         *,
+         pre_region: tuple[Interval, ...] = (),
+         prereleases_configured: bool | None = None,
++        canonical: bool = False,
+     ) -> VersionRange:
+         """Internal factory; bypasses :meth:`__new__`.
+ 
+@@ -1019,8 +1280,16 @@ class VersionRange:
+         pre-release policy is set here and never reassigned afterwards;
+         ``pre_region`` is canonicalized like the bounds and clipped to them,
+         or dropped when a configured policy makes it inert.
++
++        ``canonical=True`` says the bounds and the region are folded already,
++        so the fold is skipped. The set algebra can promise that:
++        ``intersect_ranges`` and ``_union_ranges`` reuse operand bounds
++        unchanged, and ``_complement_ranges`` flips inclusivity as it swaps a
++        bound's side, which lands either on the inclusivity the fold ignores or
++        on a version a canonical operand has already shown is no least successor.
+         """
+-        bounds = _canonicalize(bounds)
++        if not canonical:
++            bounds = _canonicalize(bounds)
+ 
+         if admit and reject:
+             admit = admit - reject
+@@ -1044,16 +1313,15 @@ class VersionRange:
+         instance._admit_arbitrary = admit_arbitrary
+         instance._prereleases_configured = prereleases_configured
+ 
+-        # A configured policy makes the region inert, so drop it. Otherwise fold
+-        # least-successor bounds (_from_specifier_set passes the region unfolded),
+-        # so ``>1.0a1`` and ``>=1.0a2.dev0`` carry the same region, then clip it
+-        # to the bounds so the opt-in never reaches past the range's own versions.
++        # A configured policy makes the region inert, so drop it.
+         if prereleases_configured is not None or not pre_region:
+             instance._pre_region = ()
+         else:
+-            instance._pre_region = tuple(
+-                intersect_ranges(_canonicalize(pre_region), bounds)
+-            )
++            # Folding (_from_specifier_set passes the region unfolded) makes
++            # ``>1.0a1`` and ``>=1.0a2.dev0`` carry the same region; clipping
++            # keeps the opt-in inside the range's own versions.
++            region = pre_region if canonical else _canonicalize(pre_region)
++            instance._pre_region = tuple(intersect_ranges(region, bounds))
+ 
+         return instance
+ 
+@@ -1105,8 +1373,7 @@ class VersionRange:
+         if not self._pre_region:
+             return other._pre_region
+ 
+-        # Both sides carry a region; merge them. _build re-canonicalizes and
+-        # clips, so the plain union is fine here.
++        # Both sides carry a region; a union of canonical regions is canonical.
+         return tuple(_union_ranges(self._pre_region, other._pre_region))
+ 
+     def _with_policy(
+@@ -1131,7 +1398,7 @@ class VersionRange:
+         >>> "1.0" in VersionRange.empty()
+         False
+         """
+-        return cls._build((), prereleases_configured=prereleases)
++        return cls._build((), prereleases_configured=prereleases, canonical=True)
+ 
+     @classmethod
+     def full(
+@@ -1156,6 +1423,7 @@ class VersionRange:
+             FULL_RANGE,
+             admit_arbitrary=admit_arbitrary,
+             prereleases_configured=prereleases,
++            canonical=True,
+         )
+ 
+     @classmethod
+@@ -1189,6 +1457,73 @@ class VersionRange:
              prereleases_configured=prereleases,
          )
  
@@ -3040,7 +3116,60 @@ index 4fbf48e..d52f359 100644
      def intersection(self, other: VersionRange) -> VersionRange:
          """Range containing exactly the versions in both self and other.
  
-@@ -1469,6 +1796,15 @@ class VersionRange:
+@@ -1219,6 +1554,7 @@ class VersionRange:
+                 admit_arbitrary=combined_arb,
+                 pre_region=new_region,
+                 prereleases_configured=configured,
++                canonical=True,
+             )
+ 
+         return self._combine_literals(
+@@ -1266,6 +1602,7 @@ class VersionRange:
+                 admit_arbitrary=combined_arb,
+                 pre_region=new_region,
+                 prereleases_configured=configured,
++                canonical=True,
+             )
+ 
+         return self._combine_literals(
+@@ -1309,6 +1646,7 @@ class VersionRange:
+             admit_arbitrary=self._admit_arbitrary,
+             pre_region=(),
+             prereleases_configured=self._prereleases_configured,
++            canonical=True,
+         )
+ 
+     def difference(self, other: VersionRange) -> VersionRange:
+@@ -1365,6 +1703,7 @@ class VersionRange:
+                 admit_arbitrary=combined_arb,
+                 pre_region=new_region,
+                 prereleases_configured=self._prereleases_configured,
++                canonical=True,
+             )
+ 
+         return self._combine_literals(
+@@ -1386,7 +1725,11 @@ class VersionRange:
+         pre_region: tuple[Interval, ...],
+         prereleases_configured: bool | None,
+     ) -> VersionRange:
+-        """Resolve admit/reject for ``self`` ``op`` ``other`` over their literals."""
++        """Resolve admit/reject for ``self`` ``op`` ``other`` over their literals.
++
++        Every caller is a set operation, so ``new_bounds`` and ``pre_region``
++        arrive folded.
++        """
+         admits: set[str] = set()
+         rejects: set[str] = set()
+ 
+@@ -1414,6 +1757,7 @@ class VersionRange:
+             admit_arbitrary=admit_arbitrary,
+             pre_region=pre_region,
+             prereleases_configured=prereleases_configured,
++            canonical=True,
+         )
+ 
+     def _matches_literal(self, literal: str) -> bool:
+@@ -1469,6 +1813,15 @@ class VersionRange:
          False
          >>> VersionRange.empty().is_subset(outer)
          True
@@ -3056,7 +3185,7 @@ index 4fbf48e..d52f359 100644
          """
          self._check_policy_compat(other)
  
-@@ -1479,12 +1815,52 @@ class VersionRange:
+@@ -1479,12 +1832,52 @@ class VersionRange:
  
          # Plain ranges: subset reduces to bounds containment, no algebra needed.
          if self._is_plain() and other._is_plain():
@@ -3110,7 +3239,7 @@ index 4fbf48e..d52f359 100644
      def is_superset(self, other: VersionRange) -> bool:
          """Return whether every member of other is also a member of self.
  
-@@ -1515,12 +1891,19 @@ class VersionRange:
+@@ -1515,12 +1908,19 @@ class VersionRange:
          True
          >>> a.is_disjoint(SpecifierSet(">=1.5,<2.5").to_range())
          False
@@ -3131,7 +3260,7 @@ index 4fbf48e..d52f359 100644
          return self.intersection(other).is_empty
  
      def _same_releases(self, other: VersionRange) -> bool:
-@@ -1539,6 +1922,8 @@ class VersionRange:
+@@ -1539,6 +1939,8 @@ class VersionRange:
          iterable: Iterable[UnparsedVersionVar],
          prereleases: bool | None = None,
          key: None = ...,
@@ -3140,7 +3269,7 @@ index 4fbf48e..d52f359 100644
      ) -> Iterator[UnparsedVersionVar]: ...
  
      @typing.overload
-@@ -1547,6 +1932,28 @@ class VersionRange:
+@@ -1547,6 +1949,28 @@ class VersionRange:
          iterable: Iterable[T],
          prereleases: bool | None = None,
          key: Callable[[T], UnparsedVersion] = ...,
@@ -3169,7 +3298,7 @@ index 4fbf48e..d52f359 100644
      ) -> Iterator[T]: ...
  
      def filter(
-@@ -1554,6 +1961,8 @@ class VersionRange:
+@@ -1554,6 +1978,8 @@ class VersionRange:
          iterable: Iterable[Any],
          prereleases: bool | None = None,
          key: Callable[[Any], Version | str] | None = None,
@@ -3178,7 +3307,7 @@ index 4fbf48e..d52f359 100644
      ) -> Iterator[Any]:
          """Yield items from iterable whose version falls inside the range.
  
-@@ -1564,13 +1973,56 @@ class VersionRange:
+@@ -1564,13 +1990,56 @@ class VersionRange:
          ``prereleases=True`` would yield it). A flushed buffer comes after
          every in-place yield, so the output is not version-sorted.
  
@@ -3236,7 +3365,7 @@ index 4fbf48e..d52f359 100644
          region: tuple[Interval, ...] = ()
          if prereleases is None:
              # The region applies only under the autodetect default; a configured
-@@ -1578,19 +2030,93 @@ class VersionRange:
+@@ -1578,19 +2047,93 @@ class VersionRange:
              prereleases = self._prereleases_configured
              region = self._pre_region
  
@@ -3335,7 +3464,7 @@ index 4fbf48e..d52f359 100644
      def _filter_with_admission(
          self,
          iterable: Iterable[Any],
-@@ -1678,6 +2204,123 @@ class VersionRange:
+@@ -1678,6 +2221,123 @@ class VersionRange:
          if not found_final:
              yield from all_nonfinal
  

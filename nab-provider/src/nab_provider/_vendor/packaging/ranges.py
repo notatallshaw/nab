@@ -1270,6 +1270,7 @@ class VersionRange:
         *,
         pre_region: tuple[Interval, ...] = (),
         prereleases_configured: bool | None = None,
+        canonical: bool = False,
     ) -> VersionRange:
         """Internal factory; bypasses :meth:`__new__`.
 
@@ -1279,8 +1280,16 @@ class VersionRange:
         pre-release policy is set here and never reassigned afterwards;
         ``pre_region`` is canonicalized like the bounds and clipped to them,
         or dropped when a configured policy makes it inert.
+
+        ``canonical=True`` says the bounds and the region are folded already,
+        so the fold is skipped. The set algebra can promise that:
+        ``intersect_ranges`` and ``_union_ranges`` reuse operand bounds
+        unchanged, and ``_complement_ranges`` flips inclusivity as it swaps a
+        bound's side, which lands either on the inclusivity the fold ignores or
+        on a version a canonical operand has already shown is no least successor.
         """
-        bounds = _canonicalize(bounds)
+        if not canonical:
+            bounds = _canonicalize(bounds)
 
         if admit and reject:
             admit = admit - reject
@@ -1304,16 +1313,15 @@ class VersionRange:
         instance._admit_arbitrary = admit_arbitrary
         instance._prereleases_configured = prereleases_configured
 
-        # A configured policy makes the region inert, so drop it. Otherwise fold
-        # least-successor bounds (_from_specifier_set passes the region unfolded),
-        # so ``>1.0a1`` and ``>=1.0a2.dev0`` carry the same region, then clip it
-        # to the bounds so the opt-in never reaches past the range's own versions.
+        # A configured policy makes the region inert, so drop it.
         if prereleases_configured is not None or not pre_region:
             instance._pre_region = ()
         else:
-            instance._pre_region = tuple(
-                intersect_ranges(_canonicalize(pre_region), bounds)
-            )
+            # Folding (_from_specifier_set passes the region unfolded) makes
+            # ``>1.0a1`` and ``>=1.0a2.dev0`` carry the same region; clipping
+            # keeps the opt-in inside the range's own versions.
+            region = pre_region if canonical else _canonicalize(pre_region)
+            instance._pre_region = tuple(intersect_ranges(region, bounds))
 
         return instance
 
@@ -1365,8 +1373,7 @@ class VersionRange:
         if not self._pre_region:
             return other._pre_region
 
-        # Both sides carry a region; merge them. _build re-canonicalizes and
-        # clips, so the plain union is fine here.
+        # Both sides carry a region; a union of canonical regions is canonical.
         return tuple(_union_ranges(self._pre_region, other._pre_region))
 
     def _with_policy(
@@ -1391,7 +1398,7 @@ class VersionRange:
         >>> "1.0" in VersionRange.empty()
         False
         """
-        return cls._build((), prereleases_configured=prereleases)
+        return cls._build((), prereleases_configured=prereleases, canonical=True)
 
     @classmethod
     def full(
@@ -1416,6 +1423,7 @@ class VersionRange:
             FULL_RANGE,
             admit_arbitrary=admit_arbitrary,
             prereleases_configured=prereleases,
+            canonical=True,
         )
 
     @classmethod
@@ -1546,6 +1554,7 @@ class VersionRange:
                 admit_arbitrary=combined_arb,
                 pre_region=new_region,
                 prereleases_configured=configured,
+                canonical=True,
             )
 
         return self._combine_literals(
@@ -1593,6 +1602,7 @@ class VersionRange:
                 admit_arbitrary=combined_arb,
                 pre_region=new_region,
                 prereleases_configured=configured,
+                canonical=True,
             )
 
         return self._combine_literals(
@@ -1636,6 +1646,7 @@ class VersionRange:
             admit_arbitrary=self._admit_arbitrary,
             pre_region=(),
             prereleases_configured=self._prereleases_configured,
+            canonical=True,
         )
 
     def difference(self, other: VersionRange) -> VersionRange:
@@ -1692,6 +1703,7 @@ class VersionRange:
                 admit_arbitrary=combined_arb,
                 pre_region=new_region,
                 prereleases_configured=self._prereleases_configured,
+                canonical=True,
             )
 
         return self._combine_literals(
@@ -1713,7 +1725,11 @@ class VersionRange:
         pre_region: tuple[Interval, ...],
         prereleases_configured: bool | None,
     ) -> VersionRange:
-        """Resolve admit/reject for ``self`` ``op`` ``other`` over their literals."""
+        """Resolve admit/reject for ``self`` ``op`` ``other`` over their literals.
+
+        Every caller is a set operation, so ``new_bounds`` and ``pre_region``
+        arrive folded.
+        """
         admits: set[str] = set()
         rejects: set[str] = set()
 
@@ -1741,6 +1757,7 @@ class VersionRange:
             admit_arbitrary=admit_arbitrary,
             pre_region=pre_region,
             prereleases_configured=prereleases_configured,
+            canonical=True,
         )
 
     def _matches_literal(self, literal: str) -> bool:
