@@ -21,13 +21,11 @@ multi-index router can treat local and remote indexes uniformly.
 from __future__ import annotations
 
 import errno
-import lzma
 import os
 import re
 import stat
 import sys
 import zipfile
-import zlib
 from email.parser import BytesParser, Parser
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -414,21 +412,21 @@ def _read_sdist_requires_python(sdist_path: Path) -> str | None:
 
 
 def _read_wheel_requires_python(wheel_path: Path, expected: str) -> str | None:
-    """Return ``Requires-Python`` from a wheel's METADATA, or ``None``."""
+    """Return ``Requires-Python`` from a wheel's METADATA, or ``None``.
+
+    A wheel that cannot be opened, read or decompressed answers ``None``, so
+    one bad file does not fail the listing that carries the package's other
+    versions.
+    """
     try:
         with zipfile.ZipFile(wheel_path) as archive:
             member = wheel_metadata_member(archive.namelist(), expected)
             if member is None:
                 return None
             raw = archive.read(member)
-    except (
-        zipfile.BadZipFile,
-        OSError,
-        UnsupportedWheelError,
-        zlib.error,
-        lzma.LZMAError,
-        RuntimeError,
-    ):
+    except Exception:  # noqa: BLE001 - untrusted archive bytes
+        # Corrupt content raises a different type per compression method, and
+        # zstd's does not exist before 3.14, so an explicit list leaves holes.
         return None
 
     value = BytesParser().parsebytes(raw, headersonly=True).get("Requires-Python")
@@ -491,9 +489,10 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
     directories, or one naming a different distribution, raises
     :class:`UnsupportedWheelError` rather than reading another package's
     metadata.  Returns ``None`` when the archive cannot be parsed, its name is
-    not a wheel filename, or it carries no METADATA member.  A wheel that
-    cannot be opened raises :class:`UnreadableLocalIndexError` instead, so a
-    permission or mount fault is not read as a wheel that declares nothing.
+    not a wheel filename, it carries no METADATA member, or that member does
+    not decompress and decode.  A filesystem fault raises
+    :class:`UnreadableLocalIndexError` instead, so a permission or mount fault
+    is not read as a wheel that declares nothing.
     """
     parsed = _parse_wheel_filename(wheel_path.name)
     if parsed is None:
@@ -504,16 +503,20 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
             if member is None:
                 return None
             return zf.read(member).decode("utf-8")
+    except UnsupportedWheelError:
+        # Not corrupt content: the catch-all below would otherwise swallow it.
+        raise
     except OSError as exc:
+        # bz2 reports a corrupt member as a plain OSError; only a filesystem
+        # fault carries an errno.
+        if exc.errno is None:
+            return None
+
         msg = f"cannot read local wheel {wheel_path}: {exc}"
         raise UnreadableLocalIndexError(msg) from exc
-    except (
-        zipfile.BadZipFile,
-        UnicodeDecodeError,
-        zlib.error,
-        lzma.LZMAError,
-        RuntimeError,
-    ):
+    except Exception:  # noqa: BLE001 - untrusted archive bytes
+        # Corrupt content raises a different type per compression method, and
+        # zstd's does not exist before 3.14, so an explicit list leaves holes.
         return None
 
 

@@ -255,6 +255,19 @@ def _write_local_wheel(path: Path, name: str, version: str) -> None:
         zf.writestr(member, make_metadata(name, version))
 
 
+def _write_corrupt_bz2_wheel(path: Path, name: str, version: str) -> None:
+    """Write a wheel whose bz2-compressed METADATA holds a corrupt stream.
+
+    The central directory stays intact, so the archive opens and lists its
+    members; only the member's bz2 magic is broken, which bz2 reports as a
+    plain OSError rather than an error type of its own.
+    """
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_BZIP2) as zf:
+        member = f"{name}-{version}.dist-info/METADATA"
+        zf.writestr(member, make_metadata(name, version))
+    path.write_bytes(path.read_bytes().replace(b"BZh", b"BZx", 1))
+
+
 def _deny_zip_open(monkeypatch: pytest.MonkeyPatch, target: Path) -> None:
     """Make opening ``target`` as a zip fail with EACCES.
 
@@ -3069,6 +3082,29 @@ class TestGetDependencies:
 
         with pytest.raises(UnreadableLocalIndexError, match="Permission denied"):
             provider.choose_version("foo", root_reqs["foo"])
+
+    def test_corrupt_local_wheel_pins_the_older_version(self, tmp_path: Path) -> None:
+        """A wheel whose METADATA will not decompress rejects only that version.
+
+        The archive opens and lists its members, so the failure is the wheel's
+        own content rather than a filesystem fault: 1.0 drops and 0.9 answers.
+        """
+        readable = tmp_path / "foo-0.9-py3-none-any.whl"
+        _write_local_wheel(readable, "foo", "0.9")
+        corrupt = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_corrupt_bz2_wheel(corrupt, "foo", "1.0")
+
+        coordinator = make_coordinator(
+            [
+                make_wheel("0.9", has_metadata=False, local_path=readable),
+                make_wheel("1.0", has_metadata=False, local_path=corrupt),
+            ],
+            package="foo",
+        )
+        root_reqs = {"foo": SpecifierSet(">=0").to_range()}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+
+        assert provider.choose_version("foo", root_reqs["foo"]) == V("0.9")
 
     def test_unreadable_local_wheel_falls_back_to_sdist(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

@@ -206,6 +206,23 @@ def _write_corrupt_lzma_wheel(path: Path, name: str, version: str) -> None:
     path.write_bytes(bytes(raw))
 
 
+def _write_corrupt_bz2_wheel(path: Path, name: str, version: str) -> None:
+    """Write a wheel whose bz2-compressed METADATA holds a corrupt stream.
+
+    The central directory stays intact, so the archive opens and lists its
+    members; only the member's bz2 magic is broken, which bz2 reports as a
+    plain OSError rather than an error type of its own.
+    """
+    member = f"{name}-{version}.dist-info/METADATA"
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_BZIP2) as zf:
+        zf.writestr(
+            member,
+            f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n"
+            "Requires-Python: >=3.12\n",
+        )
+    path.write_bytes(path.read_bytes().replace(b"BZh", b"BZx", 1))
+
+
 def _write_corrupt_sdist(path: Path, name: str, version: str) -> None:
     """Write an sdist whose PKG-INFO body is behind a corrupt deflate block.
 
@@ -287,6 +304,20 @@ def _write_unsupported_compression_wheel(
             "Requires-Python: >=3.12\n",
         )
     _patch_wheel_member(path, member, method=method)
+
+
+_ZIP_ZSTANDARD = 93
+
+
+def _write_corrupt_zstd_wheel(path: Path, name: str, version: str) -> None:
+    """Write a wheel whose METADATA member claims zstd over bytes that are not.
+
+    The method is spelled as its number because ``zipfile.ZIP_ZSTANDARD`` only
+    exists from 3.14, where reading the member raises ``ZstdError``: an
+    ``Exception`` subclass that is not an ``OSError``.  Before 3.14 the method
+    is merely unsupported.
+    """
+    _write_unsupported_compression_wheel(path, name, version, method=_ZIP_ZSTANDARD)
 
 
 def _write_encrypted_metadata_wheel(path: Path, name: str, version: str) -> None:
@@ -684,6 +715,22 @@ class TestFlatWheelhouse:
 
     def test_requires_python_none_for_corrupt_lzma(self, tmp_path: Path) -> None:
         _write_corrupt_lzma_wheel(tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python is None
+
+    def test_requires_python_none_for_corrupt_bz2(self, tmp_path: Path) -> None:
+        _write_corrupt_bz2_wheel(tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0")
+        client = LocalIndexClient(tmp_path.as_uri())
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].requires_python is None
+
+    def test_requires_python_none_for_corrupt_zstd(self, tmp_path: Path) -> None:
+        # The listing runs before any version is chosen, so an error here loses
+        # the package's other versions too, not just this wheel.
+        _write_corrupt_zstd_wheel(tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0")
         client = LocalIndexClient(tmp_path.as_uri())
         files = run(client.get_files("foo"))
         assert len(files) == 1
@@ -1614,6 +1661,16 @@ class TestReadWheelMetadata:
         _write_corrupt_lzma_wheel(wheel, "foo", "1.0")
         assert read_wheel_metadata(wheel) is None
 
+    def test_returns_none_for_corrupt_bz2(self, tmp_path: Path) -> None:
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_corrupt_bz2_wheel(wheel, "foo", "1.0")
+        assert read_wheel_metadata(wheel) is None
+
+    def test_returns_none_for_corrupt_zstd(self, tmp_path: Path) -> None:
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_corrupt_zstd_wheel(wheel, "foo", "1.0")
+        assert read_wheel_metadata(wheel) is None
+
     def test_returns_none_for_non_wheel_filename(self, tmp_path: Path) -> None:
         assert read_wheel_metadata(tmp_path / "notes.txt") is None
 
@@ -1633,6 +1690,22 @@ class TestReadWheelMetadata:
             read_wheel_metadata(wheel)
         assert str(wheel) in str(caught.value)
         assert "Permission denied" in str(caught.value)
+
+    def test_read_fault_raises_index_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A read fault carries an errno, so it must raise, not read back as None.
+        wheel = tmp_path / "foo-1.0-py3-none-any.whl"
+        _write_wheel(wheel, "foo", "1.0")
+
+        def failing_read(self: zipfile.ZipFile, name: str) -> bytes:
+            raise OSError(errno.EIO, "Input/output error", str(wheel))
+
+        monkeypatch.setattr(zipfile.ZipFile, "read", failing_read)
+
+        with pytest.raises(UnreadableLocalIndexError) as caught:
+            read_wheel_metadata(wheel)
+        assert "Input/output error" in str(caught.value)
 
     def test_rejects_multiple_dist_info_dirs(self, tmp_path: Path) -> None:
         wheel = tmp_path / "foo-1.0-py3-none-any.whl"
