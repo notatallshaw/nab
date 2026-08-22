@@ -27,7 +27,7 @@ from ..vcs_admission import UnsupportedVcsError
 from .metadata_resolver import pick_dist_for_metadata, version_dists
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Iterator, Mapping, Sequence
     from datetime import datetime
     from typing import Literal, TypeAlias
 
@@ -948,6 +948,7 @@ def _excluded_by_upload_time(
 def prefetch_walk_ahead(
     provider: Provider,
     normalized: str,
+    version_range: RangeProtocol[Version],
     deep_count: int,
 ) -> None:
     """Submit metadata for the next ``deep_count`` wheels of ``normalized``.
@@ -955,6 +956,10 @@ def prefetch_walk_ahead(
     Called at the top of the pipelined scan, so a walk that runs past the
     first ``PREFETCH_BATCH`` window hits cache instead of paying one RTT
     per visit.
+
+    ``version_range`` is the range the scan walks.  A version outside it
+    is not requested, since the scan never reaches it, but it still fills
+    its window slot.
 
     Takes each version's artifact from
     :func:`~nab_provider._provider.metadata_resolver.version_dists`, so the
@@ -976,13 +981,7 @@ def prefetch_walk_ahead(
     )
 
     items: list[tuple[str, str, str, tuple[str, str] | None]] = []
-    seen_versions: set[Version] = set()
-    for version, _ in ordered:
-        if version in seen_versions:
-            continue
-        seen_versions.add(version)
-        if len(seen_versions) > deep_count:
-            break
+    for version in _walk_ahead_window(ordered, version_range, deep_count):
         if (normalized, version) in provider.deps_cache:
             continue
         dist = picked[version]
@@ -995,6 +994,27 @@ def prefetch_walk_ahead(
         items.append((normalized, dist.version, url, dist.metadata_hash))
     if items:
         provider.coordinator.request_metadata_batch(items)
+
+
+def _walk_ahead_window(
+    ordered: Sequence[tuple[Version, DistFile]],
+    version_range: RangeProtocol[Version],
+    deep_count: int,
+) -> Iterator[Version]:
+    """Yield the in-range versions among the first ``deep_count`` distinct ones.
+
+    An excluded version still consumes its slot, so the window covers the
+    same stretch of the listing whatever the range is.
+    """
+    seen: set[Version] = set()
+    for version, _ in ordered:
+        if version in seen:
+            continue
+        seen.add(version)
+        if len(seen) > deep_count:
+            return
+        if version in version_range:
+            yield version
 
 
 def prefetch_batch(

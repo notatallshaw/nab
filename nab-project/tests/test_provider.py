@@ -104,6 +104,9 @@ from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 V = Version
 
+# Excludes nothing. Used where the walk-ahead's range is not what a test checks.
+_ANY_VERSION = VersionRange.full()
+
 # The target most tests resolve against: the host machine, impersonating
 # CPython 3.12.0.  Shared because it is frozen and building one walks the
 # host's whole tag set.
@@ -626,7 +629,7 @@ class TestSidecarDigestForwarding:
         provider.fetch_versions("foo")
         coordinator.reset()
 
-        provider.prefetch_walk_ahead("foo")
+        provider._prefetch_walk_ahead("foo", _ANY_VERSION)
 
         assert _batched_digests(coordinator) == [("1.0", _sidecar_hash("1.0"))]
 
@@ -6695,7 +6698,7 @@ class TestSkipFetch:
         )
         provider.fetch_versions("pkg")
         coordinator.reset()
-        provider.prefetch_walk_ahead("pkg")
+        provider._prefetch_walk_ahead("pkg", _ANY_VERSION)
         assert _prefetched_batch_versions(coordinator) == ["1.0"]
 
 
@@ -8728,19 +8731,20 @@ class TestSpeculativePrefetchBatchLimit:
 
 
 class TestPrefetchWalkAhead:
-    """``prefetch_walk_ahead`` covers the walk past the first batch.
+    """``_prefetch_walk_ahead`` covers the walk past the first batch.
 
     Fired from ``_scan_candidates_pipelined``; submits up to
     ``DEEP_PREFETCH_COUNT`` wheel metadata requests in scan order over
-    ``versions_cache[normalized]``.  Fire-and-forget; correctness only
-    depends on it being a superset of what the resolver later asks for.
+    ``versions_cache[normalized]``, skipping the versions the scan's range
+    excludes.  Fire-and-forget: a version it skips is fetched on demand
+    when the resolver asks for it.
     """
 
     def test_no_op_when_listing_missing(self) -> None:
         """Bare provider with no cached listing makes no batch call."""
         coordinator = make_coordinator([], package="foo")
         provider = Provider(coordinator)
-        provider.prefetch_walk_ahead("foo")
+        provider._prefetch_walk_ahead("foo", _ANY_VERSION)
         assert not coordinator.calls_to("request_metadata_batch")
 
     def test_caps_at_deep_prefetch_count(self) -> None:
@@ -8750,11 +8754,42 @@ class TestPrefetchWalkAhead:
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
         coordinator.reset()
-        provider.prefetch_walk_ahead("foo")
+        provider._prefetch_walk_ahead("foo", _ANY_VERSION)
         items = coordinator.calls_to("request_metadata_batch")[-1][0]
         # fetch_versions already prefetched the newest version; it fills a
         # window slot but is skipped as already-held.
         assert len(items) == provider.DEEP_PREFETCH_COUNT - 1
+
+    def test_skips_versions_outside_the_range(self) -> None:
+        """A version the scan's range excludes is not requested."""
+        wheels = [make_wheel("3.0"), make_wheel("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        provider.fetch_versions("foo")
+        coordinator.reset()
+        provider._prefetch_walk_ahead("foo", SpecifierSet(">=2.0").to_range())
+        items = coordinator.calls_to("request_metadata_batch")[-1][0]
+        versions = [ver for _, ver, _, _ in items]
+        # fetch_versions already prefetched the newest version.
+        assert versions == ["2.0"]
+
+    def test_out_of_range_version_still_fills_its_window_slot(self) -> None:
+        """The window stays the first ``DEEP_PREFETCH_COUNT`` listing versions.
+
+        Excluding a version frees no slot for a deeper one, so the walk
+        never reaches further than it does with no range at all.
+        """
+        wheels = [make_wheel(f"{i}.0") for i in range(100, 0, -1)]
+        coordinator = make_coordinator(wheels, package="foo")
+        provider = Provider(coordinator)
+        provider.fetch_versions("foo")
+        coordinator.reset()
+        provider._prefetch_walk_ahead("foo", SpecifierSet("<=90.0").to_range())
+        items = coordinator.calls_to("request_metadata_batch")[-1][0]
+        versions = [ver for _, ver, _, _ in items]
+        # The window runs 100.0 down to 37.0; 100.0 through 91.0 are out of
+        # range and 37.0 is the last slot.
+        assert versions == [f"{i}.0" for i in range(90, 36, -1)]
 
     @pytest.mark.parametrize(
         "strategy",
@@ -8773,7 +8808,7 @@ class TestPrefetchWalkAhead:
         )
         provider.fetch_versions("foo")
         coordinator.reset()
-        provider.prefetch_walk_ahead("foo")
+        provider._prefetch_walk_ahead("foo", _ANY_VERSION)
         items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         # fetch_versions already prefetched 1.0, the oldest; it fills a window
@@ -8790,7 +8825,7 @@ class TestPrefetchWalkAhead:
         provider.fetch_versions("foo")
         provider.deps_cache[("foo", V("2.0"))] = {}
         coordinator.reset()
-        provider.prefetch_walk_ahead("foo")
+        provider._prefetch_walk_ahead("foo", _ANY_VERSION)
         items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         assert "2.0" not in versions
@@ -8812,7 +8847,7 @@ class TestPrefetchWalkAhead:
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
         coordinator.reset()
-        provider.prefetch_walk_ahead("foo")
+        provider._prefetch_walk_ahead("foo", _ANY_VERSION)
         items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         assert versions == ["2.0", "1.0"]
@@ -8828,7 +8863,7 @@ class TestPrefetchWalkAhead:
         assert two.metadata_url is not None
         coordinator.request_metadata("foo", "2.0", two.metadata_url, None)
         coordinator.reset()
-        provider.prefetch_walk_ahead("foo")
+        provider._prefetch_walk_ahead("foo", _ANY_VERSION)
         items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         assert "2.0" not in versions
@@ -8849,7 +8884,7 @@ class TestPrefetchWalkAhead:
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
         coordinator.reset()
-        provider.prefetch_walk_ahead("foo")
+        provider._prefetch_walk_ahead("foo", _ANY_VERSION)
         items = coordinator.calls_to("request_metadata_batch")[-1][0]
         assert any(
             ver == "1.0" and url.endswith(".whl.metadata") for _, ver, url, _ in items
@@ -8865,7 +8900,7 @@ class TestPrefetchWalkAhead:
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
         coordinator.reset()
-        provider.prefetch_walk_ahead("foo")
+        provider._prefetch_walk_ahead("foo", _ANY_VERSION)
         items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         assert versions == ["2.0"]
@@ -8880,7 +8915,7 @@ class TestPrefetchWalkAhead:
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
         coordinator.reset()
-        provider.prefetch_walk_ahead("foo")
+        provider._prefetch_walk_ahead("foo", _ANY_VERSION)
         items = coordinator.calls_to("request_metadata_batch")[-1][0]
         versions = [ver for _, ver, _, _ in items]
         assert versions == ["1.0"]
@@ -8892,11 +8927,11 @@ class TestPrefetchWalkAhead:
         provider = Provider(coordinator)
         provider.fetch_versions("foo")
         coordinator.reset()
-        provider.prefetch_walk_ahead("foo")
+        provider._prefetch_walk_ahead("foo", _ANY_VERSION)
         assert not coordinator.calls_to("request_metadata_batch")
 
     def test_fires_when_pipelined_scan_engages(self) -> None:
-        """Trip the look-ahead scan: walk_ahead fires before the 8-batch starts."""
+        """Trip the look-ahead scan: walk_ahead fires with the range being scanned."""
         # foo's first candidate (3.0) requires bar<2.0 but the resolver has
         # already decided bar==3.0; that rejection drives _run_full_scan into
         # _scan_candidates_pipelined, which fires the deep prefetch.
@@ -8912,11 +8947,13 @@ class TestPrefetchWalkAhead:
         root_reqs = {"foo": VersionRange.full(admit_arbitrary=False)}
         provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         provider.receive_partial_solution_hint({}, {"bar": V("3.0")})
+
+        version_range = SpecifierSet(">=2.0").to_range()
         with patch.object(
-            provider, "prefetch_walk_ahead", wraps=provider.prefetch_walk_ahead
+            provider, "_prefetch_walk_ahead", wraps=provider._prefetch_walk_ahead
         ) as spy:
-            provider.choose_version("foo", VersionRange.full())
-        spy.assert_called_with("foo")
+            provider.choose_version("foo", version_range)
+        spy.assert_called_with("foo", version_range)
 
     def test_does_not_fire_when_first_candidate_accepted(self) -> None:
         """No rejection means no pipelined scan and no deep prefetch."""
@@ -8929,7 +8966,7 @@ class TestPrefetchWalkAhead:
         root_reqs = {"foo": SpecifierSet(">=1.0").to_range()}
         provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
         with patch.object(
-            provider, "prefetch_walk_ahead", wraps=provider.prefetch_walk_ahead
+            provider, "_prefetch_walk_ahead", wraps=provider._prefetch_walk_ahead
         ) as spy:
             provider.choose_version("foo", SpecifierSet(">=1.0").to_range())
         spy.assert_not_called()

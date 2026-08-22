@@ -1168,9 +1168,13 @@ class Provider:
         """See :func:`nab_provider._provider.listing.speculative_prefetch`."""
         _listing.speculative_prefetch(self, normalized, versions)
 
-    def prefetch_walk_ahead(self, normalized: str) -> None:
+    def _prefetch_walk_ahead(
+        self, normalized: str, version_range: RangeProtocol[Version]
+    ) -> None:
         """See :func:`nab_provider._provider.listing.prefetch_walk_ahead`."""
-        _listing.prefetch_walk_ahead(self, normalized, self.DEEP_PREFETCH_COUNT)
+        _listing.prefetch_walk_ahead(
+            self, normalized, version_range, self.DEEP_PREFETCH_COUNT
+        )
 
     def filter_distributions(
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
@@ -1227,7 +1231,13 @@ class Provider:
 
         wheel_by_version = self._wheel_by_version(normalized, version_list)
         return self._run_full_scan(
-            normalized, first, candidates, wheel_by_version, package, all_versions
+            normalized,
+            first,
+            candidates,
+            wheel_by_version,
+            package,
+            all_versions,
+            version_range,
         )
 
     def _ordered_candidates(
@@ -1392,6 +1402,7 @@ class Provider:
         wheel_by_version: dict[Version, DistFile],
         package: str,
         all_versions: list[Version],
+        version_range: RangeProtocol[Version],
     ) -> Version | None:
         """Run the decision-aware look-ahead scan over candidates.
 
@@ -1409,6 +1420,7 @@ class Provider:
             list(rest),
             wheel_by_version,
             broad_rejections,
+            version_range,
             first_candidate=first,
         )
         if found is not None:
@@ -1430,6 +1442,7 @@ class Provider:
         remaining: list[Version],
         wheel_by_version: dict[Version, DistFile],
         broad_rejections: int,
+        version_range: RangeProtocol[Version],
         *,
         first_candidate: Version | None = None,
     ) -> Version | None:
@@ -1451,7 +1464,7 @@ class Provider:
         abort path.
         """
         # Front-load deep metadata so a walk past the first batch hits cache.
-        self.prefetch_walk_ahead(normalized)
+        self._prefetch_walk_ahead(normalized, version_range)
 
         starts_iter = iter(range(0, len(remaining), self.PREFETCH_BATCH))
         in_flight: deque[
