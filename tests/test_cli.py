@@ -5785,6 +5785,16 @@ assert not leaked, f"importing nab.cli loaded {leaked}"
 """
 
 
+_STDLIB_MODULE_PROBE = """
+import sys
+
+import nab.cli
+
+leaked = sorted({"html.parser", "urllib.request"} & sys.modules.keys())
+assert not leaked, f"importing nab.cli loaded {leaked}"
+"""
+
+
 class TestCliImportPath:
     """What importing :mod:`nab.cli` is allowed to pull in."""
 
@@ -5792,6 +5802,16 @@ class TestCliImportPath:
         """Neither library belongs on the path of a command that never fetches."""
         subprocess.run(  # noqa: S603 - the probe is this file's own source
             [sys.executable, "-c", _HTTP_LIBRARY_PROBE], check=True
+        )
+
+    def test_html_parser_and_urllib_request_stay_unimported(self) -> None:
+        """Neither belongs on startup: one reads an HTML page, one a file:// URL.
+
+        Matched on full module names rather than first path components,
+        since :mod:`urllib.parse` is always loaded.
+        """
+        subprocess.run(  # noqa: S603 - the probe is this file's own source
+            [sys.executable, "-c", _STDLIB_MODULE_PROBE], check=True
         )
 
 
