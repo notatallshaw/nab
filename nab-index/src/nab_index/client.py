@@ -258,8 +258,17 @@ DEFAULT_INDEX = "https://pypi.org/simple/"
 _OBS_FOLD = re.compile(r"[\r\n]+[ \t]+")
 
 
+# RFC 9110 5.3: repeated field lines combine into one comma-separated value only
+# where the field is defined as a list. Cache-Control is the only such field read
+# here.
+_LIST_VALUED_FIELDS = frozenset({"cache-control"})
+
+
 def _header(response: HttpResponse, key: str) -> str | None:
     """Case-insensitive header lookup, returning an unfolded field value.
+
+    Repeated lines of a list-valued field are joined in order; for any other
+    field the first line is the value.
 
     The :class:`HttpResponse` Protocol only promises a plain
     :class:`Mapping`. Both real transports (httpx, urllib3) return
@@ -268,10 +277,12 @@ def _header(response: HttpResponse, key: str) -> str | None:
     """
     headers = response.headers
     target = key.lower()
-    for name, value in headers.items():
-        if name.lower() == target:
-            return _OBS_FOLD.sub(" ", value)
-    return None
+    lines = [value for name, value in headers.items() if name.lower() == target]
+    if not lines:
+        return None
+
+    value = ", ".join(lines) if target in _LIST_VALUED_FIELDS else lines[0]
+    return _OBS_FOLD.sub(" ", value)
 
 
 def _is_html_listing(content_type: str | None) -> bool:
