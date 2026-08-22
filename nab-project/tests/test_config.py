@@ -330,6 +330,12 @@ class TestTopLevelKeys:
         ):
             read_pyproject_config(path)
 
+    def test_symlink_loop_in_the_path_rejected(self, tmp_path: Path) -> None:
+        """A loop reaches the read, so the error names the errno."""
+        (tmp_path / "loop").symlink_to("loop")
+        with pytest.raises(ConfigError, match="cannot read"):
+            read_pyproject_config(tmp_path / "loop" / "pyproject.toml")
+
     @pytest.mark.parametrize("user_key", ["offline = true", 'cache-dir = "x"'])
     def test_user_scope_key_in_pyproject_rejected(
         self, tmp_path: Path, user_key: str
@@ -2819,6 +2825,16 @@ class TestLocalSources:
         )
         with pytest.raises(ConfigError, match="escapes the source tree"):
             read_pyproject_config(path)
+
+    def test_path_through_a_symlink_loop_parses(self, tmp_path: Path) -> None:
+        """A loop is a bad tree, not a bad config, so parsing accepts it."""
+        (tmp_path / "loop").symlink_to("loop")
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "x"\npath = "loop"\n',
+        )
+        srcs = read_pyproject_config(path).local_sources
+        assert srcs[0].path == str(tmp_path.resolve() / "loop")
 
     def test_unknown_key_rejected(self, tmp_path: Path) -> None:
         path = write(

@@ -3935,6 +3935,15 @@ class TestConfigErrors:
             lock(member)
         assert "workspace discovery error" in capsys.readouterr().err
 
+    def test_symlink_loop_in_the_path_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A loop is left to the pyproject read, which names the errno."""
+        (tmp_path / "loop").symlink_to("loop")
+        with pytest.raises(SystemExit, match="1"):
+            lock(tmp_path / "loop" / "pyproject.toml")
+        assert "cannot read" in capsys.readouterr().err
+
 
 class TestCliDocstringCommandModules:
     """``nab.cli``'s docstring names every module that registers a subcommand."""
