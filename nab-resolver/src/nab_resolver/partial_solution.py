@@ -333,9 +333,10 @@ class PartialSolution(Generic[PackageType, VersionType]):
 
         Computes ``positive - negative``, cached per package.
         """
-        cached = self._effective_range_cache.get(package, _UNSET)
-        if cached is not _UNSET:
-            return cast("RangeProtocol[VersionType] | None", cached)
+        # ``None`` is a cached answer, so membership decides the hit.
+        cache = self._effective_range_cache
+        if package in cache:
+            return cache[package]
 
         positive = self._positive_ranges.get(package)
         negative = self._negative_ranges.get(package)
@@ -352,7 +353,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
         else:
             result = self._combine(operator.sub, positive, negative)
 
-        self._effective_range_cache[package] = result
+        cache[package] = result
         return result
 
     def _refresh_effective_range(self, package: PackageType) -> None:
