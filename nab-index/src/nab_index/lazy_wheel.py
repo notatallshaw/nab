@@ -7,7 +7,9 @@ capability once per run through a shared :class:`RangeCapabilityMemo`, and
 navigates the ZIP with the standard library's :class:`zipfile.ZipFile` over a
 sparse buffer so no EOCD scan, deflate, or CRC logic is hand-rolled.
 
-Two kinds of exception travel outward: a
+Three kinds of exception travel outward: a
+:class:`~nab_index.client.WheelHashMismatchError` when a full-body wheel
+disagrees with the digest its listing published, a
 :class:`~nab_index.client.MalformedSimpleResponseError` for METADATA bytes
 that are not valid UTF-8, and the transport's error when the wheel URL itself
 cannot be served (a 404 on the file, a failing plain GET).  A server that
