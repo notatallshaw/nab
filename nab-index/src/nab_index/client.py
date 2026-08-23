@@ -758,8 +758,9 @@ def extract_sdist_archive(
     """Extract a .tar.gz sdist into ``target_dir`` and return the source root.
 
     Anything the extractor cannot read raises :class:`ValueError`: a corrupt or
-    truncated stream, a tar that will not open, and a member the tar ``data``
-    filter (:pep:`706`) refuses.  The filter refuses any member that would write
+    truncated stream, a tar that will not open, a chain of link members long
+    enough to exhaust the stack, and a member the tar ``data`` filter
+    (:pep:`706`) refuses.  The filter refuses any member that would write
     outside ``target_dir`` (absolute paths, ``..``, escaping links), is a special
     file (device node, FIFO), or is a hard link whose target the archive does not
     carry.  A lone top-level directory that wraps every member is the source
@@ -786,10 +787,11 @@ def extract_sdist_archive(
     except KeyError as exc:
         msg = f"broken link in sdist member: {exc}"
         raise ValueError(msg) from exc
-    except (tarfile.TarError, OSError, EOFError, zlib.error) as exc:
+    except (tarfile.TarError, OSError, EOFError, zlib.error, RecursionError) as exc:
         # gzip raises BadGzipFile (an OSError) on a bad header, a bare EOFError on
         # a truncated stream, and zlib.error on a corrupt deflate block; none of
-        # them is a TarError.
+        # them is a TarError.  RecursionError comes from tarfile recursing once
+        # per link to resolve a chain of link members.
         msg = f"unreadable sdist archive: {exc}"
         raise ValueError(msg) from exc
 
