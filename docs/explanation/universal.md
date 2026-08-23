@@ -201,7 +201,7 @@ operators (`<`, `<=`, `>`, `>=`) and the ones naming a region (`==`,
 into an interval is a loud error rather than a silent guess: a
 membership test (`in`, `not in`), a verbatim `===`, a non-version
 comparison, a comparison against another marker variable, or certain
-prerelease literals strictly inside the minor.
+pre- or post-release literals strictly inside the minor.
 
 To resolve a minor as one real release rather than split it, name the
 patch you deploy on:
