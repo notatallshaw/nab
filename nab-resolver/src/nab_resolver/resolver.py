@@ -127,11 +127,17 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
     def begin_decision_scan(self) -> None:
         """Announce the start of one decision scan.
 
-        ``choose_package_to_decide`` builds every undecided package's sort key
-        from ``prioritize`` and ``is_ready``, so both must answer from state
-        that does not move until the next call.  Providers whose answers depend
-        on another thread freeze that state here; for providers with no such
-        state this is a no-op.
+        The scan reads sort keys from ``prioritize`` and ``is_ready``, so both
+        must answer from state that does not move until the next call.
+        Providers whose answers depend on another thread freeze that state
+        here; for providers with no such state this is a no-op.
+
+        Keys are cached across scans.  A package's key is read again when its
+        allowed range moves, when the counts passed to ``prioritize`` move, and
+        on every scan while ``is_ready`` returns False.  A priority that moves
+        for a reason only the provider can see fits none of those and may go
+        unread, so a provider whose priority is still settling returns False
+        from ``is_ready`` until it has.
         """
         ...
 
@@ -156,6 +162,10 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
 
         Lets the resolver prefer ready packages while async fetches are still
         in flight.  Providers without an async layer should return True.
+
+        Returning False also holds the package on the scan's re-read list, so a
+        provider whose ``prioritize`` key is still moving keeps returning False
+        until it settles.
         """
         ...
 
