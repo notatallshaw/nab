@@ -1050,6 +1050,77 @@ class TestMatrixPerTargetWheelDivergence:
         }
 
 
+class TestMatrixMetadataReadGranularity:
+    """Which metadata a matrix reads per wheel, and which per version.
+
+    A wheel's metadata comes from its own sidecar, so a matrix asks for one
+    URL per wheel its targets pick between them.  An sdist's ``PKG-INFO``
+    stands for the version, so one read serves the whole matrix.  Collapsing
+    repeat requests for one URL is the coordinator's job, covered by
+    ``property_python/test_fetch_coordinator.py``.
+    """
+
+    def _wheel(self, tag: str) -> WheelFile:
+        """A ``pkg`` 1.0 wheel tagged ``tag``, advertising a sidecar."""
+        return WheelFile(
+            filename=f"pkg-1.0-{tag}.whl",
+            url=f"https://example.com/pkg-1.0-{tag}.whl",
+            version="1.0",
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+        )
+
+    def _resolve_three_targets(self, coordinator: FakeFetchPort) -> None:
+        """Resolve ``pkg`` for 3.11 through 3.13 on one platform, and expect success."""
+        targets = Matrix(
+            python=">=3.11,<3.14", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+        assert len(targets) == 3
+
+        result = resolve_with_coordinator(
+            coordinator, targets, _reqs("pkg"), config=_no_build()
+        )
+        assert result.success
+
+    def _metadata_urls(self, wheels: list[WheelFile]) -> set[str]:
+        """The distinct sidecar URLs the three targets ask for, given ``wheels``."""
+        coordinator = make_coordinator(listings={"pkg": wheels}, auto_metadata=True)
+        self._resolve_three_targets(coordinator)
+
+        calls = coordinator.calls_to("request_metadata")
+        return {url for _package, _version, url, _hash in calls}
+
+    def test_two_wheels_across_three_targets_name_two_urls(self) -> None:
+        """3.11 picks its own wheel; 3.12 and 3.13 both pick the universal one."""
+        universal = self._wheel("py3-none-any")
+        for_311 = self._wheel("cp311-cp311-manylinux_2_17_x86_64")
+
+        urls = self._metadata_urls([universal, for_311])
+
+        assert urls == {universal.metadata_url, for_311.metadata_url}
+
+    def test_a_wheel_per_interpreter_is_a_url_per_target(self) -> None:
+        """Nothing is shared when every target ranks a different wheel first."""
+        wheels = [
+            self._wheel(f"cp3{minor}-cp3{minor}-manylinux_2_17_x86_64")
+            for minor in (11, 12, 13)
+        ]
+
+        assert self._metadata_urls(wheels) == {wheel.metadata_url for wheel in wheels}
+
+    def test_an_sdist_is_read_once_for_the_whole_matrix(self) -> None:
+        """No wheel to pick, so all three targets read the one PKG-INFO."""
+        coordinator = make_coordinator(
+            listings={"pkg": [_make_sdist("1.0", package="pkg")]},
+            sdist_pkg_info="Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\n",
+        )
+
+        self._resolve_three_targets(coordinator)
+
+        assert len(coordinator.calls_to("request_sdist")) == 1
+
+
 _FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
