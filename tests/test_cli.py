@@ -3533,21 +3533,27 @@ class TestRelockDiffSummary:
     def test_relock_reports_added_upgraded_removed(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        """Each kind gets a distinct count, so a swapped label changes the line."""
         out = tmp_path / "pylock.toml"
-        _emit(
-            _stub_lock_input({"foo": V("1.0"), "bar": V("1.0")}),
-            format="pylock",
-            output=out,
-        )
+        prior = {
+            "upgraded": V("1.0"),
+            "removed1": V("1.0"),
+            "removed2": V("1.0"),
+            "removed3": V("1.0"),
+        }
+        _emit(_stub_lock_input(prior), format="pylock", output=out)
         capsys.readouterr()
-        # foo upgraded 1.0 -> 2.0, bar removed, baz added.
+
         _emit(
-            _stub_lock_input({"foo": V("2.0"), "baz": V("1.0")}),
+            _stub_lock_input(
+                {"upgraded": V("2.0"), "added1": V("1.0"), "added2": V("1.0")}
+            ),
             format="pylock",
             output=out,
         )
+
         err = capsys.readouterr().err.strip()
-        assert err.endswith("(2 packages: 1 added, 1 upgraded, 1 removed)")
+        assert err.endswith("(3 packages: 2 added, 1 upgraded, 3 removed)")
 
     def test_relock_reports_downgrade(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
