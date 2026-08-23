@@ -3,8 +3,9 @@
 Drives an :class:`~nab_index.transport.AsyncHttpTransport` and consults a
 :class:`~nab_index.cache.CacheBackend` before any HTTP call. Honors a small
 subset of RFC 9111: fresh entries are served directly, stale entries are
-revalidated with ``If-None-Match``, and PEP 658 metadata + sdist PKG-INFO are
-treated as immutable (cached forever; never revalidated).
+revalidated with ``If-None-Match``, a listing the origin marks ``no-cache`` or
+``no-store`` gets no freshness window of its own, and PEP 658 metadata + sdist
+PKG-INFO are treated as immutable (cached forever; never revalidated).
 """
 
 from __future__ import annotations
@@ -101,6 +102,7 @@ _DEFAULT_MAX_AGE = 600
 _HTTP_NOT_MODIFIED = 304
 # RFC 9111 5.2: directive names are case-insensitive and the argument may be quoted.
 _MAX_AGE_RE = re.compile(r'max-age\s*=\s*"?(\d+)', re.IGNORECASE)
+_NO_REUSE_RE = re.compile(r"(?:\A|,)\s*no-(?:cache|store)\s*(?:[,=]|\Z)", re.IGNORECASE)
 _AGE_RE = re.compile(r"\A\s*(\d+)\s*\Z")
 _SECONDS_CEILING = 2**31
 _SECONDS_CEILING_DIGITS = len(str(_SECONDS_CEILING))
@@ -129,6 +131,17 @@ def _max_age_directive(cache_control: str | None) -> int | None:
     if match is None:
         return None
     return _parse_seconds(match.group(1))
+
+
+def _requires_revalidation(cache_control: str | None) -> bool:
+    """Whether Cache-Control bars reusing a stored response unvalidated.
+
+    ``no-cache`` (RFC 9111 5.2.2.4) says so directly. ``no-store`` (5.2.2.5)
+    bars storing the response at all; nab stores it anyway and revalidates on
+    every read instead. A ``no-cache`` qualified with field names reads as the
+    bare directive.
+    """
+    return cache_control is not None and _NO_REUSE_RE.search(cache_control) is not None
 
 
 def _parse_age(age: str | None) -> int:
@@ -207,9 +220,14 @@ def _freshness_lifetime(response: HttpResponse) -> int:
 
     RFC 9111 4.2.1 for a private cache: an explicit ``max-age``, else Expires
     measured from Date, else the heuristic default. 4.2.2 reserves that default
-    for a response stating no expiry at all.
+    for a response stating no expiry at all, and a response barred from
+    unvalidated reuse gets no window whatever else it states.
     """
-    max_age = _max_age_directive(_header(response, "cache-control"))
+    cache_control = _header(response, "cache-control")
+    if _requires_revalidation(cache_control):
+        return 0
+
+    max_age = _max_age_directive(cache_control)
     if max_age is not None:
         return max_age
 
