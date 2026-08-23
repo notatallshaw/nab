@@ -12,6 +12,8 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+import tomli
+
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
@@ -29,8 +31,7 @@ from nab_provider.requirements_file import (
 from ._build.errors import (
     BuildBackendError as BuildBackendError,  # noqa: PLC0414  (public re-export)
 )
-from ._toml import parse_pyproject_table
-from .paths import is_absent_error, path_state
+from .paths import PathState, is_absent_error, path_state
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -59,8 +60,10 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     ``requires_python``, ``requires_dist``, and ``provides_extra``.
 
     Raises :class:`BuildBackendError` when the file is there but cannot
-    be read.  Its contents are unknown, so it is neither "no static
-    metadata" nor a missing file; the message names the errno.
+    be read: a path that is not a regular file, an errno other than
+    absence, bytes that do not decode as UTF-8, or text that does not
+    parse as TOML.  Its contents are unknown, so it is neither "no
+    static metadata" nor a missing file; the message names the cause.
 
     Raises :class:`InvalidProjectRequirementError` when a present,
     non-dynamic field is corrupt: a structurally wrong ``dependencies`` /
@@ -83,33 +86,30 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     as read-only.
     """
     pyproject = source_dir / "pyproject.toml"
-    if not path_state(pyproject).should_read:
+    state = path_state(pyproject)
+    if state is PathState.ABSENT:
         return None
+
+    if not state.should_read:
+        msg = f"{pyproject} exists but is not a regular file"
+        raise BuildBackendError(msg)
+
     try:
-        text = pyproject.read_text(encoding="utf-8")
+        data = tomli.loads(pyproject.read_text(encoding="utf-8"))
     except OSError as exc:
-        if not is_absent_error(exc):
-            msg = f"could not read pyproject.toml at {source_dir}: {exc}"
-            raise BuildBackendError(msg) from exc
-        # The presence check is racy: the file may vanish before the read.
-        return None
-    except UnicodeDecodeError:
-        # TOML is UTF-8, so a file that will not decode has no static metadata.
-        return None
-    project = load_static_project(text)
+        if is_absent_error(exc):
+            # The presence check is racy: the file may vanish before the read.
+            return None
+        msg = f"could not read pyproject.toml at {source_dir}: {exc}"
+        raise BuildBackendError(msg) from exc
+    except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
+        msg = f"could not read pyproject.toml at {source_dir}: {exc}"
+        raise BuildBackendError(msg) from exc
+
+    project = static_project_from_table(data)
     if project is None:
         return None
     return _project_to_metadata(project)
-
-
-def load_static_project(text: str) -> dict | None:
-    """Return ``text``'s ``[project]`` table when it can be trusted as static.
-
-    ``None`` when the TOML does not parse, which the static reader treats
-    the same as a table it may not trust.
-    """
-    data = parse_pyproject_table(text)
-    return None if data is None else static_project_from_table(data)
 
 
 def _project_to_metadata(project: dict) -> WheelMetadata | None:

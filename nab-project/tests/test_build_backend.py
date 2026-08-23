@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import tomli
 
 from nab_project.build_backend import (
     BuildBackendError,
@@ -99,15 +100,25 @@ class TestExtractStaticMetadata:
         ):
             extract_static_metadata(tmp_path)
 
-    def test_malformed_toml_returns_none(self, tmp_path: Path) -> None:
+    def test_malformed_toml_reports_the_parse_error(self, tmp_path: Path) -> None:
+        """Text that does not parse leaves the contents unknown."""
         _write_pyproject(tmp_path, "this is not toml [")
-        assert extract_static_metadata(tmp_path) is None
+        with pytest.raises(
+            BuildBackendError, match="could not read pyproject.toml"
+        ) as caught:
+            extract_static_metadata(tmp_path)
+        assert isinstance(caught.value.__cause__, tomli.TOMLDecodeError)
 
-    def test_non_utf8_toml_returns_none(self, tmp_path: Path) -> None:
+    def test_non_utf8_toml_reports_the_decode_error(self, tmp_path: Path) -> None:
+        """Bytes that do not decode leave the contents unknown too."""
         (tmp_path / "pyproject.toml").write_bytes(
             b'[project]\nname = "foo"\nversion = "1.0"\ndescription = "\xe9"\n'
         )
-        assert extract_static_metadata(tmp_path) is None
+        with pytest.raises(
+            BuildBackendError, match="could not read pyproject.toml"
+        ) as caught:
+            extract_static_metadata(tmp_path)
+        assert isinstance(caught.value.__cause__, UnicodeDecodeError)
 
     def test_no_project_table_returns_none(self, tmp_path: Path) -> None:
         _write_pyproject(tmp_path, '[build-system]\nrequires = ["setuptools"]\n')
@@ -369,11 +380,15 @@ class TestExtractStaticMetadata:
         ):
             extract_static_metadata(tmp_path)
 
-    def test_pyproject_is_a_directory_returns_none(self, tmp_path: Path) -> None:
-        # A directory in place of pyproject.toml is not a readable file, so
-        # the static reader bails before the read.
-        (tmp_path / "pyproject.toml").mkdir()
-        assert extract_static_metadata(tmp_path) is None
+    def test_pyproject_is_a_directory_reports_the_file_type(
+        self, tmp_path: Path
+    ) -> None:
+        """A directory in place of the file is a read failure, not absence."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.mkdir()
+        with pytest.raises(BuildBackendError) as caught:
+            extract_static_metadata(tmp_path)
+        assert str(caught.value) == f"{pyproject} exists but is not a regular file"
 
     def test_pyproject_vanishing_before_the_read_returns_none(
         self, tmp_path: Path
