@@ -95,18 +95,28 @@ def validate_marker_coverage(
     covered = _project_implementation_version(covered, environments, targets)
 
     for pins, references in _references_by_pins(targets).items():
+        env = dict(pins)
+
         # Complementing the whole matrix carries every row's atoms on every
         # axis at once and overruns the cell budget.  Restricting first leaves
         # a single-platform residual denoting the same set.
-        covered_here = covered.restrict(dict(pins))
+        covered_here = covered.restrict(env)
+
+        # Restricting the question too is sound: a group's pins are a subset
+        # of every reference's own == clauses at the same values, since both
+        # read the target's marker_env and the reference only ever adds the
+        # python axes _reference_pins leaves open.  So this drops conjuncts
+        # the reference already fixes rather than narrowing what is asked.
         asked = reduce(
             MarkerSet.union,
             (MarkerSet.from_marker(marker) for marker in references),
             MarkerSet.empty(),
-        )
+        ).restrict(env)
+
         witness = (asked & ~covered_here).witness(store=store)
         if witness is not None:
-            raise CoverageError(_coverage_message(witness))
+            # The residual carries no pins, so env restores them for the message.
+            raise CoverageError(_coverage_message({**env, **witness}))
 
 
 def _references_by_pins(
