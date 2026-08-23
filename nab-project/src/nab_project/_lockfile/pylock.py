@@ -281,7 +281,11 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
     base = (lock_dir if lock_dir is not None else Path.cwd()).resolve()
     exclusion_groups = conflict_exclusion_groups(lock_input.conflicts)
     store = DecisionStore()
-    universe = _emission_universe(lock_input, store)
+    # The universe and the coverage gate share these rows, so build them once.
+    environment_rows = [
+        MarkerSet.from_marker(marker) for marker in lock_input.environments
+    ]
+    universe = _emission_universe(lock_input, store, rows=environment_rows)
     package_records = _build_packages(
         lock_input, base, exclusion_groups, universe, store
     )
@@ -298,6 +302,7 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
         [lock.target for lock in lock_input.targets.values()],
         environments=lock_input.environments,
         store=store,
+        environment_sets=environment_rows,
     )
     tool: dict[str, Any] | None = (
         {"nab": lock_input.provenance.to_block()}
@@ -545,7 +550,9 @@ def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
 
 
 def _emission_universe(
-    lock_input: LockInput, store: DecisionStore | None = None
+    lock_input: LockInput,
+    store: DecisionStore | None = None,
+    rows: Sequence[MarkerSet] | None = None,
 ) -> MarkerSet:
     """Return the environment universe simplification must agree over.
 
@@ -559,10 +566,14 @@ def _emission_universe(
     every environment is sound inside an empty one too.  A union is empty
     exactly when every row is, so rows are tested one at a time rather than as a
     whole-matrix product, and a row too wide to decide counts as inhabited.
+
+    ``rows`` are ``lock_input.environments`` already built as sets; they are
+    built here when omitted.
     """
     if not lock_input.environments:
         return MarkerSet.full()
-    rows = [MarkerSet.from_marker(m) for m in lock_input.environments]
+    if rows is None:
+        rows = [MarkerSet.from_marker(m) for m in lock_input.environments]
     try:
         uninhabited = all(row.is_empty(store=store) for row in rows)
     except IntractableMarkerSet:
