@@ -606,14 +606,15 @@ def _finalize_marker(
     if raw is None:
         return None
     try:
-        simplified = MarkerSet.from_marker(raw).simplify(within=within, store=store)
+        source = MarkerSet.from_marker(raw)
+        simplified = source.simplify(within=within, store=store)
         text = simplified.to_marker_string(store=store)
         rebuilt = None if text is None else _parsed_marker(text)
         emitted = (
             MarkerSet.full() if rebuilt is None else MarkerSet.from_marker(rebuilt)
         )
         shown = "no marker" if rebuilt is None else str(rebuilt)
-        sound = _sound_within_universe(raw, emitted, within, store)
+        sound = source.equivalent_within(emitted, within, store=store)
     except (IntractableMarkerSet, UnserializableMarkerSet):
         return raw
     if not sound:
@@ -644,21 +645,6 @@ def _finalize_cached(
     if key not in memo:
         memo[key] = _finalize_marker(raw, within, name, store)
     return memo[key]
-
-
-def _sound_within_universe(
-    raw: Marker,
-    emitted: MarkerSet,
-    within: MarkerSet,
-    store: DecisionStore | None = None,
-) -> bool:
-    """Whether ``emitted`` and ``raw`` agree on every environment in ``within``.
-
-    ``emitted`` is what the lock ships: the reparsed marker bytes, or
-    :meth:`MarkerSet.full` when no marker field is emitted.  Decided per universe
-    row, under the same budget as the operator it checks.
-    """
-    return MarkerSet.from_marker(raw).equivalent_within(emitted, within, store=store)
 
 
 def _build_packages(
