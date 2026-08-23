@@ -1,8 +1,8 @@
 """Read ``[tool.nab]`` from a ``pyproject.toml`` into a typed config.
 
-The CLI is intentionally narrow: anything that defines *what* gets
-resolved lives in ``[tool.nab]``; anything about *how this run executes*
-lives on the CLI.  This module owns the project side.
+``[tool.nab]`` holds the keys that decide what a project resolves; a CLI
+run can override one of them by name under the ``--project-`` prefix.
+This module owns the project side.
 """
 
 from __future__ import annotations

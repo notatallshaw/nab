@@ -1,6 +1,7 @@
 """Check the published CLI pages against what the CLI does.
 
-The reference page lists each subcommand's flags, env vars and statuses; the
+The CLI reference lists each subcommand's flags, env vars and statuses; the
+config reference groups the ``nab lock`` flags by what they decide; the
 conflicts page quotes refusal lines verbatim.
 
 These tests read ``docs/``, which the umbrella sdist does not ship, so the
@@ -27,6 +28,7 @@ from nab_project.config_sources import OPTIONS
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 _CLI_REFERENCE = _DOCS / "reference" / "cli.md"
+_CONFIG_REFERENCE = _DOCS / "reference" / "configuration.md"
 _CONFLICTS_DOC = _DOCS / "explanation" / "conflicts.md"
 
 _SUBCOMMANDS = ("lock", "download", "config", "cache")
@@ -36,9 +38,47 @@ def _reference_text() -> str:
     return _CLI_REFERENCE.read_text(encoding="utf-8")
 
 
+def _section(text: str, heading: str) -> str:
+    """The body of ``text`` under ``heading``, up to the next ``##``."""
+    return text.partition(f"\n{heading}\n")[2].partition("\n## ")[0]
+
+
 def _reference_section(heading: str) -> str:
-    """The reference body under ``heading``, up to the next ``##``."""
-    return _reference_text().partition(f"\n{heading}\n")[2].partition("\n## ")[0]
+    """The CLI reference body under ``heading``."""
+    return _section(_reference_text(), heading)
+
+
+def _config_reference_section(heading: str) -> str:
+    """The config reference body under ``heading``."""
+    return _section(_CONFIG_REFERENCE.read_text(encoding="utf-8"), heading)
+
+
+def _config_reference_flag_block() -> str:
+    """The fenced ``nab lock`` block that opens the config reference's CLI flags."""
+    block = re.search(
+        r"```\n(.*?)```", _config_reference_section("## CLI flags"), re.DOTALL
+    )
+    if block is None:
+        msg = "no fenced flag block under the config reference's CLI flags heading"
+        raise AssertionError(msg)
+
+    return block.group(1)
+
+
+def _config_reference_flag_prose() -> str:
+    """The config reference's CLI-flags prose, everything after the fenced block."""
+    return _config_reference_section("## CLI flags").rpartition("```")[2]
+
+
+def _resolve_group_lines() -> str:
+    """The ``# what gets resolved`` lines of the config reference's flag block."""
+    block = _config_reference_flag_block()
+    header = "  # what gets resolved\n"
+    if header not in block:
+        msg = "no 'what gets resolved' group in the config reference's flag block"
+        raise AssertionError(msg)
+
+    return block.partition(header)[2].partition("\n\n")[0]
 
 
 def _write(path: Path, body: str) -> Path:
@@ -62,12 +102,38 @@ def _run_config(args: list[str]) -> str:
     return buf.getvalue()
 
 
-def _names_flag(text: str, flag: str) -> bool:
-    """Whether ``text`` names ``flag``, its ``--no-`` form, or a covering wildcard."""
+def _flag_forms(flag: str) -> list[str]:
+    """The spellings a page may use for ``flag``: itself, ``--no-``, a wildcard."""
     forms = [flag, f"--no-{flag.removeprefix('--')}"]
     if flag.startswith("--project-"):
-        forms.append("--project-*")
-    return any(re.search(rf"`{re.escape(form)}(?![\w-])", text) for form in forms)
+        forms += ["--project-*", "--project-<key>"]
+    return forms
+
+
+def _spells_flag(text: str, flag: str, *, left: str) -> bool:
+    """Whether ``text`` names ``flag`` in any of its forms, preceded by ``left``.
+
+    ``left`` is what the page puts to a flag's left: a backtick in prose, a
+    non-word boundary inside a fenced block.
+    """
+    return any(
+        re.search(rf"{left}{re.escape(form)}(?![\w-])", text)
+        for form in _flag_forms(flag)
+    )
+
+
+def _keyword_flags(command: Callable[..., None]) -> list[str]:
+    """The flags ``command`` accepts, one per keyword-only parameter."""
+    return [
+        "--" + name.replace("_", "-")
+        for name, param in inspect.signature(command).parameters.items()
+        if param.kind is inspect.Parameter.KEYWORD_ONLY
+    ]
+
+
+def _block_flags(block: str) -> list[str]:
+    """The flags a fenced usage ``block`` declares, one per line."""
+    return re.findall(r"(?m)^\s+(--[\w<>-]+)", block)
 
 
 def _doc_paragraph(text: str, needle: str) -> str:
@@ -121,11 +187,40 @@ class TestCliReferenceFlagCoverage:
         # Flags shared by both commands are documented once, in their own section.
         scope = _reference_section(heading) + _reference_section("## Runtime flags")
 
-        for name, param in inspect.signature(command).parameters.items():
-            if param.kind is not inspect.Parameter.KEYWORD_ONLY:
-                continue
-            flag = "--" + name.replace("_", "-")
-            assert _names_flag(scope, flag), f"{heading} omits {flag}"
+        for flag in _keyword_flags(command):
+            assert _spells_flag(scope, flag, left="`"), f"{heading} omits {flag}"
+
+
+class TestConfigReferenceCliFlags:
+    """The config reference's CLI flags section matches the ``nab lock`` surface.
+
+    The section lists the flags in groups, then says what each flag of the
+    first group does to ``[tool.nab]``.  These check both halves against the
+    ``lock`` signature.
+    """
+
+    def test_block_lists_every_lock_flag(self) -> None:
+        block = _config_reference_flag_block()
+
+        for flag in _keyword_flags(lock):
+            assert _spells_flag(block, flag, left=r"(?<![\w-])"), (
+                f"the CLI flags block omits {flag}"
+            )
+
+    def test_block_lists_only_flags_lock_accepts(self) -> None:
+        accepted = {form for flag in _keyword_flags(lock) for form in _flag_forms(flag)}
+
+        for flag in _block_flags(_config_reference_flag_block()):
+            assert flag in accepted, f"the CLI flags block still lists {flag}"
+
+    def test_prose_places_every_resolve_flag(self) -> None:
+        """The prose says what each flag of the first group does to ``[tool.nab]``."""
+        prose = _config_reference_flag_prose()
+
+        for flag in _block_flags(_resolve_group_lines()):
+            assert _spells_flag(prose, flag, left="`"), (
+                f"the section never says what {flag} does to [tool.nab]"
+            )
 
 
 class TestCliReferenceSelectionShape:
