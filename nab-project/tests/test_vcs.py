@@ -6,7 +6,9 @@ here; integration tests live alongside the runner.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -270,6 +272,25 @@ class TestResolveSha:
             raise FileNotFoundError("git not on PATH")
 
         monkeypatch.setattr(subprocess, "run", boom)
+        req = VcsRequest("git", "https://x", "main", "")
+        with pytest.raises(VcsCloneError):
+            _resolve_sha(req, require_pin=False)
+
+    def test_unusable_scratch_directory_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A scratch directory nab cannot create surfaces as a clone error.
+
+        The temporary root is a regular file, so ``mkdtemp`` fails with a
+        ``NotADirectoryError`` rather than the ``FileNotFoundError`` a
+        missing ``git`` binary raises.
+        """
+        not_a_directory = tmp_path / "tmp"
+        not_a_directory.write_text("")
+        monkeypatch.setattr(tempfile, "tempdir", str(not_a_directory))
+
         req = VcsRequest("git", "https://x", "main", "")
         with pytest.raises(VcsCloneError):
             _resolve_sha(req, require_pin=False)
@@ -739,6 +760,98 @@ class TestAmbientGitEnvironment:
         assert "could not be marked complete" in message
         assert "failed to clone" not in message
         assert list((tmp_path / "vcs").rglob("*.tmp")) == []
+
+
+class TestAmbientGitRepository:
+    """A checkout nab is invoked from must not configure nab's git calls."""
+
+    def _run_git(self, args: list[str], cwd: Path) -> str:
+        """Run git with ``args`` in ``cwd`` and return its stripped stdout."""
+        git = shutil.which("git")
+        assert git is not None
+        proc = subprocess.run(  # noqa: S603 - git is a runtime dep
+            [git, *args],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return proc.stdout.strip()
+
+    def _commit_repo(self, path: Path, content: str) -> str:
+        """Create a one-commit repo on ``main`` at ``path``, returning its SHA."""
+        path.mkdir()
+        self._run_git(["init", "--quiet", "-b", "main"], path)
+        (path / "f.txt").write_text(content)
+        self._run_git(["add", "f.txt"], path)
+        self._run_git(
+            [
+                "-c",
+                "user.name=nab tests",
+                "-c",
+                "user.email=tests@example.invalid",
+                "commit",
+                "--quiet",
+                "--no-gpg-sign",
+                "-m",
+                content,
+            ],
+            path,
+        )
+        return self._run_git(["rev-parse", "HEAD"], path)
+
+    def _rewriting_checkout(self, tmp_path: Path) -> tuple[Path, str, str]:
+        """Build an origin, a diverged mirror, and a checkout that swaps them.
+
+        The checkout's local config rewrites the origin's URL to the
+        mirror's, so any git command that reads that config answers from
+        the wrong repository.  Returns the checkout, the origin's URL,
+        and the SHA the origin's ``main`` names.
+        """
+        origin_sha = self._commit_repo(tmp_path / "origin", "origin")
+        mirror_sha = self._commit_repo(tmp_path / "mirror", "mirror")
+        assert origin_sha != mirror_sha
+
+        origin_url = (tmp_path / "origin").as_uri()
+        mirror_url = (tmp_path / "mirror").as_uri()
+
+        work = tmp_path / "work"
+        work.mkdir()
+        self._run_git(["init", "--quiet"], work)
+        self._run_git(
+            ["config", "--local", f"url.{mirror_url}.insteadOf", origin_url],
+            work,
+        )
+        return work, origin_url, origin_sha
+
+    def test_ls_remote_ignores_a_rewrite_in_the_invoking_checkout(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The rewrite in the current directory's checkout does not apply."""
+        work, origin_url, origin_sha = self._rewriting_checkout(tmp_path)
+        monkeypatch.chdir(work)
+
+        req = VcsRequest("git", origin_url, "main", "")
+
+        assert _resolve_sha(req, require_pin=False) == origin_sha
+
+    def test_ls_remote_ignores_a_rewrite_around_the_temporary_directory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A scratch directory inside the checkout does not expose the rewrite."""
+        work, origin_url, origin_sha = self._rewriting_checkout(tmp_path)
+        scratch_root = work / "tmp"
+        scratch_root.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(scratch_root))
+        monkeypatch.chdir(work)
+
+        req = VcsRequest("git", origin_url, "main", "")
+
+        assert _resolve_sha(req, require_pin=False) == origin_sha
 
 
 class TestOfflineClone:
