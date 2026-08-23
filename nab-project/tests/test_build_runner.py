@@ -47,6 +47,7 @@ from nab_project._build.env import (
     NabBuildEnv,
     _FastSchemeDictionaryDestination,
     _PendingBuild,
+    _remove_files,
     _venv_scheme_paths,
 )
 from nab_project._build.runner import (
@@ -3754,6 +3755,61 @@ class TestBuildEnvFollowUpInstall:
         env.install(["probefoo<2"])
 
         assert not (site / "probebar").exists()
+
+    def test_bytecode_of_a_module_named_like_a_pattern_goes_with_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Glob syntax in a wheel member name does not strand its bytecode."""
+        env, scheme, site = self._env(tmp_path, monkeypatch)
+
+        kept = tmp_path / "probefoo-1.0-py3-none-any.whl"
+        _make_installable_wheel(kept, "probefoo", "1.0")
+        dropped = tmp_path / "probebar-1.0-py3-none-any.whl"
+        _make_installable_wheel(
+            dropped, "probebar", "1.0", package_files={"mod[1].py": b""}
+        )
+        env._install_wheels([kept, dropped], scheme)
+
+        compiled = Path(cache_from_source(str(site / "probebar" / "mod[1].py")))
+        compiled.parent.mkdir()
+        compiled.write_bytes(b"")
+
+        monkeypatch.setattr(env, "_resolve_and_download", lambda *_a, **_k: [kept])
+
+        env.install(["probefoo<2"])
+
+        assert not (site / "probebar").exists()
+
+
+# Windows rejects ``*`` and ``?`` in a filename, leaving the bracket stem.
+_GLOB_PATTERN_STEMS = ["mod[1]"]
+if sys.platform != "win32":
+    _GLOB_PATTERN_STEMS += ["mod*", "mod?", "mod**"]
+
+
+class TestRemoveFilesNameEscaping:
+    """An installed file's name is matched literally, not as glob syntax."""
+
+    @pytest.mark.parametrize("stem", _GLOB_PATTERN_STEMS)
+    def test_a_module_named_like_a_pattern_takes_only_its_own_bytecode(
+        self, tmp_path: Path, stem: str
+    ) -> None:
+        """``mod1`` is the neighbour an unescaped ``mod[1]`` would match."""
+        package = tmp_path / "pkg"
+        package.mkdir()
+        (package / f"{stem}.py").write_bytes(b"")
+        (package / "mod1.py").write_bytes(b"")
+
+        removed = Path(cache_from_source(str(package / f"{stem}.py")))
+        kept = Path(cache_from_source(str(package / "mod1.py")))
+        removed.parent.mkdir()
+        removed.write_bytes(b"")
+        kept.write_bytes(b"")
+
+        _remove_files([(tmp_path, Path(f"pkg/{stem}.py"))])
+
+        assert not removed.exists()
+        assert kept.is_file()
 
 
 class TestVenvSchemeProbeErrors:
