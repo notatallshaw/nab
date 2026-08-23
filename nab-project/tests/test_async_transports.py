@@ -77,6 +77,17 @@ GZIP_BODY = gzip.compress(LISTING_BODY)
 # connection drop whose Content-Length matches the bytes that did arrive.
 TRUNCATED_GZIP_BODY = GZIP_BODY[: len(GZIP_BODY) // 2]
 
+# Nested past what ``json.loads`` will decode. The scanner's recursion guard
+# does not sit at ``sys.getrecursionlimit()``, so overshoot it rather than try
+# to compute the depth that trips it.
+_OVER_NESTED_DEPTH = 100_000
+OVER_NESTED_BODY = (
+    b'{"meta": {"api-version": "1.0"}, "name": "pkg", "files": '
+    + b"[" * _OVER_NESTED_DEPTH
+    + b"]" * _OVER_NESTED_DEPTH
+    + b"}"
+)
+
 # Only the first is rejected up front; the rest raise out of urllib3's conversions.
 UNPARSEABLE_RETRY_AFTERS = [
     pytest.param("soon", id="not-a-date"),
@@ -1782,6 +1793,25 @@ class TestAsyncSimpleClient:
         ) as caught:
             asyncio.run(go())
         assert isinstance(caught.value, HttpError)
+
+    def test_get_files_over_nested_body_raises_clean(self) -> None:
+        """A body nested past the scanner's guard must not escape raw."""
+        transport = self._FakeTransport(OVER_NESTED_BODY)
+
+        async def go() -> list:
+            async with AsyncSimpleClient(transport, "https://pypi.org/simple/") as c:
+                return await c.get_files("pkg")
+
+        with pytest.raises(
+            MalformedSimpleResponseError,
+            match="malformed Simple-API.+'pkg': listing is nested too deeply",
+        ) as caught:
+            asyncio.run(go())
+        assert isinstance(caught.value, HttpError)
+
+        decode_error = caught.value.__cause__
+        assert isinstance(decode_error, ValueError)
+        assert isinstance(decode_error.__cause__, RecursionError)
 
     def test_get_files_404_returns_empty(self) -> None:
         transport = self._FakeTransport(b"not found", status=404)

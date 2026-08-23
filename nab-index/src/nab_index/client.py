@@ -59,6 +59,7 @@ __all__ = [
     "SdistHashMismatchError",
     "WheelFile",
     "WheelHashMismatchError",
+    "decode_listing_json",
     "extract_sdist_archive",
     "holds_unreadable_format",
     "is_readable_filename",
@@ -379,7 +380,7 @@ class AsyncSimpleClient:
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
         """Fetch all distribution files for a package.
 
-        A body ``json.loads`` rejects becomes a
+        A body that will not decode becomes a
         :class:`MalformedSimpleResponseError`, not a raw decode error.
         """
         url = f"{self._index_url}{package}/"
@@ -393,11 +394,11 @@ class AsyncSimpleClient:
         )
 
         try:
-            data = json.loads(body)
+            data = decode_listing_json(body)
         except ValueError as exc:
             msg = (
                 f"{self._index_url} served a malformed Simple-API response for "
-                f"{package!r}: body is not valid JSON"
+                f"{package!r}: {exc}"
             )
             raise MalformedSimpleResponseError(msg) from exc
         return _parse_files(data, self._index_url, package, page_url=response.url)
@@ -413,6 +414,22 @@ class AsyncSimpleClient:
         response = await self._transport.get(url, headers=IDENTITY_HEADERS)
         raise_unless_ok(response, url)
         return response.content
+
+
+def decode_listing_json(body: bytes) -> object:
+    """Decode a Simple-API listing body, or raise ``ValueError``.
+
+    ``json.loads`` raises :class:`ValueError` for most bodies it refuses,
+    including non-UTF-8 bytes and an integer literal past CPython's
+    conversion limit. One nested past its scanner's recursion guard raises
+    :class:`RecursionError` instead.
+    """
+    try:
+        decoded: object = json.loads(body)
+    except RecursionError as exc:
+        msg = "listing is nested too deeply to decode"
+        raise ValueError(msg) from exc
+    return decoded
 
 
 def _parse_files(

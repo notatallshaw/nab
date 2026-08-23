@@ -88,6 +88,17 @@ ZIP_ONLY_BYTES = json.dumps(ZIP_ONLY_LISTING).encode()
 # A digit run just past CPython's int-from-string limit.
 OVERSIZED_DIGITS = "9" * (sys.get_int_max_str_digits() + 1)
 
+# Nested past what ``json.loads`` will decode. The scanner's recursion guard
+# does not sit at ``sys.getrecursionlimit()``, so overshoot it rather than try
+# to compute the depth that trips it.
+_OVER_NESTED_DEPTH = 100_000
+OVER_NESTED_BYTES = (
+    b'{"meta": {"api-version": "1.0"}, "name": "pkg", "files": '
+    + b"[" * _OVER_NESTED_DEPTH
+    + b"]" * _OVER_NESTED_DEPTH
+    + b"}"
+)
+
 
 class _FakeResponse:
     def __init__(
@@ -4468,6 +4479,51 @@ class TestOversizedListingInt:
         assert healed is not None
         assert healed[0] == LISTING_BYTES
         assert len(_cached_warnings(caplog)) == 1
+
+
+class TestOverNestedListingBody:
+    """A listing nested past the JSON scanner's guard reads as undecodable.
+
+    ``json.loads`` refuses it with :class:`RecursionError` rather than the
+    :class:`ValueError` a malformed body normally raises.
+    """
+
+    def test_wire_body_raises_clean_and_skips_cache(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(OVER_NESTED_BYTES, status=200)])
+
+        with pytest.raises(
+            MalformedSimpleResponseError,
+            match="malformed Simple-API.+'pkg': listing is nested too deeply",
+        ) as caught:
+            _run_get_files(transport, cache, "pkg")
+
+        assert isinstance(caught.value, HttpError)
+
+        decode_error = caught.value.__cause__
+        assert isinstance(decode_error, ValueError)
+        assert isinstance(decode_error.__cause__, RecursionError)
+
+        assert cache.get_simple("pkg") is None
+
+    def test_cached_body_self_heals_online(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", OVER_NESTED_BYTES, _fresh_policy())
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
+
+        with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
+            files = _run_get_files(transport, cache, "pkg")
+
+        assert len(files) == 1
+        healed = cache.get_simple("pkg")
+        assert healed is not None
+        assert healed[0] == LISTING_BYTES
+
+        warnings = _cached_warnings(caplog)
+        assert len(warnings) == 1
+        assert "nested too deeply to decode" in warnings[0].getMessage()
 
 
 class TestModuleDocstring:
