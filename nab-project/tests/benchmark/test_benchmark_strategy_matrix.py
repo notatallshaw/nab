@@ -23,8 +23,10 @@ from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.fetch import IndexRoute
 from nab_provider._vendor.packaging.tags import Tag
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.provider import ProviderStats
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.target import ResolveTarget
+from nab_resolver.resolver import ResolverStats
 
 # The runner scripts loaded here import their siblings by bare name.
 pytestmark = [
@@ -175,38 +177,81 @@ def _linux_host(module: ModuleType) -> object:
     )
 
 
-def _empty_provider_stats() -> SimpleNamespace:
-    fields = (
-        "listings_fetched",
-        "metadata_fetched",
-        "sdist_pkg_info_fetched",
-        "distributions_seen",
-        "wheels_seen",
-        "sdists_seen",
-        "excluded_by_python",
-        "excluded_by_time",
-        "excluded_by_dist_policy",
-        "excluded_by_build_policy",
-        "sdist_pyproject_fallbacks",
-        "get_dependencies_calls",
-        "choose_version_calls",
-        "prioritize_calls",
-        "look_ahead_rejections",
+def _distinct_provider_stats() -> ProviderStats:
+    """Return provider counters holding a different value in every field.
+
+    Distinct values pin which counter each benchmark summary key reads.
+    """
+    return ProviderStats(
+        listings_fetched=101,
+        metadata_fetched=102,
+        sdist_pkg_info_fetched=103,
+        wheel_metadata_range_fetched=104,
+        wheel_metadata_range_full_body=105,
+        wheel_metadata_range_unsupported=106,
+        wheel_metadata_range_missing=107,
+        distributions_seen=108,
+        wheels_seen=109,
+        sdists_seen=110,
+        excluded_by_python=111,
+        excluded_by_time=112,
+        excluded_by_dist_policy=113,
+        excluded_by_build_policy=114,
+        excluded_by_wheel_tags=115,
+        excluded_versions_no_compatible_wheel=116,
+        sdist_pyproject_fallbacks=117,
+        get_dependencies_calls=118,
+        choose_version_calls=119,
+        prioritize_calls=120,
+        look_ahead_rejections=121,
     )
-    return SimpleNamespace(**dict.fromkeys(fields, 0))
 
 
-def _empty_resolver_stats() -> SimpleNamespace:
-    fields = (
-        "rounds",
-        "decisions",
-        "conflicts",
-        "derivations",
-        "backjumps",
-        "restarts",
-        "incompatibilities_learned",
+def _distinct_resolver_stats() -> ResolverStats[str]:
+    """Return resolver counters holding a different value in every field."""
+    return ResolverStats(
+        rounds=201,
+        decisions=202,
+        conflicts=203,
+        derivations=204,
+        backjumps=205,
+        restarts=206,
+        targeted_backtracks=207,
+        incompatibilities_learned=208,
     )
-    return SimpleNamespace(**dict.fromkeys(fields, 0))
+
+
+def _expected_distinct_stats(packages_resolved: int) -> dict[str, int]:
+    """Return the summary the distinct-counter helpers must produce.
+
+    Spelled out rather than read back off those objects, so every key stays
+    tied to the counter it names.
+    """
+    return {
+        "rounds": 201,
+        "decisions": 202,
+        "conflicts": 203,
+        "derivations": 204,
+        "backjumps": 205,
+        "restarts": 206,
+        "incompatibilities_learned": 208,
+        "listings_fetched": 101,
+        "metadata_fetched": 102,
+        "sdist_pkg_info_fetched": 103,
+        "distributions_seen": 108,
+        "wheels_seen": 109,
+        "sdists_seen": 110,
+        "excluded_by_python": 111,
+        "excluded_by_time": 112,
+        "excluded_by_dist_policy": 113,
+        "excluded_by_build_policy": 114,
+        "sdist_pyproject_fallbacks": 117,
+        "get_dependencies_calls": 118,
+        "choose_version_calls": 119,
+        "prioritize_calls": 120,
+        "look_ahead_rejections": 121,
+        "packages_resolved": packages_resolved,
+    }
 
 
 def _wheel(package: str, version: str) -> WheelFile:
@@ -442,6 +487,42 @@ def _harness(name: str) -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _resolve_dropped_extra(
+    monkeypatch: pytest.MonkeyPatch,
+    constraint: str,
+) -> dict:
+    """Resolve ``aaa[x]`` under ``constraint`` against the dropped-extra index.
+
+    The provider and resolver are the real ones, so the summary carries the
+    counters a resolve raised rather than fixture values.
+    """
+    module = _harness("scenarios")
+    coordinator = _dropped_extra_coordinator()
+
+    @contextmanager
+    def fake_coordinator(*_args: object, **_kwargs: object) -> Iterator[object]:
+        yield coordinator
+
+    monkeypatch.setattr(module, "FetchCoordinator", fake_coordinator)
+    monkeypatch.setattr(module, "HttpxAsyncTransport", object)
+
+    captured = _linux_host(module)
+    host = module.BenchmarkHost(captured.target, captured.python_runtime, None)
+    admission = host.target_for("3.11", {}, requires_matching_host=False)
+    assert admission.target is not None
+
+    return module.resolve_scenario(
+        module.parse_requirements(["aaa[x]"]),
+        module.parse_requirements([constraint]),
+        config=module.build_benchmark_config(
+            indexes=module.DEFAULT_INDEXES,
+            trust_unverified_sdist_deps=False,
+        ),
+        target=admission.target,
+        host=host,
+    )
 
 
 def test_scenario_setting_validator_accepts_the_complete_live_vocabulary() -> None:
@@ -2704,7 +2785,7 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
         trust_unverified_sdist_deps=False,
     )
     coordinator = object()
-    provider = SimpleNamespace(stats=_empty_provider_stats())
+    provider = SimpleNamespace(stats=_distinct_provider_stats())
     seen: dict[str, object] = {}
 
     @contextmanager
@@ -2721,7 +2802,7 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
         def __init__(self, actual_provider: object, **kwargs: object) -> None:
             seen["resolver_provider"] = actual_provider
             seen["resolver_kwargs"] = kwargs
-            self.stats = _empty_resolver_stats()
+            self.stats = _distinct_resolver_stats()
 
         def resolve(self, roots: object, **kwargs: object) -> dict:
             seen["resolver_roots"] = roots
@@ -2760,7 +2841,10 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
 
     assert json.loads(json.dumps(result))["result"] == expected_result
     assert result["result"] == expected_result
-    assert result["stats"]["packages_resolved"] == 2
+
+    stats = dict(result["stats"])
+    assert isinstance(stats.pop("wall_time_seconds"), float)
+    assert stats == _expected_distinct_stats(2)
 
     assert seen["coordinator"] == {
         "indexes": list(config.indexes),
@@ -2814,11 +2898,11 @@ def test_resolve_scenario_records_no_pins_after_failure(
         yield object()
 
     def fake_build_provider(*_args: object, **_kwargs: object) -> object:
-        return SimpleNamespace(stats=_empty_provider_stats())
+        return SimpleNamespace(stats=_distinct_provider_stats())
 
     class FakeResolver:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
-            self.stats = _empty_resolver_stats()
+            self.stats = _distinct_resolver_stats()
 
         def resolve(self, *_args: object, **_kwargs: object) -> dict:
             raise RuntimeError("fixture failure")
@@ -2843,7 +2927,10 @@ def test_resolve_scenario_records_no_pins_after_failure(
         "error": "RuntimeError: fixture failure",
         "pins": {},
     }
-    assert result["stats"]["packages_resolved"] == 0
+
+    stats = dict(result["stats"])
+    assert isinstance(stats.pop("wall_time_seconds"), float)
+    assert stats == _expected_distinct_stats(0)
 
 
 @pytest.mark.parametrize(
@@ -2879,30 +2966,7 @@ def test_standard_runner_applies_root_extra_constraints(
     expected_packages: int,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module = _harness("scenarios")
-    coordinator = _dropped_extra_coordinator()
-
-    @contextmanager
-    def fake_coordinator(*_args: object, **_kwargs: object) -> Iterator[object]:
-        yield coordinator
-
-    monkeypatch.setattr(module, "FetchCoordinator", fake_coordinator)
-    monkeypatch.setattr(module, "HttpxAsyncTransport", object)
-
-    captured = _linux_host(module)
-    host = module.BenchmarkHost(captured.target, captured.python_runtime, None)
-    admission = host.target_for("3.11", {}, requires_matching_host=False)
-    assert admission.target is not None
-    result = module.resolve_scenario(
-        module.parse_requirements(["aaa[x]"]),
-        module.parse_requirements([constraint]),
-        config=module.build_benchmark_config(
-            indexes=module.DEFAULT_INDEXES,
-            trust_unverified_sdist_deps=False,
-        ),
-        target=admission.target,
-        host=host,
-    )
+    result = _resolve_dropped_extra(monkeypatch, constraint)
 
     outcome = result["result"]
     assert outcome["success"] is success
@@ -2914,6 +2978,41 @@ def test_standard_runner_applies_root_extra_constraints(
     else:
         assert error is None
     assert result["stats"]["packages_resolved"] == expected_packages
+
+
+def test_resolve_scenario_reports_the_counters_a_real_resolve_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pin the counters a real resolve raises; they move when the calls do."""
+    result = _resolve_dropped_extra(monkeypatch, "aaa==2.0")
+
+    stats = dict(result["stats"])
+    assert isinstance(stats.pop("wall_time_seconds"), float)
+    assert stats == {
+        "rounds": 4,
+        "decisions": 4,
+        "conflicts": 0,
+        "derivations": 4,
+        "backjumps": 0,
+        "restarts": 0,
+        "incompatibilities_learned": 0,
+        "listings_fetched": 2,
+        "metadata_fetched": 2,
+        "sdist_pkg_info_fetched": 0,
+        "distributions_seen": 4,
+        "wheels_seen": 4,
+        "sdists_seen": 0,
+        "excluded_by_python": 0,
+        "excluded_by_time": 0,
+        "excluded_by_dist_policy": 0,
+        "excluded_by_build_policy": 0,
+        "sdist_pyproject_fallbacks": 0,
+        "get_dependencies_calls": 9,
+        "choose_version_calls": 3,
+        "prioritize_calls": 4,
+        "look_ahead_rejections": 0,
+        "packages_resolved": 2,
+    }
 
 
 def test_marker_build_scenarios_are_explicitly_unsupported() -> None:
