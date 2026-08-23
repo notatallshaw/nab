@@ -35,18 +35,38 @@ class UnevaluableMarkerError(ValueError):
     """
 
 
+def _unevaluable(marker: Marker, exc: UndefinedComparison) -> UnevaluableMarkerError:
+    """Return the error for ``marker``, named in full.
+
+    The failing clause alone does not say which dependency to edit.
+    """
+    return UnevaluableMarkerError(f"marker {marker} cannot be evaluated: {exc}")
+
+
 def marker_set(marker: Marker) -> MarkerSet:
     """Return ``marker`` as a :class:`MarkerSet`.
 
     Building the set checks each clause against its operator, so a marker with
-    no meaning is caught here.  The error names the whole marker, since the
-    failing clause alone does not say which dependency to edit.
+    no meaning is caught here.
     """
     try:
         return MarkerSet.from_marker(marker)
     except UndefinedComparison as exc:
-        msg = f"marker {marker} cannot be evaluated: {exc}"
-        raise UnevaluableMarkerError(msg) from exc
+        raise _unevaluable(marker, exc) from exc
+
+
+def evaluate_prepared(
+    marker: Marker, environment: dict[str, str | AbstractSet[str]]
+) -> bool:
+    """Evaluate ``marker`` against a ``prepare_environment`` result.
+
+    A clause no comparison decides raises :class:`UnevaluableMarkerError`, as
+    it does through :func:`marker_set`.
+    """
+    try:
+        return marker.evaluate_prepared(environment)
+    except UndefinedComparison as exc:
+        raise _unevaluable(marker, exc) from exc
 
 
 def dependency_marker_holds(

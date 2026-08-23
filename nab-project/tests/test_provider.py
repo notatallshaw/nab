@@ -72,7 +72,7 @@ from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.tags import Tag
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
-from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.marker_holds import UnevaluableMarkerError, dependency_marker_holds
 from nab_provider.metadata import WheelMetadata
 from nab_provider.provider import (
     BuildPolicy,
@@ -2720,6 +2720,22 @@ class TestGetDependencies:
         with pytest.raises(MetadataError, match="Invalid metadata"):
             provider.get_dependencies("foo", V("1.0"))
 
+    def test_unevaluable_marker_in_metadata_drops_the_version(self) -> None:
+        """Index metadata with an undecidable marker loses only that version.
+
+        A declared source or an override stops the run instead: there the
+        marker is the user's to fix, while an index can serve another version.
+        """
+        bad_metadata = make_metadata("foo", "1.0", 'dep-a; sys_platform ~= "linux"')
+        coordinator = make_coordinator(
+            [make_wheel("1.0")], metadata_text=bad_metadata, package="foo"
+        )
+        provider = Provider(coordinator, target=_PY312)
+        with pytest.raises(MetadataError, match="cannot be evaluated"):
+            provider.get_dependencies("foo", V("1.0"))
+
+        assert provider.has_invalid_metadata("foo", V("1.0"))
+
     def test_malformed_requires_python_drops_candidate(self) -> None:
         """A version whose METADATA Requires-Python is invalid is refused.
 
@@ -3775,6 +3791,23 @@ class TestLocalSources:
         version, dist = versions[0]
         assert str(version) == "1.2.3"
         assert dist.url.startswith("file://")
+
+    def test_unevaluable_marker_names_the_marker(self, tmp_path: Path) -> None:
+        """A declared tree's undecidable marker stops the run, naming the marker."""
+
+        self._write_local(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.2.3"\n'
+            "dependencies = [\"dep-a; sys_platform ~= 'linux'\"]\n",
+        )
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            local_sources=[LocalSource("foo", str(tmp_path))],
+            build_policy=BuildPolicy.NEVER,
+        )
+        with pytest.raises(UnevaluableMarkerError, match='sys_platform ~= "linux"'):
+            provider.get_dependencies("foo", V("1.2.3"))
 
     def test_local_source_root_requirement_skips_listing_request(
         self, tmp_path: Path
@@ -6373,6 +6406,22 @@ class TestSkipFetch:
             package_overrides=(pkg_override("foo", dependencies=()),),
         )
         assert provider.get_dependencies("foo", V("1.0")) == {}
+
+    def test_unevaluable_marker_names_the_marker(self) -> None:
+        """An override's undecidable marker stops the run, naming the marker."""
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            package_overrides=(
+                pkg_override(
+                    "foo",
+                    dependencies=(Requirement('dep-a; sys_platform ~= "linux"'),),
+                ),
+            ),
+        )
+        with pytest.raises(UnevaluableMarkerError, match='sys_platform ~= "linux"'):
+            provider.get_dependencies("foo", V("1.0"))
 
     def test_prefetches_override_dependencies(self) -> None:
         # The override introduces dep-a, so its listing is background-fetched

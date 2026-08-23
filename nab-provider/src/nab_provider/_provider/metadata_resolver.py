@@ -27,6 +27,7 @@ from ..errors import (
     UnsupportedSdistError,
 )
 from ..extra_keys import join_extra
+from ..marker_holds import evaluate_prepared
 from ..metadata import (
     DEPENDENCY_FIELDS,
     WheelMetadata,
@@ -661,7 +662,7 @@ def marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> b
     result = provider.marker_base_cache.get(marker_id)
     if result is None:
         provider.consulted_markers.add(marker)
-        result = marker.evaluate_prepared(provider.prepared_environment)
+        result = evaluate_prepared(marker, provider.prepared_environment)
         provider.marker_base_cache[marker_id] = result
     return result
 
@@ -696,7 +697,7 @@ def marker_matched_extras(
         result = per_marker.get(extra_name)
         if result is None:
             env["extra"] = extra_name
-            result = marker.evaluate_prepared(env)
+            result = evaluate_prepared(marker, env)
             per_marker[extra_name] = result
         if result:
             matched.add(extra_name)
@@ -1041,7 +1042,7 @@ def _classify_requirement_uncached(
     marker = req.marker
     if marker is None:
         return set()
-    if marker.evaluate_prepared(provider.prepared_environment):
+    if evaluate_prepared(marker, provider.prepared_environment):
         return set()
     if "extra" not in str(marker):
         return None
@@ -1049,7 +1050,7 @@ def _classify_requirement_uncached(
     matched: set[str] = set()
     for extra_name in provided_extras:
         env["extra"] = extra_name
-        if marker.evaluate_prepared(env):
+        if evaluate_prepared(marker, env):
             matched.add(extra_name)
     return matched or None
 
