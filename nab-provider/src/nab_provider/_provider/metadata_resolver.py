@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from functools import partial
 from typing import TYPE_CHECKING, Literal, NamedTuple, TypeGuard
 from urllib.parse import urlsplit
 
@@ -357,6 +358,8 @@ def version_dists(
 
     Only the provider's own cached listing is memoised: another listing under
     the same name is a different set of artifacts, so it is indexed fresh.
+    The half of the index no wheel tag reads is shared with this Python's
+    other targets when :func:`_shared_index` offers it.
     """
     cacheable = version_list is provider.versions_cache.get(normalized)
     if cacheable:
@@ -364,23 +367,70 @@ def version_dists(
         if cached is not None:
             return cached
 
+    shared = _shared_index(provider, normalized, version_list) if cacheable else None
+    grouped, sibling_wheels = (
+        shared if shared is not None else _group_versions(version_list)
+    )
+
+    tags = provider.wheel_tags
+    target = provider.target
+    indexed = VersionDists(
+        {v: pick_dist(dists, tags, target) for v, dists in grouped.items()},
+        sibling_wheels,
+    )
+
+    if cacheable:
+        provider.version_dists_cache[normalized] = indexed
+    return indexed
+
+
+def _shared_index(
+    provider: Provider,
+    normalized: str,
+    version_list: Sequence[tuple[Version, DistFile]],
+) -> tuple[dict[Version, list[DistFile]], dict[Version, list[WheelFile]]] | None:
+    """Return the shared version groups and sibling wheels, or None.
+
+    Neither half reads a wheel tag, so the targets of one Python can share
+    both.  They are indexing the same listing only when the tag pass left
+    this one whole, which makes it the base list
+    :class:`~nab_provider.provider.ListingFilterCache` already keys by
+    (package, Python).  Every one of those targets then holds the result, so
+    callers must not mutate it.
+
+    A resolve with one target per Python has no second target to share with,
+    so it takes the unshared path rather than storing an entry nothing will
+    read.
+    """
+    cache = provider.listing_filter_cache
+    if (
+        cache is None
+        or not cache.shares_targets
+        or normalized not in provider.untrimmed_listings
+    ):
+        return None
+
+    return cache.indexed(
+        normalized, provider.python_version, partial(_group_versions, version_list)
+    )
+
+
+def _group_versions(
+    version_list: Sequence[tuple[Version, DistFile]],
+) -> tuple[dict[Version, list[DistFile]], dict[Version, list[WheelFile]]]:
+    """Return ``version_list``'s dists grouped by version, and its sibling wheels."""
     grouped: dict[Version, list[DistFile]] = {}
     for version, dist in version_list:
         grouped.setdefault(version, []).append(dist)
 
-    picked: dict[Version, DistFile] = {}
     sibling_wheels: dict[Version, list[WheelFile]] = {}
     for version, dists in grouped.items():
-        picked[version] = pick_dist(dists, provider.wheel_tags, provider.target)
         if len(dists) > 1:
             wheels = [d for d in dists if isinstance(d, WheelFile)]
             if len(wheels) > 1:
                 sibling_wheels[version] = wheels
 
-    indexed = VersionDists(picked, sibling_wheels)
-    if cacheable:
-        provider.version_dists_cache[normalized] = indexed
-    return indexed
+    return grouped, sibling_wheels
 
 
 def pick_dist(

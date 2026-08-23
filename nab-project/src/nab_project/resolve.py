@@ -285,7 +285,8 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
             ),
             progress=progress,
             listing_filter_cache=ListingFilterCache(
-                len({target.python_full_version for target in targets})
+                pythons=len({target.python_full_version for target in targets}),
+                targets=len(targets),
             ),
         )
 

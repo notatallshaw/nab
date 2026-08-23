@@ -299,6 +299,10 @@ def filter_distributions(
     base = base_distributions(provider, normalized, files)
     result = _apply_wheel_tags(provider, normalized, base)
 
+    if len(result) == len(base):
+        # The tag pass only drops, so an equal length means an equal list.
+        provider.untrimmed_listings.add(normalized)
+
     if not result and len(base) < len(files):
         # The base pass (dist-policy, requires-python, upload cutoff) dropped a
         # file, so an empty result is not the tag pass alone.

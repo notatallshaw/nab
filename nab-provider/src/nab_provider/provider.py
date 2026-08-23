@@ -114,6 +114,7 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 _PreparedT = TypeVar("_PreparedT")
+_IndexT = TypeVar("_IndexT")
 
 
 @dataclass
@@ -188,18 +189,29 @@ class ListingFilterCache:
     since materialising the intermediate list would cost it a pass it does
     not get back.
 
+    :meth:`indexed` shares along the other axis: grouping a listing's
+    dists by version reads no wheel tags, so the targets of one Python
+    share the groups whenever the tag pass left the listing whole.  That
+    needs a second target on some Python, which :attr:`shares_targets`
+    records; without one the entry would be held for the whole resolve
+    and read by nobody.
+
     One instance is only valid across providers that share a coordinator
     and a policy config, as the targets of one resolve do.
     """
 
-    def __init__(self, pythons: int = 1) -> None:
-        """Create an empty cache for a resolve over ``pythons`` Python releases."""
+    def __init__(self, pythons: int = 1, targets: int = 1) -> None:
+        """Create an empty cache for ``targets`` targets over ``pythons`` Pythons."""
         self.shares_pythons = pythons > 1
+        # By pigeonhole this is "some Python has two targets", the only
+        # shape in which a second target reads what :meth:`indexed` stores.
+        self.shares_targets = targets > pythons
         self._entries: dict[
             tuple[str, str | None],
             tuple[list[tuple[Version, DistFile]], tuple[int, ...]],
         ] = {}
         self._prepared: dict[str, tuple[object, tuple[int, ...]]] = {}
+        self._indexes: dict[tuple[str, str | None], object] = {}
 
     def filtered(
         self,
@@ -248,6 +260,28 @@ class ListingFilterCache:
         result = compute()
 
         self._prepared[package] = (result, _since(before, stats))
+        return result
+
+    def indexed(
+        self,
+        package: str,
+        python_version: str | None,
+        compute: Callable[[], _IndexT],
+    ) -> _IndexT:
+        """Return the tag-invariant version index, running ``compute`` once.
+
+        Keyed like :meth:`filtered`, since the caller only offers a listing
+        the wheel-tag pass left equal to that base list.  ``compute`` raises
+        no counters, so a hit has nothing to replay, and the result is
+        shared, so the caller must treat it as read-only.
+        """
+        key = (package, python_version)
+        entry = self._indexes.get(key)
+        if entry is not None:
+            return cast("_IndexT", entry)
+
+        result = compute()
+        self._indexes[key] = result
         return result
 
 
@@ -558,6 +592,9 @@ class Provider:
         self.root_requirements = root_requirements or {}
         self.constraints: Mapping[str, VersionRange] = constraints or {}
         self.versions_cache: dict[str, list[tuple[Version, DistFile]]] = {}
+        # Canonical names whose ``versions_cache`` listing the wheel-tag pass
+        # left whole, so it is still the pre-tag list.
+        self.untrimmed_listings: set[str] = set()
         self.deps_cache: dict[tuple[str, Version], dict[str, VersionRange]] = {}
         # Metadata the pipelined scan prefetched, as ``(version string, sidecar
         # URL)``, decoded on the first read of that candidate.  A candidate the

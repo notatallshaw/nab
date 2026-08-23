@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 
 from nab_provider._provider import listing as listing_mod
+from nab_provider._provider import metadata_resolver as metadata_mod
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
@@ -461,7 +462,9 @@ class TestStrategyChoiceVersion:
         assert chosen == Version("3.0")
 
 
-def _platform_wheel(version: str, tag: str, *, package: str = "pkg") -> WheelFile:
+def _platform_wheel(
+    version: str, tag: str, *, package: str = "pkg", has_metadata: bool = True
+) -> WheelFile:
     """Build a wheel with an explicit ``cpXY-cpXY-<platform>`` tag."""
     filename = f"{package}-{version}-{tag}.whl"
     return WheelFile(
@@ -469,7 +472,7 @@ def _platform_wheel(version: str, tag: str, *, package: str = "pkg") -> WheelFil
         url=f"https://example.com/{filename}",
         version=version,
         requires_python=None,
-        has_metadata=True,
+        has_metadata=has_metadata,
         upload_time=None,
     )
 
@@ -811,6 +814,142 @@ class TestEqualVersionCanonicalization:
         assert windows.fetch_versions("pkg") == []
         assert windows.stats.excluded_by_wheel_tags == 2
         assert windows.stats.excluded_versions_no_compatible_wheel == 1
+
+
+class TestVersionIndexSharedAcrossTargets:
+    """A matrix shares the half of the version index no target's tags change."""
+
+    @staticmethod
+    def _providers(
+        files: Sequence[WheelFile | SdistFile],
+        cache: ListingFilterCache,
+        targets: Sequence[ResolveTarget],
+    ) -> list[Provider]:
+        """One provider per target, over one listing and one filter cache."""
+        coordinator = _index_with_files(files)
+        return [
+            Provider(coordinator, target, listing_filter_cache=cache)
+            for target in targets
+        ]
+
+    @classmethod
+    def _platform_providers(
+        cls, files: Sequence[WheelFile | SdistFile], cache: ListingFilterCache
+    ) -> list[Provider]:
+        """A linux and a windows 3.11 target over one listing and one cache."""
+        return cls._providers(
+            files,
+            cache,
+            [
+                _linux_target(PlatformSpec("linux_x86_64")),
+                _linux_target(PlatformSpec("windows_amd64")),
+            ],
+        )
+
+    @staticmethod
+    def _indexed(provider: Provider) -> metadata_mod.VersionDists:
+        """Index ``pkg``'s listing for ``provider``, as the metadata path does."""
+        return metadata_mod.version_dists(
+            provider, "pkg", provider.fetch_versions("pkg")
+        )
+
+    @staticmethod
+    def _two_universal_wheels() -> list[WheelFile | SdistFile]:
+        """One version publishing two wheels every target installs."""
+        return [
+            _platform_wheel("1.0", "py3-none-any"),
+            _platform_wheel("1.0", "py2.py3-none-any"),
+        ]
+
+    def test_targets_keeping_the_whole_listing_share_one_index(self) -> None:
+        """Both targets accept both wheels, so both index the same base list.
+
+        The sibling wheels come back as one object, so the second target
+        of this Python does not walk the listing again.
+        """
+        linux, windows = self._platform_providers(
+            self._two_universal_wheels(), ListingFilterCache(targets=2)
+        )
+
+        linux_index = self._indexed(linux)
+        windows_index = self._indexed(windows)
+
+        assert linux_index.sibling_wheels is windows_index.sibling_wheels
+        assert len(linux_index.sibling_wheels[Version("1.0")]) == 2
+
+        assert set(linux_index.picked) == {Version("1.0")}
+        assert set(windows_index.picked) == {Version("1.0")}
+
+    def test_a_trimmed_target_indexes_its_own_listing(self) -> None:
+        """Windows refuses the manylinux wheel, so 2.0 is not one of its versions.
+
+        Linux indexes first and fills the shared entry.  Windows shares
+        the Python and the package, so keying on those alone would hand
+        it a version its tags dropped.
+        """
+        files = [
+            _platform_wheel("1.0", "py3-none-any"),
+            _platform_wheel("2.0", "cp311-cp311-manylinux_2_17_x86_64"),
+        ]
+        linux, windows = self._platform_providers(files, ListingFilterCache(targets=2))
+
+        linux_index = self._indexed(linux)
+        windows_index = self._indexed(windows)
+
+        assert set(linux_index.picked) == {Version("1.0"), Version("2.0")}
+        assert set(windows_index.picked) == {Version("1.0")}
+
+    def test_the_pick_is_rebuilt_per_target_off_the_shared_groups(self) -> None:
+        """Two targets read one set of groups and still pick different wheels.
+
+        Neither loses a file to the tag pass, so both take the shared
+        groups.  The faithful target ranks by wheel tags and takes the
+        manylinux wheel; the overlay target moved off its tag axis, so it
+        takes the wheel that carries metadata.
+        """
+        files = [
+            _platform_wheel("1.0", "py3-none-any"),
+            _platform_wheel(
+                "1.0", "cp311-cp311-manylinux_2_17_x86_64", has_metadata=False
+            ),
+        ]
+        faithful_target = _linux_target(PlatformSpec("linux_x86_64"))
+        overlay_target = faithful_target.with_marker_overrides(
+            {"platform_machine": "aarch64"}
+        )
+        faithful, overlay = self._providers(
+            files, ListingFilterCache(targets=2), [faithful_target, overlay_target]
+        )
+
+        faithful_index = self._indexed(faithful)
+        overlay_index = self._indexed(overlay)
+
+        assert faithful_index.sibling_wheels is overlay_index.sibling_wheels
+        assert len(faithful_index.sibling_wheels[Version("1.0")]) == 2
+
+        faithful_pick = faithful_index.picked[Version("1.0")]
+        overlay_pick = overlay_index.picked[Version("1.0")]
+        assert faithful_pick.filename.endswith("manylinux_2_17_x86_64.whl")
+        assert overlay_pick.filename.endswith("py3-none-any.whl")
+
+    def test_one_target_per_python_shares_nothing(self) -> None:
+        """A cache built for a one-target resolve hands out no shared index.
+
+        The second provider is that same target under another conflict
+        fork, and it groups the listing again rather than reading what
+        the first one built.
+        """
+        first, second = self._providers(
+            self._two_universal_wheels(),
+            ListingFilterCache(),
+            [_linux_target(PlatformSpec("linux_x86_64"))] * 2,
+        )
+
+        first_index = self._indexed(first)
+        second_index = self._indexed(second)
+
+        assert first_index.sibling_wheels == second_index.sibling_wheels
+        assert first_index.sibling_wheels is not second_index.sibling_wheels
 
 
 class TestListingFilterSharedAcrossPythons:
