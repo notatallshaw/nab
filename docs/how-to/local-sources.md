@@ -63,8 +63,11 @@ the build.
 ## Lockfile shape
 
 Local pins land in the lockfile as `LocalPin` records.  The path
-is written relative to the lockfile's own directory, with POSIX
-separators, as PEP 751 requires, so a committed lockfile stays
-usable on another machine.  They do not carry a `sha256` (the
-contents are not under nab's control), so `nab download` skips
-them.
+is written with POSIX separators, relative to the lockfile's own
+directory, so a committed lockfile keeps working on another
+machine as long as the checkout moves with it.  The records carry
+no `sha256` (the contents are not under nab's control), so
+`nab download` skips them.
+
+See [Portable paths](../reference/lockfile.md) for the two cases
+where the path is not relative to the lockfile.
