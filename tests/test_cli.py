@@ -1682,6 +1682,63 @@ class TestLockCommandSpecific:
         )
         assert "line 3" in lines[0]
 
+    def test_local_source_unevaluable_marker_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A declared tree's undecidable marker exits 1, not a traceback."""
+        member = tmp_path / "mylocal"
+        member.mkdir()
+        (member / "pyproject.toml").write_text(
+            '[project]\nname = "mylocal"\nversion = "1.0"\n'
+            "dependencies = [\"somepkg; sys_platform ~= 'linux'\"]\n"
+        )
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "root"\nversion = "0"\n'
+            'dependencies = ["mylocal"]\n'
+            "[[tool.nab.local-sources]]\n"
+            'name = "mylocal"\n'
+            'path = "mylocal"\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, offline=True, output=Path("-"), cache=False)
+        err = capsys.readouterr().err
+        assert 'cannot lock: marker sys_platform ~= "linux"' in err
+        assert "cannot be evaluated" in err
+        assert "Traceback" not in err
+
+    def test_local_source_constants_only_marker_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A marker with two constant operands exits 1, naming the marker.
+
+        Packaging reads the right-hand literal as a variable name and raises
+        ``UndefinedEnvironmentName``, a ``KeyError``.  The CLI's ``KeyError``
+        clause blames a missing ``[project].dependencies``, so the error must
+        not reach it.
+        """
+        member = tmp_path / "mylocal"
+        member.mkdir()
+        (member / "pyproject.toml").write_text(
+            '[project]\nname = "mylocal"\nversion = "1.0"\n'
+            'dependencies = [\'pytz>=1; "extra" == "gpu"\']\n'
+        )
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "root"\nversion = "0"\n'
+            'dependencies = ["mylocal"]\n'
+            "[[tool.nab.local-sources]]\n"
+            'name = "mylocal"\n'
+            'path = "mylocal"\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, offline=True, output=Path("-"), cache=False)
+
+        err = capsys.readouterr().err
+        assert 'cannot lock: marker "extra" == "gpu" cannot be evaluated' in err
+        assert "[project].dependencies" not in err
+        assert "Traceback" not in err
+
     def test_local_source_naming_another_project_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:

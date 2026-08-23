@@ -72,8 +72,8 @@ EXEMPT = {
     "nab_project._lockfile.coverage": ("Same edge as _lockfile.disjointness."),
     "nab_provider.marker_holds": (
         "Where the marker-set dependency lives so the engine does not import "
-        "it. Reached here only through target, requirements_file and "
-        "_lockfile.validate."
+        "it. Reached here through target, requirements_file, "
+        "_provider.metadata_resolver and _lockfile.validate."
     ),
     "nab_provider._vendor.packaging.markersets": "The marker-set module itself.",
 }
