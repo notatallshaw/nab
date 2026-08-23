@@ -39,8 +39,6 @@ from nab_provider.records import (
     DEFAULT_INDEX_NAME,
     DEFAULT_INDEX_URL,
     IndexConfig,
-    SdistFile,
-    WheelFile,
 )
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.store import InMemoryIndex, metadata_pending_key, range_pending_key
@@ -50,7 +48,7 @@ from ._sources import materialize_source
 from ._toml import parse_pyproject_table
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Mapping
 
     from typing_extensions import Self
 
@@ -198,8 +196,6 @@ class FetchCoordinator:
         with FetchCoordinator(transport) as coordinator:
             ...
     """
-
-    PREFETCH_METADATA_COUNT = 1
 
     def __init__(  # noqa: PLR0913 - the per-index knobs a coordinator wires up
         self,
@@ -517,15 +513,14 @@ class FetchCoordinator:
                 if parsed is not None:
                     records = parsed.files
                     # Store the serving index before store_listing fires the
-                    # pending, matching the async path's ordering. The tail runs
-                    # on the fetcher loop, or inline when the loop is gone.
+                    # pending, matching the async path's ordering.
                     self.index.store_listing_index(package, self.indexes[0].name)
                     self.index.store_listing(
                         package, records, zip_sdists=parsed.zip_sdists
                     )
                     self._warm_sync_stats.listing_hits += 1
-                    if not self._post_to_loop(self._run_listing_tail, package, records):
-                        self._run_listing_tail(package, records)
+                    if not self._post_to_loop(self._tick_listing_progress, package):
+                        self._tick_listing_progress(package)
                     return event
             else:
                 self._warm_sync_stats.declined_small_blob += 1
@@ -1041,50 +1036,21 @@ class FetchCoordinator:
         logger.debug("fetched listing: %s (%d files)", req.package, len(files))
         if self._on_fetch is not None:
             self._on_fetch()
-        self._prefetch_metadata_after_listing(req.package, files)
 
-    def _prefetch_metadata_after_listing(
-        self, package: str, files: Sequence[WheelFile | SdistFile]
-    ) -> None:
-        """Enqueue metadata for the newest candidates of a stored listing.
+    def _tick_listing_progress(self, package: str) -> None:
+        """Fire the progress hook for a warm listing hit.
 
-        Assumes a listing is oldest-first and keeps a version's files together,
-        which nab does not enforce. An index that interleaves versions warms an
-        older release, costing a request rather than a wrong resolve.
-
-        One wheel per version: the first with a sidecar is the one the provider
-        picks for that version's metadata. The backwards walk assigns
-        unconditionally, so that first wheel is the one left in place.
-        """
-        wanted = self.PREFETCH_METADATA_COUNT
-        newest: dict[str, WheelFile] = {}
-        for f in reversed(files):
-            if not (isinstance(f, WheelFile) and f.has_metadata):
-                continue
-            if f.version not in newest and len(newest) == wanted:
-                break
-            newest[f.version] = f
-
-        for w in reversed(newest.values()):
-            url = w.metadata_url
-            assert url is not None
-            self.request_metadata(package, w.version, url, w.metadata_hash)
-
-    def _run_listing_tail(
-        self, package: str, records: Sequence[WheelFile | SdistFile]
-    ) -> None:
-        """Run the post-listing tail on the fetcher loop: tick then prefetch.
-
-        Mirrors the tail of the async ``_fetch_listing``. A failure is swallowed
-        rather than turned into a listing error: the pending has already fired,
-        so the served listing must not be overwritten.
+        The caller posts this to the fetcher loop, so ``_on_fetch`` runs on the
+        same thread whichever path served the listing, and falls back to an
+        inline call once the loop is gone. A failure is swallowed rather than
+        turned into a listing error: the pending has already fired, so the
+        served listing must not be overwritten.
         """
         try:
             if self._on_fetch is not None:
                 self._on_fetch()
-            self._prefetch_metadata_after_listing(package, records)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("listing prefetch tail failed: %s: %s", package, exc)
+            logger.warning("listing progress tick failed: %s: %s", package, exc)
 
     def _record_serving_index(
         self,

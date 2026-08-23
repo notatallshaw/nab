@@ -66,7 +66,6 @@ from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.config import ConfigError, read_pyproject_config
 from nab_project.config_sources import SourceRoots
 from nab_project.download import DownloadError, DownloadResult
-from nab_project.fetch import FetchCoordinator
 from nab_project.lockfile import (
     ArchivePin,
     DisjointnessError,
@@ -1462,28 +1461,20 @@ class TestLockCommandSpecific:
         assert "0" * 64 in err
         assert "Traceback" not in err
 
-    def test_metadata_hash_mismatch_below_prefetch_window_exits(
+    def test_metadata_hash_mismatch_on_an_older_pin_exits(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """A pin no prefetch covers still has its sidecar checked.
-
-        The coordinator warms the newest ``PREFETCH_METADATA_COUNT`` versions
-        as soon as a listing lands and forwards the published digest itself.
-        Pinning an older version leaves the provider's own request as the only
-        carrier of that digest.
-        """
+        """A pin two releases behind still has its own sidecar digest checked."""
         monkeypatch.setattr(
             "nab.cli._config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
 
-        # Guards the premise: the pin has to sit outside the prefetch window.
         versions = ("1.0", "2.0", "3.0")
         pinned = versions[0]
-        assert len(versions) > FetchCoordinator.PREFETCH_METADATA_COUNT
 
         pyproject = _make_pyproject(
             tmp_path, f'[project]\ndependencies = ["foo=={pinned}"]\n'
