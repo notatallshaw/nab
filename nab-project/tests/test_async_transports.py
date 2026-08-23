@@ -77,16 +77,34 @@ GZIP_BODY = gzip.compress(LISTING_BODY)
 # connection drop whose Content-Length matches the bytes that did arrive.
 TRUNCATED_GZIP_BODY = GZIP_BODY[: len(GZIP_BODY) // 2]
 
-# Nested past what ``json.loads`` will decode. The scanner's recursion guard
-# does not sit at ``sys.getrecursionlimit()``, so overshoot it rather than try
-# to compute the depth that trips it.
-_OVER_NESTED_DEPTH = 100_000
+# A listing nested deeper than any real one; _refuse_as_over_nested is what
+# makes the scanner refuse it.
+_OVER_NESTED_DEPTH = 1_000
 OVER_NESTED_BODY = (
     b'{"meta": {"api-version": "1.0"}, "name": "pkg", "files": '
     + b"[" * _OVER_NESTED_DEPTH
     + b"]" * _OVER_NESTED_DEPTH
     + b"}"
 )
+
+
+def _refuse_as_over_nested(monkeypatch: pytest.MonkeyPatch, body: bytes) -> None:
+    """Make ``json.loads`` refuse ``body`` the way it refuses an over-nested one.
+
+    The scanner's guard sits wherever the interpreter's C stack budget puts it,
+    which on 3.14 is the running thread's own stack, so no fixed depth is
+    refused everywhere the suite runs.
+    """
+    real_loads = json.loads
+
+    def loads(s: str | bytes | bytearray, **kwargs: Any) -> Any:
+        if s == body:
+            msg = "maximum recursion depth exceeded while decoding a JSON array"
+            raise RecursionError(msg)
+        return real_loads(s, **kwargs)
+
+    monkeypatch.setattr(json, "loads", loads)
+
 
 # Only the first is rejected up front; the rest raise out of urllib3's conversions.
 UNPARSEABLE_RETRY_AFTERS = [
@@ -1794,8 +1812,11 @@ class TestAsyncSimpleClient:
             asyncio.run(go())
         assert isinstance(caught.value, HttpError)
 
-    def test_get_files_over_nested_body_raises_clean(self) -> None:
+    def test_get_files_over_nested_body_raises_clean(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """A body nested past the scanner's guard must not escape raw."""
+        _refuse_as_over_nested(monkeypatch, OVER_NESTED_BODY)
         transport = self._FakeTransport(OVER_NESTED_BODY)
 
         async def go() -> list:

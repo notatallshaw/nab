@@ -88,16 +88,33 @@ ZIP_ONLY_BYTES = json.dumps(ZIP_ONLY_LISTING).encode()
 # A digit run just past CPython's int-from-string limit.
 OVERSIZED_DIGITS = "9" * (sys.get_int_max_str_digits() + 1)
 
-# Nested past what ``json.loads`` will decode. The scanner's recursion guard
-# does not sit at ``sys.getrecursionlimit()``, so overshoot it rather than try
-# to compute the depth that trips it.
-_OVER_NESTED_DEPTH = 100_000
+# A listing nested deeper than any real one; _refuse_as_over_nested is what
+# makes the scanner refuse it.
+_OVER_NESTED_DEPTH = 1_000
 OVER_NESTED_BYTES = (
     b'{"meta": {"api-version": "1.0"}, "name": "pkg", "files": '
     + b"[" * _OVER_NESTED_DEPTH
     + b"]" * _OVER_NESTED_DEPTH
     + b"}"
 )
+
+
+def _refuse_as_over_nested(monkeypatch: pytest.MonkeyPatch, body: bytes) -> None:
+    """Make ``json.loads`` refuse ``body`` the way it refuses an over-nested one.
+
+    The scanner's guard sits wherever the interpreter's C stack budget puts it,
+    which on 3.14 is the running thread's own stack, so no fixed depth is
+    refused everywhere the suite runs.
+    """
+    real_loads = json.loads
+
+    def loads(s: str | bytes | bytearray, **kwargs: Any) -> Any:
+        if s == body:
+            msg = "maximum recursion depth exceeded while decoding a JSON array"
+            raise RecursionError(msg)
+        return real_loads(s, **kwargs)
+
+    monkeypatch.setattr(json, "loads", loads)
 
 
 class _FakeResponse:
@@ -4488,7 +4505,10 @@ class TestOverNestedListingBody:
     :class:`ValueError` a malformed body normally raises.
     """
 
-    def test_wire_body_raises_clean_and_skips_cache(self, tmp_path: Path) -> None:
+    def test_wire_body_raises_clean_and_skips_cache(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _refuse_as_over_nested(monkeypatch, OVER_NESTED_BYTES)
         cache = _make_cache(tmp_path)
         transport = _FakeTransport([_FakeResponse(OVER_NESTED_BYTES, status=200)])
 
@@ -4507,8 +4527,12 @@ class TestOverNestedListingBody:
         assert cache.get_simple("pkg") is None
 
     def test_cached_body_self_heals_online(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
+        _refuse_as_over_nested(monkeypatch, OVER_NESTED_BYTES)
         cache = _make_cache(tmp_path)
         cache.put_simple("pkg", OVER_NESTED_BYTES, _fresh_policy())
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
