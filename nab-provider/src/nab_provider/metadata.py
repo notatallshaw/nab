@@ -9,10 +9,10 @@ LRU cache so repeated dep strings parse once.
 
 from __future__ import annotations
 
+import re
 from contextlib import suppress
 from dataclasses import dataclass, field
 from functools import lru_cache
-from io import StringIO
 from typing import TYPE_CHECKING, Any
 
 from nab_provider._vendor.packaging.requirements import Requirement
@@ -208,6 +208,28 @@ def _is_field_name(raw: str) -> bool:
     return raw.isascii() and raw.isprintable() and " " not in raw
 
 
+# A line ending closes a header only when the line under it is not a fold, so
+# splitting on these leaves every folded value whole inside one logical line.
+_LOGICAL_LINE = re.compile(r"\n(?![ \t])")
+
+# The same boundary for a document that also ends lines on a bare \r, as
+# email's own reader does.
+_LOGICAL_LINE_CR = re.compile(r"(?:\r\n|\r(?!\n)|\n)(?![ \t])")
+
+
+def _logical_lines(text: str) -> list[str]:
+    r"""Split ``text`` into RFC 822 logical lines, each holding its own folds.
+
+    A line ending inside a fold stays. The ending that closes a logical line
+    goes, except that the common pattern splits on the ``\n`` of a ``\r\n``
+    and leaves the ``\r`` at the end of the line.
+    """
+    # Equal counts mean every \r begins a \r\n, so no line ends on a bare one.
+    if "\r" in text and text.count("\r") != text.count("\r\n"):
+        return _LOGICAL_LINE_CR.split(text)
+    return _LOGICAL_LINE.split(text)
+
+
 def _read_header_fields(text: str) -> dict[str, list[str]]:
     """Map each name in ``_READ_FIELDS`` that ``text`` carries to its values.
 
@@ -224,18 +246,15 @@ def _read_header_fields(text: str) -> dict[str, list[str]]:
     """
     fields: dict[str, list[str]] = {}
     name = ""
-    value: list[str] = []
-    # newline="" leaves a bare \r ending a line, which is what email splits on.
-    for line in StringIO(text, newline=""):
-        first = line[0]
+    value = ""
+    for line in _logical_lines(text):
+        first = line[:1]
+        # A fold can only open the first logical line, where no field is open.
         if first in {" ", "\t"}:
-            if name:
-                value.append(line)
             continue
 
         if name:
-            joined = "".join(value).lstrip(" \t\r\n")
-            fields.setdefault(name, []).append(joined.rstrip("\r\n"))
+            fields.setdefault(name, []).append(value)
             name = ""
 
         if first == "F" and line.startswith("From "):
@@ -244,17 +263,21 @@ def _read_header_fields(text: str) -> dict[str, list[str]]:
         colon = line.find(":")
         if colon < 0:
             break
+
         raw_name = line[:colon]
-        if not _is_field_name(raw_name):
-            break
         candidate = raw_name.lower()
+
+        # The set lookup can precede the validity test: U+212A is the only
+        # character _is_field_name rejects that lowercases into ASCII, and no
+        # _READ_FIELDS name holds the "k" it becomes.
         if candidate in _READ_FIELDS:
             name = candidate
-            value = [line[colon + 1 :]]
+            value = line[colon + 1 :].lstrip(" \t\r\n").rstrip("\r\n")
+        elif not _is_field_name(raw_name):
+            break
 
     if name:
-        joined = "".join(value).lstrip(" \t\r\n")
-        fields.setdefault(name, []).append(joined.rstrip("\r\n"))
+        fields.setdefault(name, []).append(value)
     return fields
 
 
