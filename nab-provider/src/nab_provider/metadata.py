@@ -138,6 +138,22 @@ def _parse_requirement_cached(req_str: str) -> Requirement:
     return req
 
 
+@lru_cache(maxsize=4096)
+def _parse_requires_python_cached(value: str) -> SpecifierSet:
+    """Cache ``Requires-Python`` parsing across wheel metadata.
+
+    The same string recurs across a project's wheels the way dep strings do.
+    ``SpecifierSet.prereleases`` is settable, but nab never assigns to it and
+    passes ``prereleases`` per call instead, so sharing the object is safe.
+
+    Raises ``ValueError`` when the string does not parse or a clause
+    version will not convert.
+    """
+    specifier_set = SpecifierSet(value)
+    validate_specifier_versions(specifier_set)
+    return specifier_set
+
+
 @lru_cache(maxsize=65536)
 def intern_version(version_str: str) -> Version:
     """Return a shared :class:`Version` for ``version_str``.
@@ -305,8 +321,7 @@ def parse_metadata(data: str | bytes) -> WheelMetadata:
     requires_python = None
     if requires_python_str:
         try:
-            requires_python = SpecifierSet(requires_python_str)
-            validate_specifier_versions(requires_python)
+            requires_python = _parse_requires_python_cached(requires_python_str)
         except ValueError as exc:
             # A malformed Requires-Python is invalid metadata; raise rather
             # than silently drop the field.
