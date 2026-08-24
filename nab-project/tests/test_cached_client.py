@@ -3318,6 +3318,36 @@ class TestGetSdistFiles:
         assert asyncio.run(go()) == (None, None)
         assert cache.get_sdist_files("pkg", "1.0") is None
 
+    @pytest.mark.parametrize(
+        "members",
+        [
+            pytest.param([("pkg-1.0/setup.py", b"setup()\n")], id="no-metadata-file"),
+            pytest.param(
+                [("pkg-1.0/pyproject.toml", b'[project]\nname = "pkg"\n')],
+                id="pyproject-only",
+            ),
+        ],
+    )
+    def test_sdist_without_pkg_info_is_cached_and_not_refetched(
+        self, tmp_path: Path, members: list[tuple[str, bytes]]
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(_build_tarball(members))])
+
+        async def go() -> list[tuple[str | None, str | None]]:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return [
+                    await client.get_sdist_files("pkg", "1.0", "https://x/pkg.tar.gz")
+                    for _ in range(2)
+                ]
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == [(None, None), (None, None)]
+        assert cache.get_sdist_files("pkg", "1.0") == (None, None)
+        assert len(transport.calls) == 1
+
     def test_offline_miss_raises(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
         transport = _FakeTransport()

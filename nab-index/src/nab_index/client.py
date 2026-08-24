@@ -664,6 +664,20 @@ def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:
 
     .zip sdists are intentionally unsupported.
     """
+    files = _extract_sdist_files_if_readable(data)
+    return (None, None) if files is None else files
+
+
+def _extract_sdist_files_if_readable(
+    data: bytes,
+) -> tuple[str | None, str | None] | None:
+    """Extract the sdist pair, or ``None`` if the archive could not be read.
+
+    A readable archive answers ``(None, None)`` when
+    :func:`_select_sdist_root` takes no PKG-INFO from it.  Caching that
+    answer freezes that choice of root, so changing it means bumping
+    ``CACHE_VERSION_SDIST``.
+    """
     try:
         return _read_tar_sdist_files(data)
     except (
@@ -677,7 +691,7 @@ def _extract_sdist_files(data: bytes) -> tuple[str | None, str | None]:
         # cycle of links only ends at the recursion limit.
         RecursionError,
     ):
-        return (None, None)
+        return None
 
 
 def _read_tar_sdist_files(data: bytes) -> tuple[str | None, str | None]:
