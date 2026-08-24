@@ -4,13 +4,15 @@ Owns ``_look_ahead_ok`` and the pending-block tables that record why a
 candidate was rejected.  ``flush_pending_blocks`` turns those into
 incompatibilities at the end of ``choose_version``.  A decision or
 positive-range rejection becomes a grouped binary incompatibility
-(``{candidate range, blocker range}``).  Version-derived terms are
-widened onto the listing's gaps, which leaves the selectable versions
-they name unchanged.  The blocker term widens further when every
-rejection in the group recorded a dependency range: each fired because
-the blocker sat outside that range, so every blocker version outside
-their union repeats the same rejections.  Groups queued without ranges,
-such as the extras block path, keep the narrower term.
+(``{candidate range, blocker range}``); a candidate blocked by a
+requirement on itself names one package on both sides, so the two terms
+merge into one and the declared range is kept on the clause.
+Version-derived terms are widened onto the listing's gaps, which leaves
+the selectable versions they name unchanged.  The blocker term widens
+further when every rejection in the group recorded a dependency range:
+each fired because the blocker sat outside that range, so every blocker
+version outside their union repeats the same rejections.  Groups queued
+without ranges, such as the extras block path, keep the narrower term.
 
 A root-requirement or metadata rejection has no blocker to name: nothing
 later in the resolve undoes it, so its versions are banned outright.
@@ -29,7 +31,7 @@ from ..errors import MetadataError
 from .listing_diagnosis import MetadataBlock
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from nab_provider._vendor.packaging.version import Version
 
@@ -112,33 +114,58 @@ def look_ahead_ok(
                 ].append(version)
                 return False
 
-        if decisions is not None:
-            decided_version = decisions.get(dep_normalized)
-            if decided_version is not None and decided_version not in dep_range:
-                decision_key = (package, dep_normalized, decided_version)
-                provider.pending_blocks[decision_key].append(version)
-                provider.pending_decision_dep_ranges[decision_key] = (
-                    provider.pending_decision_dep_ranges[decision_key].record(dep_range)
-                )
-                return False
+        if decisions is not None and _blocked_by_solution(
+            provider, package, version, dep_normalized, dep_range, decisions
+        ):
+            return False
 
-            # Positive-range disagreement: {candidate==v, dep in pos_range}
-            # is impossible.  Sound across backjumps because the
-            # ``dep in pos_range`` term goes UNDETERMINED if the supporting
-            # derivation is reverted.
-            pos_range = provider.solution_ranges.get(dep_normalized)
-            if (
-                pos_range is not None
-                and decided_version is None
-                and dep_range.is_disjoint(pos_range)
-            ):
-                range_key = (package, dep_normalized, pos_range)
-                provider.pending_range_blocks[range_key].append(version)
-                provider.pending_range_dep_ranges[range_key] = (
-                    provider.pending_range_dep_ranges[range_key].record(dep_range)
-                )
-                return False
+    return True
 
+
+def _blocked_by_solution(
+    provider: Provider,
+    package: str,
+    version: Version,
+    dep_normalized: str,
+    dep_range: VersionRange,
+    decisions: Mapping[str, Version],
+) -> bool:
+    """Whether the partial solution already rules ``dep_range`` out.
+
+    Queues the rejection it finds: against the decision that contradicts the
+    range, against the positive range disjoint from it, or, when the candidate
+    named itself, under the range it declared.
+    """
+    decided_version = decisions.get(dep_normalized)
+    if decided_version is not None:
+        if decided_version in dep_range:
+            return False
+
+        decision_key = (package, dep_normalized, decided_version)
+        provider.pending_blocks[decision_key].append(version)
+        provider.pending_decision_dep_ranges[decision_key] = (
+            provider.pending_decision_dep_ranges[decision_key].record(dep_range)
+        )
+        return True
+
+    # Positive-range disagreement: {candidate==v, dep in pos_range} is
+    # impossible.  Sound across backjumps because the ``dep in pos_range``
+    # term goes UNDETERMINED if the supporting derivation is reverted.
+    pos_range = provider.solution_ranges.get(dep_normalized)
+    if pos_range is None or not dep_range.is_disjoint(pos_range):
+        return False
+
+    # A self-dependency is grouped by the range it declared, so the merged
+    # clause has one edge to name.
+    if dep_normalized == package:
+        provider.pending_self_blocks[(package, dep_range, pos_range)].append(version)
+        return True
+
+    range_key = (package, dep_normalized, pos_range)
+    provider.pending_range_blocks[range_key].append(version)
+    provider.pending_range_dep_ranges[range_key] = provider.pending_range_dep_ranges[
+        range_key
+    ].record(dep_range)
     return True
 
 
@@ -191,6 +218,7 @@ def reset_pending_blocks(provider: Provider) -> None:
     provider.pending_decision_dep_ranges = defaultdict(DepRangeUnion.zero)
     provider.pending_range_blocks = defaultdict(list)
     provider.pending_range_dep_ranges = defaultdict(DepRangeUnion.zero)
+    provider.pending_self_blocks = defaultdict(list)
     provider.pending_root_blocks = defaultdict(list)
     provider.pending_metadata_blocks = defaultdict(dict)
 
@@ -208,6 +236,12 @@ def flush_pending_blocks(provider: Provider) -> None:
     groups and the captured positive range for range-keyed ones.  Sound across
     backjumps because the blocker term goes UNDETERMINED when the supporting
     decision is reverted, so the candidate range can be reconsidered.
+
+    A candidate rejected by a requirement on itself has no separate blocker:
+    both terms name it, so they merge to the rejected versions the declared
+    range keeps out, and the clause carries that range for the report.  The
+    ban is unconditional, which is sound: a version that requires itself to
+    be elsewhere can never be selected.
 
     Root-requirement and metadata rejections have no such blocker: neither a
     root requirement nor unreadable metadata changes over the resolve, so each
@@ -278,6 +312,23 @@ def flush_pending_blocks(provider: Provider) -> None:
                     Term(blocker_pkg, blocker_term, positive=True),
                 ],
                 cause=IncompatibilityCause.DEPENDENCY,
+            )
+        )
+
+    # Self-dependency rejections: the candidate is its own blocker, so the
+    # two terms merge into one.
+    for (
+        candidate_pkg,
+        dep_range,
+        _pos_range,
+    ), versions in provider.pending_self_blocks.items():
+        rejected = _candidate_union(provider, candidate_pkg, versions)
+        merged = Term(candidate_pkg, rejected & dep_range.complement(), positive=True)
+        provider.pending_clauses.append(
+            Incompatibility(
+                [merged],
+                cause=IncompatibilityCause.DEPENDENCY,
+                dependency_range=dep_range,
             )
         )
 

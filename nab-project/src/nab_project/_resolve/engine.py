@@ -818,15 +818,31 @@ def _diagnostics_block(
     return "\n".join(lines)
 
 
+def _rules_out_candidate(node: Incompatibility[Any, Any]) -> bool:
+    """Whether ``node`` is a dependency clause ruling its own candidate out.
+
+    A look-ahead group states the candidate's range against a blocker's, both
+    positive.  A self-dependency names one package twice, so its terms merge
+    into a single positive term.  The candidate is the first term either way.
+    """
+    if node.cause is not IncompatibilityCause.DEPENDENCY:
+        return False
+
+    terms = node.terms
+    if len(terms) == _GROUPED_CLAUSE_TERMS:
+        return terms[0].is_positive() and terms[1].is_positive()
+    return len(terms) == 1 and terms[0].is_positive()
+
+
 def _walk_no_versions_packages(
     incompatibility: Incompatibility[Any, Any],
 ) -> list[str]:
     """Return the packages a no-versions diagnostic may name.
 
-    NO_VERSIONS clauses name every package they carry.  Look-ahead grouped
-    clauses (DEPENDENCY cause, two positive terms) name their candidate: a
-    union widened over the whole listing conflicts during propagation, with
-    no second ``choose_version`` ask to raise a NO_VERSIONS clause.
+    NO_VERSIONS clauses name every package they carry.  A dependency clause
+    that rules its own candidate's versions out names that candidate: a union
+    widened over the whole listing conflicts during propagation, with no
+    second ``choose_version`` ask to raise a NO_VERSIONS clause.
 
     The walk is iterative: the tree gains a level per conflict, and recursion
     would overflow on a deeply backtracked resolve.
@@ -846,12 +862,7 @@ def _walk_no_versions_packages(
                 pkg = term.package
                 if isinstance(pkg, str):
                     out.append(pkg)
-        elif (
-            node.cause is IncompatibilityCause.DEPENDENCY
-            and len(node.terms) == _GROUPED_CLAUSE_TERMS
-            and node.terms[0].is_positive()
-            and node.terms[1].is_positive()
-        ):
+        elif _rules_out_candidate(node):
             pkg = node.terms[0].package
             if isinstance(pkg, str):
                 out.append(pkg)

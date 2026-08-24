@@ -3310,6 +3310,15 @@ class TestAugmentResolutionError:
         )
         assert _walk_no_versions_packages(clause) == ["cand"]
 
+    def test_walk_names_merged_self_dependency_candidate(self) -> None:
+        """A self-dependency merges to one positive term and still names it."""
+        clause = Incompatibility(
+            [Term("cand", Range.full(), positive=True)],
+            cause=IncompatibilityCause.DEPENDENCY,
+            dependency_range=Range.singleton(1),
+        )
+        assert _walk_no_versions_packages(clause) == ["cand"]
+
     def test_grouped_clause_hint_survives_a_later_range(self) -> None:
         """Accepted tolerance: reasons are keyed by package name, so a later
         range still surfaces the reason an earlier ask recorded."""
