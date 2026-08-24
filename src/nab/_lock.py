@@ -22,10 +22,9 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from string import Formatter
-from typing import TYPE_CHECKING, Annotated, NamedTuple, NoReturn
+from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, NoReturn
 
 import tomli
-import tomli_w
 import tyro
 
 from nab._version import __version__
@@ -369,16 +368,18 @@ def _emit(
         )
 
 
-def _packages_only(text: str) -> str:
-    """Re-render lock TOML without the volatile ``[tool.nab]`` block.
+def _packages_only(text: str) -> dict[str, Any]:
+    """Parse lock TOML without the volatile ``[tool.nab]`` block.
 
     Drops the provenance block (its command line and timestamp change every
     run) so two locks compare equal whenever their packages, environments,
-    and metadata match.
+    and metadata match.  Returning the parsed tables keeps the comparison
+    off ``tomli_w``, which recurses once per table level and so cannot
+    re-render every document tomli accepts.
     """
     data = toml_io.loads(text)
     data.pop("tool", None)
-    return tomli_w.dumps(data)
+    return data
 
 
 _BUILD_DEFAULT_OUTPUT: dict[str, str] = {
