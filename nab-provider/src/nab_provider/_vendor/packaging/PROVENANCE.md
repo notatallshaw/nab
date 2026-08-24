@@ -47,6 +47,10 @@ most one checked-in patch.
     quotes when that body is ASCII and holds no backslash, newline, carriage
     return or NUL, and calls `ast.literal_eval` otherwise. The `QUOTED_STRING`
     rule admits no string prefix, so a token takes the same value either way.
+  - `specifiers.py` and `_tokenizer.py`: `Specifier._regex` compiles the
+    specifier pattern without the surrounding `\s*`, and `Specifier.__init__`
+    strips the string before matching it, so `DEFAULT_RULES["SPECIFIER"]` can be
+    that same compiled object instead of a second compile of the same pattern.
 
   Upstream PRs are planned for the bound ordering, the direct subset and
   disjoint walks, `filter`'s `assume_sorted` fast path,

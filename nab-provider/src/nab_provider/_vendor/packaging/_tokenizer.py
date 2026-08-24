@@ -77,10 +77,8 @@ DEFAULT_RULES: dict[str, re.Pattern[str]] = {
         """,
         re.VERBOSE,
     ),
-    "SPECIFIER": re.compile(
-        Specifier._specifier_regex_str,
-        re.VERBOSE | re.IGNORECASE,
-    ),
+    # Shared with Specifier so the pattern compiles once.
+    "SPECIFIER": Specifier._regex,
     "AT": re.compile(r"\@"),
     "URL": re.compile(r"[^ \t]+"),
     "IDENTIFIER": re.compile(r"\b[a-zA-Z0-9][a-zA-Z0-9._-]*\b"),
