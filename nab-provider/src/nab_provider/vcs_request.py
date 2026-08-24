@@ -86,7 +86,7 @@ class VcsRequest:
 
 
 def _split_repo_ref(inner: str) -> tuple[str, str]:
-    """Split ``inner`` (no ``vcs+`` prefix, no fragment) into ``(repo, ref)``.
+    """Split ``inner`` (no ``git+`` prefix, no fragment) into ``(repo, ref)``.
 
     For URL forms (``scheme://...``), the ref is everything after the
     last ``@`` that appears in the path component (after the netloc),
