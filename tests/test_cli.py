@@ -364,8 +364,8 @@ def _mismatched_local_source_project(tmp_path: Path) -> str:
 def _source_name_mismatch_message(tmp_path: Path, prefix: str) -> str:
     target = (tmp_path / "bar").resolve()
     return (
-        f"error: {prefix}: local source 'foo' declares package 'foo' but its"
-        f" [project].name is 'bar' (at {target}); a source declared for one name"
+        f"error: {prefix}: local source 'foo' declares package 'foo' but the"
+        f" project at {target} is named 'bar'; a source declared for one name"
         " must not provide a different project"
     )
 

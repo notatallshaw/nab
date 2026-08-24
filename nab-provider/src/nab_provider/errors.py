@@ -104,8 +104,8 @@ class SourceNameMismatchError(Exception):
     """Raised when a materialised source's project name differs from its declaration.
 
     A declared source is the only candidate for the package it names, so a tree
-    whose ``[project].name`` does not canonicalise to that name would pin
-    another distribution.
+    whose project name does not canonicalise to that name would pin another
+    distribution.
     """
 
 

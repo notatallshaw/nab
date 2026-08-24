@@ -3975,6 +3975,56 @@ class TestLocalSources:
             provider.fetch_versions("foo")
         assert "foo" in str(excinfo.value)
 
+    @pytest.mark.parametrize(
+        "body",
+        [
+            '[build-system]\nrequires = []\nbuild-backend = "stub"\n',
+            '[project]\nname = "bar"\ndynamic = ["version"]\n',
+        ],
+        ids=["no-project-table", "dynamic-version"],
+    )
+    def test_built_source_name_mismatch_points_at_the_project(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        body: str,
+    ) -> None:
+        """The mismatch message points at the built project rather than a key.
+
+        The name comes back from the backend either way, and a tree with no
+        ``[project]`` table has no key to blame.
+        """
+        self._write_local(tmp_path, body)
+
+        built = WheelMetadata(
+            name="bar",
+            version=V("2.3.0"),
+            requires_python=None,
+            requires_dist=[],
+            provides_extra=[],
+        )
+        monkeypatch.setattr(
+            "nab_project.build_backend.extract_metadata",
+            lambda _path, **_kwargs: built,
+        )
+
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(
+            coordinator,
+            local_sources=[LocalSource("foo", str(tmp_path))],
+            build_policy=BuildPolicy.BUILD_LOCAL,
+        )
+
+        with pytest.raises(SourceNameMismatchError) as excinfo:
+            provider.fetch_versions("foo")
+
+        msg = str(excinfo.value)
+        assert "[project].name" not in msg
+        assert (
+            "local source 'foo' declares package 'foo' but the project at"
+            f" {tmp_path} is named 'bar'" in msg
+        )
+
     def test_build_local_source_failure_propagates(
         self,
         tmp_path: Path,
