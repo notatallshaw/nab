@@ -63,6 +63,7 @@ __all__ = [
     "read_lockfile_anchor",
     "read_lockfile_packages",
     "require_artifact_hashes",
+    "strip_userinfo",
 ]
 
 
@@ -238,7 +239,7 @@ def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
     }
 
 
-def _strip_userinfo(url: str) -> str:
+def strip_userinfo(url: str) -> str:
     """Return ``url`` with credential userinfo removed.
 
     Lockfiles are committed to version control, so an index or VCS URL
@@ -567,7 +568,7 @@ def _index_pin_from_listing(
     return IndexPin(
         name=canonical,
         version=str(version),
-        index=_strip_userinfo(index_url),
+        index=strip_userinfo(index_url),
         sdist=sdist,
         wheels=wheels,
         requires_python=requires_python,
@@ -591,7 +592,7 @@ def _build_artifact(
     hashes = _filter_acceptable_hashes(source.hashes)
     return cls(
         filename=source.filename,
-        url=_strip_userinfo(source.url),
+        url=strip_userinfo(source.url),
         hashes=hashes,
         size=source.size,
         upload_time=_parse_upload_time(source.upload_time),
@@ -740,7 +741,7 @@ def _vcs_pin_from_source(
 
     # Compose a pinned installable URL from the parsed pieces, not from source.url,
     # so credentials are stripped and the sha replaces any floating ref.
-    bare_repo_url = _strip_userinfo(parsed.repo_url)
+    bare_repo_url = strip_userinfo(parsed.repo_url)
     repo_url = f"{parsed.scheme}+{bare_repo_url}@{resolved_sha}"
     if parsed.subdirectory:
         repo_url += f"#subdirectory={quote(parsed.subdirectory, safe='/')}"
@@ -778,7 +779,7 @@ def _archive_pin_from_source(
     return ArchivePin(
         name=canonical,
         version=str(version),
-        url=_strip_userinfo(request.url),
+        url=strip_userinfo(request.url),
         hashes=request.hashes,
         subdirectory=request.subdirectory or None,
     )

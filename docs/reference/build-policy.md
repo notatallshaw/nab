@@ -148,6 +148,12 @@ backend than `[build-system].requires` asked for without saying so.  The
 requirement resolves as written and the refusal names the version it
 landed on.
 
+A per-package or per-index `dist-policy` narrows the resolve the other
+way.  `sdist-only` and `sdist-install` keep a build requirement's
+wheels out of the environment even where the index publishes one this
+host installs, so satisfying it means building it, and the refusal
+names the policy rather than the listing.
+
 What the build produces has to be the release nab resolved, because
 the dependencies installed beside it were resolved for that release.
 A backend that computes its own version and emits another one is

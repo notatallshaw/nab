@@ -67,6 +67,7 @@ from nab_project.config import (
     IndexOverride,
     MatrixConfig,
     NabProjectConfig,
+    PackageOverride,
     ResolveMode,
 )
 from nab_project.download import DownloadError, DownloadResult, iter_artifacts
@@ -74,6 +75,7 @@ from nab_project.lockfile import (
     IndexPin,
     LocalPin,
     LockInput,
+    PinShape,
     SdistArtifact,
     TargetLock,
     WheelArtifact,
@@ -2920,6 +2922,265 @@ class TestInstallPickIsNotTheMetadataPick:
 
         with pytest.raises(BuildEnvError, match=r"chain: meson 1\.4\.2 -> ninja 1\.11"):
             env._planned_pin(self._sdist_pin(), self._tags(), [])
+
+
+class TestRefusalNamesTheDistPolicyThatBarsTheWheels:
+    """Why a pin has no wheel decides what the refusal is allowed to say.
+
+    A per-package or per-index ``dist-policy`` governs the build env's
+    own resolve, so ``sdist-only`` and ``sdist-install`` leave a pin
+    carrying its sdist alone even where the index publishes a wheel this
+    host installs.  Blaming the index there sends the reader after a
+    wheel that is not missing.
+    """
+
+    NAME = "demo"
+    VERSION = "1.0"
+    INDEX_NAME = "local"
+    INDEX_URL = "https://pypi.example/simple/"
+    CREDENTIALED_URL = "https://user:token@pypi.example/simple/"
+    OTHER_INDEX_NAME = "mirror"
+    OTHER_INDEX_URL = "https://mirror.example/simple/"
+
+    @staticmethod
+    def _tags() -> TagSet:
+        return ResolveTarget.for_declared(
+            python_version="3.12", spec=PlatformSpec(platform_id="linux_x86_64")
+        ).tags
+
+    @classmethod
+    def _pin(cls) -> IndexPin:
+        """A pin the resolve settled on carrying its sdist alone."""
+        filename = f"{cls.NAME}-{cls.VERSION}.tar.gz"
+        return IndexPin(
+            name=cls.NAME,
+            version=cls.VERSION,
+            index=cls.INDEX_URL,
+            sdist=SdistArtifact(
+                filename=filename,
+                url=f"https://pypi.example/{filename}",
+                hashes=(("sha256", "1" * 64),),
+            ),
+        )
+
+    def _refusal(self, **fields: Any) -> str:
+        """Return the message the env refuses ``_pin`` with.
+
+        ``fields`` are the config fields the case sets.  The pin is
+        served by ``INDEX_NAME`` unless a case declares its own
+        ``indexes``.
+        """
+        fields.setdefault("indexes", (IndexConfig(self.INDEX_NAME, self.INDEX_URL),))
+        config = NabProjectConfig(**fields)
+        env = NabBuildEnv(requires=[], config=config)
+
+        with pytest.raises(BuildEnvError) as excinfo:
+            env._planned_pin(self._pin(), self._tags(), [])
+        return str(excinfo.value)
+
+    @pytest.mark.parametrize(
+        "policy",
+        [DistPolicy.SDIST_ONLY, DistPolicy.SDIST_INSTALL],
+        ids=["sdist-only", "sdist-install"],
+    )
+    def test_a_package_override_is_named_as_the_cause(self, policy: DistPolicy) -> None:
+        """The key the user set is what the message points at."""
+        message = self._refusal(
+            package_overrides=(pkg_override(self.NAME, dist_policy=policy),)
+        )
+
+        assert (
+            f"demo 1.0 has dist-policy '{policy.value}', which admits"
+            " no wheel into the build env" in message
+        )
+        assert "publishes no wheel" not in message
+
+        assert "build-requires-depth is 0" in message
+
+    def test_an_index_override_is_named_as_the_cause(self) -> None:
+        """The per-index surface reaches the build env the same way."""
+        message = self._refusal(
+            index_overrides={
+                self.INDEX_NAME: IndexOverride(dist_policy=DistPolicy.SDIST_ONLY)
+            }
+        )
+
+        assert "demo 1.0 has dist-policy 'sdist-only'" in message
+
+    def test_an_index_override_reaches_a_pin_from_a_credentialed_index(self) -> None:
+        """A pin records its index URL stripped of the credentials config has."""
+        message = self._refusal(
+            indexes=(IndexConfig(self.INDEX_NAME, self.CREDENTIALED_URL),),
+            index_overrides={
+                self.INDEX_NAME: IndexOverride(dist_policy=DistPolicy.SDIST_ONLY)
+            },
+        )
+
+        assert "demo 1.0 has dist-policy 'sdist-only'" in message
+
+    def test_indexes_differing_only_in_credentials_are_not_named(self) -> None:
+        """Both strip to the pin's URL, so which one served it is unknown."""
+        message = self._refusal(
+            indexes=(
+                IndexConfig(self.INDEX_NAME, self.INDEX_URL),
+                IndexConfig(self.OTHER_INDEX_NAME, self.CREDENTIALED_URL),
+            ),
+            index_overrides={
+                self.OTHER_INDEX_NAME: IndexOverride(dist_policy=DistPolicy.SDIST_ONLY)
+            },
+        )
+
+        assert "demo 1.0 publishes no wheel this build host can install" in message
+        assert "dist-policy" not in message
+
+    def test_an_index_override_on_another_index_is_not_named(self) -> None:
+        """Only the index that served the pin can have barred its wheels."""
+        message = self._refusal(
+            indexes=(
+                IndexConfig(self.INDEX_NAME, self.INDEX_URL),
+                IndexConfig(self.OTHER_INDEX_NAME, self.OTHER_INDEX_URL),
+            ),
+            index_overrides={
+                self.OTHER_INDEX_NAME: IndexOverride(dist_policy=DistPolicy.SDIST_ONLY)
+            },
+        )
+
+        assert "demo 1.0 publishes no wheel this build host can install" in message
+        assert "dist-policy" not in message
+
+    @pytest.mark.parametrize(
+        "override",
+        [
+            pkg_override("other", dist_policy=DistPolicy.SDIST_ONLY),
+            pkg_override("demo>2", dist_policy=DistPolicy.SDIST_ONLY),
+            pkg_override("demo", dist_policy=DistPolicy.PREFER_WHEEL),
+        ],
+        ids=["another-package", "outside-the-range", "admits-wheels"],
+    )
+    def test_an_override_that_did_not_bar_the_wheels_is_not_named(
+        self, override: PackageOverride
+    ) -> None:
+        """The name, the range, and the policy value all have to match."""
+        message = self._refusal(package_overrides=(override,))
+
+        assert "demo 1.0 publishes no wheel this build host can install" in message
+        assert "dist-policy" not in message
+
+
+class TestDistPolicyExcludesAWheelTheHostCanInstall:
+    """``sdist-only`` on a build requirement, over a real inner resolve.
+
+    The ``file://`` index publishes a wheel this host installs beside
+    the sdist.  The first test pins that the env installs that wheel,
+    so the refusal in the second can only be the override's doing.
+    Only the download is stubbed; nothing here reaches the network.
+    """
+
+    NAME = "buildstub"
+    VERSION = "1.0"
+    WHEEL = "buildstub-1.0-py3-none-any.whl"
+
+    def _config(self, tmp_path: Path, **fields: Any) -> NabProjectConfig:
+        """Config over an index serving a wheel beside a PEP 643 sdist."""
+        index_dir = tmp_path / "index"
+        _make_local_index(index_dir, self.NAME, self.VERSION)
+        return NabProjectConfig(
+            indexes=(IndexConfig("local", index_dir.as_uri()),), **fields
+        )
+
+    @staticmethod
+    def _planned_pins(monkeypatch: pytest.MonkeyPatch) -> list[PinShape]:
+        """Return a list that fills with the pins the plan sends to download."""
+        planned: list[PinShape] = []
+
+        def fake_download_lock(
+            lock_input: LockInput, _transport: object, _wheel_dir: Path, *_a: object
+        ) -> DownloadResult:
+            for lock in lock_input.targets.values():
+                planned.extend(lock.pins.values())
+            return DownloadResult(written=(), skipped=())
+
+        monkeypatch.setattr("nab_project._build.env.download_lock", fake_download_lock)
+        return planned
+
+    def _resolve(self, config: NabProjectConfig, tmp_path: Path) -> None:
+        """Run the inner resolve and its install plan, nothing further."""
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        env = NabBuildEnv(requires=[self.NAME], config=config)
+        env._resolve_and_download(wheel_dir)
+
+    def test_the_published_wheel_is_what_the_env_installs(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no override the plan narrows the pin to that wheel."""
+        planned = self._planned_pins(monkeypatch)
+
+        self._resolve(self._config(tmp_path), tmp_path)
+
+        pin = planned[0]
+        assert isinstance(pin, IndexPin)
+        assert [wheel.filename for wheel in pin.wheels] == [self.WHEEL]
+        assert pin.sdist is None
+
+    def test_the_refusal_names_dist_policy_and_not_the_index(
+        self, tmp_path: Path
+    ) -> None:
+        """The same wheel is published; the override is why it cannot be used."""
+        config = self._config(
+            tmp_path,
+            package_overrides=(
+                pkg_override(self.NAME, dist_policy=DistPolicy.SDIST_ONLY),
+            ),
+        )
+
+        with pytest.raises(BuildEnvError) as excinfo:
+            self._resolve(config, tmp_path)
+
+        message = str(excinfo.value)
+        assert f"{self.NAME} {self.VERSION} has dist-policy 'sdist-only'" in message
+        assert "publishes no wheel" not in message
+
+
+class TestDistPolicyOverAPackageThatPublishesNoWheel:
+    """``sdist-only`` where the index had no wheel to bar.
+
+    A pin arrives carrying its sdist alone whether the policy rejected
+    a wheel or the index never served one, and the env cannot tell
+    those apart.  So the clause says what the policy admits, not that
+    the package has wheels somewhere.
+    """
+
+    NAME = "buildstub"
+    VERSION = "1.0"
+
+    def _refusal(self, tmp_path: Path) -> str:
+        """Return the message an index-wide ``sdist-only`` refuses with."""
+        index_dir = tmp_path / "index"
+        _make_local_index(index_dir, self.NAME, self.VERSION, sdist_only=True)
+        config = NabProjectConfig(
+            indexes=(IndexConfig("local", index_dir.as_uri()),),
+            index_overrides={"local": IndexOverride(dist_policy=DistPolicy.SDIST_ONLY)},
+        )
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        env = NabBuildEnv(requires=[self.NAME], config=config)
+
+        with pytest.raises(BuildEnvError) as excinfo:
+            env._resolve_and_download(wheel_dir)
+        return str(excinfo.value)
+
+    def test_the_refusal_does_not_say_the_package_has_wheels(
+        self, tmp_path: Path
+    ) -> None:
+        """The policy is named; the package's own wheels are not claimed."""
+        message = self._refusal(tmp_path)
+
+        assert "its wheels" not in message
+        assert (
+            f"{self.NAME} {self.VERSION} has dist-policy 'sdist-only', which"
+            " admits no wheel into the build env" in message
+        )
 
 
 class TestBuildRequirementNeedingItsOwnBuild:
