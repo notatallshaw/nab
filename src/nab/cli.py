@@ -74,7 +74,11 @@ from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
 )
-from nab_provider.target import NonIntervalMarkerError, UnevaluableMarkerError
+from nab_provider.target import (
+    IntractableMarkerError,
+    NonIntervalMarkerError,
+    UnevaluableMarkerError,
+)
 from nab_resolver.errors import ResolutionError
 
 from .output import (
@@ -713,6 +717,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
         SourceNameMismatchError,
         NonIntervalMarkerError,
         UnevaluableMarkerError,
+        IntractableMarkerError,
     ) as e:
         printer().error(f"{failure_prefix}: {e}")
         sys.exit(1)

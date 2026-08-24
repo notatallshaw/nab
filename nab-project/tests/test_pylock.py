@@ -22,7 +22,7 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
-from nab_project._lockfile import pylock
+from nab_project._lockfile import disjointness, pylock
 from nab_project._lockfile.coverage import CoverageError
 from nab_project._lockfile.disjointness import validate_marker_disjointness
 from nab_project._lockfile.pylock import (
@@ -57,6 +57,7 @@ from nab_provider._vendor.packaging.markersets import (
 from nab_provider._vendor.packaging.pylock import Package, PackageWheel
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.marker_holds import IntractableMarkerError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget, environment_declaration
 
@@ -239,6 +240,69 @@ class TestDisjointnessVerdictInvariance:
         assert self._passes([linux, linux]) is False
         simplified = self._simplify(linux)
         assert self._passes([simplified, simplified]) is False
+
+
+# The two boundary runs scale the guard down to this: a four-extra pair sits
+# under it and a five-extra pair trips it, where sitting under the shipped
+# 100,000 takes 2**16 selections per declared environment.
+_SCALED_SELECTIONS = 16
+
+
+class TestSelectionBudgetRefusal:
+    """Rendering a same-name pair whose markers reference many extras.
+
+    No conflict declares the extras, so every one of them is free and the
+    disjointness walk enumerates their powerset.
+    """
+
+    def _lock(self, extras_count: int) -> LockInput:
+        """A lock whose two ``foo`` pins split ``extras_count`` extra gates."""
+        extras = tuple(f"e{i}" for i in range(extras_count))
+        half = extras_count // 2
+        older, newer = _target("3.11"), _target("3.12")
+        targets = {
+            older.label: TargetLock(
+                target=older,
+                pins={"foo": _index_pin("foo", "1.0")},
+                package_gates={"foo": tuple(("extra", e) for e in extras[:half])},
+            ),
+            newer.label: TargetLock(
+                target=newer,
+                pins={"foo": _index_pin("foo", "2.0")},
+                package_gates={"foo": tuple(("extra", e) for e in extras[half:])},
+            ),
+        }
+        return LockInput(
+            targets=targets,
+            environments=[_row(older), _row(newer)],
+            extras=extras,
+        )
+
+    def test_pair_inside_the_budget_renders(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Four free names is 2**4 selections, which the scaled guard allows."""
+        monkeypatch.setattr(disjointness, "_MAX_SELECTIONS", _SCALED_SELECTIONS)
+        data = tomllib.loads(render_lock(self._lock(4)))
+        assert sorted(p["version"] for p in data["packages"]) == ["1.0", "2.0"]
+
+    def test_pair_over_the_budget_refuses(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Five free names is 2**5, past the scaled guard, so it refuses."""
+        monkeypatch.setattr(disjointness, "_MAX_SELECTIONS", _SCALED_SELECTIONS)
+        with pytest.raises(
+            IntractableMarkerError, match=f"selections exceed {_SCALED_SELECTIONS}"
+        ):
+            render_lock(self._lock(5))
+
+    def test_shipped_budget_sets_the_boundary_at_seventeen_free_names(self) -> None:
+        """The declared guard the two scaled runs stand in for.
+
+        2**16 selections fit under it and 2**17 do not, so a same-name pair
+        gating on 17 unconstrained extras is the first the walk refuses.
+        """
+        assert disjointness._MAX_SELECTIONS == 100_000
 
 
 class TestOutOfUniverseDivergence:

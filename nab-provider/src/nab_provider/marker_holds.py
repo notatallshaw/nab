@@ -9,18 +9,19 @@ resolve engine never imports ``packaging.markersets``;
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.markers import (
     UndefinedComparison,
     UndefinedEnvironmentName,
 )
-from nab_provider._vendor.packaging.markersets import MarkerSet
+from nab_provider._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterator, Mapping
     from collections.abc import Set as AbstractSet
 
     from nab_provider._vendor.packaging.markers import Marker
@@ -39,6 +40,15 @@ class UnevaluableMarkerError(ValueError):
     """
 
 
+class IntractableMarkerError(ValueError):
+    """A marker question that overran a budget instead of being decided.
+
+    The budgets bound a version literal's digits, a decomposition's cells, and
+    the lock emitter's selection walk, so a pathological marker stops the run
+    rather than iterating unbounded.
+    """
+
+
 def _unevaluable(
     marker: Marker, exc: UndefinedComparison | UndefinedEnvironmentName
 ) -> UnevaluableMarkerError:
@@ -47,6 +57,15 @@ def _unevaluable(
     The failing clause alone does not say which dependency to edit.
     """
     return UnevaluableMarkerError(f"marker {marker} cannot be evaluated: {exc}")
+
+
+@contextmanager
+def intractable_as_error() -> Iterator[None]:
+    """Report an intractable marker set as :class:`IntractableMarkerError`."""
+    try:
+        yield
+    except IntractableMarkerSet as exc:
+        raise IntractableMarkerError(str(exc)) from exc
 
 
 def marker_set(marker: Marker) -> MarkerSet:
@@ -91,10 +110,12 @@ def dependency_marker_holds(
     ``UndefinedEnvironmentName``.  The lockfile-only set variables are seeded
     empty, so a marker that tests one evaluates to False rather than raising.
 
-    A clause no comparison decides raises :class:`UnevaluableMarkerError`.
+    A clause no comparison decides raises :class:`UnevaluableMarkerError`, and
+    a marker that overruns a budget raises :class:`IntractableMarkerError`.
     """
     env: dict[str, str | AbstractSet[str]] = {"extra": frozenset()}
     env.update(environment)
     env.update(EMPTY_MEMBERSHIP_SETS)
 
-    return marker_set(marker).evaluate(env)
+    with intractable_as_error():
+        return marker_set(marker).evaluate(env)

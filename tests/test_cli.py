@@ -95,7 +95,7 @@ from nab_provider.provider import (
 from nab_provider.records import WheelFile
 from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_provider.tags import PlatformSpec
-from nab_provider.target import ResolveTarget, host_environment
+from nab_provider.target import IntractableMarkerError, ResolveTarget, host_environment
 from nab_resolver.errors import ResolutionError
 
 V = Version
@@ -1769,6 +1769,24 @@ class TestLockCommandSpecific:
         )
         assert err.splitlines() == [expected]
 
+    def test_oversized_marker_version_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A marker literal the algebra refuses exits 1, not a traceback."""
+        literal = "1" * (sys.get_int_max_str_digits() + 1)
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "root"\nversion = "0"\n'
+            f"dependencies = ['somepkg; python_full_version < \"{literal}\"']\n",
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, offline=True, output=Path("-"), cache=False)
+
+        err = capsys.readouterr().err
+        assert "cannot lock: version literal" in err
+        assert "parse limit" in err
+        assert "Traceback" not in err
+
     def test_local_source_naming_another_project_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -2614,6 +2632,25 @@ class TestLockCommandUniversal:
             lock(pyproject, output=tmp_path / "pylock.toml")
         err = capsys.readouterr().err
         assert f"error: {hint}\n" in err
+
+    def test_pylock_intractable_marker_error_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A render refusal reaches the user as one error line and exit 1."""
+        pyproject = _universal_pyproject(tmp_path)
+        message = "conflict-respecting selections exceed 100000"
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_universal_result(success=True),
+            ),
+            patch("nab._lock.write_lock", side_effect=IntractableMarkerError(message)),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, output=tmp_path / "pylock.toml")
+        err = capsys.readouterr().err
+        assert f"error: cannot lock: {message}\n" in err
+        assert "Traceback" not in err
 
     def test_base_group_naming_a_declared_group_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

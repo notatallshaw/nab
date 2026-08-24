@@ -1008,6 +1008,69 @@ def test_unreadable_requirement_with_changed_envelope_reports_the_parse_error(
     assert "is out of date" not in err
 
 
+def test_intractable_requirement_marker_reports_the_marker_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A direct requirement gated on a marker the algebra refuses to decide.
+
+    Whether the requirement is active cannot be read here, so the validity
+    check treats it as indeterminate rather than as a missing pin.
+    """
+    literal = "1" * (sys.get_int_max_str_digits() + 1)
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    pyproject.write_text(
+        '[project]\nname = "proj"\nversion = "0"\n'
+        f"dependencies = ['foo; python_full_version < \"{literal}\"']\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _run_locked_unmocked(pyproject, out)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "cannot lock: version literal" in err
+    assert "is out of date" not in err
+
+
+def test_intractable_self_ref_marker_reports_the_marker_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A self-referencing extra whose marker the algebra refuses to decide.
+
+    The refusal stops the pre-resolve read of the project's own requirements,
+    so no validity check runs and the resolve reports the marker.
+    """
+    literal = "1" * (sys.get_int_max_str_digits() + 1)
+    body = (
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n'
+        "[project.optional-dependencies]\n"
+        'fast = ["foo"]\n'
+    )
+    pyproject = _write_pyproject(tmp_path, f'{body}all = ["proj[fast]"]\n')
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}), "--extras", "all")
+    capsys.readouterr()
+    pyproject.write_text(
+        f"{body}all = ['proj[fast]; python_full_version < \"{literal}\"']\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        _run_locked_unmocked(pyproject, out, "--extras", "all")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "cannot lock: version literal" in err
+    assert "is out of date" not in err
+
+
 # --- --python cases: the flag is named, never the lock ---
 
 
