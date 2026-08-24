@@ -294,7 +294,9 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     if locked:
         _fast_fail_locked(run, config=config, workspace_to_drop=workspace_to_drop)
 
-    transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
+    transport = _cli._make_resolve_transport(  # noqa: SLF001
+        settings.http_backend, offline=settings.offline
+    )
     result = _cli._resolve(  # noqa: SLF001
         path,
         config=config,

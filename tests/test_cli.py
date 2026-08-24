@@ -13,6 +13,7 @@ import inspect
 import io
 import json
 import logging
+import os
 import re
 import runpy
 import stat
@@ -45,6 +46,7 @@ from nab._lock import (
 from nab.cli import (
     _DEFAULT_OUTPUT,
     _default_cache_dir,
+    _make_resolve_transport,
     _make_transport,
     _normalize_layered_bool_flags,
     _resolve,
@@ -5884,6 +5886,154 @@ class TestMakeTransport:
         assert "nab[httpx]" in err
         assert "HTTP/2" in err
         assert "httpx is not installed" not in err
+
+
+class _RecordingTransport:
+    """Transport that records every request it is asked for and every close."""
+
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, dict[str, str] | None]] = []
+        self.closes = 0
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> tuple[str, dict[str, str] | None]:
+        self.requests.append((url, headers))
+        return self.requests[-1]
+
+    async def aclose(self) -> None:
+        self.closes += 1
+
+
+_OFFLINE_LOCK_PROBE = """
+import sys
+
+from nab.cli import main
+
+sys.argv = ["nab", "lock", sys.argv[1], "--offline", "--no-cache", "--output", "-"]
+try:
+    main()
+except SystemExit as exc:
+    assert not exc.code, f"the lock exited {exc.code}"
+
+roots = {name.partition(".")[0] for name in sys.modules}
+leaked = sorted(roots & {"truststore", "urllib3"})
+assert not leaked, f"an offline lock loaded {leaked}"
+"""
+
+
+class TestResolveTransport:
+    """Which transport a resolve is handed, and when it is built."""
+
+    def test_online_resolve_gets_the_transport_up_front(self) -> None:
+        """A resolve that may fetch is handed the real transport."""
+        with patch("nab.cli._make_transport") as make:
+            transport = _make_resolve_transport("urllib3", offline=False)
+
+        assert transport is make.return_value
+        make.assert_called_once_with("urllib3")
+
+    def test_offline_httpx_resolve_gets_it_up_front_too(self) -> None:
+        """Only urllib3 defers; httpx is built while the CLI can still exit."""
+        with patch("nab.cli._make_transport") as make:
+            transport = _make_resolve_transport("httpx", offline=True)
+
+        assert transport is make.return_value
+        make.assert_called_once_with("httpx")
+
+    def test_offline_lock_without_httpx_exits_with_the_hint(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An offline lock on a urllib3-only install still names the extra."""
+        pyproject = _make_pyproject(
+            tmp_path, '[project]\nname = "root"\nversion = "0"\ndependencies = []\n'
+        )
+        original_import = builtins.__import__
+
+        def fake_import(name: str, *args: object, **kwargs: object) -> object:
+            if name == "nab_index.httpx_async_transport":
+                raise ImportError(name)
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        with pytest.raises(SystemExit) as info:
+            lock(
+                pyproject,
+                output=tmp_path / "pylock.toml",
+                offline=True,
+                http_backend="httpx",
+                cache=False,
+            )
+
+        assert info.value.code == 1
+        assert "httpx is not installed" in capsys.readouterr().err
+
+    def test_offline_lock_builds_no_transport(self, tmp_path: Path) -> None:
+        """An offline lock resolves without building a urllib3 transport."""
+        pyproject = _make_pyproject(
+            tmp_path, '[project]\nname = "root"\nversion = "0"\ndependencies = []\n'
+        )
+        with patch("nab.cli._make_urllib3_transport") as make:
+            lock(pyproject, output=tmp_path / "pylock.toml", offline=True, cache=False)
+
+        make.assert_not_called()
+
+    def test_first_request_builds_one_transport_and_forwards(self) -> None:
+        """A deferred transport builds its inner one once, on the first get."""
+        inner = _RecordingTransport()
+        with patch("nab.cli._make_urllib3_transport", return_value=inner) as make:
+            transport = _make_resolve_transport("urllib3", offline=True)
+            make.assert_not_called()
+
+            async def fetch_twice() -> None:
+                await transport.get("https://example.invalid/a")
+                await transport.get(
+                    "https://example.invalid/b", headers={"Accept": "x"}
+                )
+
+            asyncio.run(fetch_twice())
+
+        make.assert_called_once_with()
+        assert inner.requests == [
+            ("https://example.invalid/a", None),
+            ("https://example.invalid/b", {"Accept": "x"}),
+        ]
+
+    def test_close_closes_the_transport_it_built(self) -> None:
+        """Closing a deferred transport that fetched closes the inner one."""
+        inner = _RecordingTransport()
+        with patch("nab.cli._make_urllib3_transport", return_value=inner):
+            transport = _make_resolve_transport("urllib3", offline=True)
+
+            async def fetch_then_close() -> None:
+                await transport.get("https://example.invalid/a")
+                await transport.aclose()
+
+            asyncio.run(fetch_then_close())
+
+        assert inner.closes == 1
+
+    def test_close_without_a_request_builds_nothing(self) -> None:
+        """Closing a deferred transport that never fetched builds nothing."""
+        with patch("nab.cli._make_urllib3_transport") as make:
+            transport = _make_resolve_transport("urllib3", offline=True)
+            asyncio.run(transport.aclose())
+
+        make.assert_not_called()
+
+    def test_an_offline_lock_leaves_urllib3_unimported(self, tmp_path: Path) -> None:
+        """urllib3 and truststore stay unimported across a whole offline lock."""
+        pyproject = _make_pyproject(
+            tmp_path, '[project]\nname = "root"\nversion = "0"\ndependencies = []\n'
+        )
+        subprocess.run(  # noqa: S603 - the probe is this file's own source
+            [sys.executable, "-c", _OFFLINE_LOCK_PROBE, str(pyproject)],
+            check=True,
+            env={**os.environ, "XDG_CONFIG_HOME": str(tmp_path / "config")},
+        )
 
 
 _HTTP_LIBRARY_PROBE = """
