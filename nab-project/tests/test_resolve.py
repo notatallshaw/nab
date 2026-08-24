@@ -71,7 +71,10 @@ from nab_provider.provider import (
     UnsupportedVcsError,
     VcsConfig,
 )
-from nab_provider.requirements_file import InvalidProjectRequirementError
+from nab_provider.requirements_file import (
+    InvalidProjectRequirementError,
+    expand_extra_requirements,
+)
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_resolver.errors import ResolutionError
@@ -159,6 +162,16 @@ def _build_constraints(
         marker_holds=dependency_marker_holds,
         kind="constraint",
     ).ranges
+
+
+def _constraints_pyproject(tmp_path: Path, entries: str) -> Path:
+    """A minimal project whose ``[tool.nab].constraints`` holds ``entries``."""
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
+        f"[tool.nab]\nconstraints = [{entries}]\n"
+    )
+    return pyproject
 
 
 def _malformed_group_pyproject(tmp_path: Path) -> Path:
@@ -2670,6 +2683,91 @@ class TestBuildResolverInputs:
         assert "foo" not in resolver_requirements
         assert not caplog.records
 
+    def test_root_requirement_warning_points_at_extras_of_package(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The requirement pass names a root requirement and points at pkg[extra]."""
+        with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
+            build_resolver_inputs(
+                [Requirement('foo<2.0 ; extra == "fast"')],
+                VcsConfig(),
+                environment={},
+                marker_holds=dependency_marker_holds,
+            )
+
+        (record,) = caplog.records
+        assert record.message.startswith(
+            "Root requirement 'foo<2.0; extra == \"fast\"'"
+        )
+        assert "pkg[extra] (extras-of-package)" in record.message
+
+    def test_warning_cause_holds_when_the_extra_was_selected(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The cause it gives is true on a run that did select the extra.
+
+        ``--extras fast`` folds the extra's entries into the requirement list
+        and leaves the marker environment alone, so blaming an inactive extra
+        would send the user after a flag they already passed.
+        """
+        selected = expand_extra_requirements(
+            {"fast": ['foo<2.0 ; extra == "fast"']}, "proj", ["fast"]
+        )
+        with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
+            build_resolver_inputs(
+                selected,
+                VcsConfig(),
+                environment={},
+                marker_holds=dependency_marker_holds,
+            )
+
+        (record,) = caplog.records
+        assert (
+            "folded into the requirements rather than the environment" in record.message
+        )
+        assert "no extra or dependency group is active" not in record.message
+
+    def test_unknown_kind_is_named_after_itself(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """``kind`` is a free string, so one with no subject warns, not raises."""
+        with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
+            build_resolver_inputs(
+                [Requirement('foo<2.0 ; extra == "fast"')],
+                VcsConfig(),
+                environment={},
+                marker_holds=dependency_marker_holds,
+                kind="override",
+            )
+
+        (record,) = caplog.records
+        assert record.message.startswith("Override 'foo<2.0; extra == \"fast\"'")
+
+    def test_repeated_text_warns_once_per_kind(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """One warned set covers both passes, and each keeps its own wording.
+
+        A target's requirement pass and constraint pass share the set, so a
+        project that writes the same line in both must still get the advice
+        that fits a constraint.
+        """
+        reqs = [Requirement('foo<2.0 ; extra == "fast"')]
+        warned: set[tuple[str, str]] = set()
+        with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
+            for kind in ("requirement", "requirement", "constraint"):
+                build_resolver_inputs(
+                    reqs,
+                    VcsConfig(),
+                    environment={},
+                    marker_holds=dependency_marker_holds,
+                    kind=kind,
+                    warned=warned,
+                )
+
+        subjects = [rec.message.split(" '", 1)[0] for rec in caplog.records]
+        assert subjects == ["Root requirement", "Constraint"]
+
     def test_multi_extra_proxy_keys_sorted(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2758,6 +2856,96 @@ class TestBuildConstraints:
             NabProjectConfig(constraints=('foo<2.0 ; "x" in extras',)), environment={}
         )
         assert "foo" not in out
+
+    def _drop_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        constraint: str = 'foo<2.0 ; extra == "fast"',
+        environment: dict[str, str] | None = None,
+    ) -> str:
+        """The one warning a membership-gated constraint logs when dropped."""
+        with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
+            out = _build_constraints(
+                NabProjectConfig(constraints=(constraint,)),
+                environment={} if environment is None else environment,
+            )
+
+        assert "foo" not in out
+        (record,) = caplog.records
+        return record.message
+
+    def test_dropped_constraint_warning_names_a_constraint(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The drop warning names the entry a constraint, not a root requirement."""
+        message = self._drop_warning(caplog)
+
+        assert message.startswith("Constraint 'foo<2.0; extra == \"fast\"'")
+        assert "Root requirement" not in message
+
+    def test_dropped_constraint_warning_omits_pkg_extra(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """pkg[extra] is the one spelling the constraint parser refuses."""
+        message = self._drop_warning(caplog)
+
+        assert "pkg[extra]" not in message
+        assert "A constraint cannot carry extras" in message
+
+        with pytest.raises(ConfigError, match="cannot have extras"):
+            read_pyproject_config(_constraints_pyproject(tmp_path, '"foo[fast]<2.0"'))
+
+    def test_dropped_group_constraint_warning_omits_the_extras_rule(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A group membership has no extras spelling, so that sentence stays out."""
+        message = self._drop_warning(caplog, 'foo<2.0 ; "docs" in dependency_groups')
+
+        assert "cannot carry extras" not in message
+        assert "Drop the membership test from the marker and keep the rest." in message
+
+    def test_dropped_constraint_repair_still_bounds_the_package(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """The repair the warning asks for parses and still bounds foo."""
+        message = self._drop_warning(caplog)
+        assert message.endswith(
+            "so drop the membership test from the marker and keep the rest."
+        )
+
+        config = read_pyproject_config(_constraints_pyproject(tmp_path, '"foo<2.0"'))
+        out = _build_constraints(config, environment={})
+        assert V("1.0") in out["foo"]
+        assert V("5.0") not in out["foo"]
+
+    def test_repaired_compound_marker_keeps_its_environment_test(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """Keeping the rest of the marker leaves foo unbound on other interpreters.
+
+        Dropping the whole marker instead would bound foo everywhere, which
+        is not what the project wrote.
+        """
+        on_39 = {"python_version": "3.9", "python_full_version": "3.9.18"}
+        message = self._drop_warning(
+            caplog,
+            'foo<2.0 ; extra == "fast" and python_version < "3.10"',
+            environment=on_39,
+        )
+
+        assert message.endswith(
+            "so drop the membership test from the marker and keep the rest."
+        )
+
+        config = read_pyproject_config(
+            _constraints_pyproject(tmp_path, "\"foo<2.0 ; python_version < '3.10'\"")
+        )
+        out = _build_constraints(config, environment=on_39)
+        assert V("1.0") in out["foo"]
+        assert V("5.0") not in out["foo"]
+
+        on_311 = {"python_version": "3.11", "python_full_version": "3.11.2"}
+        assert "foo" not in _build_constraints(config, environment=on_311)
 
 
 class TestResolvePyprojectConflicts:
