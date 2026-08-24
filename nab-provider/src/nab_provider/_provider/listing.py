@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from ..fetch_port import Waitable
     from ..policy import ArchiveSource, LocalSource, VcsSource
-    from ..provider import DistFile, Provider
+    from ..provider import DistFile, Provider, ProviderStats
     from ..tags import TagSet
 
     _PreparedListing = tuple[
@@ -468,6 +468,17 @@ def _filter_base(
     return _canonicalize_equal_versions(result)
 
 
+def _count_files_seen(stats: ProviderStats, wheels: int, sdists: int) -> None:
+    """Raise the listing counters by the wheels and sdists one pass classified.
+
+    Both preparation passes call this from a ``finally``, so a pass that
+    raises part way through still reports the files it reached.
+    """
+    stats.distributions_seen += wheels + sdists
+    stats.wheels_seen += wheels
+    stats.sdists_seen += sdists
+
+
 def _prepare_listing(
     provider: Provider,
     normalized: str,
@@ -495,44 +506,48 @@ def _prepare_listing(
     sort_with_wheel_first = False
     overridden = policy.overridden
     sdist_install_versions: set[Version] = set()
-    for dist in files:
-        provider.stats.distributions_seen += 1
-        if isinstance(dist, WheelFile):
-            provider.stats.wheels_seen += 1
-        else:
-            provider.stats.sdists_seen += 1
+    wheels_walked = 0
+    sdists_walked = 0
+    try:
+        for dist in files:
+            if isinstance(dist, WheelFile):
+                wheels_walked += 1
+            else:
+                sdists_walked += 1
 
-        # Parse the version first: the policy and the cutoff are
-        # version-scoped, so an unparseable version is dropped before
-        # either is consulted.
-        try:
-            version = _intern_version(dist.version)
-        except InvalidVersion:
-            continue
+            # Parse the version first: the policy and the cutoff are
+            # version-scoped, so an unparseable version is dropped before
+            # either is consulted.
+            try:
+                version = _intern_version(dist.version)
+            except InvalidVersion:
+                continue
 
-        if overridden:
-            effective_dist_policy = provider.effective_dist_policy(
-                normalized, version, policy.index_name
-            )
-        else:
-            effective_dist_policy = policy.default_dist_policy
+            if overridden:
+                effective_dist_policy = provider.effective_dist_policy(
+                    normalized, version, policy.index_name
+                )
+            else:
+                effective_dist_policy = policy.default_dist_policy
 
-        if excluded_by_dist_policy(dist, effective_dist_policy):
-            provider.stats.excluded_by_dist_policy += 1
-            continue
+            if excluded_by_dist_policy(dist, effective_dist_policy):
+                provider.stats.excluded_by_dist_policy += 1
+                continue
 
-        if effective_dist_policy is DistPolicy.SDIST_INSTALL:
-            sdist_install_versions.add(version)
-            sort_with_wheel_first = True
-        elif effective_dist_policy is DistPolicy.PREFER_WHEEL:
-            sort_with_wheel_first = True
+            if effective_dist_policy is DistPolicy.SDIST_INSTALL:
+                sdist_install_versions.add(version)
+                sort_with_wheel_first = True
+            elif effective_dist_policy is DistPolicy.PREFER_WHEEL:
+                sort_with_wheel_first = True
 
-        if target_drops and python_or_time_cause(
-            provider, normalized, version, dist, policy
-        ):
-            continue
+            if target_drops and python_or_time_cause(
+                provider, normalized, version, dist, policy
+            ):
+                continue
 
-        result.append((version, dist))
+            result.append((version, dist))
+    finally:
+        _count_files_seen(provider.stats, wheels_walked, sdists_walked)
 
     return result, sdist_install_versions, sort_with_wheel_first
 
@@ -571,48 +586,52 @@ def _prepare_listing_defaults(
 
     result: list[tuple[Version, DistFile]] = []
     sdist_install_versions: set[Version] = set()
-    for dist in files:
-        stats.distributions_seen += 1
-        is_wheel = isinstance(dist, WheelFile)
-        if is_wheel:
-            stats.wheels_seen += 1
-        else:
-            stats.sdists_seen += 1
+    wheels_walked = 0
+    sdists_walked = 0
+    try:
+        for dist in files:
+            is_wheel = isinstance(dist, WheelFile)
+            if is_wheel:
+                wheels_walked += 1
+            else:
+                sdists_walked += 1
 
-        # Parse before the kind check so an unparseable file is not
-        # counted as a dist-policy exclusion.
-        try:
-            version = _intern_version(dist.version)
-        except InvalidVersion:
-            continue
+            # Parse before the kind check so an unparseable file is not
+            # counted as a dist-policy exclusion.
+            try:
+                version = _intern_version(dist.version)
+            except InvalidVersion:
+                continue
 
-        wrong_kind = drops_wheels if is_wheel else drops_sdists
-        if wrong_kind:
-            stats.excluded_by_dist_policy += 1
-            continue
+            wrong_kind = drops_wheels if is_wheel else drops_sdists
+            if wrong_kind:
+                stats.excluded_by_dist_policy += 1
+                continue
 
-        if sdist_install:
-            sdist_install_versions.add(version)
+            if sdist_install:
+                sdist_install_versions.add(version)
 
-        requires_python = dist.requires_python
-        excluded = (
-            requires_python_cache.get(requires_python) if requires_python else False
-        )
-        if excluded is None:
-            excluded = excluded_by_python(provider, dist, None)
-        elif excluded:
-            # excluded_by_python counts its own drops; a cache hit skips it.
-            stats.excluded_by_python += 1
+            requires_python = dist.requires_python
+            excluded = (
+                requires_python_cache.get(requires_python) if requires_python else False
+            )
+            if excluded is None:
+                excluded = excluded_by_python(provider, dist, None)
+            elif excluded:
+                # excluded_by_python counts its own drops; a cache hit skips it.
+                stats.excluded_by_python += 1
 
-        if excluded:
-            continue
+            if excluded:
+                continue
 
-        if time_filter_active and _excluded_by_upload_time(
-            provider, normalized, dist, cutoff
-        ):
-            continue
+            if time_filter_active and _excluded_by_upload_time(
+                provider, normalized, dist, cutoff
+            ):
+                continue
 
-        result.append((version, dist))
+            result.append((version, dist))
+    finally:
+        _count_files_seen(stats, wheels_walked, sdists_walked)
 
     return result, sdist_install_versions, sort_with_wheel_first
 

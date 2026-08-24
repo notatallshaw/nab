@@ -26,6 +26,7 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import (
     BuildPolicy,
     DistPolicy,
+    InvalidUploadTimeError,
     ListingFilterCache,
     MetadataError,
     Provider,
@@ -970,6 +971,88 @@ class TestListingFilterSharedAcrossPythons:
 
         assert py311.stats.excluded_by_python == 1
         assert py312.stats.excluded_by_python == 1
+
+
+class TestListingWalkCounters:
+    """Every file a listing walk reaches is counted, as a wheel or as an sdist."""
+
+    @staticmethod
+    def _provider(
+        files: Sequence[WheelFile | SdistFile],
+        *,
+        shared: bool = False,
+        uploaded_prior_to: datetime | None = None,
+        overridden: bool = False,
+    ) -> Provider:
+        """A 3.11 provider over ``files``.
+
+        ``shared`` gives it a matrix cache, which moves the Requires-Python
+        and cutoff drops out of the walk.  ``overridden`` gives it an
+        override for another package, which routes the walk through the
+        general pass rather than the defaults one.
+        """
+        overrides = (
+            (pkg_override("other", requires_python=">=3.11"),) if overridden else ()
+        )
+        return Provider(
+            _index_with_files(files),
+            _LINUX_TARGET,
+            uploaded_prior_to=uploaded_prior_to,
+            package_overrides=overrides,
+            listing_filter_cache=ListingFilterCache(2) if shared else None,
+        )
+
+    @pytest.mark.parametrize("shared", [False, True], ids=["defaults", "general"])
+    def test_the_walk_counts_every_file_by_kind(self, shared: bool) -> None:
+        """A file joins the wheel or the sdist tally whether or not it survives.
+
+        2.0 loses to Requires-Python and 3.0.oops never parses; the walk
+        counts both as wheels.
+        """
+        files: list[WheelFile | SdistFile] = [
+            _make_wheel("1.0"),
+            _make_wheel("2.0", requires_python=">=3.12"),
+            _make_wheel("3.0.oops"),
+            _sdist("4.0"),
+            _sdist("5.0"),
+        ]
+
+        provider = self._provider(files, shared=shared)
+        provider.fetch_versions("pkg")
+
+        assert provider.stats.distributions_seen == 5
+        assert provider.stats.wheels_seen == 3
+        assert provider.stats.sdists_seen == 2
+
+    @pytest.mark.parametrize("overridden", [False, True], ids=["defaults", "general"])
+    def test_a_walk_that_raises_counts_the_files_it_reached(
+        self, overridden: bool
+    ) -> None:
+        """A raise out of the middle of the walk leaves the prefix counted.
+
+        The cutoff refuses 3.0's timezone-naive upload time.  The walk
+        classifies a file before it reaches that check, so the tally
+        covers the first three files and not 4.0.
+        """
+        files: list[WheelFile | SdistFile] = [
+            _make_wheel("1.0", upload_time="2026-01-01T00:00:00Z"),
+            _sdist("2.0"),
+            _make_wheel("3.0", upload_time="2026-01-01T00:00:00"),
+            _make_wheel("4.0", upload_time="2026-01-01T00:00:00Z"),
+        ]
+
+        provider = self._provider(
+            files,
+            uploaded_prior_to=datetime(2026, 3, 1, tzinfo=timezone.utc),
+            overridden=overridden,
+        )
+
+        with pytest.raises(InvalidUploadTimeError):
+            provider.fetch_versions("pkg")
+
+        assert provider.stats.distributions_seen == 3
+        assert provider.stats.wheels_seen == 2
+        assert provider.stats.sdists_seen == 1
 
 
 class TestUnsetKnobAcceptsAnyLevel:
