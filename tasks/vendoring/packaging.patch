@@ -2076,6 +2076,23 @@ index e312a1f..29c32bc 100644
      def __hash__(self) -> int:
          return hash((self.version, self.inclusive))
  
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/_tokenizer.py b/nab-provider/src/nab_provider/_vendor/packaging/_tokenizer.py
+index 7158421..6384493 100644
+--- a/nab-provider/src/nab_provider/_vendor/packaging/_tokenizer.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/_tokenizer.py
+@@ -77,10 +77,8 @@ DEFAULT_RULES: dict[str, re.Pattern[str]] = {
+         """,
+         re.VERBOSE,
+     ),
+-    "SPECIFIER": re.compile(
+-        Specifier._specifier_regex_str,
+-        re.VERBOSE | re.IGNORECASE,
+-    ),
++    # Shared with Specifier so the pattern compiles once.
++    "SPECIFIER": Specifier._regex,
+     "AT": re.compile(r"\@"),
+     "URL": re.compile(r"[^ \t]+"),
+     "IDENTIFIER": re.compile(r"\b[a-zA-Z0-9][a-zA-Z0-9._-]*\b"),
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/markers.py b/nab-provider/src/nab_provider/_vendor/packaging/markers.py
 index 609099c..fa29c65 100644
 --- a/nab-provider/src/nab_provider/_vendor/packaging/markers.py
@@ -3459,3 +3476,51 @@ index 4fbf48e..d52f359 100644
      @classmethod
      def _from_specifier_set(cls, specifier_set: SpecifierSet) -> VersionRange:
          """Build the range accepted by ``specifier_set``.
+diff --git a/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py b/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py
+index dd46b56..c3d1ba5 100644
+--- a/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py
++++ b/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py
+@@ -329,9 +329,8 @@ class Specifier(BaseSpecifier):
+         )
+         """
+ 
+-    _regex = re.compile(
+-        r"\s*" + _specifier_regex_str + r"\s*", re.VERBOSE | re.IGNORECASE
+-    )
++    # No surrounding \s*, so _tokenizer can share this object; __init__ strips first.
++    _regex = re.compile(_specifier_regex_str, re.VERBOSE | re.IGNORECASE)
+ 
+     # Legacy unused attribute, kept for backward compatibility
+     _operators: Final = {
+@@ -358,10 +357,11 @@ class Specifier(BaseSpecifier):
+         :raises InvalidSpecifier:
+             If the given specifier is invalid (i.e. bad syntax).
+         """
+-        if not self._regex.fullmatch(spec):
++        stripped = spec.strip()
++        if not self._regex.fullmatch(stripped):
+             raise InvalidSpecifier(f"Invalid specifier: {spec!r}")
+ 
+-        spec = spec.strip()
++        spec = stripped
+         if spec.startswith("==="):
+             operator, version = spec[:3], spec[3:].strip()
+         elif spec.startswith(("~=", "==", "!=", "<=", ">=")):
+@@ -829,9 +829,15 @@ class SpecifierSet(BaseSpecifier):
+         self._prereleases = prereleases
+ 
+     def _canonical_specs(self) -> tuple[Specifier, ...]:
+-        """Deduplicate, sort, and cache specs for order-sensitive operations."""
++        """Deduplicate, sort, and cache specs for order-sensitive operations.
++
++        Sorting on each clause's equality key rather than its text gives two equal
++        sets the same order, so ``__eq__`` and ``__hash__`` agree across respellings.
++        """
+         if not self._canonicalized:
+-            self._specs = tuple(dict.fromkeys(sorted(self._specs, key=str)))
++            self._specs = tuple(
++                dict.fromkeys(sorted(self._specs, key=lambda s: s._canonical_spec))
++            )
+             self._canonicalized = True
+         return self._specs
+ 
