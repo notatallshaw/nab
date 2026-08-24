@@ -127,24 +127,31 @@ def prepare_clone(
     )
 
     dest = cache_root / "vcs" / _repo_key(request.repo_url) / sha
-    if _clone_complete(dest):
-        return VcsClone(
-            path=dest,
-            commit_sha=sha,
-            subdirectory=request.subdirectory,
-        )
 
-    if not may_reach_remote:
-        msg = f"no cached clone of {request.repo_url} @ {sha} (offline mode)"
-        raise VcsCloneError(msg)
+    # The presence check stats the cache path, so it sits inside the guard too.
+    try:
+        if _clone_complete(dest):
+            return VcsClone(
+                path=dest,
+                commit_sha=sha,
+                subdirectory=request.subdirectory,
+            )
 
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists() and not _clone_complete(dest):
-        # A concurrent run may have completed dest since the top check;
-        # only wipe a partial.
-        shutil.rmtree(dest)
+        if not may_reach_remote:
+            msg = f"no cached clone of {request.repo_url} @ {sha} (offline mode)"
+            raise VcsCloneError(msg)
 
-    tmp = Path(tempfile.mkdtemp(dir=dest.parent, prefix=f"{sha}.", suffix=".tmp"))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if dest.exists() and not _clone_complete(dest):
+            # A concurrent run may have completed dest since the top check;
+            # only wipe a partial.
+            shutil.rmtree(dest)
+
+        tmp = Path(tempfile.mkdtemp(dir=dest.parent, prefix=f"{sha}.", suffix=".tmp"))
+    except OSError as exc:
+        msg = f"clone cache entry for {request.repo_url} @ {sha} is unusable: {exc}"
+        raise VcsCloneError(msg) from exc
+
     try:
         _shallow_clone(request.repo_url, sha, tmp)
         try:
@@ -304,7 +311,7 @@ def _shallow_clone(repo_url: str, sha: str, dest: Path) -> None:
             env=env,
         )
     except (
-        FileNotFoundError,
+        OSError,
         subprocess.CalledProcessError,
         subprocess.TimeoutExpired,
     ) as exc:
