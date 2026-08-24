@@ -27,7 +27,7 @@ from ..errors import (
     UnsupportedSdistError,
 )
 from ..extra_keys import join_extra
-from ..marker_holds import evaluate_prepared
+from ..marker_holds import UnevaluableMarkerError, evaluate_prepared
 from ..metadata import (
     DEPENDENCY_FIELDS,
     WheelMetadata,
@@ -1215,6 +1215,11 @@ def _tie_sibling_signature(
     marker's version will not convert: a marker holds its version as a string
     until it is evaluated against an environment, so it fails here instead of
     at the parse.
+
+    A marker nothing decides arrives here as an
+    :class:`~nab_provider.marker_holds.UnevaluableMarkerError` and propagates:
+    skipping would answer the version from the pick alone, which is the
+    disagreement this check exists to catch.
     """
     package, version = sig_key
     metadata = _tie_sibling_metadata(provider, index, package, version, sibling)
@@ -1222,6 +1227,8 @@ def _tie_sibling_signature(
         return None
     try:
         return target_dep_signature(provider, sig_key, metadata)
+    except UnevaluableMarkerError:
+        raise
     except ValueError:
         return None
 
