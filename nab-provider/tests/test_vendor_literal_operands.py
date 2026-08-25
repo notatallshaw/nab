@@ -2,8 +2,8 @@
 
 ``intersection``, ``union`` and ``difference`` each test both operands for
 literals inline and take the bounds-only shortcut when neither carries one.
-Missing one operand there drops its literals from the result without failing, so
-each operation is pinned separately with the literal on one side at a time.
+Omitting an operand from that test silently drops its literals, so each
+operation is pinned with the literal on one side at a time.
 """
 
 from __future__ import annotations
@@ -56,6 +56,9 @@ def test_union_reads_the_literals_of_both_operands(
     assert (LITERAL in left.union(right)) is admitted
 
 
+# No left-rejects case: reaching the literal test with only ``self`` carrying a
+# reject needs a plain ``other`` with bounds, and subtracting one shrinks the
+# bounds, dropping the arbitrary admission the reject exists to narrow.
 @pytest.mark.parametrize(
     ("left", "right", "admitted"),
     [
