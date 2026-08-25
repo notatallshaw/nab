@@ -97,9 +97,10 @@ class BuildPolicy(enum.Enum):
     BUILD_LOCAL = "build-local"
     """Static metadata everywhere, plus PEP 517 builds on local checkouts (default).
 
-    Adds backend invocation for ``[[tool.nab.local-sources]]`` and workspace
-    members whose ``pyproject.toml`` cannot be read statically.  VCS clones,
-    archive sources, and remote PyPI sdists remain static-only.
+    Adds backend invocation for ``[[tool.nab.local-sources]]`` entries and
+    workspace members when their ``pyproject.toml`` cannot be read
+    statically.  VCS clones, archive sources, and remote PyPI sdists remain
+    static-only.
     """
 
     BUILD_REMOTE = "build-remote"

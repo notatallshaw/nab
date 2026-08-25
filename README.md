@@ -62,10 +62,12 @@ but sometimes that is not possible and you have to build a package
 to extract the dependency metadata. There are three build policies:
 
  * never: Never builds a Python package
- * build-local (default): Builds only your local workspace packages
-   if they have dynamic versions or dependencies
- * build-remote: Builds packages sourced from indexes or VCS, it is
-   recommended that this only be turned on via per-package override
+ * build-local (default): Builds `[[tool.nab.local-sources]]` entries
+   and workspace members when their `pyproject.toml` cannot be read
+   statically
+ * build-remote: Also builds `[[tool.nab.vcs-sources]]` clones,
+   `[[tool.nab.archive-sources]]` trees, and sdists from an index. It
+   is recommended that this only be turned on via per-package override
 
 ## Indexes
 
