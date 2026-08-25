@@ -2632,28 +2632,29 @@ class TestLockCommandUniversal:
     def test_per_tuple_pins_to_dash_stdout(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Universal + --output - writes per-tuple blocks to stdout."""
+        """An explicit ``--output -`` prints the same per-tuple blocks."""
         pyproject = _universal_pyproject(tmp_path)
-        with (
-            patch(
-                "nab.cli.resolve_for_targets",
-                return_value=_universal_result(success=True),
-            ),
-            patch(
-                "nab._lock.build_lock_input",
-                return_value=MagicMock(name="LockInput"),
-            ),
-            patch(
-                "nab._lock.write_requirements_without_hashes",
-                return_value="# py311-linux_x86_64\nfoo==1.0\n",
-            ),
+        with patch(
+            "nab.cli.resolve_for_targets",
+            return_value=_multi_tuple_universal_result(),
         ):
-            lock(
-                pyproject,
-                format="requirements-without-hashes",
-                output=Path("-"),
-            )
-        assert "# py311-linux_x86_64" in capsys.readouterr().out
+            lock(pyproject, format="requirements-without-hashes", output=Path("-"))
+        assert capsys.readouterr().out == (
+            "# py311-linux_x86_64\nbar==2.0\nfoo==1.0\n\n"
+            "# py312-linux_x86_64\nfoo==1.0\n"
+        )
+
+    def test_per_tuple_pins_to_dash_stdout_single_tuple(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Single-tuple matrix + ``--output -``: just the pins, no header."""
+        pyproject = _universal_pyproject(tmp_path)
+        with patch(
+            "nab.cli.resolve_for_targets",
+            return_value=_universal_result(success=True),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=Path("-"))
+        assert capsys.readouterr().out == "foo==1.0\n"
 
     def test_failed_tuple_exits_1(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
