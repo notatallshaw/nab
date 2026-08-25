@@ -92,9 +92,9 @@ class DroppedFile:
     ``version`` is ``None`` only for :attr:`DropCause.INVALID_VERSION`,
     where the filename's version never parsed.  ``detail`` is the one value
     that cause's clause quotes: the effective Requires-Python specifier, the
-    raw upload time, or the effective dist policy.  Deliberately not frozen:
-    the walk builds one per dropped file and never mutates it, and a frozen
-    dataclass costs several times as much to construct.
+    raw upload time, or the effective dist policy.  Not frozen, because the
+    walk builds one per refused file and a frozen record costs several times
+    as much to construct.
     """
 
     filename: str
@@ -116,7 +116,6 @@ class ListingDiagnosis:
     as a file nothing refused.
     """
 
-    package: str
     index_name: str | None
     dropped: tuple[DroppedFile, ...]
     kept: frozenset[Version]
@@ -193,10 +192,11 @@ def walk_listing(provider: Provider, normalized: str) -> ListingDiagnosis | None
     """Re-walk ``normalized``'s raw listing, recording what refused each file.
 
     Returns ``None`` when the index served nothing, which leaves the walk
-    with nothing to attribute.  Every predicate it calls is the one the
-    filter called, so a file the filter kept is refused by nothing here.
-    The counter bumps some of those predicates make are undone by the
-    caller; see :meth:`~nab_provider.provider.Provider.diagnose_listing`.
+    with nothing to attribute.  The predicates are the filter's own; the
+    order it asks them in is re-expressed here, and the differential-oracle
+    test is what holds the two in step.  Counter bumps those predicates
+    make are taken back by the caller, see
+    :meth:`~nab_provider.provider.Provider.diagnose_listing`.
     """
     files = provider.coordinator.index.get_listing(normalized)
     if not files:
@@ -209,7 +209,6 @@ def walk_listing(provider: Provider, normalized: str) -> ListingDiagnosis | None
 
     filtered = provider.versions_cache.get(normalized) or []
     return ListingDiagnosis(
-        package=normalized,
         index_name=policy.index_name,
         dropped=tuple(dropped),
         kept=frozenset(kept),
