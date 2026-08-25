@@ -7,6 +7,7 @@ already-cached metadata where possible.
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING
@@ -49,6 +50,42 @@ if TYPE_CHECKING:
 # covers the worst-case abort scan without overshooting.  Used by the
 # speculative root-batch prefetch and by the pipelined scan's batch.
 PREFETCH_BATCH = 8
+
+
+class DropCause(enum.Enum):
+    """Why the listing filter refused one file, or one whole version.
+
+    The member values are the order the clauses print in, which is not the
+    order the filter applies.  The filter refuses a file at the first rung
+    that objects, and those rungs run in the order
+    :data:`CLASSIFICATION_ORDER` gives.
+    """
+
+    UPLOAD_TIME_MISSING = 1
+    UPLOAD_TIME_UNPARSEABLE = 2
+    UPLOAD_TIME_NAIVE = 3
+    UPLOAD_TIME_AFTER_CUTOFF = 4
+    DIST_POLICY = 5
+    SDIST_INSTALL_NO_SDIST = 6
+    REQUIRES_PYTHON = 7
+    WHEEL_TAGS = 8
+    INVALID_VERSION = 9
+
+
+# The order the filter asks the questions in, first refusal wins.  Written
+# down so a reader can check the diagnosis walk against it, and so the
+# report order above is visibly not this.
+CLASSIFICATION_ORDER = (
+    DropCause.INVALID_VERSION,
+    DropCause.DIST_POLICY,
+    DropCause.REQUIRES_PYTHON,
+    DropCause.UPLOAD_TIME_MISSING,
+    DropCause.UPLOAD_TIME_UNPARSEABLE,
+    DropCause.UPLOAD_TIME_NAIVE,
+    DropCause.UPLOAD_TIME_AFTER_CUTOFF,
+    DropCause.SDIST_INSTALL_NO_SDIST,
+    DropCause.WHEEL_TAGS,
+)
 
 
 def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, DistFile]]:
@@ -297,13 +334,7 @@ def filter_distributions(
     linux-only wheel still stays off the Windows target.
     """
     base = base_distributions(provider, normalized, files)
-    result = _apply_wheel_tags(provider, normalized, base)
-
-    if not result and len(base) < len(files):
-        # The base pass (dist-policy, requires-python, upload cutoff) dropped a
-        # file, so an empty result is not the tag pass alone.
-        provider.base_filtered_packages.add(normalized)
-    return result
+    return _apply_wheel_tags(provider, normalized, base)
 
 
 def base_distributions(
@@ -340,7 +371,7 @@ class _ListingPolicy:
     time_filter_active: bool
 
 
-def _listing_policy(provider: Provider, normalized: str) -> _ListingPolicy:
+def listing_policy(provider: Provider, normalized: str) -> _ListingPolicy:
     """Return the policy answers for one listing, for its per-file loop to consult."""
     return _ListingPolicy(
         index_name=provider.serving_index(normalized),
@@ -373,7 +404,7 @@ def _filter_base(
     version alive.  The answer is the same for every target that shares
     the listing and the policy config, which is what the memo assumes.
     """
-    policy = _listing_policy(provider, normalized)
+    policy = listing_policy(provider, normalized)
 
     cache = provider.listing_filter_cache
     if cache is None or not cache.shares_pythons:
@@ -463,7 +494,7 @@ def _prepare_listing(
         else:
             effective_dist_policy = policy.default_dist_policy
 
-        if _excluded_by_dist_policy(dist, effective_dist_policy):
+        if excluded_by_dist_policy(dist, effective_dist_policy):
             provider.stats.excluded_by_dist_policy += 1
             continue
 
@@ -516,24 +547,30 @@ def _apply_wheel_tags(
     return result
 
 
-def _excluded_by_python_or_time(
+def python_or_time_cause(
     provider: Provider,
     normalized: str,
     version: Version,
     dist: DistFile,
     policy: _ListingPolicy,
-) -> bool:
-    """Return True when Requires-Python or the upload cutoff rejects ``dist``."""
+) -> DropCause | None:
+    """Return why Requires-Python or the upload cutoff refuses ``dist``, or None.
+
+    Raises nothing, so the failure-time diagnosis walk can ask it about a
+    file the filter never reached.  It does bump ``excluded_by_python``
+    through :func:`excluded_by_python`; the walk brackets itself and puts
+    that back.
+    """
     if policy.overridden:
         override_rp = provider.effective_requires_python(normalized, version)
     else:
         override_rp = None
 
     if excluded_by_python(provider, dist, override_rp):
-        return True
+        return DropCause.REQUIRES_PYTHON
 
     if not policy.time_filter_active:
-        return False
+        return None
 
     if policy.overridden:
         cutoff = provider.effective_uploaded_prior_to(
@@ -542,7 +579,30 @@ def _excluded_by_python_or_time(
     else:
         cutoff = policy.default_cutoff
 
-    return excluded_by_time(provider, normalized, dist, cutoff)
+    return upload_time_cause(dist, cutoff)
+
+
+def _excluded_by_python_or_time(
+    provider: Provider,
+    normalized: str,
+    version: Version,
+    dist: DistFile,
+    policy: _ListingPolicy,
+) -> bool:
+    """Return True when Requires-Python or the upload cutoff rejects ``dist``.
+
+    The filter half of :func:`python_or_time_cause`: it counts the drop and,
+    on a timezone-naive upload time, refuses the run.
+    """
+    cause = python_or_time_cause(provider, normalized, version, dist, policy)
+    if cause is None:
+        return False
+    if cause is DropCause.REQUIRES_PYTHON:
+        return True
+    if cause is DropCause.UPLOAD_TIME_NAIVE:
+        raise InvalidUploadTimeError(naive_upload_time_message(normalized, dist))
+    provider.stats.excluded_by_time += 1
+    return True
 
 
 def excluded_by_wheel_tags(
@@ -556,15 +616,11 @@ def excluded_by_wheel_tags(
 
     An sdist is never excluded here: it carries no tags, and building it
     produces a wheel for whatever machine runs the build.  Tallied per
-    package (so a no-candidate package can say why) and per
-    ``(package, version)``.
+    ``(package, version)`` for the lock's omitted-wheel count.
     """
     if not isinstance(dist, WheelFile) or tags.accepts(dist.filename):
         return False
     provider.stats.excluded_by_wheel_tags += 1
-    provider.tag_excluded_wheels[normalized] = (
-        provider.tag_excluded_wheels.get(normalized, 0) + 1
-    )
     key = (normalized, version)
     provider.tag_excluded_wheels_by_version[key] = (
         provider.tag_excluded_wheels_by_version.get(key, 0) + 1
@@ -572,7 +628,7 @@ def excluded_by_wheel_tags(
     return True
 
 
-def _parsed_version(raw: str) -> Version | None:
+def parsed_version(raw: str) -> Version | None:
     """Return the interned version, or None when it is not a PEP 440 version."""
     try:
         return _intern_version(raw)
@@ -580,35 +636,19 @@ def _parsed_version(raw: str) -> Version | None:
         return None
 
 
-def has_filtered_in_range_release(
-    provider: Provider,
-    normalized: str,
-    version_range: VersionRange,
-    kept: Sequence[Version],
-) -> bool:
-    """Whether a filter dropped a release inside ``version_range``.
+def sdist_install_wheel_only(
+    result: list[tuple[Version, DistFile]],
+    sdist_install_versions: set[Version],
+) -> set[Version]:
+    """Return the SDIST_INSTALL versions of ``result`` whose artifacts are all wheels.
 
-    Callers ask only when no surviving version falls in the range, so a
-    dropped one that does is the release the requirement asked for.  A
-    dropped version equal to one in ``kept`` survived under another
-    spelling instead: :func:`filter_distributions` collapses equal
-    versions onto one representative, and ``===`` compares its string
-    form.  Filtering through ``version_range`` keeps the pre-release
-    semantics candidate selection uses.
+    Shared with the diagnosis walk, so both read this rung from one body.
     """
-    files = provider.coordinator.index.get_listing(normalized)
-    if not files:
-        return False
+    if not sdist_install_versions:
+        return set()
 
-    surviving = set(kept)
-    dropped = (
-        version
-        for dist in files
-        if (version := _parsed_version(dist.version)) is not None
-        and version not in surviving
-    )
-
-    return any(version_range.filter(dropped))
+    versions_with_sdist = {v for v, d in result if isinstance(d, SdistFile)}
+    return sdist_install_versions - versions_with_sdist
 
 
 def _drop_sdist_install_wheel_only(
@@ -620,11 +660,7 @@ def _drop_sdist_install_wheel_only(
     Such a version has no source to install, so it must not reach the
     resolver even though its wheels stay as a cheap metadata source.
     """
-    if not sdist_install_versions:
-        return result
-
-    versions_with_sdist = {v for v, d in result if isinstance(d, SdistFile)}
-    drop = sdist_install_versions - versions_with_sdist
+    drop = sdist_install_wheel_only(result, sdist_install_versions)
     if not drop:
         return result
     return [pair for pair in result if pair[0] not in drop]
@@ -664,7 +700,7 @@ def _canonicalize_equal_versions(
     return [(representative[version], dist) for version, dist in result]
 
 
-def _excluded_by_dist_policy(dist: DistFile, policy: object) -> bool:
+def excluded_by_dist_policy(dist: DistFile, policy: object) -> bool:
     """Return True when ``policy`` rejects ``dist``'s artifact kind.
 
     ``WHEEL_ONLY`` drops sdists and ``SDIST_ONLY`` drops wheels; the
@@ -710,24 +746,24 @@ def excluded_by_python(
     return cached
 
 
-def excluded_by_time(
-    provider: Provider, normalized: str, dist: DistFile, cutoff: datetime | None
-) -> bool:
-    """Return True when ``dist`` was uploaded after ``cutoff``.
+def upload_time_cause(dist: DistFile, cutoff: datetime | None) -> DropCause | None:
+    """Return which upload-time rule refuses ``dist``, or None when none does.
 
-    ``cutoff`` is the effective upload-time cutoff for ``normalized``,
-    already resolved through the overrides and the global
-    ``uploaded-prior-to`` (``None`` means no cutoff applies to this package).
+    ``cutoff`` is the effective upload-time cutoff for the package, already
+    resolved through the overrides and the global ``uploaded-prior-to``
+    (``None`` means no cutoff applies to it).
+
+    Total: a timezone-naive stamp is answered rather than raised, so a
+    diagnosis can meet one without turning a report into an error.  The
+    filter's caller raises on that answer.
     """
-    if cutoff is None:
-        return False
-    if dist.local_path is not None:
-        # A local file:// artifact has no upload time, so the cutoff cannot apply.
-        return False
+    # A local file:// artifact has no upload time, so the cutoff cannot apply.
+    if cutoff is None or dist.local_path is not None:
+        return None
+
     raw = dist.upload_time
     if raw is None:
-        provider.stats.excluded_by_time += 1
-        return True
+        return DropCause.UPLOAD_TIME_MISSING
 
     try:
         upload_dt = fast_iso_parser(raw)
@@ -737,22 +773,24 @@ def excluded_by_time(
         try:
             upload_dt = parse_iso_datetime(raw)
         except ValueError:
-            provider.stats.excluded_by_time += 1
-            return True
+            return DropCause.UPLOAD_TIME_UNPARSEABLE
 
     # PEP 700 mandates timezone-aware UTC upload times; refuse to guess.
     if upload_dt.tzinfo is None:
-        msg = (
-            f"{normalized} {dist.version} has a timezone-naive upload time "
-            f"{raw!r}; the Simple API requires "
-            f"timezone-aware (UTC) upload times"
-        )
-        raise InvalidUploadTimeError(msg)
+        return DropCause.UPLOAD_TIME_NAIVE
 
-    excluded = upload_dt >= cutoff
-    if excluded:
-        provider.stats.excluded_by_time += 1
-    return excluded
+    if upload_dt >= cutoff:
+        return DropCause.UPLOAD_TIME_AFTER_CUTOFF
+    return None
+
+
+def naive_upload_time_message(normalized: str, dist: DistFile) -> str:
+    """Return the error text for a candidate whose upload time carries no zone."""
+    return (
+        f"{normalized} {dist.version} has a timezone-naive upload time "
+        f"{dist.upload_time!r}; the Simple API requires "
+        f"timezone-aware (UTC) upload times"
+    )
 
 
 def prefetch_walk_ahead(

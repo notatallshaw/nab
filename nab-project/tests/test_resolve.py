@@ -3362,8 +3362,7 @@ class TestAugmentResolutionError:
         diagnostics = str(info.value).split("Diagnostics:")[1]
         assert (
             "foo: found on index but every version matching the requirement was"
-            " filtered (by requires-python, wheel tags, dist-policy, or"
-            " upload-time)" in diagnostics
+            " filtered (by requires-python)" in diagnostics
         )
         assert "no version matches the requirement" not in diagnostics
 

@@ -1,0 +1,171 @@
+########## case0-ok
+Wrote requirements.txt (1 packages)
+########## exit=0
+
+########## case1-missing-upload-time
+error: resolution failed: because no versions of case1-missing-upload-time are available
+because your project depends on case1-missing-upload-time
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case1-missing-upload-time: found on index but no distribution is compatible: the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file that publishes no upload time (1.0); no sdist is available to build from
+    note: the project-level uploaded-prior-to set that cutoff; uploaded-prior-to = false under [tool.nab.packages."case1-missing-upload-time"] lifts it for this package
+########## exit=1
+
+########## case1b-no-cutoff
+Wrote requirements.txt (1 packages)
+########## exit=0
+
+########## case2-after-cutoff
+error: resolution failed: because no versions of case2-after-cutoff are available
+because your project depends on case2-after-cutoff
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case2-after-cutoff: found on index but no distribution is compatible: the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0); no sdist is available to build from
+    note: the project-level uploaded-prior-to set that cutoff; uploaded-prior-to = false under [tool.nab.packages."case2-after-cutoff"] lifts it for this package
+########## exit=1
+
+########## case3-requires-python
+error: resolution failed: because no versions of case3-requires-python are available
+because your project depends on case3-requires-python
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case3-requires-python: found on index but no distribution is compatible: requires-python excluded 1 file (1.0 requires >=3.99, the resolve targets Python 3.12); no sdist is available to build from
+########## exit=1
+
+########## case4-dist-policy
+error: resolution failed: because no versions of case4-dist-policy are available
+because your project depends on case4-dist-policy
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case4-dist-policy: found on index but no distribution is compatible: dist-policy = "sdist-only" excluded 1 wheel (1.0); no sdist is available to build from
+########## exit=1
+
+########## case4b-dist-policy-nocut
+error: resolution failed: because no versions of case4-dist-policy are available
+because your project depends on case4-dist-policy
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case4-dist-policy: found on index but no distribution is compatible: dist-policy = "sdist-only" excluded 1 wheel (1.0); no sdist is available to build from
+########## exit=1
+
+########## case5-mix
+error: resolution failed: because no versions of case5-mix are available
+because your project depends on case5-mix
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case5-mix: found on index but no distribution is compatible: the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file uploaded at 2030-01-01T00:00:00Z (2.0); requires-python excluded 1 file (1.0 requires >=3.99, the resolve targets Python 3.12); no sdist is available to build from
+    note: the project-level uploaded-prior-to set that cutoff; uploaded-prior-to = false under [tool.nab.packages."case5-mix"] lifts it for this package
+########## exit=1
+
+########## case6-bad-upload-time
+error: resolution failed: because no versions of case6-bad-upload-time are available
+because your project depends on case6-bad-upload-time
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case6-bad-upload-time: found on index but no distribution is compatible: the uploaded-prior-to cutoff excluded 1 file whose upload time is not ISO 8601 (1.0, 'not-a-time'); no sdist is available to build from
+    note: the project-level uploaded-prior-to set that cutoff; uploaded-prior-to = false under [tool.nab.packages."case6-bad-upload-time"] lifts it for this package
+########## exit=1
+
+########## case6b-bad-nocutoff
+Wrote requirements.txt (1 packages)
+########## exit=0
+
+########## case7-wheel-tags
+error: resolution failed: because no versions of case7-wheel-tags are available
+because your project depends on case7-wheel-tags
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case7-wheel-tags: found on index but no distribution is compatible: none of the wheel's tags are compatible with the resolve target (1 wheel rejected); no sdist is available to build from
+########## exit=1
+
+########## case8-yanked-only
+error: resolution failed: because no versions of case8-yanked-only are available
+because your project depends on case8-yanked-only
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case8-yanked-only: package not found on any configured index
+########## exit=1
+
+########## case9-naive-upload-time
+error: case9-naive-upload-time 1.0 has a timezone-naive upload time '2020-01-01T00:00:00'; the Simple API requires timezone-aware (UTC) upload times
+########## exit=1
+
+########## case10-tags-plus-sdist
+error: resolution failed: because no versions of case10-tags-plus-sdist are available
+because your project depends on case10-tags-plus-sdist
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case10-tags-plus-sdist: found on index but no distribution is compatible: the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0); none of the wheel's tags are compatible with the resolve target (1 wheel rejected)
+    note: the project-level uploaded-prior-to set that cutoff; uploaded-prior-to = false under [tool.nab.packages."case10-tags-plus-sdist"] lifts it for this package
+########## exit=1
+
+########## case11-unreadable-only
+error: resolution failed: because no versions of case11-unreadable-only are available
+because your project depends on case11-unreadable-only
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case11-unreadable-only: found on index but no file is a wheel or a .tar.gz sdist (the formats nab reads)
+########## exit=1
+
+########## case12-in-range-filtered
+error: resolution failed: because no versions of case12-in-range-filtered >=2 are available
+because your project depends on case12-in-range-filtered >=2
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case12-in-range-filtered: found on index but every version matching the requirement was filtered (by upload-time)
+########## exit=1
+
+########## case13-sdist-install
+error: resolution failed: because no versions of case13-sdist-install are available
+because your project depends on case13-sdist-install
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case13-sdist-install: found on index but no distribution is compatible: dist-policy = "sdist-install" excluded 1 version that publishes no sdist (1.0)
+########## exit=1
+
+########## case14-sdist-missing-ut
+error: resolution failed: because no versions of case14-sdist-missing-upload-time are available
+because your project depends on case14-sdist-missing-upload-time
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case14-sdist-missing-upload-time: found on index but no distribution is compatible: the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file that publishes no upload time (1.0)
+    note: the project-level uploaded-prior-to set that cutoff; uploaded-prior-to = false under [tool.nab.packages."case14-sdist-missing-upload-time"] lifts it for this package
+########## exit=1
+
+########## case15-tags-plus-rp
+error: resolution failed: because no versions of case15-tags-plus-requires-python are available
+because your project depends on case15-tags-plus-requires-python
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case15-tags-plus-requires-python: found on index but no distribution is compatible: requires-python excluded 1 file (1.0 requires >=3.99, the resolve targets Python 3.12); none of the wheel's tags are compatible with the resolve target (1 wheel rejected); no sdist is available to build from
+########## exit=1
+
+########## case16-offline
+error: resolution failed: because no versions of case1-missing-upload-time are available
+because your project depends on case1-missing-upload-time
+so your project's requirements cannot be satisfied
+
+Diagnostics:
+  - case1-missing-upload-time: offline mode skipped an index with no cached listing
+########## exit=1
+
+########## case17-workaround
+Wrote requirements.txt (1 packages)
+########## exit=0
+
+workdir: /tmp/tmp.73qJffspR6
