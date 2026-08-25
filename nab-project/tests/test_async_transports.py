@@ -13,7 +13,7 @@ import sys
 import tarfile
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -1783,17 +1783,22 @@ class TestAsyncSimpleClient:
             asyncio.run(go())
         assert isinstance(caught.value, HttpError)
 
-    def test_get_files_over_nested_raises_clean(self) -> None:
+    def test_get_files_over_nested_raises_clean(
+        self, refuse_over_nested: Callable[[bytes], AbstractContextManager[None]]
+    ) -> None:
         """A body past the JSON decoder's recursion guard must not escape raw."""
-        body = ("[" * 100_000 + "]" * 100_000).encode()
+        body = b"[[[]]]"
         transport = self._FakeTransport(body)
 
         async def go() -> list:
             async with AsyncSimpleClient(transport, "https://pypi.org/simple/") as c:
                 return await c.get_files("pkg")
 
-        with pytest.raises(
-            MalformedSimpleResponseError, match="nested too deeply to decode"
+        with (
+            refuse_over_nested(body),
+            pytest.raises(
+                MalformedSimpleResponseError, match="nested too deeply to decode"
+            ),
         ):
             asyncio.run(go())
 

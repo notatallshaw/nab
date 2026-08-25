@@ -13,7 +13,8 @@ import sys
 import tarfile
 import time
 import zipfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import replace
 from email.utils import formatdate
 from pathlib import Path
@@ -87,8 +88,8 @@ ZIP_ONLY_BYTES = json.dumps(ZIP_ONLY_LISTING).encode()
 # A digit run just past CPython's int-from-string limit.
 OVERSIZED_DIGITS = "9" * (sys.get_int_max_str_digits() + 1)
 
-# Well-formed JSON nested far past the decoder's recursion guard.
-OVER_NESTED = ("[" * 100_000 + "]" * 100_000).encode()
+# Stands in for a body nested past the decoder's guard (``refuse_over_nested``).
+OVER_NESTED = b"[[[]]]"
 
 
 class _FakeResponse:
@@ -2223,13 +2224,18 @@ class TestNonJsonListingBody:
         assert cache.get_simple("foo") is None
 
     def test_cold_over_nested_body_raises_clean_and_skips_cache(
-        self, tmp_path: Path
+        self,
+        tmp_path: Path,
+        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
     ) -> None:
         cache = _make_cache(tmp_path)
         transport = _FakeTransport([_FakeResponse(OVER_NESTED, status=200)])
 
-        with pytest.raises(
-            MalformedSimpleResponseError, match="nested too deeply to decode"
+        with (
+            refuse_over_nested(OVER_NESTED),
+            pytest.raises(
+                MalformedSimpleResponseError, match="nested too deeply to decode"
+            ),
         ):
             _run_get_files(transport, cache, "foo")
         assert cache.get_simple("foo") is None
@@ -4391,13 +4397,19 @@ class TestCorruptCachedListing:
         assert len(_cached_warnings(caplog)) == 1
 
     def test_over_nested_cached_body_self_heals_online(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
     ) -> None:
         cache = _make_cache(tmp_path)
         cache.put_simple("pkg", OVER_NESTED, self._fresh())
         transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
 
-        with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
+        with (
+            refuse_over_nested(OVER_NESTED),
+            caplog.at_level(logging.WARNING, logger="nab_index.cached_client"),
+        ):
             files = _run_get_files(transport, cache, "pkg")
 
         assert len(files) == 1
