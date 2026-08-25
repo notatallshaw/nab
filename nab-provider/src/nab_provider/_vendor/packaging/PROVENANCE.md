@@ -18,8 +18,9 @@ most one checked-in patch.
     `is_subset` and `is_disjoint` answered by a direct walk over the interval
     lists instead of an intermediate range; the module-level helpers they need
     (`_relate_bounds`, `_subset_bounds`, `_disjoint_bounds`,
-    `_bisect_predicate`, `_partition_indexes`, `_make_project`, `_check_order`,
-    `_lattice_release`, `_release_boundary_point`); the `RangeRelation` and
+    `_bisect_predicate`, `_partition_indexes`, `_make_project`,
+    `_project_plain`, `_check_order`, `_lattice_release`,
+    `_release_boundary_point`); the `RangeRelation` and
     `SortedOrder` `__all__` entries; and the class-docstring lines naming them.
     `VersionRange._build` takes a `canonical` keyword that skips the bound
     fold for callers whose bounds are folded already: the set algebra, `full`,

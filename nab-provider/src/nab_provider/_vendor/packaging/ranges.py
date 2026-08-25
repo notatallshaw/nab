@@ -425,13 +425,18 @@ def _bisect_predicate(
     ``bisect.bisect_left`` on the mapped booleans, done by hand because the
     ``key`` parameter for :mod:`bisect` only exists on Python 3.10 and later.
     ``project`` maps a probed item to the version it sorts by; ``None`` means
-    the items are already :class:`~packaging.version.Version` instances.
+    the items sort by themselves, and a probe that is already a
+    :class:`~packaging.version.Version` skips the call.
     """
     low, high = 0, len(items)
     while low < high:
         mid = (low + high) // 2
         item = items[mid]
-        if predicate(item if project is None else project(item)):
+        if project is None:
+            version = item if item.__class__ is Version else _project_plain(item)
+        else:
+            version = project(item)
+        if predicate(version):
             high = mid
         else:
             low = mid + 1
@@ -467,20 +472,36 @@ def _partition_indexes(
     return start, stop
 
 
+def _project_plain(item: Any) -> Version:  # noqa: ANN401
+    """The version a key-less entry of an ordered sequence sorts by.
+
+    An item that does not parse cannot sit in version order at all, which is a
+    broken precondition rather than a non-match, so this raises rather than
+    dropping the item the way :meth:`VersionRange.filter` drops it.
+    """
+    parsed = item if isinstance(item, Version) else coerce_version(item)
+    if parsed is None:
+        raise ValueError(
+            f"{item!r} does not parse as a version, so the given sequence "
+            f"is not in version order"
+        )
+    return parsed
+
+
 def _make_project(
     key: Callable[[Any], Version | str] | None,
 ) -> Callable[[Any], Version]:
     """Build the item-to-:class:`~packaging.version.Version` map for a sorted walk.
 
     The bisections compare against bound predicates that only accept a
-    :class:`~packaging.version.Version`, so every probed item is coerced. An
-    item that does not parse cannot sit in version order at all, which is a
-    broken precondition rather than a non-match, so this raises rather than
-    dropping the item the way :meth:`VersionRange.filter` drops it.
+    :class:`~packaging.version.Version`, so a projected item is coerced.
+    Without a ``key`` that map is :func:`_project_plain`.
     """
+    if key is None:
+        return _project_plain
 
     def project(item: Any) -> Version:  # noqa: ANN401
-        raw: Version | str = item if key is None else key(item)
+        raw = key(item)
         parsed = raw if isinstance(raw, Version) else coerce_version(raw)
         if parsed is None:
             raise ValueError(
@@ -2126,10 +2147,14 @@ class VersionRange:
         """
         bounds = tuple(reversed(self._bounds)) if descending else self._bounds
 
+        # Without a key an entry is the version it sorts by, so the bisections
+        # project only an entry that is not already one.
+        bisect_project = None if key is None else project
+
         if prereleases is True:
             for lower, upper in bounds:
                 start, stop = _partition_indexes(
-                    versions, lower, upper, project, descending=descending
+                    versions, lower, upper, bisect_project, descending=descending
                 )
                 for index in range(start, stop):
                     yield versions[index]
@@ -2142,7 +2167,7 @@ class VersionRange:
 
         for lower, upper in bounds:
             start, stop = _partition_indexes(
-                versions, lower, upper, project, descending=descending
+                versions, lower, upper, bisect_project, descending=descending
             )
             for index in range(start, stop):
                 item = versions[index]

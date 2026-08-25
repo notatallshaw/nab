@@ -2638,7 +2638,7 @@ index 0000000..a5e2740
 +    def __repr__(self) -> str:
 +        return f"<{type(self).__name__} {_markersets.describe(self._tree)!r}>"
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
-index 4fbf48e..c92e4df 100644
+index 4fbf48e..a4a5912 100644
 --- a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
 +++ b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
 @@ -24,6 +24,7 @@ import typing
@@ -2790,7 +2790,7 @@ index 4fbf48e..c92e4df 100644
  def _complement_ranges(ranges: Sequence[Interval]) -> list[Interval]:
      """Complement a sorted, non-overlapping interval list.
  
-@@ -292,6 +414,142 @@ def _struct_admits(
+@@ -292,6 +414,163 @@ def _struct_admits(
      return matches_bounds_only(bounds, parsed)
  
  
@@ -2805,13 +2805,18 @@ index 4fbf48e..c92e4df 100644
 +    ``bisect.bisect_left`` on the mapped booleans, done by hand because the
 +    ``key`` parameter for :mod:`bisect` only exists on Python 3.10 and later.
 +    ``project`` maps a probed item to the version it sorts by; ``None`` means
-+    the items are already :class:`~packaging.version.Version` instances.
++    the items sort by themselves, and a probe that is already a
++    :class:`~packaging.version.Version` skips the call.
 +    """
 +    low, high = 0, len(items)
 +    while low < high:
 +        mid = (low + high) // 2
 +        item = items[mid]
-+        if predicate(item if project is None else project(item)):
++        if project is None:
++            version = item if item.__class__ is Version else _project_plain(item)
++        else:
++            version = project(item)
++        if predicate(version):
 +            high = mid
 +        else:
 +            low = mid + 1
@@ -2847,20 +2852,36 @@ index 4fbf48e..c92e4df 100644
 +    return start, stop
 +
 +
++def _project_plain(item: Any) -> Version:  # noqa: ANN401
++    """The version a key-less entry of an ordered sequence sorts by.
++
++    An item that does not parse cannot sit in version order at all, which is a
++    broken precondition rather than a non-match, so this raises rather than
++    dropping the item the way :meth:`VersionRange.filter` drops it.
++    """
++    parsed = item if isinstance(item, Version) else coerce_version(item)
++    if parsed is None:
++        raise ValueError(
++            f"{item!r} does not parse as a version, so the given sequence "
++            f"is not in version order"
++        )
++    return parsed
++
++
 +def _make_project(
 +    key: Callable[[Any], Version | str] | None,
 +) -> Callable[[Any], Version]:
 +    """Build the item-to-:class:`~packaging.version.Version` map for a sorted walk.
 +
 +    The bisections compare against bound predicates that only accept a
-+    :class:`~packaging.version.Version`, so every probed item is coerced. An
-+    item that does not parse cannot sit in version order at all, which is a
-+    broken precondition rather than a non-match, so this raises rather than
-+    dropping the item the way :meth:`VersionRange.filter` drops it.
++    :class:`~packaging.version.Version`, so a projected item is coerced.
++    Without a ``key`` that map is :func:`_project_plain`.
 +    """
++    if key is None:
++        return _project_plain
 +
 +    def project(item: Any) -> Version:  # noqa: ANN401
-+        raw: Version | str = item if key is None else key(item)
++        raw = key(item)
 +        parsed = raw if isinstance(raw, Version) else coerce_version(raw)
 +        if parsed is None:
 +            raise ValueError(
@@ -2933,7 +2954,7 @@ index 4fbf48e..c92e4df 100644
  # Repr helpers:
  
  
-@@ -904,7 +1162,8 @@ class VersionRange:
+@@ -904,7 +1183,8 @@ class VersionRange:
      :class:`~packaging.specifiers.SpecifierSet`.
  
      Construct via :meth:`~packaging.specifiers.SpecifierSet.to_range`, or with
@@ -2943,7 +2964,7 @@ index 4fbf48e..c92e4df 100644
      Compose with :meth:`intersection`, :meth:`union`, :meth:`complement`, and
      :meth:`difference` (or the ``&`` / ``|`` / ``~`` / ``-`` operators). Test
      membership with ``in`` or :meth:`contains`, filter an iterable with
-@@ -919,9 +1178,9 @@ class VersionRange:
+@@ -919,9 +1199,9 @@ class VersionRange:
      that opt-in scoped to those versions, so unrelated pre-releases are not
      admitted wholesale.
  
@@ -2956,7 +2977,7 @@ index 4fbf48e..c92e4df 100644
  
      >>> r = SpecifierSet(">=1.0,<2.0").to_range()
      >>> "1.5" in r
-@@ -997,7 +1256,8 @@ class VersionRange:
+@@ -997,7 +1277,8 @@ class VersionRange:
          raise TypeError(
              "cannot create 'VersionRange' instances directly; use "
              "SpecifierSet.to_range(), VersionRange.full(), "
@@ -2966,7 +2987,7 @@ index 4fbf48e..c92e4df 100644
          )
  
      @classmethod
-@@ -1010,6 +1270,7 @@ class VersionRange:
+@@ -1010,6 +1291,7 @@ class VersionRange:
          *,
          pre_region: tuple[Interval, ...] = (),
          prereleases_configured: bool | None = None,
@@ -2974,7 +2995,7 @@ index 4fbf48e..c92e4df 100644
      ) -> VersionRange:
          """Internal factory; bypasses :meth:`__new__`.
  
-@@ -1019,8 +1280,16 @@ class VersionRange:
+@@ -1019,8 +1301,16 @@ class VersionRange:
          pre-release policy is set here and never reassigned afterwards;
          ``pre_region`` is canonicalized like the bounds and clipped to them,
          or dropped when a configured policy makes it inert.
@@ -2992,7 +3013,7 @@ index 4fbf48e..c92e4df 100644
  
          if admit and reject:
              admit = admit - reject
-@@ -1044,16 +1313,15 @@ class VersionRange:
+@@ -1044,16 +1334,15 @@ class VersionRange:
          instance._admit_arbitrary = admit_arbitrary
          instance._prereleases_configured = prereleases_configured
  
@@ -3015,7 +3036,7 @@ index 4fbf48e..c92e4df 100644
  
          return instance
  
-@@ -1105,8 +1373,7 @@ class VersionRange:
+@@ -1105,8 +1394,7 @@ class VersionRange:
          if not self._pre_region:
              return other._pre_region
  
@@ -3025,7 +3046,7 @@ index 4fbf48e..c92e4df 100644
          return tuple(_union_ranges(self._pre_region, other._pre_region))
  
      def _with_policy(
-@@ -1131,7 +1398,7 @@ class VersionRange:
+@@ -1131,7 +1419,7 @@ class VersionRange:
          >>> "1.0" in VersionRange.empty()
          False
          """
@@ -3034,7 +3055,7 @@ index 4fbf48e..c92e4df 100644
  
      @classmethod
      def full(
-@@ -1156,6 +1423,7 @@ class VersionRange:
+@@ -1156,6 +1444,7 @@ class VersionRange:
              FULL_RANGE,
              admit_arbitrary=admit_arbitrary,
              prereleases_configured=prereleases,
@@ -3042,7 +3063,7 @@ index 4fbf48e..c92e4df 100644
          )
  
      @classmethod
-@@ -1189,6 +1457,73 @@ class VersionRange:
+@@ -1189,6 +1478,73 @@ class VersionRange:
              prereleases_configured=prereleases,
          )
  
@@ -3116,7 +3137,7 @@ index 4fbf48e..c92e4df 100644
      def intersection(self, other: VersionRange) -> VersionRange:
          """Range containing exactly the versions in both self and other.
  
-@@ -1219,6 +1554,7 @@ class VersionRange:
+@@ -1219,6 +1575,7 @@ class VersionRange:
                  admit_arbitrary=combined_arb,
                  pre_region=new_region,
                  prereleases_configured=configured,
@@ -3124,7 +3145,7 @@ index 4fbf48e..c92e4df 100644
              )
  
          return self._combine_literals(
-@@ -1266,6 +1602,7 @@ class VersionRange:
+@@ -1266,6 +1623,7 @@ class VersionRange:
                  admit_arbitrary=combined_arb,
                  pre_region=new_region,
                  prereleases_configured=configured,
@@ -3132,7 +3153,7 @@ index 4fbf48e..c92e4df 100644
              )
  
          return self._combine_literals(
-@@ -1309,6 +1646,7 @@ class VersionRange:
+@@ -1309,6 +1667,7 @@ class VersionRange:
              admit_arbitrary=self._admit_arbitrary,
              pre_region=(),
              prereleases_configured=self._prereleases_configured,
@@ -3140,7 +3161,7 @@ index 4fbf48e..c92e4df 100644
          )
  
      def difference(self, other: VersionRange) -> VersionRange:
-@@ -1365,6 +1703,7 @@ class VersionRange:
+@@ -1365,6 +1724,7 @@ class VersionRange:
                  admit_arbitrary=combined_arb,
                  pre_region=new_region,
                  prereleases_configured=self._prereleases_configured,
@@ -3148,7 +3169,7 @@ index 4fbf48e..c92e4df 100644
              )
  
          return self._combine_literals(
-@@ -1386,7 +1725,11 @@ class VersionRange:
+@@ -1386,7 +1746,11 @@ class VersionRange:
          pre_region: tuple[Interval, ...],
          prereleases_configured: bool | None,
      ) -> VersionRange:
@@ -3161,7 +3182,7 @@ index 4fbf48e..c92e4df 100644
          admits: set[str] = set()
          rejects: set[str] = set()
  
-@@ -1414,6 +1757,7 @@ class VersionRange:
+@@ -1414,6 +1778,7 @@ class VersionRange:
              admit_arbitrary=admit_arbitrary,
              pre_region=pre_region,
              prereleases_configured=prereleases_configured,
@@ -3169,7 +3190,7 @@ index 4fbf48e..c92e4df 100644
          )
  
      def _matches_literal(self, literal: str) -> bool:
-@@ -1469,6 +1813,15 @@ class VersionRange:
+@@ -1469,6 +1834,15 @@ class VersionRange:
          False
          >>> VersionRange.empty().is_subset(outer)
          True
@@ -3185,7 +3206,7 @@ index 4fbf48e..c92e4df 100644
          """
          self._check_policy_compat(other)
  
-@@ -1479,12 +1832,52 @@ class VersionRange:
+@@ -1479,12 +1853,52 @@ class VersionRange:
  
          # Plain ranges: subset reduces to bounds containment, no algebra needed.
          if self._is_plain() and other._is_plain():
@@ -3239,7 +3260,7 @@ index 4fbf48e..c92e4df 100644
      def is_superset(self, other: VersionRange) -> bool:
          """Return whether every member of other is also a member of self.
  
-@@ -1515,12 +1908,19 @@ class VersionRange:
+@@ -1515,12 +1929,19 @@ class VersionRange:
          True
          >>> a.is_disjoint(SpecifierSet(">=1.5,<2.5").to_range())
          False
@@ -3260,7 +3281,7 @@ index 4fbf48e..c92e4df 100644
          return self.intersection(other).is_empty
  
      def _same_releases(self, other: VersionRange) -> bool:
-@@ -1539,6 +1939,8 @@ class VersionRange:
+@@ -1539,6 +1960,8 @@ class VersionRange:
          iterable: Iterable[UnparsedVersionVar],
          prereleases: bool | None = None,
          key: None = ...,
@@ -3269,7 +3290,7 @@ index 4fbf48e..c92e4df 100644
      ) -> Iterator[UnparsedVersionVar]: ...
  
      @typing.overload
-@@ -1547,6 +1949,28 @@ class VersionRange:
+@@ -1547,6 +1970,28 @@ class VersionRange:
          iterable: Iterable[T],
          prereleases: bool | None = None,
          key: Callable[[T], UnparsedVersion] = ...,
@@ -3298,7 +3319,7 @@ index 4fbf48e..c92e4df 100644
      ) -> Iterator[T]: ...
  
      def filter(
-@@ -1554,6 +1978,8 @@ class VersionRange:
+@@ -1554,6 +1999,8 @@ class VersionRange:
          iterable: Iterable[Any],
          prereleases: bool | None = None,
          key: Callable[[Any], Version | str] | None = None,
@@ -3307,7 +3328,7 @@ index 4fbf48e..c92e4df 100644
      ) -> Iterator[Any]:
          """Yield items from iterable whose version falls inside the range.
  
-@@ -1564,13 +1990,56 @@ class VersionRange:
+@@ -1564,13 +2011,56 @@ class VersionRange:
          ``prereleases=True`` would yield it). A flushed buffer comes after
          every in-place yield, so the output is not version-sorted.
  
@@ -3365,7 +3386,7 @@ index 4fbf48e..c92e4df 100644
          region: tuple[Interval, ...] = ()
          if prereleases is None:
              # The region applies only under the autodetect default; a configured
-@@ -1578,19 +2047,93 @@ class VersionRange:
+@@ -1578,19 +2068,97 @@ class VersionRange:
              prereleases = self._prereleases_configured
              region = self._pre_region
  
@@ -3424,10 +3445,14 @@ index 4fbf48e..c92e4df 100644
 +        """
 +        bounds = tuple(reversed(self._bounds)) if descending else self._bounds
 +
++        # Without a key an entry is the version it sorts by, so the bisections
++        # project only an entry that is not already one.
++        bisect_project = None if key is None else project
++
 +        if prereleases is True:
 +            for lower, upper in bounds:
 +                start, stop = _partition_indexes(
-+                    versions, lower, upper, project, descending=descending
++                    versions, lower, upper, bisect_project, descending=descending
 +                )
 +                for index in range(start, stop):
 +                    yield versions[index]
@@ -3440,7 +3465,7 @@ index 4fbf48e..c92e4df 100644
 +
 +        for lower, upper in bounds:
 +            start, stop = _partition_indexes(
-+                versions, lower, upper, project, descending=descending
++                versions, lower, upper, bisect_project, descending=descending
 +            )
 +            for index in range(start, stop):
 +                item = versions[index]
@@ -3464,7 +3489,7 @@ index 4fbf48e..c92e4df 100644
      def _filter_with_admission(
          self,
          iterable: Iterable[Any],
-@@ -1678,6 +2221,123 @@ class VersionRange:
+@@ -1678,6 +2246,123 @@ class VersionRange:
          if not found_final:
              yield from all_nonfinal
  
