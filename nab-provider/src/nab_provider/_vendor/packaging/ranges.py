@@ -1368,10 +1368,7 @@ class VersionRange:
         )
 
     def _check_policy_compat(self, other: VersionRange) -> None:
-        """Refuse combining ranges with different pre-release policies.
-
-        Callers test compatibility inline and call this when that test fails.
-        """
+        """Refuse combining ranges with different pre-release policies."""
         if not isinstance(other, VersionRange):
             raise TypeError(f"expected VersionRange, got {type(other).__name__}")
         if self._prereleases_configured != other._prereleases_configured:
