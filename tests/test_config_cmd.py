@@ -8,7 +8,9 @@ one place the CLI surface is not registry-derived: tyro deriving flags
 from a function signature).  One class reads the rendered ``config`` help
 back and checks it against what each refused source really does.
 They also pin the ``--resolution`` -> ``--project-resolution`` rename, the
-lock-ladder config-error exit, and a byte-identical no-op lock at defaults.
+lock-ladder config-error exit, a byte-identical no-op lock at defaults, and
+every override flag reaching the config that ``nab lock`` and ``nab download``
+resolve from.
 """
 
 from __future__ import annotations
@@ -47,8 +49,66 @@ from nab_project.lockfile import (
 )
 from nab_project.resolve import ResolveResult, TargetResult
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.provider import DecisionOrder, DistPolicy, ResolutionStrategy
+from nab_provider.provider import (
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    ResolutionStrategy,
+    ResolveMode,
+)
 from nab_provider.target import ResolveTarget
+
+# Every registry option carrying a CLI flag, keyed on the option's key.
+_CLI_FLAGS: dict[str, str] = {
+    spec.key: spec.cli_flag for spec in OPTIONS if spec.cli_flag is not None
+}
+
+# Per flagged option: its key, the value passed on argv, and the value
+# ``config get`` then prints.
+_CLI_FLAG_CASES: tuple[tuple[str, str, str], ...] = (
+    ("resolution", "lowest", "lowest"),
+    ("decision-order", "stable", "stable"),
+    ("mode", "universal", "universal"),
+    ("constraints", "foo<2", "foo<2"),
+    ("default-groups", "dev", "dev"),
+    ("base-group", "Main_Deps", "main-deps"),
+    ("build-group", "Build_Reqs", "build-reqs"),
+    ("requires-python", ">=3.11", ">=3.11"),
+    ("uploaded-prior-to", "2024-06-01T00:00:00Z", "2024-06-01 00:00:00+00:00"),
+    ("dist-policy", "sdist-only", "sdist-only"),
+    ("build-policy", "never", "never"),
+    ("build-requires-depth", "3", "3"),
+    ("offline", "True", "true"),
+    ("cache-dir", "wheels-cache", "wheels-cache"),
+    ("http-backend", "httpx", "httpx"),
+    ("max-concurrency", "5", "5"),
+)
+
+# The ``--project-*`` flags ``nab download`` is driven with, and the argv value
+# each carries.  ``--project-mode`` needs a project declaring a matrix, so it
+# gets its own tests and is named in the completeness check instead.
+_DOWNLOAD_PROJECT_ARGV: tuple[tuple[str, str], ...] = (
+    ("--project-resolution", "lowest"),
+    ("--project-decision-order", "arrival"),
+    ("--project-constraint", "b<2"),
+    ("--project-constraint", "c<3"),
+    ("--project-default-group", "dev"),
+    ("--project-base-group", "main-deps"),
+    ("--project-build-group", "build-reqs"),
+    ("--project-requires-python", ">=3.11"),
+    ("--project-uploaded-prior-to", "2024-06-01T00:00:00Z"),
+    ("--project-dist-policy", "sdist-only"),
+    ("--project-build-policy", "never"),
+    ("--project-build-requires-depth", "3"),
+)
+
+# A ``[tool.nab]`` body declaring universal mode and the matrix it needs.
+_UNIVERSAL_TOOL_NAB = (
+    'mode = "universal"\n'
+    "[tool.nab.matrix]\n"
+    'python = "==3.11"\n'
+    'platforms = ["linux_x86_64"]\n'
+)
 
 
 def _write(path: Path, body: str) -> Path:
@@ -731,6 +791,29 @@ class TestTyroConformance:
             check_flags()
 
 
+class TestCliFlagValues:
+    """``config get`` prints the value each registry flag was given.
+
+    The conformance tests above pin the flag surface; these pin what it
+    carries.  Every case's value differs from what the key reads with no
+    flag, so a flag that stopped forwarding changes the printed output.
+    """
+
+    @pytest.mark.parametrize(("key", "argv_value", "printed"), _CLI_FLAG_CASES)
+    def test_flag_value_wins(
+        self, hermetic_roots: Path, key: str, argv_value: str, printed: str
+    ) -> None:
+        _project(hermetic_roots)
+        base = ["get", key, "--path", str(hermetic_roots / "pyproject.toml")]
+
+        assert _run_config(base) != f"{printed}\n"
+        assert _run_config([*base, _CLI_FLAGS[key], argv_value]) == f"{printed}\n"
+
+    def test_every_flagged_option_has_a_case(self) -> None:
+        covered = {key for key, _, _ in _CLI_FLAG_CASES}
+        assert covered == set(_CLI_FLAGS)
+
+
 class TestEffectiveConfigBridge:
     def test_effective_config_default_roots_callable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1017,6 +1100,48 @@ class TestProjectCliOverrides:
         )
         assert config.build_requires_depth == 3
 
+    def test_project_build_policy_reaches_resolve(self, hermetic_roots: Path) -> None:
+        # The file declares build-remote, so a resolve seeing never read it
+        # off the flag.
+        proj = _project(hermetic_roots, 'build-policy = "build-remote"\n')
+        config, _ = self._lock_config(
+            proj,
+            hermetic_roots / "pylock.toml",
+            ["--project-build-policy", "never"],
+        )
+        assert config.build_policy is BuildPolicy.NEVER
+
+    def test_project_mode_specific_takes_one_lock_from_a_matrix(
+        self, hermetic_roots: Path
+    ) -> None:
+        # How a universal project takes one single-environment lock:
+        # --project-mode outranks [tool.nab], so the declared matrix does
+        # not apply and --python names the environment to resolve for.
+        proj = _project(hermetic_roots, _UNIVERSAL_TOOL_NAB)
+        config, _ = self._lock_config(
+            proj,
+            hermetic_roots / "pylock.toml",
+            ["--project-mode", "specific", "--python", "3.13"],
+        )
+        assert config.mode is ResolveMode.SPECIFIC
+        assert config.matrix is None
+        assert config.environment is not None
+        assert config.environment.python == "3.13"
+
+    def test_project_mode_universal_needs_a_declared_matrix(
+        self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The other direction of the same flag: with no [tool.nab.matrix]
+        # declared there are no targets, so universal mode is refused.
+        proj = _project(hermetic_roots)
+        with pytest.raises(SystemExit):
+            self._lock_config(
+                proj, hermetic_roots / "pylock.toml", ["--project-mode", "universal"]
+            )
+        assert "--project-mode universal needs a [tool.nab.matrix] table" in (
+            capsys.readouterr().err
+        )
+
     def test_project_decision_order_reaches_resolve(self, hermetic_roots: Path) -> None:
         # The file declares stable, so a resolve seeing arrival read the flag.
         proj = _project(hermetic_roots, 'decision-order = "stable"\n')
@@ -1196,3 +1321,125 @@ class TestDownloadLadder:
         with pytest.raises(SystemExit):
             download(hermetic_roots / "pyproject.toml", output=hermetic_roots / "out")
         assert "config error" in capsys.readouterr().err
+
+
+class TestDownloadCliOverrides:
+    """``nab download``'s own flags reach the config the resolve reads."""
+
+    def _resolve_kwargs(self, proj: Path, extra: list[str]) -> Mapping[str, object]:
+        """The kwargs a ``nab download`` argv hands ``resolve_for_targets``."""
+        download_result = MagicMock(written=(), skipped=())
+        with (
+            patch(
+                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
+            ) as mock_resolve,
+            patch("nab._download.download_lock", return_value=download_result),
+        ):
+            app.cli(
+                args=[
+                    "download",
+                    str(proj),
+                    "--output",
+                    str(proj.parent / "out"),
+                    *extra,
+                ],
+                prog="nab",
+            )
+        return mock_resolve.call_args.kwargs
+
+    def _config(self, proj: Path, extra: list[str]) -> NabProjectConfig:
+        """The merged config the resolve reads for this argv."""
+        config = self._resolve_kwargs(proj, extra)["config"]
+        assert isinstance(config, NabProjectConfig)
+        return config
+
+    def test_project_overrides_reach_the_config(self, hermetic_roots: Path) -> None:
+        # The file declares something other than each flag's value, so a value
+        # the resolve sees came off the command line.  ``default-groups`` is
+        # left undeclared: its default, the empty tuple, already differs.
+        proj = _project(
+            hermetic_roots,
+            'resolution = "highest"\n'
+            'decision-order = "stable"\n'
+            'constraints = ["a<1"]\n'
+            'base-group = "file-base"\n'
+            'build-group = "file-build"\n'
+            'requires-python = ">=3.9"\n'
+            "uploaded-prior-to = 2020-01-01T00:00:00Z\n"
+            'dist-policy = "wheel-only"\n'
+            'build-policy = "build-remote"\n'
+            "build-requires-depth = 1\n",
+        )
+
+        kwargs = self._resolve_kwargs(
+            proj, [arg for pair in _DOWNLOAD_PROJECT_ARGV for arg in pair]
+        )
+        config = kwargs["config"]
+        assert isinstance(config, NabProjectConfig)
+
+        # --project-resolution keeps its own path into the resolver, so it is
+        # the one flag here that does not land in the merged config.
+        assert kwargs["resolution_strategy"] is ResolutionStrategy.LOWEST
+        assert config.decision_order is DecisionOrder.ARRIVAL
+
+        # Repeated --project-constraint accumulates, then replaces the list.
+        assert config.constraints == ("b<2", "c<3")
+        assert config.default_groups == ("dev",)
+        assert config.base_group == "main-deps"
+        assert config.build_group == "build-reqs"
+
+        assert config.requires_python == ">=3.11"
+        assert config.uploaded_prior_to == datetime(2024, 6, 1, tzinfo=timezone.utc)
+
+        assert config.dist_policy is DistPolicy.SDIST_ONLY
+        assert config.build_policy is BuildPolicy.NEVER
+        assert config.build_requires_depth == 3
+
+    def test_every_project_flag_has_a_case(self) -> None:
+        exercised = {flag for flag, _ in _DOWNLOAD_PROJECT_ARGV} | {"--project-mode"}
+        assert exercised == {
+            spec.cli_flag
+            for spec in OPTIONS
+            if spec.cli_flag is not None and spec.scope is Scope.PROJECT
+        }
+
+    def test_project_mode_specific_downloads_one_environment(
+        self, hermetic_roots: Path
+    ) -> None:
+        # Same as the lock path: --project-mode specific shadows the declared
+        # matrix, and --python names the environment to download for.
+        proj = _project(hermetic_roots, _UNIVERSAL_TOOL_NAB)
+        config = self._config(proj, ["--project-mode", "specific", "--python", "3.13"])
+        assert config.mode is ResolveMode.SPECIFIC
+        assert config.matrix is None
+        assert config.environment is not None
+        assert config.environment.python == "3.13"
+
+    def test_cache_dir_flag_reaches_the_resolve(self, hermetic_roots: Path) -> None:
+        proj = _project(hermetic_roots)
+        cache_dir = hermetic_roots / "wheels-cache"
+        kwargs = self._resolve_kwargs(proj, ["--cache-dir", str(cache_dir)])
+        assert kwargs["cache_dir"] == cache_dir
+
+    def test_no_cache_drops_the_cache_dir(self, hermetic_roots: Path) -> None:
+        # --no-cache wins over a --cache-dir on the same command line.
+        proj = _project(hermetic_roots)
+        kwargs = self._resolve_kwargs(
+            proj, ["--no-cache", "--cache-dir", str(hermetic_roots / "wheels-cache")]
+        )
+        assert kwargs["cache_dir"] is None
+
+    def test_no_workspace_discovery_leaves_members_undiscovered(
+        self, hermetic_roots: Path
+    ) -> None:
+        proj = _project(hermetic_roots, '[tool.nab.workspace]\nmembers = ["alpha"]\n')
+        _write(
+            hermetic_roots / "alpha" / "pyproject.toml",
+            '[project]\nname = "alpha"\nversion = "0"\ndependencies = []\n',
+        )
+        assert self._config(proj, []).workspace_member_names == frozenset({"alpha"})
+
+        assert (
+            self._config(proj, ["--no-workspace-discovery"]).workspace_member_names
+            == frozenset()
+        )
