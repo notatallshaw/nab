@@ -1347,7 +1347,10 @@ class VersionRange:
         )
 
     def _check_policy_compat(self, other: VersionRange) -> None:
-        """Refuse combining ranges with different pre-release policies."""
+        """Refuse combining ranges with different pre-release policies.
+
+        Callers test compatibility inline and call this when that test fails.
+        """
         if not isinstance(other, VersionRange):
             raise TypeError(f"expected VersionRange, got {type(other).__name__}")
         if self._prereleases_configured != other._prereleases_configured:
@@ -1533,7 +1536,11 @@ class VersionRange:
         >>> a.intersection(b) == SpecifierSet(">=1.0,<2.0").to_range()
         True
         """
-        self._check_policy_compat(other)
+        if (
+            type(other) is not VersionRange
+            or self._prereleases_configured != other._prereleases_configured
+        ):
+            self._check_policy_compat(other)
 
         configured = self._prereleases_configured
         new_bounds = tuple(intersect_ranges(self._bounds, other._bounds))
@@ -1577,7 +1584,11 @@ class VersionRange:
         >>> "1.5" in a.union(b)
         False
         """
-        self._check_policy_compat(other)
+        if (
+            type(other) is not VersionRange
+            or self._prereleases_configured != other._prereleases_configured
+        ):
+            self._check_policy_compat(other)
 
         configured = self._prereleases_configured
         new_bounds = tuple(_union_ranges(self._bounds, other._bounds))
@@ -1670,7 +1681,11 @@ class VersionRange:
         >>> a.difference(VersionRange.empty()) == a
         True
         """
-        self._check_policy_compat(other)
+        if (
+            type(other) is not VersionRange
+            or self._prereleases_configured != other._prereleases_configured
+        ):
+            self._check_policy_compat(other)
 
         # Subtracting a nothing-admitting set is a no-op; return self unchanged.
         if not other._bounds and not other._admit:
@@ -1821,7 +1836,11 @@ class VersionRange:
         >>> outer.is_subset(punctured)
         False
         """
-        self._check_policy_compat(other)
+        if (
+            type(other) is not VersionRange
+            or self._prereleases_configured != other._prereleases_configured
+        ):
+            self._check_policy_compat(other)
 
         # A live arbitrary admission has non-version strings as members, which
         # no bounds cover; only another live admission contains them.
@@ -1861,7 +1880,11 @@ class VersionRange:
         if self is other:
             return _EMPTY_REL if self.is_empty else _SUBSET_REL
 
-        self._check_policy_compat(other)
+        if (
+            type(other) is not VersionRange
+            or self._prereleases_configured != other._prereleases_configured
+        ):
+            self._check_policy_compat(other)
 
         if self._is_plain() and other._is_plain():
             # On plain ranges the bounds decide membership, so equal bounds
@@ -1890,7 +1913,11 @@ class VersionRange:
         True
         """
         # Type-guards a non-VersionRange other before delegating to is_subset.
-        self._check_policy_compat(other)
+        if (
+            type(other) is not VersionRange
+            or self._prereleases_configured != other._prereleases_configured
+        ):
+            self._check_policy_compat(other)
         return other.is_subset(self)
 
     def is_disjoint(self, other: VersionRange) -> bool:
@@ -1914,7 +1941,11 @@ class VersionRange:
         ... )
         True
         """
-        self._check_policy_compat(other)
+        if (
+            type(other) is not VersionRange
+            or self._prereleases_configured != other._prereleases_configured
+        ):
+            self._check_policy_compat(other)
 
         # Plain ranges: disjointness is an empty bounds intersection.
         if self._is_plain() and other._is_plain():
