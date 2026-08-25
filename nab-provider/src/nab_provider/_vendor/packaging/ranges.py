@@ -1325,9 +1325,6 @@ class VersionRange:
 
         return instance
 
-    def _has_literals(self) -> bool:
-        return bool(self._admit) or bool(self._reject)
-
     def _arbitrary_active(self) -> bool:
         """True when ``_admit_arbitrary`` actually admits non-version strings.
 
@@ -1343,7 +1340,8 @@ class VersionRange:
         bounds-only fast paths in :meth:`is_subset` and :meth:`is_disjoint`.
         """
         return (
-            not self._has_literals()
+            not self._admit
+            and not self._reject
             and not self._admit_arbitrary
             and self._prereleases_configured is not False
         )
@@ -1548,7 +1546,7 @@ class VersionRange:
             self._admit_arbitrary and other._admit_arbitrary and bool(new_bounds)
         )
 
-        if not self._has_literals() and not other._has_literals():
+        if not (self._admit or self._reject or other._admit or other._reject):
             return self._build(
                 new_bounds,
                 admit_arbitrary=combined_arb,
@@ -1596,7 +1594,7 @@ class VersionRange:
             # Nothing widened, so keeping the flags keeps ``r | r == r``.
             combined_arb = self._admit_arbitrary or other._admit_arbitrary
 
-        if not self._has_literals() and not other._has_literals():
+        if not (self._admit or self._reject or other._admit or other._reject):
             return self._build(
                 new_bounds,
                 admit_arbitrary=combined_arb,
@@ -1697,7 +1695,7 @@ class VersionRange:
         # admission neither operand had.
         combined_arb = self._admit_arbitrary and new_bounds == self._bounds
 
-        if not self._has_literals() and not other._has_literals():
+        if not (self._admit or self._reject or other._admit or other._reject):
             return self._build(
                 new_bounds,
                 admit_arbitrary=combined_arb,
