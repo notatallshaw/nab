@@ -424,9 +424,9 @@ def _bisect_predicate(
     The predicate must be monotonic (false runs then true runs). Equivalent to
     ``bisect.bisect_left`` on the mapped booleans, done by hand because the
     ``key`` parameter for :mod:`bisect` only exists on Python 3.10 and later.
-    ``project`` maps a probed item to the version it sorts by; ``None`` means
-    the items sort by themselves, and a probe that is already a
-    :class:`~packaging.version.Version` skips the call.
+    ``project`` maps a probed item to the version it sorts by; ``None`` maps it
+    with :func:`_project_plain`, skipping the call for a probe that is already a
+    :class:`~packaging.version.Version`.
     """
     low, high = 0, len(items)
     while low < high:
@@ -475,9 +475,9 @@ def _partition_indexes(
 def _project_plain(item: Any) -> Version:  # noqa: ANN401
     """The version a key-less entry of an ordered sequence sorts by.
 
-    An item that does not parse cannot sit in version order at all, which is a
-    broken precondition rather than a non-match, so this raises rather than
-    dropping the item the way :meth:`VersionRange.filter` drops it.
+    An item that does not parse cannot sit in version order at all, so this
+    raises on the broken precondition rather than dropping the item the way
+    :meth:`VersionRange.filter` drops a non-match.
     """
     parsed = item if isinstance(item, Version) else coerce_version(item)
     if parsed is None:
@@ -494,8 +494,8 @@ def _make_project(
     """Build the item-to-:class:`~packaging.version.Version` map for a sorted walk.
 
     The bisections compare against bound predicates that only accept a
-    :class:`~packaging.version.Version`, so a projected item is coerced.
-    Without a ``key`` that map is :func:`_project_plain`.
+    :class:`~packaging.version.Version`, so the map coerces anything else.
+    Without a ``key`` it is :func:`_project_plain`.
     """
     if key is None:
         return _project_plain
@@ -2144,8 +2144,8 @@ class VersionRange:
         """
         bounds = tuple(reversed(self._bounds)) if descending else self._bounds
 
-        # Without a key an entry is the version it sorts by, so the bisections
-        # project only an entry that is not already one.
+        # Passing no projection lets the bisections skip the call for an entry
+        # that is already a Version.
         bisect_project = None if key is None else project
 
         if prereleases is True:
