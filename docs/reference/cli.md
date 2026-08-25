@@ -35,10 +35,14 @@ Resolve and emit a lockfile or pin list. Three formats:
 
 * `--format pylock` (default) writes a [PEP 751] `pylock.toml`.
 * `--format requirements` writes a pip-compatible
-  `requirements.txt` with one `--hash=<algo>:<digest>` line per
-  recorded digest.
-* `--format requirements-without-hashes` writes a sorted
-  `name==version` list with no hashes.
+  `requirements.txt`, sorted by name. An index pin is
+  `name==version` with one `--hash=<algo>:<digest>` line per
+  recorded digest; a local, VCS or archive pin renders as a URL
+  line.
+* `--format requirements-without-hashes` writes the same output
+  with the `--hash` lines dropped, so an index pin is a bare
+  `name==version`. Local, VCS and archive pins are unchanged, so
+  an archive pin still carries its digest in the URL fragment.
 
 Dependency-group selection (PEP 735):
 

@@ -1,7 +1,9 @@
 """Check the published CLI pages against what the CLI does.
 
-The reference page lists each subcommand's flags, env vars and statuses; the
-conflicts page quotes refusal lines verbatim.
+The reference page lists each subcommand's flags, env vars and statuses, and
+the conflicts page quotes refusal lines verbatim. The reference and lockfile
+pages, ``nab lock --help`` and the README each summarise the lock formats, so
+those are checked against the emitters.
 
 These tests read ``docs/``, which the umbrella sdist does not ship, so the
 module is on that sdist's exclude list in pyproject.toml.
@@ -13,7 +15,7 @@ import inspect
 import io
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -24,10 +26,26 @@ from nab._lock import lock
 from nab.cli import app
 from nab.output import ColorChoice, Verbosity, parse_output_options
 from nab_project.config_sources import OPTIONS
+from nab_project.lockfile import (
+    ArchivePin,
+    IndexPin,
+    LocalPin,
+    LockInput,
+    PinShape,
+    TargetLock,
+    VcsPin,
+    WheelArtifact,
+    write_requirements_with_hashes,
+    write_requirements_without_hashes,
+)
+from nab_provider.tags import PlatformSpec
+from nab_provider.target import ResolveTarget
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 _CLI_REFERENCE = _DOCS / "reference" / "cli.md"
+_LOCKFILE_REFERENCE = _DOCS / "reference" / "lockfile.md"
 _CONFLICTS_DOC = _DOCS / "explanation" / "conflicts.md"
+_README = Path(__file__).resolve().parents[1] / "README.md"
 
 _SUBCOMMANDS = ("lock", "download", "config", "cache")
 
@@ -68,6 +86,11 @@ def _names_flag(text: str, flag: str) -> bool:
     if flag.startswith("--project-"):
         forms.append("--project-*")
     return any(re.search(rf"`{re.escape(form)}(?![\w-])", text) for form in forms)
+
+
+def _unwrapped(text: str) -> str:
+    """``text`` with its line wrapping removed, so a claim matches on one line."""
+    return " ".join(text.split())
 
 
 def _doc_paragraph(text: str, needle: str) -> str:
@@ -471,7 +494,7 @@ class TestConflictsDocForkingPolicies:
     def _unwrapped_claim(self, needle: str) -> str:
         """The page's paragraph holding ``needle``, unwrapped so a claim matches."""
         doc = _CONFLICTS_DOC.read_text(encoding="utf-8")
-        return " ".join(_doc_paragraph(doc, needle).split())
+        return _unwrapped(_doc_paragraph(doc, needle))
 
     def test_exactly_one_forks_co_selected_members(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -496,3 +519,163 @@ class TestConflictsDocForkingPolicies:
 
         claim = self._unwrapped_claim("The require-one policies")
         assert "`at-least-one` permits it" in claim
+
+
+_WITHOUT_HASHES = "requirements-without-hashes"
+_ARCHIVE_URL = "https://example.com/my-archive-1.0.tar.gz"
+_ARCHIVE_DIGEST = "c" * 64
+_COMMIT = "d" * 40
+_WHEEL_DIGEST = "a" * 64
+_TARGET = ResolveTarget.for_declared(
+    python_version="3.11", spec=PlatformSpec("linux_x86_64")
+)
+_NAME_EQUALS_VERSION = re.compile(r"[^\s@]+==\S+")
+
+
+def _pins_by_shape(directory: Path) -> dict[str, PinShape]:
+    """One pin per source shape, keyed by the name the docs give the shape."""
+    return {
+        "index": IndexPin(
+            name="fastapi",
+            version="0.109.1",
+            index="pypi",
+            wheels=(
+                WheelArtifact(
+                    filename="fastapi-0.109.1-py3-none-any.whl",
+                    url="https://example.com/fastapi-0.109.1-py3-none-any.whl",
+                    hashes=(("sha256", _WHEEL_DIGEST),),
+                ),
+            ),
+        ),
+        "archive": ArchivePin(
+            name="my-archive",
+            version="1.0",
+            url=_ARCHIVE_URL,
+            hashes=(("sha256", _ARCHIVE_DIGEST),),
+        ),
+        "local": LocalPin(name="my-fork", version="2.0", path=str(directory)),
+        "vcs": VcsPin(
+            name="some-pkg",
+            version="0.0.0+vcs",
+            repo_url=f"git+https://github.com/me/x.git@{_COMMIT}",
+            bare_repo_url="https://github.com/me/x.git",
+            commit_id=_COMMIT,
+        ),
+    }
+
+
+def _requirements_lines(pins: Iterable[PinShape], *, with_hashes: bool) -> list[str]:
+    """The requirements lines ``pins`` produce in one of the two formats."""
+    lock_input = LockInput(
+        targets={
+            _TARGET.label: TargetLock(
+                target=_TARGET, pins={pin.name: pin for pin in pins}
+            )
+        }
+    )
+    write = (
+        write_requirements_with_hashes
+        if with_hashes
+        else write_requirements_without_hashes
+    )
+    return write(lock_input).splitlines()
+
+
+def _format_bullets(section: str) -> str:
+    """The ``--format`` bullets of a reference section, joined into one string."""
+    return " ".join(
+        chunk for chunk in _prose_chunks(section) if chunk.startswith("* `--format")
+    )
+
+
+def _format_summaries() -> dict[str, str]:
+    """The user-facing ``nab lock --format`` summaries, keyed by where each lives.
+
+    Each reference page carries a bullet per format, ``nab lock``'s docstring is
+    its ``--help`` text, and the README is the distribution's PyPI description.
+    """
+    preamble = _LOCKFILE_REFERENCE.read_text(encoding="utf-8").partition("\n## ")[0]
+    readme = _README.read_text(encoding="utf-8")
+
+    summaries = {
+        "cli.md": _format_bullets(_reference_section("## `nab lock`")),
+        "lockfile.md": _format_bullets(preamble),
+        "nab lock --help": _unwrapped(
+            _doc_paragraph(inspect.getdoc(lock) or "", "Formats:")
+        ),
+        "README.md": _unwrapped(_doc_paragraph(readme, _WITHOUT_HASHES)),
+    }
+
+    for source, summary in summaries.items():
+        assert _WITHOUT_HASHES in summary, f"{source} no longer names the format"
+
+    return summaries
+
+
+class TestLockFormatSummaries:
+    """The ``nab lock --format`` summaries describe what the emitters print.
+
+    Only an index pin renders as ``name==version``; a local, VCS or archive
+    pin is a URL line, and an archive pin's URL carries its digest in both
+    formats.
+    """
+
+    def test_only_an_index_pin_renders_name_equals_version(
+        self, tmp_path: Path
+    ) -> None:
+        """One pin of each shape gives one pinned line and three URL lines."""
+        shapes = _pins_by_shape(tmp_path)
+        assert _requirements_lines(shapes.values(), with_hashes=False) == [
+            "fastapi==0.109.1",
+            f"my-archive @ {_ARCHIVE_URL}#sha256={_ARCHIVE_DIGEST}",
+            f"my-fork @ {tmp_path.resolve().as_uri()}",
+            f"some-pkg @ git+https://github.com/me/x.git@{_COMMIT}",
+        ]
+
+    def test_dropping_the_hash_lines_leaves_the_url_lines_alone(
+        self, tmp_path: Path
+    ) -> None:
+        """Only the index pin's line differs between the two formats."""
+        shapes = _pins_by_shape(tmp_path)
+        hashed = _requirements_lines(shapes.values(), with_hashes=True)
+        plain = _requirements_lines(shapes.values(), with_hashes=False)
+
+        assert hashed[:2] == [
+            "fastapi==0.109.1 \\",
+            f"    --hash=sha256:{_WHEEL_DIGEST}",
+        ]
+        assert hashed[2:] == plain[1:]
+
+    def test_no_summary_calls_a_format_hash_free(self, tmp_path: Path) -> None:
+        """An archive pin keeps its digest, so neither format drops every hash."""
+        plain = _requirements_lines(
+            _pins_by_shape(tmp_path).values(), with_hashes=False
+        )
+        assert any(f"sha256={_ARCHIVE_DIGEST}" in line for line in plain)
+
+        for source, summary in _format_summaries().items():
+            assert "no hashes" not in summary.lower(), source
+
+    def test_a_summary_naming_name_equals_version_says_which_pins(self) -> None:
+        """The phrase covers index pins only, so a summary using it says so."""
+        for source, summary in _format_summaries().items():
+            if "name==version" in summary.replace("`", ""):
+                assert "index pin" in summary.lower(), source
+
+    def test_reference_pages_name_every_shape_that_renders_as_a_url(
+        self, tmp_path: Path
+    ) -> None:
+        """Every shape whose line is a URL is named on both reference pages."""
+        url_shapes = {
+            shape
+            for shape, pin in _pins_by_shape(tmp_path).items()
+            if not _NAME_EQUALS_VERSION.fullmatch(
+                _requirements_lines([pin], with_hashes=False)[0]
+            )
+        }
+        assert url_shapes == {"archive", "local", "vcs"}
+
+        summaries = _format_summaries()
+        for source in ("cli.md", "lockfile.md"):
+            for shape in sorted(url_shapes):
+                assert shape in summaries[source].lower(), f"{source} omits {shape}"

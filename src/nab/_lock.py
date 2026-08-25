@@ -148,10 +148,11 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
 ) -> None:
     """Resolve dependencies and emit a lockfile or pin list.
 
-    Formats: ``pylock`` (PEP 751), ``requirements`` (pip-style with
-    ``--hash`` lines), ``requirements-without-hashes`` (plain
-    ``name==version``).  ``--output`` defaults to ``pylock.toml`` or
-    ``requirements.txt``; ``--output -`` writes to stdout.
+    Formats: ``pylock`` (PEP 751), ``requirements`` (pip-style, with
+    ``--hash`` lines on index pins), ``requirements-without-hashes``
+    (the same without those lines).  ``--output`` defaults to
+    ``pylock.toml`` or ``requirements.txt``; ``--output -`` writes to
+    stdout.
 
     ``--groups`` / ``--all-groups`` select PEP 735 dependency groups;
     ``--extras`` / ``--all-extras`` select entries from

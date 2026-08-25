@@ -1,10 +1,10 @@
 """Pip-compatible ``requirements.txt`` rendering for a finished resolve.
 
 Produces text that pip's hash-checking mode can install (with
-``--hash=sha256:...`` lines) or a plain ``name==version`` list when
-hashes are not required.  Per-tuple resolves render as commented
-sections; pip cannot install a single requirements.txt across
-multiple ``(python, platform)`` tuples in hash-checking mode.
+``--hash=sha256:...`` lines on index pins) or the same text without
+those lines.  Per-tuple resolves render as commented sections; pip
+cannot install a single requirements.txt across multiple
+``(python, platform)`` tuples in hash-checking mode.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def write_requirements_with_hashes(
 ) -> str:
     """Render ``lock_input`` as a pip-compatible requirements.txt.
 
-    Each line is ``name==version`` followed by one ``--hash=<algo>:<digest>``
+    An index pin is ``name==version`` followed by one ``--hash=<algo>:<digest>``
     per recorded digest, in the format pip's hash-checking mode accepts.  The
     hash lines are sorted, so the output does not depend on artefact order.
     Local and VCS pins are emitted as ``name @ <url>`` lines without hashes
@@ -53,12 +53,12 @@ def write_requirements_with_hashes(
 def write_requirements_without_hashes(
     lock_input: LockInput, *, output_path: str | os.PathLike[str] | None = None
 ) -> str:
-    """Render ``lock_input`` as a plain ``name==version`` list.
+    """Render ``lock_input`` without the ``--hash=sha256:...`` lines.
 
-    Same shape as :func:`write_requirements_with_hashes` but without
-    the ``--hash=sha256:...`` lines.  Local, VCS, and archive pins render
-    the same in both variants.  Returns the text and, when ``output_path``
-    is provided, atomically writes it.
+    Same shape as :func:`write_requirements_with_hashes`, so an index pin
+    is a bare ``name==version``; local, VCS, and archive pins render the
+    same in both variants.  Returns the text and, when ``output_path`` is
+    provided, atomically writes it.
     """
     return _render_requirements(lock_input, with_hashes=False, output_path=output_path)
 

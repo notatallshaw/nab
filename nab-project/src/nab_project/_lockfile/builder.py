@@ -642,8 +642,8 @@ def require_artifact_hashes(lock_input: LockInput) -> None:
     """Raise :class:`MissingHashError` if a pinned artefact has no hash.
 
     PEP 751 and pip's hash-checking mode each need at least one of
-    sha256/sha384/sha512 per artefact.  The plain ``name==version``
-    writer records no hash and does not call this.
+    sha256/sha384/sha512 per artefact.  :func:`write_requirements_without_hashes`
+    emits no ``--hash`` lines and does not call this.
     """
     from ..lockfile import ACCEPTED_HASH_ALGORITHMS, IndexPin
 
