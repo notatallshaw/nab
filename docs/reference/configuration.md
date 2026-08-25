@@ -664,9 +664,11 @@ editable by default (see [Lock a workspace](../how-to/workspaces.md)).
 `subdirectory` locates the package below `path`, for monorepo
 layouts.
 
-Reading static dependencies from a local pyproject.toml works at
-every `build-policy` level.  Dynamic dependencies require
-`build-policy = "build-local"` or `"build-remote"`.
+Reading static metadata from a local pyproject.toml works at every
+`build-policy` level.  When the static read comes up empty, nab builds
+the checkout instead, which needs `build-policy = "build-local"` or
+`"build-remote"`.  See [Build policy](build-policy.md) for what counts
+as empty.
 
 ## Pinned VCS sources
 
@@ -678,8 +680,9 @@ beyond `vcs.policy = "allow"`, the URL's scheme must be listed in
 `vcs.allowed-schemes` and its repository in `vcs.allowed-repos`, both
 empty by default so each denies every URL until an entry is added, and
 the URL must pin a 40-char commit hash unless `vcs.require-pin = false`.
-Reading static dependencies works at any `build-policy`.  Dynamic
-dependencies on a VCS clone require `build-policy = "build-remote"`.
+Reading static metadata works at any `build-policy`.  Building a clone
+whose static read comes up empty needs `build-policy = "build-remote"`;
+see [Build policy](build-policy.md).
 
 ```toml
 [[tool.nab.vcs-sources]]
@@ -703,8 +706,9 @@ url  = "https://example.com/my-fork-1.0.tar.gz#sha256=<hex>"
 Only `.tar.gz` source archives are supported; a wheel or other
 format is refused at parse.  A `&subdirectory=` fragment locates the
 package below the archive root, for monorepo layouts.  Reading static
-dependencies works at any `build-policy`; dynamic dependencies require
-`build-policy = "build-remote"`, like a remote sdist.
+metadata works at any `build-policy`.  Building an extracted tree whose
+static read comes up empty needs `build-policy = "build-remote"`, like a
+remote sdist; see [Build policy](build-policy.md).
 
 The URL is read by its own scheme, whatever the configured indexes use:
 a `file://` archive is read from disk, and any other archive is fetched
