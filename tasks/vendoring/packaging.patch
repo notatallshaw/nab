@@ -2638,7 +2638,7 @@ index 0000000..a5e2740
 +    def __repr__(self) -> str:
 +        return f"<{type(self).__name__} {_markersets.describe(self._tree)!r}>"
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
-index 4fbf48e..a4a5912 100644
+index 4fbf48e..67b99ca 100644
 --- a/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
 +++ b/nab-provider/src/nab_provider/_vendor/packaging/ranges.py
 @@ -24,6 +24,7 @@ import typing
@@ -3013,7 +3013,7 @@ index 4fbf48e..a4a5912 100644
  
          if admit and reject:
              admit = admit - reject
-@@ -1044,16 +1334,15 @@ class VersionRange:
+@@ -1044,22 +1334,18 @@ class VersionRange:
          instance._admit_arbitrary = admit_arbitrary
          instance._prereleases_configured = prereleases_configured
  
@@ -3036,7 +3036,33 @@ index 4fbf48e..a4a5912 100644
  
          return instance
  
-@@ -1105,8 +1394,7 @@ class VersionRange:
+-    def _has_literals(self) -> bool:
+-        return bool(self._admit) or bool(self._reject)
+-
+     def _arbitrary_active(self) -> bool:
+         """True when ``_admit_arbitrary`` actually admits non-version strings.
+ 
+@@ -1075,13 +1361,17 @@ class VersionRange:
+         bounds-only fast paths in :meth:`is_subset` and :meth:`is_disjoint`.
+         """
+         return (
+-            not self._has_literals()
++            not self._admit
++            and not self._reject
+             and not self._admit_arbitrary
+             and self._prereleases_configured is not False
+         )
+ 
+     def _check_policy_compat(self, other: VersionRange) -> None:
+-        """Refuse combining ranges with different pre-release policies."""
++        """Refuse combining ranges with different pre-release policies.
++
++        Callers test compatibility inline and call this when that test fails.
++        """
+         if not isinstance(other, VersionRange):
+             raise TypeError(f"expected VersionRange, got {type(other).__name__}")
+         if self._prereleases_configured != other._prereleases_configured:
+@@ -1105,8 +1395,7 @@ class VersionRange:
          if not self._pre_region:
              return other._pre_region
  
@@ -3046,7 +3072,7 @@ index 4fbf48e..a4a5912 100644
          return tuple(_union_ranges(self._pre_region, other._pre_region))
  
      def _with_policy(
-@@ -1131,7 +1419,7 @@ class VersionRange:
+@@ -1131,7 +1420,7 @@ class VersionRange:
          >>> "1.0" in VersionRange.empty()
          False
          """
@@ -3055,7 +3081,7 @@ index 4fbf48e..a4a5912 100644
  
      @classmethod
      def full(
-@@ -1156,6 +1444,7 @@ class VersionRange:
+@@ -1156,6 +1445,7 @@ class VersionRange:
              FULL_RANGE,
              admit_arbitrary=admit_arbitrary,
              prereleases_configured=prereleases,
@@ -3063,7 +3089,7 @@ index 4fbf48e..a4a5912 100644
          )
  
      @classmethod
-@@ -1189,6 +1478,73 @@ class VersionRange:
+@@ -1189,6 +1479,73 @@ class VersionRange:
              prereleases_configured=prereleases,
          )
  
@@ -3137,7 +3163,27 @@ index 4fbf48e..a4a5912 100644
      def intersection(self, other: VersionRange) -> VersionRange:
          """Range containing exactly the versions in both self and other.
  
-@@ -1219,6 +1575,7 @@ class VersionRange:
+@@ -1200,7 +1557,11 @@ class VersionRange:
+         >>> a.intersection(b) == SpecifierSet(">=1.0,<2.0").to_range()
+         True
+         """
+-        self._check_policy_compat(other)
++        if (
++            type(other) is not VersionRange
++            or self._prereleases_configured != other._prereleases_configured
++        ):
++            self._check_policy_compat(other)
+ 
+         configured = self._prereleases_configured
+         new_bounds = tuple(intersect_ranges(self._bounds, other._bounds))
+@@ -1213,12 +1574,13 @@ class VersionRange:
+             self._admit_arbitrary and other._admit_arbitrary and bool(new_bounds)
+         )
+ 
+-        if not self._has_literals() and not other._has_literals():
++        if not (self._admit or self._reject or other._admit or other._reject):
+             return self._build(
+                 new_bounds,
                  admit_arbitrary=combined_arb,
                  pre_region=new_region,
                  prereleases_configured=configured,
@@ -3145,7 +3191,27 @@ index 4fbf48e..a4a5912 100644
              )
  
          return self._combine_literals(
-@@ -1266,6 +1623,7 @@ class VersionRange:
+@@ -1243,7 +1605,11 @@ class VersionRange:
+         >>> "1.5" in a.union(b)
+         False
+         """
+-        self._check_policy_compat(other)
++        if (
++            type(other) is not VersionRange
++            or self._prereleases_configured != other._prereleases_configured
++        ):
++            self._check_policy_compat(other)
+ 
+         configured = self._prereleases_configured
+         new_bounds = tuple(_union_ranges(self._bounds, other._bounds))
+@@ -1260,12 +1626,13 @@ class VersionRange:
+             # Nothing widened, so keeping the flags keeps ``r | r == r``.
+             combined_arb = self._admit_arbitrary or other._admit_arbitrary
+ 
+-        if not self._has_literals() and not other._has_literals():
++        if not (self._admit or self._reject or other._admit or other._reject):
+             return self._build(
+                 new_bounds,
                  admit_arbitrary=combined_arb,
                  pre_region=new_region,
                  prereleases_configured=configured,
@@ -3153,7 +3219,7 @@ index 4fbf48e..a4a5912 100644
              )
  
          return self._combine_literals(
-@@ -1309,6 +1667,7 @@ class VersionRange:
+@@ -1309,6 +1676,7 @@ class VersionRange:
              admit_arbitrary=self._admit_arbitrary,
              pre_region=(),
              prereleases_configured=self._prereleases_configured,
@@ -3161,7 +3227,27 @@ index 4fbf48e..a4a5912 100644
          )
  
      def difference(self, other: VersionRange) -> VersionRange:
-@@ -1365,6 +1724,7 @@ class VersionRange:
+@@ -1334,7 +1702,11 @@ class VersionRange:
+         >>> a.difference(VersionRange.empty()) == a
+         True
+         """
+-        self._check_policy_compat(other)
++        if (
++            type(other) is not VersionRange
++            or self._prereleases_configured != other._prereleases_configured
++        ):
++            self._check_policy_compat(other)
+ 
+         # Subtracting a nothing-admitting set is a no-op; return self unchanged.
+         if not other._bounds and not other._admit:
+@@ -1359,12 +1731,13 @@ class VersionRange:
+         # admission neither operand had.
+         combined_arb = self._admit_arbitrary and new_bounds == self._bounds
+ 
+-        if not self._has_literals() and not other._has_literals():
++        if not (self._admit or self._reject or other._admit or other._reject):
+             return self._build(
+                 new_bounds,
                  admit_arbitrary=combined_arb,
                  pre_region=new_region,
                  prereleases_configured=self._prereleases_configured,
@@ -3169,7 +3255,7 @@ index 4fbf48e..a4a5912 100644
              )
  
          return self._combine_literals(
-@@ -1386,7 +1746,11 @@ class VersionRange:
+@@ -1386,7 +1759,11 @@ class VersionRange:
          pre_region: tuple[Interval, ...],
          prereleases_configured: bool | None,
      ) -> VersionRange:
@@ -3182,7 +3268,7 @@ index 4fbf48e..a4a5912 100644
          admits: set[str] = set()
          rejects: set[str] = set()
  
-@@ -1414,6 +1778,7 @@ class VersionRange:
+@@ -1414,6 +1791,7 @@ class VersionRange:
              admit_arbitrary=admit_arbitrary,
              pre_region=pre_region,
              prereleases_configured=prereleases_configured,
@@ -3190,7 +3276,7 @@ index 4fbf48e..a4a5912 100644
          )
  
      def _matches_literal(self, literal: str) -> bool:
-@@ -1469,6 +1834,15 @@ class VersionRange:
+@@ -1469,8 +1847,21 @@ class VersionRange:
          False
          >>> VersionRange.empty().is_subset(outer)
          True
@@ -3204,9 +3290,16 @@ index 4fbf48e..a4a5912 100644
 +        >>> outer.is_subset(punctured)
 +        False
          """
-         self._check_policy_compat(other)
+-        self._check_policy_compat(other)
++        if (
++            type(other) is not VersionRange
++            or self._prereleases_configured != other._prereleases_configured
++        ):
++            self._check_policy_compat(other)
  
-@@ -1479,12 +1853,52 @@ class VersionRange:
+         # A live arbitrary admission has non-version strings as members, which
+         # no bounds cover; only another live admission contains them.
+@@ -1479,12 +1870,56 @@ class VersionRange:
  
          # Plain ranges: subset reduces to bounds containment, no algebra needed.
          if self._is_plain() and other._is_plain():
@@ -3242,7 +3335,11 @@ index 4fbf48e..a4a5912 100644
 +        if self is other:
 +            return _EMPTY_REL if self.is_empty else _SUBSET_REL
 +
-+        self._check_policy_compat(other)
++        if (
++            type(other) is not VersionRange
++            or self._prereleases_configured != other._prereleases_configured
++        ):
++            self._check_policy_compat(other)
 +
 +        if self._is_plain() and other._is_plain():
 +            # On plain ranges the bounds decide membership, so equal bounds
@@ -3260,7 +3357,20 @@ index 4fbf48e..a4a5912 100644
      def is_superset(self, other: VersionRange) -> bool:
          """Return whether every member of other is also a member of self.
  
-@@ -1515,12 +1929,19 @@ class VersionRange:
+@@ -1499,7 +1934,11 @@ class VersionRange:
+         True
+         """
+         # Type-guards a non-VersionRange other before delegating to is_subset.
+-        self._check_policy_compat(other)
++        if (
++            type(other) is not VersionRange
++            or self._prereleases_configured != other._prereleases_configured
++        ):
++            self._check_policy_compat(other)
+         return other.is_subset(self)
+ 
+     def is_disjoint(self, other: VersionRange) -> bool:
+@@ -1515,12 +1954,23 @@ class VersionRange:
          True
          >>> a.is_disjoint(SpecifierSet(">=1.5,<2.5").to_range())
          False
@@ -3272,7 +3382,12 @@ index 4fbf48e..a4a5912 100644
 +        ... )
 +        True
          """
-         self._check_policy_compat(other)
+-        self._check_policy_compat(other)
++        if (
++            type(other) is not VersionRange
++            or self._prereleases_configured != other._prereleases_configured
++        ):
++            self._check_policy_compat(other)
  
          # Plain ranges: disjointness is an empty bounds intersection.
          if self._is_plain() and other._is_plain():
@@ -3281,7 +3396,7 @@ index 4fbf48e..a4a5912 100644
          return self.intersection(other).is_empty
  
      def _same_releases(self, other: VersionRange) -> bool:
-@@ -1539,6 +1960,8 @@ class VersionRange:
+@@ -1539,6 +1989,8 @@ class VersionRange:
          iterable: Iterable[UnparsedVersionVar],
          prereleases: bool | None = None,
          key: None = ...,
@@ -3290,7 +3405,7 @@ index 4fbf48e..a4a5912 100644
      ) -> Iterator[UnparsedVersionVar]: ...
  
      @typing.overload
-@@ -1547,6 +1970,28 @@ class VersionRange:
+@@ -1547,6 +1999,28 @@ class VersionRange:
          iterable: Iterable[T],
          prereleases: bool | None = None,
          key: Callable[[T], UnparsedVersion] = ...,
@@ -3319,7 +3434,7 @@ index 4fbf48e..a4a5912 100644
      ) -> Iterator[T]: ...
  
      def filter(
-@@ -1554,6 +1999,8 @@ class VersionRange:
+@@ -1554,6 +2028,8 @@ class VersionRange:
          iterable: Iterable[Any],
          prereleases: bool | None = None,
          key: Callable[[Any], Version | str] | None = None,
@@ -3328,7 +3443,7 @@ index 4fbf48e..a4a5912 100644
      ) -> Iterator[Any]:
          """Yield items from iterable whose version falls inside the range.
  
-@@ -1564,13 +2011,56 @@ class VersionRange:
+@@ -1564,13 +2040,56 @@ class VersionRange:
          ``prereleases=True`` would yield it). A flushed buffer comes after
          every in-place yield, so the output is not version-sorted.
  
@@ -3386,7 +3501,7 @@ index 4fbf48e..a4a5912 100644
          region: tuple[Interval, ...] = ()
          if prereleases is None:
              # The region applies only under the autodetect default; a configured
-@@ -1578,19 +2068,97 @@ class VersionRange:
+@@ -1578,19 +2097,97 @@ class VersionRange:
              prereleases = self._prereleases_configured
              region = self._pre_region
  
@@ -3489,7 +3604,7 @@ index 4fbf48e..a4a5912 100644
      def _filter_with_admission(
          self,
          iterable: Iterable[Any],
-@@ -1678,6 +2246,123 @@ class VersionRange:
+@@ -1678,6 +2275,123 @@ class VersionRange:
          if not found_final:
              yield from all_nonfinal
  
