@@ -25,6 +25,7 @@ from nab_provider._provider.listing_diagnosis import (
 )
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.errors import InvalidUploadTimeError
 from nab_provider.overrides import IndexOverride
 from nab_provider.provider import (
     DistPolicy,
@@ -606,19 +607,34 @@ class TestTheInRangeLead:
 class TestSharedPredicates:
     """The rungs the walk and the filter read from one body."""
 
-    def test_the_filter_reads_the_cause_the_walk_reads(self) -> None:
-        """``_excluded_by_python_or_time`` is the counting half of one function."""
+    def test_the_walk_reads_the_filter_own_rung(self) -> None:
+        """One body answers both, so the two cannot disagree about a cause."""
         provider = build([wheel("1.0", upload_time=AFTER)], uploaded_prior_to=CUTOFF)
         policy = listing_mod.listing_policy(provider, "pkg")
         dist = wheel("1.0", upload_time=AFTER)
 
-        cause = listing_mod.python_or_time_cause(
-            provider, "pkg", Version("1.0"), dist, policy
-        )
-        assert cause is DropCause.UPLOAD_TIME_AFTER_CUTOFF
-        assert provider.stats.excluded_by_time == 0
-
-        assert listing_mod._excluded_by_python_or_time(
-            provider, "pkg", Version("1.0"), dist, policy
+        assert (
+            listing_mod.python_or_time_cause(
+                provider, "pkg", Version("1.0"), dist, policy
+            )
+            is DropCause.UPLOAD_TIME_AFTER_CUTOFF
         )
         assert provider.stats.excluded_by_time == 1
+
+    def test_the_walk_answers_where_the_filter_refuses_the_run(self) -> None:
+        """A naive stamp is a cause to the walk and an error to the filter."""
+        naive = wheel("1.0", upload_time="2020-01-01T00:00:00")
+        provider = build([naive], uploaded_prior_to=CUTOFF)
+        policy = listing_mod.listing_policy(provider, "pkg")
+
+        with pytest.raises(InvalidUploadTimeError):
+            listing_mod.python_or_time_cause(
+                provider, "pkg", Version("1.0"), naive, policy
+            )
+
+        assert (
+            diagnosis_mod.python_or_time_verdict(
+                provider, "pkg", Version("1.0"), naive, policy
+            )
+            is DropCause.UPLOAD_TIME_NAIVE
+        )

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from nab_provider.records import SdistFile, WheelFile
 
+from ..errors import InvalidUploadTimeError
 from ..policy import DistPolicy
 from . import listing as _listing
 from .listing import DropCause
@@ -257,9 +258,7 @@ def _base_pass(
         if effective is DistPolicy.SDIST_INSTALL:
             sdist_install.add(version)
 
-        cause = _listing.python_or_time_cause(
-            provider, normalized, version, dist, policy
-        )
+        cause = python_or_time_verdict(provider, normalized, version, dist, policy)
         if cause is not None:
             dropped.append(
                 _detailed(provider, normalized, version, dist, cause, policy)
@@ -297,6 +296,31 @@ def _tag_pass(
         kept.add(version)
 
     return dropped, kept
+
+
+def python_or_time_verdict(
+    provider: Provider,
+    normalized: str,
+    version: Version,
+    dist: DistFile,
+    policy: _ListingPolicy,
+) -> DropCause | None:
+    """Answer the filter's Requires-Python and upload-time question, totally.
+
+    Calls the filter's own
+    :func:`~nab_provider._provider.listing.python_or_time_cause` rather than
+    a copy of it, so the two cannot disagree, and turns the refusal it
+    raises on a timezone-naive upload time back into the cause it came
+    from.  The walk runs inside an error path: an exception here would lose
+    the report it was building.  The counters that call raises are taken
+    back by :meth:`~nab_provider.provider.Provider.diagnose_listing`.
+    """
+    try:
+        return _listing.python_or_time_cause(
+            provider, normalized, version, dist, policy
+        )
+    except InvalidUploadTimeError:
+        return DropCause.UPLOAD_TIME_NAIVE
 
 
 def _record(

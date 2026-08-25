@@ -431,9 +431,7 @@ def _filter_base(
         result = [
             pair
             for pair in parsed
-            if not _excluded_by_python_or_time(
-                provider, normalized, pair[0], pair[1], policy
-            )
+            if not python_or_time_cause(provider, normalized, pair[0], pair[1], policy)
         ]
 
     result = _drop_sdist_install_wheel_only(result, sdist_install_versions)
@@ -504,7 +502,7 @@ def _prepare_listing(
         elif effective_dist_policy is DistPolicy.PREFER_WHEEL:
             sort_with_wheel_first = True
 
-        if target_drops and _excluded_by_python_or_time(
+        if target_drops and python_or_time_cause(
             provider, normalized, version, dist, policy
         ):
             continue
@@ -556,10 +554,11 @@ def python_or_time_cause(
 ) -> DropCause | None:
     """Return why Requires-Python or the upload cutoff refuses ``dist``, or None.
 
-    Raises nothing, so the failure-time diagnosis walk can ask it about a
-    file the filter never reached.  It does bump ``excluded_by_python``
-    through :func:`excluded_by_python`; the walk brackets itself and puts
-    that back.
+    Counts the drop and, on a timezone-naive upload time, refuses the run.
+    The diagnosis walk calls this same body rather than a copy of it, and
+    brackets the counters it raises; see
+    :func:`nab_provider._provider.listing_diagnosis.python_or_time_verdict`,
+    which is the total sibling that answers instead of raising.
     """
     if policy.overridden:
         override_rp = provider.effective_requires_python(normalized, version)
@@ -579,30 +578,13 @@ def python_or_time_cause(
     else:
         cutoff = policy.default_cutoff
 
-    return upload_time_cause(dist, cutoff)
-
-
-def _excluded_by_python_or_time(
-    provider: Provider,
-    normalized: str,
-    version: Version,
-    dist: DistFile,
-    policy: _ListingPolicy,
-) -> bool:
-    """Return True when Requires-Python or the upload cutoff rejects ``dist``.
-
-    The filter half of :func:`python_or_time_cause`: it counts the drop and,
-    on a timezone-naive upload time, refuses the run.
-    """
-    cause = python_or_time_cause(provider, normalized, version, dist, policy)
+    cause = upload_time_cause(dist, cutoff)
     if cause is None:
-        return False
-    if cause is DropCause.REQUIRES_PYTHON:
-        return True
+        return None
     if cause is DropCause.UPLOAD_TIME_NAIVE:
         raise InvalidUploadTimeError(naive_upload_time_message(normalized, dist))
     provider.stats.excluded_by_time += 1
-    return True
+    return cause
 
 
 def excluded_by_wheel_tags(
