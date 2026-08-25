@@ -54,6 +54,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from nab_provider.serialization import SimpleSerialization
 
+from ._json_decode import decode_json
 from .atomic import atomic_write
 from .parsed_listing import corruption_reason as _parsed_corruption
 
@@ -577,9 +578,9 @@ class OnDiskCache:
 
     def _read_json_reason(self, path: Path, raw: bytes) -> str | None:
         try:
-            doc = json.loads(raw)
-        except ValueError:
-            return "not valid JSON"
+            doc = decode_json(raw)
+        except ValueError as exc:
+            return str(exc)
         bucket = self._bucket_of(path)
         if bucket.startswith("sdist-") and not (
             isinstance(doc, dict) and "pkg_info" in doc and "pyproject" in doc
@@ -632,7 +633,7 @@ def _decode_json_sdist_record(raw: bytes) -> tuple[str | None, str | None] | Non
     into the current bucket.
     """
     try:
-        doc = json.loads(raw)
+        doc = decode_json(raw)
         pkg_info, pyproject = doc["pkg_info"], doc["pyproject"]
     except (ValueError, KeyError, TypeError):
         return None
@@ -790,7 +791,7 @@ def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
     :class:`ValueError`.
     """
     try:
-        doc = json.loads(policy_bytes)
+        doc = decode_json(policy_bytes)
         return CachePolicy(
             fetched_at=int(doc["fetched_at"]),
             max_age=int(doc["max_age"]),

@@ -23,6 +23,9 @@ SDIST_BUCKET = f"sdist-{CACHE_VERSION_SDIST}"
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
+# Well-formed JSON nested far past the decoder's recursion guard.
+_OVER_NESTED = ("[" * 100_000 + "]" * 100_000).encode()
+
 
 # Relative to tmp_path, which the fixture below points discovery at.
 _USER_TOML = Path("usr") / "nab.toml"
@@ -296,6 +299,18 @@ class TestCacheVerify:
         err = capsys.readouterr().err
         assert str(parsed_path) in err
         assert "not valid JSON" in err
+
+    def test_reports_over_nested_parsed_entry(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = tmp_path / "cache"
+        _populate(root)
+        parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
+        parsed_path.write_bytes(_OVER_NESTED)
+        _run_cache(["verify", "--cache-dir", str(root)])
+        err = capsys.readouterr().err
+        assert str(parsed_path) in err
+        assert "nested too deeply to decode" in err
 
     def test_does_not_read_through_symlinked_bucket(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

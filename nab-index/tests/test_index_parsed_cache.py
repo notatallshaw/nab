@@ -41,6 +41,9 @@ _SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
+# Well-formed JSON nested far past the decoder's recursion guard.
+_OVER_NESTED = ("[" * 100_000 + "]" * 100_000).encode()
+
 _T = TypeVar("_T")
 
 # Constructor form and the trailing-slash form the client normalizes to and
@@ -702,6 +705,22 @@ class TestReadPathRebuild:
         assert result is not None
         _, policy = result
         assert decode(cache.get_simple_parsed("pkg"), policy) == files
+
+    def test_over_nested_blob_warns_and_reparses(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _cache(tmp_path)
+        files, _ = _warm_bound(cache)
+        cache.put_simple_parsed("pkg", _OVER_NESTED)
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        with caplog.at_level(logging.WARNING):
+            got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert "Corrupt parsed-listing" in caplog.text
+        assert "nested too deeply to decode" in caplog.text
 
     def test_truncated_blob_warns_and_reparses(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

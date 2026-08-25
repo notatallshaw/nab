@@ -147,8 +147,8 @@ class UnserveableUrlError(HttpError):
 class MalformedSimpleResponseError(HttpError):
     """The index served a 200 response that is not a usable Simple-API body.
 
-    Covers a listing that is neither valid JSON nor decodable HTML, and a
-    PEP 658 metadata sidecar that is not valid UTF-8.
+    Covers a listing body that neither the JSON nor the HTML decoder will
+    take, and a PEP 658 metadata sidecar that is not valid UTF-8.
     """
 
 

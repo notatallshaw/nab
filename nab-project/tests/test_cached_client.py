@@ -87,6 +87,9 @@ ZIP_ONLY_BYTES = json.dumps(ZIP_ONLY_LISTING).encode()
 # A digit run just past CPython's int-from-string limit.
 OVERSIZED_DIGITS = "9" * (sys.get_int_max_str_digits() + 1)
 
+# Well-formed JSON nested far past the decoder's recursion guard.
+OVER_NESTED = ("[" * 100_000 + "]" * 100_000).encode()
+
 
 class _FakeResponse:
     def __init__(
@@ -2217,6 +2220,18 @@ class TestNonJsonListingBody:
 
         with pytest.raises(MalformedSimpleResponseError, match="malformed Simple-API"):
             asyncio.run(go())
+        assert cache.get_simple("foo") is None
+
+    def test_cold_over_nested_body_raises_clean_and_skips_cache(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(OVER_NESTED, status=200)])
+
+        with pytest.raises(
+            MalformedSimpleResponseError, match="nested too deeply to decode"
+        ):
+            _run_get_files(transport, cache, "foo")
         assert cache.get_simple("foo") is None
 
     def test_poisoned_cache_not_reproduced_offline(self, tmp_path: Path) -> None:
@@ -4374,6 +4389,25 @@ class TestCorruptCachedListing:
         assert healed is not None
         assert healed[0] == LISTING_BYTES
         assert len(_cached_warnings(caplog)) == 1
+
+    def test_over_nested_cached_body_self_heals_online(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", OVER_NESTED, self._fresh())
+        transport = _FakeTransport([_FakeResponse(LISTING_BYTES, status=200)])
+
+        with caplog.at_level(logging.WARNING, logger="nab_index.cached_client"):
+            files = _run_get_files(transport, cache, "pkg")
+
+        assert len(files) == 1
+        assert len(transport.calls) == 1
+        healed = cache.get_simple("pkg")
+        assert healed is not None
+        assert healed[0] == LISTING_BYTES
+
+        (warning,) = _cached_warnings(caplog)
+        assert "nested too deeply to decode" in warning.getMessage()
 
     def test_corrupt_cached_body_offline_raises(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

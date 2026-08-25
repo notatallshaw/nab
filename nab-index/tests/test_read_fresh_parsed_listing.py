@@ -52,6 +52,9 @@ _LISTING = {
 _LISTING_BYTES = json.dumps(_LISTING).encode()
 _PARSED = _parse_files(json.loads(_LISTING_BYTES), _INDEX_NORM, "pkg")
 
+# Well-formed JSON nested far past the decoder's recursion guard.
+_OVER_NESTED = ("[" * 100_000 + "]" * 100_000).encode()
+
 # A page of only formats nab does not read, so it parses to zero files.
 _ZIP_ONLY_BYTES = json.dumps(
     {
@@ -169,6 +172,7 @@ class TestReadFreshParsedListing:
             b"not json",
             b'{"fetched_at": Infinity, "max_age": 99999, "etag": null}',
             b'{"fetched_at": 2000000000, "max_age": 1e400, "etag": null}',
+            pytest.param(_OVER_NESTED, id="over-nested"),
         ],
     )
     def test_corrupt_policy_returns_none(self, tmp_path: Path, raw: bytes) -> None:
@@ -198,7 +202,15 @@ class TestReadFreshParsedListing:
         cache.put_simple_parsed("pkg", encode(files, "f" * 64))
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
-    @pytest.mark.parametrize("blob", [b"\xff\xfe not json", b"", b"\x00\x01\x02"])
+    @pytest.mark.parametrize(
+        "blob",
+        [
+            b"\xff\xfe not json",
+            b"",
+            b"\x00\x01\x02",
+            pytest.param(_OVER_NESTED, id="over-nested"),
+        ],
+    )
     def test_corrupt_blob_returns_none(self, tmp_path: Path, blob: bytes) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache)

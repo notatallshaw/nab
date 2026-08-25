@@ -43,6 +43,8 @@ from nab_provider.records import (
     rehydrated_wheel,
 )
 
+from ._json_decode import decode_json
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -146,7 +148,7 @@ def decode(blob: bytes, policy: CachePolicy) -> list[WheelFile | SdistFile] | No
     matches a fresh parse.
     """
     try:
-        loaded = json.loads(blob)
+        loaded = decode_json(blob)
     except ValueError:
         return None
     if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
@@ -184,9 +186,9 @@ def corruption_reason(blob: bytes) -> str | None:
     for every miss reason alike.
     """
     try:
-        loaded = json.loads(blob)
-    except ValueError:
-        return "not valid JSON"
+        loaded = decode_json(blob)
+    except ValueError as exc:
+        return str(exc)
     if not (isinstance(loaded, list) and len(loaded) == _TOP_LEN):
         return "unexpected top-level shape"
     header, rows = loaded

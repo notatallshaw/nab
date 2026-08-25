@@ -34,6 +34,9 @@ from nab_provider.records import defer_hashes, defer_sidecar_hash
 
 DIGEST = "a" * 64
 
+# Well-formed JSON nested far past the decoder's recursion guard.
+OVER_NESTED = ("[" * 100_000 + "]" * 100_000).encode()
+
 SHA256 = sys.intern("sha256")
 SHA512 = sys.intern("sha512")
 RP = sys.intern(">=3.8")
@@ -330,10 +333,16 @@ def test_absent_optional_fields_decode_as_none() -> None:
     assert wheel.metadata_hash is None
 
 
+def test_over_nested_blob_is_miss() -> None:
+    """A blob nested past the JSON decoder's guard is a miss, not a raise."""
+    assert decode(OVER_NESTED, _policy()) is None
+
+
 @pytest.mark.parametrize(
     ("blob", "reason"),
     [
         (b"not json", "not valid JSON"),
+        pytest.param(OVER_NESTED, "nested too deeply to decode", id="over-nested"),
         (json.dumps(7).encode(), "unexpected top-level shape"),
         (json.dumps(["bad-header", []]).encode(), "unexpected header shape"),
     ],

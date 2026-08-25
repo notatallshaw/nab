@@ -1783,6 +1783,20 @@ class TestAsyncSimpleClient:
             asyncio.run(go())
         assert isinstance(caught.value, HttpError)
 
+    def test_get_files_over_nested_raises_clean(self) -> None:
+        """A body past the JSON decoder's recursion guard must not escape raw."""
+        body = ("[" * 100_000 + "]" * 100_000).encode()
+        transport = self._FakeTransport(body)
+
+        async def go() -> list:
+            async with AsyncSimpleClient(transport, "https://pypi.org/simple/") as c:
+                return await c.get_files("pkg")
+
+        with pytest.raises(
+            MalformedSimpleResponseError, match="nested too deeply to decode"
+        ):
+            asyncio.run(go())
+
     def test_get_files_404_returns_empty(self) -> None:
         transport = self._FakeTransport(b"not found", status=404)
 
