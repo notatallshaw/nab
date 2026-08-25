@@ -343,6 +343,43 @@ class TestClauseText:
             " 2030-01-01T00:00:00Z)" in reason
         )
 
+    def test_clauses_print_in_report_order(self) -> None:
+        """Two causes on one listing print cutoff first, Requires-Python second.
+
+        Report order is the enum's member values and is deliberately not the
+        order the filter asks the questions in.
+        """
+        assert reason_for(
+            [wheel("1.0", requires_python=">=3.99"), wheel("2.0", upload_time=AFTER)],
+            target=_LINUX312,
+            uploaded_prior_to=CUTOFF,
+        ) == (
+            "found on index but no distribution is compatible: the"
+            " uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file"
+            " uploaded at 2030-01-01T00:00:00Z (2.0); requires-python excluded 1"
+            " file (1.0 requires >=3.99, the resolve targets Python 3.12); no"
+            " sdist is available to build from\n    note: the project-level"
+            " uploaded-prior-to set that cutoff; uploaded-prior-to = false under"
+            ' [tool.nab.packages."pkg"] lifts it for this package'
+        )
+
+    def test_the_first_rung_that_refuses_a_file_is_the_one_named(self) -> None:
+        """Two rungs that both refuse a wheel read as the one the filter asked first.
+
+        ``dist-policy`` runs ahead of ``requires-python``, so the wheel is
+        gone before its ``Requires-Python`` is consulted and the clause must
+        not blame a rung that never ran.
+        """
+        assert reason_for(
+            [wheel("1.0", requires_python=">=3.99")],
+            target=_LINUX312,
+            dist_policy=DistPolicy.SDIST_ONLY,
+        ) == (
+            "found on index but no distribution is compatible: dist-policy ="
+            ' "sdist-only" excluded 1 wheel (1.0); no sdist is available to'
+            " build from"
+        )
+
     def test_dist_policy(self) -> None:
         assert reason_for([sdist("1.0")], dist_policy=DistPolicy.WHEEL_ONLY) == (
             "found on index but no distribution is compatible: dist-policy ="
