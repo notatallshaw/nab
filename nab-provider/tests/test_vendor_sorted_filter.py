@@ -376,6 +376,14 @@ class TestSortedFilterOrderContract:
         with pytest.raises(ValueError, match="'frobnicate' does not parse"):
             _range(">=1.0").filter(["1.0", "frobnicate"], assume_sorted="ascending")
 
+    def test_unparsable_keyed_endpoint_is_rejected(self) -> None:
+        entries: list[tuple[Any, str]] = [
+            (V("1.0"), "pkg-1.0.whl"),
+            ("frobnicate", "pkg-frobnicate.whl"),
+        ]
+        with pytest.raises(ValueError, match="'frobnicate' does not parse"):
+            _range(">=1.0").filter(entries, key=_first, assume_sorted="ascending")
+
     def test_an_unrecognised_order_is_rejected(self) -> None:
         for claimed in ("Descending", "desc", "sorted", ""):
             with pytest.raises(ValueError, match="must be 'ascending' or 'descending'"):
