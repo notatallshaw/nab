@@ -24,7 +24,10 @@ most one checked-in patch.
     `SortedOrder` `__all__` entries; and the class-docstring lines naming them.
     `VersionRange._build` takes a `canonical` keyword that skips the bound
     fold for callers whose bounds are folded already: the set algebra, `full`,
-    and `empty`.
+    and `empty`. Pre-release policy compatibility is tested inline at each set
+    operation and relation query, so `_check_policy_compat` is called only to
+    raise. The set operations test both operands' `===` literals inline too,
+    in place of upstream's `_has_literals`, which the patch deletes.
   - `_ranges.py`: an unbounded end canonicalizes its inclusivity, and
     `LowerBound.__gt__`, `LowerBound.__le__`, and `UpperBound.__gt__` are
     written out beside `functools.total_ordering`, which still derives the
