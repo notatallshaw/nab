@@ -68,9 +68,11 @@ logger = logging.getLogger(__name__)
 
 _OFFLINE_METADATA_MISS = "offline mode skipped a metadata fetch with no cached metadata"
 
-# Named without a filter, because naming one means walking the listing.  The
-# report replaces the whole sentence once it knows the resolve failed.
-FILTERED_SDIST_REASON = "no PEP 658 metadata and the listing filter excluded the sdist"
+# Naming the rung that took the sdist means walking the whole listing, and
+# look-ahead swallows this error, so a resolve that then succeeds would pay
+# for a sentence nobody reads.  The report names the rung instead, off the
+# marker the error carries.
+_FILTERED_SDIST = "no PEP 658 metadata and the listing filter excluded the sdist"
 
 
 def resolve_metadata(
@@ -182,10 +184,7 @@ def _ladder_failure(
         # A fetched sdist with no PKG-INFO is distinct from no sdist at all.
         reason = "no PEP 658 metadata and the sdist has no readable PKG-INFO"
     elif _index_published_sdist(index, normalized, version):
-        # Which rung of the listing filter took it is a walk of the whole
-        # listing, and look-ahead swallows this error, so the marker goes
-        # and the report walks only if the resolve fails.
-        reason = FILTERED_SDIST_REASON
+        reason = _FILTERED_SDIST
         filtered_sdist = version
     else:
         reason = "no PEP 658 metadata and no sdist available"

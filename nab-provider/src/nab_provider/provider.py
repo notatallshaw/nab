@@ -1815,11 +1815,9 @@ class Provider:
         if fixed is not None:
             return fixed
         if recorded.kind is _diagnosis.ReasonKind.BLOCKERS:
+            _, _, normalized = self.split_and_normalize(package)
             return _diagnosis.blockers_diagnostic(
-                self,
-                canonicalize_name(package),
-                recorded.blockers,
-                recorded.metadata,
+                self, normalized, recorded.blockers, recorded.metadata
             )
         if recorded.kind in _EXTRA_KINDS:
             return self._render_extra_reason(package, recorded)

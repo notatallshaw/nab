@@ -89,12 +89,12 @@ class CutoffLayer(enum.Enum):
 
 
 class CutoffSource(NamedTuple):
-    """Where a candidate's upload-time cutoff came from, at both depths.
+    """Where a candidate's upload-time cutoff came from.
 
     ``label`` names the entry the way the config file has it, so the
     ``note:`` line can point the reader back at what they wrote.
-    ``selector`` is the requirement itself, which is the only half a
-    setting can be keyed by: a config path is not a package selector.
+    ``selector`` is the requirement itself, which is what the ``try:``
+    line keys a setting by: a config path is not a package selector.
     """
 
     layer: CutoffLayer
@@ -225,9 +225,9 @@ class MetadataBlock:
     """One version whose metadata no rung of the ladder could read.
 
     ``message`` is the failure as every other caller of the raising code
-    reads it.  ``filtered_sdist_version`` is the ladder's marker for the one
-    failure the report can improve on, and asking the walk which rung took
-    that version's sdist is what improves it.
+    reads it.  ``filtered_sdist_version`` is the ladder's marker for a
+    failure the report can say more about: the walk can name which rung
+    took that version's sdist.
     """
 
     __slots__ = ("filtered_sdist_version", "message")
@@ -996,6 +996,8 @@ def blockers_diagnostic(
 
     One rejection states its ranges on the line.  Several name their packages
     and leave the ranges to ``-v``, since two pairs of ranges do not fit.
+    ``provider`` and ``normalized`` are read only where the one rejection is
+    a metadata failure the walk can say more about.
     """
     detail = [
         _BLOCKER_DETAIL[blocker.kind].format(
@@ -1052,21 +1054,13 @@ def metadata_diagnostic(
     """
     if len(blocks) == 1:
         block = blocks[0]
-        named = _named_filtered_sdist(provider, normalized, block)
-        if named is not None:
-            return named
+        version = block.filtered_sdist_version
+        if version is not None:
+            named = provider.filtered_sdist_diagnostic(normalized, version)
+            if named is not None:
+                return named
         return Diagnostic(block.message, (block.message,))
     return Diagnostic(_UNREADABLE_METADATA, tuple(block.message for block in blocks))
-
-
-def _named_filtered_sdist(
-    provider: Provider, normalized: str, block: MetadataBlock
-) -> Diagnostic | None:
-    """Name the rung that took this block's sdist, where the ladder marked one."""
-    version = block.filtered_sdist_version
-    if version is None:
-        return None
-    return provider.filtered_sdist_diagnostic(normalized, version)
 
 
 _EXTRA_SHORT: dict[ReasonKind, str] = {
