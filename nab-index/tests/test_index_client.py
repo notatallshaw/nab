@@ -12,6 +12,7 @@ from nab_index.client import (
     _parse_files,
     _parse_sdist_filename,
     _sdist_member_top_level,
+    holds_only_yanked,
     holds_unreadable_format,
     is_readable_filename,
 )
@@ -130,6 +131,50 @@ def test_holds_unreadable_format_finds_oversized_version() -> None:
 )
 def test_holds_unreadable_format_false(data: object) -> None:
     assert not holds_unreadable_format(data)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(
+            {"files": [{"filename": "foo-1.0-py3-none-any.whl", "yanked": True}]},
+            id="one-yanked-wheel",
+        ),
+        pytest.param(
+            {
+                "files": [
+                    {"filename": "foo-1.0-py3-none-any.whl", "yanked": True},
+                    {"filename": "foo-2.0.tar.gz", "yanked": "withdrawn"},
+                ]
+            },
+            id="every-entry-yanked",
+        ),
+    ],
+)
+def test_holds_only_yanked_true(data: object) -> None:
+    assert holds_only_yanked(data)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(["files"], id="body-not-an-object"),
+        pytest.param({"files": "nope"}, id="files-not-a-list"),
+        pytest.param({"files": []}, id="no-entries"),
+        pytest.param({"files": ["foo-1.0.whl"]}, id="no-entry-is-an-object"),
+        pytest.param(
+            {
+                "files": [
+                    {"filename": "foo-1.0-py3-none-any.whl", "yanked": True},
+                    {"filename": "foo-2.0-py3-none-any.whl"},
+                ]
+            },
+            id="one-entry-stands",
+        ),
+    ],
+)
+def test_holds_only_yanked_false(data: object) -> None:
+    assert not holds_only_yanked(data)
 
 
 @pytest.mark.parametrize(

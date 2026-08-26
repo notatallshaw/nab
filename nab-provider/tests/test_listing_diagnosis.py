@@ -1057,3 +1057,180 @@ class TestSharedPredicates:
             )
             is DropCause.UPLOAD_TIME_NAIVE
         )
+
+
+def blocker(package: str, kind: diagnosis_mod.BlockerKind) -> diagnosis_mod.Blocker:
+    """A look-ahead record wanting ``package`` in ``==2.0``, held at ``1.0``."""
+    return diagnosis_mod.Blocker(kind, package, "==2.0", "1.0")
+
+
+class TestBlockerLines:
+    """What a look-ahead rejection says at each depth."""
+
+    def test_one_decided_blocker(self) -> None:
+        decided = blocker("bar", diagnosis_mod.BlockerKind.DECIDED)
+        diagnostic = diagnosis_mod.blockers_diagnostic([decided], ())
+        assert diagnostic.short == (
+            "every version needs bar in ==2.0, but the resolve chose bar 1.0"
+        )
+        assert diagnostic.detail == (
+            "requires bar in ==2.0 but solution has it at 1.0",
+        )
+
+    def test_one_held_blocker(self) -> None:
+        held = blocker("bar", diagnosis_mod.BlockerKind.HELD)
+        assert diagnosis_mod.blockers_diagnostic([held], ()).short == (
+            "every version needs bar in ==2.0, but the resolve holds bar in 1.0"
+        )
+
+    def test_one_root_blocker(self) -> None:
+        root = blocker("bar", diagnosis_mod.BlockerKind.ROOT)
+        assert diagnosis_mod.blockers_diagnostic([root], ()).short == (
+            "every version needs bar in ==2.0, but your project requires bar 1.0"
+        )
+
+    def test_two_blockers_name_their_packages_and_stop(self) -> None:
+        """Two ranges do not fit on one line, so the line names the packages."""
+        diagnostic = diagnosis_mod.blockers_diagnostic(
+            [
+                blocker("bar", diagnosis_mod.BlockerKind.DECIDED),
+                blocker("baz", diagnosis_mod.BlockerKind.ROOT),
+            ],
+            (),
+        )
+        assert diagnostic.short == (
+            "every version is blocked by bar and baz (-v for the ranges)"
+        )
+        assert len(diagnostic.detail) == 2
+
+    def test_two_blockers_on_one_package_name_it_once(self) -> None:
+        """A decided blocker and a root disagreement over the same dependency."""
+        diagnostic = diagnosis_mod.blockers_diagnostic(
+            [
+                blocker("bar", diagnosis_mod.BlockerKind.DECIDED),
+                blocker("bar", diagnosis_mod.BlockerKind.ROOT),
+            ],
+            (),
+        )
+        assert diagnostic.short == (
+            "every version is blocked by bar (-v for the ranges)"
+        )
+
+    def test_a_blocker_beside_unreadable_metadata_says_both(self) -> None:
+        diagnostic = diagnosis_mod.blockers_diagnostic(
+            [blocker("bar", diagnosis_mod.BlockerKind.DECIDED)],
+            (diagnosis_mod.MetadataBlock("No metadata for pkg==2.0"),),
+        )
+        assert diagnostic.short == (
+            "every version is blocked by bar or has unreadable metadata (-v for detail)"
+        )
+        assert diagnostic.detail == (
+            "requires bar in ==2.0 but solution has it at 1.0",
+            "No metadata for pkg==2.0",
+        )
+
+    def test_metadata_alone_reads_as_the_metadata_line(self) -> None:
+        """One unreadable version keeps its own sentence, which names the rung."""
+        block = diagnosis_mod.MetadataBlock("No metadata for pkg==2.0")
+        diagnostic = diagnosis_mod.blockers_diagnostic([], (block,))
+        assert diagnostic.short == "No metadata for pkg==2.0"
+        assert diagnostic.detail == ("No metadata for pkg==2.0",)
+
+    def test_a_block_that_carries_its_own_entry_uses_it(self) -> None:
+        """The ladder builds one where it can name the filter that took the sdist."""
+        entry = Diagnostic("uploaded-prior-to excluded the sdist", ("detail",), "try")
+        block = diagnosis_mod.MetadataBlock("No metadata for pkg==2.0", entry)
+        assert diagnosis_mod.blockers_diagnostic([], (block,)) is entry
+
+
+_WINDOWS312 = ResolveTarget.for_declared(
+    python_version="3.12", spec=PlatformSpec("windows_amd64")
+)
+
+
+class TestTheWalkIsSharedAcrossTargets:
+    """A matrix attributes one listing once per Python, not once per tuple."""
+
+    def _pair(
+        self, files: Sequence[WheelFile | SdistFile], **kwargs: object
+    ) -> tuple[Provider, Provider]:
+        """Two providers over one listing and one shared filter memo."""
+        coordinator = make_coordinator(list(files), package="pkg", auto_metadata=True)
+        cache = ListingFilterCache()
+        return (
+            Provider(  # type: ignore[arg-type]
+                coordinator, listing_filter_cache=cache, target=_LINUX312, **kwargs
+            ),
+            Provider(  # type: ignore[arg-type]
+                coordinator, listing_filter_cache=cache, target=_WINDOWS312, **kwargs
+            ),
+        )
+
+    def test_the_base_pass_runs_once_for_two_platforms(self) -> None:
+        """The second target reads the refusals the first one's walk recorded.
+
+        The rungs before the tag pass read the listing, the policy config and
+        the target Python, so a matrix that fans out over platforms would
+        otherwise re-walk the whole listing per failing tuple.
+        """
+        linux, windows = self._pair(
+            [wheel("1.0", upload_time=AFTER)], uploaded_prior_to=CUTOFF
+        )
+
+        first = linux.diagnose_listing("pkg")
+        second = windows.diagnose_listing("pkg")
+        assert first is not None
+        assert second is not None
+        assert first.dropped[0] is second.dropped[0]
+
+    def test_the_tag_pass_still_answers_per_target(self) -> None:
+        """Sharing stops at the rung whose answer differs by platform."""
+        linux, windows = self._pair([wheel("1.0", tag="cp312-cp312-win_amd64")])
+
+        assert linux.diagnose_listing("pkg") is not None
+        linux_diagnosis = linux.diagnose_listing("pkg")
+        windows_diagnosis = windows.diagnose_listing("pkg")
+        assert linux_diagnosis is not None
+        assert windows_diagnosis is not None
+
+        assert [record.cause for record in linux_diagnosis.dropped] == [
+            DropCause.WHEEL_TAGS
+        ]
+        assert windows_diagnosis.dropped == ()
+        assert windows_diagnosis.kept == {Version("1.0")}
+
+    def test_a_second_python_walks_the_listing_again(self) -> None:
+        """The Requires-Python rung answers per Python, so the memo keys on it."""
+        coordinator = make_coordinator(
+            [wheel("1.0", requires_python=">=3.12")], package="pkg", auto_metadata=True
+        )
+        cache = ListingFilterCache()
+        old = Provider(
+            coordinator,
+            listing_filter_cache=cache,
+            target=ResolveTarget.for_declared(
+                python_version="3.11", spec=PlatformSpec("linux_x86_64")
+            ),
+        )
+        new = Provider(coordinator, listing_filter_cache=cache, target=_LINUX312)
+
+        old_diagnosis = old.diagnose_listing("pkg")
+        new_diagnosis = new.diagnose_listing("pkg")
+        assert old_diagnosis is not None
+        assert new_diagnosis is not None
+
+        assert [record.cause for record in old_diagnosis.dropped] == [
+            DropCause.REQUIRES_PYTHON
+        ]
+        assert new_diagnosis.dropped == ()
+
+    def test_a_provider_with_no_memo_walks_on_its_own(self) -> None:
+        """A single-target resolve carries no cache and still gets its answer."""
+        provider = build([wheel("1.0", upload_time=AFTER)], **WITH_CUTOFF)
+        assert provider.listing_filter_cache is None
+
+        diagnosis = provider.diagnose_listing("pkg")
+        assert diagnosis is not None
+        assert [record.cause for record in diagnosis.dropped] == [
+            DropCause.UPLOAD_TIME_AFTER_CUTOFF
+        ]

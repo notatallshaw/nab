@@ -989,14 +989,16 @@ def blockers_diagnostic(
 def _several_blockers_short(
     blockers: Sequence[Blocker], metadata: Sequence[MetadataBlock]
 ) -> str:
-    """Name the packages holding every candidate out, without their ranges."""
-    names = list(dict.fromkeys(blocker.package for blocker in blockers))
+    """Name the packages holding every candidate out, without their ranges.
+
+    Called only where more than one thing rejected the candidates, so at
+    least one dependency is named however the metadata failures fall.
+    """
+    names = _join_names(list(dict.fromkeys(blocker.package for blocker in blockers)))
     if not metadata:
-        return f"every version is blocked by {_join_names(names)} (-v for the ranges)"
-    if not names:
-        return _UNREADABLE_METADATA
+        return f"every version is blocked by {names} (-v for the ranges)"
     return (
-        f"every version is blocked by {_join_names(names)}"
+        f"every version is blocked by {names}"
         " or has unreadable metadata (-v for detail)"
     )
 
