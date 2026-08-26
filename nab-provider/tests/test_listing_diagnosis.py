@@ -4,7 +4,7 @@ Two things are pinned here.  One is the differential oracle: over a matrix of
 policy configurations, the walk keeps or refuses every file the filter saw,
 exactly once, and keeps the versions the filter kept.  That is the whole
 anti-drift argument for a mechanism that re-expresses the filter's order.  The
-other is the clause text, one test per cause, singular and plural.
+other is the clause text, one table entry per cause per grammatical number.
 """
 
 from __future__ import annotations
@@ -44,6 +44,8 @@ if TYPE_CHECKING:
 CUTOFF = datetime(2026, 5, 1, tzinfo=timezone.utc)
 BEFORE = "2020-01-01T00:00:00Z"
 AFTER = "2030-01-01T00:00:00Z"
+CUTOFF_TEXT = "2026-05-01T00:00:00+00:00"
+WITH_CUTOFF: dict[str, object] = {"uploaded_prior_to": CUTOFF}
 
 _LINUX312 = ResolveTarget.for_declared(
     python_version="3.12", spec=PlatformSpec("linux_x86_64")
@@ -92,11 +94,27 @@ def build(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> Provider:
     return Provider(coordinator, **kwargs)  # type: ignore[arg-type]
 
 
-def reason_for(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> str | None:
-    """Ask ``pkg`` over the full range and return the sentence that comes back."""
+def reason_for(
+    files: Sequence[WheelFile | SdistFile], *, spec: str = "", **kwargs: object
+) -> str:
+    """Ask ``pkg`` for ``spec`` and return the sentence that comes back."""
     provider = build(files, **kwargs)
-    assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
-    return provider.get_no_versions_reason("pkg")
+    assert provider.choose_version("pkg", SpecifierSet(spec).to_range()) is None
+    reason = provider.get_no_versions_reason("pkg")
+    assert reason is not None
+    return reason
+
+
+def rendered_for(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> str:
+    """Render ``pkg``'s empty-listing sentence without asking for a version.
+
+    The filter refuses the whole run on a timezone-naive upload time, so a
+    listing carrying one cannot be reached through :func:`reason_for`.
+    """
+    provider = build(files, **kwargs)
+    diagnosis = provider.diagnose_listing("pkg")
+    assert diagnosis is not None
+    return diagnosis_mod.empty_listing_reason(provider, "pkg", diagnosis)
 
 
 # One file per cause, plus a survivor, so a walk over it exercises every rung
@@ -264,6 +282,7 @@ class TestTheWalkLeavesNoTrace:
         first = provider.diagnose_listing("pkg")
         assert first is not None
         assert provider.diagnose_listing("pkg") is first
+        assert first.dropped
 
     def test_an_absent_listing_memoises_its_own_absence(self) -> None:
         """A package the index never served is walked once and answers None."""
@@ -277,77 +296,156 @@ class TestClauseText:
     """One clause per cause, singular and plural, over a real filter run."""
 
     def test_missing_upload_time(self) -> None:
-        assert reason_for(
-            [wheel("1.0", upload_time=None)], uploaded_prior_to=CUTOFF
-        ) == (
-            "found on index but no distribution is compatible: the"
-            " uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file"
-            " that publishes no upload time (1.0); no sdist is available to build"
-            " from\n    note: the project-level uploaded-prior-to set that"
-            ' cutoff; uploaded-prior-to = false under [tool.nab.packages."pkg"]'
-            " lifts it for this package"
-        )
-
-    def test_missing_upload_time_plural_names_the_newest(self) -> None:
-        reason = reason_for(
-            [wheel("1.0", upload_time=None), wheel("2.0", upload_time=None)],
-            uploaded_prior_to=CUTOFF,
-        )
-        assert reason is not None
         assert (
-            "the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 2"
-            " files that publish no upload time (newest: 2.0)" in reason
+            f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file that"
+            " publishes no upload time (1.0)"
+        ) in reason_for([wheel("1.0", upload_time=None)], **WITH_CUTOFF)
+
+    def test_missing_upload_time_plural(self) -> None:
+        assert (
+            f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 2 files that"
+            " publish no upload time (newest: 2.0)"
+        ) in reason_for(
+            [wheel("1.0", upload_time=None), wheel("2.0", upload_time=None)],
+            **WITH_CUTOFF,
         )
 
     def test_unparseable_upload_time(self) -> None:
-        reason = reason_for(
-            [wheel("1.0", upload_time="not-a-time")], uploaded_prior_to=CUTOFF
-        )
-        assert reason is not None
         assert (
             "the uploaded-prior-to cutoff excluded 1 file whose upload time is"
-            " not ISO 8601 (1.0, 'not-a-time')" in reason
-        )
+            " not ISO 8601 (1.0, 'not-a-time')"
+        ) in reason_for([wheel("1.0", upload_time="not-a-time")], **WITH_CUTOFF)
 
     def test_unparseable_upload_time_plural(self) -> None:
-        reason = reason_for(
+        assert (
+            "the uploaded-prior-to cutoff excluded 2 files whose upload time is"
+            " not ISO 8601 (newest: 2.0, 'also-not-a-time')"
+        ) in reason_for(
             [
                 wheel("1.0", upload_time="not-a-time"),
                 wheel("2.0", upload_time="also-not-a-time"),
             ],
-            uploaded_prior_to=CUTOFF,
-        )
-        assert reason is not None
-        assert (
-            "the uploaded-prior-to cutoff excluded 2 files whose upload time is"
-            " not ISO 8601 (newest: 2.0, 'also-not-a-time')" in reason
+            **WITH_CUTOFF,
         )
 
     def test_after_cutoff(self) -> None:
-        reason = reason_for([wheel("1.0", upload_time=AFTER)], uploaded_prior_to=CUTOFF)
-        assert reason is not None
         assert (
-            "the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1"
-            " file uploaded at 2030-01-01T00:00:00Z (1.0)" in reason
-        )
+            f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file"
+            f" uploaded at {AFTER} (1.0)"
+        ) in reason_for([wheel("1.0", upload_time=AFTER)], **WITH_CUTOFF)
 
     def test_after_cutoff_plural(self) -> None:
-        reason = reason_for(
-            [wheel("1.0", upload_time=AFTER), wheel("2.0", upload_time=AFTER)],
-            uploaded_prior_to=CUTOFF,
-        )
-        assert reason is not None
         assert (
-            "the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 2"
-            " files uploaded on or after it (newest: 2.0, uploaded"
-            " 2030-01-01T00:00:00Z)" in reason
+            f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 2 files"
+            f" uploaded on or after it (newest: 2.0, uploaded {AFTER})"
+        ) in reason_for(
+            [wheel("1.0", upload_time=AFTER), wheel("2.0", upload_time=AFTER)],
+            **WITH_CUTOFF,
         )
+
+    def test_a_naive_upload_time_is_a_clause_not_an_error(self) -> None:
+        """The walk answers where the filter refuses the run.
+
+        The filter raises :class:`InvalidUploadTimeError` on a naive stamp and
+        ends the resolve, so this cause is not reachable from one.  It is
+        modelled because the walk runs inside an error path, where turning a
+        report into an exception would lose the report.
+        """
+        assert (
+            "the uploaded-prior-to cutoff could not judge 1 file whose upload"
+            " time carries no timezone (1.0, '2020-01-01T00:00:00')"
+        ) in rendered_for(
+            [wheel("1.0", upload_time="2020-01-01T00:00:00")], **WITH_CUTOFF
+        )
+
+    def test_a_naive_upload_time_plural(self) -> None:
+        assert (
+            "the uploaded-prior-to cutoff could not judge 2 files whose upload"
+            " time carries no timezone (newest: 2.0, '2021-01-01T00:00:00')"
+        ) in rendered_for(
+            [
+                wheel("1.0", upload_time="2020-01-01T00:00:00"),
+                wheel("2.0", upload_time="2021-01-01T00:00:00"),
+            ],
+            **WITH_CUTOFF,
+        )
+
+    def test_dist_policy(self) -> None:
+        assert 'dist-policy = "wheel-only" excluded 1 sdist (1.0)' in reason_for(
+            [sdist("1.0")], dist_policy=DistPolicy.WHEEL_ONLY
+        )
+
+    def test_dist_policy_plural(self) -> None:
+        assert (
+            'dist-policy = "sdist-only" excluded 2 wheels (newest: 2.0)'
+        ) in reason_for([wheel("1.0"), wheel("2.0")], dist_policy=DistPolicy.SDIST_ONLY)
+
+    def test_sdist_install_without_an_sdist(self) -> None:
+        assert (
+            'dist-policy = "sdist-install" excluded 1 version that publishes no'
+            " sdist (1.0)"
+        ) in reason_for([wheel("1.0")], dist_policy=DistPolicy.SDIST_INSTALL)
+
+    def test_sdist_install_without_an_sdist_plural(self) -> None:
+        assert (
+            'dist-policy = "sdist-install" excluded 2 versions that publish no'
+            " sdist (newest: 2.0)"
+        ) in reason_for(
+            [wheel("1.0"), wheel("2.0")], dist_policy=DistPolicy.SDIST_INSTALL
+        )
+
+    def test_requires_python(self) -> None:
+        assert (
+            "requires-python excluded 1 file (1.0 requires >=3.99, the resolve"
+            " targets Python 3.12)"
+        ) in reason_for([wheel("1.0", requires_python=">=3.99")], target=_LINUX312)
+
+    def test_requires_python_plural(self) -> None:
+        assert (
+            "requires-python excluded 2 files (newest: 2.0 requires >=4, the"
+            " resolve targets Python 3.12)"
+        ) in reason_for(
+            [
+                wheel("1.0", requires_python=">=3.99"),
+                wheel("2.0", requires_python=">=4"),
+            ],
+            target=_LINUX312,
+        )
+
+    def test_wheel_tags(self) -> None:
+        assert (
+            "none of the wheel's tags are compatible with the resolve target"
+            " (1 wheel rejected)"
+        ) in reason_for([wheel("1.0", tag="cp312-cp312-win_amd64")], target=_LINUX312)
+
+    def test_wheel_tags_plural(self) -> None:
+        assert (
+            "none of the wheel's tags are compatible with the resolve target"
+            " (2 wheels rejected)"
+        ) in reason_for(
+            [
+                wheel("1.0", tag="cp312-cp312-win_amd64"),
+                wheel("2.0", tag="cp312-cp312-win_amd64"),
+            ],
+            target=_LINUX312,
+        )
+
+    def test_invalid_version(self) -> None:
+        assert (
+            "1 file carries a version PEP 440 cannot parse ('not-a-version')"
+        ) in reason_for([wheel("not-a-version")])
+
+    def test_invalid_version_plural_quotes_the_first(self) -> None:
+        assert (
+            "2 files carry a version PEP 440 cannot parse (first: 'not-a-version')"
+        ) in reason_for([wheel("not-a-version"), wheel("nor-is-this")])
 
     def test_clauses_print_in_report_order(self) -> None:
         """Two causes on one listing print cutoff first, Requires-Python second.
 
         Report order is the enum's member values and is deliberately not the
-        order the filter asks the questions in.
+        order the filter asks the questions in.  This is also the whole shape
+        of the message: lead, clauses, sdist tail, then the note.
         """
         assert reason_for(
             [wheel("1.0", requires_python=">=3.99"), wheel("2.0", upload_time=AFTER)],
@@ -380,132 +478,9 @@ class TestClauseText:
             " build from"
         )
 
-    def test_dist_policy(self) -> None:
-        assert reason_for([sdist("1.0")], dist_policy=DistPolicy.WHEEL_ONLY) == (
-            "found on index but no distribution is compatible: dist-policy ="
-            ' "wheel-only" excluded 1 sdist (1.0)'
-        )
-
-    def test_dist_policy_plural(self) -> None:
-        reason = reason_for(
-            [wheel("1.0"), wheel("2.0")], dist_policy=DistPolicy.SDIST_ONLY
-        )
-        assert reason is not None
-        assert 'dist-policy = "sdist-only" excluded 2 wheels (newest: 2.0)' in reason
-
-    def test_sdist_install_without_an_sdist(self) -> None:
-        assert reason_for([wheel("1.0")], dist_policy=DistPolicy.SDIST_INSTALL) == (
-            "found on index but no distribution is compatible: dist-policy ="
-            ' "sdist-install" excluded 1 version that publishes no sdist (1.0)'
-        )
-
-    def test_sdist_install_without_an_sdist_plural(self) -> None:
-        reason = reason_for(
-            [wheel("1.0"), wheel("2.0")], dist_policy=DistPolicy.SDIST_INSTALL
-        )
-        assert reason is not None
-        assert (
-            'dist-policy = "sdist-install" excluded 2 versions that publish no'
-            " sdist (newest: 2.0)" in reason
-        )
-
-    def test_requires_python(self) -> None:
-        assert reason_for(
-            [wheel("1.0", requires_python=">=3.99")], target=_LINUX312
-        ) == (
-            "found on index but no distribution is compatible: requires-python"
-            " excluded 1 file (1.0 requires >=3.99, the resolve targets Python"
-            " 3.12); no sdist is available to build from"
-        )
-
-    def test_requires_python_plural(self) -> None:
-        reason = reason_for(
-            [
-                wheel("1.0", requires_python=">=3.99"),
-                wheel("2.0", requires_python=">=4"),
-            ],
-            target=_LINUX312,
-        )
-        assert reason is not None
-        assert (
-            "requires-python excluded 2 files (newest: 2.0 requires >=4, the"
-            " resolve targets Python 3.12)" in reason
-        )
-
-    def test_wheel_tags_plural(self) -> None:
-        reason = reason_for(
-            [
-                wheel("1.0", tag="cp312-cp312-win_amd64"),
-                wheel("2.0", tag="cp312-cp312-win_amd64"),
-            ],
-            target=_LINUX312,
-        )
-        assert reason is not None
-        assert (
-            "none of the wheel's tags are compatible with the resolve target"
-            " (2 wheels rejected)" in reason
-        )
-
-    def test_invalid_version(self) -> None:
-        assert reason_for([wheel("not-a-version")]) == (
-            "found on index but no distribution is compatible: 1 file carries a"
-            " version PEP 440 cannot parse ('not-a-version'); no sdist is"
-            " available to build from"
-        )
-
-    def test_invalid_version_plural_quotes_the_first(self) -> None:
-        reason = reason_for([wheel("not-a-version"), wheel("nor-is-this")])
-        assert reason is not None
-        assert (
-            "2 files carry a version PEP 440 cannot parse (first:"
-            " 'not-a-version')" in reason
-        )
-
-    def test_a_naive_upload_time_is_a_clause_not_an_error(self) -> None:
-        """The walk answers where the filter refuses the run.
-
-        The filter raises :class:`InvalidUploadTimeError` on a naive stamp and
-        ends the resolve, so this branch is not reachable from one.  It is
-        written because the walk runs inside an error path, where turning a
-        report into an exception would lose the report.
-        """
-        provider = build(
-            [wheel("1.0", upload_time="2020-01-01T00:00:00")], uploaded_prior_to=CUTOFF
-        )
-        diagnosis = provider.diagnose_listing("pkg")
-        assert diagnosis is not None
-        assert [record.cause for record in diagnosis.dropped] == [
-            DropCause.UPLOAD_TIME_NAIVE
-        ]
-        assert diagnosis_mod.empty_listing_reason(provider, "pkg", diagnosis) == (
-            "found on index but no distribution is compatible: the"
-            " uploaded-prior-to cutoff could not judge 1 file whose upload time"
-            " carries no timezone (1.0, '2020-01-01T00:00:00'); no sdist is"
-            " available to build from\n    note: the project-level"
-            " uploaded-prior-to set that cutoff; uploaded-prior-to = false under"
-            ' [tool.nab.packages."pkg"] lifts it for this package'
-        )
-
-    def test_a_naive_upload_time_clause_pluralises(self) -> None:
-        provider = build(
-            [
-                wheel("1.0", upload_time="2020-01-01T00:00:00"),
-                wheel("2.0", upload_time="2021-01-01T00:00:00"),
-            ],
-            uploaded_prior_to=CUTOFF,
-        )
-        diagnosis = provider.diagnose_listing("pkg")
-        assert diagnosis is not None
-        assert (
-            "the uploaded-prior-to cutoff could not judge 2 files whose upload"
-            " time carries no timezone (newest: 2.0, '2021-01-01T00:00:00')"
-            in diagnosis_mod.empty_listing_reason(provider, "pkg", diagnosis)
-        )
-
     def test_an_sdist_on_the_index_takes_no_no_sdist_tail(self) -> None:
         """The tail says the index published no sdist, not that none survived."""
         reason = reason_for([sdist("1.0", requires_python=">=3.99")], target=_LINUX312)
-        assert reason is not None
         assert "no sdist is available to build from" not in reason
 
 
@@ -513,36 +488,32 @@ class TestTheRemedyNamesTheLayer:
     """Which of the three config layers set the cutoff that fired."""
 
     def test_the_project_level_cutoff(self) -> None:
-        reason = reason_for([wheel("1.0", upload_time=AFTER)], uploaded_prior_to=CUTOFF)
-        assert reason is not None
-        assert reason.endswith(
+        assert reason_for(
+            [wheel("1.0", upload_time=AFTER)], uploaded_prior_to=CUTOFF
+        ).endswith(
             "\n    note: the project-level uploaded-prior-to set that cutoff;"
             ' uploaded-prior-to = false under [tool.nab.packages."pkg"] lifts it'
             " for this package"
         )
 
     def test_a_per_package_cutoff(self) -> None:
-        reason = reason_for(
+        assert reason_for(
             [wheel("1.0", upload_time=AFTER)],
             package_overrides=[
                 pkg_override(
                     "pkg", uploaded_prior_to=CUTOFF, source_label="packages.'pkg'"
                 )
             ],
-        )
-        assert reason is not None
-        assert reason.endswith(
+        ).endswith(
             "\n    note: the per-package uploaded-prior-to for packages.'pkg' set"
             " that cutoff; setting it to false there lifts it"
         )
 
     def test_a_per_index_cutoff(self) -> None:
-        reason = reason_for(
+        assert reason_for(
             [wheel("1.0", upload_time=AFTER)],
             index_overrides={"pypi": IndexOverride(uploaded_prior_to=CUTOFF)},
-        )
-        assert reason is not None
-        assert reason.endswith(
+        ).endswith(
             '\n    note: the per-index uploaded-prior-to for index "pypi" set'
             " that cutoff; uploaded-prior-to = false under [tool.nab.index.pypi]"
             " lifts it"
@@ -568,27 +539,20 @@ class TestTheRemedyNamesTheLayer:
     def test_requires_python_is_offered_no_remedy(self) -> None:
         """Overriding requires-python would tell the resolver a falsehood."""
         reason = reason_for([wheel("1.0", requires_python=">=3.99")], target=_LINUX312)
-        assert reason is not None
         assert "note:" not in reason
 
 
 class TestTheInRangeLead:
     """Which filters dropped the release the requirement asked for."""
 
-    def _asked(self, files: Sequence[WheelFile | SdistFile], **kwargs: object) -> str:
-        provider = build(files, **kwargs)
-        assert provider.choose_version("pkg", SpecifierSet(">=2").to_range()) is None
-        reason = provider.get_no_versions_reason("pkg")
-        assert reason is not None
-        return reason
-
     def test_two_filters_read_as_a_pair(self) -> None:
-        reason = self._asked(
+        reason = reason_for(
             [
                 wheel("1.0"),
                 wheel("2.0", requires_python=">=3.99"),
                 wheel("3.0", tag="cp312-cp312-win_amd64"),
             ],
+            spec=">=2",
             target=_LINUX312,
         )
         assert reason == (
@@ -597,13 +561,14 @@ class TestTheInRangeLead:
         )
 
     def test_three_filters_read_as_a_list(self) -> None:
-        reason = self._asked(
+        reason = reason_for(
             [
                 wheel("1.0"),
                 wheel("2.0", upload_time=AFTER),
                 wheel("3.0", requires_python=">=3.99"),
                 wheel("4.0", tag="cp312-cp312-win_amd64"),
             ],
+            spec=">=2",
             target=_LINUX312,
             uploaded_prior_to=CUTOFF,
         )
@@ -614,12 +579,13 @@ class TestTheInRangeLead:
 
     def test_an_out_of_range_drop_does_not_name_its_filter(self) -> None:
         """A filter that touched only a release outside the ask stays unnamed."""
-        reason = self._asked(
+        reason = reason_for(
             [
                 wheel("0.5", requires_python=">=3.99"),
                 wheel("1.0"),
                 wheel("2.0", upload_time=AFTER),
             ],
+            spec=">=2",
             target=_LINUX312,
             uploaded_prior_to=CUTOFF,
         )

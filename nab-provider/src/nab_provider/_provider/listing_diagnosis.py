@@ -17,7 +17,7 @@ counted as unexplained rather than passed over.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+import re
 from typing import TYPE_CHECKING
 
 from nab_provider.records import SdistFile, WheelFile
@@ -28,7 +28,7 @@ from . import listing as _listing
 from .listing import DropCause
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
     from datetime import datetime
 
     from nab_provider._vendor.packaging.ranges import VersionRange
@@ -73,57 +73,6 @@ class CutoffLayer(enum.Enum):
     INDEX = "index"
 
 
-@dataclass(frozen=True, slots=True)
-class CutoffSource:
-    """The layer that set a cutoff, and the config entry that carries it.
-
-    ``label`` is the per-package override's ``source_label`` or the index's
-    name; it is empty for the project-level cutoff, which no entry names.
-    """
-
-    layer: CutoffLayer
-    label: str
-
-
-@dataclass(slots=True)
-class DroppedFile:
-    """One file the diagnosis walk attributed to a rung.
-
-    ``version`` is ``None`` only for :attr:`DropCause.INVALID_VERSION`,
-    where the filename's version never parsed.  ``detail`` is the one value
-    that cause's clause quotes: the effective Requires-Python specifier, the
-    raw upload time, or the effective dist policy.  Not frozen, because the
-    walk builds one per refused file and a frozen record costs several times
-    as much to construct.
-    """
-
-    filename: str
-    raw_version: str
-    version: Version | None
-    is_wheel: bool
-    cause: DropCause
-    detail: str | None = None
-    cutoff: datetime | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ListingDiagnosis:
-    """Every refusal the filter made over one package's raw listing, for one target.
-
-    ``kept`` is what the walk admitted, and ``unexplained`` counts the
-    versions in it the filter did not keep: the walk's own check that it
-    modelled every rung, since a drop it cannot name would otherwise read
-    as a file nothing refused.
-    """
-
-    index_name: str | None
-    dropped: tuple[DroppedFile, ...]
-    kept: frozenset[Version]
-    published_sdist: bool
-    unexplained: int
-    target_python: str | None
-
-
 class ReasonKind(enum.Enum):
     """Which situation left ``choose_version`` with no version to return."""
 
@@ -135,19 +84,122 @@ class ReasonKind(enum.Enum):
     NO_MATCH = "no-match"
 
 
-@dataclass(frozen=True, slots=True)
+# The four value types below are hand-written rather than dataclasses:
+# every nab invocation imports this module, and declaring a frozen slots
+# dataclass costs tens of times more at import than a plain class with
+# ``__slots__``.
+
+
+class CutoffSource:
+    """The layer that set a cutoff, and the config entry that carries it."""
+
+    __slots__ = ("label", "layer")
+
+    def __init__(self, layer: CutoffLayer, label: str) -> None:
+        """Record ``label`` as the entry that set the cutoff at ``layer``.
+
+        ``label`` is the per-package override's ``source_label`` or the
+        index's name; it is empty for the project-level cutoff, which no
+        entry names.
+        """
+        self.layer = layer
+        self.label = label
+
+
+class DroppedFile:
+    """One file the diagnosis walk attributed to a rung."""
+
+    __slots__ = (
+        "cause",
+        "cutoff",
+        "detail",
+        "filename",
+        "is_wheel",
+        "raw_version",
+        "version",
+    )
+
+    def __init__(
+        self,
+        dist: DistFile,
+        version: Version | None,
+        cause: DropCause,
+        detail: str | None = None,
+        cutoff: datetime | None = None,
+    ) -> None:
+        """Record ``dist`` as refused by ``cause``.
+
+        ``version`` is ``None`` only for :attr:`DropCause.INVALID_VERSION`,
+        where the filename's version never parsed.  ``detail`` is the one
+        value that cause's clause quotes: the effective Requires-Python
+        specifier, the raw upload time, or the effective dist policy.
+        """
+        self.filename = dist.filename
+        self.raw_version = dist.version
+        self.version = version
+        self.is_wheel = isinstance(dist, WheelFile)
+        self.cause = cause
+        self.detail = detail
+        self.cutoff = cutoff
+
+
+class ListingDiagnosis:
+    """Every refusal the filter made over one package's raw listing, for one target."""
+
+    __slots__ = (
+        "dropped",
+        "index_name",
+        "kept",
+        "published_sdist",
+        "target_python",
+        "unexplained",
+    )
+
+    def __init__(
+        self,
+        *,
+        index_name: str | None,
+        dropped: tuple[DroppedFile, ...],
+        kept: frozenset[Version],
+        published_sdist: bool,
+        unexplained: int,
+        target_python: str | None,
+    ) -> None:
+        """Record what the walk kept and what it refused.
+
+        ``kept`` is what the walk admitted, and ``unexplained`` counts the
+        versions in it the filter did not keep: the walk's own check that
+        it modelled every rung, since a drop it cannot name would
+        otherwise read as a file nothing refused.
+        """
+        self.index_name = index_name
+        self.dropped = dropped
+        self.kept = kept
+        self.published_sdist = published_sdist
+        self.unexplained = unexplained
+        self.target_python = target_python
+
+
 class NoVersionsReason:
-    """What the resolve recorded when a package ran out of candidates.
+    """What the resolve recorded when a package ran out of candidates."""
 
-    Recorded during the resolve and rendered only if the resolve then
-    fails, so it holds what the failure path cannot re-derive and nothing
-    else: which situation applied, the look-ahead blocker strings (which
-    reset per scan), and the range that was asked.
-    """
+    __slots__ = ("blockers", "kind", "version_range")
 
-    kind: ReasonKind
-    blockers: tuple[str, ...] = ()
-    version_range: VersionRange | None = None
+    def __init__(
+        self,
+        kind: ReasonKind,
+        blockers: tuple[str, ...] = (),
+        version_range: VersionRange | None = None,
+    ) -> None:
+        """Mark ``kind`` as the situation, with what the failure cannot re-derive.
+
+        Recorded during the resolve and rendered only if the resolve then
+        fails, so it holds the look-ahead blocker strings (which reset per
+        scan) and the range that was asked, and nothing else.
+        """
+        self.kind = kind
+        self.blockers = blockers
+        self.version_range = version_range
 
     @property
     def is_generic(self) -> bool:
@@ -166,19 +218,17 @@ ABSENT = NoVersionsReason(ReasonKind.ABSENT)
 FILTERED_EMPTY = NoVersionsReason(ReasonKind.FILTERED_EMPTY)
 
 
-OFFLINE_MISS_TEXT = "offline mode skipped an index with no cached listing"
-UNREADABLE_ONLY_TEXT = (
-    "found on index but no file is a wheel or a .tar.gz sdist (the formats nab reads)"
-)
-ABSENT_TEXT = "package not found on any configured index"
 NO_MATCH_TEXT = "no version matches the requirement"
 
 # The kinds whose sentence is a constant, copied character for character
 # from the classifier they replace.
 FIXED_TEXTS: dict[ReasonKind, str] = {
-    ReasonKind.OFFLINE_MISS: OFFLINE_MISS_TEXT,
-    ReasonKind.UNREADABLE_ONLY: UNREADABLE_ONLY_TEXT,
-    ReasonKind.ABSENT: ABSENT_TEXT,
+    ReasonKind.OFFLINE_MISS: "offline mode skipped an index with no cached listing",
+    ReasonKind.UNREADABLE_ONLY: (
+        "found on index but no file is a wheel or a .tar.gz sdist"
+        " (the formats nab reads)"
+    ),
+    ReasonKind.ABSENT: "package not found on any configured index",
 }
 
 _EMPTY_LEAD = "found on index but no distribution is compatible"
@@ -238,7 +288,7 @@ def _base_pass(
     for dist in files:
         version = _listing.parsed_version(dist.version)
         if version is None:
-            dropped.append(_record(dist, None, DropCause.INVALID_VERSION))
+            dropped.append(DroppedFile(dist, None, DropCause.INVALID_VERSION))
             continue
 
         if policy.overridden:
@@ -250,7 +300,7 @@ def _base_pass(
 
         if _listing.excluded_by_dist_policy(dist, effective):
             dropped.append(
-                _record(dist, version, DropCause.DIST_POLICY, detail=effective.value)
+                DroppedFile(dist, version, DropCause.DIST_POLICY, effective.value)
             )
             continue
 
@@ -283,13 +333,13 @@ def _tag_pass(
     kept: set[Version] = set()
     for version, dist in survivors:
         if version in no_sdist:
-            dropped.append(_record(dist, version, DropCause.SDIST_INSTALL_NO_SDIST))
+            dropped.append(DroppedFile(dist, version, DropCause.SDIST_INSTALL_NO_SDIST))
             continue
 
         if tags is not None and _listing.excluded_by_wheel_tags(
             provider, normalized, version, dist, tags
         ):
-            dropped.append(_record(dist, version, DropCause.WHEEL_TAGS))
+            dropped.append(DroppedFile(dist, version, DropCause.WHEEL_TAGS))
             continue
 
         kept.add(version)
@@ -322,26 +372,6 @@ def python_or_time_verdict(
         return DropCause.UPLOAD_TIME_NAIVE
 
 
-def _record(
-    dist: DistFile,
-    version: Version | None,
-    cause: DropCause,
-    *,
-    detail: str | None = None,
-    cutoff: datetime | None = None,
-) -> DroppedFile:
-    """Build the record for one refused file."""
-    return DroppedFile(
-        filename=dist.filename,
-        raw_version=dist.version,
-        version=version,
-        is_wheel=isinstance(dist, WheelFile),
-        cause=cause,
-        detail=detail,
-        cutoff=cutoff,
-    )
-
-
 def _detailed(
     provider: Provider,
     normalized: str,
@@ -363,7 +393,7 @@ def _detailed(
             else None
         )
         spec = override if override is not None else dist.requires_python
-        return _record(dist, version, cause, detail=spec)
+        return DroppedFile(dist, version, cause, spec)
 
     if policy.overridden:
         cutoff = provider.effective_uploaded_prior_to(
@@ -371,7 +401,7 @@ def _detailed(
         )
     else:
         cutoff = policy.default_cutoff
-    return _record(dist, version, cause, detail=dist.upload_time, cutoff=cutoff)
+    return DroppedFile(dist, version, cause, dist.upload_time, cutoff)
 
 
 def empty_listing_reason(
@@ -380,15 +410,14 @@ def empty_listing_reason(
     """Say why nothing on ``normalized``'s listing is usable on this target."""
     clauses = _clauses(diagnosis)
     if diagnosis.unexplained:
-        clauses.append(_unexplained_clause(diagnosis.unexplained))
+        clauses.append(_render(None, diagnosis.unexplained))
     if not diagnosis.published_sdist and not any(
         record.cause is DropCause.SDIST_INSTALL_NO_SDIST for record in diagnosis.dropped
     ):
         clauses.append(_NO_SDIST_TAIL)
 
-    line = f"{_EMPTY_LEAD}: {'; '.join(clauses)}" if clauses else _EMPTY_LEAD
-    remedy = _remedy(provider, normalized, diagnosis)
-    return line if remedy is None else f"{line}\n    note: {remedy}"
+    lead = f"{_EMPTY_LEAD}: {'; '.join(clauses)}" if clauses else _EMPTY_LEAD
+    return lead + _note(provider, normalized, diagnosis, diagnosis.dropped)
 
 
 def in_range_reason(
@@ -407,13 +436,18 @@ def in_range_reason(
         if record.version is not None and record.version not in diagnosis.kept
     ]
     in_range = set(version_range.filter({record.version for record in named}))
+    asked = sorted(
+        (record for record in named if record.version in in_range),
+        key=lambda record: record.cause.value,
+    )
 
     labels: list[str] = []
-    for record in sorted(named, key=lambda record: record.cause.value):
-        if record.version in in_range and FILTER_LABELS[record.cause] not in labels:
+    for record in asked:
+        if FILTER_LABELS[record.cause] not in labels:
             labels.append(FILTER_LABELS[record.cause])
     if not labels:
         return None
+
     return f"{_IN_RANGE_LEAD} (by {_join_labels(labels)})"
 
 
@@ -426,32 +460,105 @@ def _join_labels(labels: list[str]) -> str:
     return f"{', '.join(labels[:-1])}, or {labels[-1]}"
 
 
+# One template per cause, with the residual drop under ``None``, so every
+# sentence a clause can print is in one table.  ``{n}`` is the count and
+# ``[singular|plural]`` picks the form it takes; ``{v}`` is the version the
+# clause quotes and ``{detail}`` the one value that cause carries.
+_CLAUSE_TEMPLATES: dict[DropCause | None, str] = {
+    DropCause.UPLOAD_TIME_MISSING: (
+        "the uploaded-prior-to cutoff {cutoff} excluded {n} [file that"
+        " publishes|files that publish] no upload time ([|newest: ]{v})"
+    ),
+    DropCause.UPLOAD_TIME_UNPARSEABLE: (
+        "the uploaded-prior-to cutoff excluded {n} [file|files] whose upload"
+        " time is not ISO 8601 ([|newest: ]{v}, {detail!r})"
+    ),
+    DropCause.UPLOAD_TIME_NAIVE: (
+        "the uploaded-prior-to cutoff could not judge {n} [file|files] whose"
+        " upload time carries no timezone ([|newest: ]{v}, {detail!r})"
+    ),
+    DropCause.UPLOAD_TIME_AFTER_CUTOFF: (
+        "the uploaded-prior-to cutoff {cutoff} excluded {n} [file uploaded at"
+        " {detail} ({v})|files uploaded on or after it (newest: {v}, uploaded"
+        " {detail})]"
+    ),
+    DropCause.DIST_POLICY: (
+        'dist-policy = "{detail}" excluded {n} [{kind} ({v})|{kind}s (newest: {v})]'
+    ),
+    DropCause.SDIST_INSTALL_NO_SDIST: (
+        'dist-policy = "sdist-install" excluded {n} [version that'
+        " publishes|versions that publish] no sdist ([|newest: ]{v})"
+    ),
+    DropCause.REQUIRES_PYTHON: (
+        "requires-python excluded {n} [file|files] ([|newest: ]{v} requires"
+        " {detail}, the resolve targets Python {py})"
+    ),
+    DropCause.WHEEL_TAGS: (
+        "none of the wheel's tags are compatible with the resolve target"
+        " ({n} [wheel|wheels] rejected)"
+    ),
+    DropCause.INVALID_VERSION: (
+        "{n} [file carries|files carry] a version PEP 440 cannot parse"
+        " ([|first: ]{raw!r})"
+    ),
+    # The walk kept a version the filter did not, so no rung names it.
+    None: (
+        "{n} [version was|versions were] dropped for a reason this report cannot name"
+    ),
+}
+
+_ALTERNATIVES = r"\[([^|\]]*)\|([^\]]*)\]"
+
+
+def _render(cause: DropCause | None, count: int, **fields: object) -> str:
+    """Fill ``cause``'s template, taking the singular form when ``count`` is 1."""
+    template = re.sub(
+        _ALTERNATIVES, r"\1" if count == 1 else r"\2", _CLAUSE_TEMPLATES[cause]
+    )
+    return template.format(n=count, **fields)
+
+
 def _clauses(diagnosis: ListingDiagnosis) -> list[str]:
     """Render one clause per cause that fired, in report order."""
     groups: dict[DropCause, list[DroppedFile]] = {}
     for record in diagnosis.dropped:
         groups.setdefault(record.cause, []).append(record)
-
-    clauses: list[str] = []
-    for cause in sorted(groups, key=lambda cause: cause.value):
-        records = groups[cause]
-        if cause is DropCause.INVALID_VERSION:
-            clauses.append(_invalid_version_clause(records))
-            continue
-        # The count is files, except the whole-version rung; the quoted
-        # detail comes from the highest version the cause refused, so the
-        # release a user most likely wanted is the one named.
-        count = (
-            len({record.version for record in records})
-            if cause is DropCause.SDIST_INSTALL_NO_SDIST
-            else len(records)
-        )
-        clauses.append(_CLAUSE_BUILDERS[cause](count, _newest(records), diagnosis))
-    return clauses
+    return [
+        _clause(cause, groups[cause], diagnosis)
+        for cause in sorted(groups, key=lambda cause: cause.value)
+    ]
 
 
-def _newest(records: list[DroppedFile]) -> DroppedFile:
-    """Return the record carrying the highest version of a cause's group."""
+def _clause(
+    cause: DropCause, records: list[DroppedFile], diagnosis: ListingDiagnosis
+) -> str:
+    """Render one cause's clause, quoting the file its evidence comes from.
+
+    The count is files, except the whole-version rung, and the detail comes
+    from the highest version the cause refused, so the release a user most
+    likely wanted is the one named.  An unparseable version has none to
+    rank by, so that cause quotes the first file it refused.
+    """
+    if cause is DropCause.SDIST_INSTALL_NO_SDIST:
+        count = len({record.version for record in records})
+    else:
+        count = len(records)
+
+    quoted = records[0] if cause is DropCause.INVALID_VERSION else _newest(records)
+    return _render(
+        cause,
+        count,
+        v=quoted.version,
+        raw=quoted.raw_version,
+        detail=quoted.detail,
+        kind="wheel" if quoted.is_wheel else "sdist",
+        cutoff="" if quoted.cutoff is None else quoted.cutoff.isoformat(),
+        py=diagnosis.target_python,
+    )
+
+
+def _newest(records: Sequence[DroppedFile]) -> DroppedFile:
+    """Return the record carrying the highest version of a group."""
     return max(records, key=_version_of)
 
 
@@ -461,170 +568,41 @@ def _version_of(record: DroppedFile) -> Version:
     return record.version
 
 
-def _iso(cutoff: datetime | None) -> str:
-    """Render the cutoff an upload-time clause quotes."""
-    assert cutoff is not None
-    return cutoff.isoformat()
-
-
-def _missing_upload_time_clause(
-    count: int, newest: DroppedFile, _diagnosis: ListingDiagnosis
-) -> str:
-    prefix = f"the uploaded-prior-to cutoff {_iso(newest.cutoff)} excluded"
-    if count == 1:
-        return f"{prefix} 1 file that publishes no upload time ({newest.version})"
-    return (
-        f"{prefix} {count} files that publish no upload time (newest: {newest.version})"
-    )
-
-
-def _unparseable_upload_time_clause(
-    count: int, newest: DroppedFile, _diagnosis: ListingDiagnosis
-) -> str:
-    prefix = "the uploaded-prior-to cutoff excluded"
-    if count == 1:
-        return (
-            f"{prefix} 1 file whose upload time is not ISO 8601"
-            f" ({newest.version}, {newest.detail!r})"
-        )
-    return (
-        f"{prefix} {count} files whose upload time is not ISO 8601"
-        f" (newest: {newest.version}, {newest.detail!r})"
-    )
-
-
-def _naive_upload_time_clause(
-    count: int, newest: DroppedFile, _diagnosis: ListingDiagnosis
-) -> str:
-    prefix = "the uploaded-prior-to cutoff could not judge"
-    if count == 1:
-        return (
-            f"{prefix} 1 file whose upload time carries no timezone"
-            f" ({newest.version}, {newest.detail!r})"
-        )
-    return (
-        f"{prefix} {count} files whose upload time carries no timezone"
-        f" (newest: {newest.version}, {newest.detail!r})"
-    )
-
-
-def _after_cutoff_clause(
-    count: int, newest: DroppedFile, _diagnosis: ListingDiagnosis
-) -> str:
-    prefix = f"the uploaded-prior-to cutoff {_iso(newest.cutoff)} excluded"
-    if count == 1:
-        return f"{prefix} 1 file uploaded at {newest.detail} ({newest.version})"
-    return (
-        f"{prefix} {count} files uploaded on or after it"
-        f" (newest: {newest.version}, uploaded {newest.detail})"
-    )
-
-
-def _dist_policy_clause(
-    count: int, newest: DroppedFile, _diagnosis: ListingDiagnosis
-) -> str:
-    kind = "wheel" if newest.is_wheel else "sdist"
-    prefix = f'dist-policy = "{newest.detail}" excluded'
-    if count == 1:
-        return f"{prefix} 1 {kind} ({newest.version})"
-    return f"{prefix} {count} {kind}s (newest: {newest.version})"
-
-
-def _sdist_install_clause(
-    count: int, newest: DroppedFile, _diagnosis: ListingDiagnosis
-) -> str:
-    prefix = 'dist-policy = "sdist-install" excluded'
-    if count == 1:
-        return f"{prefix} 1 version that publishes no sdist ({newest.version})"
-    return f"{prefix} {count} versions that publish no sdist (newest: {newest.version})"
-
-
-def _requires_python_clause(
-    count: int, newest: DroppedFile, diagnosis: ListingDiagnosis
-) -> str:
-    target = f"the resolve targets Python {diagnosis.target_python}"
-    if count == 1:
-        return (
-            f"requires-python excluded 1 file"
-            f" ({newest.version} requires {newest.detail}, {target})"
-        )
-    return (
-        f"requires-python excluded {count} files"
-        f" (newest: {newest.version} requires {newest.detail}, {target})"
-    )
-
-
-def _wheel_tags_clause(
-    count: int, _newest: DroppedFile, _diagnosis: ListingDiagnosis
-) -> str:
-    wheels = "wheel" if count == 1 else "wheels"
-    return (
-        "none of the wheel's tags are compatible with the resolve target"
-        f" ({count} {wheels} rejected)"
-    )
-
-
-def _invalid_version_clause(records: list[DroppedFile]) -> str:
-    """Quote the first unparseable version, which has none to rank by."""
-    first = records[0].raw_version
-    if len(records) == 1:
-        return f"1 file carries a version PEP 440 cannot parse ({first!r})"
-    return (
-        f"{len(records)} files carry a version PEP 440 cannot parse (first: {first!r})"
-    )
-
-
-def _unexplained_clause(count: int) -> str:
-    """Say that the walk kept versions the filter did not, rather than hide it."""
-    if count == 1:
-        return "1 version was dropped for a reason this report cannot name"
-    return f"{count} versions were dropped for a reason this report cannot name"
-
-
-_CLAUSE_BUILDERS: dict[
-    DropCause, Callable[[int, DroppedFile, ListingDiagnosis], str]
-] = {
-    DropCause.UPLOAD_TIME_MISSING: _missing_upload_time_clause,
-    DropCause.UPLOAD_TIME_UNPARSEABLE: _unparseable_upload_time_clause,
-    DropCause.UPLOAD_TIME_NAIVE: _naive_upload_time_clause,
-    DropCause.UPLOAD_TIME_AFTER_CUTOFF: _after_cutoff_clause,
-    DropCause.DIST_POLICY: _dist_policy_clause,
-    DropCause.SDIST_INSTALL_NO_SDIST: _sdist_install_clause,
-    DropCause.REQUIRES_PYTHON: _requires_python_clause,
-    DropCause.WHEEL_TAGS: _wheel_tags_clause,
+_REMEDIES: dict[CutoffLayer, str] = {
+    CutoffLayer.GLOBAL: (
+        "the project-level uploaded-prior-to set that cutoff; uploaded-prior-to"
+        ' = false under [tool.nab.packages."{package}"] lifts it for this package'
+    ),
+    CutoffLayer.PACKAGE: (
+        "the per-package uploaded-prior-to for {label} set that cutoff; setting"
+        " it to false there lifts it"
+    ),
+    CutoffLayer.INDEX: (
+        'the per-index uploaded-prior-to for index "{label}" set that cutoff;'
+        " uploaded-prior-to = false under [tool.nab.index.{label}] lifts it"
+    ),
 }
 
 
-def _remedy(
-    provider: Provider, normalized: str, diagnosis: ListingDiagnosis
-) -> str | None:
-    """Name the config layer that set the cutoff, and what lifts it there.
+def _note(
+    provider: Provider,
+    normalized: str,
+    diagnosis: ListingDiagnosis,
+    records: Sequence[DroppedFile],
+) -> str:
+    """Return the ``note:`` continuation naming what lifts the cutoff, or "".
 
-    Offered for the upload-time causes alone.  Requires-Python gets none:
-    the per-package override replaces the package's declared metadata, so
-    offering it as a fix would be telling the user to lie to the resolver.
+    Offered for the upload-time causes alone, and only for the drops the
+    lead it follows describes.  Requires-Python gets none: the per-package
+    override replaces the package's declared metadata, so offering it as a
+    fix would be telling the user to lie to the resolver.
     """
-    records = [
-        record for record in diagnosis.dropped if record.cause in UPLOAD_TIME_CAUSES
-    ]
-    if not records:
-        return None
+    refused = [record for record in records if record.cause in UPLOAD_TIME_CAUSES]
+    if not refused:
+        return ""
 
     source = provider.uploaded_prior_to_source(
-        normalized, _version_of(_newest(records)), diagnosis.index_name
+        normalized, _version_of(_newest(refused)), diagnosis.index_name
     )
-    if source.layer is CutoffLayer.PACKAGE:
-        return (
-            f"the per-package uploaded-prior-to for {source.label} set that cutoff;"
-            " setting it to false there lifts it"
-        )
-    if source.layer is CutoffLayer.INDEX:
-        return (
-            f'the per-index uploaded-prior-to for index "{source.label}" set that'
-            f" cutoff; uploaded-prior-to = false under [tool.nab.index.{source.label}]"
-            " lifts it"
-        )
-    return (
-        "the project-level uploaded-prior-to set that cutoff; uploaded-prior-to ="
-        f' false under [tool.nab.packages."{normalized}"] lifts it for this package'
-    )
+    remedy = _REMEDIES[source.layer].format(package=normalized, label=source.label)
+    return f"\n    note: {remedy}"

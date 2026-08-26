@@ -56,9 +56,10 @@ class DropCause(enum.Enum):
     """Why the listing filter refused one file, or one whole version.
 
     The member values are the order the clauses print in, which is not the
-    order the filter applies.  The filter refuses a file at the first rung
-    that objects, and those rungs run in the order
-    :data:`CLASSIFICATION_ORDER` gives.
+    order the filter applies.  A file is refused at the first rung that
+    objects, and the rungs run in this order: ``INVALID_VERSION``,
+    ``DIST_POLICY``, ``REQUIRES_PYTHON``, the four ``UPLOAD_TIME_*``,
+    ``SDIST_INSTALL_NO_SDIST``, ``WHEEL_TAGS``.
     """
 
     UPLOAD_TIME_MISSING = 1
@@ -70,22 +71,6 @@ class DropCause(enum.Enum):
     REQUIRES_PYTHON = 7
     WHEEL_TAGS = 8
     INVALID_VERSION = 9
-
-
-# The order the filter asks the questions in, first refusal wins.  Written
-# down so a reader can check the diagnosis walk against it, and so the
-# report order above is visibly not this.
-CLASSIFICATION_ORDER = (
-    DropCause.INVALID_VERSION,
-    DropCause.DIST_POLICY,
-    DropCause.REQUIRES_PYTHON,
-    DropCause.UPLOAD_TIME_MISSING,
-    DropCause.UPLOAD_TIME_UNPARSEABLE,
-    DropCause.UPLOAD_TIME_NAIVE,
-    DropCause.UPLOAD_TIME_AFTER_CUTOFF,
-    DropCause.SDIST_INSTALL_NO_SDIST,
-    DropCause.WHEEL_TAGS,
-)
 
 
 def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, DistFile]]:
