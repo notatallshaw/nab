@@ -2951,7 +2951,7 @@ class TestLockCommandUniversal:
             "\nDiagnostics:\n"
             "  - foo: uploaded-prior-to excluded every file;"
             " all are newer than the cutoff\n"
-            '    try: packages."foo".uploaded-prior-to = false\n'
+            '    try: set packages."foo".uploaded-prior-to = false\n'
         )
 
     def test_the_verbose_level_replaces_the_try_line_with_the_detail(
@@ -2995,7 +2995,7 @@ class TestLockCommandUniversal:
             "#     - foo: uploaded-prior-to excluded every file;"
             " all are newer than the cutoff"
         ) in err
-        assert '#       try: packages."foo".uploaded-prior-to = false' in err
+        assert '#       try: set packages."foo".uploaded-prior-to = false' in err
 
     def test_the_verbose_level_reaches_the_per_tuple_block(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

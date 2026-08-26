@@ -137,6 +137,13 @@ def short_for(
     return diagnostic_for(files, spec=spec, **kwargs).short
 
 
+def remedy_for(
+    files: Sequence[WheelFile | SdistFile], *, spec: str = "", **kwargs: object
+) -> str | None:
+    """Ask ``pkg`` for ``spec`` and return what its ``try:`` line instructs."""
+    return diagnostic_for(files, spec=spec, **kwargs).remedy
+
+
 def rendered_for(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> str:
     """Render ``pkg``'s empty-listing entry without asking for a version.
 
@@ -836,20 +843,159 @@ class TestTheRemedyNamesTheLayer:
             uploaded_prior_to=CUTOFF,
             index_overrides={"other": IndexOverride(uploaded_prior_to=CUTOFF)},
         )
-        layer, _label = provider.uploaded_prior_to_source("pkg", Version("1.0"), "pypi")
-        assert layer is CutoffLayer.GLOBAL
+        source = provider.uploaded_prior_to_source("pkg", Version("1.0"), "pypi")
+        assert source.layer is CutoffLayer.GLOBAL
 
     def test_a_synthetic_source_has_no_index_layer(self) -> None:
         """A package with no serving index falls through to the project level."""
         provider = build([wheel("1.0")], uploaded_prior_to=CUTOFF)
-        layer, label = provider.uploaded_prior_to_source("pkg", Version("1.0"), None)
-        assert layer is CutoffLayer.GLOBAL
-        assert label == ""
+        source = provider.uploaded_prior_to_source("pkg", Version("1.0"), None)
+        assert source.layer is CutoffLayer.GLOBAL
+        assert source.label == ""
+        assert source.selector == "pkg"
 
     def test_requires_python_is_offered_no_remedy(self) -> None:
         """Overriding requires-python would tell the resolver a falsehood."""
         reason = reason_for([wheel("1.0", requires_python=">=3.99")], target=_LINUX312)
         assert "note:" not in reason
+
+
+class TestTheTryLine:
+    """The instruction a default run prints under the line, per layer.
+
+    Read at this depth because it is not the ``note:`` it was cut from: a
+    note points at the entry the config file has, and an instruction has to
+    name a setting the reader can change.  Each is quoted here as it was
+    executed against a real project.
+    """
+
+    def test_the_project_level_cutoff_is_a_key_to_set(self) -> None:
+        """No entry sets the key yet, so the line can name the whole path."""
+        assert remedy_for(
+            [wheel("1.0", upload_time=AFTER)], uploaded_prior_to=CUTOFF
+        ) == ('set packages."pkg".uploaded-prior-to = false')
+
+    @pytest.mark.parametrize(
+        "source_label",
+        ["packages.'pkg > 0.5'", "package-rules[0]", ""],
+        ids=["sugar-table", "package-rules", "host-built"],
+    )
+    def test_a_per_package_cutoff_names_the_entry_not_its_config_path(
+        self, source_label: str
+    ) -> None:
+        """The label is where the entry was written, which is not a selector.
+
+        ``packages.'pkg > 0.5'`` and ``package-rules[0]`` are the same
+        override on two surfaces, and only one of them is spelled
+        ``packages."<selector>"``.  Composing either into a second key path
+        gives configuration nab rejects, so the line names the entry and
+        the requirement the user wrote.
+        """
+        assert (
+            remedy_for(
+                [wheel("1.0", upload_time=AFTER)],
+                package_overrides=[
+                    pkg_override(
+                        "pkg>0.5",
+                        uploaded_prior_to=CUTOFF,
+                        source_label=source_label,
+                    )
+                ],
+            )
+            == "set uploaded-prior-to = false on the per-package entry for pkg>0.5"
+        )
+
+    @pytest.mark.parametrize(
+        "index_name",
+        ["pypi", "corp mirror", "my.index"],
+        ids=["bare", "spaced", "dotted"],
+    )
+    def test_a_per_index_cutoff_quotes_whatever_the_index_is_called(
+        self, index_name: str
+    ) -> None:
+        """A cutoff can only reach an index through the table that names it."""
+        provider = build(
+            [wheel("1.0", upload_time=AFTER)],
+            index_overrides={index_name: IndexOverride(uploaded_prior_to=CUTOFF)},
+        )
+        provider.coordinator.index.store_listing_index("pkg", index_name)
+        assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
+
+        diagnostic = provider.get_no_versions_reason("pkg")
+        assert diagnostic is not None
+        assert diagnostic.remedy == (
+            f'set index."{index_name}".uploaded-prior-to = false'
+        )
+
+    def test_a_package_that_already_scopes_the_cutoff_is_told_to_widen_it(
+        self,
+    ) -> None:
+        """A second entry would overlap the first, so there is nothing to set.
+
+        The project cutoff is what refused 2.0; the ``pkg<2`` entry does not
+        reach it, and a bare-name entry beside that one is two per-package
+        entries setting one field over overlapping versions.
+        """
+        assert remedy_for(
+            [wheel("2.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
+        ) == (
+            "widen the per-package entry for pkg<2 over this version,"
+            " or drop the project cutoff"
+        )
+
+    @pytest.mark.parametrize(
+        "policy",
+        [DistPolicy.SDIST_ONLY, DistPolicy.SDIST_INSTALL],
+        ids=["sdist-only", "sdist-install"],
+    )
+    def test_both_dist_policy_causes_offer_the_wider_policy(
+        self, policy: DistPolicy
+    ) -> None:
+        """Neither cause depends on which layer set the policy, so both set it here."""
+        assert remedy_for([wheel("1.0")], dist_policy=policy, target=_LINUX312) == (
+            'set packages."pkg".dist-policy = "wheel-or-sdist"'
+        )
+
+    def test_the_first_rung_in_report_order_answers(self) -> None:
+        """Two rungs fired and the earlier one holds the line.
+
+        ``dist-policy`` took the wheel and the cutoff took the sdist, so
+        both have a remedy.  Lifting the one the ``-v`` clauses lead with
+        is what the reader is being pointed at.
+        """
+        assert remedy_for(
+            [wheel("1.0"), sdist("2.0", upload_time=AFTER)],
+            dist_policy=DistPolicy.SDIST_ONLY,
+            uploaded_prior_to=CUTOFF,
+            target=_LINUX312,
+        ) == ('set packages."pkg".uploaded-prior-to = false')
+
+    def test_requires_python_is_offered_no_try_line(self) -> None:
+        """Overriding requires-python would tell the resolver a falsehood."""
+        assert (
+            remedy_for([wheel("1.0", requires_python=">=3.99")], target=_LINUX312)
+            is None
+        )
+
+    def test_requires_python_beside_a_cutoff_offers_the_cutoff(self) -> None:
+        """The ban is on the key, not on the line: another rung may still answer."""
+        assert remedy_for(
+            [
+                wheel("1.0", requires_python=">=3.99"),
+                wheel("2.0", upload_time=AFTER),
+            ],
+            uploaded_prior_to=CUTOFF,
+            target=_LINUX312,
+        ) == ('set packages."pkg".uploaded-prior-to = false')
+
+    def test_wheel_tags_is_offered_no_try_line(self) -> None:
+        """No configuration turns the tag pass on, so nothing can be set."""
+        assert (
+            remedy_for([wheel("1.0", tag="cp312-cp312-win_amd64")], target=_LINUX312)
+            is None
+        )
 
 
 class TestTheInRangeLead:

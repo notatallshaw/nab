@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import enum
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from nab_provider.diagnostics import Diagnostic
 from nab_provider.records import SdistFile, WheelFile
@@ -86,6 +86,20 @@ class CutoffLayer(enum.Enum):
     GLOBAL_SCOPED_ENTRY = "global-scoped-entry"
     PACKAGE = "package"
     INDEX = "index"
+
+
+class CutoffSource(NamedTuple):
+    """Where a candidate's upload-time cutoff came from, at both depths.
+
+    ``label`` names the entry the way the config file has it, so the
+    ``note:`` line can point the reader back at what they wrote.
+    ``selector`` is the requirement itself, which is the only half a
+    setting can be keyed by: a config path is not a package selector.
+    """
+
+    layer: CutoffLayer
+    label: str
+    selector: str
 
 
 class ReasonKind(enum.Enum):
@@ -280,11 +294,11 @@ FIXED_DIAGNOSTICS: dict[ReasonKind, Diagnostic] = {
                 " for this package"
             ),
             (
-                "note: running without --offline, or setting offline = false,"
-                " lets nab fetch it"
+                "note: run without --offline, or set offline = false in a"
+                " nab.toml; pyproject.toml does not take that key"
             ),
         ),
-        "run without --offline (or offline = false)",
+        "run without --offline",
     ),
     ReasonKind.UNREADABLE_ONLY: Diagnostic(
         "no file is a wheel or a .tar.gz sdist (the only formats nab reads)",
@@ -798,19 +812,27 @@ _REMEDIES: dict[CutoffLayer, str] = {
     ),
 }
 
-# The assignment cut out of each remedy, for the one ``try:`` line the
-# default report prints.  It states what to set and not what follows:
+# The instruction cut out of each remedy, for the one ``try:`` line the
+# default report prints.  It names a setting to change rather than a
+# fragment to paste, since the table holding that setting usually exists
+# already and a second one is a TOML error.  The two layers whose key is
+# already set name the entry instead of a path, because the same override
+# is written on two surfaces and only one of them is spelled
+# ``packages."<selector>"``.  It states what to set and not what follows:
 # lifting a filter admits files rather than promising a resolve.
 _TRY_CUTOFF: dict[CutoffLayer, str] = {
-    CutoffLayer.GLOBAL: 'packages."{package}".uploaded-prior-to = false',
+    CutoffLayer.GLOBAL: 'set packages."{selector}".uploaded-prior-to = false',
     CutoffLayer.GLOBAL_SCOPED_ENTRY: (
-        'widen packages."{label}" to this version, or unset uploaded-prior-to'
+        "widen the per-package entry for {selector} over this version,"
+        " or drop the project cutoff"
     ),
-    CutoffLayer.PACKAGE: 'packages."{label}".uploaded-prior-to = false',
-    CutoffLayer.INDEX: 'index."{label}".uploaded-prior-to = false',
+    CutoffLayer.PACKAGE: (
+        "set uploaded-prior-to = false on the per-package entry for {selector}"
+    ),
+    CutoffLayer.INDEX: 'set index."{selector}".uploaded-prior-to = false',
 }
 
-_TRY_DIST_POLICY = 'packages."{package}".dist-policy = "wheel-or-sdist"'
+_TRY_DIST_POLICY = 'set packages."{package}".dist-policy = "wheel-or-sdist"'
 
 
 def _cutoff_layers(
@@ -818,7 +840,7 @@ def _cutoff_layers(
     normalized: str,
     diagnosis: ListingDiagnosis,
     records: Iterable[DroppedFile],
-) -> list[tuple[CutoffLayer, str]]:
+) -> list[CutoffSource]:
     """Return the config layers that set the cutoffs ``records`` were judged by.
 
     One entry per layer, so a listing judged by two of them is answered
@@ -839,9 +861,7 @@ def _cutoff_layers(
     )
 
 
-def _note_lines(
-    layers: Sequence[tuple[CutoffLayer, str]], package: str
-) -> tuple[str, ...]:
+def _note_lines(layers: Sequence[CutoffSource], package: str) -> tuple[str, ...]:
     """Return the ``note:`` lines naming what lifts each cutoff that applied.
 
     Offered for the upload-time causes alone.  Requires-Python gets none:
@@ -849,15 +869,15 @@ def _note_lines(
     offering it as a fix would be telling the user to lie to the resolver.
     """
     return tuple(
-        "note: " + _REMEDIES[layer].format(package=package, label=label)
-        for layer, label in layers
+        "note: " + _REMEDIES[source.layer].format(package=package, label=source.label)
+        for source in layers
     )
 
 
 def _remedy(
-    package: str, groups: _Groups, layers: Sequence[tuple[CutoffLayer, str]]
+    package: str, groups: _Groups, layers: Sequence[CutoffSource]
 ) -> str | None:
-    """Return the assignment the ``try:`` line states, or ``None``.
+    """Return the instruction the ``try:`` line states, or ``None``.
 
     Where several rungs fired, the first in report order that has a remedy
     answers: lifting it is what admits files again, and the report cannot
@@ -865,8 +885,8 @@ def _remedy(
     """
     for cause, _records in groups:
         if cause in UPLOAD_TIME_CAUSES:
-            layer, label = layers[0]
-            return _TRY_CUTOFF[layer].format(package=package, label=label)
+            source = layers[0]
+            return _TRY_CUTOFF[source.layer].format(selector=source.selector)
         if cause in DIST_POLICY_CAUSES:
             return _TRY_DIST_POLICY.format(package=package)
     return None

@@ -147,13 +147,18 @@ captured diagnostics are appended under a `Diagnostics:` section. Each
 package that ran out of versions gets one line there, naming the
 configuration key that refused its files as the key is spelled in
 `pyproject.toml`. Where changing a setting would admit those files
-again, an indented `try:` line states the assignment:
+again, an indented `try:` line says which setting:
 
 ```
 Diagnostics:
   - foo: uploaded-prior-to excluded every file; all are newer than the cutoff
-    try: packages."foo".uploaded-prior-to = false
+    try: set packages."foo".uploaded-prior-to = false
 ```
+
+It is an instruction rather than a fragment to paste: the table the key
+belongs in usually exists already, and a second one is a TOML error.
+Where an entry already sets that key, the line names the entry instead
+of a path, since the same override is written on two surfaces.
 
 The `try:` line states what to set, not what follows: lifting a filter
 admits files rather than promising a resolve, and a file two filters

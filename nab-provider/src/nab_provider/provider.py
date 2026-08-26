@@ -1928,37 +1928,42 @@ class Provider:
 
     def uploaded_prior_to_source(
         self, canonical_name: str, version: Version, index_name: str | None
-    ) -> tuple[_diagnosis.CutoffLayer, str]:
-        """Return the config layer that set this candidate's cutoff, and its label.
+    ) -> _diagnosis.CutoffSource:
+        """Return the config layer that set this candidate's cutoff.
 
-        The label is the per-package override's ``source_label`` or the
-        index's name, and is empty for the project-level cutoff, which no
-        entry names.  A host that builds overrides itself may leave the
-        label unset, so the requirement stands in for it.  Reads the two
-        override surfaces through the same matcher :meth:`_effective_field`
-        reads them with, but never raises: it runs while a failure is being
-        rendered, where the probe may already have swallowed the conflict
-        :meth:`_effective_field` would.
+        Reads the two override surfaces through the same matcher
+        :meth:`_effective_field` reads them with, but never raises: it runs
+        while a failure is being rendered, where the probe may already have
+        swallowed the conflict :meth:`_effective_field` would.
         """
         override = self._matching_package_override(
             canonical_name, version, self._uploaded_prior_to_value
         )
         if override is not None:
-            label = override.source_label or str(override.requirement)
-            return _diagnosis.CutoffLayer.PACKAGE, label
+            return _diagnosis.CutoffSource(
+                _diagnosis.CutoffLayer.PACKAGE,
+                override.source_label or str(override.requirement),
+                str(override.requirement),
+            )
 
         if index_name is not None:
             index = self._index_overrides.get(index_name)
             if index is not None and self._uploaded_prior_to_value(index) is not _UNSET:
-                return _diagnosis.CutoffLayer.INDEX, index_name
+                return _diagnosis.CutoffSource(
+                    _diagnosis.CutoffLayer.INDEX, index_name, index_name
+                )
 
         scoped = self._scoped_uploaded_prior_to_entry(canonical_name)
         if scoped is not None:
-            return _diagnosis.CutoffLayer.GLOBAL_SCOPED_ENTRY, scoped
-        return _diagnosis.CutoffLayer.GLOBAL, ""
+            return scoped
+        return _diagnosis.CutoffSource(
+            _diagnosis.CutoffLayer.GLOBAL, "", canonical_name
+        )
 
-    def _scoped_uploaded_prior_to_entry(self, canonical_name: str) -> str | None:
-        """Return the label of an entry setting ``canonical_name``'s cutoff elsewhere.
+    def _scoped_uploaded_prior_to_entry(
+        self, canonical_name: str
+    ) -> _diagnosis.CutoffSource | None:
+        """Return the entry setting ``canonical_name``'s cutoff over another range.
 
         Asked only where the project-level cutoff answered, so a bare-name
         entry would have matched the candidate and any entry found here is
@@ -1970,7 +1975,11 @@ class Provider:
             if override.name == canonical_name and (
                 self._uploaded_prior_to_value(override) is not _UNSET
             ):
-                return override.source_label or str(override.requirement)
+                return _diagnosis.CutoffSource(
+                    _diagnosis.CutoffLayer.GLOBAL_SCOPED_ENTRY,
+                    override.source_label or str(override.requirement),
+                    str(override.requirement),
+                )
         return None
 
     def _prefetch_batch(

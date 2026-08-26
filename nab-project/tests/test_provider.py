@@ -1541,9 +1541,13 @@ class TestNoVersionsReasons:
         ) as coordinator:
             provider = Provider(coordinator)
             provider.choose_version("foo", SpecifierSet("").to_range())
-        assert short_reason(provider, "foo") == (
+        diagnostic = provider.get_no_versions_reason("foo")
+        assert diagnostic is not None
+        assert diagnostic.short == (
             "offline mode skipped an index with no cached listing"
         )
+        # The key is user-scope, so the flag is the half that always works.
+        assert diagnostic.remedy == "run without --offline"
 
     def test_offline_with_cached_absence_still_reports_not_found(
         self, tmp_path: Path
