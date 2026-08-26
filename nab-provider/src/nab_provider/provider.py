@@ -170,7 +170,7 @@ def _since(before: tuple[int, ...], stats: ProviderStats) -> tuple[int, ...]:
 
 
 def _restore(stats: ProviderStats, before: tuple[int, ...]) -> None:
-    """Take back every counter a bracketed pass raised on ``stats``."""
+    """Take back every counter a bracketed pass bumped on ``stats``."""
     _replay(stats, tuple(-count for count in _since(before, stats)))
 
 
@@ -1589,9 +1589,9 @@ class Provider:
         The marker carries the range; which filters fired is decided later.
 
         ``all_versions`` is post-filter, so an empty one means either the
-        index served no files or every file it served was dropped by the
-        wheel-tag filter, requires-python, dist-policy, or the upload-time
-        cutoff.  The stored listing tells absence from incompatibility
+        index served no files or every file it served was dropped by one of
+        the listing filter's rungs.  The stored listing tells absence from
+        incompatibility
         apart, except that it is also empty for an index skipped offline
         and for a page of formats nab does not read (``.zip`` sdists,
         ``.exe`` installers).  Both are marked when stored so the reason
@@ -1626,8 +1626,8 @@ class Provider:
     def _empty_listing_marker(self, normalized: str) -> _diagnosis.NoVersionsReason:
         """Classify a package the filter left with nothing, without walking it.
 
-        Reads only the flags the index client already set, so an ask that
-        ends here during ordinary backtracking pays a dict lookup.
+        Reads only what the index client already holds, so an ask that ends
+        here during ordinary backtracking builds no sentence.
         """
         if self.coordinator.index.get_listing(normalized):
             return _diagnosis.FILTERED_EMPTY
@@ -1789,11 +1789,10 @@ class Provider:
     def diagnose_listing(self, normalized: str) -> _diagnosis.ListingDiagnosis | None:
         """Attribute ``normalized``'s listing drops, once per package per target.
 
-        The walk calls the filter's own predicates, and three of them raise
-        counters the benchmarks read, so it is bracketed: whatever it raised
-        on :attr:`stats` and on the per-version tag tally is taken back
-        before the answer is returned.  That keeps the filter's own loop at
-        a zero diff, which is why the walk shares those predicates at all.
+        The walk calls the filter's own predicates, which bump counters the
+        benchmarks read, so it is bracketed: whatever it added to
+        :attr:`stats` and to the per-version tag tally is taken back before
+        the answer is returned.
         """
         cached = self.listing_diagnoses.get(normalized, _UNSET)
         if cached is not _UNSET:

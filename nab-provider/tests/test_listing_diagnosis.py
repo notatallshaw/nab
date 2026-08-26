@@ -1,10 +1,11 @@
 """Tests for the failure-time attribution of the listing filter's drops.
 
-Two things are pinned here.  One is the differential oracle: over a matrix of
-policy configurations, the walk keeps or refuses every file the filter saw,
-exactly once, and keeps the versions the filter kept.  That is the whole
-anti-drift argument for a mechanism that re-expresses the filter's order.  The
-other is the clause text, one table entry per cause per grammatical number.
+The differential oracle is the anti-drift argument for a mechanism that
+re-expresses the filter's order: over a matrix of policy configurations, the
+walk keeps or refuses every file the filter saw, exactly once, and keeps the
+versions the filter kept.  The rest pins what the user reads, one case per
+clause per grammatical number, plus the remedy notes and the screen that
+keeps the walk off a lead that would discard it.
 """
 
 from __future__ import annotations
@@ -467,7 +468,7 @@ class TestClauseText:
     def test_two_cutoffs_over_files_with_no_upload_time_read_as_two_clauses(
         self,
     ) -> None:
-        """This clause names a cutoff as well, so it splits on one as well.
+        """This clause names a cutoff too, so two of them split it in two.
 
         Neither file publishes an upload time, and the cutoff each was
         judged against is the one its own clause has to name.
@@ -692,26 +693,16 @@ class TestTheRemedyNamesTheLayer:
             " cutoff; setting it to false there lifts it"
         )
 
-    def test_a_per_index_cutoff(self) -> None:
-        assert reason_for(
-            [wheel("1.0", upload_time=AFTER)],
-            index_overrides={"pypi": IndexOverride(uploaded_prior_to=CUTOFF)},
-        ).endswith(
-            f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file uploaded"
-            f" at {AFTER} (1.0); no sdist is available to build from"
-            '\n    note: the per-index uploaded-prior-to for index "pypi" set'
-            " that cutoff; setting it to false there lifts it"
-        )
-
     @pytest.mark.parametrize(
-        "index_name", ["corp mirror", "my.index"], ids=["spaced", "dotted"]
+        "index_name",
+        ["pypi", "corp mirror", "my.index"],
+        ids=["bare", "spaced", "dotted"],
     )
-    def test_the_note_names_a_free_form_index(self, index_name: str) -> None:
-        """An index name no bare TOML key can spell still reads back whole.
+    def test_a_per_index_cutoff(self, index_name: str) -> None:
+        """The note names the entry the user wrote, whatever the index is called.
 
-        The note points at the entry the user already wrote rather than
-        spelling its key, so a name carrying a space or a dot needs no
-        quoting rules of its own.
+        Index names are free-form, and a name carrying a space or a dot is
+        one no bare TOML key can spell.
         """
         provider = build(
             [wheel("1.0", upload_time=AFTER)],
@@ -723,6 +714,8 @@ class TestTheRemedyNamesTheLayer:
         reason = provider.get_no_versions_reason("pkg")
         assert reason is not None
         assert reason.endswith(
+            f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file uploaded"
+            f" at {AFTER} (1.0); no sdist is available to build from"
             f'\n    note: the per-index uploaded-prior-to for index "{index_name}"'
             " set that cutoff; setting it to false there lifts it"
         )

@@ -176,8 +176,7 @@ def make_sdist(
 
 
 def _blocker_reason(*blockers: str) -> diagnosis_mod.NoVersionsReason:
-    """A recorded look-ahead rejection, the marker tests seed to stand in for any
-    reason that names a cause."""
+    """A look-ahead marker, the reason tests seed when one must name a cause."""
     return diagnosis_mod.NoVersionsReason(
         diagnosis_mod.ReasonKind.BLOCKERS, blockers=blockers
     )

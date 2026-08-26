@@ -12,9 +12,9 @@ The record path builds a marker and nothing else: no listing is walked, no
 version parsed and no sentence built until
 :meth:`~nab_provider.provider.Provider.get_no_versions_reason` asks for one,
 which happens once the resolve has already failed.  The walk partitions the
-whole listing rather than a difference, so every file it sees is kept or
-refused exactly once, and a version it keeps that the filter did not is
-counted as unexplained rather than passed over.
+whole listing, so every file it sees is kept or refused exactly once, and a
+version it keeps that the filter did not is counted as unexplained rather
+than passed over.
 """
 
 from __future__ import annotations
@@ -54,7 +54,8 @@ FILTER_LABELS: dict[DropCause, str] = {
     DropCause.REQUIRES_PYTHON: "requires-python",
     DropCause.WHEEL_TAGS: "wheel tags",
     # Unreachable from the in-range lead, which compares versions against a
-    # range and so cannot see a file whose version never parsed.
+    # range and so cannot see a file whose version never parsed.  Kept so
+    # the table answers for every DropCause.
     DropCause.INVALID_VERSION: "version parsing",
 }
 
@@ -199,10 +200,7 @@ class NoVersionsReason:
 
     @property
     def is_generic(self) -> bool:
-        """Whether this reason says only that nothing matched.
-
-        A generic reason loses to a metadata ban, which names a cause.
-        """
+        """Whether this reason says only that nothing matched."""
         return self.kind is ReasonKind.NO_MATCH
 
 
@@ -216,8 +214,6 @@ FILTERED_EMPTY = NoVersionsReason(ReasonKind.FILTERED_EMPTY)
 
 NO_MATCH_TEXT = "no version matches the requirement"
 
-# The kinds whose sentence is a constant, copied character for character
-# from the classifier they replace.
 FIXED_TEXTS: dict[ReasonKind, str] = {
     ReasonKind.OFFLINE_MISS: "offline mode skipped an index with no cached listing",
     ReasonKind.UNREADABLE_ONLY: (
@@ -350,15 +346,11 @@ def python_or_time_verdict(
     dist: DistFile,
     policy: ListingPolicy,
 ) -> DropCause | None:
-    """Answer the filter's Requires-Python and upload-time question, totally.
+    """Answer the filter's own question without raising on a naive stamp.
 
-    Calls the filter's own
-    :func:`~nab_provider._provider.listing.python_or_time_cause` rather than
-    a copy of it, so the two cannot disagree, and turns the refusal it
-    raises on a timezone-naive upload time back into the cause it came
-    from.  The walk runs inside an error path: an exception here would lose
-    the report it was building.  The counters that call raises are taken
-    back by :meth:`~nab_provider.provider.Provider.diagnose_listing`.
+    The walk runs while a failure is being rendered, where the
+    :class:`~nab_provider.errors.InvalidUploadTimeError` the filter raises
+    would lose the report, so it comes back as the cause it was raised for.
     """
     try:
         return _listing.python_or_time_cause(
@@ -407,6 +399,7 @@ def empty_listing_reason(
     clauses = _clauses(diagnosis)
     if diagnosis.unexplained:
         clauses.append(_render(None, diagnosis.unexplained))
+
     if not diagnosis.published_sdist and not any(
         record.cause is DropCause.SDIST_INSTALL_NO_SDIST for record in diagnosis.dropped
     ):
@@ -441,14 +434,11 @@ def in_range_reason(
         key=lambda record: record.cause.value,
     )
 
-    labels: list[str] = []
-    for record in asked:
-        if FILTER_LABELS[record.cause] not in labels:
-            labels.append(FILTER_LABELS[record.cause])
+    labels = list(dict.fromkeys(FILTER_LABELS[record.cause] for record in asked))
     if not labels:
-        # A drop no rung models leaves no filter to name, but the release
-        # is still gone from a listing that published it, so the lead alone
-        # says more than the no-match line it would fall back to.
+        # A drop no rung models leaves no filter to name, but the release is
+        # still gone from a listing that published it, so the bare lead says
+        # more than the no-match line it would fall back to.
         return _IN_RANGE_LEAD if diagnosis.unexplained else None
 
     lead = f"{_IN_RANGE_LEAD} (by {_join_labels(labels)})"
@@ -456,12 +446,7 @@ def in_range_reason(
 
 
 def _join_labels(labels: list[str]) -> str:
-    """Join filter labels the way the sentence reads them.
-
-    Every label named here refused a release the requirement asked for, so
-    they are conjoined: "or" would offer the reader a guess where the walk
-    has an answer.
-    """
+    """Join filter labels with "and": every one named refused a release."""
     if len(labels) == 1:
         return labels[0]
     if len(labels) == 2:  # noqa: PLR2004 - "a and b" against "a, b, and c"
@@ -549,6 +534,7 @@ def _clauses(diagnosis: ListingDiagnosis) -> list[str]:
     groups: dict[tuple[DropCause, tuple[object, ...]], list[DroppedFile]] = {}
     for record in diagnosis.dropped:
         groups.setdefault((record.cause, _shared_values(record)), []).append(record)
+
     return [
         _clause(cause, records, diagnosis)
         for (cause, _values), records in sorted(
@@ -602,12 +588,9 @@ def _version_of(record: DroppedFile) -> Version:
     return record.version
 
 
-# A remedy names a setting rather than the table that holds it, because the
-# same key is spelled under [tool.nab] in pyproject.toml and at the top
-# level of a nab.toml.  Two of the four point at an entry the user already
-# wrote; the project-level cutoff has no entry of its own, so its remedy
-# names the per-package key that overrides it, unless the package already
-# carries one, which the config layer allows only once.
+# A remedy names a setting rather than the table that holds it: the same key
+# is spelled under [tool.nab] in pyproject.toml and at the top level of a
+# nab.toml.
 _REMEDIES: dict[CutoffLayer, str] = {
     CutoffLayer.GLOBAL: (
         "the project-level uploaded-prior-to set that cutoff; setting"
