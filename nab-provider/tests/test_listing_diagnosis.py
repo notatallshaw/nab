@@ -18,7 +18,6 @@ import pytest
 from nab_provider._provider import listing as listing_mod
 from nab_provider._provider import listing_diagnosis as diagnosis_mod
 from nab_provider._provider.listing_diagnosis import (
-    _REMEDIES,
     CutoffLayer,
     DropCause,
     NoVersionsReason,
@@ -687,19 +686,23 @@ class TestTheRemedyNamesTheLayer:
     def test_an_index_name_that_is_not_a_bare_toml_key(self) -> None:
         """The suggested table header is quoted, so any declared name parses.
 
-        Index names are free-form strings.  ``[tool.nab.index.my.index]``
-        reads as a nested table and nab refuses it; ``[tool.nab.index."corp
-        mirror"]`` is not even TOML.
+        Index names are free-form strings.  ``[tool.nab.index.corp mirror]``
+        is not TOML at all, and the unquoted ``[tool.nab.index.my.index]``
+        reads as a nested table nab then refuses.
         """
         provider = build(
             [wheel("1.0", upload_time=AFTER)],
-            index_overrides={"pypi": IndexOverride(uploaded_prior_to=CUTOFF)},
+            index_overrides={"corp mirror": IndexOverride(uploaded_prior_to=CUTOFF)},
         )
-        layer, _label = provider.uploaded_prior_to_source("pkg", Version("1.0"), "pypi")
-        assert _REMEDIES[layer].format(package="pkg", label="corp mirror") == (
-            'the per-index uploaded-prior-to for index "corp mirror" set that'
-            ' cutoff; uploaded-prior-to = false under [tool.nab.index."corp'
-            ' mirror"] lifts it'
+        provider.coordinator.index.store_listing_index("pkg", "corp mirror")
+        assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
+
+        reason = provider.get_no_versions_reason("pkg")
+        assert reason is not None
+        assert reason.endswith(
+            '\n    note: the per-index uploaded-prior-to for index "corp mirror"'
+            " set that cutoff; uploaded-prior-to = false under"
+            ' [tool.nab.index."corp mirror"] lifts it'
         )
 
     def test_a_package_that_already_scopes_the_cutoff_is_offered_no_entry(
