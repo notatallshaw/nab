@@ -146,7 +146,8 @@ Exits non-zero on resolution failure; the message starts with
 captured diagnostics are appended under a `Diagnostics:` section. Each
 package that ran out of versions gets one line there, naming the
 configuration key that refused its files as the key is spelled in
-`pyproject.toml`. Where changing a setting would admit those files
+`pyproject.toml`, or naming what the resolve was aiming at where no key
+turns that filter on. Where changing a setting would admit those files
 again, an indented `try:` line says which setting:
 
 ```
@@ -170,8 +171,13 @@ back in.
 It states what to set, not what follows: lifting a filter admits files
 rather than promising a resolve, and a file two filters would both
 refuse is attributed to the first one that did, so lifting the named
-key can uncover a second. Where several keys fired the line names them
-all and leaves the breakdown to `-v`.
+key can uncover a second. Where an entry covers more than one package,
+following the line changes the setting for all of them.
+
+A line that would grow with your configuration counts instead. Two keys
+are named, three or more read as `3 filters excluded every file`, and
+`-v` names them one to a clause. The look-ahead line naming the
+packages that block every candidate counts them the same way.
 
 `-v` keeps the line and replaces the `try:` with the whole record: one
 clause per cause, with its count, the newest version it refused and the
@@ -193,11 +199,14 @@ it already says, `-v` prints nothing under it.
 
 A remedy is offered for the upload-time cutoff, for `dist-policy` and
 for offline mode. `requires-python` never gets one: the override that
-lifts it replaces the package's declared metadata. Some lines name no
-key at all, because nothing in the configuration produced them: a
-package no configured index served reads `package not found on any
-configured index`, and a project whose every file the index yanked
-reads `the index lists this package but every file is yanked`.
+lifts it replaces the package's declared metadata, so the line names
+the Python the resolve targets instead (`no file supports Python
+3.12`), which is what a different interpreter or a wider `[project]
+requires-python` would change. Some lines name no key at all, because
+nothing in the configuration produced them: a package no configured
+index served reads `package not found on any configured index`, and a
+project whose every file the index yanked reads `the index lists this
+package but every file is yanked`.
 
 Universal mode (`[tool.nab].mode = "universal"`) is supported for
 all three formats:
