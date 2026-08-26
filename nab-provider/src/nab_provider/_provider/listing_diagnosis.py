@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.version import Version
 
     from ..provider import DistFile, Provider
-    from .listing import _ListingPolicy
+    from .listing import ListingPolicy
 
 
 # The filter each cause belongs to, as the in-range lead names it.  One
@@ -258,7 +258,7 @@ def _base_pass(
     provider: Provider,
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
-    policy: _ListingPolicy,
+    policy: ListingPolicy,
 ) -> tuple[list[DroppedFile], list[tuple[Version, DistFile]], set[Version]]:
     """Partition ``files`` by every rung that runs before the wheel-tag pass.
 
@@ -336,7 +336,7 @@ def python_or_time_verdict(
     normalized: str,
     version: Version,
     dist: DistFile,
-    policy: _ListingPolicy,
+    policy: ListingPolicy,
 ) -> DropCause | None:
     """Answer the filter's Requires-Python and upload-time question, totally.
 
@@ -362,7 +362,7 @@ def _detailed(
     version: Version,
     dist: DistFile,
     cause: DropCause,
-    policy: _ListingPolicy,
+    policy: ListingPolicy,
 ) -> DroppedFile:
     """Record a Requires-Python or upload-time refusal with the value it quotes.
 

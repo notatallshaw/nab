@@ -341,7 +341,7 @@ def base_distributions(
 
 
 @dataclass(frozen=True, slots=True)
-class _ListingPolicy:
+class ListingPolicy:
     """The policy config one listing's files are judged under.
 
     ``overridden`` is true when a per-package or per-index override can
@@ -356,9 +356,9 @@ class _ListingPolicy:
     time_filter_active: bool
 
 
-def listing_policy(provider: Provider, normalized: str) -> _ListingPolicy:
+def listing_policy(provider: Provider, normalized: str) -> ListingPolicy:
     """Return the policy answers for one listing, for its per-file loop to consult."""
-    return _ListingPolicy(
+    return ListingPolicy(
         index_name=provider.serving_index(normalized),
         overridden=provider.has_overrides,
         default_dist_policy=provider.dist_policy,
@@ -435,7 +435,7 @@ def _prepare_listing(
     provider: Provider,
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
-    policy: _ListingPolicy,
+    policy: ListingPolicy,
     *,
     target_drops: bool,
 ) -> _PreparedListing:
@@ -535,7 +535,7 @@ def python_or_time_cause(
     normalized: str,
     version: Version,
     dist: DistFile,
-    policy: _ListingPolicy,
+    policy: ListingPolicy,
 ) -> DropCause | None:
     """Return why Requires-Python or the upload cutoff refuses ``dist``, or None.
 
