@@ -1750,17 +1750,39 @@ class Provider:
         have dropped the release the requirement asked for.
         """
         _, _, normalized = self.split_and_normalize(package)
-        diagnosis = self.diagnose_listing(normalized)
+        diagnosis = (
+            self.diagnose_listing(normalized)
+            if self._walk_would_be_read(normalized, recorded)
+            else None
+        )
         if diagnosis is None:
             return _diagnosis.NO_MATCH_TEXT
         if recorded.kind is _diagnosis.ReasonKind.FILTERED_EMPTY:
             return _diagnosis.empty_listing_reason(self, normalized, diagnosis)
-        if recorded.version_range is None:
-            return _diagnosis.NO_MATCH_TEXT
+
+        # The screen passed, so the marker carries the range it screened.
+        assert recorded.version_range is not None
         filtered = _diagnosis.in_range_reason(
             self, normalized, recorded.version_range, diagnosis
         )
         return filtered if filtered is not None else _diagnosis.NO_MATCH_TEXT
+
+    def _walk_would_be_read(
+        self, normalized: str, recorded: _diagnosis.NoVersionsReason
+    ) -> bool:
+        """Whether the walk's detail would reach ``recorded``'s sentence.
+
+        The walk records one refusal per file the filter dropped, and the
+        in-range lead throws every one of them away unless the filter
+        dropped a release inside the range that was asked.  A requirement
+        naming a version the index never published is the ordinary way to
+        reach that, so the cheap question runs first.
+        """
+        if recorded.kind is _diagnosis.ReasonKind.FILTERED_EMPTY:
+            return True
+        return recorded.version_range is not None and _listing.dropped_release_in_range(
+            self, normalized, recorded.version_range
+        )
 
     def diagnose_listing(self, normalized: str) -> _diagnosis.ListingDiagnosis | None:
         """Attribute ``normalized``'s listing drops, once per package per target.

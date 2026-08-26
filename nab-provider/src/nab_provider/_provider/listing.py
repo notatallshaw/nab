@@ -603,6 +603,35 @@ def parsed_version(raw: str) -> Version | None:
         return None
 
 
+def dropped_release_in_range(
+    provider: Provider, normalized: str, version_range: VersionRange
+) -> bool:
+    """Whether a file the filter dropped carries a version inside ``version_range``.
+
+    Callers ask only when no surviving version falls in the range, so a
+    dropped one that does is the release the requirement asked for.  A
+    dropped version equal to a surviving one survived under another
+    spelling instead: :func:`filter_distributions` collapses equal
+    versions onto one representative, and ``===`` compares its string
+    form.  Filtering through ``version_range`` keeps the pre-release
+    semantics candidate selection uses.
+    """
+    files = provider.coordinator.index.get_listing(normalized)
+    if not files:
+        return False
+
+    surviving = {
+        version for version, _dist in provider.versions_cache.get(normalized) or []
+    }
+    dropped = (
+        version
+        for dist in files
+        if (version := parsed_version(dist.version)) is not None
+        and version not in surviving
+    )
+    return any(version_range.filter(dropped))
+
+
 def sdist_install_wheel_only(
     result: list[tuple[Version, DistFile]],
     sdist_install_versions: set[Version],

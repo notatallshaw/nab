@@ -41,6 +41,8 @@ from nab_provider.testing import make_coordinator, pkg_override
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from nab_provider.provider import DistFile
+
 CUTOFF = datetime(2026, 5, 1, tzinfo=timezone.utc)
 BEFORE = "2020-01-01T00:00:00Z"
 AFTER = "2030-01-01T00:00:00Z"
@@ -228,6 +230,29 @@ class TestDifferentialOracle:
             " available to build from"
         )
 
+    def test_an_unmodelled_drop_answers_the_in_range_lead_too(self) -> None:
+        """The in-range lead names no filter but still says the release was filtered.
+
+        No rung explains the drop, so there is nothing to put in the
+        parenthetical; the release the requirement asked for is still gone
+        from a listing that published it, which the no-match line denies.
+        """
+
+        class DropsTheAskedRelease(Provider):
+            def filter_distributions(
+                self, normalized: str, files: Sequence[WheelFile | SdistFile]
+            ) -> list[tuple[Version, DistFile]]:
+                kept = super().filter_distributions(normalized, files)
+                return [pair for pair in kept if pair[0] != Version("1.0")]
+
+        coordinator = make_coordinator([wheel("1.0"), wheel("2.0")], package="pkg")
+        provider = DropsTheAskedRelease(coordinator)
+        assert provider.choose_version("pkg", SpecifierSet("==1.0").to_range()) is None
+
+        assert provider.get_no_versions_reason("pkg") == (
+            "found on index but every version matching the requirement was filtered"
+        )
+
     def test_one_unmodelled_drop_reads_as_one_version(self) -> None:
         """The singular of the same clause."""
         coordinator = make_coordinator([wheel("1.0")], package="pkg")
@@ -242,6 +267,33 @@ class TestDifferentialOracle:
             " dropped for a reason this report cannot name; no sdist is"
             " available to build from"
         )
+
+
+class TestTheWalkRunsOnlyWhereItIsRead:
+    """The walk costs one record per dropped file, so it is screened first."""
+
+    def test_a_version_the_index_never_published_never_walks(self) -> None:
+        """A range holding nothing the filter dropped answers without the walk."""
+        provider = build([wheel("1.0"), wheel("2.0")])
+        assert provider.choose_version("pkg", SpecifierSet(">=5").to_range()) is None
+
+        assert provider.get_no_versions_reason("pkg") == (
+            "no version matches the requirement"
+        )
+        assert provider.listing_diagnoses == {}
+
+    def test_a_dropped_release_inside_the_range_does_walk(self) -> None:
+        """The same screen lets the walk run where its detail is quoted."""
+        provider = build(
+            [wheel("1.0"), wheel("2.0", requires_python=">=3.99")], target=_LINUX312
+        )
+        assert provider.choose_version("pkg", SpecifierSet(">=2").to_range()) is None
+
+        assert provider.get_no_versions_reason("pkg") == (
+            "found on index but every version matching the requirement was"
+            " filtered (by requires-python)"
+        )
+        assert list(provider.listing_diagnoses) == ["pkg"]
 
 
 class TestTheWalkLeavesNoTrace:

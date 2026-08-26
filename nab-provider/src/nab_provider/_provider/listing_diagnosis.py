@@ -433,7 +433,10 @@ def in_range_reason(
         if FILTER_LABELS[record.cause] not in labels:
             labels.append(FILTER_LABELS[record.cause])
     if not labels:
-        return None
+        # A drop no rung models leaves no filter to name, but the release
+        # is still gone from a listing that published it, so the lead alone
+        # says more than the no-match line it would fall back to.
+        return _IN_RANGE_LEAD if diagnosis.unexplained else None
 
     lead = f"{_IN_RANGE_LEAD} (by {_join_labels(labels)})"
     return lead + _note(provider, normalized, diagnosis, asked)
