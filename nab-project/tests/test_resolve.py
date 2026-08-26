@@ -3369,10 +3369,7 @@ class TestAugmentResolutionError:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         diagnostics = _diagnostics(info.value)
-        assert (
-            "foo: requires-python excluded every version matching the"
-            " requirement" in diagnostics
-        )
+        assert "foo: requires-python excluded every version in range" in diagnostics
         assert "no version matches the requirement" not in diagnostics
 
     def test_constraint_does_not_hide_the_transitive_blocker(
@@ -3464,7 +3461,7 @@ class TestAugmentResolutionError:
         derivation = str(info.value).split("Diagnostics:")[0]
         diagnostics = _diagnostics(info.value)
         assert "no versions of foo" in derivation
-        assert "foo: no version in range has readable metadata" in diagnostics
+        assert "foo: every version in range was rejected on its metadata" in diagnostics
         assert (
             "No metadata for foo==5.0: no PEP 658 metadata and no sdist"
             " available" in diagnostics
@@ -3511,7 +3508,7 @@ class TestAugmentResolutionError:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         diagnostics = _diagnostics(info.value)
-        assert "foo: no version in range has readable metadata" in diagnostics
+        assert "foo: every version in range was rejected on its metadata" in diagnostics
         assert (
             "No metadata for foo==5.0: no PEP 658 metadata and no sdist"
             " available" in diagnostics
@@ -3557,7 +3554,7 @@ class TestAugmentResolutionError:
         diagnostics = _diagnostics(info.value)
         assert "no versions of foo <VersionRange '(4.0, +inf)'>" in derivation
         assert "no versions of foo <VersionRange '(2.0, 4.0)'>" in derivation
-        assert "foo: no version in range has readable metadata" in diagnostics
+        assert "foo: every version in range was rejected on its metadata" in diagnostics
         assert (
             "No metadata for foo==5.0: no PEP 658 metadata and no sdist"
             " available" in diagnostics
@@ -3609,8 +3606,8 @@ class TestAugmentResolutionError:
 
         diagnostics = _diagnostics(info.value)
         assert (
-            "foo: uploaded-prior-to excluded the sdist, and the index has no"
-            " PEP 658 metadata" in diagnostics
+            "foo: uploaded-prior-to excluded the sdist nab needed for metadata"
+            in diagnostics
         )
 
     def test_a_resolve_that_survives_the_ladder_never_walks_the_listing(
@@ -4283,8 +4280,14 @@ class TestLocalVcsRequiresPython:
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            with pytest.raises(ResolutionError, match="requires Python"):
+            with pytest.raises(ResolutionError) as info:
                 _resolved(root, _FAKE_TRANSPORT, python_version="3.8.0")
+
+        # The line names the metadata; which version and which Python is the
+        # raiser's own sentence, one depth down.
+        assert "rejected on its metadata" in str(info.value)
+        assert info.value.verbose_message is not None
+        assert "requires Python" in info.value.verbose_message
 
 
 def _metadata(name: str, version: str, *requires: str) -> str:

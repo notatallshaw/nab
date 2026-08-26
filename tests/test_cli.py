@@ -2948,9 +2948,8 @@ class TestLockCommandUniversal:
         )
 
         assert capsys.readouterr().err.endswith(
-            "\nDiagnostics:\n"
-            "  - foo: uploaded-prior-to excluded every file;"
-            " all are newer than the cutoff\n"
+            "\nDiagnostics: (-v for detail)\n"
+            "  - foo: uploaded-prior-to excluded every file\n"
             '    try: set packages."foo".uploaded-prior-to = false\n'
         )
 
@@ -2965,11 +2964,10 @@ class TestLockCommandUniversal:
 
         assert capsys.readouterr().err.endswith(
             "\nDiagnostics:\n"
-            "  - foo: uploaded-prior-to excluded every file;"
-            " all are newer than the cutoff\n"
+            "  - foo: uploaded-prior-to excluded every file\n"
             "    the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded"
             " 1 file uploaded at 2030-01-01T00:00:00Z (1.0)\n"
-            "    no sdist is available to build from\n"
+            "    the files nab read hold no sdist to build from\n"
             "    note: the project-level uploaded-prior-to set that cutoff;"
             ' setting packages."foo".uploaded-prior-to = false lifts it for this'
             " package\n"
@@ -2991,10 +2989,7 @@ class TestLockCommandUniversal:
         err = capsys.readouterr().err
         assert "# py311-linux_x86_64: FAILED" in err
         assert "#   Diagnostics:" in err
-        assert (
-            "#     - foo: uploaded-prior-to excluded every file;"
-            " all are newer than the cutoff"
-        ) in err
+        assert ("#     - foo: uploaded-prior-to excluded every file") in err
         assert '#       try: set packages."foo".uploaded-prior-to = false' in err
 
     def test_the_verbose_level_reaches_the_per_tuple_block(

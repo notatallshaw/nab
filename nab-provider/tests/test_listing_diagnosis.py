@@ -10,6 +10,7 @@ keeps the walk off a lead that would discard it.
 
 from __future__ import annotations
 
+import re
 from dataclasses import fields
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -19,9 +20,9 @@ import pytest
 from nab_provider._provider import listing as listing_mod
 from nab_provider._provider import listing_diagnosis as diagnosis_mod
 from nab_provider._provider.listing_diagnosis import (
-    CutoffLayer,
     DropCause,
     NoVersionsReason,
+    OverrideLayer,
     ReasonKind,
 )
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
@@ -144,8 +145,8 @@ def remedy_for(
     return diagnostic_for(files, spec=spec, **kwargs).remedy
 
 
-def rendered_for(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> str:
-    """Render ``pkg``'s empty-listing entry without asking for a version.
+def empty_entry(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> Diagnostic:
+    """Build ``pkg``'s empty-listing entry without asking for a version.
 
     The filter refuses the whole run on a timezone-naive upload time, so a
     listing carrying one cannot be reached through :func:`reason_for`.
@@ -153,7 +154,12 @@ def rendered_for(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> st
     provider = build(files, **kwargs)
     diagnosis = provider.diagnose_listing("pkg")
     assert diagnosis is not None
-    return render(diagnosis_mod.empty_listing_diagnostic(provider, "pkg", diagnosis))
+    return diagnosis_mod.empty_listing_diagnostic(provider, "pkg", diagnosis)
+
+
+def rendered_for(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> str:
+    """Render both depths of the entry :func:`empty_entry` builds."""
+    return render(empty_entry(files, **kwargs))
 
 
 # One file per cause, plus a survivor, so a walk over it exercises every rung
@@ -263,7 +269,7 @@ class TestDifferentialOracle:
         assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
 
         assert short_reason(provider, "pkg") == (
-            "every file was refused, and this report cannot name the filter that did it"
+            "every file was refused; the filter cannot be named"
         )
 
     def test_an_unmodelled_drop_answers_the_in_range_lead_too(self) -> None:
@@ -286,7 +292,7 @@ class TestDifferentialOracle:
         assert provider.choose_version("pkg", SpecifierSet("==1.0").to_range()) is None
 
         assert short_reason(provider, "pkg") == (
-            "every matching version was refused, and this report cannot name the filter"
+            "every version in range was refused; the filter cannot be named"
         )
 
     def test_one_unmodelled_drop_reads_as_one_version(self) -> None:
@@ -301,10 +307,9 @@ class TestDifferentialOracle:
         assert render(
             diagnosis_mod.empty_listing_diagnostic(provider, "pkg", diagnosis)
         ) == (
-            "every file was refused, and this report cannot name the filter"
-            " that did it"
+            "every file was refused; the filter cannot be named"
             "\n1 version was dropped for a reason this report cannot name"
-            "\nno sdist is available to build from"
+            "\nthe files nab read hold no sdist to build from"
         )
 
 
@@ -327,7 +332,7 @@ class TestTheWalkRunsOnlyWhereItIsRead:
         assert provider.choose_version("pkg", SpecifierSet(">=2").to_range()) is None
 
         assert short_reason(provider, "pkg") == (
-            "requires-python excluded every version matching the requirement"
+            "requires-python excluded every version in range"
         )
         assert list(provider.listing_diagnoses) == ["pkg"]
 
@@ -486,12 +491,12 @@ class TestClauseText:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ) == (
-            "uploaded-prior-to excluded every file (-v for detail)"
+            "uploaded-prior-to excluded every file"
             f"\nthe uploaded-prior-to cutoff {EARLY_CUTOFF_TEXT} excluded 1 file"
             f" uploaded at {BETWEEN} (1.0)"
             f"\nthe uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file"
             f" uploaded at {AFTER} (2.0)"
-            "\nno sdist is available to build from"
+            "\nthe files nab read hold no sdist to build from"
             "\nnote: the per-package uploaded-prior-to for pkg<2 set that"
             " cutoff; setting it to false there lifts it"
             "\nnote: the project-level uploaded-prior-to set that cutoff; pkg"
@@ -512,7 +517,7 @@ class TestClauseText:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ).startswith(
-            "uploaded-prior-to excluded every file (-v for detail)"
+            "uploaded-prior-to excluded every file; none is dated"
             f"\nthe uploaded-prior-to cutoff {EARLY_CUTOFF_TEXT} excluded 1 file"
             " that publishes no upload time (1.0)"
             f"\nthe uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file that"
@@ -533,18 +538,25 @@ class TestClauseText:
                 pkg_override("pkg==1.0", dist_policy=DistPolicy.SDIST_ONLY)
             ],
         ) == (
-            "dist-policy excluded every file (-v for detail)"
+            "dist-policy excluded every file"
             '\ndist-policy = "sdist-only" excluded 1 wheel (1.0)'
             '\ndist-policy = "wheel-only" excluded 1 sdist (2.0)'
+            "\nnote: the per-package dist-policy for pkg==1.0 set that policy;"
+            ' setting it to "wheel-or-sdist" there admits both formats'
+            "\nnote: the project-level dist-policy set that policy; pkg already"
+            " sets dist-policy over another version range, so widen that entry"
+            " over this version or drop the project-level policy"
         )
 
     def test_sdist_install_without_an_sdist(self) -> None:
         """The whole sentence: this clause already says no sdist is available."""
         assert reason_for([wheel("1.0")], dist_policy=DistPolicy.SDIST_INSTALL) == (
-            'dist-policy = "sdist-install" excluded every version;'
-            " none publishes an sdist"
+            'dist-policy = "sdist-install" excluded every version'
             '\ndist-policy = "sdist-install" excluded 1 version that publishes'
             " no sdist (1.0)"
+            "\nnote: the project-level dist-policy set that policy; setting"
+            ' packages."pkg".dist-policy = "wheel-or-sdist" admits both formats'
+            " for this package"
         )
 
     def test_sdist_install_is_asked_before_the_wheel_tags(self) -> None:
@@ -559,10 +571,12 @@ class TestClauseText:
             target=_LINUX312,
             dist_policy=DistPolicy.SDIST_INSTALL,
         ) == (
-            'dist-policy = "sdist-install" excluded every version;'
-            " none publishes an sdist"
+            'dist-policy = "sdist-install" excluded every version'
             '\ndist-policy = "sdist-install" excluded 1 version that publishes'
             " no sdist (1.0)"
+            "\nnote: the project-level dist-policy set that policy; setting"
+            ' packages."pkg".dist-policy = "wheel-or-sdist" admits both formats'
+            " for this package"
         )
 
     def test_two_wheels_of_one_release_are_one_version(self) -> None:
@@ -571,10 +585,12 @@ class TestClauseText:
             [wheel("1.0"), wheel("1.0", tag="py2-none-any")],
             dist_policy=DistPolicy.SDIST_INSTALL,
         ) == (
-            'dist-policy = "sdist-install" excluded every version;'
-            " none publishes an sdist"
+            'dist-policy = "sdist-install" excluded every version'
             '\ndist-policy = "sdist-install" excluded 1 version that publishes'
             " no sdist (1.0)"
+            "\nnote: the project-level dist-policy set that policy; setting"
+            ' packages."pkg".dist-policy = "wheel-or-sdist" admits both formats'
+            " for this package"
         )
 
     def test_sdist_install_without_an_sdist_plural(self) -> None:
@@ -649,9 +665,9 @@ class TestClauseText:
     def test_clauses_print_in_report_order(self) -> None:
         """Two causes on one listing print cutoff first, Requires-Python second.
 
-        Report order is the enum's member values and is deliberately not the
-        order the filter asks the questions in.  This is also the whole shape
-        of the message: lead, clauses, sdist tail, then the note.
+        Report order is :data:`DropCause.REPORT_ORDER` and is deliberately
+        not the order the filter asks the questions in.  This is also the
+        whole shape of the message: lead, clauses, sdist tail, then the note.
         """
         assert reason_for(
             [wheel("1.0", requires_python=">=3.99"), wheel("2.0", upload_time=AFTER)],
@@ -659,12 +675,11 @@ class TestClauseText:
             uploaded_prior_to=CUTOFF,
         ) == (
             "uploaded-prior-to and requires-python excluded every file"
-            " (-v for detail)"
             "\nthe uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1"
             " file uploaded at 2030-01-01T00:00:00Z (2.0)"
             "\nrequires-python excluded 1 file (1.0 requires >=3.99, the resolve"
             " targets Python 3.12)"
-            "\nno sdist is available to build from"
+            "\nthe files nab read hold no sdist to build from"
             "\nnote: the project-level uploaded-prior-to set that cutoff; setting"
             ' packages."pkg".uploaded-prior-to = false lifts it for this package'
         )
@@ -681,15 +696,18 @@ class TestClauseText:
             target=_LINUX312,
             dist_policy=DistPolicy.SDIST_ONLY,
         ) == (
-            'dist-policy = "sdist-only" excluded every file; none is an sdist'
+            'dist-policy = "sdist-only" excluded every file'
             '\ndist-policy = "sdist-only" excluded 1 wheel (1.0)'
-            "\nno sdist is available to build from"
+            "\nthe files nab read hold no sdist to build from"
+            "\nnote: the project-level dist-policy set that policy; setting"
+            ' packages."pkg".dist-policy = "wheel-or-sdist" admits both formats'
+            " for this package"
         )
 
     def test_an_sdist_on_the_index_takes_no_no_sdist_tail(self) -> None:
         """The tail says the index published no sdist, not that none survived."""
         reason = reason_for([sdist("1.0", requires_python=">=3.99")], target=_LINUX312)
-        assert "no sdist is available to build from" not in reason
+        assert "the files nab read hold no sdist to build from" not in reason
 
 
 class TestTheRemedyNamesTheLayer:
@@ -713,10 +731,10 @@ class TestTheRemedyNamesTheLayer:
                 )
             ],
         ) == (
-            "uploaded-prior-to excluded every file; all are newer than the cutoff"
+            "uploaded-prior-to excluded every file"
             f"\nthe uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file"
             f" uploaded at {AFTER} (1.0)"
-            "\nno sdist is available to build from"
+            "\nthe files nab read hold no sdist to build from"
             "\nnote: the per-package uploaded-prior-to for packages.'pkg' set"
             " that cutoff; setting it to false there lifts it"
         )
@@ -760,7 +778,7 @@ class TestTheRemedyNamesTheLayer:
         assert render(diagnostic).endswith(
             f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file uploaded"
             f" at {AFTER} (1.0)"
-            "\nno sdist is available to build from"
+            "\nthe files nab read hold no sdist to build from"
             f'\nnote: the per-index uploaded-prior-to for index "{index_name}"'
             " set that cutoff; setting it to false there lifts it"
         )
@@ -843,14 +861,18 @@ class TestTheRemedyNamesTheLayer:
             uploaded_prior_to=CUTOFF,
             index_overrides={"other": IndexOverride(uploaded_prior_to=CUTOFF)},
         )
-        source = provider.uploaded_prior_to_source("pkg", Version("1.0"), "pypi")
-        assert source.layer is CutoffLayer.GLOBAL
+        source = provider.override_source(
+            "pkg", Version("1.0"), "pypi", field="uploaded-prior-to"
+        )
+        assert source.layer == OverrideLayer.GLOBAL
 
     def test_a_synthetic_source_has_no_index_layer(self) -> None:
         """A package with no serving index falls through to the project level."""
         provider = build([wheel("1.0")], uploaded_prior_to=CUTOFF)
-        source = provider.uploaded_prior_to_source("pkg", Version("1.0"), None)
-        assert source.layer is CutoffLayer.GLOBAL
+        source = provider.override_source(
+            "pkg", Version("1.0"), None, field="uploaded-prior-to"
+        )
+        assert source.layer == OverrideLayer.GLOBAL
         assert source.label == ""
         assert source.selector == "pkg"
 
@@ -906,14 +928,25 @@ class TestTheTryLine:
         )
 
     @pytest.mark.parametrize(
-        "index_name",
-        ["pypi", "corp mirror", "my.index"],
-        ids=["bare", "spaced", "dotted"],
+        ("index_name", "key"),
+        [
+            ("pypi", '"pypi"'),
+            ("corp mirror", '"corp mirror"'),
+            ("my.index", '"my.index"'),
+            ('corp "the" mirror', "'corp \"the\" mirror'"),
+            ('it\'s "ours"', '"it\'s \\"ours\\""'),
+        ],
+        ids=["bare", "spaced", "dotted", "quoted", "both-quotes"],
     )
     def test_a_per_index_cutoff_quotes_whatever_the_index_is_called(
-        self, index_name: str
+        self, index_name: str, key: str
     ) -> None:
-        """A cutoff can only reach an index through the table that names it."""
+        """A cutoff can only reach an index through the table that names it.
+
+        nab takes an index name from a TOML string, so the name can hold
+        either quote, and the key the line writes it into has to be the
+        form that parses back.
+        """
         provider = build(
             [wheel("1.0", upload_time=AFTER)],
             index_overrides={index_name: IndexOverride(uploaded_prior_to=CUTOFF)},
@@ -923,9 +956,7 @@ class TestTheTryLine:
 
         diagnostic = provider.get_no_versions_reason("pkg")
         assert diagnostic is not None
-        assert diagnostic.remedy == (
-            f'set index."{index_name}".uploaded-prior-to = false'
-        )
+        assert diagnostic.remedy == f"set index.{key}.uploaded-prior-to = false"
 
     def test_a_package_that_already_scopes_the_cutoff_is_told_to_widen_it(
         self,
@@ -953,9 +984,74 @@ class TestTheTryLine:
     def test_both_dist_policy_causes_offer_the_wider_policy(
         self, policy: DistPolicy
     ) -> None:
-        """Neither cause depends on which layer set the policy, so both set it here."""
+        """Both causes are the one key, so both are lifted by the one setting."""
         assert remedy_for([wheel("1.0")], dist_policy=policy, target=_LINUX312) == (
             'set packages."pkg".dist-policy = "wheel-or-sdist"'
+        )
+
+    @pytest.mark.parametrize(
+        "source_label",
+        ["packages.'pkg > 0.5'", "package-rules[0]", ""],
+        ids=["sugar-table", "package-rules", "host-built"],
+    )
+    def test_a_per_package_dist_policy_names_the_entry_not_its_config_path(
+        self, source_label: str
+    ) -> None:
+        """The policy layers the way the cutoff does, and so does its remedy.
+
+        Routing a set of packages to ``sdist-only`` through one
+        ``package-rules`` entry is an ordinary configuration, and composing
+        it into ``packages."<name>"`` gives two per-package overrides
+        setting one field over overlapping versions, which nab refuses.
+        """
+        assert (
+            remedy_for(
+                [wheel("1.0")],
+                target=_LINUX312,
+                package_overrides=[
+                    pkg_override(
+                        "pkg>0.5",
+                        dist_policy=DistPolicy.SDIST_ONLY,
+                        source_label=source_label,
+                    )
+                ],
+            )
+            == 'set dist-policy = "wheel-or-sdist" on the per-package entry'
+            " for pkg>0.5"
+        )
+
+    def test_a_per_index_dist_policy_is_set_on_the_index(self) -> None:
+        """A policy that reached the filter through an index is lifted there."""
+        provider = build(
+            [wheel("1.0")],
+            target=_LINUX312,
+            index_overrides={
+                "corp mirror": IndexOverride(dist_policy=DistPolicy.SDIST_ONLY)
+            },
+        )
+        provider.coordinator.index.store_listing_index("pkg", "corp mirror")
+        assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
+
+        diagnostic = provider.get_no_versions_reason("pkg")
+        assert diagnostic is not None
+        assert diagnostic.remedy == (
+            'set index."corp mirror".dist-policy = "wheel-or-sdist"'
+        )
+
+    def test_a_package_that_already_scopes_the_policy_is_told_to_widen_it(
+        self,
+    ) -> None:
+        """A second entry would overlap the first, so there is nothing to set."""
+        assert remedy_for(
+            [wheel("2.0")],
+            target=_LINUX312,
+            dist_policy=DistPolicy.SDIST_ONLY,
+            package_overrides=[
+                pkg_override("pkg<2", dist_policy=DistPolicy.WHEEL_OR_SDIST)
+            ],
+        ) == (
+            "widen the per-package entry for pkg<2 over this version,"
+            " or drop the project dist-policy"
         )
 
     def test_the_first_rung_in_report_order_answers(self) -> None:
@@ -1018,8 +1114,7 @@ class TestTheLadderSdistLine:
 
         assert diagnostic is not None
         assert diagnostic.short == (
-            "uploaded-prior-to excluded the sdist,"
-            " and the index has no PEP 658 metadata"
+            "uploaded-prior-to excluded the sdist nab needed for metadata"
         )
         detail = "\n".join(diagnostic.detail)
         assert "pkg-1.0.tar.gz" in detail
@@ -1040,8 +1135,7 @@ class TestTheInRangeLead:
             target=_LINUX312,
         )
         assert reason == (
-            "requires-python and wheel tags excluded every matching version"
-            " (-v for detail)"
+            "requires-python and wheel tags excluded every version in range"
             "\nrequires-python excluded 1 file (2.0 requires >=3.99, the resolve"
             " targets Python 3.12)"
             "\nnone of the wheel's tags are compatible with the resolve target"
@@ -1062,7 +1156,7 @@ class TestTheInRangeLead:
         )
         assert reason == (
             "uploaded-prior-to, requires-python and wheel tags excluded every"
-            " matching version (-v for detail)"
+            " version in range"
             "\nthe uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1"
             " file uploaded at 2030-01-01T00:00:00Z (2.0)"
             "\nrequires-python excluded 1 file (3.0 requires >=3.99, the resolve"
@@ -1085,9 +1179,7 @@ class TestTheInRangeLead:
             target=_LINUX312,
             uploaded_prior_to=CUTOFF,
         )
-        assert reason.startswith(
-            "uploaded-prior-to excluded every version matching the requirement"
-        )
+        assert reason.startswith("uploaded-prior-to excluded every version in range")
 
     def test_one_filter_is_named_once_however_many_files_it_refused(self) -> None:
         """Two in-range releases refused by one filter name it once."""
@@ -1101,7 +1193,7 @@ class TestTheInRangeLead:
             target=_LINUX312,
         )
         assert reason == (
-            "requires-python excluded every version matching the requirement"
+            "requires-python excluded every version in range"
             "\nrequires-python excluded 2 files (newest: 3.0 requires >=3.99,"
             " the resolve targets Python 3.12)"
         )
@@ -1123,7 +1215,7 @@ class TestTheInRangeLead:
             uploaded_prior_to=CUTOFF,
         )
         assert reason == (
-            "requires-python excluded every version matching the requirement"
+            "requires-python excluded every version in range"
             "\nrequires-python excluded 1 file (2.0 requires >=3.99, the resolve"
             " targets Python 3.12)"
         )
@@ -1168,7 +1260,7 @@ class TestTheInRangeLead:
         )
 
         assert short_reason(provider, "pkg") == (
-            "every matching version was refused, and this report cannot name the filter"
+            "every version in range was refused; the filter cannot be named"
         )
 
     def test_a_dropped_pre_release_is_the_release_the_range_asked_for(self) -> None:
@@ -1182,9 +1274,7 @@ class TestTheInRangeLead:
             [wheel("0.5"), wheel("1.0b1", upload_time=AFTER)],
             spec=">=0.9",
             **WITH_CUTOFF,
-        ).startswith(
-            "uploaded-prior-to excluded every version matching the requirement"
-        )
+        ).startswith("uploaded-prior-to excluded every version in range")
 
     def test_a_recorded_range_of_none_stays_a_no_match(self) -> None:
         """A scan that rejected every candidate without a range says no match.
@@ -1260,14 +1350,13 @@ class TestBlockerLines:
         )
 
     def test_one_decided_blocker(self) -> None:
+        """One rejection states its ranges on the line, so -v adds nothing."""
         decided = blocker("bar", diagnosis_mod.BlockerKind.DECIDED)
         diagnostic = self._diagnostic([decided])
         assert diagnostic.short == (
             "every version needs bar in ==2.0, but the resolve chose bar 1.0"
         )
-        assert diagnostic.detail == (
-            "requires bar in ==2.0 but solution has it at 1.0",
-        )
+        assert diagnostic.detail == ()
 
     def test_one_held_blocker(self) -> None:
         held = blocker("bar", diagnosis_mod.BlockerKind.HELD)
@@ -1289,9 +1378,7 @@ class TestBlockerLines:
                 blocker("baz", diagnosis_mod.BlockerKind.ROOT),
             ]
         )
-        assert diagnostic.short == (
-            "every version is blocked by bar and baz (-v for the ranges)"
-        )
+        assert diagnostic.short == ("every version is blocked by bar and baz")
         assert len(diagnostic.detail) == 2
 
     def test_two_blockers_on_one_package_name_it_once(self) -> None:
@@ -1302,9 +1389,7 @@ class TestBlockerLines:
                 blocker("bar", diagnosis_mod.BlockerKind.ROOT),
             ]
         )
-        assert diagnostic.short == (
-            "every version is blocked by bar (-v for the ranges)"
-        )
+        assert diagnostic.short == ("every version is blocked by bar")
 
     def test_a_blocker_beside_unreadable_metadata_says_both(self) -> None:
         diagnostic = self._diagnostic(
@@ -1312,18 +1397,18 @@ class TestBlockerLines:
             (diagnosis_mod.MetadataBlock("No metadata for pkg==2.0"),),
         )
         assert diagnostic.short == (
-            "every version is blocked by bar or has unreadable metadata (-v for detail)"
+            "every version is blocked by bar or rejected on its metadata"
         )
         assert diagnostic.detail == (
-            "requires bar in ==2.0 but solution has it at 1.0",
+            "needs bar in ==2.0, but the resolve chose bar 1.0",
             "No metadata for pkg==2.0",
         )
 
     def test_metadata_alone_reads_as_the_metadata_line(self) -> None:
-        """One unreadable version keeps its own sentence, which names the rung."""
+        """One unreadable version reads like several: a line, then the error."""
         block = diagnosis_mod.MetadataBlock("No metadata for pkg==2.0")
         diagnostic = self._diagnostic([], (block,))
-        assert diagnostic.short == "No metadata for pkg==2.0"
+        assert diagnostic.short == "every version in range was rejected on its metadata"
         assert diagnostic.detail == ("No metadata for pkg==2.0",)
 
     def test_a_marked_block_asks_the_walk_for_the_filter(self) -> None:
@@ -1339,8 +1424,7 @@ class TestBlockerLines:
         diagnostic = self._diagnostic([], (block,), provider)
 
         assert diagnostic.short == (
-            "uploaded-prior-to excluded the sdist,"
-            " and the index has no PEP 658 metadata"
+            "uploaded-prior-to excluded the sdist nab needed for metadata"
         )
 
     def test_a_marked_block_the_walk_cannot_name_keeps_its_sentence(self) -> None:
@@ -1350,7 +1434,8 @@ class TestBlockerLines:
 
         diagnostic = self._diagnostic([], (block,), provider)
 
-        assert diagnostic.short == "No metadata for pkg==2.0"
+        assert diagnostic.short == "every version in range was rejected on its metadata"
+        assert diagnostic.detail == ("No metadata for pkg==2.0",)
 
 
 _WINDOWS312 = ResolveTarget.for_declared(
@@ -1444,3 +1529,161 @@ class TestTheWalkIsSharedAcrossTargets:
         assert [record.cause for record in diagnosis.dropped] == [
             DropCause.UPLOAD_TIME_AFTER_CUTOFF
         ]
+
+
+def unnamed_drop_entry() -> Diagnostic:
+    """The entry for a drop no rung of the walk models."""
+    provider = build([wheel("1.0")])
+    provider.fetch_versions("pkg")
+    provider.versions_cache["pkg"] = []
+    diagnosis = provider.diagnose_listing("pkg")
+    assert diagnosis is not None
+    return diagnosis_mod.empty_listing_diagnostic(provider, "pkg", diagnosis)
+
+
+def ladder_entry() -> Diagnostic:
+    """The entry for the sdist the metadata ladder went looking for."""
+    provider = build([wheel("2.0"), sdist("2.0", upload_time=AFTER)], **WITH_CUTOFF)
+    entry = provider.filtered_sdist_diagnostic("pkg", Version("2.0"))
+    assert entry is not None
+    return entry
+
+
+def extra_entry(kind: str, **kwargs: object) -> Diagnostic:
+    """The entry an extras proxy gets for one of its three markers."""
+    recorded = NoVersionsReason(kind, **kwargs)  # type: ignore[arg-type]
+    return diagnosis_mod.extra_diagnostic("foo", "bar", recorded, "<1.5")
+
+
+def every_shape() -> dict[str, Diagnostic]:
+    """One entry per shape the ``Diagnostics:`` section can print.
+
+    The two rules below hold over the whole report rather than over the
+    cases a test happened to write down, so they are checked against this
+    table.  It is also what the line-length census is counted from.
+    """
+    blocked = [blocker("bar", diagnosis_mod.BlockerKind.DECIDED)]
+    unreadable = (diagnosis_mod.MetadataBlock("No metadata for pkg==2.0"),)
+    return {
+        **{kind: entry for kind, entry in diagnosis_mod.FIXED_DIAGNOSTICS.items()},
+        "no-match": diagnosis_mod.NO_MATCH,
+        "upload-time-missing": empty_entry(
+            [wheel("1.0", upload_time=None)], **WITH_CUTOFF
+        ),
+        "upload-time-unparseable": empty_entry(
+            [wheel("1.0", upload_time="not-a-time")], **WITH_CUTOFF
+        ),
+        "upload-time-naive": empty_entry(
+            [wheel("1.0", upload_time="2020-01-01T00:00:00")], **WITH_CUTOFF
+        ),
+        "upload-time-after-cutoff": empty_entry(
+            [wheel("1.0", upload_time=AFTER)], **WITH_CUTOFF
+        ),
+        "dist-policy": empty_entry(
+            [wheel("1.0")], dist_policy=DistPolicy.SDIST_ONLY, target=_LINUX312
+        ),
+        "sdist-install": empty_entry(
+            [wheel("1.0")], dist_policy=DistPolicy.SDIST_INSTALL
+        ),
+        "requires-python": empty_entry(
+            [wheel("1.0", requires_python=">=3.99")], target=_LINUX312
+        ),
+        "wheel-tags": empty_entry(
+            [wheel("1.0", tag="cp312-cp312-win_amd64")], target=_LINUX312
+        ),
+        "invalid-version": empty_entry([wheel("not-a-version")]),
+        "two-keys": empty_entry(
+            [wheel("1.0", requires_python=">=3.99"), wheel("2.0", upload_time=AFTER)],
+            target=_LINUX312,
+            **WITH_CUTOFF,
+        ),
+        "three-keys": empty_entry(
+            [
+                wheel("1.0", requires_python=">=3.99"),
+                wheel("2.0", upload_time=AFTER),
+                sdist("3.0"),
+            ],
+            target=_LINUX312,
+            dist_policy=DistPolicy.WHEEL_ONLY,
+            **WITH_CUTOFF,
+        ),
+        "unnamed": unnamed_drop_entry(),
+        "in-range-one-key": diagnostic_for(
+            [wheel("1.0"), wheel("2.0", upload_time=AFTER)],
+            spec=">=2",
+            **WITH_CUTOFF,
+        ),
+        "in-range-two-keys": diagnostic_for(
+            [
+                wheel("1.0"),
+                wheel("2.0", requires_python=">=3.99"),
+                wheel("3.0", tag="cp312-cp312-win_amd64"),
+            ],
+            spec=">=2",
+            target=_LINUX312,
+        ),
+        "ladder-sdist": ladder_entry(),
+        "blocker-decided": diagnosis_mod.blockers_diagnostic(
+            build([wheel("1.0")]), "pkg", blocked, ()
+        ),
+        "blocker-held": diagnosis_mod.blockers_diagnostic(
+            build([wheel("1.0")]),
+            "pkg",
+            [blocker("bar", diagnosis_mod.BlockerKind.HELD)],
+            (),
+        ),
+        "blocker-root": diagnosis_mod.blockers_diagnostic(
+            build([wheel("1.0")]),
+            "pkg",
+            [blocker("bar", diagnosis_mod.BlockerKind.ROOT)],
+            (),
+        ),
+        "blockers-two": diagnosis_mod.blockers_diagnostic(
+            build([wheel("1.0")]),
+            "pkg",
+            [*blocked, blocker("baz", diagnosis_mod.BlockerKind.ROOT)],
+            (),
+        ),
+        "blockers-and-metadata": diagnosis_mod.blockers_diagnostic(
+            build([wheel("1.0")]), "pkg", blocked, unreadable
+        ),
+        "metadata": diagnosis_mod.blockers_diagnostic(
+            build([wheel("1.0")]), "pkg", [], unreadable
+        ),
+        "extra-undeclared": extra_entry(
+            ReasonKind.EXTRA_UNDECLARED, version_range=SpecifierSet(">=1.0").to_range()
+        ),
+        "extra-metadata": extra_entry(ReasonKind.EXTRA_METADATA, metadata=unreadable),
+        "extra-narrowed": extra_entry(ReasonKind.EXTRA_NARROWED),
+    }
+
+
+class TestTheTwoDepths:
+    """What ``-v`` owes the line it deepens, over every entry the report has.
+
+    The three rules are that it never drops what the default line carried,
+    never says the same thing again, and never reaches for the resolver's
+    own vocabulary.  Where a shape has no more to say, it says nothing.
+    """
+
+    @pytest.mark.parametrize("name", list(every_shape()))
+    def test_a_try_line_always_has_its_note_behind_it(self, name: str) -> None:
+        """Asking for more must never give less than the default line gave."""
+        entry = every_shape()[name]
+        if entry.remedy is None:
+            return
+        assert [line for line in entry.detail if line.startswith("note: ")]
+
+    @pytest.mark.parametrize("name", list(every_shape()))
+    def test_no_detail_line_repeats_the_line_it_deepens(self, name: str) -> None:
+        """A restatement is not detail, and an empty block is the honest form."""
+        entry = every_shape()[name]
+        assert entry.short not in entry.detail
+
+    @pytest.mark.parametrize("name", list(every_shape()))
+    def test_no_line_uses_the_resolvers_own_words(self, name: str) -> None:
+        """The report is read by someone who wrote a config file, not a solver."""
+        entry = every_shape()[name]
+        internal = re.compile(r"\b(root|rung|walk|walked|predicate|marker)\b")
+        for line in (entry.short, *entry.detail):
+            assert internal.search(line) is None, line

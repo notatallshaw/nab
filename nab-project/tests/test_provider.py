@@ -1546,8 +1546,16 @@ class TestNoVersionsReasons:
         assert diagnostic.short == (
             "offline mode skipped an index with no cached listing"
         )
-        # The key is user-scope, so the flag is the half that always works.
-        assert diagnostic.remedy == "run without --offline"
+        # offline is layered, so the instruction is the one that wins over
+        # every layer rather than the flag this run may not have passed.
+        assert diagnostic.remedy == "re-run with --no-offline"
+        assert diagnostic.detail == (
+            (
+                "note: --no-offline turns offline mode off for this run"
+                " wherever it was set: a nab.toml, NAB_OFFLINE, or this"
+                " command line"
+            ),
+        )
 
     def test_offline_with_cached_absence_still_reports_not_found(
         self, tmp_path: Path
@@ -1605,9 +1613,6 @@ class TestNoVersionsReasons:
 
         assert rendered_reason(provider, "foo") == (
             "the index lists this package but every file is yanked"
-            "\nevery file the index served for this package is yanked (PEP 592)"
-            "\na yanked file is never admitted, so the listing reaches the"
-            " resolver empty"
         )
 
     def test_a_yanked_file_beside_a_readable_one_is_not_an_all_yanked_page(
@@ -1645,7 +1650,7 @@ class TestNoVersionsReasons:
             provider.choose_version("foo", SpecifierSet("").to_range())
 
         assert short_reason(provider, "foo") == (
-            "no file is a wheel or a .tar.gz sdist (the only formats nab reads)"
+            "no file the index served is one nab can read"
         )
 
     def test_unreadable_formats_only_reports_format_not_absence(
@@ -1677,7 +1682,7 @@ class TestNoVersionsReasons:
             provider = Provider(coordinator)
             provider.choose_version("foo", SpecifierSet("").to_range())
         assert short_reason(provider, "foo") == (
-            "no file is a wheel or a .tar.gz sdist (the only formats nab reads)"
+            "no file the index served is one nab can read"
         )
 
     def test_unreadable_formats_on_second_index_reports_format(
@@ -1704,7 +1709,7 @@ class TestNoVersionsReasons:
             provider = Provider(coordinator)
             provider.choose_version("foo", SpecifierSet("").to_range())
         assert short_reason(provider, "foo") == (
-            "no file is a wheel or a .tar.gz sdist (the only formats nab reads)"
+            "no file the index served is one nab can read"
         )
 
     def test_local_wheelhouse_zip_only_reports_format_not_absence(
@@ -1719,7 +1724,7 @@ class TestNoVersionsReasons:
             provider = Provider(coordinator)
             provider.choose_version("foo", SpecifierSet("").to_range())
         assert short_reason(provider, "foo") == (
-            "no file is a wheel or a .tar.gz sdist (the only formats nab reads)"
+            "no file the index served is one nab can read"
         )
 
     def test_local_wheelhouse_other_package_zip_still_reports_absence(
@@ -1754,7 +1759,7 @@ class TestNoVersionsReasons:
             provider = Provider(coordinator)
             provider.choose_version("foo", SpecifierSet("").to_range())
         assert short_reason(provider, "foo") == (
-            "no file is a wheel or a .tar.gz sdist (the only formats nab reads)"
+            "no file the index served is one nab can read"
         )
 
     def test_no_match_in_range_records_no_match_reason(self) -> None:
@@ -1796,7 +1801,7 @@ class TestNoVersionsReasons:
                 lambda coordinator: Provider(
                     coordinator, dist_policy=DistPolicy.WHEEL_ONLY
                 ),
-                "dist-policy",
+                'dist-policy = "wheel-only"',
                 id="dist-policy",
             ),
             pytest.param(
@@ -1830,7 +1835,7 @@ class TestNoVersionsReasons:
         provider = build(coordinator)
         assert provider.choose_version("foo", SpecifierSet(">=2").to_range()) is None
         assert short_reason(provider, "foo") == (
-            f"{filters} excluded every version matching the requirement"
+            f"{filters} excluded every version in range"
         )
 
     def test_unparseable_listing_version_is_not_read_as_a_filtered_match(self) -> None:
@@ -1890,11 +1895,10 @@ class TestNoVersionsReasons:
         provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.9.0"))
         provider.choose_version("foo", SpecifierSet("").to_range())
         assert rendered_reason(provider, "foo") == (
-            "requires-python excluded every file;"
-            " none supports your target Python"
+            "requires-python excluded every file"
             "\nrequires-python excluded 3 files (newest: 3.0 requires >=3.13,"
             " the resolve targets Python 3.9)"
-            "\nno sdist is available to build from"
+            "\nthe files nab read hold no sdist to build from"
         )
 
     def test_present_but_wheel_tags_incompatible_names_the_tags(self) -> None:
@@ -1924,10 +1928,10 @@ class TestNoVersionsReasons:
         )
         provider.choose_version("foo", SpecifierSet("").to_range())
         assert rendered_reason(provider, "foo") == (
-            "no wheel matches this platform or Python, and no sdist to build from"
+            "no wheel matches this platform or Python"
             "\nnone of the wheel's tags are compatible with the resolve target"
             " (2 wheels rejected)"
-            "\nno sdist is available to build from"
+            "\nthe files nab read hold no sdist to build from"
         )
 
     def test_tag_rejected_wheel_does_not_hijack_requires_python_reason(self) -> None:
@@ -1960,12 +1964,12 @@ class TestNoVersionsReasons:
         )
         provider.choose_version("foo", SpecifierSet("").to_range())
         assert rendered_reason(provider, "foo") == (
-            "requires-python and wheel tags excluded every file (-v for detail)"
+            "requires-python and wheel tags excluded every file"
             "\nrequires-python excluded 1 file (1.0 requires >=3.13, the resolve"
             " targets Python 3.11)"
             "\nnone of the wheel's tags are compatible with the resolve target"
             " (1 wheel rejected)"
-            "\nno sdist is available to build from"
+            "\nthe files nab read hold no sdist to build from"
         )
 
     def test_tag_rejected_wheel_does_not_deny_a_filtered_sdist(self) -> None:
@@ -1996,7 +2000,7 @@ class TestNoVersionsReasons:
         )
         provider.choose_version("foo", SpecifierSet("").to_range())
         assert rendered_reason(provider, "foo") == (
-            "requires-python and wheel tags excluded every file (-v for detail)"
+            "requires-python and wheel tags excluded every file"
             "\nrequires-python excluded 1 file (1.0 requires >=3.13, the resolve"
             " targets Python 3.11)"
             "\nnone of the wheel's tags are compatible with the resolve target"
@@ -2009,15 +2013,18 @@ class TestNoVersionsReasons:
         provider = Provider(coordinator, dist_policy=DistPolicy.WHEEL_ONLY)
         provider.choose_version("foo", SpecifierSet("").to_range())
         assert rendered_reason(provider, "foo") == (
-            'dist-policy = "wheel-only" excluded every file; none is a wheel'
+            'dist-policy = "wheel-only" excluded every file'
             '\ndist-policy = "wheel-only" excluded 1 sdist (1.0)'
+            "\nnote: the project-level dist-policy set that policy; setting"
+            ' packages."foo".dist-policy = "wheel-or-sdist" admits both formats'
+            " for this package"
         )
 
     def test_tag_excluded_wheel_with_filtered_sdist_keeps_the_sdist(self) -> None:
         """A tag-excluded wheel beside a filtered sdist must not deny the sdist.
 
         The sdist is on the index, dropped only by requires-python, so the
-        reason may not claim ``no sdist is available to build from``: it has
+        reason may not claim ``the files nab read hold no sdist to build from``: it has
         to read present-but-filtered like the no-tag-excluded branch does.
         """
         wheel = WheelFile(
@@ -2046,7 +2053,7 @@ class TestNoVersionsReasons:
         reason = rendered_reason(provider, "foo")
         assert "no sdist is available" not in reason
         assert reason == (
-            "requires-python and wheel tags excluded every file (-v for detail)"
+            "requires-python and wheel tags excluded every file"
             "\nrequires-python excluded 1 file (1.0 requires >=3.13, the resolve"
             " targets Python 3.11)"
             "\nnone of the wheel's tags are compatible with the resolve target"
@@ -2124,7 +2131,6 @@ class TestNoVersionsReasons:
 
         assert rendered_reason(provider, "foo") == (
             "every version needs bar in ==2.0, but the resolve chose bar 1.0"
-            "\nrequires bar in ==2.0 but solution has it at 1.0"
         )
 
     def test_sdist_only_under_dynamic_local_names_build_policy(self) -> None:
@@ -2153,7 +2159,7 @@ class TestNoVersionsReasons:
         result = provider.choose_version("pkg", VersionRange.full())
         assert result is None
         reason = rendered_reason(provider, "pkg")
-        assert reason.startswith("no version in range has readable metadata")
+        assert reason.startswith("every version in range was rejected on its metadata")
         assert "dynamic dependencies" in reason
         assert "build-local" in reason
         # The misleading PEP 440 narrative must NOT appear.
@@ -2233,7 +2239,9 @@ class TestNoVersionsReasons:
             "foo", metadata_blocks(**{"1.0": "No metadata for foo==1.0"})
         )
 
-        assert short_reason(provider, "foo") == "No metadata for foo==1.0"
+        assert short_reason(provider, "foo") == (
+            "every version in range was rejected on its metadata"
+        )
 
     def test_metadata_ban_unions_the_blocks_of_every_scan(self) -> None:
         """Versions banned by a later scan are counted with the earlier ones."""
@@ -2248,7 +2256,7 @@ class TestNoVersionsReasons:
         )
 
         assert rendered_reason(provider, "foo") == (
-            "no version in range has readable metadata (-v for the errors)"
+            "every version in range was rejected on its metadata"
             "\nNo metadata for foo==5.0"
             "\nNo metadata for foo==3.0"
         )
@@ -2284,7 +2292,7 @@ class TestNoVersionsReasons:
         assert result is None
         reason = rendered_reason(provider, "foo")
         assert "<VersionRange" not in reason
-        assert "requires bar in ==2.0 but root has it in ==1.0" in reason
+        assert "needs bar in ==2.0, but your project requires bar ==1.0" in reason
 
     def test_range_block_rejection_names_the_blocker(self) -> None:
         """Same as above but the blocker is a positive-range constraint
@@ -2316,7 +2324,7 @@ class TestNoVersionsReasons:
         # foo requires bar==2.0; the message must name that, not the solution range.
         assert "<VersionRange" not in reason
         assert "AFTER_LOCALS" not in reason
-        assert "requires bar in ==2.0 but solution has it in <2.0" in reason
+        assert "needs bar in ==2.0, but the resolve holds bar in <2.0" in reason
         assert "disjoint with current solution range" not in reason
 
     @pytest.mark.parametrize("cache_listing", [True, False])
@@ -2354,7 +2362,9 @@ class TestNoVersionsReasons:
         reason = rendered_reason(provider, "foo")
         assert "<VersionRange" not in reason
         assert "AFTER_LOCALS" not in reason
-        assert "requires bar in ==3.0 or ==1.0 but solution has it in ==5.0" in reason
+        assert (
+            "needs bar in ==3.0 or ==1.0, but the resolve holds bar in ==5.0" in reason
+        )
 
     def test_declared_pins_covering_the_listing_keep_their_spelling(self) -> None:
         """Pins that between them cover every listed version stay on the line.
@@ -2384,8 +2394,10 @@ class TestNoVersionsReasons:
         assert provider.choose_version("foo", VersionRange.full()) is None
 
         reason = rendered_reason(provider, "foo")
-        assert "requires bar in  but" not in reason
-        assert "requires bar in ==3.0 or ==1.0 but solution has it in ==2.0" in reason
+        assert "needs bar in , but" not in reason
+        assert (
+            "needs bar in ==3.0 or ==1.0, but the resolve holds bar in ==2.0" in reason
+        )
 
     def test_root_blocker_names_an_unconstrained_root_range(self) -> None:
         """The root side reads as "any version" rather than as nothing.
@@ -2412,7 +2424,10 @@ class TestNoVersionsReasons:
         assert provider.choose_version("foo", VersionRange.full()) is None
 
         reason = rendered_reason(provider, "foo")
-        assert "requires bar in no version but root has it in any version" in reason
+        assert (
+            "needs bar in no version, but your project requires bar any version"
+            in reason
+        )
 
     def test_post_release_pin_blocker_spells_both_sides_as_specifiers(self) -> None:
         """``bar>2.0`` excludes 2.0's post releases, so it is disjoint with
@@ -2438,7 +2453,7 @@ class TestNoVersionsReasons:
         result = provider.choose_version("foo", VersionRange.full())
         assert result is None
         reason = rendered_reason(provider, "foo")
-        assert "requires bar in >2.0 but solution has it in ==2.0.post1" in reason
+        assert "needs bar in >2.0, but the resolve holds bar in ==2.0.post1" in reason
 
     def test_decision_block_rejection_names_the_requirement(self) -> None:
         """The decision-block diagnostic names the candidate's real
@@ -2472,7 +2487,7 @@ class TestNoVersionsReasons:
         reason = rendered_reason(provider, "foo")
         assert "<VersionRange" not in reason
         assert "AFTER_LOCALS" not in reason
-        assert "requires bar in ==2.0 but solution has it at 1.0" in reason
+        assert "needs bar in ==2.0, but the resolve chose bar 1.0" in reason
         assert "requires bar != 1.0" not in reason
 
 
@@ -2694,7 +2709,7 @@ class TestMetadataBlockerCount:
         diagnostic = provider.get_no_versions_reason("pkg")
         assert diagnostic is not None
         assert diagnostic.short == (
-            "no version in range has readable metadata (-v for the errors)"
+            "every version in range was rejected on its metadata"
         )
         assert len(diagnostic.detail) == 3
         assert "pkg 3.0 requires Python >=3.13" in diagnostic.detail[0]
@@ -8528,8 +8543,7 @@ class TestLadderSdistAvailability:
 
         assert self._marker(provider) == V("1.0")
         assert self._named_line(provider, V("1.0")) == (
-            "uploaded-prior-to excluded the sdist,"
-            " and the index has no PEP 658 metadata"
+            "uploaded-prior-to excluded the sdist nab needed for metadata"
         )
 
     def test_requires_python_filtered_sdist_names_the_filter(self) -> None:
@@ -8544,7 +8558,7 @@ class TestLadderSdistAvailability:
 
         assert self._marker(provider) == V("1.0")
         assert self._named_line(provider, V("1.0")) == (
-            "requires-python excluded the sdist, and the index has no PEP 658 metadata"
+            "requires-python excluded the sdist nab needed for metadata"
         )
 
     def test_wheel_only_policy_filtered_sdist_names_the_filter(self) -> None:
@@ -8558,7 +8572,7 @@ class TestLadderSdistAvailability:
 
         assert self._marker(provider) == V("1.0")
         assert self._named_line(provider, V("1.0")) == (
-            "dist-policy excluded the sdist, and the index has no PEP 658 metadata"
+            'dist-policy = "wheel-only" excluded the sdist nab needed for metadata'
         )
 
     def test_a_host_side_drop_leaves_the_untargeted_sentence(self) -> None:
@@ -12314,7 +12328,7 @@ class TestExtrasProxyDiagnostics:
         diagnostic = provider.get_no_versions_reason("foo[security]")
         assert diagnostic is not None
         assert diagnostic.short == (
-            "every version of foo declaring this extra has unreadable metadata"
+            "every version in range was rejected on its metadata"
         )
         assert "foo==2.0" in diagnostic.detail[0]
 
@@ -12326,7 +12340,7 @@ class TestExtrasProxyDiagnostics:
         diagnostic = provider.get_no_versions_reason("foo[security]")
         assert diagnostic is not None
         assert diagnostic.short == (
-            "every version of foo declaring this extra has unreadable metadata"
+            "every version in range was rejected on its metadata"
         )
 
     def test_the_base_was_narrowed_off_every_declaring_version(self) -> None:
@@ -12353,7 +12367,7 @@ class TestExtrasProxyDiagnostics:
         diagnostic = provider.get_no_versions_reason("foo[security]")
         assert diagnostic is not None
         assert diagnostic.short == (
-            "another requirement holds foo at versions that do not declare this extra"
+            "another requirement holds foo where this extra is undeclared"
         )
         assert diagnostic.detail == (
             (

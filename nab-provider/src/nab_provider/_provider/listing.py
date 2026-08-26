@@ -7,10 +7,9 @@ already-cached metadata where possible.
 
 from __future__ import annotations
 
-import enum
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
@@ -30,6 +29,7 @@ from .metadata_resolver import pick_dist_for_metadata, version_dists
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from datetime import datetime
+    from typing import Literal, TypeAlias
 
     from nab_provider._vendor.packaging.ranges import VersionRange
     from nab_resolver.types import RangeProtocol
@@ -45,6 +45,20 @@ if TYPE_CHECKING:
         bool,
     ]
 
+    # The values :class:`DropCause` names, so a checker holds a cause to
+    # that set rather than to ``str``.
+    Cause: TypeAlias = Literal[
+        "upload-time-missing",
+        "upload-time-unparseable",
+        "upload-time-naive",
+        "upload-time-after-cutoff",
+        "dist-policy",
+        "sdist-install-no-sdist",
+        "requires-python",
+        "wheel-tags",
+        "invalid-version",
+    ]
+
 
 # Matched to the provider's look-ahead abort threshold: prefetching 8 versions
 # covers the worst-case abort scan without overshooting.  Used by the
@@ -52,25 +66,41 @@ if TYPE_CHECKING:
 PREFETCH_BATCH = 8
 
 
-class DropCause(enum.Enum):
+class DropCause:
     """Why the listing filter refused one file, or one whole version.
 
-    The member values are the order the clauses print in, which is not the
-    order the filter applies.  A file is refused at the first rung that
+    A namespace of constants rather than an :class:`enum.Enum`: every nab
+    invocation imports this module, and declaring an Enum class costs
+    around half a million instructions.
+
+    :data:`REPORT_ORDER` is the order the clauses print in, which is not
+    the order the filter applies.  A file is refused at the first rung that
     objects, and the rungs run in this order: ``INVALID_VERSION``,
     ``DIST_POLICY``, ``REQUIRES_PYTHON``, the four ``UPLOAD_TIME_*``,
     ``SDIST_INSTALL_NO_SDIST``, ``WHEEL_TAGS``.
     """
 
-    UPLOAD_TIME_MISSING = 1
-    UPLOAD_TIME_UNPARSEABLE = 2
-    UPLOAD_TIME_NAIVE = 3
-    UPLOAD_TIME_AFTER_CUTOFF = 4
-    DIST_POLICY = 5
-    SDIST_INSTALL_NO_SDIST = 6
-    REQUIRES_PYTHON = 7
-    WHEEL_TAGS = 8
-    INVALID_VERSION = 9
+    UPLOAD_TIME_MISSING: Final = "upload-time-missing"
+    UPLOAD_TIME_UNPARSEABLE: Final = "upload-time-unparseable"
+    UPLOAD_TIME_NAIVE: Final = "upload-time-naive"
+    UPLOAD_TIME_AFTER_CUTOFF: Final = "upload-time-after-cutoff"
+    DIST_POLICY: Final = "dist-policy"
+    SDIST_INSTALL_NO_SDIST: Final = "sdist-install-no-sdist"
+    REQUIRES_PYTHON: Final = "requires-python"
+    WHEEL_TAGS: Final = "wheel-tags"
+    INVALID_VERSION: Final = "invalid-version"
+
+    REPORT_ORDER: Final = (
+        UPLOAD_TIME_MISSING,
+        UPLOAD_TIME_UNPARSEABLE,
+        UPLOAD_TIME_NAIVE,
+        UPLOAD_TIME_AFTER_CUTOFF,
+        DIST_POLICY,
+        SDIST_INSTALL_NO_SDIST,
+        REQUIRES_PYTHON,
+        WHEEL_TAGS,
+        INVALID_VERSION,
+    )
 
 
 def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, DistFile]]:
@@ -536,7 +566,7 @@ def python_or_time_cause(
     version: Version,
     dist: DistFile,
     policy: ListingPolicy,
-) -> DropCause | None:
+) -> Cause | None:
     """Return why Requires-Python or the upload cutoff refuses ``dist``, or None.
 
     Counts the drop and, on a timezone-naive upload time, refuses the run.
@@ -566,7 +596,7 @@ def python_or_time_cause(
     cause = upload_time_cause(dist, cutoff)
     if cause is None:
         return None
-    if cause is DropCause.UPLOAD_TIME_NAIVE:
+    if cause == DropCause.UPLOAD_TIME_NAIVE:
         raise InvalidUploadTimeError(naive_upload_time_message(normalized, dist))
     provider.stats.excluded_by_time += 1
     return cause
@@ -742,7 +772,7 @@ def excluded_by_python(
     return cached
 
 
-def upload_time_cause(dist: DistFile, cutoff: datetime | None) -> DropCause | None:
+def upload_time_cause(dist: DistFile, cutoff: datetime | None) -> Cause | None:
     """Return which upload-time rule refuses ``dist``, or None when none does.
 
     ``cutoff`` is the effective upload-time cutoff for the package, already

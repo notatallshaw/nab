@@ -296,12 +296,34 @@ def _unset_if_none(value: object) -> object:
     Most policy fields store ``None`` to mean "unset" on the override
     dataclasses, so wrapping their attribute access in this helper yields
     the ``_UNSET``-or-value shape :meth:`Provider._effective_field`
-    expects.  :meth:`Provider._uploaded_prior_to_value` builds that shape
-    itself, because there ``None`` is a real value (a disabled cutoff).
+    expects.  :func:`_uploaded_prior_to_value` builds that shape itself,
+    because there ``None`` is a real value (a disabled cutoff).
     """
     if value is None:
         return _UNSET
     return value
+
+
+def _uploaded_prior_to_value(override: PackageOverride | IndexOverride) -> object:
+    """Upload-time value: a datetime, ``None`` (disabled), or ``_UNSET``."""
+    if override.uploaded_prior_to is not None:
+        return override.uploaded_prior_to
+    if override.uploaded_prior_to_disabled:
+        return None
+    return _UNSET
+
+
+def _dist_policy_value(override: PackageOverride | IndexOverride) -> object:
+    """Dist-policy value: a :class:`DistPolicy`, or ``_UNSET`` when unset."""
+    return _unset_if_none(override.dist_policy)
+
+
+# What each field a remedy can name is read with, so the layer lookup and
+# the effective value read the same surfaces the same way.
+_SOURCE_VALUES: dict[str, Callable[[PackageOverride | IndexOverride], object]] = {
+    "uploaded-prior-to": _uploaded_prior_to_value,
+    "dist-policy": _dist_policy_value,
+}
 
 
 # The markers an extras proxy records, which read the proxy's own name
@@ -838,7 +860,7 @@ class Provider:
             version,
             index_name,
             field="dist-policy",
-            value=lambda o: _unset_if_none(o.dist_policy),
+            value=_dist_policy_value,
         )
         if result is _UNSET:
             return self.dist_policy
@@ -864,7 +886,7 @@ class Provider:
             version,
             index_name,
             field="uploaded-prior-to",
-            value=self._uploaded_prior_to_value,
+            value=_uploaded_prior_to_value,
         )
         if result is _UNSET:
             return self.uploaded_prior_to
@@ -1002,15 +1024,6 @@ class Provider:
             self.effective_requires_python(canonical_name, version),
             self.effective_provides_extra(canonical_name, version),
         )
-
-    @staticmethod
-    def _uploaded_prior_to_value(override: PackageOverride | IndexOverride) -> object:
-        """Upload-time value: a datetime, ``None`` (disabled), or ``_UNSET``."""
-        if override.uploaded_prior_to is not None:
-            return override.uploaded_prior_to
-        if override.uploaded_prior_to_disabled:
-            return None
-        return _UNSET
 
     def _matching_package_override(
         self, canonical_name: str, version: Version, sets_field: Callable[..., object]
@@ -1666,7 +1679,7 @@ class Provider:
     def record_extra_no_versions(
         self,
         package: str,
-        kind: _diagnosis.ReasonKind,
+        kind: _diagnosis.Kind,
         *,
         metadata: tuple[_diagnosis.MetadataBlock, ...] = (),
         version_range: VersionRange | None = None,
@@ -1814,7 +1827,7 @@ class Provider:
         fixed = _diagnosis.FIXED_DIAGNOSTICS.get(recorded.kind)
         if fixed is not None:
             return fixed
-        if recorded.kind is _diagnosis.ReasonKind.BLOCKERS:
+        if recorded.kind == _diagnosis.ReasonKind.BLOCKERS:
             _, _, normalized = self.split_and_normalize(package)
             return _diagnosis.blockers_diagnostic(
                 self, normalized, recorded.blockers, recorded.metadata
@@ -1856,7 +1869,7 @@ class Provider:
         )
         if diagnosis is None:
             return _diagnosis.NO_MATCH
-        if recorded.kind is _diagnosis.ReasonKind.FILTERED_EMPTY:
+        if recorded.kind == _diagnosis.ReasonKind.FILTERED_EMPTY:
             return _diagnosis.empty_listing_diagnostic(self, normalized, diagnosis)
 
         # The screen passed, so the marker carries the range it screened.
@@ -1877,7 +1890,7 @@ class Provider:
         naming a version the index never published is the ordinary way to
         reach that, so the cheap question runs first.
         """
-        if recorded.kind is _diagnosis.ReasonKind.FILTERED_EMPTY:
+        if recorded.kind == _diagnosis.ReasonKind.FILTERED_EMPTY:
             return True
         return recorded.version_range is not None and _listing.dropped_release_in_range(
             self, normalized, recorded.version_range
@@ -1926,57 +1939,67 @@ class Provider:
             self, normalized, version, diagnosis
         )
 
-    def uploaded_prior_to_source(
-        self, canonical_name: str, version: Version, index_name: str | None
-    ) -> _diagnosis.CutoffSource:
-        """Return the config layer that set this candidate's cutoff.
+    def override_source(
+        self,
+        canonical_name: str,
+        version: Version,
+        index_name: str | None,
+        *,
+        field: _diagnosis.Field,
+    ) -> _diagnosis.Remedy:
+        """Return the config layer that set ``field`` for this candidate.
 
         Reads the two override surfaces through the same matcher
         :meth:`_effective_field` reads them with, but never raises: it runs
         while a failure is being rendered, where the probe may already have
         swallowed the conflict :meth:`_effective_field` would.
         """
-        override = self._matching_package_override(
-            canonical_name, version, self._uploaded_prior_to_value
-        )
+        value = _SOURCE_VALUES[field]
+        override = self._matching_package_override(canonical_name, version, value)
         if override is not None:
-            return _diagnosis.CutoffSource(
-                _diagnosis.CutoffLayer.PACKAGE,
+            return _diagnosis.Remedy(
+                field,
+                _diagnosis.OverrideLayer.PACKAGE,
                 override.source_label or str(override.requirement),
                 str(override.requirement),
             )
 
         if index_name is not None:
             index = self._index_overrides.get(index_name)
-            if index is not None and self._uploaded_prior_to_value(index) is not _UNSET:
-                return _diagnosis.CutoffSource(
-                    _diagnosis.CutoffLayer.INDEX, index_name, index_name
+            if index is not None and value(index) is not _UNSET:
+                return _diagnosis.Remedy(
+                    field,
+                    _diagnosis.OverrideLayer.INDEX,
+                    index_name,
+                    index_name,
                 )
 
-        scoped = self._scoped_uploaded_prior_to_entry(canonical_name)
+        scoped = self._scoped_entry(canonical_name, field, value)
         if scoped is not None:
             return scoped
-        return _diagnosis.CutoffSource(
-            _diagnosis.CutoffLayer.GLOBAL, "", canonical_name
+        return _diagnosis.Remedy(
+            field, _diagnosis.OverrideLayer.GLOBAL, "", canonical_name
         )
 
-    def _scoped_uploaded_prior_to_entry(
-        self, canonical_name: str
-    ) -> _diagnosis.CutoffSource | None:
-        """Return the entry setting ``canonical_name``'s cutoff over another range.
+    def _scoped_entry(
+        self,
+        canonical_name: str,
+        field: _diagnosis.Field,
+        value: Callable[[PackageOverride | IndexOverride], object],
+    ) -> _diagnosis.Remedy | None:
+        """Return the entry setting ``canonical_name``'s ``field`` over another range.
 
-        Asked only where the project-level cutoff answered, so a bare-name
+        Asked only where the project-level value answered, so a bare-name
         entry would have matched the candidate and any entry found here is
         version-scoped around it.  A second entry for the package would
         overlap that one, which the config layer refuses, so the remedy for
         this candidate points at widening the entry that exists.
         """
         for override in self._package_overrides:
-            if override.name == canonical_name and (
-                self._uploaded_prior_to_value(override) is not _UNSET
-            ):
-                return _diagnosis.CutoffSource(
-                    _diagnosis.CutoffLayer.GLOBAL_SCOPED_ENTRY,
+            if override.name == canonical_name and value(override) is not _UNSET:
+                return _diagnosis.Remedy(
+                    field,
+                    _diagnosis.OverrideLayer.GLOBAL_SCOPED_ENTRY,
                     override.source_label or str(override.requirement),
                     str(override.requirement),
                 )

@@ -801,8 +801,14 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
 def _diagnostics_block(
     entries: Sequence[tuple[str, Diagnostic]], *, detailed: bool
 ) -> str:
-    """Render the ``Diagnostics:`` section at one of its two depths."""
-    lines = ["", "", "Diagnostics:"]
+    """Render the ``Diagnostics:`` section at one of its two depths.
+
+    The header carries the pointer to ``-v``, once, rather than every line
+    that has something behind it repeating the same sixteen characters.  It
+    is offered only where some entry does have more to show.
+    """
+    deeper = not detailed and any(diagnostic.detail for _, diagnostic in entries)
+    lines = ["", "", "Diagnostics: (-v for detail)" if deeper else "Diagnostics:"]
     for package, diagnostic in entries:
         lines.append(f"  - {package}: {diagnostic.short}")
         if detailed:
