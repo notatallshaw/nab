@@ -606,6 +606,22 @@ class TestTheInRangeLead:
             " filtered (by upload-time)"
         )
 
+    def test_one_filter_is_named_once_however_many_files_it_refused(self) -> None:
+        """Two in-range releases refused by one filter name it once."""
+        reason = reason_for(
+            [
+                wheel("1.0"),
+                wheel("2.0", requires_python=">=3.99"),
+                wheel("3.0", requires_python=">=3.99"),
+            ],
+            spec=">=2",
+            target=_LINUX312,
+        )
+        assert reason == (
+            "found on index but every version matching the requirement was"
+            " filtered (by requires-python)"
+        )
+
     def test_a_cutoff_outside_the_ask_offers_no_remedy(self) -> None:
         """The note follows the drops the lead describes, not every drop.
 
