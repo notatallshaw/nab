@@ -450,12 +450,17 @@ def in_range_reason(
 
 
 def _join_labels(labels: list[str]) -> str:
-    """Join filter labels the way the sentence reads them."""
+    """Join filter labels the way the sentence reads them.
+
+    Every label named here refused a release the requirement asked for, so
+    they are conjoined: "or" would offer the reader a guess where the walk
+    has an answer.
+    """
     if len(labels) == 1:
         return labels[0]
-    if len(labels) == 2:  # noqa: PLR2004 - "a or b" against "a, b, or c"
-        return f"{labels[0]} or {labels[1]}"
-    return f"{', '.join(labels[:-1])}, or {labels[-1]}"
+    if len(labels) == 2:  # noqa: PLR2004 - "a and b" against "a, b, and c"
+        return f"{labels[0]} and {labels[1]}"
+    return f"{', '.join(labels[:-1])}, and {labels[-1]}"
 
 
 # One template per cause, with the residual drop under ``None``, so every

@@ -730,7 +730,7 @@ class TestTheInRangeLead:
         )
         assert reason == (
             "found on index but every version matching the requirement was"
-            " filtered (by requires-python or wheel tags)"
+            " filtered (by requires-python and wheel tags)"
         )
 
     def test_three_filters_read_as_a_list(self) -> None:
@@ -747,7 +747,7 @@ class TestTheInRangeLead:
         )
         assert reason == (
             "found on index but every version matching the requirement was"
-            " filtered (by upload-time, requires-python, or wheel tags)\n"
+            " filtered (by upload-time, requires-python, and wheel tags)\n"
             "    note: the project-level uploaded-prior-to set that cutoff;"
             ' uploaded-prior-to = false under [tool.nab.packages."pkg"] lifts'
             " it for this package"
