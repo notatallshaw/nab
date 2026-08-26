@@ -149,14 +149,18 @@ nothing this target can install, gets a line there naming the filters
 that refused files, with a count and the newest version each one
 refused. A file that two filters would both refuse is attributed to the
 first one that did, so lifting the named filter can uncover a second.
-Where a config key would admit those files again, an indented `note:`
-line names it and what to set:
+Where a config key would admit those files again, the line is followed
+by an indented `note:` naming that key and the value to set:
 
 ```
 Diagnostics:
   - foo: found on index but no distribution is compatible: the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0); no sdist is available to build from
-    note: the project-level uploaded-prior-to set that cutoff; uploaded-prior-to = false under [tool.nab.packages."foo"] lifts it for this package
+    note: the project-level uploaded-prior-to set that cutoff; setting packages."foo".uploaded-prior-to = false lifts it for this package
 ```
+
+A note names the setting rather than the file it belongs in, since the
+same key is spelled under `[tool.nab]` in `pyproject.toml` and at the
+top level of a `nab.toml`.
 
 A remedy is offered for the upload-time cutoff alone. Not every line
 carries counts and versions: a package no configured index served reads

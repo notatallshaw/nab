@@ -602,18 +602,21 @@ def _version_of(record: DroppedFile) -> Version:
     return record.version
 
 
-# Every key path here is spelled the way the user must type it: an index
-# name is free-form, so it is quoted, and a package that already carries an
-# uploaded-prior-to entry is offered no second one.
+# A remedy names a setting rather than the table that holds it, because the
+# same key is spelled under [tool.nab] in pyproject.toml and at the top
+# level of a nab.toml.  Two of the four point at an entry the user already
+# wrote; the project-level cutoff has no entry of its own, so its remedy
+# names the per-package key that overrides it, unless the package already
+# carries one, which the config layer allows only once.
 _REMEDIES: dict[CutoffLayer, str] = {
     CutoffLayer.GLOBAL: (
-        "the project-level uploaded-prior-to set that cutoff; uploaded-prior-to"
-        ' = false under [tool.nab.packages."{package}"] lifts it for this package'
+        "the project-level uploaded-prior-to set that cutoff; setting"
+        ' packages."{package}".uploaded-prior-to = false lifts it for this package'
     ),
     CutoffLayer.GLOBAL_SCOPED_ENTRY: (
         "the project-level uploaded-prior-to set that cutoff; {package} already"
-        " sets uploaded-prior-to over another version range, so a second package"
-        " entry would conflict"
+        " sets uploaded-prior-to over another version range, so widen that entry"
+        " over this version or drop the project-level cutoff"
     ),
     CutoffLayer.PACKAGE: (
         "the per-package uploaded-prior-to for {label} set that cutoff; setting"
@@ -621,7 +624,7 @@ _REMEDIES: dict[CutoffLayer, str] = {
     ),
     CutoffLayer.INDEX: (
         'the per-index uploaded-prior-to for index "{label}" set that cutoff;'
-        ' uploaded-prior-to = false under [tool.nab.index."{label}"] lifts it'
+        " setting it to false there lifts it"
     ),
 }
 
@@ -632,18 +635,30 @@ def _note(
     diagnosis: ListingDiagnosis,
     records: Sequence[DroppedFile],
 ) -> str:
-    """Return the ``note:`` continuation naming what lifts the cutoff, or "".
+    """Return the ``note:`` continuations naming what lifts the cutoffs, or "".
 
     Offered for the upload-time causes alone, and only for the drops the
-    lead it follows describes.  Requires-Python gets none: the per-package
-    override replaces the package's declared metadata, so offering it as a
-    fix would be telling the user to lie to the resolver.
+    lead it follows describes.  One line per layer that set a cutoff, so a
+    listing judged by two of them is answered about both.  Requires-Python
+    gets none: the per-package override replaces the package's declared
+    metadata, so offering it as a fix would be telling the user to lie to
+    the resolver.
     """
     refused = [record for record in records if record.cause in UPLOAD_TIME_CAUSES]
     if not refused:
         return ""
 
-    layer, label = provider.uploaded_prior_to_source(
-        normalized, _version_of(_newest(refused)), diagnosis.index_name
+    by_cutoff: dict[datetime | None, list[DroppedFile]] = {}
+    for record in refused:
+        by_cutoff.setdefault(record.cutoff, []).append(record)
+
+    layers = dict.fromkeys(
+        provider.uploaded_prior_to_source(
+            normalized, _version_of(_newest(group)), diagnosis.index_name
+        )
+        for group in by_cutoff.values()
     )
-    return f"\n    note: {_REMEDIES[layer].format(package=normalized, label=label)}"
+    return "".join(
+        "\n    note: " + _REMEDIES[layer].format(package=normalized, label=label)
+        for layer, label in layers
+    )

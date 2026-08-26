@@ -456,10 +456,31 @@ class TestClauseText:
             f" uploaded-prior-to cutoff {EARLY_CUTOFF_TEXT} excluded 1 file"
             f" uploaded at {BETWEEN} (1.0); the uploaded-prior-to cutoff"
             f" {CUTOFF_TEXT} excluded 1 file uploaded at {AFTER} (2.0); no sdist"
-            " is available to build from\n    note: the project-level"
-            " uploaded-prior-to set that cutoff; pkg already sets"
-            " uploaded-prior-to over another version range, so a second package"
-            " entry would conflict"
+            " is available to build from"
+            "\n    note: the per-package uploaded-prior-to for pkg<2 set that"
+            " cutoff; setting it to false there lifts it"
+            "\n    note: the project-level uploaded-prior-to set that cutoff; pkg"
+            " already sets uploaded-prior-to over another version range, so widen"
+            " that entry over this version or drop the project-level cutoff"
+        )
+
+    def test_two_cutoffs_over_files_with_no_upload_time_read_as_two_clauses(
+        self,
+    ) -> None:
+        """This clause names a cutoff as well, so it splits on one as well.
+
+        Neither file publishes an upload time, and the cutoff each was
+        judged against is the one its own clause has to name.
+        """
+        assert reason_for(
+            [wheel("1.0", upload_time=None), wheel("2.0", upload_time=None)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
+        ).startswith(
+            "found on index but no distribution is compatible: the"
+            f" uploaded-prior-to cutoff {EARLY_CUTOFF_TEXT} excluded 1 file that"
+            " publishes no upload time (1.0); the uploaded-prior-to cutoff"
+            f" {CUTOFF_TEXT} excluded 1 file that publishes no upload time (2.0)"
         )
 
     def test_two_dist_policies_over_one_listing_read_as_two_clauses(self) -> None:
@@ -600,8 +621,8 @@ class TestClauseText:
             " uploaded at 2030-01-01T00:00:00Z (2.0); requires-python excluded 1"
             " file (1.0 requires >=3.99, the resolve targets Python 3.12); no"
             " sdist is available to build from\n    note: the project-level"
-            " uploaded-prior-to set that cutoff; uploaded-prior-to = false under"
-            ' [tool.nab.packages."pkg"] lifts it for this package'
+            " uploaded-prior-to set that cutoff; setting"
+            ' packages."pkg".uploaded-prior-to = false lifts it for this package'
         )
 
     def test_the_first_rung_that_refuses_a_file_is_the_one_named(self) -> None:
@@ -635,8 +656,8 @@ class TestTheRemedyNamesTheLayer:
             [wheel("1.0", upload_time=AFTER)], uploaded_prior_to=CUTOFF
         ).endswith(
             "\n    note: the project-level uploaded-prior-to set that cutoff;"
-            ' uploaded-prior-to = false under [tool.nab.packages."pkg"] lifts it'
-            " for this package"
+            ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
+            " package"
         )
 
     def test_a_per_package_cutoff(self) -> None:
@@ -679,30 +700,31 @@ class TestTheRemedyNamesTheLayer:
             f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file uploaded"
             f" at {AFTER} (1.0); no sdist is available to build from"
             '\n    note: the per-index uploaded-prior-to for index "pypi" set'
-            ' that cutoff; uploaded-prior-to = false under [tool.nab.index."pypi"]'
-            " lifts it"
+            " that cutoff; setting it to false there lifts it"
         )
 
-    def test_an_index_name_that_is_not_a_bare_toml_key(self) -> None:
-        """The suggested table header is quoted, so any declared name parses.
+    @pytest.mark.parametrize(
+        "index_name", ["corp mirror", "my.index"], ids=["spaced", "dotted"]
+    )
+    def test_the_note_names_a_free_form_index(self, index_name: str) -> None:
+        """An index name no bare TOML key can spell still reads back whole.
 
-        Index names are free-form strings.  ``[tool.nab.index.corp mirror]``
-        is not TOML at all, and the unquoted ``[tool.nab.index.my.index]``
-        reads as a nested table nab then refuses.
+        The note points at the entry the user already wrote rather than
+        spelling its key, so a name carrying a space or a dot needs no
+        quoting rules of its own.
         """
         provider = build(
             [wheel("1.0", upload_time=AFTER)],
-            index_overrides={"corp mirror": IndexOverride(uploaded_prior_to=CUTOFF)},
+            index_overrides={index_name: IndexOverride(uploaded_prior_to=CUTOFF)},
         )
-        provider.coordinator.index.store_listing_index("pkg", "corp mirror")
+        provider.coordinator.index.store_listing_index("pkg", index_name)
         assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
 
         reason = provider.get_no_versions_reason("pkg")
         assert reason is not None
         assert reason.endswith(
-            '\n    note: the per-index uploaded-prior-to for index "corp mirror"'
-            " set that cutoff; uploaded-prior-to = false under"
-            ' [tool.nab.index."corp mirror"] lifts it'
+            f'\n    note: the per-index uploaded-prior-to for index "{index_name}"'
+            " set that cutoff; setting it to false there lifts it"
         )
 
     def test_a_package_that_already_scopes_the_cutoff_is_offered_no_entry(
@@ -721,8 +743,8 @@ class TestTheRemedyNamesTheLayer:
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ).endswith(
             "\n    note: the project-level uploaded-prior-to set that cutoff; pkg"
-            " already sets uploaded-prior-to over another version range, so a"
-            " second package entry would conflict"
+            " already sets uploaded-prior-to over another version range, so widen"
+            " that entry over this version or drop the project-level cutoff"
         )
 
     def test_a_package_scoping_another_field_still_gets_the_entry(self) -> None:
@@ -739,8 +761,27 @@ class TestTheRemedyNamesTheLayer:
             ],
         ).endswith(
             "\n    note: the project-level uploaded-prior-to set that cutoff;"
-            ' uploaded-prior-to = false under [tool.nab.packages."pkg"] lifts it'
-            " for this package"
+            ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
+            " package"
+        )
+
+    def test_an_index_scoping_another_field_is_not_the_layer(self) -> None:
+        """An index entry answers for the cutoff only when it sets one.
+
+        The entry here sets ``dist-policy``, so the cutoff came from the
+        project level and naming the index would send the user to a key
+        that never judged the file.
+        """
+        assert reason_for(
+            [wheel("1.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            index_overrides={
+                "pypi": IndexOverride(dist_policy=DistPolicy.PREFER_WHEEL)
+            },
+        ).endswith(
+            "\n    note: the project-level uploaded-prior-to set that cutoff;"
+            ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
+            " package"
         )
 
     def test_an_override_with_no_source_label_names_its_requirement(self) -> None:
@@ -814,8 +855,8 @@ class TestTheInRangeLead:
             "found on index but every version matching the requirement was"
             " filtered (by upload-time, requires-python, and wheel tags)\n"
             "    note: the project-level uploaded-prior-to set that cutoff;"
-            ' uploaded-prior-to = false under [tool.nab.packages."pkg"] lifts'
-            " it for this package"
+            ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
+            " package"
         )
 
     def test_an_out_of_range_drop_does_not_name_its_filter(self) -> None:
@@ -913,6 +954,22 @@ class TestTheInRangeLead:
 
         assert provider.get_no_versions_reason("pkg") == (
             "found on index but every version matching the requirement was filtered"
+        )
+
+    def test_a_dropped_pre_release_is_the_release_the_range_asked_for(self) -> None:
+        """A range holding only a dropped pre-release still reaches the walk.
+
+        The screen filters the dropped versions through the range rather
+        than testing each one, so the pre-release is admitted where no
+        final release in range could stand in for it.
+        """
+        assert reason_for(
+            [wheel("0.5"), wheel("1.0b1", upload_time=AFTER)],
+            spec=">=0.9",
+            **WITH_CUTOFF,
+        ).startswith(
+            "found on index but every version matching the requirement was"
+            " filtered (by upload-time)"
         )
 
     def test_a_recorded_range_of_none_stays_a_no_match(self) -> None:

@@ -1716,8 +1716,8 @@ class TestNoVersionsReasons:
                 ),
                 "upload-time",
                 "\n    note: the project-level uploaded-prior-to set that cutoff;"
-                ' uploaded-prior-to = false under [tool.nab.packages."foo"] lifts'
-                " it for this package",
+                ' setting packages."foo".uploaded-prior-to = false lifts it for'
+                " this package",
                 id="upload-time",
             ),
         ],

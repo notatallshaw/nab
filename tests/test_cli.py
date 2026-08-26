@@ -2954,8 +2954,8 @@ class TestLockCommandUniversal:
             " uploaded at 2030-01-01T00:00:00Z (1.0); no sdist is available to"
             " build from\n"
             "    note: the project-level uploaded-prior-to set that cutoff;"
-            ' uploaded-prior-to = false under [tool.nab.packages."foo"] lifts it'
-            " for this package\n"
+            ' setting packages."foo".uploaded-prior-to = false lifts it for this'
+            " package\n"
         )
 
     def test_a_diagnostics_note_survives_the_per_tuple_block(
@@ -2982,8 +2982,8 @@ class TestLockCommandUniversal:
         ) in err
         assert (
             "#       note: the project-level uploaded-prior-to set that cutoff;"
-            ' uploaded-prior-to = false under [tool.nab.packages."foo"] lifts it'
-            " for this package"
+            ' setting packages."foo".uploaded-prior-to = false lifts it for this'
+            " package"
         ) in err
 
     def test_template_writes_one_file_per_tuple(
