@@ -69,9 +69,9 @@ PREFETCH_BATCH = 8
 class DropCause:
     """Why the listing filter refused one file, or one whole version.
 
-    A namespace of constants rather than an :class:`enum.Enum`: every nab
-    invocation imports this module, and declaring an Enum class costs
-    around half a million instructions.
+    A namespace of constants rather than an :class:`enum.Enum`, which is
+    the most expensive way to declare a handful of names and is paid on
+    every nab invocation, since every one imports this module.
 
     :data:`REPORT_ORDER` is the order the clauses print in, which is not
     the order the filter applies.  A file is refused at the first rung that

@@ -135,10 +135,9 @@ class BlockerKind:
 
 
 # The value types below are hand-written rather than dataclasses or named
-# tuples: every nab invocation imports this module, and both of those cost
-# tens of times more at import than a plain class with ``__slots__``.  The
-# constants above are strings for the same reason, an Enum class being the
-# most expensive declaration of the three.
+# tuples, and the constants above are strings rather than Enum members, for
+# one reason: every nab invocation imports this module, and each of those
+# declarations costs several times what the plain form does.
 
 
 class Remedy:
@@ -160,7 +159,7 @@ class Remedy:
         self.selector = selector
 
     def identity(self) -> tuple[str, str, str, str]:
-        """Return what makes two remedies the same change to make."""
+        """Return what makes two remedies the same change."""
         return (self.field, self.layer, self.label, self.selector)
 
 
@@ -908,7 +907,7 @@ def _remedies(
     diagnosis: ListingDiagnosis,
     groups: _Groups,
 ) -> list[Remedy]:
-    """Return the entries a change would have to be made to, in report order.
+    """Return the config entries a remedy would change, in report order.
 
     Empty where nothing a config key set did the refusing: Requires-Python
     is left out on purpose, since the override that lifts it replaces the
@@ -943,7 +942,7 @@ def _by_attribute(
 
 
 def _note_lines(remedies: Sequence[Remedy], package: str) -> tuple[str, ...]:
-    """Return the ``note:`` line naming what each entry would take to change."""
+    """Return one ``note:`` line per entry, saying what changing it would take."""
     return tuple(
         "note: " + _fill(_REMEDIES[remedy.field, remedy.layer], remedy, package)
         for remedy in remedies
@@ -960,11 +959,15 @@ def _try_line(remedies: Sequence[Remedy]) -> str | None:
     if not remedies:
         return None
     remedy = remedies[0]
-    return _fill(_TRY_LINES[remedy.field, remedy.layer], remedy, "")
+    return _fill(_TRY_LINES[remedy.field, remedy.layer], remedy)
 
 
-def _fill(template: str, remedy: Remedy, package: str) -> str:
-    """Fill one remedy template with the entry it is about."""
+def _fill(template: str, remedy: Remedy, package: str = "") -> str:
+    """Fill one remedy template with the entry it is about.
+
+    ``package`` is read by the notes alone: a ``try:`` line names the entry
+    and the setting, never the package the entry is about.
+    """
     return template.format(
         package=package,
         label=remedy.label,
@@ -974,11 +977,12 @@ def _fill(template: str, remedy: Remedy, package: str) -> str:
 
 
 def _toml_key(name: str) -> str:
-    """Quote ``name`` as a TOML key, in whichever of the two forms parses.
+    """Quote ``name`` as a TOML key, in whichever form reads back as ``name``.
 
-    An index is named by whatever the config called it, and nab accepts a
-    quote in that name, which would otherwise close the key the remedy is
-    writing it into.
+    An index is named by whatever the config called it, and nab accepts
+    either quote in that name, which would otherwise close the key the
+    remedy is writing it into.  A literal string takes a double quote and a
+    basic string takes the rest, escaping where the name holds both.
     """
     if '"' not in name:
         return f'"{name}"'
