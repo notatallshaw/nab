@@ -3369,7 +3369,7 @@ class TestAugmentResolutionError:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         diagnostics = _diagnostics(info.value)
-        assert "foo: requires-python excluded every version in range" in diagnostics
+        assert "foo: no version in range supports Python 3.12" in diagnostics
         assert "no version matches the requirement" not in diagnostics
 
     def test_constraint_does_not_hide_the_transitive_blocker(

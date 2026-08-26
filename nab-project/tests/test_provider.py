@@ -1770,14 +1770,14 @@ class TestNoVersionsReasons:
         assert short_reason(provider, "foo") == "no version matches the requirement"
 
     @pytest.mark.parametrize(
-        ("listing", "build", "filters"),
+        ("listing", "build", "line"),
         [
             pytest.param(
                 [make_wheel("2.0", requires_python=">=3.13"), make_wheel("1.0")],
                 lambda coordinator: Provider(
                     coordinator, target=ResolveTarget.for_host_python("3.9.0")
                 ),
-                "requires-python",
+                "no version in range supports Python 3.9",
                 id="requires-python",
             ),
             pytest.param(
@@ -1793,7 +1793,7 @@ class TestNoVersionsReasons:
                     make_wheel("1.0"),
                 ],
                 lambda coordinator: Provider(coordinator, target=_LINUX311),
-                "wheel tags",
+                "no wheel in range matches this platform or Python",
                 id="wheel-tags",
             ),
             pytest.param(
@@ -1801,7 +1801,7 @@ class TestNoVersionsReasons:
                 lambda coordinator: Provider(
                     coordinator, dist_policy=DistPolicy.WHEEL_ONLY
                 ),
-                'dist-policy = "wheel-only"',
+                'dist-policy = "wheel-only" excluded every version in range',
                 id="dist-policy",
             ),
             pytest.param(
@@ -1813,7 +1813,7 @@ class TestNoVersionsReasons:
                     coordinator,
                     uploaded_prior_to=datetime(2024, 3, 1, tzinfo=timezone.utc),
                 ),
-                "uploaded-prior-to",
+                "uploaded-prior-to excluded every version in range",
                 id="upload-time",
             ),
         ],
@@ -1822,21 +1822,20 @@ class TestNoVersionsReasons:
         self,
         listing: list[WheelFile | SdistFile],
         build: Callable[[FakeFetchPort], Provider],
-        filters: str,
+        line: str,
     ) -> None:
         """An in-range release a filter dropped names the filter that dropped it.
 
         Each listing keeps an out-of-range 1.0, so the package still has a
         surviving version and only the 2.0 the requirement asks for was
-        filtered away.  Four listings, four different lines: each names the
-        one key that fired, not the four it might have been.
+        filtered away.  Four listings, four different lines: the two rungs a
+        config key turns on name that key, and the two that answer to no key
+        name the target they judged against.
         """
         coordinator = make_coordinator(listing, package="foo")
         provider = build(coordinator)
         assert provider.choose_version("foo", SpecifierSet(">=2").to_range()) is None
-        assert short_reason(provider, "foo") == (
-            f"{filters} excluded every version in range"
-        )
+        assert short_reason(provider, "foo") == line
 
     def test_unparseable_listing_version_is_not_read_as_a_filtered_match(self) -> None:
         """A version nab cannot parse cannot be the in-range release."""
@@ -1895,7 +1894,7 @@ class TestNoVersionsReasons:
         provider = Provider(coordinator, target=ResolveTarget.for_host_python("3.9.0"))
         provider.choose_version("foo", SpecifierSet("").to_range())
         assert rendered_reason(provider, "foo") == (
-            "requires-python excluded every file"
+            "no file supports Python 3.9"
             "\nrequires-python excluded 3 files (newest: 3.0 requires >=3.13,"
             " the resolve targets Python 3.9)"
             "\nthe files nab read hold no sdist to build from"

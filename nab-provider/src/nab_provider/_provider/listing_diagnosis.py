@@ -544,7 +544,8 @@ def _detailed(
 # wrong.  A why-clause is here only where the key does not carry it: an
 # excluding uploaded-prior-to reads as a cutoff nothing was old enough for
 # unless the line says otherwise, and the dist-policy value says which half
-# of the listing that key kept.
+# of the listing that key kept.  The two rungs no key turns on name the
+# target they judged against instead, which is the half a reader can move.
 _SHORT_EMPTY: dict[Cause, str] = {
     DropCause.UPLOAD_TIME_MISSING: (
         "uploaded-prior-to excluded every file; none is dated"
@@ -558,9 +559,17 @@ _SHORT_EMPTY: dict[Cause, str] = {
     DropCause.UPLOAD_TIME_AFTER_CUTOFF: "uploaded-prior-to excluded every file",
     DropCause.DIST_POLICY: "{subject} excluded every file",
     DropCause.SDIST_INSTALL_NO_SDIST: "{subject} excluded every version",
-    DropCause.REQUIRES_PYTHON: "requires-python excluded every file",
+    DropCause.REQUIRES_PYTHON: "no file supports Python {py}",
     DropCause.WHEEL_TAGS: "no wheel matches this platform or Python",
     DropCause.INVALID_VERSION: "every file carries a version PEP 440 cannot parse",
+}
+
+# The line for a requirement whose matching releases were the ones refused,
+# where saying so is not the generic "<subject> excluded every version in
+# range": a line naming the target has to carry the range somewhere else.
+_SHORT_IN_RANGE: dict[Cause, str] = {
+    DropCause.REQUIRES_PYTHON: "no version in range supports Python {py}",
+    DropCause.WHEEL_TAGS: "no wheel in range matches this platform or Python",
 }
 
 _SHORT_UNNAMED = "every file was refused; the filter cannot be named"
@@ -585,7 +594,7 @@ def empty_listing_diagnostic(
 
     remedies = _remedies(provider, normalized, diagnosis, groups)
     return Diagnostic(
-        _empty_short(groups, diagnosis.unexplained),
+        _empty_short(groups, diagnosis),
         (*clauses, *_note_lines(remedies)),
         _try_line(remedies),
     )
@@ -623,13 +632,13 @@ def in_range_diagnostic(
     remedies = _remedies(provider, normalized, diagnosis, groups)
     clauses = [_clause(cause, records, diagnosis) for cause, records in groups]
     return Diagnostic(
-        _in_range_short(groups),
+        _in_range_short(groups, diagnosis),
         (*clauses, *_note_lines(remedies)),
         _try_line(remedies),
     )
 
 
-def _empty_short(groups: _Groups, unexplained: int) -> str:
+def _empty_short(groups: _Groups, diagnosis: ListingDiagnosis) -> str:
     """Return the one line an emptied listing gets at default verbosity.
 
     Groups that would say the same sentence say it once: one key judging a
@@ -638,22 +647,42 @@ def _empty_short(groups: _Groups, unexplained: int) -> str:
     """
     if not groups:
         return _SHORT_UNNAMED
-    sentences = {_single_cause_short(cause, records[0]) for cause, records in groups}
-    if len(sentences) == 1 and not unexplained:
+    sentences = {
+        _single_cause_short(cause, records[0], diagnosis) for cause, records in groups
+    }
+    if len(sentences) == 1 and not diagnosis.unexplained:
         return sentences.pop()
     return f"{_join_keys(groups)} excluded every file"
 
 
-def _single_cause_short(cause: Cause, record: DroppedFile) -> str:
+def _single_cause_short(
+    cause: Cause, record: DroppedFile, diagnosis: ListingDiagnosis
+) -> str:
     """Return the line for a listing one rung emptied on its own."""
-    return _SHORT_EMPTY[cause].format(subject=_subject(cause, record))
+    return _SHORT_EMPTY[cause].format(
+        subject=_subject(cause, record), py=diagnosis.target_python
+    )
 
 
-def _in_range_short(groups: _Groups) -> str:
+def _in_range_short(groups: _Groups, diagnosis: ListingDiagnosis) -> str:
     """Return the one line a filtered-out requirement gets at default verbosity."""
-    subjects = {_subject(cause, records[0]) for cause, records in groups}
-    named = subjects.pop() if len(subjects) == 1 else _join_keys(groups)
-    return f"{named} excluded every version in range"
+    sentences = {
+        _single_cause_in_range(cause, records[0], diagnosis)
+        for cause, records in groups
+    }
+    if len(sentences) == 1:
+        return sentences.pop()
+    return f"{_join_keys(groups)} excluded every version in range"
+
+
+def _single_cause_in_range(
+    cause: Cause, record: DroppedFile, diagnosis: ListingDiagnosis
+) -> str:
+    """Return the line for a range one rung emptied on its own."""
+    template = _SHORT_IN_RANGE.get(cause)
+    if template is None:
+        return f"{_subject(cause, record)} excluded every version in range"
+    return template.format(py=diagnosis.target_python)
 
 
 def _subject(cause: Cause, record: DroppedFile) -> str:

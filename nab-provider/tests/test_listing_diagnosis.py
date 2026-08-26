@@ -332,7 +332,7 @@ class TestTheWalkRunsOnlyWhereItIsRead:
         assert provider.choose_version("pkg", SpecifierSet(">=2").to_range()) is None
 
         assert short_reason(provider, "pkg") == (
-            "requires-python excluded every version in range"
+            "no version in range supports Python 3.12"
         )
         assert list(provider.listing_diagnoses) == ["pkg"]
 
@@ -1197,7 +1197,7 @@ class TestTheInRangeLead:
             target=_LINUX312,
         )
         assert reason == (
-            "requires-python excluded every version in range"
+            "no version in range supports Python 3.12"
             "\nrequires-python excluded 2 files (newest: 3.0 requires >=3.99,"
             " the resolve targets Python 3.12)"
         )
@@ -1219,7 +1219,7 @@ class TestTheInRangeLead:
             uploaded_prior_to=CUTOFF,
         )
         assert reason == (
-            "requires-python excluded every version in range"
+            "no version in range supports Python 3.12"
             "\nrequires-python excluded 1 file (2.0 requires >=3.99, the resolve"
             " targets Python 3.12)"
         )
@@ -1637,6 +1637,27 @@ def every_shape() -> dict[str, Diagnostic]:
             ],
             spec=">=2",
             target=_LINUX312,
+        ),
+        "in-range-requires-python": diagnostic_for(
+            [wheel("1.0"), wheel("2.0", requires_python=">=3.99")],
+            spec=">=2",
+            target=_LINUX312,
+        ),
+        "in-range-wheel-tags": diagnostic_for(
+            [wheel("1.0"), wheel("2.0", tag="cp312-cp312-win_amd64")],
+            spec=">=2",
+            target=_LINUX312,
+        ),
+        "in-range-three-keys": diagnostic_for(
+            [
+                wheel("1.0"),
+                wheel("2.0", upload_time=AFTER),
+                wheel("3.0", requires_python=">=3.99"),
+                wheel("4.0", tag="cp312-cp312-win_amd64"),
+            ],
+            spec=">=2",
+            target=_LINUX312,
+            **WITH_CUTOFF,
         ),
         "ladder-sdist": ladder_entry(),
         "blocker-decided": diagnosis_mod.blockers_diagnostic(
