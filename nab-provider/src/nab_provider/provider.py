@@ -1683,6 +1683,7 @@ class Provider:
         *,
         metadata: tuple[_diagnosis.MetadataBlock, ...] = (),
         version_range: VersionRange | None = None,
+        declaring_version: Version | None = None,
     ) -> None:
         """Record why an extras proxy found no version of its base to offer.
 
@@ -1692,7 +1693,10 @@ class Provider:
         ``Diagnostics:`` section cannot.
         """
         self._no_versions_reasons[package] = _diagnosis.NoVersionsReason(
-            kind, metadata=metadata, version_range=version_range
+            kind,
+            metadata=metadata,
+            version_range=version_range,
+            declaring_version=declaring_version,
         )
 
     def _empty_listing_marker(self, normalized: str) -> _diagnosis.NoVersionsReason:
@@ -1840,14 +1844,14 @@ class Provider:
         self, package: str, recorded: _diagnosis.NoVersionsReason
     ) -> Diagnostic:
         """Render an extras proxy left with no version of its base package."""
-        base, extra, normalized = self.split_and_normalize(package)
+        base, extra, _ = self.split_and_normalize(package)
         assert extra is not None
-        held = self.solution_ranges.get(normalized)
+        searched = recorded.version_range
         return _diagnosis.extra_diagnostic(
             base,
             extra,
             recorded,
-            None if held is None else self._format_blocker_range(held),
+            "" if searched is None else self._format_blocker_range(searched),
         )
 
     def _render_listing_reason(

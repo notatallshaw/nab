@@ -275,7 +275,7 @@ class MetadataBlock:
 class NoVersionsReason:
     """What the resolve recorded when a package ran out of candidates."""
 
-    __slots__ = ("blockers", "kind", "metadata", "version_range")
+    __slots__ = ("blockers", "declaring_version", "kind", "metadata", "version_range")
 
     def __init__(
         self,
@@ -283,19 +283,21 @@ class NoVersionsReason:
         blockers: tuple[Blocker, ...] = (),
         metadata: tuple[MetadataBlock, ...] = (),
         version_range: VersionRange | None = None,
+        declaring_version: Version | None = None,
     ) -> None:
         """Mark ``kind`` as the situation, with what the failure cannot re-derive.
 
         Recorded during the resolve and rendered only if the resolve then
         fails, so it holds what the render can no longer read for itself: the
         look-ahead rejections and metadata failures, which reset at the next
-        scan, and the range that was asked.  Everything else the render walks
-        for.
+        scan, the range that was asked, and the version an extras proxy was
+        narrowed off.  Everything else the render walks for.
         """
         self.kind = kind
         self.blockers = blockers
         self.metadata = metadata
         self.version_range = version_range
+        self.declaring_version = declaring_version
 
     @property
     def is_generic(self) -> bool:
@@ -1202,12 +1204,15 @@ _EXTRA_SHORT: dict[Kind, str] = {
 
 
 def extra_diagnostic(
-    base: str, extra: str, recorded: NoVersionsReason, held: str | None
+    base: str, extra: str, recorded: NoVersionsReason, searched: str
 ) -> Diagnostic:
     """Say why an extras proxy ran out of versions of its base package.
 
-    ``held`` is how the resolve narrowed ``base``, which only the
-    narrowed case reads.
+    ``searched`` is the range the proxy looked in, which the undeclared
+    case reads.  The narrowed case names the version it was narrowed off
+    instead: the range it was left with is the solver's own, which does
+    not always spell as a specifier, and "outside any version" is not a
+    sentence.
     """
     short = _EXTRA_SHORT[recorded.kind].format(base=base)
     if recorded.kind == ReasonKind.EXTRA_METADATA:
@@ -1217,8 +1222,8 @@ def extra_diagnostic(
             short,
             (
                 (
-                    f"the resolve holds {base} in {held}; the versions declaring"
-                    " the extra are outside that range"
+                    f"{base} {recorded.declaring_version} declares the extra,"
+                    " and the resolve cannot choose that version"
                 ),
             ),
         )
@@ -1229,6 +1234,6 @@ def extra_diagnostic(
                 f"no version of {base} in the range the resolve considered"
                 f" declares Provides-Extra: {extra}"
             ),
-            f"the range considered: {recorded.version_range}",
+            f"the range considered: {searched}",
         ),
     )

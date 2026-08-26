@@ -12343,7 +12343,12 @@ class TestExtrasProxyDiagnostics:
         )
 
     def test_the_base_was_narrowed_off_every_declaring_version(self) -> None:
-        """A root extra whose declaring versions the search narrowed away."""
+        """A root extra whose declaring versions the search narrowed away.
+
+        The detail names the version that declares the extra rather than
+        the range the search was left with: that range is the solver's own
+        and does not always spell as a specifier.
+        """
         coordinator = make_coordinator(
             [make_wheel("2.0"), make_wheel("1.0")],
             metadata_by_version={
@@ -12369,10 +12374,7 @@ class TestExtrasProxyDiagnostics:
             "another requirement holds foo where this extra is undeclared"
         )
         assert diagnostic.detail == (
-            (
-                "the resolve holds foo in >=2; the versions declaring the extra"
-                " are outside that range"
-            ),
+            "foo 1.0 declares the extra, and the resolve cannot choose that version",
         )
 
     def test_a_base_with_no_candidate_in_range_records_nothing(self) -> None:
