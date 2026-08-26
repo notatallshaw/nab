@@ -143,10 +143,11 @@ class BlockerKind:
 class Remedy:
     """The setting one config entry made, and what changing it would take.
 
-    ``label`` names the entry the way the config file has it, so the
-    ``note:`` line can point the reader back at what they wrote.
-    ``selector`` is the requirement itself, which is what the ``try:``
-    line keys a setting by: a config path is not a package selector.
+    ``label`` names the entry the way the config file has it, so a line
+    asking for a change to an entry that exists can point the reader
+    straight at it.  ``selector`` is the requirement itself, which the
+    remaining lines key a new setting by: a config path is not a package
+    selector.
     """
 
     __slots__ = ("field", "label", "layer", "selector")
@@ -585,7 +586,7 @@ def empty_listing_diagnostic(
     remedies = _remedies(provider, normalized, diagnosis, groups)
     return Diagnostic(
         _empty_short(groups, diagnosis.unexplained),
-        (*clauses, *_note_lines(remedies, normalized)),
+        (*clauses, *_note_lines(remedies)),
         _try_line(remedies),
     )
 
@@ -623,7 +624,7 @@ def in_range_diagnostic(
     clauses = [_clause(cause, records, diagnosis) for cause, records in groups]
     return Diagnostic(
         _in_range_short(groups),
-        (*clauses, *_note_lines(remedies, normalized)),
+        (*clauses, *_note_lines(remedies)),
         _try_line(remedies),
     )
 
@@ -835,7 +836,7 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
         ' packages."{selector}".uploaded-prior-to = false lifts it for this package'
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        "the project-level uploaded-prior-to set that cutoff; {package} already"
+        "the project-level uploaded-prior-to set that cutoff; {label} already"
         " sets uploaded-prior-to over another version range, so widen that entry"
         " over this version or drop the project-level cutoff"
     ),
@@ -853,7 +854,7 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
         " formats for this package"
     ),
     ("dist-policy", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        "the project-level dist-policy set that policy; {package} already sets"
+        "the project-level dist-policy set that policy; {label} already sets"
         " dist-policy over another version range, so widen that entry over this"
         " version or drop the project-level policy"
     ),
@@ -870,21 +871,22 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
 # The instruction cut out of each remedy, for the one ``try:`` line the
 # default report prints.  It names a setting to change rather than a
 # fragment to paste, since the table holding that setting usually exists
-# already and a second one is a TOML error.  The two layers whose key is
-# already set name the entry instead of a path, because the same override
-# is written on two surfaces and only one of them is spelled
-# ``packages."<selector>"``.  It states what to set and not what follows:
-# lifting a filter admits files rather than promising a resolve.
+# already and a second one is a TOML error.  The two layers whose entry
+# already exists name that entry: the same override is written on two
+# surfaces, only one of them is spelled ``packages."<selector>"``, and a
+# ``[[package-rules]]`` entry can match several packages, so naming the
+# one being reported would send the reader to change the others too.  It
+# states what to set and not what follows: lifting a filter admits files
+# rather than promising a resolve.
 _TRY_LINES: dict[tuple[Field, Layer], str] = {
     ("uploaded-prior-to", OverrideLayer.GLOBAL): (
         'set packages."{selector}".uploaded-prior-to = false'
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        "widen the per-package entry for {selector} over this version,"
-        " or drop the project cutoff"
+        "widen {label} over this version, or drop the project cutoff"
     ),
     ("uploaded-prior-to", OverrideLayer.PACKAGE): (
-        "set uploaded-prior-to = false on the per-package entry for {selector}"
+        "set uploaded-prior-to = false on {label}"
     ),
     ("uploaded-prior-to", OverrideLayer.INDEX): (
         "set index.{key}.uploaded-prior-to = false"
@@ -893,11 +895,10 @@ _TRY_LINES: dict[tuple[Field, Layer], str] = {
         'set packages."{selector}".dist-policy = "wheel-or-sdist"'
     ),
     ("dist-policy", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        "widen the per-package entry for {selector} over this version,"
-        " or drop the project dist-policy"
+        "widen {label} over this version, or drop the project dist-policy"
     ),
     ("dist-policy", OverrideLayer.PACKAGE): (
-        'set dist-policy = "wheel-or-sdist" on the per-package entry for {selector}'
+        'set dist-policy = "wheel-or-sdist" on {label}'
     ),
     ("dist-policy", OverrideLayer.INDEX): (
         'set index.{key}.dist-policy = "wheel-or-sdist"'
@@ -957,10 +958,10 @@ def _by_attribute(
     return list(split.values())
 
 
-def _note_lines(remedies: Sequence[Remedy], package: str) -> tuple[str, ...]:
+def _note_lines(remedies: Sequence[Remedy]) -> tuple[str, ...]:
     """Return one ``note:`` line per entry, saying what changing it would take."""
     return tuple(
-        "note: " + _fill(_REMEDIES[remedy.field, remedy.layer], remedy, package)
+        "note: " + _fill(_REMEDIES[remedy.field, remedy.layer], remedy)
         for remedy in remedies
     )
 
@@ -978,14 +979,9 @@ def _try_line(remedies: Sequence[Remedy]) -> str | None:
     return _fill(_TRY_LINES[remedy.field, remedy.layer], remedy)
 
 
-def _fill(template: str, remedy: Remedy, package: str = "") -> str:
-    """Fill one remedy template with the entry it is about.
-
-    ``package`` is read by the notes alone: a ``try:`` line names the entry
-    and the setting, never the package the entry is about.
-    """
+def _fill(template: str, remedy: Remedy) -> str:
+    """Fill one remedy template with the entry it is about."""
     return template.format(
-        package=package,
         label=remedy.label,
         selector=remedy.selector,
         key=_toml_key(remedy.selector),
@@ -1069,7 +1065,7 @@ def filtered_sdist_diagnostic(
                 cutoff="" if record.cutoff is None else record.cutoff.isoformat(),
                 py=diagnosis.target_python,
             ),
-            *_note_lines(remedies, normalized),
+            *_note_lines(remedies),
         ),
         _try_line(remedies),
     )

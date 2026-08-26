@@ -499,7 +499,7 @@ class TestClauseText:
             "\nthe files nab read hold no sdist to build from"
             "\nnote: the per-package uploaded-prior-to for pkg<2 set that"
             " cutoff; setting it to false there lifts it"
-            "\nnote: the project-level uploaded-prior-to set that cutoff; pkg"
+            "\nnote: the project-level uploaded-prior-to set that cutoff; pkg<2"
             " already sets uploaded-prior-to over another version range, so widen"
             " that entry over this version or drop the project-level cutoff"
         )
@@ -543,9 +543,9 @@ class TestClauseText:
             '\ndist-policy = "wheel-only" excluded 1 sdist (2.0)'
             "\nnote: the per-package dist-policy for pkg==1.0 set that policy;"
             ' setting it to "wheel-or-sdist" there admits both formats'
-            "\nnote: the project-level dist-policy set that policy; pkg already"
-            " sets dist-policy over another version range, so widen that entry"
-            " over this version or drop the project-level policy"
+            "\nnote: the project-level dist-policy set that policy; pkg==1.0"
+            " already sets dist-policy over another version range, so widen that"
+            " entry over this version or drop the project-level policy"
         )
 
     def test_sdist_install_without_an_sdist(self) -> None:
@@ -798,7 +798,7 @@ class TestTheRemedyNamesTheLayer:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ).endswith(
-            "\nnote: the project-level uploaded-prior-to set that cutoff; pkg"
+            "\nnote: the project-level uploaded-prior-to set that cutoff; pkg<2"
             " already sets uploaded-prior-to over another version range, so widen"
             " that entry over this version or drop the project-level cutoff"
         )
@@ -898,20 +898,27 @@ class TestTheTryLine:
         ) == ('set packages."pkg".uploaded-prior-to = false')
 
     @pytest.mark.parametrize(
-        "source_label",
-        ["packages.'pkg > 0.5'", "package-rules[0]", ""],
+        ("source_label", "named"),
+        [
+            ("packages.'pkg > 0.5'", "packages.'pkg > 0.5'"),
+            ("package-rules[0]", "package-rules[0]"),
+            ("", "pkg>0.5"),
+        ],
         ids=["sugar-table", "package-rules", "host-built"],
     )
-    def test_a_per_package_cutoff_names_the_entry_not_its_config_path(
-        self, source_label: str
+    def test_a_per_package_cutoff_names_the_entry_it_was_written_on(
+        self, source_label: str, named: str
     ) -> None:
-        """The label is where the entry was written, which is not a selector.
+        """The line names the entry, which is not a selector and not a package.
 
         ``packages.'pkg > 0.5'`` and ``package-rules[0]`` are the same
         override on two surfaces, and only one of them is spelled
-        ``packages."<selector>"``.  Composing either into a second key path
-        gives configuration nab rejects, so the line names the entry and
-        the requirement the user wrote.
+        ``packages."<selector>"``, so composing either into a second key
+        path gives configuration nab rejects.  A ``package-rules`` entry can
+        also match several packages, and naming the one being reported would
+        send the reader to change the cutoff for the rest of them too.  A
+        host that built the override itself named no entry, so the line
+        falls back to the requirement it was given.
         """
         assert (
             remedy_for(
@@ -924,7 +931,7 @@ class TestTheTryLine:
                     )
                 ],
             )
-            == "set uploaded-prior-to = false on the per-package entry for pkg>0.5"
+            == f"set uploaded-prior-to = false on {named}"
         )
 
     @pytest.mark.parametrize(
@@ -971,10 +978,7 @@ class TestTheTryLine:
             [wheel("2.0", upload_time=AFTER)],
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
-        ) == (
-            "widen the per-package entry for pkg<2 over this version,"
-            " or drop the project cutoff"
-        )
+        ) == ("widen pkg<2 over this version, or drop the project cutoff")
 
     @pytest.mark.parametrize(
         "policy",
@@ -990,12 +994,16 @@ class TestTheTryLine:
         )
 
     @pytest.mark.parametrize(
-        "source_label",
-        ["packages.'pkg > 0.5'", "package-rules[0]", ""],
+        ("source_label", "named"),
+        [
+            ("packages.'pkg > 0.5'", "packages.'pkg > 0.5'"),
+            ("package-rules[0]", "package-rules[0]"),
+            ("", "pkg>0.5"),
+        ],
         ids=["sugar-table", "package-rules", "host-built"],
     )
-    def test_a_per_package_dist_policy_names_the_entry_not_its_config_path(
-        self, source_label: str
+    def test_a_per_package_dist_policy_names_the_entry_it_was_written_on(
+        self, source_label: str, named: str
     ) -> None:
         """The policy layers the way the cutoff does, and so does its remedy.
 
@@ -1016,8 +1024,7 @@ class TestTheTryLine:
                     )
                 ],
             )
-            == 'set dist-policy = "wheel-or-sdist" on the per-package entry'
-            " for pkg>0.5"
+            == f'set dist-policy = "wheel-or-sdist" on {named}'
         )
 
     def test_a_per_index_dist_policy_is_set_on_the_index(self) -> None:
@@ -1049,10 +1056,7 @@ class TestTheTryLine:
             package_overrides=[
                 pkg_override("pkg<2", dist_policy=DistPolicy.WHEEL_OR_SDIST)
             ],
-        ) == (
-            "widen the per-package entry for pkg<2 over this version,"
-            " or drop the project dist-policy"
-        )
+        ) == ("widen pkg<2 over this version, or drop the project dist-policy")
 
     def test_the_first_rung_in_report_order_answers(self) -> None:
         """Two rungs fired and the earlier one holds the line.
