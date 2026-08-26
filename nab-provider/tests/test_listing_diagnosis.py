@@ -483,10 +483,37 @@ class TestClauseText:
         )
 
     def test_sdist_install_without_an_sdist(self) -> None:
-        assert (
-            'dist-policy = "sdist-install" excluded 1 version that publishes no'
-            " sdist (1.0)"
-        ) in reason_for([wheel("1.0")], dist_policy=DistPolicy.SDIST_INSTALL)
+        """The whole sentence: this clause already says no sdist is available."""
+        assert reason_for([wheel("1.0")], dist_policy=DistPolicy.SDIST_INSTALL) == (
+            "found on index but no distribution is compatible: dist-policy ="
+            ' "sdist-install" excluded 1 version that publishes no sdist (1.0)'
+        )
+
+    def test_sdist_install_is_asked_before_the_wheel_tags(self) -> None:
+        """The rung that refused the version first is the one the clause names.
+
+        The filter drops a wheel-only ``sdist-install`` version in the base
+        pass, before the target's tags are consulted, so blaming the tags
+        would point at a config key that was never reached.
+        """
+        assert reason_for(
+            [wheel("1.0", tag="cp312-cp312-win_amd64")],
+            target=_LINUX312,
+            dist_policy=DistPolicy.SDIST_INSTALL,
+        ) == (
+            "found on index but no distribution is compatible: dist-policy ="
+            ' "sdist-install" excluded 1 version that publishes no sdist (1.0)'
+        )
+
+    def test_two_wheels_of_one_release_are_one_version(self) -> None:
+        """This clause counts versions where every other one counts files."""
+        assert reason_for(
+            [wheel("1.0"), wheel("1.0", tag="py2-none-any")],
+            dist_policy=DistPolicy.SDIST_INSTALL,
+        ) == (
+            "found on index but no distribution is compatible: dist-policy ="
+            ' "sdist-install" excluded 1 version that publishes no sdist (1.0)'
+        )
 
     def test_sdist_install_without_an_sdist_plural(self) -> None:
         assert (
@@ -501,6 +528,21 @@ class TestClauseText:
             "requires-python excluded 1 file (1.0 requires >=3.99, the resolve"
             " targets Python 3.12)"
         ) in reason_for([wheel("1.0", requires_python=">=3.99")], target=_LINUX312)
+
+    def test_an_overridden_requires_python_is_the_spec_quoted(self) -> None:
+        """The override replaces the file's own metadata, so it is what refused it.
+
+        The wheel declares no Requires-Python at all, so quoting the file
+        would print ``None`` where the entry that fired says ``>=3.99``.
+        """
+        assert (
+            "requires-python excluded 1 file (1.0 requires >=3.99, the resolve"
+            " targets Python 3.12)"
+        ) in reason_for(
+            [wheel("1.0")],
+            target=_LINUX312,
+            package_overrides=[pkg_override("pkg", requires_python=">=3.99")],
+        )
 
     def test_requires_python_plural(self) -> None:
         assert (
@@ -606,9 +648,28 @@ class TestTheRemedyNamesTheLayer:
                     "pkg", uploaded_prior_to=CUTOFF, source_label="packages.'pkg'"
                 )
             ],
-        ).endswith(
+        ) == (
+            "found on index but no distribution is compatible: the"
+            f" uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file uploaded at"
+            f" {AFTER} (1.0); no sdist is available to build from"
             "\n    note: the per-package uploaded-prior-to for packages.'pkg' set"
             " that cutoff; setting it to false there lifts it"
+        )
+
+    def test_the_note_reads_the_layer_at_the_newest_version_refused(self) -> None:
+        """Two layers refused two releases, and only one of them is worth lifting.
+
+        The project cutoff refused 1.0 and the ``pkg>=3`` entry refused 3.0.
+        Naming the project level here would point at a cutoff that has
+        nothing to do with the newest release the user could have had.
+        """
+        assert reason_for(
+            [wheel("1.0", upload_time=AFTER), wheel("3.0", upload_time=BETWEEN)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[pkg_override("pkg>=3", uploaded_prior_to=EARLY_CUTOFF)],
+        ).endswith(
+            "\n    note: the per-package uploaded-prior-to for pkg>=3 set that"
+            " cutoff; setting it to false there lifts it"
         )
 
     def test_a_per_index_cutoff(self) -> None:
@@ -806,6 +867,49 @@ class TestTheInRangeLead:
         assert reason == (
             "found on index but every version matching the requirement was"
             " filtered (by requires-python)"
+        )
+
+    def test_a_refused_spelling_of_a_kept_release_names_no_filter(self) -> None:
+        """The wheel's ``1.0.0`` and the sdist's ``1.0`` are one release.
+
+        ``===`` compares the string, so the refused wheel falls in range
+        while the representative the listing kept does not.  The release
+        survived, and no filter took it away.
+        """
+        assert reason_for(
+            [wheel("1.0.0", tag="cp312-cp312-win_amd64"), sdist("1.0")],
+            spec="===1.0.0",
+            target=_LINUX312,
+        ) == ("no version matches the requirement")
+
+    def test_the_walk_reads_its_own_kept_set_for_that_rule(self) -> None:
+        """The same rule where the surviving list can no longer answer it.
+
+        The host drops the sdist that carries the release, so the version
+        the requirement spells is missing from ``versions_cache`` and the
+        walk is asked for a sentence.  The wheel it refused on tags is that
+        same release under another spelling, and the walk kept it, so the
+        line must not blame the tags for a drop the host made.
+        """
+
+        class DropsTheSdist(Provider):
+            def filter_distributions(
+                self, normalized: str, files: Sequence[WheelFile | SdistFile]
+            ) -> list[tuple[Version, DistFile]]:
+                kept = super().filter_distributions(normalized, files)
+                return [pair for pair in kept if not isinstance(pair[1], SdistFile)]
+
+        coordinator = make_coordinator(
+            [wheel("1.0.0", tag="cp312-cp312-win_amd64"), sdist("1.0"), wheel("3.0")],
+            package="pkg",
+        )
+        provider = DropsTheSdist(coordinator, target=_LINUX312)
+        assert (
+            provider.choose_version("pkg", SpecifierSet("===1.0.0").to_range()) is None
+        )
+
+        assert provider.get_no_versions_reason("pkg") == (
+            "found on index but every version matching the requirement was filtered"
         )
 
     def test_a_recorded_range_of_none_stays_a_no_match(self) -> None:
