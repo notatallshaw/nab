@@ -1693,6 +1693,8 @@ class Provider:
             return _diagnosis.FILTERED_EMPTY
         if index.is_offline_listing_miss(normalized):
             return _diagnosis.OFFLINE_MISS
+        # Nothing sets both: the unreadable flag needs a file that stands,
+        # and the yank flag needs every one withdrawn.
         if index.is_unreadable_only_listing(normalized):
             return _diagnosis.UNREADABLE_ONLY
         if index.is_all_yanked_listing(normalized):

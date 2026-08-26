@@ -998,6 +998,34 @@ class TestTheTryLine:
         )
 
 
+class TestTheLadderSdistLine:
+    """The entry for the sdist the metadata ladder went looking for."""
+
+    def test_a_wheel_the_same_release_lost_is_not_the_refused_sdist(self) -> None:
+        """Only an sdist can be the file the ladder wanted.
+
+        ``requires-python`` refused 1.0's wheel and the cutoff refused its
+        sdist, so the walk's first refusal for that release is a file the
+        ladder never asked about.
+        """
+        provider = build(
+            [wheel("1.0", requires_python=">=3.99"), sdist("1.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            target=_LINUX312,
+        )
+
+        diagnostic = provider.filtered_sdist_diagnostic("pkg", Version("1.0"))
+
+        assert diagnostic is not None
+        assert diagnostic.short == (
+            "uploaded-prior-to excluded the sdist,"
+            " and the index has no PEP 658 metadata"
+        )
+        detail = "\n".join(diagnostic.detail)
+        assert "pkg-1.0.tar.gz" in detail
+        assert "pkg-1.0-py3-none-any.whl" not in detail
+
+
 class TestTheInRangeLead:
     """Which filters dropped the release the requirement asked for."""
 

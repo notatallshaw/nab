@@ -177,6 +177,18 @@ def test_holds_only_yanked_false(data: object) -> None:
     assert not holds_only_yanked(data)
 
 
+def test_the_two_empty_listing_flags_are_exclusive() -> None:
+    """A page of yanked .zip sdists is yanked rather than unreadable.
+
+    ``holds_unreadable_format`` skips a yanked entry before reading its
+    name, and ``holds_only_yanked`` needs every entry withdrawn, so no body
+    sets both.
+    """
+    data = {"files": [{"filename": "foo-1.0.zip", "yanked": True}]}
+    assert not holds_unreadable_format(data)
+    assert holds_only_yanked(data)
+
+
 @pytest.mark.parametrize(
     "filename",
     [
