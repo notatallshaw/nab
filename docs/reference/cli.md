@@ -143,18 +143,34 @@ pylock output instead.
 
 Exits non-zero on resolution failure; the message starts with
 `error: resolution failed:` followed by a derivation tree, and any
-captured diagnostics are appended under a `Diagnostics:` section. A
-package whose listing an index served, and which the filters left with
-nothing this target can install, gets a line there naming the filters
-that refused files, with a count and the newest version each one
-refused. A file that two filters would both refuse is attributed to the
-first one that did, so lifting the named filter can uncover a second.
-Where a config key would admit those files again, the line is followed
-by an indented `note:` naming that key and the value to set:
+captured diagnostics are appended under a `Diagnostics:` section. Each
+package that ran out of versions gets one line there, naming the
+configuration key that refused its files as the key is spelled in
+`pyproject.toml`. Where changing a setting would admit those files
+again, an indented `try:` line states the assignment:
 
 ```
 Diagnostics:
-  - foo: found on index but no distribution is compatible: the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0); no sdist is available to build from
+  - foo: uploaded-prior-to excluded every file; all are newer than the cutoff
+    try: packages."foo".uploaded-prior-to = false
+```
+
+The `try:` line states what to set, not what follows: lifting a filter
+admits files rather than promising a resolve, and a file two filters
+would both refuse is attributed to the first one that did, so lifting
+the named key can uncover a second. Where several keys fired the line
+names them all and says the breakdown is behind `-v`.
+
+`-v` keeps that line and replaces the `try:` with the whole record: one
+clause per cause, with its count, the newest version it refused and the
+cutoff that applied, and a closing `note:` naming the configuration
+layer that set the cutoff.
+
+```
+Diagnostics:
+  - foo: uploaded-prior-to excluded every file; all are newer than the cutoff
+    the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0)
+    no sdist is available to build from
     note: the project-level uploaded-prior-to set that cutoff; setting packages."foo".uploaded-prior-to = false lifts it for this package
 ```
 
@@ -162,12 +178,13 @@ A note names the setting rather than the file it belongs in, since the
 same key is spelled under `[tool.nab]` in `pyproject.toml` and at the
 top level of a `nab.toml`.
 
-A remedy is offered for the upload-time cutoff alone. Not every line
-carries counts and versions: a package no configured index served reads
-`package not found on any configured index`, and a release the
-requirement asked for that a filter dropped reads `found on index but
-every version matching the requirement was filtered`, naming those
-filters.
+A remedy is offered for the upload-time cutoff and for `dist-policy`.
+`requires-python` never gets one: the override that lifts it replaces
+the package's declared metadata. Some lines name no key at all, because
+nothing in the configuration produced them: a package no configured
+index served reads `package not found on any configured index`, and a
+project whose every file the index yanked reads `the index lists this
+package but every file is yanked`.
 
 Universal mode (`[tool.nab].mode = "universal"`) is supported for
 all three formats:
@@ -376,7 +393,7 @@ verbosity.
 
 | Flag | Effect |
 | ---- | ------ |
-| `-v`, `-vv`, `--verbose` | Raise verbosity. `-v` adds the engine's `INFO` records, `-vv` adds `DEBUG`. `--verbose` counts as one `-v`; repeats add, and `-vvv` saturates at `-vv`. |
+| `-v`, `-vv`, `--verbose` | Raise verbosity. `-v` adds the engine's `INFO` records and deepens the `Diagnostics:` section of a resolution failure, `-vv` adds `DEBUG`. `--verbose` counts as one `-v`; repeats add, and `-vvv` saturates at `-vv`. |
 | `-q`, `-qq`, `--quiet` | Lower verbosity. `-q` drops the run summary and notes, keeping warnings and errors; `-qq` keeps only errors. `--quiet` counts as one `-q`. |
 | `--color` | When to colour stderr: `auto` (default), `always`, or `never`. `auto` colours only an stderr terminal and honours `NO_COLOR`, `FORCE_COLOR`, and `TERM=dumb`; `always` and `never` win outright. Colour touches only a message's leading token, so it reads the same stripped. |
 | `--no-color` | Shorthand for `--color never`. |
