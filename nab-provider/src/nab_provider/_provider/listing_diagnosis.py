@@ -46,7 +46,13 @@ if TYPE_CHECKING:
 
     # The values :class:`OverrideLayer`, :class:`ReasonKind` and
     # :class:`BlockerKind` name.
-    Layer: TypeAlias = Literal["global", "global-scoped-entry", "package", "index"]
+    Layer: TypeAlias = Literal[
+        "global",
+        "global-scoped-entry",
+        "global-bare-entry",
+        "package",
+        "index",
+    ]
     Kind: TypeAlias = Literal[
         "offline-miss",
         "unreadable-only",
@@ -99,14 +105,18 @@ DIST_POLICY_CAUSES = frozenset(
 class OverrideLayer:
     """Which config layer set the policy field a candidate was judged by.
 
-    The project level splits in two because the remedy does: a package that
-    already sets the field over some other version range cannot be given a
-    second, bare-name entry, which the config layer refuses as two entries
-    setting one field over overlapping ranges.
+    The project level splits in three because the remedy does.  A package
+    that already sets the field over some other version range cannot be
+    given a second, bare-name entry, which the config layer refuses as two
+    entries setting one field over overlapping ranges.  A package that
+    already has a bare-name entry setting some other field cannot be given
+    one either, since the table holding it is declared and TOML refuses a
+    second declaration of the same table.
     """
 
     GLOBAL: Final = "global"
     GLOBAL_SCOPED_ENTRY: Final = "global-scoped-entry"
+    GLOBAL_BARE_ENTRY: Final = "global-bare-entry"
     PACKAGE: Final = "package"
     INDEX: Final = "index"
 
@@ -907,6 +917,11 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
         " sets uploaded-prior-to over another version range, so widen that entry"
         " over this version or drop the project-level cutoff"
     ),
+    ("uploaded-prior-to", OverrideLayer.GLOBAL_BARE_ENTRY): (
+        "the project-level uploaded-prior-to set that cutoff; {label} already"
+        " exists, so adding uploaded-prior-to = false there lifts it for this"
+        " package"
+    ),
     ("uploaded-prior-to", OverrideLayer.PACKAGE): (
         "the per-package uploaded-prior-to for {label} set that cutoff; setting"
         " it to false there lifts it"
@@ -925,6 +940,11 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
         " dist-policy over another version range, so widen that entry over this"
         " version or drop the project-level policy"
     ),
+    ("dist-policy", OverrideLayer.GLOBAL_BARE_ENTRY): (
+        "the project-level dist-policy set that policy; {label} already exists,"
+        ' so adding dist-policy = "wheel-or-sdist" there admits both formats for'
+        " this package"
+    ),
     ("dist-policy", OverrideLayer.PACKAGE): (
         "the per-package dist-policy for {label} set that policy; setting it to"
         ' "wheel-or-sdist" there admits both formats'
@@ -938,19 +958,24 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
 # The instruction cut out of each remedy, for the one ``try:`` line the
 # default report prints.  It names a setting to change rather than a
 # fragment to paste, since the table holding that setting usually exists
-# already and a second one is a TOML error.  The two layers whose entry
-# already exists name that entry: the same override is written on two
-# surfaces, only one of them is spelled ``packages."<selector>"``, and a
-# ``[[package-rules]]`` entry can match several packages, so naming the
-# one being reported would send the reader to change the others too.  It
-# states what to set and not what follows: lifting a filter admits files
-# rather than promising a resolve.
+# already and a second one is a TOML error.  Three layers name an entry
+# the file already holds.  The per-package and scoped-entry layers do it
+# because the same override is written on two surfaces, only one of them
+# spelled ``packages."<selector>"``, and a ``[[package-rules]]`` entry can
+# match several packages, so naming the one being reported would send the
+# reader to change the others too.  The bare-name layer does it because
+# the table its key path would write is that entry.  It states what to
+# set and not what follows: lifting a filter admits files rather than
+# promising a resolve.
 _TRY_LINES: dict[tuple[Field, Layer], str] = {
     ("uploaded-prior-to", OverrideLayer.GLOBAL): (
         'set packages."{selector}".uploaded-prior-to = false'
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
         "widen {label} over this version, or drop the project cutoff"
+    ),
+    ("uploaded-prior-to", OverrideLayer.GLOBAL_BARE_ENTRY): (
+        "add uploaded-prior-to = false to {label}"
     ),
     ("uploaded-prior-to", OverrideLayer.PACKAGE): (
         "set uploaded-prior-to = false on {label}"
@@ -963,6 +988,9 @@ _TRY_LINES: dict[tuple[Field, Layer], str] = {
     ),
     ("dist-policy", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
         "widen {label} over this version, or drop the project dist-policy"
+    ),
+    ("dist-policy", OverrideLayer.GLOBAL_BARE_ENTRY): (
+        'add dist-policy = "wheel-or-sdist" to {label}'
     ),
     ("dist-policy", OverrideLayer.PACKAGE): (
         'set dist-policy = "wheel-or-sdist" on {label}'

@@ -845,17 +845,72 @@ class TestTheRemedyNamesTheLayer:
         """Only an uploaded-prior-to entry blocks the suggestion.
 
         Two per-package entries may set different fields over overlapping
-        ranges, so a ``dist-policy`` entry leaves the remedy alone.
+        ranges, and this one is keyed by a selector of its own, so the
+        remedy can still write ``packages."pkg"``.
         """
         assert reason_for(
             [wheel("1.0", upload_time=AFTER)],
             uploaded_prior_to=CUTOFF,
             package_overrides=[
-                pkg_override("pkg<2", dist_policy=DistPolicy.WHEEL_OR_SDIST)
+                pkg_override(
+                    "pkg<2",
+                    dist_policy=DistPolicy.WHEEL_OR_SDIST,
+                    name_keyed=True,
+                    source_label="packages.'pkg<2'",
+                )
             ],
         ).endswith(
             "\nnote: the project-level uploaded-prior-to set that cutoff;"
             ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
+            " package"
+        )
+
+    def test_a_bare_name_table_setting_another_field_is_named(self) -> None:
+        """``packages."pkg"`` is declared already, and TOML has one of each.
+
+        The project cutoff is what refused the file, so the remedy is the
+        one that writes ``packages."pkg"``.  The package already has that
+        table, so the note sends the reader into it rather than asking for
+        a second declaration of it.
+        """
+        assert reason_for(
+            [wheel("1.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[
+                pkg_override(
+                    "pkg",
+                    dist_policy=DistPolicy.WHEEL_OR_SDIST,
+                    name_keyed=True,
+                    source_label="packages.'pkg'",
+                )
+            ],
+        ).endswith(
+            "\nnote: the project-level uploaded-prior-to set that cutoff;"
+            " packages.'pkg' already exists, so adding uploaded-prior-to = false"
+            " there lifts it for this package"
+        )
+
+    def test_a_bare_name_table_setting_another_field_is_named_for_the_policy(
+        self,
+    ) -> None:
+        """The policy takes the same turn, since the collision is the table."""
+        assert reason_for(
+            [wheel("1.0")],
+            target=_LINUX312,
+            dist_policy=DistPolicy.SDIST_ONLY,
+            package_overrides=[
+                pkg_override(
+                    "pkg",
+                    uploaded_prior_to=None,
+                    uploaded_prior_to_disabled=True,
+                    name_keyed=True,
+                    source_label="packages.'pkg'",
+                )
+            ],
+        ).endswith(
+            "\nnote: the project-level dist-policy set that policy;"
+            " packages.'pkg' already exists, so adding"
+            ' dist-policy = "wheel-or-sdist" there admits both formats for this'
             " package"
         )
 
@@ -1017,6 +1072,81 @@ class TestTheTryLine:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ) == ("widen pkg<2 over this version, or drop the project cutoff")
+
+    def test_a_package_whose_table_exists_is_told_to_add_the_key(self) -> None:
+        """The line has to name the table, since a second one is a TOML error.
+
+        Executed: with ``[tool.nab.packages.pkg]`` in the file, both
+        ``[tool.nab.packages."pkg"]`` and the dotted key under
+        ``[tool.nab]`` are refused as declaring that table twice, and
+        adding the key inside the table that is there resolves.
+        """
+        assert remedy_for(
+            [wheel("1.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[
+                pkg_override(
+                    "pkg",
+                    dist_policy=DistPolicy.WHEEL_OR_SDIST,
+                    name_keyed=True,
+                    source_label="packages.'pkg'",
+                )
+            ],
+        ) == ("add uploaded-prior-to = false to packages.'pkg'")
+
+    def test_a_rule_setting_another_field_leaves_the_key_path_alone(self) -> None:
+        """A ``[[package-rules]]`` entry is an array element, not that table.
+
+        Executed: ``[tool.nab.packages."pkg"]`` beside a rule matching the
+        same package parses and resolves.
+        """
+        assert remedy_for(
+            [wheel("1.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[
+                pkg_override(
+                    "pkg",
+                    dist_policy=DistPolicy.WHEEL_OR_SDIST,
+                    source_label="package-rules[0]",
+                )
+            ],
+        ) == ('set packages."pkg".uploaded-prior-to = false')
+
+    def test_a_table_keyed_by_a_selector_leaves_the_key_path_alone(self) -> None:
+        """``packages."pkg>=1"`` is a different key from ``packages."pkg"``.
+
+        Executed: the two tables sit side by side, and since they set
+        different fields the config layer takes both.
+        """
+        assert remedy_for(
+            [wheel("1.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[
+                pkg_override(
+                    "pkg>=1",
+                    dist_policy=DistPolicy.WHEEL_OR_SDIST,
+                    name_keyed=True,
+                    source_label="packages.'pkg>=1'",
+                )
+            ],
+        ) == ('set packages."pkg".uploaded-prior-to = false')
+
+    def test_a_package_whose_table_exists_is_told_to_add_the_policy(self) -> None:
+        """The policy takes the same turn, since the collision is the table."""
+        assert remedy_for(
+            [wheel("1.0")],
+            target=_LINUX312,
+            dist_policy=DistPolicy.SDIST_ONLY,
+            package_overrides=[
+                pkg_override(
+                    "pkg",
+                    uploaded_prior_to=None,
+                    uploaded_prior_to_disabled=True,
+                    name_keyed=True,
+                    source_label="packages.'pkg'",
+                )
+            ],
+        ) == ("add dist-policy = \"wheel-or-sdist\" to packages.'pkg'")
 
     @pytest.mark.parametrize(
         "policy",

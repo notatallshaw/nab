@@ -165,8 +165,9 @@ The `try:` line is an instruction rather than a fragment to paste: the
 table the key belongs in usually exists already, and a second one is a
 TOML error. Where an entry already sets that key, the line names the
 entry instead of a path, since the same override is written on two
-surfaces. An index name goes in whichever quoting form TOML takes it
-back in.
+surfaces. Where the package has a `[tool.nab.packages."<name>"]` table
+setting some other key, the line says to add the key to that table. An
+index name goes in whichever quoting form TOML takes it back in.
 
 It states what to set, not what follows: lifting a filter admits files
 rather than promising a resolve, and a file two filters would both

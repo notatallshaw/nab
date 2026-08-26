@@ -3272,6 +3272,28 @@ class TestPackageRules:
         assert first.dist_policy is DistPolicy.SDIST_ONLY
         assert second.dist_policy is DistPolicy.SDIST_ONLY
 
+    def test_a_rule_is_not_the_name_keyed_table(self, tmp_path: Path) -> None:
+        """A rule is an array element, so it declares no ``packages.<name>`` table.
+
+        The diagnostic remedy reads this to decide whether writing that
+        table would collide with one the file already has.
+        """
+        path = write(
+            tmp_path,
+            "[[tool.nab.package-rules]]\n"
+            'match = ["lxml"]\n'
+            'dist-policy = "sdist-only"\n'
+            "[tool.nab.packages.xmlsec]\n"
+            'dist-policy = "sdist-only"\n',
+        )
+        table, rule = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert table.name == "xmlsec"
+        assert table.name_keyed is True
+        assert rule.name == "lxml"
+        assert rule.name_keyed is False
+
     def test_routing_many_packages_to_one_index(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,

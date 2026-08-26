@@ -2069,6 +2069,7 @@ def _parse_packages_sugar(
                 body,
                 where,
                 anchor=anchor,
+                name_keyed=True,
             )
         )
     return out
@@ -2134,6 +2135,7 @@ def _build_package_overrides(
     where: str,
     *,
     anchor: datetime,
+    name_keyed: bool = False,
 ) -> list[PackageOverride]:
     """Turn a validated selector and body into one override per requirement."""
     dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
@@ -2201,6 +2203,7 @@ def _build_package_overrides(
             dependencies=dependencies,
             requires_python=requires_python,
             provides_extra=provides_extra,
+            name_keyed=name_keyed,
             source_label=where,
         )
         for requirement in requirements

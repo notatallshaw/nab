@@ -1981,6 +1981,15 @@ class Provider:
         scoped = self._scoped_entry(canonical_name, field, value)
         if scoped is not None:
             return scoped
+
+        bare = self._bare_name_entry(canonical_name)
+        if bare is not None:
+            return _diagnosis.Remedy(
+                field,
+                _diagnosis.OverrideLayer.GLOBAL_BARE_ENTRY,
+                bare.source_label or str(bare.requirement),
+                str(bare.requirement),
+            )
         return _diagnosis.Remedy(
             field, _diagnosis.OverrideLayer.GLOBAL, "", canonical_name
         )
@@ -2007,6 +2016,25 @@ class Provider:
                     override.source_label or str(override.requirement),
                     str(override.requirement),
                 )
+        return None
+
+    def _bare_name_entry(self, canonical_name: str) -> PackageOverride | None:
+        """Return the name-keyed entry a bare-name remedy would collide with.
+
+        Asked where no entry sets the failing field, so the remedy is the
+        one that writes ``packages."<name>"``.  Where the package already
+        has a table under that exact key, TOML refuses a second declaration
+        of it and the remedy has to name the table instead.  A
+        ``[[package-rules]]`` entry is an array element rather than that
+        table, so it does not collide.
+        """
+        for override in self._package_overrides:
+            if (
+                override.name_keyed
+                and override.name == canonical_name
+                and str(override.requirement) == canonical_name
+            ):
+                return override
         return None
 
     def _prefetch_batch(
