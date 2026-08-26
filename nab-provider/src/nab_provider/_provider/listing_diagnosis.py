@@ -509,24 +509,49 @@ def _render(cause: DropCause | None, count: int, **fields: object) -> str:
     return template.format(n=count, **fields)
 
 
+# The fields a cause's template states of every file it counts, rather
+# than of the one file it quotes.  Records that disagree on one of them
+# make two clauses, so no clause asserts a cutoff or a policy of a file
+# that was judged by another.
+_SHARED_FIELDS: dict[DropCause, tuple[str, ...]] = {
+    DropCause.UPLOAD_TIME_MISSING: ("cutoff",),
+    DropCause.UPLOAD_TIME_AFTER_CUTOFF: ("cutoff",),
+    DropCause.DIST_POLICY: ("detail", "is_wheel"),
+}
+
+
 def _clauses(diagnosis: ListingDiagnosis) -> list[str]:
-    """Render one clause per cause that fired, in report order."""
-    groups: dict[DropCause, list[DroppedFile]] = {}
+    """Render one clause per cause that fired, in report order.
+
+    A version-scoped override can give one listing two effective cutoffs
+    or two effective dist policies, and each is quoted in a clause of its
+    own, in the order the index served the files.  Every other cause has
+    one clause, since nothing else its template states varies by file.
+    """
+    groups: dict[tuple[DropCause, tuple[object, ...]], list[DroppedFile]] = {}
     for record in diagnosis.dropped:
-        groups.setdefault(record.cause, []).append(record)
+        groups.setdefault((record.cause, _shared_values(record)), []).append(record)
     return [
-        _clause(cause, groups[cause], diagnosis)
-        for cause in sorted(groups, key=lambda cause: cause.value)
+        _clause(cause, records, diagnosis)
+        for (cause, _values), records in sorted(
+            groups.items(), key=lambda group: group[0][0].value
+        )
     ]
+
+
+def _shared_values(record: DroppedFile) -> tuple[object, ...]:
+    """Return what ``record`` carries for the fields its clause shares."""
+    fields = _SHARED_FIELDS.get(record.cause, ())
+    return tuple(getattr(record, name) for name in fields)
 
 
 def _clause(
     cause: DropCause, records: list[DroppedFile], diagnosis: ListingDiagnosis
 ) -> str:
-    """Render one cause's clause, quoting the file its evidence comes from.
+    """Render one group's clause, quoting the file its evidence comes from.
 
     The count is files, except the whole-version rung, and the detail comes
-    from the highest version the cause refused, so the release a user most
+    from the highest version the group refused, so the release a user most
     likely wanted is the one named.  An unparseable version has none to
     rank by, so that cause quotes the first file it refused.
     """

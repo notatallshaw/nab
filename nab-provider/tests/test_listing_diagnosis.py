@@ -44,9 +44,12 @@ if TYPE_CHECKING:
     from nab_provider.provider import DistFile
 
 CUTOFF = datetime(2026, 5, 1, tzinfo=timezone.utc)
+EARLY_CUTOFF = datetime(2015, 1, 1, tzinfo=timezone.utc)
 BEFORE = "2020-01-01T00:00:00Z"
+BETWEEN = "2020-06-01T00:00:00Z"
 AFTER = "2030-01-01T00:00:00Z"
 CUTOFF_TEXT = "2026-05-01T00:00:00+00:00"
+EARLY_CUTOFF_TEXT = "2015-01-01T00:00:00+00:00"
 WITH_CUTOFF: dict[str, object] = {"uploaded_prior_to": CUTOFF}
 
 _LINUX312 = ResolveTarget.for_declared(
@@ -435,6 +438,43 @@ class TestClauseText:
         assert (
             'dist-policy = "sdist-only" excluded 2 wheels (newest: 2.0)'
         ) in reason_for([wheel("1.0"), wheel("2.0")], dist_policy=DistPolicy.SDIST_ONLY)
+
+    def test_two_cutoffs_over_one_listing_read_as_two_clauses(self) -> None:
+        """A clause names the cutoff that refused the files it counts.
+
+        The version-scoped override gives 1.0 a cutoff of its own.  One
+        clause over both files would count 1.0 among the files uploaded on
+        or after a cutoff it precedes by five years.
+        """
+        assert reason_for(
+            [wheel("1.0", upload_time=BETWEEN), wheel("2.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
+        ).startswith(
+            "found on index but no distribution is compatible: the"
+            f" uploaded-prior-to cutoff {EARLY_CUTOFF_TEXT} excluded 1 file"
+            f" uploaded at {BETWEEN} (1.0); the uploaded-prior-to cutoff"
+            f" {CUTOFF_TEXT} excluded 1 file uploaded at {AFTER} (2.0)"
+        )
+
+    def test_two_dist_policies_over_one_listing_read_as_two_clauses(self) -> None:
+        """A clause names the policy that refused the artifacts it counts.
+
+        ``sdist-only`` refused the wheel and ``wheel-only`` the sdist, so a
+        single clause would name one policy over two files and call both of
+        them the kind only one of them is.
+        """
+        assert reason_for(
+            [wheel("1.0"), sdist("2.0")],
+            dist_policy=DistPolicy.WHEEL_ONLY,
+            package_overrides=[
+                pkg_override("pkg==1.0", dist_policy=DistPolicy.SDIST_ONLY)
+            ],
+        ) == (
+            "found on index but no distribution is compatible: dist-policy ="
+            ' "sdist-only" excluded 1 wheel (1.0); dist-policy = "wheel-only"'
+            " excluded 1 sdist (2.0)"
+        )
 
     def test_sdist_install_without_an_sdist(self) -> None:
         assert (
