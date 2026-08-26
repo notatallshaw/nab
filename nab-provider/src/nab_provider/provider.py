@@ -1961,12 +1961,7 @@ class Provider:
         value = _SOURCE_VALUES[field]
         override = self._matching_package_override(canonical_name, version, value)
         if override is not None:
-            return _diagnosis.Remedy(
-                field,
-                _diagnosis.OverrideLayer.PACKAGE,
-                override.source_label or str(override.requirement),
-                str(override.requirement),
-            )
+            return self._entry_remedy(field, _diagnosis.OverrideLayer.PACKAGE, override)
 
         if index_name is not None:
             index = self._index_overrides.get(index_name)
@@ -1984,14 +1979,45 @@ class Provider:
 
         bare = self._bare_name_entry(canonical_name)
         if bare is not None:
-            return _diagnosis.Remedy(
-                field,
-                _diagnosis.OverrideLayer.GLOBAL_BARE_ENTRY,
-                bare.source_label or str(bare.requirement),
-                str(bare.requirement),
+            return self._entry_remedy(
+                field, _diagnosis.OverrideLayer.GLOBAL_BARE_ENTRY, bare
             )
         return _diagnosis.Remedy(
             field, _diagnosis.OverrideLayer.GLOBAL, "", canonical_name
+        )
+
+    def _entry_remedy(
+        self,
+        field: _diagnosis.Field,
+        layer: _diagnosis.Layer,
+        override: PackageOverride,
+    ) -> _diagnosis.Remedy:
+        """Build the remedy that changes ``override``'s own config entry."""
+        label = override.source_label
+        return _diagnosis.Remedy(
+            field,
+            layer,
+            label or str(override.requirement),
+            str(override.requirement),
+            self._entry_covers(label),
+        )
+
+    def _entry_covers(self, label: str) -> int:
+        """Count the packages the entry labelled ``label`` matches.
+
+        A ``[[package-rules]]`` entry becomes one override per requirement
+        in its ``match`` list, each carrying the entry's label, so a remedy
+        naming the entry can say how much changing it moves.  An override a
+        host built itself carries no label and speaks for its own package.
+        """
+        if not label:
+            return 1
+        return len(
+            {
+                override.name
+                for override in self._package_overrides
+                if override.source_label == label
+            }
         )
 
     def _scoped_entry(
@@ -2010,11 +2036,8 @@ class Provider:
         """
         for override in self._package_overrides:
             if override.name == canonical_name and value(override) is not _UNSET:
-                return _diagnosis.Remedy(
-                    field,
-                    _diagnosis.OverrideLayer.GLOBAL_SCOPED_ENTRY,
-                    override.source_label or str(override.requirement),
-                    str(override.requirement),
+                return self._entry_remedy(
+                    field, _diagnosis.OverrideLayer.GLOBAL_SCOPED_ENTRY, override
                 )
         return None
 

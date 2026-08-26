@@ -157,17 +157,27 @@ class Remedy:
     asking for a change to an entry that exists can point the reader
     straight at it.  ``selector`` is the requirement itself, which a line
     writing a setting that does not exist yet keys it by: a config path is
-    not a package selector.
+    not a package selector.  ``covers`` is how many packages the entry
+    matches, so a note sending the reader to a rule can say that changing
+    it moves more than the package being reported.
     """
 
-    __slots__ = ("field", "label", "layer", "selector")
+    __slots__ = ("covers", "field", "label", "layer", "selector")
 
-    def __init__(self, field: Field, layer: Layer, label: str, selector: str) -> None:
+    def __init__(
+        self,
+        field: Field,
+        layer: Layer,
+        label: str,
+        selector: str,
+        covers: int = 1,
+    ) -> None:
         """Record ``layer`` as the layer that set ``field`` for a candidate."""
         self.field = field
         self.layer = layer
         self.label = label
         self.selector = selector
+        self.covers = covers
 
     def identity(self) -> tuple[str, str, str, str]:
         """Return what makes two remedies the same change."""
@@ -913,9 +923,9 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
         ' packages."{selector}".uploaded-prior-to = false lifts it for this package'
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        "the project-level uploaded-prior-to set that cutoff; {label} already"
-        " sets uploaded-prior-to over another version range, so widen that entry"
-        " over this version or drop the project-level cutoff"
+        "the project-level uploaded-prior-to set that cutoff; {label}{covers}"
+        " already sets uploaded-prior-to over another version range, so widen"
+        " that entry over this version or drop the project-level cutoff"
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_BARE_ENTRY): (
         "the project-level uploaded-prior-to set that cutoff; {label} already"
@@ -923,8 +933,8 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
         " package"
     ),
     ("uploaded-prior-to", OverrideLayer.PACKAGE): (
-        "the per-package uploaded-prior-to for {label} set that cutoff; setting"
-        " it to false there lifts it"
+        "the uploaded-prior-to on {label}{covers} set that cutoff; setting it"
+        " to false there lifts it"
     ),
     ("uploaded-prior-to", OverrideLayer.INDEX): (
         "the per-index uploaded-prior-to for index {key} set that cutoff;"
@@ -936,9 +946,9 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
         " formats for this package"
     ),
     ("dist-policy", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        "the project-level dist-policy set that policy; {label} already sets"
-        " dist-policy over another version range, so widen that entry over this"
-        " version or drop the project-level policy"
+        "the project-level dist-policy set that policy; {label}{covers} already"
+        " sets dist-policy over another version range, so widen that entry over"
+        " this version or drop the project-level policy"
     ),
     ("dist-policy", OverrideLayer.GLOBAL_BARE_ENTRY): (
         "the project-level dist-policy set that policy; {label} already exists,"
@@ -946,7 +956,7 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
         " this package"
     ),
     ("dist-policy", OverrideLayer.PACKAGE): (
-        "the per-package dist-policy for {label} set that policy; setting it to"
+        "the dist-policy on {label}{covers} set that policy; setting it to"
         ' "wheel-or-sdist" there admits both formats'
     ),
     ("dist-policy", OverrideLayer.INDEX): (
@@ -1080,7 +1090,19 @@ def _fill(template: str, remedy: Remedy) -> str:
         label=remedy.label,
         selector=remedy.selector,
         key=_toml_key(remedy.selector),
+        covers=_covers_clause(remedy.covers),
     )
+
+
+def _covers_clause(packages: int) -> str:
+    """Say how wide an entry is, where it is wider than the package reported.
+
+    A ``[[package-rules]]`` entry carries a ``match`` list, so changing it
+    changes the setting for every package on that list.
+    """
+    if packages == 1:
+        return ""
+    return f", which matches {packages} packages,"
 
 
 def _toml_key(name: str) -> str:

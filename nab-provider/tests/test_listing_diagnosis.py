@@ -497,8 +497,8 @@ class TestClauseText:
             f"\nthe uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file"
             f" uploaded at {AFTER} (2.0)"
             "\nthe files nab read hold no sdist to build from"
-            "\nnote: the per-package uploaded-prior-to for pkg<2 set that"
-            " cutoff; setting it to false there lifts it"
+            "\nnote: the uploaded-prior-to on pkg<2 set that cutoff; setting it"
+            " to false there lifts it"
             "\nnote: the project-level uploaded-prior-to set that cutoff; pkg<2"
             " already sets uploaded-prior-to over another version range, so widen"
             " that entry over this version or drop the project-level cutoff"
@@ -541,8 +541,8 @@ class TestClauseText:
             'dist-policy = "sdist-only" and "wheel-only" excluded every file'
             '\ndist-policy = "sdist-only" excluded 1 wheel (1.0)'
             '\ndist-policy = "wheel-only" excluded 1 sdist (2.0)'
-            "\nnote: the per-package dist-policy for pkg==1.0 set that policy;"
-            ' setting it to "wheel-or-sdist" there admits both formats'
+            "\nnote: the dist-policy on pkg==1.0 set that policy; setting it to"
+            ' "wheel-or-sdist" there admits both formats'
             "\nnote: the project-level dist-policy set that policy; pkg==1.0"
             " already sets dist-policy over another version range, so widen that"
             " entry over this version or drop the project-level policy"
@@ -773,8 +773,8 @@ class TestTheRemedyNamesTheLayer:
             f"\nthe uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file"
             f" uploaded at {AFTER} (1.0)"
             "\nthe files nab read hold no sdist to build from"
-            "\nnote: the per-package uploaded-prior-to for packages.'pkg' set"
-            " that cutoff; setting it to false there lifts it"
+            "\nnote: the uploaded-prior-to on packages.'pkg' set that cutoff;"
+            " setting it to false there lifts it"
         )
 
     def test_the_note_reads_the_layer_at_the_newest_version_refused(self) -> None:
@@ -789,8 +789,8 @@ class TestTheRemedyNamesTheLayer:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg>=3", uploaded_prior_to=EARLY_CUTOFF)],
         ).endswith(
-            "\nnote: the per-package uploaded-prior-to for pkg>=3 set that"
-            " cutoff; setting it to false there lifts it"
+            "\nnote: the uploaded-prior-to on pkg>=3 set that cutoff; setting"
+            " it to false there lifts it"
         )
 
     @pytest.mark.parametrize(
@@ -914,6 +914,92 @@ class TestTheRemedyNamesTheLayer:
             " package"
         )
 
+    def test_a_rule_matching_two_packages_says_how_wide_it_is(self) -> None:
+        """A rule is one entry across a ``match`` list, and changing it moves all of it.
+
+        Both overrides carry the entry's label, which is how the note counts
+        what the reader is about to change.
+        """
+        assert reason_for(
+            [wheel("1.0", upload_time=AFTER)],
+            package_overrides=[
+                pkg_override(
+                    "pkg",
+                    uploaded_prior_to=CUTOFF,
+                    source_label="package-rules[0]",
+                ),
+                pkg_override(
+                    "other",
+                    uploaded_prior_to=CUTOFF,
+                    source_label="package-rules[0]",
+                ),
+            ],
+        ).endswith(
+            "\nnote: the uploaded-prior-to on package-rules[0], which matches 2"
+            " packages, set that cutoff; setting it to false there lifts it"
+        )
+
+    def test_a_scoped_rule_matching_two_packages_says_how_wide_it_is(self) -> None:
+        """The entry a widening points at is as wide as the one a setting points at."""
+        assert reason_for(
+            [wheel("2.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[
+                pkg_override(
+                    "pkg<2",
+                    uploaded_prior_to=EARLY_CUTOFF,
+                    source_label="package-rules[0]",
+                ),
+                pkg_override(
+                    "other<2",
+                    uploaded_prior_to=EARLY_CUTOFF,
+                    source_label="package-rules[0]",
+                ),
+            ],
+        ).endswith(
+            "\nnote: the project-level uploaded-prior-to set that cutoff;"
+            " package-rules[0], which matches 2 packages, already sets"
+            " uploaded-prior-to over another version range, so widen that entry"
+            " over this version or drop the project-level cutoff"
+        )
+
+    def test_a_rule_matching_one_package_says_nothing_about_its_width(self) -> None:
+        """One package is what the reader already knows, so the note stays quiet."""
+        assert reason_for(
+            [wheel("1.0", upload_time=AFTER)],
+            package_overrides=[
+                pkg_override(
+                    "pkg",
+                    uploaded_prior_to=CUTOFF,
+                    source_label="package-rules[0]",
+                )
+            ],
+        ).endswith(
+            "\nnote: the uploaded-prior-to on package-rules[0] set that cutoff;"
+            " setting it to false there lifts it"
+        )
+
+    def test_two_selectors_for_one_package_are_one_package(self) -> None:
+        """A ``match`` list may hold two selectors of the same package."""
+        assert reason_for(
+            [wheel("1.0", upload_time=AFTER)],
+            package_overrides=[
+                pkg_override(
+                    "pkg<5",
+                    uploaded_prior_to=CUTOFF,
+                    source_label="package-rules[0]",
+                ),
+                pkg_override(
+                    "pkg>=5",
+                    uploaded_prior_to=CUTOFF,
+                    source_label="package-rules[0]",
+                ),
+            ],
+        ).endswith(
+            "\nnote: the uploaded-prior-to on package-rules[0] set that cutoff;"
+            " setting it to false there lifts it"
+        )
+
     def test_an_index_scoping_another_field_is_not_the_layer(self) -> None:
         """An index entry answers for the cutoff only when it sets one.
 
@@ -943,8 +1029,8 @@ class TestTheRemedyNamesTheLayer:
             [wheel("1.0", upload_time=AFTER)],
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=CUTOFF)],
         ).endswith(
-            "\nnote: the per-package uploaded-prior-to for pkg<2 set that"
-            " cutoff; setting it to false there lifts it"
+            "\nnote: the uploaded-prior-to on pkg<2 set that cutoff; setting it"
+            " to false there lifts it"
         )
 
     def test_an_index_override_on_another_index_is_not_the_layer(self) -> None:
