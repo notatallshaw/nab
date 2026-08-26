@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.markers import Marker
     from nab_provider._vendor.packaging.requirements import Requirement
 
+    from ..diagnostics import Diagnostic
     from ..provider import DistFile, Provider
     from ..store import InMemoryIndex
     from ..tags import TagSet
@@ -170,6 +171,7 @@ def _ladder_failure(
     # skipped offline says nothing about what this one read.
     last_url = sdist.url if sdist is not None else metadata_url
 
+    diagnostic = None
     if index.is_offline_metadata_miss(normalized, ver_str, last_url):
         reason = _OFFLINE_METADATA_MISS
         _report_offline_skip(index, normalized, package, version)
@@ -177,15 +179,30 @@ def _ladder_failure(
         # A fetched sdist with no PKG-INFO is distinct from no sdist at all.
         reason = "no PEP 658 metadata and the sdist has no readable PKG-INFO"
     elif _index_published_sdist(index, normalized, version):
-        reason = (
-            "no PEP 658 metadata and the sdist was filtered by"
-            " requires-python, dist-policy, or upload-time"
-        )
+        reason, diagnostic = _filtered_sdist_reason(provider, normalized, version)
     else:
         reason = "no PEP 658 metadata and no sdist available"
 
-    msg = f"No metadata for {package}=={version}: {reason}"
-    return MetadataError(msg)
+    error = MetadataError(f"No metadata for {package}=={version}: {reason}")
+    error.diagnostic = diagnostic
+    return error
+
+
+def _filtered_sdist_reason(
+    provider: Provider, normalized: str, version: Version
+) -> tuple[str, Diagnostic | None]:
+    """Say which filter took the sdist the ladder wanted, if the walk can.
+
+    The listing filter drops a file without recording why, so the ladder
+    asks the diagnosis walk to attribute this one.  A rung the walk cannot
+    name leaves the untargeted sentence, which says what happened without
+    guessing at a filter.
+    """
+    named = provider.filtered_sdist_diagnostic(normalized, version)
+    if named is None:
+        return "no PEP 658 metadata and the listing filter excluded the sdist", None
+    key, diagnostic = named
+    return f"no PEP 658 metadata and {key} excluded the sdist", diagnostic
 
 
 def _index_published_sdist(

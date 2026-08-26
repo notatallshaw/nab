@@ -56,7 +56,7 @@ def test_scan_directory_without_index_html_returns_empty(tmp_path: Path) -> None
     # exercised directly here.
     package_dir = tmp_path / "foo"
     package_dir.mkdir()
-    assert _scan_pep503_directory(package_dir, "foo") == ([], False)
+    assert _scan_pep503_directory(package_dir, "foo") == ([], False, False)
 
 
 def test_get_sdist_archive_returns_file_bytes(tmp_path: Path) -> None:

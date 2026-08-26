@@ -1030,6 +1030,7 @@ class FetchCoordinator:
             req.package,
             files,
             unreadable_only=client.served_unreadable_only(req.package),
+            all_yanked=client.served_all_yanked(req.package),
         )
         logger.debug("fetched listing: %s (%d files)", req.package, len(files))
         if self._on_fetch is not None:

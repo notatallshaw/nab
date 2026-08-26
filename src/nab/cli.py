@@ -81,6 +81,7 @@ from .output import (
     OutputOptionError,
     Printer,
     ProgressReporter,
+    Verbosity,
     install_log_handler,
     parse_output_options,
 )
@@ -660,7 +661,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
             if progress is not None:
                 progress.clear()
     except ResolutionError as e:
-        printer().error(f"resolution failed: {e}")
+        printer().error(f"resolution failed: {_error_text(e)}")
         sys.exit(1)
     except (
         UnsupportedVcsError,
@@ -727,7 +728,7 @@ def _report_failures(result: ResolveResult) -> None:
     """
     if len(result.target_results) <= 1:
         first = next(tr.error for tr in result.every_result if tr.error is not None)
-        printer().error(f"resolution failed: {first}")
+        printer().error(f"resolution failed: {_error_text(first)}")
         return
 
     blocks: list[str] = []
@@ -753,8 +754,21 @@ def _report_failures(result: ResolveResult) -> None:
 
 def _error_lines(error: ResolutionError | None) -> list[str]:
     """Render a failed target's error as commented block lines."""
-    text = f"{type(error).__name__}: {error}" if error is not None else ""
+    text = f"{type(error).__name__}: {_error_text(error)}" if error is not None else ""
     return [f"#   {line}" for line in text.splitlines()]
+
+
+def _error_text(error: ResolutionError) -> str:
+    """Return the error at the depth the run's verbosity asks for.
+
+    A resolution failure carries two renderings of its ``Diagnostics:``
+    section: one line per package by default, and each package's clauses
+    and ``note:`` at ``-v``.  An error nothing augmented carries only the
+    one.
+    """
+    if printer().verbosity >= Verbosity.VERBOSE and error.verbose_message is not None:
+        return error.verbose_message
+    return str(error)
 
 
 # Layered boolean flags (currently just --offline) are tri-state, which tyro

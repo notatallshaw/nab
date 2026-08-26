@@ -26,6 +26,7 @@ from nab_provider._provider.listing_diagnosis import (
 )
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.diagnostics import Diagnostic
 from nab_provider.errors import InvalidUploadTimeError
 from nab_provider.overrides import IndexOverride
 from nab_provider.provider import (
@@ -56,6 +57,12 @@ WITH_CUTOFF: dict[str, object] = {"uploaded_prior_to": CUTOFF}
 _LINUX312 = ResolveTarget.for_declared(
     python_version="3.12", spec=PlatformSpec("linux_x86_64")
 )
+
+
+def short_reason(provider: Provider, package: str) -> str | None:
+    """Return the one line ``package``'s diagnostic prints at default verbosity."""
+    diagnostic = provider.get_no_versions_reason(package)
+    return None if diagnostic is None else diagnostic.short
 
 
 def wheel(
@@ -100,19 +107,38 @@ def build(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> Provider:
     return Provider(coordinator, **kwargs)  # type: ignore[arg-type]
 
 
+def render(diagnostic: Diagnostic) -> str:
+    """Return an entry as one string: the line, then everything ``-v`` adds."""
+    return "\n".join((diagnostic.short, *diagnostic.detail))
+
+
+def diagnostic_for(
+    files: Sequence[WheelFile | SdistFile], *, spec: str = "", **kwargs: object
+) -> Diagnostic:
+    """Ask ``pkg`` for ``spec`` and return the entry that comes back."""
+    provider = build(files, **kwargs)
+    assert provider.choose_version("pkg", SpecifierSet(spec).to_range()) is None
+    diagnostic = provider.get_no_versions_reason("pkg")
+    assert diagnostic is not None
+    return diagnostic
+
+
 def reason_for(
     files: Sequence[WheelFile | SdistFile], *, spec: str = "", **kwargs: object
 ) -> str:
-    """Ask ``pkg`` for ``spec`` and return the sentence that comes back."""
-    provider = build(files, **kwargs)
-    assert provider.choose_version("pkg", SpecifierSet(spec).to_range()) is None
-    reason = provider.get_no_versions_reason("pkg")
-    assert reason is not None
-    return reason
+    """Ask ``pkg`` for ``spec`` and return both depths of what comes back."""
+    return render(diagnostic_for(files, spec=spec, **kwargs))
+
+
+def short_for(
+    files: Sequence[WheelFile | SdistFile], *, spec: str = "", **kwargs: object
+) -> str:
+    """Ask ``pkg`` for ``spec`` and return its default-verbosity line."""
+    return diagnostic_for(files, spec=spec, **kwargs).short
 
 
 def rendered_for(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> str:
-    """Render ``pkg``'s empty-listing sentence without asking for a version.
+    """Render ``pkg``'s empty-listing entry without asking for a version.
 
     The filter refuses the whole run on a timezone-naive upload time, so a
     listing carrying one cannot be reached through :func:`reason_for`.
@@ -120,7 +146,7 @@ def rendered_for(files: Sequence[WheelFile | SdistFile], **kwargs: object) -> st
     provider = build(files, **kwargs)
     diagnosis = provider.diagnose_listing("pkg")
     assert diagnosis is not None
-    return diagnosis_mod.empty_listing_reason(provider, "pkg", diagnosis)
+    return render(diagnosis_mod.empty_listing_diagnostic(provider, "pkg", diagnosis))
 
 
 # One file per cause, plus a survivor, so a walk over it exercises every rung
@@ -229,10 +255,8 @@ class TestDifferentialOracle:
         provider = DropsEverything(coordinator)
         assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
 
-        assert provider.get_no_versions_reason("pkg") == (
-            "found on index but no distribution is compatible: 2 versions were"
-            " dropped for a reason this report cannot name; no sdist is"
-            " available to build from"
+        assert short_reason(provider, "pkg") == (
+            "every file was refused, and this report cannot name the filter that did it"
         )
 
     def test_an_unmodelled_drop_answers_the_in_range_lead_too(self) -> None:
@@ -254,8 +278,8 @@ class TestDifferentialOracle:
         provider = DropsTheAskedRelease(coordinator)
         assert provider.choose_version("pkg", SpecifierSet("==1.0").to_range()) is None
 
-        assert provider.get_no_versions_reason("pkg") == (
-            "found on index but every version matching the requirement was filtered"
+        assert short_reason(provider, "pkg") == (
+            "every matching version was refused, and this report cannot name the filter"
         )
 
     def test_one_unmodelled_drop_reads_as_one_version(self) -> None:
@@ -267,10 +291,13 @@ class TestDifferentialOracle:
 
         diagnosis = provider.diagnose_listing("pkg")
         assert diagnosis is not None
-        assert diagnosis_mod.empty_listing_reason(provider, "pkg", diagnosis) == (
-            "found on index but no distribution is compatible: 1 version was"
-            " dropped for a reason this report cannot name; no sdist is"
-            " available to build from"
+        assert render(
+            diagnosis_mod.empty_listing_diagnostic(provider, "pkg", diagnosis)
+        ) == (
+            "every file was refused, and this report cannot name the filter"
+            " that did it"
+            "\n1 version was dropped for a reason this report cannot name"
+            "\nno sdist is available to build from"
         )
 
 
@@ -282,9 +309,7 @@ class TestTheWalkRunsOnlyWhereItIsRead:
         provider = build([wheel("1.0"), wheel("2.0")])
         assert provider.choose_version("pkg", SpecifierSet(">=5").to_range()) is None
 
-        assert provider.get_no_versions_reason("pkg") == (
-            "no version matches the requirement"
-        )
+        assert short_reason(provider, "pkg") == ("no version matches the requirement")
         assert provider.listing_diagnoses == {}
 
     def test_a_dropped_release_inside_the_range_does_walk(self) -> None:
@@ -294,9 +319,8 @@ class TestTheWalkRunsOnlyWhereItIsRead:
         )
         assert provider.choose_version("pkg", SpecifierSet(">=2").to_range()) is None
 
-        assert provider.get_no_versions_reason("pkg") == (
-            "found on index but every version matching the requirement was"
-            " filtered (by requires-python)"
+        assert short_reason(provider, "pkg") == (
+            "requires-python excluded every version matching the requirement"
         )
         assert list(provider.listing_diagnoses) == ["pkg"]
 
@@ -341,8 +365,10 @@ class TestTheWalkLeavesNoTrace:
         provider = build([wheel("1.0", upload_time=AFTER)], **WITH_CUTOFF)
         assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
 
-        assert provider.get_no_versions_reason("pkg") == first
-        assert provider.get_no_versions_reason("pkg") == first
+        second = provider.get_no_versions_reason("pkg")
+        assert second is not None
+        assert render(second) == first
+        assert render(second) == first
         assert "excluded 1 file uploaded at" in first
 
     def test_an_absent_listing_memoises_its_own_absence(self) -> None:
@@ -453,14 +479,15 @@ class TestClauseText:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ) == (
-            "found on index but no distribution is compatible: the"
-            f" uploaded-prior-to cutoff {EARLY_CUTOFF_TEXT} excluded 1 file"
-            f" uploaded at {BETWEEN} (1.0); the uploaded-prior-to cutoff"
-            f" {CUTOFF_TEXT} excluded 1 file uploaded at {AFTER} (2.0); no sdist"
-            " is available to build from"
-            "\n    note: the per-package uploaded-prior-to for pkg<2 set that"
+            "uploaded-prior-to excluded every file (-v for detail)"
+            f"\nthe uploaded-prior-to cutoff {EARLY_CUTOFF_TEXT} excluded 1 file"
+            f" uploaded at {BETWEEN} (1.0)"
+            f"\nthe uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file"
+            f" uploaded at {AFTER} (2.0)"
+            "\nno sdist is available to build from"
+            "\nnote: the per-package uploaded-prior-to for pkg<2 set that"
             " cutoff; setting it to false there lifts it"
-            "\n    note: the project-level uploaded-prior-to set that cutoff; pkg"
+            "\nnote: the project-level uploaded-prior-to set that cutoff; pkg"
             " already sets uploaded-prior-to over another version range, so widen"
             " that entry over this version or drop the project-level cutoff"
         )
@@ -478,10 +505,11 @@ class TestClauseText:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ).startswith(
-            "found on index but no distribution is compatible: the"
-            f" uploaded-prior-to cutoff {EARLY_CUTOFF_TEXT} excluded 1 file that"
-            " publishes no upload time (1.0); the uploaded-prior-to cutoff"
-            f" {CUTOFF_TEXT} excluded 1 file that publishes no upload time (2.0)"
+            "uploaded-prior-to excluded every file (-v for detail)"
+            f"\nthe uploaded-prior-to cutoff {EARLY_CUTOFF_TEXT} excluded 1 file"
+            " that publishes no upload time (1.0)"
+            f"\nthe uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file that"
+            " publishes no upload time (2.0)"
         )
 
     def test_two_dist_policies_over_one_listing_read_as_two_clauses(self) -> None:
@@ -498,16 +526,18 @@ class TestClauseText:
                 pkg_override("pkg==1.0", dist_policy=DistPolicy.SDIST_ONLY)
             ],
         ) == (
-            "found on index but no distribution is compatible: dist-policy ="
-            ' "sdist-only" excluded 1 wheel (1.0); dist-policy = "wheel-only"'
-            " excluded 1 sdist (2.0)"
+            "dist-policy excluded every file (-v for detail)"
+            '\ndist-policy = "sdist-only" excluded 1 wheel (1.0)'
+            '\ndist-policy = "wheel-only" excluded 1 sdist (2.0)'
         )
 
     def test_sdist_install_without_an_sdist(self) -> None:
         """The whole sentence: this clause already says no sdist is available."""
         assert reason_for([wheel("1.0")], dist_policy=DistPolicy.SDIST_INSTALL) == (
-            "found on index but no distribution is compatible: dist-policy ="
-            ' "sdist-install" excluded 1 version that publishes no sdist (1.0)'
+            'dist-policy = "sdist-install" excluded every version;'
+            " none publishes an sdist"
+            '\ndist-policy = "sdist-install" excluded 1 version that publishes'
+            " no sdist (1.0)"
         )
 
     def test_sdist_install_is_asked_before_the_wheel_tags(self) -> None:
@@ -522,8 +552,10 @@ class TestClauseText:
             target=_LINUX312,
             dist_policy=DistPolicy.SDIST_INSTALL,
         ) == (
-            "found on index but no distribution is compatible: dist-policy ="
-            ' "sdist-install" excluded 1 version that publishes no sdist (1.0)'
+            'dist-policy = "sdist-install" excluded every version;'
+            " none publishes an sdist"
+            '\ndist-policy = "sdist-install" excluded 1 version that publishes'
+            " no sdist (1.0)"
         )
 
     def test_two_wheels_of_one_release_are_one_version(self) -> None:
@@ -532,8 +564,10 @@ class TestClauseText:
             [wheel("1.0"), wheel("1.0", tag="py2-none-any")],
             dist_policy=DistPolicy.SDIST_INSTALL,
         ) == (
-            "found on index but no distribution is compatible: dist-policy ="
-            ' "sdist-install" excluded 1 version that publishes no sdist (1.0)'
+            'dist-policy = "sdist-install" excluded every version;'
+            " none publishes an sdist"
+            '\ndist-policy = "sdist-install" excluded 1 version that publishes'
+            " no sdist (1.0)"
         )
 
     def test_sdist_install_without_an_sdist_plural(self) -> None:
@@ -617,12 +651,14 @@ class TestClauseText:
             target=_LINUX312,
             uploaded_prior_to=CUTOFF,
         ) == (
-            "found on index but no distribution is compatible: the"
-            " uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file"
-            " uploaded at 2030-01-01T00:00:00Z (2.0); requires-python excluded 1"
-            " file (1.0 requires >=3.99, the resolve targets Python 3.12); no"
-            " sdist is available to build from\n    note: the project-level"
-            " uploaded-prior-to set that cutoff; setting"
+            "uploaded-prior-to and requires-python excluded every file"
+            " (-v for detail)"
+            "\nthe uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1"
+            " file uploaded at 2030-01-01T00:00:00Z (2.0)"
+            "\nrequires-python excluded 1 file (1.0 requires >=3.99, the resolve"
+            " targets Python 3.12)"
+            "\nno sdist is available to build from"
+            "\nnote: the project-level uploaded-prior-to set that cutoff; setting"
             ' packages."pkg".uploaded-prior-to = false lifts it for this package'
         )
 
@@ -638,9 +674,9 @@ class TestClauseText:
             target=_LINUX312,
             dist_policy=DistPolicy.SDIST_ONLY,
         ) == (
-            "found on index but no distribution is compatible: dist-policy ="
-            ' "sdist-only" excluded 1 wheel (1.0); no sdist is available to'
-            " build from"
+            'dist-policy = "sdist-only" excluded every file; none is an sdist'
+            '\ndist-policy = "sdist-only" excluded 1 wheel (1.0)'
+            "\nno sdist is available to build from"
         )
 
     def test_an_sdist_on_the_index_takes_no_no_sdist_tail(self) -> None:
@@ -656,7 +692,7 @@ class TestTheRemedyNamesTheLayer:
         assert reason_for(
             [wheel("1.0", upload_time=AFTER)], uploaded_prior_to=CUTOFF
         ).endswith(
-            "\n    note: the project-level uploaded-prior-to set that cutoff;"
+            "\nnote: the project-level uploaded-prior-to set that cutoff;"
             ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
             " package"
         )
@@ -670,10 +706,11 @@ class TestTheRemedyNamesTheLayer:
                 )
             ],
         ) == (
-            "found on index but no distribution is compatible: the"
-            f" uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file uploaded at"
-            f" {AFTER} (1.0); no sdist is available to build from"
-            "\n    note: the per-package uploaded-prior-to for packages.'pkg' set"
+            "uploaded-prior-to excluded every file; all are newer than the cutoff"
+            f"\nthe uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file"
+            f" uploaded at {AFTER} (1.0)"
+            "\nno sdist is available to build from"
+            "\nnote: the per-package uploaded-prior-to for packages.'pkg' set"
             " that cutoff; setting it to false there lifts it"
         )
 
@@ -689,7 +726,7 @@ class TestTheRemedyNamesTheLayer:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg>=3", uploaded_prior_to=EARLY_CUTOFF)],
         ).endswith(
-            "\n    note: the per-package uploaded-prior-to for pkg>=3 set that"
+            "\nnote: the per-package uploaded-prior-to for pkg>=3 set that"
             " cutoff; setting it to false there lifts it"
         )
 
@@ -711,12 +748,13 @@ class TestTheRemedyNamesTheLayer:
         provider.coordinator.index.store_listing_index("pkg", index_name)
         assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
 
-        reason = provider.get_no_versions_reason("pkg")
-        assert reason is not None
-        assert reason.endswith(
+        diagnostic = provider.get_no_versions_reason("pkg")
+        assert diagnostic is not None
+        assert render(diagnostic).endswith(
             f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file uploaded"
-            f" at {AFTER} (1.0); no sdist is available to build from"
-            f'\n    note: the per-index uploaded-prior-to for index "{index_name}"'
+            f" at {AFTER} (1.0)"
+            "\nno sdist is available to build from"
+            f'\nnote: the per-index uploaded-prior-to for index "{index_name}"'
             " set that cutoff; setting it to false there lifts it"
         )
 
@@ -735,7 +773,7 @@ class TestTheRemedyNamesTheLayer:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ).endswith(
-            "\n    note: the project-level uploaded-prior-to set that cutoff; pkg"
+            "\nnote: the project-level uploaded-prior-to set that cutoff; pkg"
             " already sets uploaded-prior-to over another version range, so widen"
             " that entry over this version or drop the project-level cutoff"
         )
@@ -753,7 +791,7 @@ class TestTheRemedyNamesTheLayer:
                 pkg_override("pkg<2", dist_policy=DistPolicy.WHEEL_OR_SDIST)
             ],
         ).endswith(
-            "\n    note: the project-level uploaded-prior-to set that cutoff;"
+            "\nnote: the project-level uploaded-prior-to set that cutoff;"
             ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
             " package"
         )
@@ -772,7 +810,7 @@ class TestTheRemedyNamesTheLayer:
                 "pypi": IndexOverride(dist_policy=DistPolicy.PREFER_WHEEL)
             },
         ).endswith(
-            "\n    note: the project-level uploaded-prior-to set that cutoff;"
+            "\nnote: the project-level uploaded-prior-to set that cutoff;"
             ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
             " package"
         )
@@ -787,7 +825,7 @@ class TestTheRemedyNamesTheLayer:
             [wheel("1.0", upload_time=AFTER)],
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=CUTOFF)],
         ).endswith(
-            "\n    note: the per-package uploaded-prior-to for pkg<2 set that"
+            "\nnote: the per-package uploaded-prior-to for pkg<2 set that"
             " cutoff; setting it to false there lifts it"
         )
 
@@ -828,8 +866,12 @@ class TestTheInRangeLead:
             target=_LINUX312,
         )
         assert reason == (
-            "found on index but every version matching the requirement was"
-            " filtered (by requires-python and wheel tags)"
+            "requires-python and wheel tags excluded every matching version"
+            " (-v for detail)"
+            "\nrequires-python excluded 1 file (2.0 requires >=3.99, the resolve"
+            " targets Python 3.12)"
+            "\nnone of the wheel's tags are compatible with the resolve target"
+            " (1 wheel rejected)"
         )
 
     def test_three_filters_read_as_a_list(self) -> None:
@@ -845,11 +887,16 @@ class TestTheInRangeLead:
             uploaded_prior_to=CUTOFF,
         )
         assert reason == (
-            "found on index but every version matching the requirement was"
-            " filtered (by upload-time, requires-python, and wheel tags)\n"
-            "    note: the project-level uploaded-prior-to set that cutoff;"
-            ' setting packages."pkg".uploaded-prior-to = false lifts it for this'
-            " package"
+            "uploaded-prior-to, requires-python and wheel tags excluded every"
+            " matching version (-v for detail)"
+            "\nthe uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1"
+            " file uploaded at 2030-01-01T00:00:00Z (2.0)"
+            "\nrequires-python excluded 1 file (3.0 requires >=3.99, the resolve"
+            " targets Python 3.12)"
+            "\nnone of the wheel's tags are compatible with the resolve target"
+            " (1 wheel rejected)"
+            "\nnote: the project-level uploaded-prior-to set that cutoff; setting"
+            ' packages."pkg".uploaded-prior-to = false lifts it for this package'
         )
 
     def test_an_out_of_range_drop_does_not_name_its_filter(self) -> None:
@@ -865,8 +912,7 @@ class TestTheInRangeLead:
             uploaded_prior_to=CUTOFF,
         )
         assert reason.startswith(
-            "found on index but every version matching the requirement was"
-            " filtered (by upload-time)"
+            "uploaded-prior-to excluded every version matching the requirement"
         )
 
     def test_one_filter_is_named_once_however_many_files_it_refused(self) -> None:
@@ -881,8 +927,9 @@ class TestTheInRangeLead:
             target=_LINUX312,
         )
         assert reason == (
-            "found on index but every version matching the requirement was"
-            " filtered (by requires-python)"
+            "requires-python excluded every version matching the requirement"
+            "\nrequires-python excluded 2 files (newest: 3.0 requires >=3.99,"
+            " the resolve targets Python 3.12)"
         )
 
     def test_a_cutoff_outside_the_ask_offers_no_remedy(self) -> None:
@@ -902,8 +949,9 @@ class TestTheInRangeLead:
             uploaded_prior_to=CUTOFF,
         )
         assert reason == (
-            "found on index but every version matching the requirement was"
-            " filtered (by requires-python)"
+            "requires-python excluded every version matching the requirement"
+            "\nrequires-python excluded 1 file (2.0 requires >=3.99, the resolve"
+            " targets Python 3.12)"
         )
 
     def test_a_refused_spelling_of_a_kept_release_names_no_filter(self) -> None:
@@ -945,8 +993,8 @@ class TestTheInRangeLead:
             provider.choose_version("pkg", SpecifierSet("===1.0.0").to_range()) is None
         )
 
-        assert provider.get_no_versions_reason("pkg") == (
-            "found on index but every version matching the requirement was filtered"
+        assert short_reason(provider, "pkg") == (
+            "every matching version was refused, and this report cannot name the filter"
         )
 
     def test_a_dropped_pre_release_is_the_release_the_range_asked_for(self) -> None:
@@ -961,8 +1009,7 @@ class TestTheInRangeLead:
             spec=">=0.9",
             **WITH_CUTOFF,
         ).startswith(
-            "found on index but every version matching the requirement was"
-            " filtered (by upload-time)"
+            "uploaded-prior-to excluded every version matching the requirement"
         )
 
     def test_a_recorded_range_of_none_stays_a_no_match(self) -> None:
@@ -973,9 +1020,7 @@ class TestTheInRangeLead:
         """
         provider = build([wheel("1.0")])
         provider._no_versions_reasons["pkg"] = NoVersionsReason(ReasonKind.NO_MATCH)
-        assert provider.get_no_versions_reason("pkg") == (
-            "no version matches the requirement"
-        )
+        assert short_reason(provider, "pkg") == ("no version matches the requirement")
 
 
 class TestSharedPredicates:

@@ -64,6 +64,10 @@ class IndexClient(Protocol):
         """Whether a listing for ``package`` held only files nab cannot read."""
         ...
 
+    def served_all_yanked(self, package: str) -> bool:
+        """Whether a listing for ``package`` held files and yanked every one."""
+        ...
+
     async def get_metadata_text(
         self,
         package: str,
@@ -234,6 +238,17 @@ class MultiIndexClient:
         """
         return any(
             client.served_unreadable_only(package) for client in self._clients.values()
+        )
+
+    def served_all_yanked(self, package: str) -> bool:
+        """Whether a walked index listed ``package`` and yanked every file.
+
+        Asked of every client for the same reason
+        :meth:`served_unreadable_only` is: an empty walk routes ``package``
+        to the first index, which need not be the one that served it.
+        """
+        return any(
+            client.served_all_yanked(package) for client in self._clients.values()
         )
 
     async def get_metadata_text(

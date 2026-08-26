@@ -6,6 +6,11 @@ can own it.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from nab_provider.diagnostics import Diagnostic
+
 __all__ = [
     "ConfigError",
     "ForeignMetadataError",
@@ -51,7 +56,15 @@ class MetadataError(Exception):
 
     ``_look_ahead_ok`` treats it as a rejection and moves to the next version,
     so anything that has to end the resolve must not subclass it.
+
+    ``diagnostic`` is the report entry for the package this failure belongs
+    to, set by a raiser that knows more than its own message says: the
+    metadata ladder names the listing-filter rung that took the sdist it
+    wanted.  It stays ``None`` everywhere else, and the report then reads
+    the message.
     """
+
+    diagnostic: Diagnostic | None = None
 
 
 class UnsupportedSdistError(MetadataError):

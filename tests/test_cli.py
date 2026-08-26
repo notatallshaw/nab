@@ -2935,13 +2935,13 @@ class TestLockCommandUniversal:
             with pytest.raises(SystemExit, match="1"):
                 lock(pyproject, format="requirements-without-hashes", cache=False)
 
-    def test_a_diagnostics_note_reaches_stderr(
+    def test_a_diagnostics_line_reaches_stderr(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A one-tuple failure prints the body the provider built, unprefixed.
+        """A one-tuple failure prints one line and the setting that lifts it.
 
-        The sentence and its indented ``note:`` continuation come from a real
-        resolve, so this is the text a user reads, not a fixture of it.
+        The line and its ``try:`` come from a real resolve, so this is the
+        text a user reads at the default level, not a fixture of it.
         """
         self._lock_against_a_refused_listing(
             self._cutoff_refused(tmp_path, '"linux_x86_64"')
@@ -2949,21 +2949,38 @@ class TestLockCommandUniversal:
 
         assert capsys.readouterr().err.endswith(
             "\nDiagnostics:\n"
-            "  - foo: found on index but no distribution is compatible: the"
-            " uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file"
-            " uploaded at 2030-01-01T00:00:00Z (1.0); no sdist is available to"
-            " build from\n"
+            "  - foo: uploaded-prior-to excluded every file;"
+            " all are newer than the cutoff\n"
+            '    try: packages."foo".uploaded-prior-to = false\n'
+        )
+
+    def test_the_verbose_level_replaces_the_try_line_with_the_detail(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``-v`` keeps the line and prints the clauses and the note under it."""
+        with patch("nab.cli._printer", Printer(verbosity=Verbosity.VERBOSE)):
+            self._lock_against_a_refused_listing(
+                self._cutoff_refused(tmp_path, '"linux_x86_64"')
+            )
+
+        assert capsys.readouterr().err.endswith(
+            "\nDiagnostics:\n"
+            "  - foo: uploaded-prior-to excluded every file;"
+            " all are newer than the cutoff\n"
+            "    the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded"
+            " 1 file uploaded at 2030-01-01T00:00:00Z (1.0)\n"
+            "    no sdist is available to build from\n"
             "    note: the project-level uploaded-prior-to set that cutoff;"
             ' setting packages."foo".uploaded-prior-to = false lifts it for this'
             " package\n"
         )
 
-    def test_a_diagnostics_note_survives_the_per_tuple_block(
+    def test_a_diagnostics_line_survives_the_per_tuple_block(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Every line of the body takes the block's comment prefix.
 
-        ``_error_lines`` prefixes each line, so the note arrives indented
+        ``_error_lines`` prefixes each line, so the ``try:`` arrives indented
         under the package it belongs to rather than at the block's own
         indent.
         """
@@ -2975,10 +2992,24 @@ class TestLockCommandUniversal:
         assert "# py311-linux_x86_64: FAILED" in err
         assert "#   Diagnostics:" in err
         assert (
-            "#     - foo: found on index but no distribution is compatible: the"
-            " uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file"
-            " uploaded at 2030-01-01T00:00:00Z (1.0); no sdist is available to"
-            " build from"
+            "#     - foo: uploaded-prior-to excluded every file;"
+            " all are newer than the cutoff"
+        ) in err
+        assert '#       try: packages."foo".uploaded-prior-to = false' in err
+
+    def test_the_verbose_level_reaches_the_per_tuple_block(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A matrix block deepens at ``-v`` the way the single-target one does."""
+        with patch("nab.cli._printer", Printer(verbosity=Verbosity.VERBOSE)):
+            self._lock_against_a_refused_listing(
+                self._cutoff_refused(tmp_path, '"linux_x86_64", "windows_amd64"')
+            )
+
+        err = capsys.readouterr().err
+        assert (
+            "#       the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00"
+            " excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0)"
         ) in err
         assert (
             "#       note: the project-level uploaded-prior-to set that cutoff;"

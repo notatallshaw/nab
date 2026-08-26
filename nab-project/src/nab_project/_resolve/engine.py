@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.markers import Marker
     from nab_provider._vendor.packaging.requirements import Requirement
     from nab_provider._vendor.packaging.version import Version
+    from nab_provider.diagnostics import Diagnostic
     from nab_provider.provider import ResolutionStrategy
     from nab_provider.resolver_inputs import MarkerHolds
     from nab_provider.target import ResolveTarget
@@ -766,6 +767,12 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
     Reasons are keyed by package name and outlive the ask that recorded
     them, so a package keeps its hint even when the tree names it over a
     later range.
+
+    Both depths are attached: ``str(exc)`` carries the one line per package
+    a default run prints, and :attr:`~nab_resolver.errors.ResolutionError.
+    verbose_message` carries the same report with each package's clauses and
+    ``note:`` in place of its ``try:`` line.  The host picks by verbosity;
+    a host that only prints the exception gets the short one.
     """
     if exc.incompatibility is None:
         return
@@ -778,17 +785,31 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
         seen.add(package)
         packages.append(package)
 
-    hints: list[str] = []
+    entries: list[tuple[str, Diagnostic]] = []
     for package in packages:
-        reason = provider.get_no_versions_reason(package)
-        if reason is not None:
-            hints.append(f"{package}: {reason}")
-    if not hints:
+        diagnostic = provider.get_no_versions_reason(package)
+        if diagnostic is not None:
+            entries.append((package, diagnostic))
+    if not entries:
         return
 
     base = str(exc)
-    augmented = base + "\n\nDiagnostics:\n  - " + "\n  - ".join(hints)
-    exc.args = (augmented,)
+    exc.args = (base + _diagnostics_block(entries, detailed=False),)
+    exc.verbose_message = base + _diagnostics_block(entries, detailed=True)
+
+
+def _diagnostics_block(
+    entries: Sequence[tuple[str, Diagnostic]], *, detailed: bool
+) -> str:
+    """Render the ``Diagnostics:`` section at one of its two depths."""
+    lines = ["", "", "Diagnostics:"]
+    for package, diagnostic in entries:
+        lines.append(f"  - {package}: {diagnostic.short}")
+        if detailed:
+            lines.extend(f"    {line}" for line in diagnostic.detail)
+        elif diagnostic.remedy is not None:
+            lines.append(f"    try: {diagnostic.remedy}")
+    return "\n".join(lines)
 
 
 def _walk_no_versions_packages(

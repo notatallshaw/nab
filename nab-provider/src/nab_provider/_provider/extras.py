@@ -18,6 +18,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from ..errors import MetadataError, MissingExtraError
 from ..extra_keys import join_extra
 from ..policy import ExtrasMode
+from .listing_diagnosis import MetadataBlock, ReasonKind
 from .lookahead import flush_pending_blocks
 from .metadata_resolver import refuse_url_dep
 
@@ -70,11 +71,13 @@ def choose_extra_version(
     if provider.wants_lowest(normalized):
         candidates.reverse()
 
-    chosen = _pick_in_mode(provider, base, extra, candidates)
+    chosen, unreadable = _pick_in_mode(provider, base, extra, candidates)
+    narrowed = False
     if chosen is not None and (normalized, extra) in provider.root_extras:
         chosen = _pick_for_user_extra(
             provider, base, extra, chosen, candidates, all_versions
         )
+        narrowed = chosen is None
 
     # Enumerate pre-releases too: default filtering buffers a pre-release
     # behind any matching final and would drop one that the base's bounds
@@ -97,7 +100,46 @@ def choose_extra_version(
         _record_base_range_blocks(
             provider, package, normalized, base_range, excluded_by_base
         )
+    if chosen is None:
+        _record_extra_reason(
+            provider,
+            package,
+            admit_range,
+            candidates,
+            unreadable,
+            narrowed=narrowed,
+        )
     return chosen
+
+
+def _record_extra_reason(
+    provider: Provider,
+    package: str,
+    admit_range: VersionRange,
+    candidates: list[Version],
+    unreadable: list[MetadataBlock],
+    *,
+    narrowed: bool,
+) -> None:
+    """Record why the proxy has no version, so the report can name the extra.
+
+    Three situations are worth telling apart, and none of them is visible
+    once the proxy's empty candidate list reaches the resolver: the search
+    narrowed the base off every version declaring the extra, no version
+    that could be read declares it, or none could be read at all.  A proxy
+    whose base has no candidate in range at all records nothing, since the
+    base package's own entry says that already.
+    """
+    if narrowed:
+        provider.record_extra_no_versions(package, ReasonKind.EXTRA_NARROWED)
+    elif candidates and len(unreadable) == len(candidates):
+        provider.record_extra_no_versions(
+            package, ReasonKind.EXTRA_METADATA, metadata=tuple(unreadable)
+        )
+    elif candidates:
+        provider.record_extra_no_versions(
+            package, ReasonKind.EXTRA_UNDECLARED, version_range=admit_range
+        )
 
 
 def _pick_in_mode(
@@ -105,8 +147,8 @@ def _pick_in_mode(
     base: str,
     extra: str,
     candidates: list[Version],
-) -> Version | None:
-    """Pick a candidate honoring ``ExtrasMode``.
+) -> tuple[Version | None, list[MetadataBlock]]:
+    """Pick a candidate honoring ``ExtrasMode``, and say what was unreadable.
 
     Fetches base metadata so an extraction failure (unparseable PKG-INFO,
     a disallowed sdist build, or no metadata source at all) skips the
@@ -114,19 +156,27 @@ def _pick_in_mode(
     to expand the extra. This applies to user-requested extras too, since
     the proxy always needs the base metadata. BACKTRACK mode additionally
     checks ``Provides-Extra`` for transitive extras.
+
+    The second return value carries one record per candidate skipped for
+    an unreadable metadata source, which tells a proxy that found nothing
+    apart from one whose candidates simply do not declare the extra.
     """
     _, _, normalized = provider.split_and_normalize(base)
     is_user = (normalized, extra) in provider.root_extras
     backtrack = provider.extras_mode == ExtrasMode.BACKTRACK
+    unreadable: list[MetadataBlock] = []
     for version in candidates:
-        if provider.has_invalid_metadata(normalized, version):
+        cached = provider.invalid_metadata_reason(normalized, version)
+        if cached is not None:
+            unreadable.append(MetadataBlock(cached))
             continue
         try:
             provider.get_dependencies(base, version)
-        except MetadataError:
+        except MetadataError as exc:
+            unreadable.append(MetadataBlock(str(exc), exc.diagnostic))
             continue
         if is_user or not backtrack:
-            return version
+            return version, unreadable
         metadata = provider.metadata_cache.get((normalized, version))
         provided = (
             {canonicalize_name(e) for e in metadata.provides_extra}
@@ -134,8 +184,8 @@ def _pick_in_mode(
             else set()
         )
         if metadata is None or extra in provided:
-            return version
-    return None
+            return version, unreadable
+    return None, unreadable
 
 
 def _pick_for_user_extra(

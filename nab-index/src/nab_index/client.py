@@ -240,6 +240,22 @@ def holds_unreadable_format(data: object) -> bool:
     return False
 
 
+def holds_only_yanked(data: object) -> bool:
+    """Whether a Simple-API body served file entries and yanked every one.
+
+    :pep:`592` yanks are never admitted, so such a page parses to no files
+    and would otherwise read as a package no configured index carries.
+    """
+    if not isinstance(data, dict):
+        return False
+    raw_files = data.get("files")
+    if not isinstance(raw_files, list):
+        return False
+
+    entries = [entry for entry in raw_files if isinstance(entry, dict)]
+    return bool(entries) and all(entry.get("yanked") for entry in entries)
+
+
 def is_readable_filename(filename: str) -> bool:
     """Whether ``filename`` names a wheel or ``.tar.gz`` sdist that nab can use."""
     return (

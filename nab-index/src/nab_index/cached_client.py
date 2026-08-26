@@ -34,6 +34,7 @@ from .client import (
     _listing_body,
     _parse_files,
     _verify_metadata_hash,
+    holds_only_yanked,
     holds_unreadable_format,
     verify_sdist_hash,
 )
@@ -345,6 +346,7 @@ class CachedAsyncSimpleClient:
         self._offline = offline
         self._serialization = serialization
         self._unreadable_only: set[str] = set()
+        self._all_yanked: set[str] = set()
         self._range_memo = (
             range_memo if range_memo is not None else RangeCapabilityMemo()
         )
@@ -613,11 +615,17 @@ class CachedAsyncSimpleClient:
         files = _parse_files(data, self._index_url, package, page_url=page_url)
         if not files and holds_unreadable_format(data):
             self._unreadable_only.add(package)
+        if not files and holds_only_yanked(data):
+            self._all_yanked.add(package)
         return files
 
     def served_unreadable_only(self, package: str) -> bool:
         """Whether a listing for ``package`` held only files nab cannot read."""
         return package in self._unreadable_only
+
+    def served_all_yanked(self, package: str) -> bool:
+        """Whether a listing for ``package`` held files and yanked every one."""
+        return package in self._all_yanked
 
     def _unmodified_records(
         self, package: str, policy: CachePolicy
