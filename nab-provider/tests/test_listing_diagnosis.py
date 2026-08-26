@@ -1142,7 +1142,8 @@ class TestTheInRangeLead:
             " (1 wheel rejected)"
         )
 
-    def test_three_filters_read_as_a_list(self) -> None:
+    def test_three_filters_are_counted_and_named_only_behind_v(self) -> None:
+        """Past two, the line says how many and the clauses name them."""
         reason = reason_for(
             [
                 wheel("1.0"),
@@ -1155,8 +1156,7 @@ class TestTheInRangeLead:
             uploaded_prior_to=CUTOFF,
         )
         assert reason == (
-            "uploaded-prior-to, requires-python and wheel tags excluded every"
-            " version in range"
+            "3 filters excluded every version in range"
             "\nthe uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1"
             " file uploaded at 2030-01-01T00:00:00Z (2.0)"
             "\nrequires-python excluded 1 file (3.0 requires >=3.99, the resolve"
@@ -1380,6 +1380,18 @@ class TestBlockerLines:
         )
         assert diagnostic.short == ("every version is blocked by bar and baz")
         assert len(diagnostic.detail) == 2
+
+    def test_three_blockers_are_counted_and_named_only_behind_v(self) -> None:
+        """Past two the line grows with the resolve, so it says how many."""
+        diagnostic = self._diagnostic(
+            [
+                blocker("bar", diagnosis_mod.BlockerKind.DECIDED),
+                blocker("baz", diagnosis_mod.BlockerKind.ROOT),
+                blocker("qux", diagnosis_mod.BlockerKind.HELD),
+            ]
+        )
+        assert diagnostic.short == ("every version is blocked by 3 packages")
+        assert len(diagnostic.detail) == 3
 
     def test_two_blockers_on_one_package_name_it_once(self) -> None:
         """A decided blocker and a root disagreement over the same dependency."""
@@ -1642,6 +1654,16 @@ def every_shape() -> dict[str, Diagnostic]:
             build([wheel("1.0")]),
             "pkg",
             [*blocked, blocker("baz", diagnosis_mod.BlockerKind.ROOT)],
+            (),
+        ),
+        "blockers-three": diagnosis_mod.blockers_diagnostic(
+            build([wheel("1.0")]),
+            "pkg",
+            [
+                *blocked,
+                blocker("baz", diagnosis_mod.BlockerKind.ROOT),
+                blocker("qux", diagnosis_mod.BlockerKind.HELD),
+            ],
             (),
         ),
         "blockers-and-metadata": diagnosis_mod.blockers_diagnostic(

@@ -668,11 +668,27 @@ def _subject(cause: Cause, record: DroppedFile) -> str:
 
 
 def _join_keys(groups: _Groups) -> str:
-    """Join the config keys the groups name, in report order, without repeats."""
+    """Name the config keys the groups fired, in report order, without repeats."""
     keys = list(dict.fromkeys(FILTER_KEYS[cause] for cause, _records in groups))
-    if len(keys) == 1:
-        return keys[0]
-    return f"{', '.join(keys[:-1])} and {keys[-1]}"
+    return _named_or_counted(keys, "filters")
+
+
+# How many things a short line names before it counts them instead.
+_MOST_NAMED: Final = 2
+
+
+def _named_or_counted(names: Sequence[str], noun: str) -> str:
+    """Name the things a line is about, or count them past :data:`_MOST_NAMED`.
+
+    A line built by listing what the user configured grows with their
+    configuration and stops being one glance's worth of reading, so past
+    two it says how many.  ``-v`` names them all, one to a clause.
+    """
+    if len(names) == 1:
+        return names[0]
+    if len(names) == _MOST_NAMED:
+        return f"{names[0]} and {names[1]}"
+    return f"{len(names)} {noun}"
 
 
 # One template per cause, with the residual drop under ``None``, so every
@@ -1120,17 +1136,12 @@ def _several_blockers_short(
     Called only where more than one thing rejected the candidates, so at
     least one dependency is named however the metadata failures fall.
     """
-    names = _join_names(list(dict.fromkeys(blocker.package for blocker in blockers)))
+    names = _named_or_counted(
+        list(dict.fromkeys(blocker.package for blocker in blockers)), "packages"
+    )
     if not metadata:
         return f"every version is blocked by {names}"
     return f"every version is blocked by {names} or rejected on its metadata"
-
-
-def _join_names(names: Sequence[str]) -> str:
-    """Join package names with "and", the way the short lines read them."""
-    if len(names) == 1:
-        return names[0]
-    return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
 def metadata_diagnostic(
