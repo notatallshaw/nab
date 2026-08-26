@@ -180,7 +180,11 @@ class TestDifferentialOracle:
     def test_every_file_is_kept_or_refused_exactly_once(
         self, config: str, pythons: int
     ) -> None:
-        """No file is claimed twice, dropped silently, or refused after surviving."""
+        """No file is claimed twice, dropped silently, or refused after surviving.
+
+        The kept sets agree too, so no clause can describe a release that
+        survived the filter.
+        """
         kwargs = dict(ORACLE_CONFIGS[config])
         kwargs["listing_filter_cache"] = ListingFilterCache(pythons)
         provider = build(ORACLE_LISTING, **kwargs)
@@ -195,15 +199,6 @@ class TestDifferentialOracle:
             dist.filename for dist in ORACLE_LISTING
         )
         assert not set(kept_names) & set(dropped_names)
-
-    @pytest.mark.parametrize("config", sorted(ORACLE_CONFIGS), ids=str)
-    def test_the_walk_keeps_the_versions_the_filter_kept(self, config: str) -> None:
-        """The kept sets agree, so no clause describes a release that survived."""
-        provider = build(ORACLE_LISTING, **ORACLE_CONFIGS[config])
-
-        kept = provider.fetch_versions("pkg")
-        diagnosis = provider.diagnose_listing("pkg")
-        assert diagnosis is not None
 
         assert diagnosis.kept == {version for version, _dist in kept}
         assert diagnosis.unexplained == 0
@@ -535,15 +530,15 @@ class TestTheRemedyNamesTheLayer:
             uploaded_prior_to=CUTOFF,
             index_overrides={"other": IndexOverride(uploaded_prior_to=CUTOFF)},
         )
-        source = provider.uploaded_prior_to_source("pkg", Version("1.0"), "pypi")
-        assert source.layer is CutoffLayer.GLOBAL
+        layer, _label = provider.uploaded_prior_to_source("pkg", Version("1.0"), "pypi")
+        assert layer is CutoffLayer.GLOBAL
 
     def test_a_synthetic_source_has_no_index_layer(self) -> None:
         """A package with no serving index falls through to the project level."""
         provider = build([wheel("1.0")], uploaded_prior_to=CUTOFF)
-        source = provider.uploaded_prior_to_source("pkg", Version("1.0"), None)
-        assert source.layer is CutoffLayer.GLOBAL
-        assert source.label == ""
+        layer, label = provider.uploaded_prior_to_source("pkg", Version("1.0"), None)
+        assert layer is CutoffLayer.GLOBAL
+        assert label == ""
 
     def test_requires_python_is_offered_no_remedy(self) -> None:
         """Overriding requires-python would tell the resolver a falsehood."""

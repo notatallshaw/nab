@@ -84,26 +84,10 @@ class ReasonKind(enum.Enum):
     NO_MATCH = "no-match"
 
 
-# The four value types below are hand-written rather than dataclasses:
+# The three value types below are hand-written rather than dataclasses:
 # every nab invocation imports this module, and declaring a frozen slots
 # dataclass costs tens of times more at import than a plain class with
 # ``__slots__``.
-
-
-class CutoffSource:
-    """The layer that set a cutoff, and the config entry that carries it."""
-
-    __slots__ = ("label", "layer")
-
-    def __init__(self, layer: CutoffLayer, label: str) -> None:
-        """Record ``label`` as the entry that set the cutoff at ``layer``.
-
-        ``label`` is the per-package override's ``source_label`` or the
-        index's name; it is empty for the project-level cutoff, which no
-        entry names.
-        """
-        self.layer = layer
-        self.label = label
 
 
 class DroppedFile:
@@ -605,8 +589,7 @@ def _note(
     if not refused:
         return ""
 
-    source = provider.uploaded_prior_to_source(
+    layer, label = provider.uploaded_prior_to_source(
         normalized, _version_of(_newest(refused)), diagnosis.index_name
     )
-    remedy = _REMEDIES[source.layer].format(package=normalized, label=source.label)
-    return f"\n    note: {remedy}"
+    return f"\n    note: {_REMEDIES[layer].format(package=normalized, label=label)}"

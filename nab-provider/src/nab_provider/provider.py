@@ -1789,29 +1789,28 @@ class Provider:
 
     def uploaded_prior_to_source(
         self, canonical_name: str, version: Version, index_name: str | None
-    ) -> _diagnosis.CutoffSource:
-        """Return which config layer set the cutoff this candidate was judged by.
+    ) -> tuple[_diagnosis.CutoffLayer, str]:
+        """Return the config layer that set this candidate's cutoff, and its label.
 
-        Reads the two override surfaces through the same matcher
-        :meth:`_effective_field` reads them with, so it names the entry that
-        answered, but never raises: it runs while a failure is being
-        rendered, where the probe may already have swallowed the conflict
-        :meth:`_effective_field` would raise.
+        The label is the per-package override's ``source_label`` or the
+        index's name, and is empty for the project-level cutoff, which no
+        entry names.  Reads the two override surfaces through the same
+        matcher :meth:`_effective_field` reads them with, but never raises:
+        it runs while a failure is being rendered, where the probe may
+        already have swallowed the conflict :meth:`_effective_field` would.
         """
         override = self._matching_package_override(
             canonical_name, version, self._uploaded_prior_to_value
         )
         if override is not None:
-            return _diagnosis.CutoffSource(
-                _diagnosis.CutoffLayer.PACKAGE, override.source_label
-            )
+            return _diagnosis.CutoffLayer.PACKAGE, override.source_label
 
         if index_name is not None:
             index = self._index_overrides.get(index_name)
             if index is not None and self._uploaded_prior_to_value(index) is not _UNSET:
-                return _diagnosis.CutoffSource(_diagnosis.CutoffLayer.INDEX, index_name)
+                return _diagnosis.CutoffLayer.INDEX, index_name
 
-        return _diagnosis.CutoffSource(_diagnosis.CutoffLayer.GLOBAL, "")
+        return _diagnosis.CutoffLayer.GLOBAL, ""
 
     def _prefetch_batch(
         self,
