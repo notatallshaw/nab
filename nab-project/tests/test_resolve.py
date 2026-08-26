@@ -54,6 +54,7 @@ from nab_project.resolve import (
     config_for_build_requirements,
     resolve_for_targets,
 )
+from nab_provider._provider import listing_diagnosis
 from nab_provider._vendor.packaging.markers import Marker, default_environment
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -3611,6 +3612,70 @@ class TestAugmentResolutionError:
             "foo: uploaded-prior-to excluded the sdist, and the index has no"
             " PEP 658 metadata" in diagnostics
         )
+
+    def test_a_resolve_that_survives_the_ladder_never_walks_the_listing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The listing walk is a failure-path cost and stays off a resolve that works.
+
+        ``foo`` 2.0 runs the ladder out of rungs, look-ahead takes that as a
+        rejection, and 1.0 pins.  Naming the rung that took 2.0's sdist would
+        mean walking the whole listing for a sentence nobody reads.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[tool.nab]\nuploaded-prior-to = "2026-05-01T00:00:00Z"\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": [
+                    WheelFile(
+                        filename="foo-2.0-py3-none-any.whl",
+                        url="https://example.com/foo-2.0-py3-none-any.whl",
+                        version="2.0",
+                        requires_python=None,
+                        has_metadata=False,
+                        upload_time="2026-01-01T00:00:00Z",
+                    ),
+                    SdistFile(
+                        filename="foo-2.0.tar.gz",
+                        url="https://example.com/foo-2.0.tar.gz",
+                        version="2.0",
+                        requires_python=None,
+                        upload_time="2030-01-01T00:00:00Z",
+                    ),
+                    WheelFile(
+                        filename="foo-1.0-py3-none-any.whl",
+                        url="https://example.com/foo-1.0-py3-none-any.whl",
+                        version="1.0",
+                        requires_python=None,
+                        has_metadata=True,
+                        upload_time="2026-01-01T00:00:00Z",
+                    ),
+                ]
+            },
+            metadata_by_version={"1.0": _metadata("foo", "1.0")},
+        )
+
+        walks: list[str] = []
+        real_walk = listing_diagnosis.walk_listing
+
+        def counted_walk(provider: Provider, normalized: str) -> object:
+            walks.append(normalized)
+            return real_walk(provider, normalized)
+
+        monkeypatch.setattr(listing_diagnosis, "walk_listing", counted_walk)
+
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            result = _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        assert _pins(result) == {"foo": Version("1.0")}
+        assert walks == []
 
     def test_blocker_diagnostics_render_readable_ranges(self, tmp_path: Path) -> None:
         """Blocker diagnostics render declared ranges, not the debug repr.

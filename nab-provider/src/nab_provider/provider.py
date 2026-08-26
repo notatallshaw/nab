@@ -1795,9 +1795,12 @@ class Provider:
         if recorded is not None and not recorded.is_generic:
             return self._render_no_versions_reason(package, recorded)
 
-        blocks = self._metadata_ban_blocks.get(canonicalize_name(package))
+        normalized = canonicalize_name(package)
+        blocks = self._metadata_ban_blocks.get(normalized)
         if blocks:
-            return _diagnosis.metadata_diagnostic(list(blocks.values()))
+            return _diagnosis.metadata_diagnostic(
+                self, normalized, list(blocks.values())
+            )
         if recorded is None:
             return None
         return self._render_no_versions_reason(package, recorded)
@@ -1810,7 +1813,12 @@ class Provider:
         if fixed is not None:
             return fixed
         if recorded.kind is _diagnosis.ReasonKind.BLOCKERS:
-            return _diagnosis.blockers_diagnostic(recorded.blockers, recorded.metadata)
+            return _diagnosis.blockers_diagnostic(
+                self,
+                canonicalize_name(package),
+                recorded.blockers,
+                recorded.metadata,
+            )
         if recorded.kind in _EXTRA_KINDS:
             return self._render_extra_reason(package, recorded)
         return self._render_listing_reason(package, recorded)
@@ -1901,16 +1909,17 @@ class Provider:
 
     def filtered_sdist_diagnostic(
         self, normalized: str, version: Version
-    ) -> tuple[str, Diagnostic] | None:
+    ) -> Diagnostic | None:
         """Name the listing-filter rung that took ``version``'s sdist.
 
-        Asked by the metadata ladder, which knows the index published an
-        sdist for the version and that the filter removed it, but not which
-        rung did.  Returns the config key and the report entry, or ``None``
-        when the walk cannot name one.
+        Asked while rendering a failure, for a version the metadata ladder
+        marked: it knew the index published an sdist and that the filter
+        removed it, but naming the rung is a walk, so it left the marker
+        instead.  Returns the report entry, or ``None`` when the walk cannot
+        name a rung.
         """
         diagnosis = self.diagnose_listing(normalized)
-        # The ladder asks only after reading an sdist out of the raw
+        # The ladder marks only after reading an sdist out of the raw
         # listing, so the walk had files to partition.
         assert diagnosis is not None
         return _diagnosis.filtered_sdist_diagnostic(

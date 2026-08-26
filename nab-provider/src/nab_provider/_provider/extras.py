@@ -173,7 +173,7 @@ def _pick_in_mode(
         try:
             provider.get_dependencies(base, version)
         except MetadataError as exc:
-            unreadable.append(MetadataBlock(str(exc), exc.diagnostic))
+            unreadable.append(MetadataBlock(str(exc), exc.filtered_sdist_version))
             continue
         if is_user or not backtrack:
             return version, unreadable

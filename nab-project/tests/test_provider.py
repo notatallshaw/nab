@@ -8485,9 +8485,26 @@ class TestLadderSdistAvailability:
     A filtered sdist comes back by loosening the cutoff or the policy that
     dropped it; a release that published none has nothing to loosen.  So the
     two failures must not read alike.
+
+    Which rung dropped it is a walk of the whole listing, and look-ahead
+    swallows this error, so the ladder marks the version and the report
+    names the rung only once the resolve has failed.
     """
 
     _ABSENT = "no PEP 658 metadata and no sdist available"
+    _FILTERED = "no PEP 658 metadata and the listing filter excluded the sdist"
+
+    def _named_line(self, provider: Provider, version: Version) -> str | None:
+        """The line the report builds for a marked version, or ``None``."""
+        diagnostic = provider.filtered_sdist_diagnostic("pkg", version)
+        return None if diagnostic is None else diagnostic.short
+
+    def _marker(self, provider: Provider) -> Version | None:
+        """Resolve ``pkg`` 1.0's metadata and return the marker the ladder left."""
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+        assert self._FILTERED in str(excinfo.value)
+        return excinfo.value.filtered_sdist_version
 
     def test_upload_cutoff_filtered_sdist_names_the_filter(self) -> None:
         """A cutoff keeping the wheel and dropping the sdist names the filter."""
@@ -8505,11 +8522,10 @@ class TestLadderSdistAvailability:
             uploaded_prior_to=datetime(2026, 1, 10, tzinfo=timezone.utc),
         )
 
-        with pytest.raises(MetadataError) as excinfo:
-            provider.get_dependencies("pkg", V("1.0"))
-
-        assert ("no PEP 658 metadata and uploaded-prior-to excluded the sdist") in str(
-            excinfo.value
+        assert self._marker(provider) == V("1.0")
+        assert self._named_line(provider, V("1.0")) == (
+            "uploaded-prior-to excluded the sdist,"
+            " and the index has no PEP 658 metadata"
         )
 
     def test_requires_python_filtered_sdist_names_the_filter(self) -> None:
@@ -8522,11 +8538,9 @@ class TestLadderSdistAvailability:
         )
         provider = Provider(coordinator, target=_PY312)
 
-        with pytest.raises(MetadataError) as excinfo:
-            provider.get_dependencies("pkg", V("1.0"))
-
-        assert ("no PEP 658 metadata and requires-python excluded the sdist") in str(
-            excinfo.value
+        assert self._marker(provider) == V("1.0")
+        assert self._named_line(provider, V("1.0")) == (
+            "requires-python excluded the sdist, and the index has no PEP 658 metadata"
         )
 
     def test_wheel_only_policy_filtered_sdist_names_the_filter(self) -> None:
@@ -8538,11 +8552,9 @@ class TestLadderSdistAvailability:
             coordinator, target=_PY312, dist_policy=DistPolicy.WHEEL_ONLY
         )
 
-        with pytest.raises(MetadataError) as excinfo:
-            provider.get_dependencies("pkg", V("1.0"))
-
-        assert ("no PEP 658 metadata and dist-policy excluded the sdist") in str(
-            excinfo.value
+        assert self._marker(provider) == V("1.0")
+        assert self._named_line(provider, V("1.0")) == (
+            "dist-policy excluded the sdist, and the index has no PEP 658 metadata"
         )
 
     def test_a_host_side_drop_leaves_the_untargeted_sentence(self) -> None:
@@ -8567,12 +8579,8 @@ class TestLadderSdistAvailability:
         )
         provider = DropsTheSdist(coordinator, target=_PY312)
 
-        with pytest.raises(MetadataError) as excinfo:
-            provider.get_dependencies("pkg", V("1.0"))
-
-        assert ("no PEP 658 metadata and the listing filter excluded the sdist") in str(
-            excinfo.value
-        )
+        assert self._marker(provider) == V("1.0")
+        assert self._named_line(provider, V("1.0")) is None
 
     def test_sdist_of_another_release_is_reported_as_absent(self) -> None:
         """Only this release's own sdist counts as one the filter dropped."""

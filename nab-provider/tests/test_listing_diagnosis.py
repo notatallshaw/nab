@@ -1067,9 +1067,27 @@ def blocker(package: str, kind: diagnosis_mod.BlockerKind) -> diagnosis_mod.Bloc
 class TestBlockerLines:
     """What a look-ahead rejection says at each depth."""
 
+    def _diagnostic(
+        self,
+        blockers: Sequence[diagnosis_mod.Blocker],
+        metadata: Sequence[diagnosis_mod.MetadataBlock] = (),
+        provider: Provider | None = None,
+    ) -> Diagnostic:
+        """Render a look-ahead rejection for ``pkg``.
+
+        The provider is only read where a metadata block carries the ladder's
+        marker, so the blocker cases hand over a listing that resolves.
+        """
+        return diagnosis_mod.blockers_diagnostic(
+            build([wheel("1.0")]) if provider is None else provider,
+            "pkg",
+            blockers,
+            metadata,
+        )
+
     def test_one_decided_blocker(self) -> None:
         decided = blocker("bar", diagnosis_mod.BlockerKind.DECIDED)
-        diagnostic = diagnosis_mod.blockers_diagnostic([decided], ())
+        diagnostic = self._diagnostic([decided])
         assert diagnostic.short == (
             "every version needs bar in ==2.0, but the resolve chose bar 1.0"
         )
@@ -1079,24 +1097,23 @@ class TestBlockerLines:
 
     def test_one_held_blocker(self) -> None:
         held = blocker("bar", diagnosis_mod.BlockerKind.HELD)
-        assert diagnosis_mod.blockers_diagnostic([held], ()).short == (
+        assert self._diagnostic([held]).short == (
             "every version needs bar in ==2.0, but the resolve holds bar in 1.0"
         )
 
     def test_one_root_blocker(self) -> None:
         root = blocker("bar", diagnosis_mod.BlockerKind.ROOT)
-        assert diagnosis_mod.blockers_diagnostic([root], ()).short == (
+        assert self._diagnostic([root]).short == (
             "every version needs bar in ==2.0, but your project requires bar 1.0"
         )
 
     def test_two_blockers_name_their_packages_and_stop(self) -> None:
         """Two ranges do not fit on one line, so the line names the packages."""
-        diagnostic = diagnosis_mod.blockers_diagnostic(
+        diagnostic = self._diagnostic(
             [
                 blocker("bar", diagnosis_mod.BlockerKind.DECIDED),
                 blocker("baz", diagnosis_mod.BlockerKind.ROOT),
-            ],
-            (),
+            ]
         )
         assert diagnostic.short == (
             "every version is blocked by bar and baz (-v for the ranges)"
@@ -1105,19 +1122,18 @@ class TestBlockerLines:
 
     def test_two_blockers_on_one_package_name_it_once(self) -> None:
         """A decided blocker and a root disagreement over the same dependency."""
-        diagnostic = diagnosis_mod.blockers_diagnostic(
+        diagnostic = self._diagnostic(
             [
                 blocker("bar", diagnosis_mod.BlockerKind.DECIDED),
                 blocker("bar", diagnosis_mod.BlockerKind.ROOT),
-            ],
-            (),
+            ]
         )
         assert diagnostic.short == (
             "every version is blocked by bar (-v for the ranges)"
         )
 
     def test_a_blocker_beside_unreadable_metadata_says_both(self) -> None:
-        diagnostic = diagnosis_mod.blockers_diagnostic(
+        diagnostic = self._diagnostic(
             [blocker("bar", diagnosis_mod.BlockerKind.DECIDED)],
             (diagnosis_mod.MetadataBlock("No metadata for pkg==2.0"),),
         )
@@ -1132,15 +1148,35 @@ class TestBlockerLines:
     def test_metadata_alone_reads_as_the_metadata_line(self) -> None:
         """One unreadable version keeps its own sentence, which names the rung."""
         block = diagnosis_mod.MetadataBlock("No metadata for pkg==2.0")
-        diagnostic = diagnosis_mod.blockers_diagnostic([], (block,))
+        diagnostic = self._diagnostic([], (block,))
         assert diagnostic.short == "No metadata for pkg==2.0"
         assert diagnostic.detail == ("No metadata for pkg==2.0",)
 
-    def test_a_block_that_carries_its_own_entry_uses_it(self) -> None:
-        """The ladder builds one where it can name the filter that took the sdist."""
-        entry = Diagnostic("uploaded-prior-to excluded the sdist", ("detail",), "try")
-        block = diagnosis_mod.MetadataBlock("No metadata for pkg==2.0", entry)
-        assert diagnosis_mod.blockers_diagnostic([], (block,)) is entry
+    def test_a_marked_block_asks_the_walk_for_the_filter(self) -> None:
+        """The ladder leaves a marker, and the filter is named here.
+
+        Naming it costs a walk of the whole listing, so the ladder stores
+        the version it wanted and the walk runs on this side, where the
+        resolve has already failed.
+        """
+        provider = build([wheel("2.0"), sdist("2.0", upload_time=AFTER)], **WITH_CUTOFF)
+        block = diagnosis_mod.MetadataBlock("No metadata for pkg==2.0", Version("2.0"))
+
+        diagnostic = self._diagnostic([], (block,), provider)
+
+        assert diagnostic.short == (
+            "uploaded-prior-to excluded the sdist,"
+            " and the index has no PEP 658 metadata"
+        )
+
+    def test_a_marked_block_the_walk_cannot_name_keeps_its_sentence(self) -> None:
+        """A marker the walk answers nothing for leaves the ladder's own line."""
+        provider = build([wheel("2.0")], **WITH_CUTOFF)
+        block = diagnosis_mod.MetadataBlock("No metadata for pkg==2.0", Version("2.0"))
+
+        diagnostic = self._diagnostic([], (block,), provider)
+
+        assert diagnostic.short == "No metadata for pkg==2.0"
 
 
 _WINDOWS312 = ResolveTarget.for_declared(

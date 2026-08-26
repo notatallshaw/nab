@@ -94,7 +94,7 @@ def look_ahead_ok(
             provider.get_dependencies(package, version)
         except MetadataError as exc:
             provider.pending_metadata_blocks[canonicalize_name(package)].setdefault(
-                version, MetadataBlock(str(exc), exc.diagnostic)
+                version, MetadataBlock(str(exc), exc.filtered_sdist_version)
             )
             return False
 

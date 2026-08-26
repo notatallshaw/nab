@@ -50,7 +50,6 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.markers import Marker
     from nab_provider._vendor.packaging.requirements import Requirement
 
-    from ..diagnostics import Diagnostic
     from ..provider import DistFile, Provider
     from ..store import InMemoryIndex
     from ..tags import TagSet
@@ -68,6 +67,10 @@ Gating = Literal["base", "extra", "excluded"]
 logger = logging.getLogger(__name__)
 
 _OFFLINE_METADATA_MISS = "offline mode skipped a metadata fetch with no cached metadata"
+
+# Named without a filter, because naming one means walking the listing.  The
+# report replaces the whole sentence once it knows the resolve failed.
+FILTERED_SDIST_REASON = "no PEP 658 metadata and the listing filter excluded the sdist"
 
 
 def resolve_metadata(
@@ -171,7 +174,7 @@ def _ladder_failure(
     # skipped offline says nothing about what this one read.
     last_url = sdist.url if sdist is not None else metadata_url
 
-    diagnostic = None
+    filtered_sdist = None
     if index.is_offline_metadata_miss(normalized, ver_str, last_url):
         reason = _OFFLINE_METADATA_MISS
         _report_offline_skip(index, normalized, package, version)
@@ -179,30 +182,17 @@ def _ladder_failure(
         # A fetched sdist with no PKG-INFO is distinct from no sdist at all.
         reason = "no PEP 658 metadata and the sdist has no readable PKG-INFO"
     elif _index_published_sdist(index, normalized, version):
-        reason, diagnostic = _filtered_sdist_reason(provider, normalized, version)
+        # Which rung of the listing filter took it is a walk of the whole
+        # listing, and look-ahead swallows this error, so the marker goes
+        # and the report walks only if the resolve fails.
+        reason = FILTERED_SDIST_REASON
+        filtered_sdist = version
     else:
         reason = "no PEP 658 metadata and no sdist available"
 
     error = MetadataError(f"No metadata for {package}=={version}: {reason}")
-    error.diagnostic = diagnostic
+    error.filtered_sdist_version = filtered_sdist
     return error
-
-
-def _filtered_sdist_reason(
-    provider: Provider, normalized: str, version: Version
-) -> tuple[str, Diagnostic | None]:
-    """Say which filter took the sdist the ladder wanted, if the walk can.
-
-    The listing filter drops a file without recording why, so the ladder
-    asks the diagnosis walk to attribute this one.  A rung the walk cannot
-    name leaves the untargeted sentence, which says what happened without
-    guessing at a filter.
-    """
-    named = provider.filtered_sdist_diagnostic(normalized, version)
-    if named is None:
-        return "no PEP 658 metadata and the listing filter excluded the sdist", None
-    key, diagnostic = named
-    return f"no PEP 658 metadata and {key} excluded the sdist", diagnostic
 
 
 def _index_published_sdist(

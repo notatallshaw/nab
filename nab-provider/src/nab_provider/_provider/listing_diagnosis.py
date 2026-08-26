@@ -211,17 +211,19 @@ class MetadataBlock:
     """One version whose metadata no rung of the ladder could read.
 
     ``message`` is the failure as every other caller of the raising code
-    reads it.  ``diagnostic`` is the whole-package entry the raiser could
-    build for it, which only the rung that knows a named filter took the
-    sdist can.
+    reads it.  ``filtered_sdist_version`` is the ladder's marker for the one
+    failure the report can improve on, and asking the walk which rung took
+    that version's sdist is what improves it.
     """
 
-    __slots__ = ("diagnostic", "message")
+    __slots__ = ("filtered_sdist_version", "message")
 
-    def __init__(self, message: str, diagnostic: Diagnostic | None = None) -> None:
+    def __init__(
+        self, message: str, filtered_sdist_version: Version | None = None
+    ) -> None:
         """Record ``message`` as this version's failure."""
         self.message = message
-        self.diagnostic = diagnostic
+        self.filtered_sdist_version = filtered_sdist_version
 
 
 class NoVersionsReason:
@@ -902,12 +904,12 @@ def filtered_sdist_diagnostic(
     normalized: str,
     version: Version,
     diagnosis: ListingDiagnosis,
-) -> tuple[str, Diagnostic] | None:
+) -> Diagnostic | None:
     """Name the rung that took ``version``'s sdist, for the metadata ladder.
 
-    Returns the config key that refused it and the report entry for the
-    package, or ``None`` when no rung this report can name refused that
-    sdist, which leaves the ladder its own untargeted sentence.
+    Returns the report entry for the package, or ``None`` when no rung this
+    report can name refused that sdist, which leaves the ladder's own
+    untargeted sentence standing.
     """
     refused = [
         record
@@ -922,7 +924,7 @@ def filtered_sdist_diagnostic(
     record = refused[0]
     key = FILTER_KEYS[record.cause]
     layers = _cutoff_layers(provider, normalized, diagnosis, refused)
-    return key, Diagnostic(
+    return Diagnostic(
         f"{key} excluded the sdist, and the index has no PEP 658 metadata",
         (
             f"{normalized} {version} has no PEP 658 metadata on the index",
@@ -965,7 +967,10 @@ _UNREADABLE_METADATA = "no version in range has readable metadata (-v for the er
 
 
 def blockers_diagnostic(
-    blockers: Sequence[Blocker], metadata: Sequence[MetadataBlock]
+    provider: Provider,
+    normalized: str,
+    blockers: Sequence[Blocker],
+    metadata: Sequence[MetadataBlock],
 ) -> Diagnostic:
     """Say what the look-ahead found rejecting every candidate in range.
 
@@ -982,7 +987,7 @@ def blockers_diagnostic(
 
     if len(blockers) + bool(metadata) == 1:
         if not blockers:
-            return metadata_diagnostic(metadata)
+            return metadata_diagnostic(provider, normalized, metadata)
         blocker = blockers[0]
         short = _BLOCKER_SHORT[blocker.kind].format(
             package=blocker.package, declared=blocker.declared, held=blocker.held
@@ -1016,19 +1021,32 @@ def _join_names(names: Sequence[str]) -> str:
     return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
-def metadata_diagnostic(blocks: Sequence[MetadataBlock]) -> Diagnostic:
+def metadata_diagnostic(
+    provider: Provider, normalized: str, blocks: Sequence[MetadataBlock]
+) -> Diagnostic:
     """Say that no version's metadata could be read, at the depth it is known.
 
     One version keeps its own sentence, which names the rung that gave up.
-    Where the raiser built a whole-package entry for it, that entry is the
-    answer: it names the filter that took the sdist the ladder wanted.
+    Where that rung was the listing filter, the walk runs here and names the
+    filter, since reaching this function means the resolve has failed.
     """
     if len(blocks) == 1:
         block = blocks[0]
-        if block.diagnostic is not None:
-            return block.diagnostic
+        named = _named_filtered_sdist(provider, normalized, block)
+        if named is not None:
+            return named
         return Diagnostic(block.message, (block.message,))
     return Diagnostic(_UNREADABLE_METADATA, tuple(block.message for block in blocks))
+
+
+def _named_filtered_sdist(
+    provider: Provider, normalized: str, block: MetadataBlock
+) -> Diagnostic | None:
+    """Name the rung that took this block's sdist, where the ladder marked one."""
+    version = block.filtered_sdist_version
+    if version is None:
+        return None
+    return provider.filtered_sdist_diagnostic(normalized, version)
 
 
 _EXTRA_SHORT: dict[ReasonKind, str] = {
