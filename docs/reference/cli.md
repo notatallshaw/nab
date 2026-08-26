@@ -143,7 +143,22 @@ pylock output instead.
 
 Exits non-zero on resolution failure; the message starts with
 `error: resolution failed:` followed by a derivation tree, and any
-captured diagnostics are appended under a `Diagnostics:` section.
+captured diagnostics are appended under a `Diagnostics:` section. A
+package the resolve found no candidate for gets one line there naming
+every filter that refused its files, how many each refused, and the
+version the evidence comes from. Where a config key would admit them
+again, an indented `note:` line names it and what to set:
+
+```
+Diagnostics:
+  - foo: found on index but no distribution is compatible: the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0); no sdist is available to build from
+    note: the project-level uploaded-prior-to set that cutoff; uploaded-prior-to = false under [tool.nab.packages."foo"] lifts it for this package
+```
+
+A remedy is offered for the upload-time cutoff alone. A release the
+requirement asked for that a filter dropped reads as `found on index
+but every version matching the requirement was filtered`, naming those
+filters.
 
 Universal mode (`[tool.nab].mode = "universal"`) is supported for
 all three formats:
@@ -163,8 +178,8 @@ all three formats:
   format is for inspection or for tools that consume one block at
   a time.
 
-Failed tuples render as `# {label}: FAILED` followed by the
-indented error and exit `1`.
+Failed tuples render as `# {label}: FAILED` followed by the error,
+every line of it commented and indented, and exit `1`.
 
 `--python X.Y` resolves for that Python on this machine instead of the
 running interpreter, like pip's `--python-version`; it moves only the
