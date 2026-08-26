@@ -145,9 +145,9 @@ class Remedy:
 
     ``label`` names the entry the way the config file has it, so a line
     asking for a change to an entry that exists can point the reader
-    straight at it.  ``selector`` is the requirement itself, which the
-    remaining lines key a new setting by: a config path is not a package
-    selector.
+    straight at it.  ``selector`` is the requirement itself, which a line
+    writing a setting that does not exist yet keys it by: a config path is
+    not a package selector.
     """
 
     __slots__ = ("field", "label", "layer", "selector")
@@ -546,8 +546,9 @@ def _detailed(
 # wrong.  A why-clause is here only where the key does not carry it: an
 # excluding uploaded-prior-to reads as a cutoff nothing was old enough for
 # unless the line says otherwise, and the dist-policy value says which half
-# of the listing that key kept.  The two rungs no key turns on name the
-# target they judged against instead, which is the half a reader can move.
+# of the listing that key kept.  The two rungs this report never offers a
+# remedy for name the target they judged against instead, which is the half
+# a reader can move.
 _SHORT_EMPTY: dict[Cause, str] = {
     DropCause.UPLOAD_TIME_MISSING: (
         "uploaded-prior-to excluded every file; none is dated"
@@ -700,7 +701,10 @@ def _subject(cause: Cause, record: DroppedFile) -> str:
 
 
 def _join_keys(groups: _Groups) -> str:
-    """Name the config keys the groups fired, in report order, without repeats."""
+    """Name the config keys the groups fired, or count them past two.
+
+    Report order, without repeats.
+    """
     keys = list(dict.fromkeys(FILTER_KEYS[cause] for cause, _records in groups))
     return _named_or_counted(keys, "filters")
 
@@ -712,9 +716,9 @@ _MOST_NAMED: Final = 2
 def _named_or_counted(names: Sequence[str], noun: str) -> str:
     """Name the things a line is about, or count them past :data:`_MOST_NAMED`.
 
-    A line built by listing what the user configured grows with their
-    configuration and stops being one glance's worth of reading, so past
-    two it says how many.  ``-v`` names them all, one to a clause.
+    A line that lists what a resolve found grows with the project it ran
+    on and stops being one glance's worth of reading, so past two names it
+    says how many.  ``-v`` names them all, one to a clause.
     """
     if len(names) == 1:
         return names[0]
@@ -1211,8 +1215,8 @@ def extra_diagnostic(
     ``searched`` is the range the proxy looked in, which the undeclared
     case reads.  The narrowed case names the version it was narrowed off
     instead: the range it was left with is the solver's own, which does
-    not always spell as a specifier, and "outside any version" is not a
-    sentence.
+    not always spell as a specifier, and a full one has nothing outside it
+    to point at.
     """
     short = _EXTRA_SHORT[recorded.kind].format(base=base)
     if recorded.kind == ReasonKind.EXTRA_METADATA:
