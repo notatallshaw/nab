@@ -312,6 +312,33 @@ class TestDifferentialOracle:
             "\nthe files nab read hold no sdist to build from"
         )
 
+    def test_a_named_rung_beside_an_unmodelled_drop_still_names_its_key(self) -> None:
+        """One rung explains one file and nothing explains the other.
+
+        The line cannot say a single rung emptied the listing, so it joins
+        what it has, which here is the one key.
+        """
+
+        class DropsTheSurvivor(Provider):
+            def filter_distributions(
+                self, normalized: str, files: Sequence[WheelFile | SdistFile]
+            ) -> list[tuple[Version, DistFile]]:
+                kept = super().filter_distributions(normalized, files)
+                return [pair for pair in kept if pair[0] != Version("2.0")]
+
+        coordinator = make_coordinator(
+            [wheel("1.0", upload_time=AFTER), wheel("2.0")], package="pkg"
+        )
+        provider = DropsTheSurvivor(coordinator, uploaded_prior_to=CUTOFF)
+        assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
+
+        diagnosis = provider.diagnose_listing("pkg")
+        assert diagnosis is not None
+        assert diagnosis.unexplained == 1
+        assert diagnosis_mod.empty_listing_diagnostic(
+            provider, "pkg", diagnosis
+        ).short == ("uploaded-prior-to excluded every file")
+
 
 class TestTheWalkRunsOnlyWhereItIsRead:
     """The walk costs one record per dropped file, so it is screened first."""
