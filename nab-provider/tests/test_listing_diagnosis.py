@@ -445,7 +445,7 @@ class TestClauseText:
 
         The version-scoped override gives 1.0 a cutoff of its own.  One
         clause over both files would count 1.0 among the files uploaded on
-        or after a cutoff it precedes by five years.
+        or after a cutoff it precedes by nearly six years.
         """
         assert reason_for(
             [wheel("1.0", upload_time=BETWEEN), wheel("2.0", upload_time=AFTER)],
