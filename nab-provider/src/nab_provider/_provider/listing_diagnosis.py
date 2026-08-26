@@ -239,8 +239,10 @@ class NoVersionsReason:
         """Mark ``kind`` as the situation, with what the failure cannot re-derive.
 
         Recorded during the resolve and rendered only if the resolve then
-        fails, so it holds the look-ahead rejections (which reset per scan)
-        and the range that was asked, and nothing else.
+        fails, so it holds what the render can no longer read for itself: the
+        look-ahead rejections and metadata failures, which reset at the next
+        scan, and the range that was asked.  Everything else the render walks
+        for.
         """
         self.kind = kind
         self.blockers = blockers
@@ -965,7 +967,11 @@ _UNREADABLE_METADATA = "no version in range has readable metadata (-v for the er
 def blockers_diagnostic(
     blockers: Sequence[Blocker], metadata: Sequence[MetadataBlock]
 ) -> Diagnostic:
-    """Say what the look-ahead found rejecting every candidate in range."""
+    """Say what the look-ahead found rejecting every candidate in range.
+
+    One rejection states its ranges on the line.  Several name their packages
+    and leave the ranges to ``-v``, since two pairs of ranges do not fit.
+    """
     detail = [
         _BLOCKER_DETAIL[blocker.kind].format(
             package=blocker.package, declared=blocker.declared, held=blocker.held
