@@ -212,9 +212,10 @@ class TestDifferentialOracle:
     def test_a_drop_the_walk_cannot_model_is_counted_not_hidden(self) -> None:
         """A filter that removes more than the rungs explain says so in the line.
 
-        Driven through the documented ``filter_distributions`` override seam,
-        which is the only way a host can drop a file no rung of the walk knows
-        about.
+        Driven through the ``filter_distributions`` override seam, which
+        ``fetch_versions`` routes through so a subclass's answer is what
+        reaches ``versions_cache``.  It is the only way a host can drop a
+        file no rung of the walk knows about.
         """
 
         class DropsEverything(Provider):

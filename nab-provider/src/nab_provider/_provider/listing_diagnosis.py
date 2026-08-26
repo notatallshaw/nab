@@ -8,8 +8,11 @@ listing a second time through the predicates in
 and records which one refused each file.  The sentence the user reads is
 built here, from that record.
 
-Nothing in this module runs on a resolve that succeeds.  The walk partitions
-the whole listing rather than a difference, so every file it sees is kept or
+The record path builds a marker and nothing else: no listing is walked, no
+version parsed and no sentence built until
+:meth:`~nab_provider.provider.Provider.get_no_versions_reason` asks for one,
+which happens once the resolve has already failed.  The walk partitions the
+whole listing rather than a difference, so every file it sees is kept or
 refused exactly once, and a version it keeps that the filter did not is
 counted as unexplained rather than passed over.
 """
@@ -38,9 +41,9 @@ if TYPE_CHECKING:
     from .listing import ListingPolicy
 
 
-# The filter each cause belongs to, as the in-range lead names it.  One
-# table for both leads, so the two cannot enumerate different filter sets
-# for the same drop.
+# The filter each cause belongs to, as the in-range lead names it.  The
+# empty-listing lead names one cause at a time, so this is the coarser of
+# the two enumerations rather than a second one.
 FILTER_LABELS: dict[DropCause, str] = {
     DropCause.UPLOAD_TIME_MISSING: "upload-time",
     DropCause.UPLOAD_TIME_UNPARSEABLE: "upload-time",
@@ -159,9 +162,11 @@ class ListingDiagnosis:
         """Record what the walk kept and what it refused.
 
         ``kept`` is what the walk admitted, and ``unexplained`` counts the
-        versions in it the filter did not keep: the walk's own check that
-        it modelled every rung, since a drop it cannot name would
-        otherwise read as a file nothing refused.
+        versions in it the filter did not keep, so a drop no rung models is
+        reported rather than read as a file nothing refused.  That is one
+        direction only: a file the walk refuses and the filter kept counts
+        zero here, and the differential-oracle test is what covers the
+        other way round.
         """
         self.index_name = index_name
         self.dropped = dropped
