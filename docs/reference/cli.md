@@ -144,10 +144,13 @@ pylock output instead.
 Exits non-zero on resolution failure; the message starts with
 `error: resolution failed:` followed by a derivation tree, and any
 captured diagnostics are appended under a `Diagnostics:` section. A
-package the resolve found no candidate for gets one line there naming
-every filter that refused its files, how many each refused, and the
-version the evidence comes from. Where a config key would admit them
-again, an indented `note:` line names it and what to set:
+package whose listing an index served, and which the filters left with
+nothing this target can install, gets a line there naming the filters
+that refused files, with a count and the newest version each one
+refused. A file that two filters would both refuse is attributed to the
+first one that did, so lifting the named filter can uncover a second.
+Where a config key would admit those files again, an indented `note:`
+line names it and what to set:
 
 ```
 Diagnostics:
@@ -155,9 +158,11 @@ Diagnostics:
     note: the project-level uploaded-prior-to set that cutoff; uploaded-prior-to = false under [tool.nab.packages."foo"] lifts it for this package
 ```
 
-A remedy is offered for the upload-time cutoff alone. A release the
-requirement asked for that a filter dropped reads as `found on index
-but every version matching the requirement was filtered`, naming those
+A remedy is offered for the upload-time cutoff alone. Not every line
+carries counts and versions: a package no configured index served reads
+`package not found on any configured index`, and a release the
+requirement asked for that a filter dropped reads `found on index but
+every version matching the requirement was filtered`, naming those
 filters.
 
 Universal mode (`[tool.nab].mode = "universal"`) is supported for
