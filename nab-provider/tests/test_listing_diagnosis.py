@@ -282,7 +282,16 @@ class TestTheWalkLeavesNoTrace:
         first = provider.diagnose_listing("pkg")
         assert first is not None
         assert provider.diagnose_listing("pkg") is first
-        assert first.dropped
+
+    def test_a_second_render_keeps_the_causes_the_walk_found(self) -> None:
+        """The memo replays the whole diagnosis, so the sentence cannot thin."""
+        first = reason_for([wheel("1.0", upload_time=AFTER)], **WITH_CUTOFF)
+        provider = build([wheel("1.0", upload_time=AFTER)], **WITH_CUTOFF)
+        assert provider.choose_version("pkg", SpecifierSet("").to_range()) is None
+
+        assert provider.get_no_versions_reason("pkg") == first
+        assert provider.get_no_versions_reason("pkg") == first
+        assert "excluded 1 file uploaded at" in first
 
     def test_an_absent_listing_memoises_its_own_absence(self) -> None:
         """A package the index never served is walked once and answers None."""
