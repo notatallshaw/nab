@@ -1745,9 +1745,11 @@ class Provider:
     ) -> str:
         """Render the two markers whose sentence comes from the listing walk.
 
-        A package with no listing to walk falls back to the no-match line:
-        a local, VCS or archive source has no index page, so no filter can
-        have dropped the release the requirement asked for.
+        Falls back to the no-match line wherever the walk has nothing to
+        say: a local, VCS or archive source has no index page for a filter
+        to have dropped anything from, and an in-range marker whose range
+        holds nothing the filter dropped is a requirement for a version the
+        index never published.
         """
         _, _, normalized = self.split_and_normalize(package)
         diagnosis = (

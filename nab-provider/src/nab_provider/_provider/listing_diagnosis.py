@@ -424,10 +424,11 @@ def in_range_reason(
 ) -> str | None:
     """Say which filters dropped the releases matching ``version_range``.
 
-    Returns ``None`` when no refused release falls inside the range, which
-    is the caller's signal that the requirement asks for a version the index
-    never published.  A refused version equal to one in ``kept`` survived
-    under another spelling and does not count.
+    Returns ``None`` when the walk explains every drop and none of them
+    falls inside the range, which is the caller's signal that the
+    requirement asks for a version the index never published.  A refused
+    version equal to one in ``kept`` survived under another spelling and
+    does not count.
     """
     named = [
         record
