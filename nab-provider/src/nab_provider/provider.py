@@ -1816,23 +1816,43 @@ class Provider:
 
         The label is the per-package override's ``source_label`` or the
         index's name, and is empty for the project-level cutoff, which no
-        entry names.  Reads the two override surfaces through the same
-        matcher :meth:`_effective_field` reads them with, but never raises:
-        it runs while a failure is being rendered, where the probe may
-        already have swallowed the conflict :meth:`_effective_field` would.
+        entry names.  A host that builds overrides itself may leave the
+        label unset, so the requirement stands in for it.  Reads the two
+        override surfaces through the same matcher :meth:`_effective_field`
+        reads them with, but never raises: it runs while a failure is being
+        rendered, where the probe may already have swallowed the conflict
+        :meth:`_effective_field` would.
         """
         override = self._matching_package_override(
             canonical_name, version, self._uploaded_prior_to_value
         )
         if override is not None:
-            return _diagnosis.CutoffLayer.PACKAGE, override.source_label
+            label = override.source_label or str(override.requirement)
+            return _diagnosis.CutoffLayer.PACKAGE, label
 
         if index_name is not None:
             index = self._index_overrides.get(index_name)
             if index is not None and self._uploaded_prior_to_value(index) is not _UNSET:
                 return _diagnosis.CutoffLayer.INDEX, index_name
 
+        if self._package_scopes_uploaded_prior_to(canonical_name):
+            return _diagnosis.CutoffLayer.GLOBAL_SCOPED_ENTRY, ""
         return _diagnosis.CutoffLayer.GLOBAL, ""
+
+    def _package_scopes_uploaded_prior_to(self, canonical_name: str) -> bool:
+        """Whether an entry sets ``canonical_name``'s cutoff over some other range.
+
+        Asked only where the project-level cutoff answered, so a bare-name
+        entry would have matched the candidate and any entry found here is
+        version-scoped around it.  A second entry for the package would
+        overlap that one, which the config layer refuses, so the remedy for
+        this candidate cannot suggest one.
+        """
+        return any(
+            override.name == canonical_name
+            and self._uploaded_prior_to_value(override) is not _UNSET
+            for override in self._package_overrides
+        )
 
     def _prefetch_batch(
         self,

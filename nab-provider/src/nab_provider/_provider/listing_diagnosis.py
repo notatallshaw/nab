@@ -66,9 +66,16 @@ UPLOAD_TIME_CAUSES = frozenset(
 
 
 class CutoffLayer(enum.Enum):
-    """Which config layer set the upload-time cutoff a candidate was judged by."""
+    """Which config layer set the upload-time cutoff a candidate was judged by.
+
+    The project level splits in two because the remedy does: a package that
+    already sets ``uploaded-prior-to`` over some other version range cannot
+    be given a second, bare-name entry, which the config layer refuses as
+    two entries setting one field over overlapping ranges.
+    """
 
     GLOBAL = "global"
+    GLOBAL_SCOPED_ENTRY = "global-scoped-entry"
     PACKAGE = "package"
     INDEX = "index"
 
@@ -584,10 +591,18 @@ def _version_of(record: DroppedFile) -> Version:
     return record.version
 
 
+# Every key path here is spelled the way the user must type it: an index
+# name is free-form, so it is quoted, and a package that already carries an
+# uploaded-prior-to entry is offered no second one.
 _REMEDIES: dict[CutoffLayer, str] = {
     CutoffLayer.GLOBAL: (
         "the project-level uploaded-prior-to set that cutoff; uploaded-prior-to"
         ' = false under [tool.nab.packages."{package}"] lifts it for this package'
+    ),
+    CutoffLayer.GLOBAL_SCOPED_ENTRY: (
+        "the project-level uploaded-prior-to set that cutoff; {package} already"
+        " sets uploaded-prior-to over another version range, so a second package"
+        " entry would conflict"
     ),
     CutoffLayer.PACKAGE: (
         "the per-package uploaded-prior-to for {label} set that cutoff; setting"
@@ -595,7 +610,7 @@ _REMEDIES: dict[CutoffLayer, str] = {
     ),
     CutoffLayer.INDEX: (
         'the per-index uploaded-prior-to for index "{label}" set that cutoff;'
-        " uploaded-prior-to = false under [tool.nab.index.{label}] lifts it"
+        ' uploaded-prior-to = false under [tool.nab.index."{label}"] lifts it'
     ),
 }
 

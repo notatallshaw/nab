@@ -18,6 +18,7 @@ import pytest
 from nab_provider._provider import listing as listing_mod
 from nab_provider._provider import listing_diagnosis as diagnosis_mod
 from nab_provider._provider.listing_diagnosis import (
+    _REMEDIES,
     CutoffLayer,
     DropCause,
     NoVersionsReason,
@@ -450,11 +451,15 @@ class TestClauseText:
             [wheel("1.0", upload_time=BETWEEN), wheel("2.0", upload_time=AFTER)],
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
-        ).startswith(
+        ) == (
             "found on index but no distribution is compatible: the"
             f" uploaded-prior-to cutoff {EARLY_CUTOFF_TEXT} excluded 1 file"
             f" uploaded at {BETWEEN} (1.0); the uploaded-prior-to cutoff"
-            f" {CUTOFF_TEXT} excluded 1 file uploaded at {AFTER} (2.0)"
+            f" {CUTOFF_TEXT} excluded 1 file uploaded at {AFTER} (2.0); no sdist"
+            " is available to build from\n    note: the project-level"
+            " uploaded-prior-to set that cutoff; pkg already sets"
+            " uploaded-prior-to over another version range, so a second package"
+            " entry would conflict"
         )
 
     def test_two_dist_policies_over_one_listing_read_as_two_clauses(self) -> None:
@@ -610,9 +615,81 @@ class TestTheRemedyNamesTheLayer:
             [wheel("1.0", upload_time=AFTER)],
             index_overrides={"pypi": IndexOverride(uploaded_prior_to=CUTOFF)},
         ).endswith(
+            f"the uploaded-prior-to cutoff {CUTOFF_TEXT} excluded 1 file uploaded"
+            f" at {AFTER} (1.0); no sdist is available to build from"
             '\n    note: the per-index uploaded-prior-to for index "pypi" set'
-            " that cutoff; uploaded-prior-to = false under [tool.nab.index.pypi]"
+            ' that cutoff; uploaded-prior-to = false under [tool.nab.index."pypi"]'
             " lifts it"
+        )
+
+    def test_an_index_name_that_is_not_a_bare_toml_key(self) -> None:
+        """The suggested table header is quoted, so any declared name parses.
+
+        Index names are free-form strings.  ``[tool.nab.index.my.index]``
+        reads as a nested table and nab refuses it; ``[tool.nab.index."corp
+        mirror"]`` is not even TOML.
+        """
+        provider = build(
+            [wheel("1.0", upload_time=AFTER)],
+            index_overrides={"pypi": IndexOverride(uploaded_prior_to=CUTOFF)},
+        )
+        layer, _label = provider.uploaded_prior_to_source("pkg", Version("1.0"), "pypi")
+        assert _REMEDIES[layer].format(package="pkg", label="corp mirror") == (
+            'the per-index uploaded-prior-to for index "corp mirror" set that'
+            ' cutoff; uploaded-prior-to = false under [tool.nab.index."corp'
+            ' mirror"] lifts it'
+        )
+
+    def test_a_package_that_already_scopes_the_cutoff_is_offered_no_entry(
+        self,
+    ) -> None:
+        """The project level answered, but a second package entry would conflict.
+
+        The ``pkg<2`` entry sets ``uploaded-prior-to`` over another range, and
+        the config layer refuses two per-package entries setting one field over
+        overlapping versions.  A bare-name entry overlaps everything, so the
+        remedy names the project-level cutoff and stops.
+        """
+        assert reason_for(
+            [wheel("1.0", upload_time=BETWEEN), wheel("2.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
+        ).endswith(
+            "\n    note: the project-level uploaded-prior-to set that cutoff; pkg"
+            " already sets uploaded-prior-to over another version range, so a"
+            " second package entry would conflict"
+        )
+
+    def test_a_package_scoping_another_field_still_gets_the_entry(self) -> None:
+        """Only an uploaded-prior-to entry blocks the suggestion.
+
+        Two per-package entries may set different fields over overlapping
+        ranges, so a ``dist-policy`` entry leaves the remedy alone.
+        """
+        assert reason_for(
+            [wheel("1.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[
+                pkg_override("pkg<2", dist_policy=DistPolicy.WHEEL_OR_SDIST)
+            ],
+        ).endswith(
+            "\n    note: the project-level uploaded-prior-to set that cutoff;"
+            ' uploaded-prior-to = false under [tool.nab.packages."pkg"] lifts it'
+            " for this package"
+        )
+
+    def test_an_override_with_no_source_label_names_its_requirement(self) -> None:
+        """A host that builds overrides itself leaves the label unset.
+
+        ``nab_provider`` is published on its own, and the note has to name
+        something the reader can find either way.
+        """
+        assert reason_for(
+            [wheel("1.0", upload_time=AFTER)],
+            package_overrides=[pkg_override("pkg<2", uploaded_prior_to=CUTOFF)],
+        ).endswith(
+            "\n    note: the per-package uploaded-prior-to for pkg<2 set that"
+            " cutoff; setting it to false there lifts it"
         )
 
     def test_an_index_override_on_another_index_is_not_the_layer(self) -> None:
