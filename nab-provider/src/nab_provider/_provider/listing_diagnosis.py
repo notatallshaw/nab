@@ -761,7 +761,7 @@ _CLAUSE_TEMPLATES: dict[Cause | None, str] = {
         " {detail}, the resolve targets Python {py})"
     ),
     DropCause.WHEEL_TAGS: (
-        "none of the wheel's tags are compatible with the resolve target"
+        "no wheel's tags are compatible with the resolve target"
         " ({n} [wheel|wheels] rejected)"
     ),
     DropCause.INVALID_VERSION: (

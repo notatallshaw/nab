@@ -1928,7 +1928,7 @@ class TestNoVersionsReasons:
         provider.choose_version("foo", SpecifierSet("").to_range())
         assert rendered_reason(provider, "foo") == (
             "no wheel matches this platform or Python"
-            "\nnone of the wheel's tags are compatible with the resolve target"
+            "\nno wheel's tags are compatible with the resolve target"
             " (2 wheels rejected)"
             "\nthe files nab read hold no sdist to build from"
         )
@@ -1966,7 +1966,7 @@ class TestNoVersionsReasons:
             "requires-python and wheel tags excluded every file"
             "\nrequires-python excluded 1 file (1.0 requires >=3.13, the resolve"
             " targets Python 3.11)"
-            "\nnone of the wheel's tags are compatible with the resolve target"
+            "\nno wheel's tags are compatible with the resolve target"
             " (1 wheel rejected)"
             "\nthe files nab read hold no sdist to build from"
         )
@@ -2002,7 +2002,7 @@ class TestNoVersionsReasons:
             "requires-python and wheel tags excluded every file"
             "\nrequires-python excluded 1 file (1.0 requires >=3.13, the resolve"
             " targets Python 3.11)"
-            "\nnone of the wheel's tags are compatible with the resolve target"
+            "\nno wheel's tags are compatible with the resolve target"
             " (1 wheel rejected)"
         )
 
@@ -2055,7 +2055,7 @@ class TestNoVersionsReasons:
             "requires-python and wheel tags excluded every file"
             "\nrequires-python excluded 1 file (1.0 requires >=3.13, the resolve"
             " targets Python 3.11)"
-            "\nnone of the wheel's tags are compatible with the resolve target"
+            "\nno wheel's tags are compatible with the resolve target"
             " (1 wheel rejected)"
         )
 

@@ -636,14 +636,12 @@ class TestClauseText:
 
     def test_wheel_tags(self) -> None:
         assert (
-            "none of the wheel's tags are compatible with the resolve target"
-            " (1 wheel rejected)"
+            "no wheel's tags are compatible with the resolve target (1 wheel rejected)"
         ) in reason_for([wheel("1.0", tag="cp312-cp312-win_amd64")], target=_LINUX312)
 
     def test_wheel_tags_plural(self) -> None:
         assert (
-            "none of the wheel's tags are compatible with the resolve target"
-            " (2 wheels rejected)"
+            "no wheel's tags are compatible with the resolve target (2 wheels rejected)"
         ) in reason_for(
             [
                 wheel("1.0", tag="cp312-cp312-win_amd64"),
@@ -1142,7 +1140,7 @@ class TestTheInRangeLead:
             "requires-python and wheel tags excluded every version in range"
             "\nrequires-python excluded 1 file (2.0 requires >=3.99, the resolve"
             " targets Python 3.12)"
-            "\nnone of the wheel's tags are compatible with the resolve target"
+            "\nno wheel's tags are compatible with the resolve target"
             " (1 wheel rejected)"
         )
 
@@ -1165,7 +1163,7 @@ class TestTheInRangeLead:
             " file uploaded at 2030-01-01T00:00:00Z (2.0)"
             "\nrequires-python excluded 1 file (3.0 requires >=3.99, the resolve"
             " targets Python 3.12)"
-            "\nnone of the wheel's tags are compatible with the resolve target"
+            "\nno wheel's tags are compatible with the resolve target"
             " (1 wheel rejected)"
             "\nnote: the project-level uploaded-prior-to set that cutoff; setting"
             ' packages."pkg".uploaded-prior-to = false lifts it for this package'
