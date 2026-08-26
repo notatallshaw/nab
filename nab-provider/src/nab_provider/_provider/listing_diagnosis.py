@@ -689,42 +689,74 @@ def _single_cause_in_range(
 
 
 def _subject(cause: Cause, record: DroppedFile) -> str:
-    """Name the key that refused, carrying the value where the user set one.
+    """Name the key that refused, carrying the value where the user set one."""
+    value = _subject_value(cause, record)
+    key = FILTER_KEYS[cause]
+    return key if value is None else f"{key} = {value}"
+
+
+def _subject_value(cause: Cause, record: DroppedFile) -> str | None:
+    """Return the value a key carries into a line, where it carries one.
 
     ``sdist-only`` and ``sdist-install`` fail for different reasons, so a
     dist-policy line without its value leaves the reader guessing which of
-    the two they wrote.
+    the two they wrote.  No other key has a value worth the room.
     """
     if cause in DIST_POLICY_CAUSES:
-        return f'dist-policy = "{record.detail}"'
-    return FILTER_KEYS[cause]
+        return f'"{record.detail}"'
+    return None
 
 
 def _join_keys(groups: _Groups) -> str:
-    """Name the config keys the groups fired, or count them past two.
+    """Name the config keys the groups fired, or count them past :data:`_MOST_NAMED`.
 
-    Report order, without repeats.
+    Report order, without repeats.  One key is spelled with every value
+    its entries set, since two version-scoped entries can judge one
+    listing under two dist policies and the key alone would drop both.
+    Several keys are spelled bare: there the line is a summary of what
+    fired, and ``-v`` carries the values one to a clause.
     """
-    keys = list(dict.fromkeys(FILTER_KEYS[cause] for cause, _records in groups))
-    return _named_or_counted(keys, "filters")
+    values: dict[str, list[str]] = {}
+    for cause, records in groups:
+        seen = values.setdefault(FILTER_KEYS[cause], [])
+        value = _subject_value(cause, records[0])
+        if value is not None and value not in seen:
+            seen.append(value)
+
+    if len(values) == 1:
+        key, seen = next(iter(values.items()))
+        return _key_with_values(key, seen)
+    return _named_or_counted(list(values), "filters")
+
+
+def _key_with_values(key: str, values: Sequence[str]) -> str:
+    """Spell one config key with whatever values its entries set it to."""
+    if not values:
+        return key
+    return f"{key} = {_join_names(values)}"
 
 
 # How many things a short line names before it counts them instead.
-_MOST_NAMED: Final = 2
+_MOST_NAMED: Final = 3
 
 
 def _named_or_counted(names: Sequence[str], noun: str) -> str:
     """Name the things a line is about, or count them past :data:`_MOST_NAMED`.
 
     A line that lists what a resolve found grows with the project it ran
-    on and stops being one glance's worth of reading, so past two names it
-    says how many.  ``-v`` names them all, one to a clause.
+    on and stops being one glance's worth of reading, so past three names
+    it says how many.  ``-v`` names them all, one to a clause.
     """
+    if len(names) > _MOST_NAMED:
+        return f"{len(names)} {noun}"
+    return _join_names(names)
+
+
+def _join_names(names: Sequence[str]) -> str:
+    """Join names as prose, with ``and`` before the last."""
     if len(names) == 1:
         return names[0]
-    if len(names) == _MOST_NAMED:
-        return f"{names[0]} and {names[1]}"
-    return f"{len(names)} {noun}"
+    return f"{', '.join(names[:-1])} and {names[-1]}"
 
 
 # One template per cause, with the residual drop under ``None``, so every

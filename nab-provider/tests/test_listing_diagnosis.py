@@ -538,7 +538,7 @@ class TestClauseText:
                 pkg_override("pkg==1.0", dist_policy=DistPolicy.SDIST_ONLY)
             ],
         ) == (
-            "dist-policy excluded every file"
+            'dist-policy = "sdist-only" and "wheel-only" excluded every file'
             '\ndist-policy = "sdist-only" excluded 1 wheel (1.0)'
             '\ndist-policy = "wheel-only" excluded 1 sdist (2.0)'
             "\nnote: the per-package dist-policy for pkg==1.0 set that policy;"
@@ -681,6 +681,46 @@ class TestClauseText:
             "\nnote: the project-level uploaded-prior-to set that cutoff; setting"
             ' packages."pkg".uploaded-prior-to = false lifts it for this package'
         )
+
+    def test_a_line_naming_two_keys_leaves_the_values_to_v(self) -> None:
+        """Two keys make the line a summary, and the clauses under it carry the values."""
+        assert short_for(
+            [wheel("1.0", upload_time=AFTER), sdist("2.0")],
+            dist_policy=DistPolicy.WHEEL_ONLY,
+            uploaded_prior_to=CUTOFF,
+        ) == ("uploaded-prior-to and dist-policy excluded every file")
+
+    def test_two_policy_values_over_one_listing_are_both_named(self) -> None:
+        """One key, two entries, two values, and neither of them can be dropped.
+
+        ``sdist-only`` refused the wheel and ``wheel-only`` the sdist.  The
+        line is about one key, so it says the key once and both values.
+        """
+        assert short_for(
+            [wheel("1.0"), sdist("2.0")],
+            dist_policy=DistPolicy.WHEEL_ONLY,
+            package_overrides=[
+                pkg_override("pkg==1.0", dist_policy=DistPolicy.SDIST_ONLY)
+            ],
+        ) == ('dist-policy = "sdist-only" and "wheel-only" excluded every file')
+
+    def test_four_filters_are_counted(self) -> None:
+        """Past three the line stops naming and says how many.
+
+        Four keys spelled out ran to 94 characters on a live run, which is
+        past the point a bullet reads at a glance.
+        """
+        assert short_for(
+            [
+                wheel("1.0", upload_time=AFTER),
+                sdist("2.0"),
+                wheel("3.0", requires_python=">=3.99"),
+                wheel("4.0", tag="cp312-cp312-win_amd64"),
+            ],
+            dist_policy=DistPolicy.WHEEL_ONLY,
+            uploaded_prior_to=CUTOFF,
+            target=_LINUX312,
+        ) == ("4 filters excluded every file")
 
     def test_the_first_rung_that_refuses_a_file_is_the_one_named(self) -> None:
         """Two rungs that both refuse a wheel read as the one the filter asked first.
@@ -1144,8 +1184,8 @@ class TestTheInRangeLead:
             " (1 wheel rejected)"
         )
 
-    def test_three_filters_are_counted_and_named_only_behind_v(self) -> None:
-        """Past two, the line says how many and the clauses name them."""
+    def test_three_filters_are_named_on_the_line(self) -> None:
+        """Three still fit: naming them beats a count that points nowhere."""
         reason = reason_for(
             [
                 wheel("1.0"),
@@ -1158,7 +1198,8 @@ class TestTheInRangeLead:
             uploaded_prior_to=CUTOFF,
         )
         assert reason == (
-            "3 filters excluded every version in range"
+            "uploaded-prior-to, requires-python and wheel tags excluded every"
+            " version in range"
             "\nthe uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1"
             " file uploaded at 2030-01-01T00:00:00Z (2.0)"
             "\nrequires-python excluded 1 file (3.0 requires >=3.99, the resolve"
@@ -1383,8 +1424,8 @@ class TestBlockerLines:
         assert diagnostic.short == ("every version is blocked by bar and baz")
         assert len(diagnostic.detail) == 2
 
-    def test_three_blockers_are_counted_and_named_only_behind_v(self) -> None:
-        """Past two the line grows with the resolve, so it says how many."""
+    def test_three_blockers_are_named_on_the_line(self) -> None:
+        """Three names still read at a glance, and each is one to go look at."""
         diagnostic = self._diagnostic(
             [
                 blocker("bar", diagnosis_mod.BlockerKind.DECIDED),
@@ -1392,8 +1433,21 @@ class TestBlockerLines:
                 blocker("qux", diagnosis_mod.BlockerKind.HELD),
             ]
         )
-        assert diagnostic.short == ("every version is blocked by 3 packages")
+        assert diagnostic.short == ("every version is blocked by bar, baz and qux")
         assert len(diagnostic.detail) == 3
+
+    def test_four_blockers_are_counted(self) -> None:
+        """Past three the line grows with the resolve, so it says how many."""
+        diagnostic = self._diagnostic(
+            [
+                blocker("bar", diagnosis_mod.BlockerKind.DECIDED),
+                blocker("baz", diagnosis_mod.BlockerKind.ROOT),
+                blocker("qux", diagnosis_mod.BlockerKind.HELD),
+                blocker("quux", diagnosis_mod.BlockerKind.DECIDED),
+            ]
+        )
+        assert diagnostic.short == ("every version is blocked by 4 packages")
+        assert len(diagnostic.detail) == 4
 
     def test_two_blockers_on_one_package_name_it_once(self) -> None:
         """A decided blocker and a root disagreement over the same dependency."""

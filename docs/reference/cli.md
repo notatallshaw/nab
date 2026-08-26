@@ -174,10 +174,10 @@ refuse is attributed to the first one that did, so lifting the named
 key can uncover a second. Where an entry covers more than one package,
 following the line changes the setting for all of them.
 
-A line that would grow with your configuration counts instead. Two keys
-are named, three or more read as `3 filters excluded every file`, and
-`-v` names them one to a clause. The look-ahead line naming the
-packages that block every candidate counts them the same way.
+A line that would grow with your configuration counts instead. Up to
+three keys are named, four or more read as `4 filters excluded every
+file`, and `-v` names them one to a clause. The look-ahead line naming
+the packages that block every candidate counts them the same way.
 
 `-v` keeps the line and replaces the `try:` with the whole record: one
 clause per cause, with its count, the newest version it refused and the
