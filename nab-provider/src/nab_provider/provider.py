@@ -1757,7 +1757,9 @@ class Provider:
             return _diagnosis.empty_listing_reason(self, normalized, diagnosis)
         if recorded.version_range is None:
             return _diagnosis.NO_MATCH_TEXT
-        filtered = _diagnosis.in_range_reason(recorded.version_range, diagnosis)
+        filtered = _diagnosis.in_range_reason(
+            self, normalized, recorded.version_range, diagnosis
+        )
         return filtered if filtered is not None else _diagnosis.NO_MATCH_TEXT
 
     def diagnose_listing(self, normalized: str) -> _diagnosis.ListingDiagnosis | None:

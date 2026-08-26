@@ -574,7 +574,10 @@ class TestTheInRangeLead:
         )
         assert reason == (
             "found on index but every version matching the requirement was"
-            " filtered (by upload-time, requires-python, or wheel tags)"
+            " filtered (by upload-time, requires-python, or wheel tags)\n"
+            "    note: the project-level uploaded-prior-to set that cutoff;"
+            ' uploaded-prior-to = false under [tool.nab.packages."pkg"] lifts'
+            " it for this package"
         )
 
     def test_an_out_of_range_drop_does_not_name_its_filter(self) -> None:
@@ -589,9 +592,30 @@ class TestTheInRangeLead:
             target=_LINUX312,
             uploaded_prior_to=CUTOFF,
         )
-        assert reason == (
+        assert reason.startswith(
             "found on index but every version matching the requirement was"
             " filtered (by upload-time)"
+        )
+
+    def test_a_cutoff_outside_the_ask_offers_no_remedy(self) -> None:
+        """The note follows the drops the lead describes, not every drop.
+
+        The cutoff here refused 0.5, which the requirement did not ask for, so
+        lifting it would not give the user the release they wanted.
+        """
+        reason = reason_for(
+            [
+                wheel("0.5", upload_time=AFTER),
+                wheel("1.0"),
+                wheel("2.0", requires_python=">=3.99"),
+            ],
+            spec=">=2",
+            target=_LINUX312,
+            uploaded_prior_to=CUTOFF,
+        )
+        assert reason == (
+            "found on index but every version matching the requirement was"
+            " filtered (by requires-python)"
         )
 
     def test_a_recorded_range_of_none_stays_a_no_match(self) -> None:

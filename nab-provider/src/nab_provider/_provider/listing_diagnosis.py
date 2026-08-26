@@ -421,7 +421,10 @@ def empty_listing_reason(
 
 
 def in_range_reason(
-    version_range: VersionRange, diagnosis: ListingDiagnosis
+    provider: Provider,
+    normalized: str,
+    version_range: VersionRange,
+    diagnosis: ListingDiagnosis,
 ) -> str | None:
     """Say which filters dropped the releases matching ``version_range``.
 
@@ -448,7 +451,8 @@ def in_range_reason(
     if not labels:
         return None
 
-    return f"{_IN_RANGE_LEAD} (by {_join_labels(labels)})"
+    lead = f"{_IN_RANGE_LEAD} (by {_join_labels(labels)})"
+    return lead + _note(provider, normalized, diagnosis, asked)
 
 
 def _join_labels(labels: list[str]) -> str:

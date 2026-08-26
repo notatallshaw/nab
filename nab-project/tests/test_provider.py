@@ -1668,7 +1668,7 @@ class TestNoVersionsReasons:
         )
 
     @pytest.mark.parametrize(
-        ("listing", "build", "filters"),
+        ("listing", "build", "filters", "note"),
         [
             pytest.param(
                 [make_wheel("2.0", requires_python=">=3.13"), make_wheel("1.0")],
@@ -1676,6 +1676,7 @@ class TestNoVersionsReasons:
                     coordinator, target=ResolveTarget.for_host_python("3.9.0")
                 ),
                 "requires-python",
+                "",
                 id="requires-python",
             ),
             pytest.param(
@@ -1692,6 +1693,7 @@ class TestNoVersionsReasons:
                 ],
                 lambda coordinator: Provider(coordinator, target=_LINUX311),
                 "wheel tags",
+                "",
                 id="wheel-tags",
             ),
             pytest.param(
@@ -1700,6 +1702,7 @@ class TestNoVersionsReasons:
                     coordinator, dist_policy=DistPolicy.WHEEL_ONLY
                 ),
                 "dist-policy",
+                "",
                 id="dist-policy",
             ),
             pytest.param(
@@ -1712,6 +1715,9 @@ class TestNoVersionsReasons:
                     uploaded_prior_to=datetime(2024, 3, 1, tzinfo=timezone.utc),
                 ),
                 "upload-time",
+                "\n    note: the project-level uploaded-prior-to set that cutoff;"
+                ' uploaded-prior-to = false under [tool.nab.packages."foo"] lifts'
+                " it for this package",
                 id="upload-time",
             ),
         ],
@@ -1721,6 +1727,7 @@ class TestNoVersionsReasons:
         listing: list[WheelFile | SdistFile],
         build: Callable[[FakeFetchPort], Provider],
         filters: str,
+        note: str,
     ) -> None:
         """An in-range release a filter dropped names the filter that dropped it.
 
@@ -1728,13 +1735,14 @@ class TestNoVersionsReasons:
         surviving version and only the 2.0 the requirement asks for was
         filtered away.  Four listings, four different sentences: the line
         names the one filter that fired, not the four it might have been.
+        Only the cutoff carries a remedy, so only it takes a note.
         """
         coordinator = make_coordinator(listing, package="foo")
         provider = build(coordinator)
         assert provider.choose_version("foo", SpecifierSet(">=2").to_range()) is None
         assert provider.get_no_versions_reason("foo") == (
             "found on index but every version matching the requirement was"
-            f" filtered (by {filters})"
+            f" filtered (by {filters}){note}"
         )
 
     def test_unparseable_listing_version_is_not_read_as_a_filtered_match(self) -> None:
