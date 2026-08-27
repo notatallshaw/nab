@@ -42,8 +42,6 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelFile,
     WheelHashMismatchError,
-    _advertises_sidecar,
-    _metadata_value,
     _normalized_url,
     _parse_files,
     _parse_sdist_filename,
@@ -202,14 +200,26 @@ def _build_tarball(members: list[tuple[str, bytes]]) -> bytes:
     return buf.getvalue()
 
 
+def _parsed_wheel(file_info: Mapping[Any, object]) -> WheelFile:
+    """The ``WheelFile`` ingest builds for an entry carrying ``file_info``."""
+    entry: dict[Any, object] = {
+        "filename": "foo-1.0-py3-none-any.whl",
+        "url": "https://example.com/foo-1.0-py3-none-any.whl",
+        **file_info,
+    }
+    (wheel,) = _parse_files({"files": [entry]}, "https://example.com/", "foo")
+    assert isinstance(wheel, WheelFile)
+    return wheel
+
+
 def _has_metadata(file_info: Mapping[Any, object]) -> bool:
     """Whether ``file_info`` advertises a sidecar, read the way ingest reads it."""
-    return _advertises_sidecar(_metadata_value(file_info))
+    return _parsed_wheel(file_info).has_metadata
 
 
 def _metadata_hash(file_info: Mapping[Any, object]) -> tuple[str, str] | None:
     """The sidecar hash ``file_info`` publishes, read the way ingest reads it."""
-    return sidecar_hash(_metadata_value(file_info))
+    return _parsed_wheel(file_info).metadata_hash
 
 
 class TestHasMetadataFlag:
@@ -837,6 +847,9 @@ class TestParseHashes:
 
     def test_uppercase_digest_kept_lowercased(self) -> None:
         assert parse_hash_table({"sha256": "A" * 64}) == (("sha256", "a" * 64),)
+
+    def test_bare_true_publishes_no_sidecar_hash(self) -> None:
+        assert sidecar_hash(True) is None  # noqa: FBT003
 
 
 class TestSelectArtifactHash:
