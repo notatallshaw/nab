@@ -26,7 +26,7 @@ from nab_resolver.incompat_index import (
     maybe_merge_dependency,
 )
 from nab_resolver.partial_solution import Assignment, PartialSolution
-from nab_resolver.propagate import term_relation
+from nab_resolver.propagate import classify_relation, term_relation
 from nab_resolver.ranges import Range
 from nab_resolver.report import (
     explain_incompatibility,
@@ -3012,6 +3012,45 @@ class TestHashOrderIndependence:
         forward = self._culprit_queue_order(list(range(8)))
         backward = self._culprit_queue_order(list(range(7, -1, -1)))
         assert forward == backward
+
+
+class TestClassifyRelation:
+    @pytest.mark.parametrize(
+        ("positive", "subset", "disjoint", "expected"),
+        [
+            (True, True, False, SetRelation.SATISFIED),
+            (True, False, True, SetRelation.CONTRADICTED),
+            (True, False, False, SetRelation.UNDETERMINED),
+            (False, False, True, SetRelation.SATISFIED),
+            (False, True, False, SetRelation.CONTRADICTED),
+            (False, False, False, SetRelation.UNDETERMINED),
+        ],
+    )
+    def test_maps_each_relation_to_its_member(
+        self,
+        *,
+        positive: bool,
+        subset: bool,
+        disjoint: bool,
+        expected: SetRelation,
+    ) -> None:
+        term = Term("foo", Range.at_least(1), positive=positive)
+
+        result = classify_relation(term, subset=subset, disjoint=disjoint)
+
+        assert result is expected
+
+    @pytest.mark.parametrize("positive", [True, False])
+    def test_an_empty_assignment_reads_as_satisfied(self, *, positive: bool) -> None:
+        """An empty assignment is both a subset of and disjoint from anything.
+
+        Satisfied is tested first, so it wins for a term of either sign.
+        """
+        term = Term("foo", Range.at_least(1), positive=positive)
+
+        result = classify_relation(term, subset=True, disjoint=True)
+
+        assert result is SetRelation.SATISFIED
 
 
 class TestRelationCache:
