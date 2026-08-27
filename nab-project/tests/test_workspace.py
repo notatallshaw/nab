@@ -105,6 +105,24 @@ class TestDiscoverWorkspaceRoot:
         )
         assert discover_workspace_root(member) == (tmp_path / "ws" / "pyproject.toml")
 
+    def test_skips_oversized_integer_intermediate_pyprojects(
+        self, tmp_path: Path, oversized_integer: str
+    ) -> None:
+        _write(
+            tmp_path / "ws" / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\nmembers = []\n",
+        )
+        _write(
+            tmp_path / "ws" / "broken" / "pyproject.toml",
+            f"[tool.other]\ncount = {oversized_integer}\n",
+        )
+        member = _write(
+            tmp_path / "ws" / "broken" / "pkg" / "pyproject.toml",
+            '[project]\nname = "pkg"\nversion = "0"\n',
+        )
+        assert discover_workspace_root(member) == (tmp_path / "ws" / "pyproject.toml")
+
     def test_walks_past_pyproject_without_workspace_table(self, tmp_path: Path) -> None:
         _write(
             tmp_path / "outer" / "pyproject.toml",
@@ -382,6 +400,25 @@ class TestReadWorkspaceMembers:
         member = _write(
             tmp_path / "pkg" / "pyproject.toml",
             "name = 'pkg-b\n",
+        )
+        with pytest.raises(
+            WorkspaceDiscoveryError,
+            match=rf"{re.escape(str(member))} is not valid TOML",
+        ):
+            read_workspace_members(root)
+
+    def test_member_oversized_integer_raises(
+        self, tmp_path: Path, oversized_integer: str
+    ) -> None:
+        root = _write(
+            tmp_path / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\n"
+            'members = ["pkg"]\n',
+        )
+        member = _write(
+            tmp_path / "pkg" / "pyproject.toml",
+            f"[tool.other]\ncount = {oversized_integer}\n",
         )
         with pytest.raises(
             WorkspaceDiscoveryError,

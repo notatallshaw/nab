@@ -27,6 +27,7 @@ from nab_provider.metadata import validate_specifier_versions
 from nab_provider.policy import DistPolicy
 from nab_provider.records import SdistFile, WheelFile
 
+from .. import toml_io
 from .._toml import tool_nab_section
 from ..paths import path_state
 from .groups import BASE_MEMBER
@@ -197,7 +198,7 @@ def read_lockfile_anchor(path: Path) -> datetime | None:
         return None
     try:
         with path.open("rb") as f:
-            data = tomli.load(f)
+            data = toml_io.load(f)
     except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError):
         return None
     nab = tool_nab_section(data)
@@ -228,7 +229,7 @@ def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
         return None
     try:
         with path.open("rb") as f:
-            data = tomli.load(f)
+            data = toml_io.load(f)
         pylock = Pylock.from_dict(data)
     except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError, PylockValidationError):
         return None

@@ -27,6 +27,7 @@ import tyro
 from tyro.extras import SubcommandApp
 
 from nab._version import __version__
+from nab_project import toml_io
 from nab_project.config import (
     ConfigError,
     NabProjectConfig,
@@ -517,7 +518,7 @@ def _is_pylock(path: Path) -> bool:
     the pyproject parser to report.
     """
     try:
-        data = tomli.loads(path.read_text(encoding="utf-8"))
+        data = toml_io.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError):
         return False
     return "lock-version" in data and "project" not in data

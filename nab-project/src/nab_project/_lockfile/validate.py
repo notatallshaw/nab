@@ -45,6 +45,8 @@ from nab_provider.marker_holds import UnevaluableMarkerError, dependency_marker_
 from nab_provider.metadata import validate_specifier_versions
 from nab_provider.target import NonIntervalMarkerError, micro_boundary_points
 
+from .. import toml_io
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from pathlib import Path
@@ -373,7 +375,7 @@ def read_committed_pylock(path: Path) -> Pylock:
     PEP 751 lock.
     """
     try:
-        data = tomli.loads(path.read_text(encoding="utf-8"))
+        data = toml_io.loads(path.read_text(encoding="utf-8"))
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
         raise LockfileSyntaxError(str(e)) from e
     try:

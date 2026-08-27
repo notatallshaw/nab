@@ -8,14 +8,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import tomli
-
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
     parse_requirements,
     require_string_list,
 )
+
+from . import toml_io
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -40,7 +40,7 @@ def _load_project_table(path: Path) -> Mapping[str, object]:
     :class:`InvalidProjectTableError`.
     """
     with path.open("rb") as f:
-        data = tomli.load(f)
+        data = toml_io.load(f)
     project = data.get("project", {})
     if not isinstance(project, dict):
         msg = f"[project] must be a table, got {type(project).__name__}"
@@ -58,7 +58,7 @@ def read_pyproject_dependencies(path: Path) -> list[Requirement]:
     ``dependencies``.
     """
     with path.open("rb") as f:
-        data = tomli.load(f)
+        data = toml_io.load(f)
     project = data["project"]
     if not isinstance(project, dict):
         msg = f"[project] must be a table, got {type(project).__name__}"
@@ -92,7 +92,7 @@ def read_pyproject_build_requires(path: Path) -> list[Requirement]:
     known only once the backend runs.
     """
     with path.open("rb") as f:
-        data = tomli.load(f)
+        data = toml_io.load(f)
 
     if "build-system" not in data:
         msg = (
@@ -151,7 +151,7 @@ def read_pyproject_groups(
     absent table reads as an empty dict.
     """
     with path.open("rb") as f:
-        data = tomli.load(f)
+        data = toml_io.load(f)
     raw = data.get("dependency-groups", {})
     if not isinstance(raw, dict):
         msg = f"[dependency-groups] must be a table, got {type(raw).__name__}"

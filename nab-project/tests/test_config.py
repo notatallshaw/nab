@@ -321,6 +321,23 @@ class TestTopLevelKeys:
         with pytest.raises(ConfigError, match="not valid TOML"):
             read_pyproject_config(path)
 
+    def test_oversized_integer_rejected(
+        self, tmp_path: Path, oversized_integer: str
+    ) -> None:
+        # The literal sits in a table nab never reads, and still fails the parse.
+        path = write(tmp_path, f"[tool.other]\ncount = {oversized_integer}\n")
+        with pytest.raises(ConfigError, match="not valid TOML"):
+            read_pyproject_config(path)
+
+    def test_over_nested_inline_arrays_rejected(self, tmp_path: Path) -> None:
+        # tomli reports nesting this deep as a RecursionError, not a decode error.
+        depth = 1100
+        path = write(
+            tmp_path, "[tool.other]\nvalue = " + "[" * depth + "]" * depth + "\n"
+        )
+        with pytest.raises(ConfigError, match="not valid TOML"):
+            read_pyproject_config(path)
+
     def test_unreadable_rejected(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[project]\nname = "demo"\n')
         denied = PermissionError(errno.EACCES, "Permission denied", str(path))
