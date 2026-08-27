@@ -112,16 +112,22 @@ def _build_policy_bullets() -> dict[BuildPolicy, str]:
 
 
 def _documented_routes() -> dict[BuildPolicy, frozenset[str]]:
-    """The ways of declaring a source that each level's bullet names.
+    """The ways of declaring a source each level's bullet is the first to name.
 
-    A bullet says what its level adds to the stricter one above it, so a
-    route counts for the bullet that first names it. Index sdists are not
-    declared in config and have a test of their own.
+    A bullet may restate a stricter level's sources to say what its own level
+    adds to them, so a route counts only for the first bullet that names it,
+    levels taken strictest first. Index sdists are not declared in config and
+    have a test of their own.
     """
-    return {
-        policy: frozenset(phrase for phrase in SOURCE_ROUTES if phrase in body)
-        for policy, body in _build_policy_bullets().items()
-    }
+    bullets = _build_policy_bullets()
+
+    routes: dict[BuildPolicy, frozenset[str]] = {}
+    named_above: set[str] = set()
+    for policy in BuildPolicy:
+        named = {phrase for phrase in SOURCE_ROUTES if phrase in bullets[policy]}
+        routes[policy] = frozenset(named - named_above)
+        named_above |= named
+    return routes
 
 
 def _admitted_kinds(policy: BuildPolicy, tree: Path) -> frozenset[str]:
