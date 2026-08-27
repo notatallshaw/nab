@@ -29,7 +29,7 @@ from .client import (
     MalformedSimpleResponseError,
     SdistFile,
     WheelFile,
-    _extract_sdist_files,
+    _extract_sdist_files_if_readable,
     _header,
     _listing_body,
     _parse_files,
@@ -837,7 +837,10 @@ class CachedAsyncSimpleClient:
         Cache miss + offline raises :class:`OfflineError`.  Either
         element may be ``None`` if the corresponding file is absent
         from the archive (or the archive cannot be parsed).  Both are
-        treated as immutable: cached forever, never revalidated.
+        treated as immutable: cached forever, never revalidated.  An
+        archive that was read is cached even when neither file came out
+        of it; one that could not be read is not, so a later run can try
+        again.
 
         When ``sdist_hashes`` carries an acceptable published digest, the
         downloaded archive is verified against it before extraction. A
@@ -861,15 +864,16 @@ class CachedAsyncSimpleClient:
         selected = select_artifact_hash(sdist_hashes)
         if selected is not None:
             verify_sdist_hash(response.content, selected)
-        pkg_info, pyproject_toml = _extract_sdist_files(response.content)
+        files = _extract_sdist_files_if_readable(response.content)
 
         if self._sdist_archive_hold is not None:
             self._sdist_archive_hold.put(package, version, response.content)
 
-        if pkg_info is not None or pyproject_toml is not None:
-            self._cache.put_sdist_files(package, version, pkg_info, pyproject_toml)
+        if files is None:
+            return (None, None)
 
-        return (pkg_info, pyproject_toml)
+        self._cache.put_sdist_files(package, version, *files)
+        return files
 
     async def get_sdist_archive(
         self,
