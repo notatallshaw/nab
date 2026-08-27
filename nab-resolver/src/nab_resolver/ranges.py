@@ -314,11 +314,17 @@ class Range(Generic[VersionType]):
                 left_interval, right_interval
             )
 
-            if not _interval_is_empty(
-                inter_lower,
-                lower_inclusive=inter_lower_inc,
-                upper=inter_upper,
-                upper_inclusive=inter_upper_inc,
+            # _interval_is_empty, written out.
+            if not (
+                inter_lower is not NEGATIVE_INFINITY
+                and inter_upper is not POSITIVE_INFINITY
+                and (
+                    inter_lower > inter_upper
+                    or (
+                        inter_lower == inter_upper
+                        and not (inter_lower_inc and inter_upper_inc)
+                    )
+                )
             ):
                 result.append(
                     (inter_lower, inter_lower_inc, inter_upper, inter_upper_inc)
@@ -414,6 +420,8 @@ class Range(Generic[VersionType]):
             lower, lower_inclusive, upper, upper_inclusive = left
 
             # A right interval below this one is below every later one too.
+            # Written out it would need an ``if`` to break on, which puts
+            # ``__sub__`` past ruff's C901 ceiling, so this one stays a call.
             while right_index < right_count and _ends_before(
                 right_intervals[right_index], left
             ):
@@ -423,21 +431,35 @@ class Range(Generic[VersionType]):
             scan = right_index
 
             while scan < right_count:
-                right = right_intervals[scan]
+                right_lower, right_lower_inc, right_upper, right_upper_inc = (
+                    right_intervals[scan]
+                )
 
-                # Carving moves the remainder's lower end only, so its upper end
-                # is still left's and this comparison can read left directly.
-                if _ends_before(left, right):
+                # _ends_before, written out.  Carving only moves the
+                # remainder's lower end, so ``upper`` is still left's own.
+                if (
+                    upper is not POSITIVE_INFINITY
+                    and right_lower is not NEGATIVE_INFINITY
+                    and (
+                        not (upper_inclusive and right_lower_inc)
+                        if upper == right_lower
+                        else upper < right_lower
+                    )
+                ):
                     break
 
-                right_lower, right_lower_inc, right_upper, right_upper_inc = right
-
-                # Whatever of the remainder sits below this right interval survives.
-                if right_lower is not NEGATIVE_INFINITY and not _interval_is_empty(
-                    lower,
-                    lower_inclusive=lower_inclusive,
-                    upper=right_lower,
-                    upper_inclusive=not right_lower_inc,
+                # Whatever of the remainder sits below this right interval
+                # survives.  _interval_is_empty, written out.
+                if right_lower is not NEGATIVE_INFINITY and not (
+                    lower is not NEGATIVE_INFINITY
+                    and right_lower is not POSITIVE_INFINITY
+                    and (
+                        lower > right_lower
+                        or (
+                            lower == right_lower
+                            and not (lower_inclusive and not right_lower_inc)
+                        )
+                    )
                 ):
                     result.append(
                         (lower, lower_inclusive, right_lower, not right_lower_inc)
@@ -447,24 +469,32 @@ class Range(Generic[VersionType]):
                     fully_covered = True
                     break
 
-                # Resume above this right interval.
+                # Resume above this right interval, stopping when nothing of
+                # it is left.  _interval_is_empty, written out.
                 lower, lower_inclusive = right_upper, not right_upper_inc
-                if _interval_is_empty(
-                    lower,
-                    lower_inclusive=lower_inclusive,
-                    upper=upper,
-                    upper_inclusive=upper_inclusive,
+                if (
+                    lower is not NEGATIVE_INFINITY
+                    and upper is not POSITIVE_INFINITY
+                    and (
+                        lower > upper
+                        or (
+                            lower == upper and not (lower_inclusive and upper_inclusive)
+                        )
+                    )
                 ):
                     fully_covered = True
                     break
 
                 scan += 1
 
-            if not fully_covered and not _interval_is_empty(
-                lower,
-                lower_inclusive=lower_inclusive,
-                upper=upper,
-                upper_inclusive=upper_inclusive,
+            # _interval_is_empty, written out.
+            if not fully_covered and not (
+                lower is not NEGATIVE_INFINITY
+                and upper is not POSITIVE_INFINITY
+                and (
+                    lower > upper
+                    or (lower == upper and not (lower_inclusive and upper_inclusive))
+                )
             ):
                 result.append((lower, lower_inclusive, upper, upper_inclusive))
 
@@ -483,9 +513,23 @@ class Range(Generic[VersionType]):
         right_index = 0
 
         for left in self._intervals:
-            while right_index < right_count and _ends_before(
-                right_intervals[right_index], left
-            ):
+            left_lower, left_lower_inclusive = left[0], left[1]
+
+            # Retire every right interval that finishes below this one:
+            # _ends_before, written out.
+            while right_index < right_count:
+                candidate = right_intervals[right_index]
+                candidate_upper = candidate[2]
+                if (
+                    candidate_upper is POSITIVE_INFINITY
+                    or left_lower is NEGATIVE_INFINITY
+                    or (
+                        (candidate[3] and left_lower_inclusive)
+                        if candidate_upper == left_lower
+                        else not candidate_upper < left_lower
+                    )
+                ):
+                    break
                 right_index += 1
 
             if right_index >= right_count:
@@ -523,11 +567,14 @@ class Range(Generic[VersionType]):
             lower, lower_inclusive = _max_lower_bound(left, right)
             upper, upper_inclusive = _min_upper_bound(left, right)
 
-            if not _interval_is_empty(
-                lower,
-                lower_inclusive=lower_inclusive,
-                upper=upper,
-                upper_inclusive=upper_inclusive,
+            # _interval_is_empty, written out.
+            if not (
+                lower is not NEGATIVE_INFINITY
+                and upper is not POSITIVE_INFINITY
+                and (
+                    lower > upper
+                    or (lower == upper and not (lower_inclusive and upper_inclusive))
+                )
             ):
                 return False
 
@@ -563,9 +610,23 @@ class Range(Generic[VersionType]):
         disjoint = True
 
         for left in self._intervals:
-            while right_index < right_count and _ends_before(
-                right_intervals[right_index], left
-            ):
+            left_lower, left_lower_inclusive = left[0], left[1]
+
+            # Retire every right interval that finishes below this one:
+            # _ends_before, written out.
+            while right_index < right_count:
+                candidate = right_intervals[right_index]
+                candidate_upper = candidate[2]
+                if (
+                    candidate_upper is POSITIVE_INFINITY
+                    or left_lower is NEGATIVE_INFINITY
+                    or (
+                        (candidate[3] and left_lower_inclusive)
+                        if candidate_upper == left_lower
+                        else not candidate_upper < left_lower
+                    )
+                ):
+                    break
                 right_index += 1
 
             if right_index >= right_count:
@@ -574,10 +635,22 @@ class Range(Generic[VersionType]):
                 subset = False
                 break
 
+            # _ends_before, written out, against the first right interval
+            # still standing.
             right = right_intervals[right_index]
-            if _ends_before(left, right):
-                # This interval meets nothing: the walk skipped everything below
-                # it, and right starts above it.  Leave right for the next one.
+            left_upper = left[2]
+            right_lower = right[0]
+            if (
+                left_upper is not POSITIVE_INFINITY
+                and right_lower is not NEGATIVE_INFINITY
+                and (
+                    not (left[3] and right[1])
+                    if left_upper == right_lower
+                    else left_upper < right_lower
+                )
+            ):
+                # It meets nothing: the walk skipped everything below it, and
+                # right starts above it.  Leave right for the next one.
                 subset = False
                 continue
 
