@@ -28,6 +28,7 @@ import tomli
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.policy import LocalSource
 
+from . import toml_io
 from ._toml import tool_nab_section
 from .paths import PathState, path_state, realpath, resolve_path
 
@@ -65,7 +66,7 @@ def _load_member_toml(pyproject: Path) -> dict[str, Any]:
     """
     try:
         with pyproject.open("rb") as f:
-            return tomli.load(f)
+            return toml_io.load(f)
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
         msg = f"{pyproject} is not valid TOML: {exc}"
         raise WorkspaceDiscoveryError(msg) from exc
@@ -122,7 +123,7 @@ def discover_workspace_root(member_pyproject: Path) -> Path | None:
         for candidate in (parent / "pyproject.toml", parent / _PROJECT_TOML):
             try:
                 with candidate.open("rb") as f:
-                    data = tomli.load(f)
+                    data = toml_io.load(f)
             except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError):
                 continue
             declared, _label = _workspace_declaration(data, candidate)

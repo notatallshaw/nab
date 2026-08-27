@@ -1110,6 +1110,25 @@ def test_invalid_toml_precondition(
     mock.assert_not_called()
 
 
+def test_oversized_integer_precondition(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], oversized_integer: str
+) -> None:
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+    out.write_text(
+        f'lock-version = "1.0"\n[tool.other]\ncount = {oversized_integer}\n',
+        encoding="utf-8",
+    )
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    assert "is not valid TOML" in capsys.readouterr().err
+    mock.assert_not_called()
+
+
 def test_non_pep751_precondition(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

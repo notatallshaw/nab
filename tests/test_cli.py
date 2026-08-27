@@ -1747,6 +1747,21 @@ class TestLockCommandSpecific:
             lock(pyproject, output=Path("-"))
         assert "is not valid TOML" in capsys.readouterr().err
 
+    def test_oversized_integer_toml_exits(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        oversized_integer: str,
+    ) -> None:
+        """An integer too long to convert reports a clean message, not a traceback."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            f"[project]\ndependencies = []\n[tool.other]\ncount = {oversized_integer}\n"
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=Path("-"))
+        assert "is not valid TOML" in capsys.readouterr().err
+
     def test_unreadable_toml_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -5049,6 +5064,20 @@ class TestGroupAndExtraSelection:
     ) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_bytes(b"[project]\nname = '\xe9'\n[dependency-groups]\n")
+        with pytest.raises(SystemExit, match="1"):
+            resolve_group_selection(pyproject, groups=(), all_groups=True)
+        assert "is not valid TOML" in capsys.readouterr().err
+
+    def test_all_groups_oversized_integer_exits(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        oversized_integer: str,
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            f"[project]\nname = 'x'\n[tool.other]\ncount = {oversized_integer}\n"
+        )
         with pytest.raises(SystemExit, match="1"):
             resolve_group_selection(pyproject, groups=(), all_groups=True)
         assert "is not valid TOML" in capsys.readouterr().err

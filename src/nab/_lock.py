@@ -29,6 +29,7 @@ import tomli_w
 import tyro
 
 from nab._version import __version__
+from nab_project import toml_io
 from nab_project.config import (
     ConfigError,
     NabProjectConfig,
@@ -374,7 +375,7 @@ def _packages_only(text: str) -> str:
     run) so two locks compare equal whenever their packages, environments,
     and metadata match.
     """
-    data = tomli.loads(text)
+    data = toml_io.loads(text)
     data.pop("tool", None)
     return tomli_w.dumps(data)
 
