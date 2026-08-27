@@ -376,11 +376,14 @@ def version_dists(
     picked: dict[Version, DistFile] = {}
     sibling_wheels: dict[Version, list[WheelFile]] = {}
     for version, dists in grouped.items():
-        picked[version] = pick_dist(dists, provider.wheel_tags, provider.target)
+        # Selected before the pick, which reuses them rather than selecting again.
+        wheels: list[WheelFile] | None = None
         if len(dists) > 1:
             wheels = [d for d in dists if isinstance(d, WheelFile)]
             if len(wheels) > 1:
                 sibling_wheels[version] = wheels
+
+        picked[version] = pick_dist(dists, provider.wheel_tags, provider.target, wheels)
 
     indexed = VersionDists(picked, sibling_wheels)
     if cacheable:
@@ -392,10 +395,13 @@ def pick_dist(
     dists: Sequence[DistFile],
     tags: TagSet | None,
     target: ResolveTarget | None = None,
+    wheels: list[WheelFile] | None = None,
 ) -> DistFile:
     """Pick the dist of one version whose metadata answers for the target.
 
     ``dists`` are the artifacts of a single version, and must be non-empty.
+    ``wheels`` is those dists' wheels in listing order, for a caller that
+    already holds them; they are selected from ``dists`` otherwise.
 
     Sibling wheels of one version can declare different dependencies, so
     the wheel the ``tags`` rank most specific wins: :pep:`425` is what an
@@ -418,7 +424,8 @@ def pick_dist(
     if len(dists) == 1:
         return dists[0]
 
-    wheels = [d for d in dists if isinstance(d, WheelFile)]
+    if wheels is None:
+        wheels = [d for d in dists if isinstance(d, WheelFile)]
     if not wheels:
         return dists[0]
 
