@@ -13,14 +13,20 @@ orders and injects errors.  Invariants:
   including duplicate submissions, batch duplicates, and the
   listing-triggered metadata prefetch;
 * injected errors surface as replies (None / listing error), never
-  as hangs.
+  as hangs;
+* shutdown closes the client and the transport, and the fetcher thread
+  logs no error.
 """
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import NoReturn
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -154,11 +160,58 @@ class FakeClient:
         self.closed = True
 
 
+class FakeTransport:
+    """Stands in for the HTTP transport the fetcher closes on shutdown.
+
+    A direct-archive fetch is the only one that reads the transport, and no
+    action below requests one, so a recorded GET is a routing bug.
+    """
+
+    def __init__(self) -> None:
+        self.closed = False
+        self.gets: list[str] = []
+
+    async def get(self, url: str, *, headers: dict[str, str] | None = None) -> NoReturn:
+        self.gets.append(url)
+        msg = f"unexpected transport GET: {url}"
+        raise AssertionError(msg)
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _ErrorCollector(logging.Handler):
+    """Collects ERROR records as formatted text, so tracebacks survive."""
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.ERROR)
+        self.messages: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.messages.append(self.format(record))
+
+
+@contextmanager
+def _fetcher_errors() -> Iterator[list[str]]:
+    """Collect the fetcher thread's ERROR logs for the block.
+
+    A crash makes the next request raise, but nothing follows shutdown, so a
+    fault on that path reaches the log and nowhere else.
+    """
+    handler = _ErrorCollector()
+    fetch_logger = logging.getLogger(FetchCoordinator.__module__)
+    fetch_logger.addHandler(handler)
+    try:
+        yield handler.messages
+    finally:
+        fetch_logger.removeHandler(handler)
+
+
 class FakeClientCoordinator(FetchCoordinator):
     """Coordinator whose fetcher loop talks to a :class:`FakeClient`."""
 
-    def __init__(self, fake_client: FakeClient) -> None:
-        super().__init__(transport=None)  # type: ignore[arg-type]
+    def __init__(self, fake_client: FakeClient, transport: FakeTransport) -> None:
+        super().__init__(transport=transport)
         self._fake_client = fake_client
 
     def _build_client(self) -> FakeClient:  # type: ignore[override]
@@ -197,9 +250,13 @@ def test_every_request_gets_exactly_one_correct_reply(
     has_meta: dict[str, bool],
 ) -> None:
     client = FakeClient(plan, has_meta)
+    transport = FakeTransport()
     requested: list[tuple[Key, threading.Event]] = []
 
-    with FakeClientCoordinator(client) as coord:
+    with (
+        _fetcher_errors() as errors,
+        FakeClientCoordinator(client, transport) as coord,
+    ):
         for kind, pi, vi in action_list:
             pkg, ver = PKGS[pi], VERSIONS[vi]
             if kind == "listing":
@@ -301,4 +358,9 @@ def test_every_request_gets_exactly_one_correct_reply(
     # duplicate submissions, batch duplicates, and prefetch overlap.
     dupes = {k: c for k, c in client.calls.items() if c > 1}
     assert not dupes, f"duplicate fetches: {dupes}"
+
+    assert not errors, "fetcher logged:\n" + "\n".join(errors)
+
     assert client.closed
+    assert transport.closed
+    assert not transport.gets, f"unexpected transport GETs: {transport.gets}"
