@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import bisect
 import logging
+import operator
 from collections import defaultdict, deque
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, TypeVar, cast
@@ -152,10 +153,8 @@ class ProviderStats:
 
 _STAT_FIELDS = tuple(stat.name for stat in fields(ProviderStats))
 
-
-def _counters(stats: ProviderStats) -> tuple[int, ...]:
-    """Return every counter of ``stats``, in ``_STAT_FIELDS`` order."""
-    return tuple(getattr(stats, name) for name in _STAT_FIELDS)
+# Every counter of a ProviderStats, in _STAT_FIELDS order.
+_counters = operator.attrgetter(*_STAT_FIELDS)
 
 
 def _replay(stats: ProviderStats, delta: tuple[int, ...]) -> None:
@@ -167,12 +166,12 @@ def _replay(stats: ProviderStats, delta: tuple[int, ...]) -> None:
 
 def _since(before: tuple[int, ...], stats: ProviderStats) -> tuple[int, ...]:
     """Return how far each counter of ``stats`` rose since ``before``."""
-    return tuple(now - was for now, was in zip(_counters(stats), before, strict=True))
+    return tuple(map(operator.sub, _counters(stats), before))
 
 
 def _restore(stats: ProviderStats, before: tuple[int, ...]) -> None:
     """Take back every counter a bracketed pass bumped on ``stats``."""
-    _replay(stats, tuple(-count for count in _since(before, stats)))
+    _replay(stats, tuple(map(operator.sub, before, _counters(stats))))
 
 
 class ListingFilterCache:
