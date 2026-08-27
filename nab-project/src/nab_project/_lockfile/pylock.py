@@ -232,11 +232,16 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
     require_artifact_hashes(lock_input)
     _check_extra_names(lock_input.extras)
     pylock = build_pylock(lock_input, lock_dir=lock_dir)
+
+    # ``Pylock.validate`` is ``from_dict(to_dict())``, so validating the mapping
+    # about to be emitted runs the same check without a second ``to_dict``.
+    document = dict(pylock.to_dict())
     try:
-        pylock.validate()
+        Pylock.from_dict(document)
     except PylockValidationError as e:
         raise LockValidationError(str(e)) from e
-    return tomli_w.dumps(dict(pylock.to_dict()))
+
+    return tomli_w.dumps(document)
 
 
 def _check_extra_names(extras: Sequence[str]) -> None:
