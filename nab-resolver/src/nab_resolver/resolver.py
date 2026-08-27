@@ -22,10 +22,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Protocol
+from typing import TYPE_CHECKING, Any, Final, Generic, Protocol
 
 from . import conflict, decide, incompat_index, propagate
+from ._compat import override
 from .decision_queue import DecisionQueue
 from .errors import ResolutionError
 from .partial_solution import PartialSolution
@@ -67,7 +67,6 @@ __all__ = [
 DEFAULT_MAX_ITERATIONS = 200_000
 
 
-@dataclass(frozen=True)
 class Solution(Generic[PackageType, VersionType]):
     """Pins and dependency relationships from a finished resolution.
 
@@ -76,11 +75,67 @@ class Solution(Generic[PackageType, VersionType]):
     breadth-first order from ``roots``.  Both endpoints of each edge are
     keys of ``pins``.  ``roots`` are the packages the caller required
     directly, in requirement order.
+
+    Immutable.  No ``__slots__``: pickle and ``copy`` restore a slotted
+    instance by assignment, which :meth:`__setattr__` refuses.
     """
+
+    __match_args__ = ("pins", "edges", "roots")
 
     pins: dict[PackageType, VersionType]
     edges: tuple[tuple[PackageType, PackageType], ...]
     roots: tuple[PackageType, ...]
+
+    def __init__(
+        self,
+        pins: dict[PackageType, VersionType],
+        edges: tuple[tuple[PackageType, PackageType], ...],
+        roots: tuple[PackageType, ...],
+    ) -> None:
+        """Record the pins, edges and roots of a finished resolution."""
+        object.__setattr__(self, "pins", pins)
+        object.__setattr__(self, "edges", edges)
+        object.__setattr__(self, "roots", roots)
+
+    @override
+    def __setattr__(self, name: str, value: object) -> None:
+        """Refuse the write."""
+        message = f"cannot assign to field {name!r}"
+        raise AttributeError(message)
+
+    @override
+    def __delattr__(self, name: str) -> None:
+        """Refuse the deletion."""
+        message = f"cannot delete field {name!r}"
+        raise AttributeError(message)
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        """Compare pins, edges and roots."""
+        if not isinstance(other, Solution):
+            return NotImplemented
+        return (self.pins, self.edges, self.roots) == (
+            other.pins,
+            other.edges,
+            other.roots,
+        )
+
+    @override
+    def __hash__(self) -> int:
+        """Hash pins, edges and roots together.
+
+        Immutable and comparable, so it declares a hash; the ``pins`` dict
+        makes the call itself raise :exc:`TypeError`.
+        """
+        return hash((self.pins, self.edges, self.roots))
+
+    @override
+    def __repr__(self) -> str:
+        """Return a debug representation."""
+        return (
+            f"{type(self).__qualname__}(pins={self.pins!r}, "
+            f"edges={self.edges!r}, roots={self.roots!r})"
+        )
 
 
 class ResolverProvider(Protocol[PackageType, VersionType]):
@@ -325,7 +380,22 @@ def _provider_with_inherited_hint(
     return None
 
 
-@dataclass
+# Every counter in declaration order.  ``__slots__`` holds the same names
+# sorted, so equality, the repr and ``__match_args__`` read this one instead.
+_STAT_FIELDS: Final = (
+    "rounds",
+    "decisions",
+    "conflicts",
+    "derivations",
+    "backjumps",
+    "restarts",
+    "targeted_backtracks",
+    "incompatibilities_learned",
+    "package_conflict_counts",
+    "package_culprit_counts",
+)
+
+
 class ResolverStats(Generic[PackageType]):
     """Running statistics for resolution observability.
 
@@ -334,20 +404,78 @@ class ResolverStats(Generic[PackageType]):
     See: https://minisat.se/MiniSat.html
     """
 
-    rounds: int = 0
-    decisions: int = 0
-    conflicts: int = 0
-    derivations: int = 0
-    backjumps: int = 0
-    restarts: int = 0
-    targeted_backtracks: int = 0
-    incompatibilities_learned: int = 0
-    package_conflict_counts: defaultdict[PackageType, int] = field(
-        default_factory=lambda: defaultdict(int)
+    __slots__ = (
+        "backjumps",
+        "conflicts",
+        "decisions",
+        "derivations",
+        "incompatibilities_learned",
+        "package_conflict_counts",
+        "package_culprit_counts",
+        "restarts",
+        "rounds",
+        "targeted_backtracks",
     )
-    package_culprit_counts: defaultdict[PackageType, int] = field(
-        default_factory=lambda: defaultdict(int)
-    )
+
+    __match_args__ = _STAT_FIELDS
+
+    rounds: int
+    decisions: int
+    conflicts: int
+    derivations: int
+    backjumps: int
+    restarts: int
+    targeted_backtracks: int
+    incompatibilities_learned: int
+    package_conflict_counts: defaultdict[PackageType, int]
+    package_culprit_counts: defaultdict[PackageType, int]
+
+    def __init__(  # noqa: PLR0913, PLR0917 - one parameter per counter
+        self,
+        rounds: int = 0,
+        decisions: int = 0,
+        conflicts: int = 0,
+        derivations: int = 0,
+        backjumps: int = 0,
+        restarts: int = 0,
+        targeted_backtracks: int = 0,
+        incompatibilities_learned: int = 0,
+        package_conflict_counts: defaultdict[PackageType, int] | None = None,
+        package_culprit_counts: defaultdict[PackageType, int] | None = None,
+    ) -> None:
+        """Start every counter at the value given, zero and empty by default."""
+        self.rounds = rounds
+        self.decisions = decisions
+        self.conflicts = conflicts
+        self.derivations = derivations
+        self.backjumps = backjumps
+        self.restarts = restarts
+        self.targeted_backtracks = targeted_backtracks
+        self.incompatibilities_learned = incompatibilities_learned
+
+        if package_conflict_counts is None:
+            package_conflict_counts = defaultdict(int)
+        if package_culprit_counts is None:
+            package_culprit_counts = defaultdict(int)
+        self.package_conflict_counts = package_conflict_counts
+        self.package_culprit_counts = package_culprit_counts
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        """Compare every counter."""
+        if not isinstance(other, ResolverStats):
+            return NotImplemented
+        return tuple(getattr(self, name) for name in _STAT_FIELDS) == tuple(
+            getattr(other, name) for name in _STAT_FIELDS
+        )
+
+    __hash__ = None  # type: ignore[assignment]
+
+    @override
+    def __repr__(self) -> str:
+        """Return a debug representation."""
+        counters = ", ".join(f"{name}={getattr(self, name)!r}" for name in _STAT_FIELDS)
+        return f"{type(self).__qualname__}({counters})"
 
 
 class ResolverObserver(Generic[PackageType, VersionType]):
