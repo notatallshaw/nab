@@ -269,16 +269,24 @@ class OnDiskCache:
         version_segment = _require_single_segment(version)
         return self._sdist_dir / package_segment / f"{version_segment}.json"
 
-    def _metadata_path(self, package: str, metadata_url: str) -> Path:
-        """Return the file holding the sidecar published at ``metadata_url``.
+    def _metadata_file(self, package: str, metadata_url: str) -> str:
+        """Return the path of the file holding the sidecar at ``metadata_url``.
 
         :pep:`658` attaches a sidecar to one file, so the wheels of a version
         each have their own. The URL is digested to keep the key a single
         path segment whatever path shape the index serves.
+
+        A string rather than a ``Path`` because the read side only opens it.
         """
         package_segment = _require_single_segment(package)
         digest = hashlib.sha256(metadata_url.encode("utf-8")).hexdigest()
-        return self._metadata_dir / package_segment / f"{digest}.metadata"
+        return os.path.join(  # noqa: PTH118
+            str(self._metadata_dir), package_segment, f"{digest}.metadata"
+        )
+
+    def _metadata_path(self, package: str, metadata_url: str) -> Path:
+        """Return :meth:`_metadata_file` as a ``Path``."""
+        return Path(self._metadata_file(package, metadata_url))
 
     def get_simple(self, package: str) -> tuple[bytes, CachePolicy] | None:
         """Return ``(body_bytes, policy)`` if cached, else ``None``."""
@@ -383,9 +391,11 @@ class OnDiskCache:
         A present file that is not valid UTF-8 is a corrupt entry: logged
         and treated as a miss. An absent file is a silent miss.
         """
-        path = self._metadata_path(package, metadata_url)
+        path = self._metadata_file(package, metadata_url)
         try:
-            raw = path.read_bytes()
+            # Unbuffered: the file is read whole, so buffering only adds a copy.
+            with open(path, "rb", buffering=0) as handle:  # noqa: PTH123
+                raw = handle.read()
         except OSError:
             return None
         try:

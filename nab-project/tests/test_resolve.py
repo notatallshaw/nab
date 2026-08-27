@@ -6,7 +6,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, NoReturn
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -54,12 +54,15 @@ from nab_project.resolve import (
     config_for_build_requirements,
     resolve_for_targets,
 )
+from nab_provider._provider import listing_diagnosis
 from nab_provider._vendor.packaging.markers import Marker, default_environment
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.diagnostics import Diagnostic
 from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.metadata import WheelMetadata
 from nab_provider.provider import (
     BuildPolicy,
     LocalSource,
@@ -117,6 +120,11 @@ def _root_ranges(mock_resolver: MagicMock) -> dict[str, VersionRange]:
         previous = folded.get(root.package, VersionRange.full())
         folded[root.package] = previous & root.constraint
     return folded
+
+
+def _scanned_groups(mock_check: MagicMock) -> list[tuple[str, ...]]:
+    """The groups each ``_check_group_disjointness`` call scanned, in call order."""
+    return [tuple(call.args[0]) for call in mock_check.call_args_list]
 
 
 def _locked(lock_input: LockInput) -> dict[str, PinShape]:
@@ -1600,7 +1608,10 @@ class TestResolveUniversalPyproject:
         mock_engine.assert_called_once()
 
     @patch("nab_project.resolve.resolve_with_coordinator")
-    @patch("nab_project.resolve._check_group_disjointness")
+    @patch(
+        "nab_project.resolve._check_group_disjointness",
+        wraps=_check_group_disjointness,
+    )
     def test_repeated_active_groups_check_once(
         self,
         mock_check: MagicMock,
@@ -1625,8 +1636,96 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64"]\n'
         )
         _resolved(pyproject, extras=["cpu", "gpu"], groups=["dev", "lint"])
-        # Two forks, both with active_groups=("dev", "lint"): scan once.
-        assert mock_check.call_count == 1
+        assert _scanned_groups(mock_check) == [("dev", "lint")]
+
+    @patch("nab_project.resolve.resolve_with_coordinator")
+    @patch(
+        "nab_project.resolve._check_group_disjointness",
+        wraps=_check_group_disjointness,
+    )
+    def test_distinct_active_groups_check_each(
+        self,
+        mock_check: MagicMock,
+        mock_engine: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Group-conflict forks carry different group sets, so each is scanned."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'dev = ["pytest"]\n'
+            'cpu = ["torch==2.0+cpu"]\n'
+            'gpu = ["torch==2.0+gpu"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ group = "cpu" }, { group = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        _resolved(pyproject, groups=["dev", "cpu", "gpu"])
+        assert _scanned_groups(mock_check) == [("dev", "cpu"), ("dev", "gpu")]
+
+    def test_conflict_in_a_later_fork_raises(self, tmp_path: Path) -> None:
+        """A pair that conflicts only in the second fork raises before the resolve."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'dev = ["pkg>=2"]\n'
+            'cpu = ["other"]\n'
+            'gpu = ["pkg<1"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'conflicts = [[{ group = "cpu" }, { group = "gpu" }]]\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
+            pytest.raises(ResolutionError) as info,
+        ):
+            _resolved(pyproject, groups=["dev", "cpu", "gpu"])
+        mock_universal.assert_not_called()
+
+        assert str(info.value) == (
+            "Dependency groups 'dev' and 'gpu' conflict on 'pkg': "
+            "group 'dev' requires pkg>=2 but group 'gpu' requires pkg<1."
+        )
+
+    def test_conflict_in_the_last_of_four_forks_raises(self, tmp_path: Path) -> None:
+        """Two conflict sets fork four ways, and the last fork's conflict raises."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\ndependencies = ["base"]\n'
+            "[dependency-groups]\n"
+            'cpu = ["other"]\n'
+            'gpu = ["pkg>=2"]\n'
+            'test = ["thing"]\n'
+            'docs = ["pkg<1"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            "conflicts = [\n"
+            '    [{ group = "cpu" }, { group = "gpu" }],\n'
+            '    [{ group = "test" }, { group = "docs" }],\n'
+            "]\n"
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            'platforms = ["linux_x86_64"]\n'
+        )
+        with (
+            patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
+            pytest.raises(ResolutionError) as info,
+        ):
+            _resolved(pyproject, groups=["cpu", "gpu", "test", "docs"])
+        mock_universal.assert_not_called()
+
+        assert str(info.value) == (
+            "Dependency groups 'docs' and 'gpu' conflict on 'pkg': "
+            "group 'docs' requires pkg<1 but group 'gpu' requires pkg>=2."
+        )
 
     def test_umbrella_extra_co_selecting_conflict_raises(self, tmp_path: Path) -> None:
         """An umbrella extra forcing both members cannot fork, so it raises."""
@@ -3088,6 +3187,13 @@ class TestResolvePyprojectGroupConflict:
         assert "foo" in _pins(result)
 
 
+def _diagnostics(error: ResolutionError, *, detailed: bool = True) -> str:
+    """Return the ``Diagnostics:`` section, at ``-v`` depth unless told otherwise."""
+    text = error.verbose_message if detailed else str(error)
+    assert text is not None
+    return text.split("Diagnostics:")[1]
+
+
 class TestAugmentResolutionError:
     """``resolve_pyproject`` enriches errors with provider hints."""
 
@@ -3103,7 +3209,7 @@ class TestAugmentResolutionError:
         exc = ResolutionError("base message", incompatibility=clause)
         provider = MagicMock()
         provider.get_no_versions_reason.side_effect = lambda pkg: (
-            "package not found on any configured index"
+            Diagnostic("package not found on any configured index")
             if pkg == "missing-pkg"
             else None
         )
@@ -3140,7 +3246,7 @@ class TestAugmentResolutionError:
         )
         exc = ResolutionError("base", incompatibility=derived)
         provider = MagicMock()
-        provider.get_no_versions_reason.return_value = (
+        provider.get_no_versions_reason.return_value = Diagnostic(
             "no version matches the requirement"
         )
         _augment_resolution_error(exc, provider)
@@ -3193,7 +3299,7 @@ class TestAugmentResolutionError:
         exc = ResolutionError("base message", incompatibility=clause)
         provider = MagicMock()
         provider.get_no_versions_reason.side_effect = lambda pkg: (
-            "no version matches the requirement" if pkg == "cand" else None
+            Diagnostic("no version matches the requirement") if pkg == "cand" else None
         )
         _augment_resolution_error(exc, provider)
         assert "cand: no version matches the requirement" in str(exc)
@@ -3272,7 +3378,7 @@ class TestAugmentResolutionError:
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             mock_provider_cls.return_value.get_no_versions_reason.return_value = (
-                "package not found on any configured index"
+                Diagnostic("package not found on any configured index")
             )
             mock_resolver_cls.return_value.resolve.side_effect = ResolutionError(
                 "base", incompatibility=clause
@@ -3317,8 +3423,8 @@ class TestAugmentResolutionError:
             with pytest.raises(ResolutionError) as info:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        diagnostics = str(info.value).split("Diagnostics:")[1]
-        assert "foo: every version in range was rejected" in diagnostics
+        diagnostics = _diagnostics(info.value)
+        assert "foo: every version needs bar in >=2" in diagnostics
         assert "bar" in diagnostics
         assert "foo: no version matches the requirement" not in diagnostics
 
@@ -3359,12 +3465,8 @@ class TestAugmentResolutionError:
             with pytest.raises(ResolutionError) as info:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        diagnostics = str(info.value).split("Diagnostics:")[1]
-        assert (
-            "foo: found on index but every version matching the requirement was"
-            " filtered (by requires-python, wheel tags, dist-policy, or"
-            " upload-time)" in diagnostics
-        )
+        diagnostics = _diagnostics(info.value)
+        assert "foo: no version in range supports Python 3.12" in diagnostics
         assert "no version matches the requirement" not in diagnostics
 
     def test_constraint_does_not_hide_the_transitive_blocker(
@@ -3407,11 +3509,11 @@ class TestAugmentResolutionError:
             with pytest.raises(ResolutionError) as info:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        diagnostics = str(info.value).split("Diagnostics:")[1]
+        diagnostics = _diagnostics(info.value)
         assert "<VersionRange" not in diagnostics
         assert (
-            "foo: every version in range was rejected:"
-            " requires lib in ==5.0 but solution has it at 9.0" in diagnostics
+            "foo: every version needs lib in ==5.0, but the resolve chose"
+            " lib 9.0" in diagnostics
         )
         assert "requires lib != 9.0" not in diagnostics
         assert "foo: no version matches the requirement" not in diagnostics
@@ -3453,13 +3555,14 @@ class TestAugmentResolutionError:
             with pytest.raises(ResolutionError) as info:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        derivation, diagnostics = str(info.value).split("Diagnostics:")
+        derivation = str(info.value).split("Diagnostics:")[0]
+        diagnostics = _diagnostics(info.value)
         assert "no versions of foo" in derivation
+        assert "foo: every version in range was rejected on its metadata" in diagnostics
         assert (
-            "foo: 3 versions failed metadata extraction (first: No metadata for"
-            " foo==5.0: no PEP 658 metadata and no sdist available)" in diagnostics
+            "No metadata for foo==5.0: no PEP 658 metadata and no sdist"
+            " available" in diagnostics
         )
-        assert "every version in range was rejected" not in diagnostics
 
     def test_a_sibling_requirement_does_not_bury_the_metadata_ban(
         self, tmp_path: Path
@@ -3501,10 +3604,11 @@ class TestAugmentResolutionError:
             with pytest.raises(ResolutionError) as info:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        diagnostics = str(info.value).split("Diagnostics:")[1]
+        diagnostics = _diagnostics(info.value)
+        assert "foo: every version in range was rejected on its metadata" in diagnostics
         assert (
-            "foo: 3 versions failed metadata extraction (first: No metadata for"
-            " foo==5.0: no PEP 658 metadata and no sdist available)" in diagnostics
+            "No metadata for foo==5.0: no PEP 658 metadata and no sdist"
+            " available" in diagnostics
         )
         assert "foo: no version matches the requirement" not in diagnostics
 
@@ -3543,12 +3647,18 @@ class TestAugmentResolutionError:
             with pytest.raises(ResolutionError) as info:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        derivation, diagnostics = str(info.value).split("Diagnostics:")
+        derivation = str(info.value).split("Diagnostics:")[0]
+        diagnostics = _diagnostics(info.value)
         assert "no versions of foo <VersionRange '(4.0, +inf)'>" in derivation
         assert "no versions of foo <VersionRange '(2.0, 4.0)'>" in derivation
+        assert "foo: every version in range was rejected on its metadata" in diagnostics
         assert (
-            "foo: 2 versions failed metadata extraction (first: No metadata for"
-            " foo==5.0: no PEP 658 metadata and no sdist available)" in diagnostics
+            "No metadata for foo==5.0: no PEP 658 metadata and no sdist"
+            " available" in diagnostics
+        )
+        assert (
+            "No metadata for foo==3.0: no PEP 658 metadata and no sdist"
+            " available" in diagnostics
         )
 
     def test_cutoff_filtered_sdist_is_not_reported_as_never_published(
@@ -3591,12 +3701,75 @@ class TestAugmentResolutionError:
             with pytest.raises(ResolutionError) as info:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        diagnostics = str(info.value).split("Diagnostics:")[1]
+        diagnostics = _diagnostics(info.value)
         assert (
-            "foo: every version in range was rejected: No metadata for foo==1.0:"
-            " no PEP 658 metadata and the sdist was filtered by requires-python,"
-            " dist-policy, or upload-time" in diagnostics
+            "foo: uploaded-prior-to excluded the sdist nab needed for metadata"
+            in diagnostics
         )
+
+    def test_a_resolve_that_survives_the_ladder_never_walks_the_listing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The listing walk is a failure-path cost and stays off a resolve that works.
+
+        ``foo`` 2.0 runs the ladder out of rungs, look-ahead takes that as a
+        rejection, and 1.0 pins.  Naming the rung that took 2.0's sdist would
+        mean walking the whole listing for a sentence nobody reads.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[tool.nab]\nuploaded-prior-to = "2026-05-01T00:00:00Z"\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": [
+                    WheelFile(
+                        filename="foo-2.0-py3-none-any.whl",
+                        url="https://example.com/foo-2.0-py3-none-any.whl",
+                        version="2.0",
+                        requires_python=None,
+                        has_metadata=False,
+                        upload_time="2026-01-01T00:00:00Z",
+                    ),
+                    SdistFile(
+                        filename="foo-2.0.tar.gz",
+                        url="https://example.com/foo-2.0.tar.gz",
+                        version="2.0",
+                        requires_python=None,
+                        upload_time="2030-01-01T00:00:00Z",
+                    ),
+                    WheelFile(
+                        filename="foo-1.0-py3-none-any.whl",
+                        url="https://example.com/foo-1.0-py3-none-any.whl",
+                        version="1.0",
+                        requires_python=None,
+                        has_metadata=True,
+                        upload_time="2026-01-01T00:00:00Z",
+                    ),
+                ]
+            },
+            metadata_by_version={"1.0": _metadata("foo", "1.0")},
+        )
+
+        walks: list[str] = []
+        real_walk = listing_diagnosis.walk_listing
+
+        def counted_walk(provider: Provider, normalized: str) -> object:
+            walks.append(normalized)
+            return real_walk(provider, normalized)
+
+        monkeypatch.setattr(listing_diagnosis, "walk_listing", counted_walk)
+
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            result = _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        assert _pins(result) == {"foo": Version("1.0")}
+        assert walks == []
 
     def test_blocker_diagnostics_render_readable_ranges(self, tmp_path: Path) -> None:
         """Blocker diagnostics render declared ranges, not the debug repr.
@@ -3629,12 +3802,11 @@ class TestAugmentResolutionError:
             with pytest.raises(ResolutionError) as info:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        diagnostics = str(info.value).split("Diagnostics:")[1]
+        diagnostics = _diagnostics(info.value)
         assert "<VersionRange" not in diagnostics
         assert "AFTER_LOCALS" not in diagnostics
         assert (
-            "c: every version in range was rejected:"
-            " requires b in ==1.0 but root has it in >=2"
+            "c: every version needs b in ==1.0, but your project requires b >=2"
         ) in diagnostics
 
     def test_blocker_diagnostics_spell_each_declared_range(
@@ -3673,12 +3845,11 @@ class TestAugmentResolutionError:
             with pytest.raises(ResolutionError) as info:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
-        diagnostics = str(info.value).split("Diagnostics:")[1]
+        diagnostics = _diagnostics(info.value)
         assert "<VersionRange" not in diagnostics
         assert "AFTER_LOCALS" not in diagnostics
         assert (
-            "a: every version in range was rejected:"
-            " requires c in ==2.0 or ==1.0 but solution has it at 3.0"
+            "a: every version needs c in ==2.0 or ==1.0, but the resolve chose c 3.0"
         ) in diagnostics
 
     def test_derivation_renders_readable_ranges(self, tmp_path: Path) -> None:
@@ -4206,8 +4377,14 @@ class TestLocalVcsRequiresPython:
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            with pytest.raises(ResolutionError, match="requires Python"):
+            with pytest.raises(ResolutionError) as info:
                 _resolved(root, _FAKE_TRANSPORT, python_version="3.8.0")
+
+        # The line names the metadata; which version and which Python is the
+        # raiser's own sentence, one depth down.
+        assert "rejected on its metadata" in str(info.value)
+        assert info.value.verbose_message is not None
+        assert "requires Python" in info.value.verbose_message
 
 
 def _metadata(name: str, version: str, *requires: str) -> str:
@@ -5947,3 +6124,67 @@ class TestConfiguredGroupConflictDivergentPins:
         assert versions() == {"23.2"}
         assert versions(dependency_groups=["main"]) == {"23.2"}
         assert versions(dependency_groups=["build"]) == {"24.2"}
+
+
+class _NoIndexTransport:
+    """Transport that fails the test on any request: this resolve needs no index."""
+
+    async def get(self, url: str, *, headers: dict[str, str] | None = None) -> NoReturn:
+        msg = f"unexpected index request to {url}"
+        raise AssertionError(msg)
+
+    async def aclose(self) -> None:
+        return None
+
+
+class TestBuildConfigPlumbing:
+    """A resolve's own config is the one its PEP 517 builds run under.
+
+    Only a dynamic-metadata source reaches a build: the static reader
+    returns ``None`` for it, so materialising the source falls through to
+    ``build_backend.extract_metadata``, which refuses without a config.
+    The backend run itself is stubbed, so no build venv is created.
+    """
+
+    def _project(self, tmp_path: Path) -> Path:
+        """Write a project whose only dependency is a dynamic local source."""
+        source = tmp_path / "dyn"
+        source.mkdir()
+        (source / "pyproject.toml").write_text(
+            '[project]\nname = "dyn"\ndynamic = ["version"]\n', encoding="utf-8"
+        )
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\nversion = "0"\ndependencies = ["dyn"]\n'
+            "[tool.nab]\n"
+            'build-policy = "build-local"\n'
+            "[[tool.nab.local-sources]]\n"
+            'name = "dyn"\n'
+            'path = "dyn"\n',
+            encoding="utf-8",
+        )
+        return pyproject
+
+    def test_dynamic_local_source_builds_under_the_project_config(
+        self, tmp_path: Path
+    ) -> None:
+        """``resolve_for_targets`` hands its config to the coordinator it opens."""
+        pyproject = self._project(tmp_path)
+        config = read_pyproject_config(pyproject)
+        built = WheelMetadata(name="dyn", version=Version("7.0"))
+
+        with patch(
+            "nab_project._build.runner.run_build_backend", return_value=built
+        ) as runner:
+            result = resolve_for_targets(
+                pyproject,
+                _NoIndexTransport(),
+                config=config,
+                cache_dir=tmp_path / "cache",
+            )
+
+        assert result.success
+        assert _pins(result) == {"dyn": Version("7.0")}
+
+        assert runner.call_args.kwargs["config"] is config

@@ -494,11 +494,12 @@ class Resolver(Generic[PackageType, VersionType]):
         self.relation_cache: dict[tuple[bool, int, int], SetRelation] = {}
 
         # relation_cache_on goes off while the memo's hit rate does not pay for
-        # the key it builds. relation_gate_countdown is the probes left in the
-        # window that rate is judged over, and relation_gate_hits its hits.
+        # the key it builds. A window of probes decides that: relation_gate_hits
+        # counts its hits, relation_gate_probes_left is the window less its
+        # misses, and a miss judges the window once the hits cover what is left.
         self.relation_cache_on = True
-        self.relation_gate_countdown = propagate.RELATION_GATE_WINDOW
         self.relation_gate_hits = 0
+        self.relation_gate_probes_left = propagate.RELATION_GATE_WINDOW
 
         # One token per distinct range, so a relation-cache probe compares ints
         # rather than bound structures. The counter never rewinds, so clearing
@@ -721,8 +722,8 @@ class Resolver(Generic[PackageType, VersionType]):
         self.priority_epoch = 0
         self.relation_cache.clear()
         self.relation_cache_on = True
-        self.relation_gate_countdown = propagate.RELATION_GATE_WINDOW
         self.relation_gate_hits = 0
+        self.relation_gate_probes_left = propagate.RELATION_GATE_WINDOW
         self.range_tokens.clear()
         self.range_token_by_id.clear()
         self.interned_ranges.clear()

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import bisect
 import logging
+import operator
 from collections import defaultdict, deque
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, TypeVar, cast
@@ -20,6 +21,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 
 from ._provider import extras as _extras
 from ._provider import listing as _listing
+from ._provider import listing_diagnosis as _diagnosis
 from ._provider import lookahead as _lookahead
 from ._provider import metadata_resolver as _metadata_resolver
 from ._provider import priority as _priority
@@ -77,6 +79,7 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.version import Version
     from nab_resolver.types import Incompatibility, RangeProtocol
 
+    from .diagnostics import Diagnostic
     from .fetch_port import FetchPort, Waitable
     from .overrides import IndexOverride, PackageOverride
     from .tags import TagSet
@@ -150,10 +153,8 @@ class ProviderStats:
 
 _STAT_FIELDS = tuple(stat.name for stat in fields(ProviderStats))
 
-
-def _counters(stats: ProviderStats) -> tuple[int, ...]:
-    """Return every counter of ``stats``, in ``_STAT_FIELDS`` order."""
-    return tuple(getattr(stats, name) for name in _STAT_FIELDS)
+# Every counter of a ProviderStats, in _STAT_FIELDS order.
+_counters = operator.attrgetter(*_STAT_FIELDS)
 
 
 def _replay(stats: ProviderStats, delta: tuple[int, ...]) -> None:
@@ -165,7 +166,12 @@ def _replay(stats: ProviderStats, delta: tuple[int, ...]) -> None:
 
 def _since(before: tuple[int, ...], stats: ProviderStats) -> tuple[int, ...]:
     """Return how far each counter of ``stats`` rose since ``before``."""
-    return tuple(now - was for now, was in zip(_counters(stats), before, strict=True))
+    return tuple(map(operator.sub, _counters(stats), before))
+
+
+def _restore(stats: ProviderStats, before: tuple[int, ...]) -> None:
+    """Take back every counter a bracketed pass bumped on ``stats``."""
+    _replay(stats, tuple(map(operator.sub, before, _counters(stats))))
 
 
 class ListingFilterCache:
@@ -200,6 +206,7 @@ class ListingFilterCache:
             tuple[list[tuple[Version, DistFile]], tuple[int, ...]],
         ] = {}
         self._prepared: dict[str, tuple[object, tuple[int, ...]]] = {}
+        self._diagnosed: dict[tuple[str, str | None], object] = {}
 
     def filtered(
         self,
@@ -250,6 +257,32 @@ class ListingFilterCache:
         self._prepared[package] = (result, _since(before, stats))
         return result
 
+    def diagnosed(
+        self,
+        package: str,
+        python_version: str | None,
+        compute: Callable[[], _PreparedT],
+    ) -> _PreparedT:
+        """Return the diagnosis walk's base pass, running ``compute`` once.
+
+        Keyed the way :meth:`filtered` is, because the rungs the walk shares
+        with the filter's base pass read the same three inputs: the listing,
+        the policy config and the target Python.  A matrix whose tuples
+        differ only by platform therefore attributes each listing once per
+        Python rather than once per failing tuple.
+
+        No counters are replayed: the walk's caller brackets and restores
+        every counter its predicates bump, so a hit and a miss leave the
+        same totals behind.  The result is held by every target that shares
+        the memo, so callers must treat it as read-only.
+        """
+        key = (package, python_version)
+        entry = self._diagnosed.get(key)
+        if entry is None:
+            entry = compute()
+            self._diagnosed[key] = entry
+        return cast("_PreparedT", entry)
+
 
 # Sentinel for "this override does not set the field".  Distinct from
 # ``None``, which is a real value (a disabled upload-time cutoff).
@@ -262,34 +295,45 @@ def _unset_if_none(value: object) -> object:
     Most policy fields store ``None`` to mean "unset" on the override
     dataclasses, so wrapping their attribute access in this helper yields
     the ``_UNSET``-or-value shape :meth:`Provider._effective_field`
-    expects.  :meth:`Provider._uploaded_prior_to_value` builds that shape
-    itself, because there ``None`` is a real value (a disabled cutoff).
+    expects.  :func:`_uploaded_prior_to_value` builds that shape itself,
+    because there ``None`` is a real value (a disabled cutoff).
     """
     if value is None:
         return _UNSET
     return value
 
 
-def _metadata_block_summary(blocks: Mapping[Version, str]) -> str:
-    """Summarise a package's metadata rejections as one diagnostic line.
-
-    Several collapse into a count plus the first message.  ``blocks`` must
-    not be empty.
-    """
-    first_msg = next(iter(blocks.values()))
-    if len(blocks) == 1:
-        return first_msg
-    return f"{len(blocks)} versions failed metadata extraction (first: {first_msg})"
+def _uploaded_prior_to_value(override: PackageOverride | IndexOverride) -> object:
+    """Upload-time value: a datetime, ``None`` (disabled), or ``_UNSET``."""
+    if override.uploaded_prior_to is not None:
+        return override.uploaded_prior_to
+    if override.uploaded_prior_to_disabled:
+        return None
+    return _UNSET
 
 
-# The two reasons that name no cause beyond "nothing matched".
-_NO_MATCH_REASON = "no version matches the requirement"
-_FILTERED_IN_RANGE_REASON = (
-    "found on index but every version matching the requirement"
-    " was filtered (by requires-python, wheel tags, dist-policy,"
-    " or upload-time)"
+def _dist_policy_value(override: PackageOverride | IndexOverride) -> object:
+    """Dist-policy value: a :class:`DistPolicy`, or ``_UNSET`` when unset."""
+    return _unset_if_none(override.dist_policy)
+
+
+# What each field a remedy can name is read with, so the layer lookup and
+# the effective value read the same surfaces the same way.
+_SOURCE_VALUES: dict[str, Callable[[PackageOverride | IndexOverride], object]] = {
+    "uploaded-prior-to": _uploaded_prior_to_value,
+    "dist-policy": _dist_policy_value,
+}
+
+
+# The markers an extras proxy records, which read the proxy's own name
+# rather than a listing the base package's filter emptied.
+_EXTRA_KINDS = frozenset(
+    {
+        _diagnosis.ReasonKind.EXTRA_UNDECLARED,
+        _diagnosis.ReasonKind.EXTRA_METADATA,
+        _diagnosis.ReasonKind.EXTRA_NARROWED,
+    }
 )
-_GENERIC_NO_VERSIONS_REASONS = frozenset({_NO_MATCH_REASON, _FILTERED_IN_RANGE_REASON})
 
 
 # Past this many exclusions the requirement reads worse than the range it states.
@@ -540,20 +584,14 @@ class Provider:
             target.tags if target is not None and target.tags_faithful else None
         )
 
-        # Wheels the tag filter dropped, per canonical name, so a package left
-        # with no candidate can say the target has no compatible wheel rather
-        # than blame requires-python or the cutoff.
-        self.tag_excluded_wheels: dict[str, int] = {}
-
-        # The same drops keyed by (canonical name, version), for the lock's
-        # per-package omitted count.  Bumped alongside tag_excluded_wheels.
+        # Wheels the tag filter dropped, keyed by (canonical name, version),
+        # for the lock's per-package omitted count.
         self.tag_excluded_wheels_by_version: dict[tuple[str, Version], int] = {}
 
-        # Canonical names whose listing lost a file to requires-python,
-        # dist-policy, or the upload cutoff before the tag pass ran.  A
-        # tag-rejected wheel on some other version must not then claim the
-        # whole package failed on wheel tags alone.
-        self.base_filtered_packages: set[str] = set()
+        # Per-package attribution of the listing filter's drops, built on the
+        # failure path and never during a resolve.  ``None`` records that the
+        # index served nothing to attribute.
+        self.listing_diagnoses: dict[str, _diagnosis.ListingDiagnosis | None] = {}
 
         self.root_requirements = root_requirements or {}
         self.constraints: Mapping[str, VersionRange] = constraints or {}
@@ -688,16 +726,19 @@ class Provider:
         # Metadata-error rejections, carrying the message so the failure can
         # name the real cause (sdist build needed, malformed PKG-INFO, etc).
         # Keyed by version so a re-checked candidate is counted once.
-        self.pending_metadata_blocks: defaultdict[str, dict[Version, str]] = (
-            defaultdict(dict)
-        )
+        self.pending_metadata_blocks: defaultdict[
+            str, dict[Version, _diagnosis.MetadataBlock]
+        ] = defaultdict(dict)
 
-        # Last NO_VERSIONS reason per package, for the resolve's error message.
-        self._no_versions_reasons: dict[str, str] = {}
+        # Last NO_VERSIONS marker per package.  Rendered into a sentence only
+        # if the resolve goes on to fail; see ``get_no_versions_reason``.
+        self._no_versions_reasons: dict[str, _diagnosis.NoVersionsReason] = {}
 
         # Metadata errors behind the permanent bans, keyed by canonical name
         # and unioned across scans.
-        self._metadata_ban_blocks: dict[str, dict[Version, str]] = {}
+        self._metadata_ban_blocks: dict[
+            str, dict[Version, _diagnosis.MetadataBlock]
+        ] = {}
 
         # Blocker packages queued for force back-track by the resolver after
         # the next ``choose_version`` returns.  Populated by the look-ahead
@@ -818,7 +859,7 @@ class Provider:
             version,
             index_name,
             field="dist-policy",
-            value=lambda o: _unset_if_none(o.dist_policy),
+            value=_dist_policy_value,
         )
         if result is _UNSET:
             return self.dist_policy
@@ -844,7 +885,7 @@ class Provider:
             version,
             index_name,
             field="uploaded-prior-to",
-            value=self._uploaded_prior_to_value,
+            value=_uploaded_prior_to_value,
         )
         if result is _UNSET:
             return self.uploaded_prior_to
@@ -983,15 +1024,6 @@ class Provider:
             self.effective_provides_extra(canonical_name, version),
         )
 
-    @staticmethod
-    def _uploaded_prior_to_value(override: PackageOverride | IndexOverride) -> object:
-        """Upload-time value: a datetime, ``None`` (disabled), or ``_UNSET``."""
-        if override.uploaded_prior_to is not None:
-            return override.uploaded_prior_to
-        if override.uploaded_prior_to_disabled:
-            return None
-        return _UNSET
-
     def _matching_package_override(
         self, canonical_name: str, version: Version, sets_field: Callable[..., object]
     ) -> PackageOverride | None:
@@ -1057,6 +1089,12 @@ class Provider:
     def has_invalid_metadata(self, canonical_name: str, version: Version) -> bool:
         """Return True if metadata parsing previously failed for this pin."""
         return (canonical_name, version) in self._invalid_metadata
+
+    def invalid_metadata_reason(
+        self, canonical_name: str, version: Version
+    ) -> str | None:
+        """Return the recorded parse failure for this pin, or ``None``."""
+        return self._invalid_metadata.get((canonical_name, version))
 
     def materialize_source(
         self,
@@ -1129,9 +1167,13 @@ class Provider:
         """See :func:`nab_provider._provider.listing.speculative_prefetch`."""
         _listing.speculative_prefetch(self, normalized, versions)
 
-    def prefetch_walk_ahead(self, normalized: str) -> None:
+    def _prefetch_walk_ahead(
+        self, normalized: str, version_range: RangeProtocol[Version]
+    ) -> None:
         """See :func:`nab_provider._provider.listing.prefetch_walk_ahead`."""
-        _listing.prefetch_walk_ahead(self, normalized, self.DEEP_PREFETCH_COUNT)
+        _listing.prefetch_walk_ahead(
+            self, normalized, version_range, self.DEEP_PREFETCH_COUNT
+        )
 
     def filter_distributions(
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
@@ -1188,7 +1230,13 @@ class Provider:
 
         wheel_by_version = self._wheel_by_version(normalized, version_list)
         return self._run_full_scan(
-            normalized, first, candidates, wheel_by_version, package, all_versions
+            normalized,
+            first,
+            candidates,
+            wheel_by_version,
+            package,
+            all_versions,
+            version_range,
         )
 
     def _ordered_candidates(
@@ -1353,6 +1401,7 @@ class Provider:
         wheel_by_version: dict[Version, DistFile],
         package: str,
         all_versions: list[Version],
+        version_range: RangeProtocol[Version],
     ) -> Version | None:
         """Run the decision-aware look-ahead scan over candidates.
 
@@ -1370,6 +1419,7 @@ class Provider:
             list(rest),
             wheel_by_version,
             broad_rejections,
+            version_range,
             first_candidate=first,
         )
         if found is not None:
@@ -1378,9 +1428,11 @@ class Provider:
 
         # Every candidate rejected. Flush so the resolver replaces the default
         # NO_VERSIONS clause with the grouped binary incompatibilities.
-        blockers = self._capture_lookahead_blockers(normalized)
+        blockers, metadata = self._capture_lookahead_blockers(normalized)
         self._flush_pending_blocks()
-        self._record_no_versions_reason(package, all_versions, blockers=blockers)
+        self._record_no_versions_reason(
+            package, all_versions, blockers=blockers, metadata=metadata
+        )
         return None
 
     def _scan_candidates_pipelined(
@@ -1389,6 +1441,7 @@ class Provider:
         remaining: list[Version],
         wheel_by_version: dict[Version, DistFile],
         broad_rejections: int,
+        version_range: RangeProtocol[Version],
         *,
         first_candidate: Version | None = None,
     ) -> Version | None:
@@ -1410,7 +1463,7 @@ class Provider:
         abort path.
         """
         # Front-load deep metadata so a walk past the first batch hits cache.
-        self.prefetch_walk_ahead(normalized)
+        self._prefetch_walk_ahead(normalized, version_range)
 
         starts_iter = iter(range(0, len(remaining), self.PREFETCH_BATCH))
         in_flight: deque[
@@ -1568,13 +1621,20 @@ class Provider:
         package: str,
         all_versions: list[Version],
         *,
-        blockers: list[str] | None = None,
+        blockers: Sequence[_diagnosis.Blocker] = (),
+        metadata: tuple[_diagnosis.MetadataBlock, ...] = (),
         version_range: VersionRange | None = None,
     ) -> None:
         """Record why ``choose_version`` returned ``None`` for ``package``.
 
-        ``blockers`` carries the look-ahead rejection causes when
-        every candidate that fell in ``version_range`` was rejected:
+        Runs during the resolve, on every ask that returns no version, which
+        is ordinary backtracking and not failure.  So it stores a marker and
+        renders nothing: no listing is walked, no version parsed and no
+        sentence built until :meth:`get_no_versions_reason` is asked for one,
+        which happens once, after the resolve has already failed.
+
+        ``blockers`` and ``metadata`` carry the look-ahead rejection causes
+        when every candidate that fell in ``version_range`` was rejected:
         either because of an already-decided package, a positive-range
         constraint, a root-requirement disagreement, or because the
         candidate's metadata could not be read under the current
@@ -1588,89 +1648,108 @@ class Provider:
         ``version_range`` is passed only when no surviving version fell
         inside it.  A version the listing filter dropped that does fall
         inside it is the release the requirement asked for, so the reason
-        names the filter rather than reporting no match.
+        names the filters that dropped it rather than reporting no match.
+        The marker carries the range; which filters fired is decided later.
 
         ``all_versions`` is post-filter, so an empty one means either the
-        index served no files or every file it served was dropped by the
-        wheel-tag filter, requires-python, dist-policy, or the upload-time
-        cutoff.  The stored listing tells absence from incompatibility
-        apart, except that it is also empty for an index skipped offline
-        and for a page of formats nab does not read (``.zip`` sdists,
-        ``.exe`` installers).  Both are marked when stored so the reason
-        names them instead of absence.
-        The wheel-tag case (a Windows-only package on a Linux target) is
-        named only when the base pass dropped nothing, or when the file
-        it dropped was an sdist: there the reason names both the rejected
-        tags and the filtered sdist, because the sdist is what the user
-        can bring back.  A base-filtered wheel alongside a tag-rejected
-        wheel on another version reports the base-filter reason alone.
+        index served no files or every file it served was dropped by one of
+        the listing filter's rungs.  The stored listing tells absence from
+        incompatibility apart, except that it is also empty for an index
+        skipped offline, for a page of formats nab does not read (``.zip``
+        sdists, ``.exe`` installers), and for one whose every file is
+        yanked.  All three are marked when stored, so the reason names what
+        happened instead of absence.
 
         A look-ahead rejection emits a clause that removes the rejected
         versions from the range, so the resolver asks again over a range
         nothing falls in.  That second ask has no blockers of its own, so
         its no-match reason must not overwrite the one naming the blocker.
         """
-        _, _, normalized = self.split_and_normalize(package)
         if not all_versions:
-            raw_listing = self.coordinator.index.get_listing(normalized)
-            tag_excluded = self.tag_excluded_wheels.get(normalized, 0)
-            if not raw_listing:
-                if self.coordinator.index.is_offline_listing_miss(normalized):
-                    reason = "offline mode skipped an index with no cached listing"
-                elif self.coordinator.index.is_unreadable_only_listing(normalized):
-                    reason = (
-                        "found on index but no file is a wheel or a .tar.gz sdist"
-                        " (the formats nab reads)"
-                    )
-                else:
-                    reason = "package not found on any configured index"
-            elif tag_excluded and normalized not in self.base_filtered_packages:
-                reason = (
-                    f"found on index but none of the wheel's tags are compatible"
-                    f" with the resolve target ({tag_excluded} wheels rejected),"
-                    f" and no sdist is available to build from"
-                )
-            elif tag_excluded and any(isinstance(f, SdistFile) for f in raw_listing):
-                # A present sdist beside tag-rejected wheels was dropped by
-                # the base pass (it would otherwise keep its version alive),
-                # so name both causes rather than the base filter alone.
-                reason = (
-                    f"found on index but none of the wheel's tags are compatible"
-                    f" with the resolve target ({tag_excluded} wheels rejected),"
-                    f" and the sdist was filtered by requires-python,"
-                    f" dist-policy, or upload-time"
-                )
-            else:
-                reason = (
-                    "found on index but no distribution is compatible "
-                    "(all filtered by requires-python, dist-policy, or upload-time)"
-                )
-        elif blockers:
+            _, _, normalized = self.split_and_normalize(package)
+            reason = self._empty_listing_marker(normalized)
+        elif blockers or metadata:
             # Look-ahead rejection: candidates DID match the range but
             # were rejected.  Naming the blocker is more useful than
             # a generic "no version matches" line, which would
             # otherwise fire because ``all_versions`` contains
             # versions inside ``version_range``.
-            joined = "; ".join(blockers)
-            reason = f"every version in range was rejected: {joined}"
+            reason = _diagnosis.NoVersionsReason(
+                _diagnosis.ReasonKind.BLOCKERS,
+                blockers=tuple(blockers),
+                metadata=metadata,
+            )
         elif package in self._no_versions_reasons:
             # The weakest reason: keep whatever is already recorded.
             return
-        elif version_range is not None and _listing.has_filtered_in_range_release(
-            self, normalized, version_range, all_versions
-        ):
-            reason = _FILTERED_IN_RANGE_REASON
         else:
-            reason = _NO_MATCH_REASON
+            reason = _diagnosis.NoVersionsReason(
+                _diagnosis.ReasonKind.NO_MATCH, version_range=version_range
+            )
         self._no_versions_reasons[package] = reason
 
-    def _capture_lookahead_blockers(self, normalized: str) -> list[str]:
-        """Summarise pending look-ahead rejections for ``normalized``.
+    def record_extra_no_versions(
+        self,
+        package: str,
+        kind: _diagnosis.Kind,
+        *,
+        metadata: tuple[_diagnosis.MetadataBlock, ...] = (),
+        version_range: VersionRange | None = None,
+        declaring_version: Version | None = None,
+    ) -> None:
+        """Record why an extras proxy found no version of its base to offer.
 
-        Returns one human-readable string per blocker source
-        (decisions, positive ranges, root disagreements, metadata errors).
+        ``choose_version`` hands a proxy to the extras chooser before either
+        listing-level record is made, so without this the proxy reaches the
+        report with nothing to say and the tree names a package the
+        ``Diagnostics:`` section cannot.
         """
-        out: list[str] = []
+        self._no_versions_reasons[package] = _diagnosis.NoVersionsReason(
+            kind,
+            metadata=metadata,
+            version_range=version_range,
+            declaring_version=declaring_version,
+        )
+
+    def record_extra_base_empty(self, package: str) -> None:
+        """Record that ``package``'s base has no version to offer at all.
+
+        Which listing-level situation the base is in is left to the render.
+        This runs during the resolve, where an ask that finds nothing is
+        ordinary backtracking rather than a failure.
+        """
+        self._no_versions_reasons[package] = _diagnosis.EXTRA_BASE_EMPTY
+
+    def _empty_listing_marker(self, normalized: str) -> _diagnosis.NoVersionsReason:
+        """Classify a package the filter left with nothing, without walking it.
+
+        Reads only what the index client already holds, so an ask that ends
+        here during ordinary backtracking builds no sentence.
+        """
+        index = self.coordinator.index
+        if index.get_listing(normalized):
+            return _diagnosis.FILTERED_EMPTY
+        if index.is_offline_listing_miss(normalized):
+            return _diagnosis.OFFLINE_MISS
+        # Nothing sets both: the unreadable flag needs a file that stands,
+        # and the yank flag needs every one withdrawn.
+        if index.is_unreadable_only_listing(normalized):
+            return _diagnosis.UNREADABLE_ONLY
+        if index.is_all_yanked_listing(normalized):
+            return _diagnosis.YANKED_ONLY
+        return _diagnosis.ABSENT
+
+    def _capture_lookahead_blockers(
+        self, normalized: str
+    ) -> tuple[list[_diagnosis.Blocker], tuple[_diagnosis.MetadataBlock, ...]]:
+        """Snapshot the pending look-ahead rejections for ``normalized``.
+
+        Returns one record per dependency the scan found holding every
+        candidate out, plus the metadata failures recorded against them.
+        Both queues reset at the next flush, so what the report will need
+        is taken now and rendered only if the resolve fails.
+        """
+        out: list[_diagnosis.Blocker] = []
 
         for cand, blocker_pkg, blocker_version in self.pending_blocks:
             if cand != normalized:
@@ -1679,11 +1758,15 @@ class Provider:
                 self.pending_decision_dep_ranges[(cand, blocker_pkg, blocker_version)]
             )
 
-            # The blocker is decided, so the line names that version rather
+            # The blocker is decided, so the record names that version rather
             # than a singleton range, which has no specifier spelling.
             out.append(
-                f"requires {blocker_pkg} in {declared}"
-                f" but solution has it at {blocker_version}"
+                _diagnosis.Blocker(
+                    _diagnosis.BlockerKind.DECIDED,
+                    blocker_pkg,
+                    declared,
+                    str(blocker_version),
+                )
             )
 
         for cand, blocker_pkg, pos_range in self.pending_range_blocks:
@@ -1692,9 +1775,13 @@ class Provider:
             declared = self._format_declared_ranges(
                 self.pending_range_dep_ranges[(cand, blocker_pkg, pos_range)]
             )
-            held = self._format_blocker_range(pos_range)
             out.append(
-                f"requires {blocker_pkg} in {declared} but solution has it in {held}"
+                _diagnosis.Blocker(
+                    _diagnosis.BlockerKind.HELD,
+                    blocker_pkg,
+                    declared,
+                    self._format_blocker_range(pos_range),
+                )
             )
 
         for (
@@ -1705,20 +1792,20 @@ class Provider:
         ) in self.pending_root_blocks:
             if cand != normalized:
                 continue
-            declared = self._format_blocker_range(dep_range)
-            required = self._format_blocker_range(root_range)
             out.append(
-                f"requires {blocker_pkg} in {declared} but root has it in {required}"
+                _diagnosis.Blocker(
+                    _diagnosis.BlockerKind.ROOT,
+                    blocker_pkg,
+                    self._format_blocker_range(dep_range),
+                    self._format_blocker_range(root_range),
+                )
             )
 
-        meta = self.pending_metadata_blocks.get(normalized)
-        if meta:
-            out.append(_metadata_block_summary(meta))
-
-        return out
+        meta = self.pending_metadata_blocks.get(normalized) or {}
+        return out, tuple(meta.values())
 
     def record_metadata_ban(
-        self, normalized: str, blocks: Mapping[Version, str]
+        self, normalized: str, blocks: Mapping[Version, _diagnosis.MetadataBlock]
     ) -> None:
         """Accumulate the metadata errors behind ``normalized``'s permanent ban.
 
@@ -1729,25 +1816,285 @@ class Provider:
         for version, message in blocks.items():
             recorded.setdefault(version, message)
 
-    def get_no_versions_reason(self, package: str) -> str | None:
+    def get_no_versions_reason(self, package: str) -> Diagnostic | None:
         """Return the recorded reason for ``package``'s NO_VERSIONS clause.
 
         Ranked by specificity, not by which pass wrote first: a recorded
         reason that names a cause wins, and a metadata ban beats the two
         that say only that nothing matched.
 
+        This is where the sentence is built, and the only place it is built.
+        Reaching it means the resolve has already failed, so the marker is
+        rendered here rather than on the resolve path.
+
         Returns ``None`` if no diagnostic was captured (e.g. the
         package was decided successfully or failed for a non-listing
         reason such as a metadata parse error).
         """
         recorded = self._no_versions_reasons.get(package)
-        if recorded is not None and recorded not in _GENERIC_NO_VERSIONS_REASONS:
-            return recorded
+        if recorded is not None and not recorded.is_generic:
+            return self._render_no_versions_reason(package, recorded)
 
-        blocks = self._metadata_ban_blocks.get(canonicalize_name(package))
+        normalized = canonicalize_name(package)
+        blocks = self._metadata_ban_blocks.get(normalized)
         if blocks:
-            return _metadata_block_summary(blocks)
-        return recorded
+            return _diagnosis.metadata_diagnostic(
+                self, normalized, list(blocks.values())
+            )
+        if recorded is None:
+            return None
+        return self._render_no_versions_reason(package, recorded)
+
+    def _render_no_versions_reason(
+        self, package: str, recorded: _diagnosis.NoVersionsReason
+    ) -> Diagnostic:
+        """Turn one recorded marker into the entry the user reads."""
+        fixed = _diagnosis.FIXED_DIAGNOSTICS.get(recorded.kind)
+        if fixed is not None:
+            return fixed
+        if recorded.kind == _diagnosis.ReasonKind.BLOCKERS:
+            _, _, normalized = self.split_and_normalize(package)
+            return _diagnosis.blockers_diagnostic(
+                self, normalized, recorded.blockers, recorded.metadata
+            )
+        if recorded.kind == _diagnosis.ReasonKind.EXTRA_BASE_EMPTY:
+            return self._render_extra_base_reason(package)
+        if recorded.kind in _EXTRA_KINDS:
+            return self._render_extra_reason(package, recorded)
+        return self._render_listing_reason(package, recorded)
+
+    def _render_extra_base_reason(self, package: str) -> Diagnostic:
+        """Render an extras proxy whose base package ran out of versions.
+
+        The extra plays no part: nothing read a ``Provides-Extra`` before
+        the base came back empty.  So the entry is the base package's own,
+        remedy included, since ``packages."foo"`` is the entry a user edits
+        to admit files for ``foo[bar]``.
+        """
+        _, _, normalized = self.split_and_normalize(package)
+        return self._render_no_versions_reason(
+            package, self._empty_listing_marker(normalized)
+        )
+
+    def _render_extra_reason(
+        self, package: str, recorded: _diagnosis.NoVersionsReason
+    ) -> Diagnostic:
+        """Render an extras proxy left with no version of its base package."""
+        base, extra, _ = self.split_and_normalize(package)
+        assert extra is not None
+        searched = recorded.version_range
+        return _diagnosis.extra_diagnostic(
+            base,
+            extra,
+            recorded,
+            "" if searched is None else self._format_blocker_range(searched),
+        )
+
+    def _render_listing_reason(
+        self, package: str, recorded: _diagnosis.NoVersionsReason
+    ) -> Diagnostic:
+        """Render the two markers whose entry comes from the listing walk.
+
+        Falls back to the no-match line wherever the walk has nothing to
+        say: a local, VCS or archive source has no index page for a filter
+        to have dropped anything from, and an in-range marker whose range
+        holds nothing the filter dropped is a requirement for a version the
+        index never published.
+        """
+        _, _, normalized = self.split_and_normalize(package)
+        diagnosis = (
+            self.diagnose_listing(normalized)
+            if self._walk_would_be_read(normalized, recorded)
+            else None
+        )
+        if diagnosis is None:
+            return _diagnosis.NO_MATCH
+        if recorded.kind == _diagnosis.ReasonKind.FILTERED_EMPTY:
+            return _diagnosis.empty_listing_diagnostic(self, normalized, diagnosis)
+
+        # The screen passed, so the marker carries the range it screened.
+        assert recorded.version_range is not None
+        filtered = _diagnosis.in_range_diagnostic(
+            self, normalized, recorded.version_range, diagnosis
+        )
+        return filtered if filtered is not None else _diagnosis.NO_MATCH
+
+    def _walk_would_be_read(
+        self, normalized: str, recorded: _diagnosis.NoVersionsReason
+    ) -> bool:
+        """Whether the walk's detail would reach ``recorded``'s sentence.
+
+        The walk records one refusal per file the filter dropped, and the
+        in-range lead throws every one of them away unless the filter
+        dropped a release inside the range that was asked.  A requirement
+        naming a version the index never published is the ordinary way to
+        reach that, so the cheap question runs first.
+        """
+        if recorded.kind == _diagnosis.ReasonKind.FILTERED_EMPTY:
+            return True
+        return recorded.version_range is not None and _listing.dropped_release_in_range(
+            self, normalized, recorded.version_range
+        )
+
+    def diagnose_listing(self, normalized: str) -> _diagnosis.ListingDiagnosis | None:
+        """Attribute ``normalized``'s listing drops, once per package per target.
+
+        The walk calls the filter's own predicates, which bump counters the
+        benchmarks read, so it is bracketed: whatever it added to
+        :attr:`stats` and to the per-version tag tally is taken back before
+        the answer is returned.
+        """
+        cached = self.listing_diagnoses.get(normalized, _UNSET)
+        if cached is not _UNSET:
+            return cast("_diagnosis.ListingDiagnosis | None", cached)
+
+        before = _counters(self.stats)
+        tag_counts = dict(self.tag_excluded_wheels_by_version)
+        try:
+            diagnosis = _diagnosis.walk_listing(self, normalized)
+        finally:
+            _restore(self.stats, before)
+            self.tag_excluded_wheels_by_version.clear()
+            self.tag_excluded_wheels_by_version.update(tag_counts)
+
+        self.listing_diagnoses[normalized] = diagnosis
+        return diagnosis
+
+    def filtered_sdist_diagnostic(
+        self, normalized: str, version: Version
+    ) -> Diagnostic | None:
+        """Name the listing-filter rung that took ``version``'s sdist.
+
+        Asked while rendering a failure, for a version the metadata ladder
+        marked: it knew the index published an sdist and that the filter
+        removed it, but naming the rung is a walk, so it left the marker
+        instead.  Returns the report entry, or ``None`` when the walk cannot
+        name a rung.
+        """
+        diagnosis = self.diagnose_listing(normalized)
+        # The ladder marks only after reading an sdist out of the raw
+        # listing, so the walk had files to partition.
+        assert diagnosis is not None
+        return _diagnosis.filtered_sdist_diagnostic(
+            self, normalized, version, diagnosis
+        )
+
+    def override_source(
+        self,
+        canonical_name: str,
+        version: Version,
+        index_name: str | None,
+        *,
+        field: _diagnosis.Field,
+    ) -> _diagnosis.Remedy:
+        """Return the config layer that set ``field`` for this candidate.
+
+        Reads the two override surfaces through the same matcher
+        :meth:`_effective_field` reads them with, but never raises: it runs
+        while a failure is being rendered, where the probe may already have
+        swallowed the conflict :meth:`_effective_field` would.
+        """
+        value = _SOURCE_VALUES[field]
+        override = self._matching_package_override(canonical_name, version, value)
+        if override is not None:
+            return self._entry_remedy(field, _diagnosis.OverrideLayer.PACKAGE, override)
+
+        if index_name is not None:
+            index = self._index_overrides.get(index_name)
+            if index is not None and value(index) is not _UNSET:
+                return _diagnosis.Remedy(
+                    field,
+                    _diagnosis.OverrideLayer.INDEX,
+                    index_name,
+                    index_name,
+                )
+
+        scoped = self._scoped_entry(canonical_name, field, value)
+        if scoped is not None:
+            return scoped
+
+        bare = self._bare_name_entry(canonical_name)
+        if bare is not None:
+            return self._entry_remedy(
+                field, _diagnosis.OverrideLayer.GLOBAL_BARE_ENTRY, bare
+            )
+        return _diagnosis.Remedy(
+            field, _diagnosis.OverrideLayer.GLOBAL, "", canonical_name
+        )
+
+    def _entry_remedy(
+        self,
+        field: _diagnosis.Field,
+        layer: _diagnosis.Layer,
+        override: PackageOverride,
+    ) -> _diagnosis.Remedy:
+        """Build the remedy that changes ``override``'s own config entry."""
+        label = override.source_label
+        return _diagnosis.Remedy(
+            field,
+            layer,
+            label or str(override.requirement),
+            str(override.requirement),
+            self._entry_covers(label),
+        )
+
+    def _entry_covers(self, label: str) -> int:
+        """Count the packages the entry labelled ``label`` matches.
+
+        A ``[[package-rules]]`` entry becomes one override per requirement
+        in its ``match`` list, each carrying the entry's label, so a remedy
+        naming the entry can say how much changing it moves.  An override a
+        host built itself carries no label and speaks for its own package.
+        """
+        if not label:
+            return 1
+        return len(
+            {
+                override.name
+                for override in self._package_overrides
+                if override.source_label == label
+            }
+        )
+
+    def _scoped_entry(
+        self,
+        canonical_name: str,
+        field: _diagnosis.Field,
+        value: Callable[[PackageOverride | IndexOverride], object],
+    ) -> _diagnosis.Remedy | None:
+        """Return the entry setting ``canonical_name``'s ``field`` over another range.
+
+        Asked only where the project-level value answered, so a bare-name
+        entry would have matched the candidate and any entry found here is
+        version-scoped around it.  A second entry for the package would
+        overlap that one, which the config layer refuses, so the remedy for
+        this candidate points at widening the entry that exists.
+        """
+        for override in self._package_overrides:
+            if override.name == canonical_name and value(override) is not _UNSET:
+                return self._entry_remedy(
+                    field, _diagnosis.OverrideLayer.GLOBAL_SCOPED_ENTRY, override
+                )
+        return None
+
+    def _bare_name_entry(self, canonical_name: str) -> PackageOverride | None:
+        """Return the name-keyed entry a bare-name remedy would collide with.
+
+        Asked where no entry sets the failing field, so the remedy is the
+        one that writes ``packages."<name>"``.  Where the package already
+        has a table under that exact key, TOML refuses a second declaration
+        of it and the remedy has to name the table instead.  A
+        ``[[package-rules]]`` entry is an array element rather than that
+        table, so it does not collide.
+        """
+        for override in self._package_overrides:
+            if (
+                override.name_keyed
+                and override.name == canonical_name
+                and str(override.requirement) == canonical_name
+            ):
+                return override
+        return None
 
     def _prefetch_batch(
         self,

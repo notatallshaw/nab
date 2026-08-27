@@ -6,6 +6,11 @@ can own it.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from nab_provider._vendor.packaging.version import Version
+
 __all__ = [
     "ConfigError",
     "ForeignMetadataError",
@@ -51,7 +56,15 @@ class MetadataError(Exception):
 
     ``_look_ahead_ok`` treats it as a rejection and moves to the next version,
     so anything that has to end the resolve must not subclass it.
+
+    ``filtered_sdist_version`` marks the one failure the report can say more
+    about than the message does: the metadata ladder wanted an sdist the
+    listing filter had removed.  Naming the rung that removed it means
+    walking the listing, so the marker travels instead and the report walks
+    only if the resolve goes on to fail.
     """
+
+    filtered_sdist_version: Version | None = None
 
 
 class UnsupportedSdistError(MetadataError):
