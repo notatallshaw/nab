@@ -29,6 +29,7 @@ from nab_provider.requirements_file import (
     require_string_list,
 )
 
+from . import toml_io
 from ._build.errors import (
     BuildBackendError as BuildBackendError,  # noqa: PLC0414  (public re-export)
 )
@@ -96,7 +97,7 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
         raise BuildBackendError(msg)
 
     try:
-        data = tomli.loads(pyproject.read_text(encoding="utf-8"))
+        data = toml_io.loads(pyproject.read_text(encoding="utf-8"))
     except OSError as exc:
         if is_absent_error(exc):
             # The presence check is racy: the file may vanish before the read.

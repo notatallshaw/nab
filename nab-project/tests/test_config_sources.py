@@ -638,6 +638,17 @@ class TestLoadTomlLayerDirect:
         with pytest.raises(SourceConfigError, match="not valid TOML"):
             _load_toml_layer(path, SourceKind.PYPROJECT)
 
+    def test_oversized_integer_pyproject_errors(
+        self, tmp_path: Path, oversized_integer: str
+    ) -> None:
+        # The literal sits in a table nab never reads, and still fails the parse.
+        path = _write(
+            tmp_path / "pyproject.toml",
+            f"[tool.other]\ncount = {oversized_integer}\n",
+        )
+        with pytest.raises(SourceConfigError, match="not valid TOML"):
+            _load_toml_layer(path, SourceKind.PYPROJECT)
+
     def test_unreadable_file_errors(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "nab.toml", 'resolution = "lowest"\n')
         denied = PermissionError(errno.EACCES, "Permission denied", str(path))

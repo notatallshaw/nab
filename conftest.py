@@ -15,8 +15,9 @@ The property suite under ``nab-*/tests/property*/`` uses explicit
 ``PROPERTY_SETTINGS``/``DEEP_SETTINGS``/``BRUTE_FORCE_SETTINGS``
 decorators so its example budget is independent of the profile.
 
-``cap_writes`` and ``deny_access`` are here rather than in one suite's
-conftest because both the ``nab-project`` suite and the CLI suite use them.
+``cap_writes``, ``deny_access`` and ``oversized_integer`` are here rather than
+in one suite's conftest because both the ``nab-project`` suite and the CLI
+suite use them.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from __future__ import annotations
 import errno
 import io
 import os
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -166,3 +168,14 @@ def cap_writes() -> Callable[[int], AbstractContextManager[None]]:
     file gets written.
     """
     return _cap_writes
+
+
+@pytest.fixture
+def oversized_integer() -> str:
+    """Return a decimal integer literal too long for ``int()`` to convert.
+
+    tomli builds a TOML integer with ``int()``, which CPython caps at
+    ``sys.get_int_max_str_digits()`` digits, so a literal this long fails the
+    parse without being a syntax error.
+    """
+    return "1" * (sys.get_int_max_str_digits() + 1)

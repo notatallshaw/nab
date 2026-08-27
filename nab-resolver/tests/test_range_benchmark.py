@@ -1,11 +1,11 @@
 """Tests for the Range benchmark under ``nab-resolver/benchmarks``.
 
-The benchmark exists to catch a change to ``Range`` that helps a backtracking
-resolve and hurts a wide one, so what has to hold is that its two scenarios
-really are those two regimes, that both go through the resolver's default range
-type, and that the traffic each reports is the traffic it reported before. Each
-scenario runs here shrunk to ``SUITE_SIZES``; the sizes the standard run
-declares are pinned on their own.
+The benchmark exists to catch a change to ``Range`` that helps one graph shape
+and hurts another, so what has to hold is that its three scenarios really are
+the three regimes it claims, that all of them go through the resolver's default
+range type, and that the traffic each reports is the traffic it reported
+before. Each scenario runs here shrunk to ``SUITE_SIZES``; the sizes the
+standard run declares are pinned on their own.
 
 These carry the ``benchmark`` marker, so they run under ``nox -s benchmarks``
 rather than in the resolver workspace.
@@ -26,6 +26,7 @@ from typing import Any, NamedTuple
 import pytest
 
 from nab_resolver.ranges import Range
+from nab_resolver.types import RangeRelation
 
 pytestmark = pytest.mark.benchmark
 
@@ -34,7 +35,11 @@ MODULE_NAME = "_nab_range_scenarios"
 
 # Small enough to run in a fraction of a second, large enough to backtrack and
 # to fan out.
-SUITE_SIZES = {"wrong-package-backtracking": 8, "conflict-free-fanout": 6}
+SUITE_SIZES = {
+    "wrong-package-backtracking": 8,
+    "conflict-free-fanout": 6,
+    "satisfied-ceiling-fanin": 6,
+}
 
 
 class Profile(NamedTuple):
@@ -77,6 +82,16 @@ SUITE_PROFILE = {
         hash_misses=5,
         equality_calls=22,
     ),
+    "satisfied-ceiling-fanin": Profile(
+        rounds=10,
+        decisions=10,
+        conflicts=0,
+        membership_tests=235,
+        intervals_seen=1300,
+        largest_range=6,
+        hash_misses=19,
+        equality_calls=52,
+    ),
 }
 
 
@@ -117,8 +132,11 @@ def test_standard_run_declares_the_full_scale_sizes(benchmark: ModuleType) -> No
     assert {s.id: s.size for s in benchmark.SCENARIOS} == {
         "wrong-package-backtracking": 64,
         "conflict-free-fanout": 120,
+        "satisfied-ceiling-fanin": 1000,
     }
     assert benchmark.FANOUT_RELEASES == 50
+    assert benchmark.FANIN_SUPPORTED == 200
+    assert benchmark.FANIN_YANKED == (3, 8, 13, 18, 23)
     assert benchmark.DEFAULT_REPEATS == 5
 
 
@@ -159,6 +177,34 @@ def test_fanout_scenario_stays_conflict_free_and_single_interval(
 
     assert measurement.traffic.census.largest == 1
     assert measurement.traffic.census.mean == 1.0
+
+
+def test_fanin_scenario_answers_every_relation_with_subset(
+    benchmark: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The regime the other two leave out: a requirement that already holds.
+
+    The answers are read off what ``relation`` returns rather than off the
+    predicates it calls, because which of those it goes through is what a
+    change to ``Range`` is free to alter.
+    """
+    answers: list[RangeRelation] = []
+    relation = Range.relation
+
+    def tallied(self: Range[int], other: Range[int]) -> RangeRelation:
+        answer = relation(self, other)
+        answers.append(answer)
+        return answer
+
+    monkeypatch.setattr(Range, "relation", tallied)
+    measurement = measure_small(benchmark, "satisfied-ceiling-fanin")
+
+    assert measurement.resolution.stats.conflicts == 0
+    assert set(answers) == {RangeRelation.SUBSET}
+
+    # Only the hub's range fragments, into one more interval than there are
+    # yanked releases, so it is the widest membership is tested against.
+    assert measurement.traffic.census.largest == len(benchmark.FANIN_YANKED) + 1
 
 
 @pytest.mark.parametrize("scenario_id", list(SUITE_SIZES))
