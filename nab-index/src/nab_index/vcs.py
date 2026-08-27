@@ -1,19 +1,22 @@
 """Shallow VCS clone helper for nab-index.
 
-Performs ``git clone --depth 1`` against a directory under the cache
-root.  URL admission lives upstream in
-:func:`nab_provider.vcs_admission.admit_vcs_url`.
+Lands one commit under the cache root with ``git init``,
+``git fetch --depth 1`` and ``git checkout FETCH_HEAD``.  URL admission
+lives upstream in :func:`nab_provider.vcs_admission.admit_vcs_url`.
 
 Cache layout under ``cache_root / "vcs"``:
 
     <repo-key>/<commit-sha>/
 
-``repo-key`` is the 16-char prefix of a SHA-256 over the canonicalised
-repo URL (``vcs+`` prefix stripped).  ``commit-sha`` is always a
-concrete 40-char hash; floating refs are resolved via
-``git ls-remote`` before the clone runs.  A finished clone carries a
-``.git/nab-complete`` marker file; a tree without it is discarded and
-recloned.
+``repo-key`` is the 16-char prefix of a SHA-256 over
+``VcsRequest.repo_url``: the requirement URL without its ``git+``
+prefix, ``@<ref>`` suffix and ``#`` fragment.  Nothing canonicalises
+what is left, so two spellings of one repo get two cache entries.
+
+``commit-sha`` is always a concrete 40-char hash; floating refs are
+resolved via ``git ls-remote`` before the fetch runs.  A finished clone
+carries a ``.git/nab-complete`` marker file; a tree without it is
+discarded and refetched.
 """
 
 from __future__ import annotations

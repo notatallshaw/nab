@@ -687,21 +687,23 @@ class _Decision(NamedTuple):
 
 
 class Memo:
-    """The emptiness verdicts, partitions and atom truths a decision re-reads.
+    """The verdicts, partitions, atom truths and version parses a decision re-reads.
 
     A run over related trees decides the same tree shape more than once. Within one
-    decision, one axis is re-partitioned for overlapping atom sets and one atom
-    re-read on one point across those partitions. All three are memoised here. One
-    decision makes its own unless the caller passes one to share; see
+    decision, one axis is re-partitioned for overlapping atom sets, one atom re-read
+    on one point across those partitions, and the literals those partitions share
+    parsed as versions once per partition. All four are memoised here. One decision
+    makes its own unless the caller passes one to share; see
     :class:`~packaging.markersets.DecisionStore` for the sharing contract.
     """
 
-    __slots__ = ("decisions", "partitions", "truths")
+    __slots__ = ("decisions", "partitions", "truths", "versions")
 
     def __init__(self) -> None:
         self.decisions: dict[tuple, _Decision] = {}
         self.partitions: dict[tuple, list[Cell]] = {}
         self.truths: dict[tuple[Atom, str], bool] = {}
+        self.versions: dict[str, Version | None] = {}
 
 
 def _truth(atom: Atom, point: object, memo: Memo) -> bool:
@@ -713,6 +715,26 @@ def _truth(atom: Atom, point: object, memo: Memo) -> bool:
     if hit is None:
         hit = memo.truths[key] = atom.holds(point)
     return hit
+
+
+def _pooled_version(text: str, memo: Memo) -> Version | None:
+    """Return ``text`` parsed as a version, or None, memoised for the operation's span.
+
+    Distinct atom subsets of one axis re-derive their candidate pools from
+    overlapping literals, so the parse is shared rather than repeated per subset.
+
+    Keyed on text alone where :func:`_apply` also keys on the int-string limit.
+    Every text pooled here is an axis literal, a substring of one, or a neighbour
+    minted from one, and the parse-limit guards bound each of those ahead of its
+    read, so a hit is never a parse the current limit forbids.
+    """
+    versions = memo.versions
+    if text not in versions:
+        try:
+            versions[text] = Version(text)
+        except InvalidVersion:
+            versions[text] = None
+    return versions[text]
 
 
 def _substring_cost(text: str) -> int:
@@ -812,7 +834,7 @@ def _equal_twins(version: Version) -> list[str]:
     return [version.public, str(padded)]
 
 
-def _between(vlow: Version, low: str, vhigh: Version) -> str | None:
+def _between(vlow: Version, low: str, vhigh: Version, memo: Memo) -> str | None:
     for candidate in (
         f"{low}.post0",
         f"{low}+m",
@@ -820,11 +842,8 @@ def _between(vlow: Version, low: str, vhigh: Version) -> str | None:
         f"{low}.1",
         f"{low}a1",
     ):
-        try:
-            parsed = Version(candidate)
-        except InvalidVersion:
-            continue
-        if vlow < parsed < vhigh:
+        parsed = _pooled_version(candidate, memo)
+        if parsed is not None and vlow < parsed < vhigh:
             return candidate
     return None
 
@@ -836,7 +855,11 @@ _POOL_ANCHORS: tuple[tuple[Version, str], ...] = tuple(
 
 
 def _version_pool(
-    entries: Iterable[tuple[Version, str]], *, elevate_epoch: bool, max_cells: int
+    entries: Iterable[tuple[Version, str]],
+    *,
+    elevate_epoch: bool,
+    max_cells: int,
+    memo: Memo,
 ) -> list[str]:
     parsed: list[tuple[Version, str]] = list(_POOL_ANCHORS)
     seen: set[str] = {text for _, text in _POOL_ANCHORS}
@@ -851,7 +874,7 @@ def _version_pool(
     for (vlow, slow), (vhigh, _shigh) in pairwise(parsed):
         if vlow == vhigh:
             continue
-        mid = _between(vlow, slow, vhigh)
+        mid = _between(vlow, slow, vhigh, memo)
         if mid is not None:
             extra.append(mid)
 
@@ -881,12 +904,14 @@ def _elevate_epochs(
     return elevated
 
 
-def _membership_candidates(atom: Atom) -> list[str]:
+def _membership_candidates(atom: Atom, memo: Memo) -> list[str]:
     subs = _substrings(atom.literal)
     if atom.derive_mm:
         # A1 membership tests the major.minor of a full version, so realisable
         # points are the substrings of the literal that are themselves versions.
-        return [s for s in subs if _parses_version(s)]
+        return [
+            s for s in subs if _pooled_version(s.removesuffix(".*"), memo) is not None
+        ]
     return subs
 
 
@@ -898,7 +923,7 @@ def _mixes_mm_and_full(atoms: Sequence[Atom]) -> bool:
 
 
 def _dedupe_candidates(
-    candidates: Iterable[str], *, pure_version: bool, max_cells: int
+    candidates: Iterable[str], *, pure_version: bool, max_cells: int, memo: Memo
 ) -> list[str]:
     ordered: list[str] = []
     seen: set[str] = set()
@@ -908,7 +933,7 @@ def _dedupe_candidates(
         # A pure Version axis holds only PEP 440 versions, so a non-version
         # candidate is unrealisable there. The twins keep every non-version
         # candidate, including the OTHER-cell representative.
-        if pure_version and not _strict_version(candidate):
+        if pure_version and _pooled_version(candidate, memo) is None:
             continue
         seen.add(candidate)
         ordered.append(candidate)
@@ -930,7 +955,7 @@ def _other_representative(literals: Sequence[str]) -> str:
 
 
 def _reduce_work_exceeds(
-    variable: str, literals: Sequence[str], atom_count: int, max_cells: int
+    variable: str, literals: Sequence[str], atom_count: int, max_cells: int, memo: Memo
 ) -> bool:
     """Whether the axis's guaranteed reduce work already exceeds ``max_cells``.
 
@@ -943,7 +968,7 @@ def _reduce_work_exceeds(
     seen: set[str] = set()
     for literal in literals:
         key = literal.removesuffix(".*") if pure else literal
-        if key in seen or (pure and not _strict_version(key)):
+        if key in seen or (pure and _pooled_version(key, memo) is None):
             continue
         seen.add(key)
         if len(seen) * atom_count > max_cells:
@@ -952,12 +977,12 @@ def _reduce_work_exceeds(
 
 
 def _value_candidates(
-    variable: str, atoms: Sequence[Atom], max_cells: int
+    variable: str, atoms: Sequence[Atom], max_cells: int, memo: Memo
 ) -> list[str]:
     literals = [atom.literal for atom in atoms]
 
     reject_oversized_version_literals(variable, literals)
-    if _reduce_work_exceeds(variable, literals, len(atoms), max_cells):
+    if _reduce_work_exceeds(variable, literals, len(atoms), max_cells, memo):
         msg = f"axis work over {len(atoms)} atoms exceeds max_cells={max_cells}"
         raise IntractableMarkerSet(msg)
 
@@ -979,7 +1004,7 @@ def _value_candidates(
             if spent > max_cells:
                 msg = f"substring enumeration exceeds max_cells={max_cells}"
                 raise IntractableMarkerSet(msg)
-            candidates.extend(_membership_candidates(atom))
+            candidates.extend(_membership_candidates(atom, memo))
 
     if is_version_dispatch(variable):
         _reject_mint_overflow(literals)
@@ -991,10 +1016,14 @@ def _value_candidates(
                 entries,
                 elevate_epoch=_mixes_mm_and_full(atoms),
                 max_cells=max_cells,
+                memo=memo,
             )
         )
     return _dedupe_candidates(
-        candidates, pure_version=raw_kind == DOMAIN_VERSION, max_cells=max_cells
+        candidates,
+        pure_version=raw_kind == DOMAIN_VERSION,
+        max_cells=max_cells,
+        memo=memo,
     )
 
 
@@ -1037,7 +1066,7 @@ def partition_value_axis(
 ) -> list[Cell]:
     """Cells of a version/string value axis."""
     return _reduce_cells(
-        _value_candidates(variable, atoms, max_cells), atoms, max_cells, memo
+        _value_candidates(variable, atoms, max_cells, memo), atoms, max_cells, memo
     )
 
 

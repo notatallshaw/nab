@@ -156,15 +156,23 @@ class TestConfigList:
         self,
         hermetic_roots: Path,
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
         var: str,
         value: str,
     ) -> None:
-        # NAB_VERBOSITY / NAB_NO_PROGRESS belong to the output layer, so the
-        # config env-layer must not reject them as unknown NAB_* settings.
+        # NAB_VERBOSITY and NAB_NO_PROGRESS belong to the output layer, so the
+        # config env-layer skips them: no warning, and no rejected entry.
         _project(hermetic_roots)
         monkeypatch.setenv(var, value)
-        out = _run_config(["list", "--path", str(hermetic_roots / "pyproject.toml")])
+        path = str(hermetic_roots / "pyproject.toml")
+
+        with caplog.at_level(logging.WARNING, logger="nab_project"):
+            out = _run_config(["list", "--path", path])
+            rejected = _run_config(["list", "--include-rejected", "--path", path])
+
         assert "offline" in out
+        assert var not in caplog.text
+        assert var not in rejected
 
     def test_unknown_env_var_warns_and_runs(
         self,

@@ -1,7 +1,7 @@
 """Tests for nab_index.vcs URL parsing + clone helpers.
 
-The clone path itself shells out to ``git`` and is not unit-tested
-here; integration tests live alongside the runner.
+The clone path shells out to ``git``, so its tests stub
+:func:`subprocess.run`.
 """
 
 from __future__ import annotations
@@ -129,6 +129,11 @@ class TestVcsRequestParse:
     def test_bzr_scheme_refused(self) -> None:
         with pytest.raises(VcsCloneError, match="not a recognised"):
             VcsRequest.parse("bzr+https://bzr.example.com/repo")
+
+    def test_vcs_prefix_refused(self) -> None:
+        """``vcs+`` is not a scheme: ``git+`` is the only prefix stripped."""
+        with pytest.raises(VcsCloneError, match="not a recognised"):
+            VcsRequest.parse("vcs+https://example.com/repo.git")
 
     def test_ssh_shortcut_with_ref(self) -> None:
         req = VcsRequest.parse("git+git@github.com:x/y.git@" + "c" * 40)
@@ -668,6 +673,83 @@ _EXPECTED_SCRUBBED_VARS = (
     "GIT_COMMON_DIR",
     "GIT_NAMESPACE",
 )
+
+
+class TestCacheLayout:
+    """The clone cache key, and the git commands that fill an entry."""
+
+    def _clone(
+        self,
+        cache_root: Path,
+        requirement_url: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[Path, list[list[str]]]:
+        """Clone a ``git+`` URL with git stubbed; return the tree and the argv."""
+        argv: list[list[str]] = []
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            argv.append(cmd)
+            if cmd[:2] == ["git", "init"]:
+                (Path(str(kwargs["cwd"])) / ".git").mkdir(exist_ok=True)
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        clone = prepare_clone(
+            cache_root,
+            VcsRequest.parse(requirement_url),
+            require_pin=True,
+        )
+        return clone.path, argv
+
+    def test_repo_key_covers_the_repo_url_alone(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The ``git+`` prefix, the ``@<sha>`` ref and the fragment are not keyed."""
+        sha = "a" * 40
+        path, _ = self._clone(
+            tmp_path,
+            f"git+https://example.com/repo.git@{sha}#subdirectory=pkg",
+            monkeypatch,
+        )
+
+        # 3f71ca0a9a455fa9 is sha256("https://example.com/repo.git")[:16].
+        assert path == tmp_path / "vcs" / "3f71ca0a9a455fa9" / sha
+
+    def test_spellings_of_one_repo_do_not_share_an_entry(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """One repo written three ways gets three entries: nothing canonicalises."""
+        sha = "b" * 40
+        spellings = (
+            "https://example.com/repo.git",
+            "https://example.com/repo",
+            "https://example.com/repo.git/",
+        )
+        trees = [
+            self._clone(tmp_path, f"git+{url}@{sha}", monkeypatch)[0]
+            for url in spellings
+        ]
+
+        assert len({tree.parent for tree in trees}) == len(spellings)
+
+    def test_entry_is_filled_by_init_fetch_checkout(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sha = "c" * 40
+        url = "https://example.com/repo.git"
+        _, argv = self._clone(tmp_path, f"git+{url}@{sha}", monkeypatch)
+
+        assert argv == [
+            ["git", "init", "--quiet"],
+            ["git", "fetch", "--quiet", "--depth", "1", url, sha],
+            ["git", "checkout", "--quiet", "FETCH_HEAD"],
+        ]
 
 
 class TestAmbientGitEnvironment:
