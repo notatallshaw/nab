@@ -22,6 +22,7 @@ from ``build.env.IsolatedEnv``.
 
 from __future__ import annotations
 
+import glob
 import json
 import logging
 import os
@@ -695,6 +696,9 @@ def _remove_files(entries: list[tuple[Path, Path]]) -> None:
     run in this venv, so a removed package has usually been imported,
     and the ``__pycache__`` that import wrote would keep its directory
     importable as a namespace package.
+
+    A wheel member's name can hold glob syntax, so the stem is escaped
+    before the cache is searched for it.
     """
     directories: set[Path] = set()
     roots: set[Path] = set()
@@ -705,7 +709,7 @@ def _remove_files(entries: list[tuple[Path, Path]]) -> None:
 
         if target.suffix == ".py":
             cache = target.parent / "__pycache__"
-            for compiled in cache.glob(f"{target.stem}.*.pyc"):
+            for compiled in cache.glob(f"{glob.escape(target.stem)}.*.pyc"):
                 compiled.unlink()
             directories.add(cache)
 
