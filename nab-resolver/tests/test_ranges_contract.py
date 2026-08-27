@@ -27,6 +27,7 @@ from nab_resolver.ranges import (
     POSITIVE_INFINITY,
     Interval,
     Range,
+    _interval_is_empty,
     _normalize_intervals,
 )
 from nab_resolver.types import RangeRelation
@@ -65,6 +66,28 @@ OUT_OF_CONTRACT_LISTS: tuple[tuple[Interval, ...], ...] = (
 )
 """One list per way the invariant can break: order, overlap, touch, empty,
 reversed, either inclusive infinity, and all of them at once."""
+
+AT_NEGATIVE_INFINITY: Interval = (
+    NEGATIVE_INFINITY,
+    True,
+    NEGATIVE_INFINITY,
+    False,
+)
+"""``[-inf, -inf)``, which puts ``-inf`` in the upper slot it is barred from."""
+
+AT_POSITIVE_INFINITY: Interval = (
+    POSITIVE_INFINITY,
+    True,
+    POSITIVE_INFINITY,
+    False,
+)
+"""``[+inf, +inf)``, the same for ``+inf`` and the lower slot."""
+
+STARTS_ABOVE_EVERYTHING: Interval = (POSITIVE_INFINITY, True, 1, True)
+"""``[+inf, 1]``: a finite upper bound over a ``+inf`` lower bound."""
+
+ENDS_BELOW_EVERYTHING: Interval = (1, True, NEGATIVE_INFINITY, True)
+"""``[1, -inf]``: a ``-inf`` upper bound under a finite lower bound."""
 
 
 def holds_no_version(interval: Interval) -> bool:
@@ -376,6 +399,28 @@ class TestNormalizeIntervals:
         )
 
 
+class TestTheEmptinessPredicate:
+    """``_interval_is_empty`` and ``holds_no_version`` state the same rule.
+
+    ``invariant_violations`` reads the test-side one, so the two agreeing is
+    what lets its verdicts stand for the module's own.
+    """
+
+    def test_they_agree_on_every_shape_of_bound(self) -> None:
+        """Both infinities, in both slots, against both flags."""
+        bounds = (NEGATIVE_INFINITY, 1, 2, POSITIVE_INFINITY)
+        combinations = itertools.product(bounds, (True, False), bounds, (True, False))
+
+        for lower, lower_inclusive, upper, upper_inclusive in combinations:
+            interval: Interval = (lower, lower_inclusive, upper, upper_inclusive)
+            assert _interval_is_empty(
+                lower,
+                lower_inclusive=lower_inclusive,
+                upper=upper,
+                upper_inclusive=upper_inclusive,
+            ) == holds_no_version(interval), interval
+
+
 class TestOutOfContractInputs:
     """Hand-built lists that break the invariant, and what ``Range`` does with them.
 
@@ -432,6 +477,122 @@ class TestOutOfContractInputs:
 
         assert oracle_is_subset(below_one, Range.full())
         assert not below_one.is_subset(Range.full()), WIDENING_CHANGES_THIS
+
+    def test_an_interval_at_an_infinity_holds_no_version(self) -> None:
+        """The scan finds nothing in either misplaced-sentinel interval.
+
+        Nothing sits at or beyond an infinity.  The walks below still carve and
+        compare these intervals, which is the asymmetry the rest of these tests
+        turn on.
+        """
+        assert all(probe not in Range((AT_NEGATIVE_INFINITY,)) for probe in PROBES)
+        assert all(probe not in Range((AT_POSITIVE_INFINITY,)) for probe in PROBES)
+
+    def test_the_carve_reads_a_misplaced_sentinel_as_an_infinity(self) -> None:
+        """``__sub__`` tests both ends for an infinity by identity before comparing.
+
+        Only a sentinel in a slot the invariant bars reaches those tests, and
+        each answer below changes if one of them goes.
+        """
+        assert (Range((AT_NEGATIVE_INFINITY,)) - Range.at_most(1)).is_empty, (
+            WIDENING_CHANGES_THIS
+        )
+        assert (
+            Range((AT_NEGATIVE_INFINITY,)) - Range((AT_NEGATIVE_INFINITY,))
+        )._intervals == (AT_NEGATIVE_INFINITY,), WIDENING_CHANGES_THIS
+
+        assert (Range.at_least(1) - Range((STARTS_ABOVE_EVERYTHING,)))._intervals == (
+            (1, True, POSITIVE_INFINITY, False),
+            (1, False, POSITIVE_INFINITY, False),
+        ), WIDENING_CHANGES_THIS
+
+        assert (
+            Range((AT_POSITIVE_INFINITY,)) - Range((AT_POSITIVE_INFINITY,))
+        )._intervals == (AT_POSITIVE_INFINITY,), WIDENING_CHANGES_THIS
+        assert (Range((AT_POSITIVE_INFINITY,)) - Range.singleton(1))._intervals == (
+            AT_POSITIVE_INFINITY,
+        ), WIDENING_CHANGES_THIS
+
+    def test_the_subset_walk_reads_a_misplaced_sentinel_as_an_infinity(self) -> None:
+        """``is_subset`` retires a right interval on the same two tests.
+
+        A ``+inf`` upper bound ends below nothing, and nothing ends below a
+        ``-inf`` lower bound, whichever slot the sentinel is sitting in.
+        """
+        assert Range((STARTS_ABOVE_EVERYTHING,)).is_subset(Range.at_least(1)), (
+            WIDENING_CHANGES_THIS
+        )
+        assert not Range.at_most(1).is_subset(
+            Range((AT_NEGATIVE_INFINITY, (NEGATIVE_INFINITY, False, 1, True)))
+        ), WIDENING_CHANGES_THIS
+
+    def test_relation_reads_a_misplaced_sentinel_as_an_infinity(self) -> None:
+        """``relation`` asks the same question in two places, in both directions.
+
+        Its advance loop and its ends-below test each carry both infinity
+        tests, so a pair answers one way round and not the other.
+        """
+        above_one: Range[int] = Range.at_least(1)
+        starts_above: Range[int] = Range((STARTS_ABOVE_EVERYTHING,))
+
+        assert starts_above.relation(above_one) is RangeRelation.SUBSET, (
+            WIDENING_CHANGES_THIS
+        )
+        assert above_one.relation(starts_above) is RangeRelation.OVERLAPPING, (
+            WIDENING_CHANGES_THIS
+        )
+
+        below_one: Range[int] = Range.at_most(1)
+        ends_below: Range[int] = Range((ENDS_BELOW_EVERYTHING,))
+
+        assert ends_below.relation(below_one) is RangeRelation.SUBSET, (
+            WIDENING_CHANGES_THIS
+        )
+        assert below_one.relation(ends_below) is RangeRelation.OVERLAPPING, (
+            WIDENING_CHANGES_THIS
+        )
+
+    def test_the_intersection_reads_a_misplaced_sentinel_as_an_infinity(self) -> None:
+        """``__and__`` and ``is_disjoint`` share the emptiness test on the overlap.
+
+        An overlap bounded by a misplaced sentinel is not empty, because that
+        test asks for the sentinel by identity before it compares.
+        """
+        assert (Range((AT_NEGATIVE_INFINITY,)) & Range.at_most(1))._intervals == (
+            (NEGATIVE_INFINITY, False, NEGATIVE_INFINITY, False),
+        ), WIDENING_CHANGES_THIS
+        assert not Range((AT_NEGATIVE_INFINITY,)).is_disjoint(Range.at_most(1)), (
+            WIDENING_CHANGES_THIS
+        )
+
+        assert (Range((AT_POSITIVE_INFINITY,)) & Range.at_least(1))._intervals == (
+            AT_POSITIVE_INFINITY,
+        ), WIDENING_CHANGES_THIS
+        assert not Range((AT_POSITIVE_INFINITY,)).is_disjoint(Range.at_least(1)), (
+            WIDENING_CHANGES_THIS
+        )
+
+    def test_a_shared_endpoint_belongs_to_both_sides_only_if_both_include_it(
+        self,
+    ) -> None:
+        """The walks decide that with ``and`` over the two flags.
+
+        Reaching it takes an interval that holds no version, since a canonical
+        list leaves a gap wherever two intervals could share an endpoint.
+        """
+        assert (
+            Range.at_most(1) - Range(((1, True, 1, True), (1, True, 1, False)))
+        )._intervals == Range.less_than(1)._intervals, WIDENING_CHANGES_THIS
+        assert (
+            Range(((1, True, 2, True),)) - Range(((2, False, 1, True),))
+        )._intervals == ((1, True, 2, True),), WIDENING_CHANGES_THIS
+
+        assert (Range(((1, True, 1, False),)) - Range.singleton(1)).is_empty, (
+            WIDENING_CHANGES_THIS
+        )
+        assert not Range(((1, True, 1, False),)).is_subset(
+            Range(((1, True, 1, False),))
+        ), WIDENING_CHANGES_THIS
 
     def test_an_empty_interval_defeats_the_relation_short_circuit(self) -> None:
         """``relation`` reads ``is_empty`` off the interval count, not off the versions."""
