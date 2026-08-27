@@ -15,8 +15,10 @@ import hashlib
 import inspect
 import io
 import os
+import sys
 import tarfile
 import textwrap
+import traceback
 import zlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -1294,6 +1296,49 @@ class TestExtractArchive:
         out.mkdir()
         with pytest.raises(ValueError, match="broken link in sdist member"):
             extract_sdist_archive(buf.getvalue(), out)
+
+    @requires_data_filter
+    def test_chained_link_members_raise_value_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A chain of link members is an unreadable archive, not a crash.
+
+        tarfile recurses once per link either way: it copies a link's target
+        when it cannot create the link, and it resolves the destination through
+        the links it did create.  A long enough chain runs out of stack.
+        Refusing os.symlink, as a Windows host without the privilege does, pins
+        this to the copying path.
+        """
+
+        def refuse_symlink(*_args: object, **_kwargs: object) -> NoReturn:
+            raise OSError(errno.EPERM, "symbolic link privilege not held")
+
+        monkeypatch.setattr(os, "symlink", refuse_symlink)
+
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            directory = tarfile.TarInfo("foo-1.0.0")
+            directory.type = tarfile.DIRTYPE
+            tar.addfile(directory)
+
+            for index in range(200):
+                link = tarfile.TarInfo(f"foo-1.0.0/link{index}")
+                link.type = tarfile.SYMTYPE
+                link.linkname = f"link{index - 1}" if index else "absent"
+                tar.addfile(link)
+
+        out = tmp_path / "out"
+        out.mkdir()
+
+        original = sys.getrecursionlimit()
+        try:
+            # Just above the current depth, so the chain overruns the limit
+            # whatever this interpreter starts with.
+            sys.setrecursionlimit(len(traceback.extract_stack()) + 100)
+            with pytest.raises(ValueError, match="unreadable sdist archive"):
+                extract_sdist_archive(buf.getvalue(), out)
+        finally:
+            sys.setrecursionlimit(original)
 
     @requires_data_filter
     @pytest.mark.parametrize(
