@@ -32,7 +32,6 @@ import logging
 import types
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -57,6 +56,7 @@ from nab_provider.serialization import SimpleSerialization
 from nab_provider.vcs_admission import VcsConfig
 
 from ._toml import tool_nab_section
+from ._value import ValueType
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
 from .paths import PathState, is_usable_path_name, path_state
 
@@ -235,8 +235,7 @@ _ALLOWED_TOML_SOURCES: dict[Scope, frozenset[SourceKind]] = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class OptionSpec:
+class OptionSpec(ValueType):
     """One row of the registry: the full definition of a layered option.
 
     ``key`` is the TOML/`nab config` key.  ``scope`` gates which sources
@@ -251,6 +250,18 @@ class OptionSpec:
     ``nab config``.
     """
 
+    __slots__ = __match_args__ = (
+        "key",
+        "scope",
+        "type_label",
+        "default",
+        "env_var",
+        "cli_flag",
+        "cli_param",
+        "parse",
+        "render",
+    )
+
     key: str
     scope: Scope
     type_label: str
@@ -260,6 +271,29 @@ class OptionSpec:
     cli_param: str | None
     parse: Callable[[Any, str], Any]
     render: Callable[[Any], str]
+
+    def __init__(  # noqa: PLR0913, PLR0917 - the type's own fields, in its own order
+        self,
+        key: str,
+        scope: Scope,
+        type_label: str,
+        default: Any,
+        env_var: str | None,
+        cli_flag: str | None,
+        cli_param: str | None,
+        parse: Callable[[Any, str], Any],
+        render: Callable[[Any], str],
+    ) -> None:
+        """Record one registry row."""
+        self.key = key
+        self.scope = scope
+        self.type_label = type_label
+        self.default = default
+        self.env_var = env_var
+        self.cli_flag = cli_flag
+        self.cli_param = cli_param
+        self.parse = parse
+        self.render = render
 
     def allowed_in_toml(self, kind: SourceKind) -> bool:
         """Whether a TOML source of ``kind`` may set this option.
@@ -1179,12 +1213,18 @@ def reject_user_keys_in_pyproject(raw: Mapping[str, Any]) -> None:
             raise SourceConfigError(msg)
 
 
-@dataclass(frozen=True, slots=True)
-class Origin:
+class Origin(ValueType):
     """Where a value came from: a source kind plus a display label."""
+
+    __slots__ = __match_args__ = ("kind", "label")
 
     kind: SourceKind
     label: str
+
+    def __init__(self, kind: SourceKind, label: str) -> None:
+        """Record the source a value came from."""
+        self.kind = kind
+        self.label = label
 
     @property
     def scope(self) -> str:
@@ -1216,16 +1256,21 @@ def _scope_label(kind: SourceKind) -> str:
     return "project" if kind is SourceKind.PYPROJECT else kind.value
 
 
-@dataclass(frozen=True, slots=True)
-class Layer:
+class Layer(ValueType):
     """A set of (key -> value) bindings discovered from one source."""
+
+    __slots__ = __match_args__ = ("origin", "values")
 
     origin: Origin
     values: Mapping[str, Any]
 
+    def __init__(self, origin: Origin, values: Mapping[str, Any]) -> None:
+        """Record the bindings ``origin`` supplied."""
+        self.origin = origin
+        self.values = values
 
-@dataclass(frozen=True, slots=True)
-class RejectedLayer:
+
+class RejectedLayer(ValueType):
     """A source refused by the registry: a key outside its scope, or unknown.
 
     Captured (not raised) by :func:`discover_layers` for the TOML sources and
@@ -1234,14 +1279,23 @@ class RejectedLayer:
     load path raises :class:`SourceConfigError` for TOML and warns for env.
     """
 
+    __slots__ = __match_args__ = ("origin", "key", "reason")
+
     origin: Origin
     key: str
     reason: str
 
+    def __init__(self, origin: Origin, key: str, reason: str) -> None:
+        """Record why ``origin``'s ``key`` was refused."""
+        self.origin = origin
+        self.key = key
+        self.reason = reason
 
-@dataclass(frozen=True, slots=True)
-class EffectiveValue:
+
+class EffectiveValue(ValueType):
     """One option's winning value plus its full shadowed stack."""
+
+    __slots__ = __match_args__ = ("spec", "value", "origin", "stack", "rejected")
 
     spec: OptionSpec
     value: Any
@@ -1249,11 +1303,25 @@ class EffectiveValue:
     # Every binding for this key in precedence order (low -> high),
     # the last of which is the winner.
     stack: tuple[tuple[Origin, Any], ...]
-    rejected: tuple[RejectedLayer, ...] = ()
+    rejected: tuple[RejectedLayer, ...]
+
+    def __init__(
+        self,
+        spec: OptionSpec,
+        value: Any,
+        origin: Origin,
+        stack: tuple[tuple[Origin, Any], ...],
+        rejected: tuple[RejectedLayer, ...] = (),
+    ) -> None:
+        """Record the value ``origin`` bound for ``spec``."""
+        self.spec = spec
+        self.value = value
+        self.origin = origin
+        self.stack = stack
+        self.rejected = rejected
 
 
-@dataclass(frozen=True, slots=True)
-class SourceRoots:
+class SourceRoots(ValueType):
     """Injectable search roots so config discovery is hermetic in tests.
 
     ``system_toml`` and ``user_toml`` point at the system/user
@@ -1267,10 +1335,30 @@ class SourceRoots:
     pyproject only.
     """
 
-    system_toml: Path | None = None
-    user_toml: Path | None = None
-    project_dir: Path | None = None
-    pyproject: Path | None = None
+    __slots__ = __match_args__ = (
+        "system_toml",
+        "user_toml",
+        "project_dir",
+        "pyproject",
+    )
+
+    system_toml: Path | None
+    user_toml: Path | None
+    project_dir: Path | None
+    pyproject: Path | None
+
+    def __init__(
+        self,
+        system_toml: Path | None = None,
+        user_toml: Path | None = None,
+        project_dir: Path | None = None,
+        pyproject: Path | None = None,
+    ) -> None:
+        """Record the roots config discovery may read."""
+        self.system_toml = system_toml
+        self.user_toml = user_toml
+        self.project_dir = project_dir
+        self.pyproject = pyproject
 
 
 def _load_toml_layer(

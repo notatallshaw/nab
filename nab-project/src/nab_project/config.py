@@ -64,6 +64,7 @@ from nab_provider.target import (
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 
 from ._toml import tool_nab_section
+from ._value import ValueType
 from .config_sources import (
     ConfigError,
     EffectiveValue,
@@ -157,15 +158,37 @@ _TOOL_NAB_REQUIRES_PYTHON = "requires-python"
 _PROJECT_REQUIRES_PYTHON = "[project] requires-python"
 
 
-@dataclass(frozen=True, slots=True)
-class MatrixConfig:
+class MatrixConfig(ValueType):
     """User-declared matrix axes for universal resolution."""
+
+    __slots__ = __match_args__ = (
+        "python",
+        "platforms",
+        "python_order",
+        "python_patches",
+        "implementations",
+    )
 
     python: str
     platforms: tuple[PlatformSpec, ...]
-    python_order: str = "asc"
-    python_patches: Mapping[str, str] | None = None
-    implementations: tuple[str, ...] = ("cpython",)
+    python_order: str
+    python_patches: Mapping[str, str] | None
+    implementations: tuple[str, ...]
+
+    def __init__(
+        self,
+        python: str,
+        platforms: tuple[PlatformSpec, ...],
+        python_order: str = "asc",
+        python_patches: Mapping[str, str] | None = None,
+        implementations: tuple[str, ...] = ("cpython",),
+    ) -> None:
+        """Record the axes ``[tool.nab.matrix]`` declared."""
+        self.python = python
+        self.platforms = platforms
+        self.python_order = python_order
+        self.python_patches = python_patches
+        self.implementations = implementations
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,8 +235,7 @@ class ConflictKind(enum.Enum):
     GROUP = KIND_GROUP
 
 
-@dataclass(frozen=True, slots=True)
-class ConflictMember:
+class ConflictMember(ValueType):
     """One side of a conflict: a named extra or dependency group.
 
     ``name`` is stored canonicalised (PEP 685 for extras, PEP 735 for
@@ -222,8 +244,15 @@ class ConflictMember:
     members, matching uv's package-qualified model.
     """
 
+    __slots__ = __match_args__ = ("kind", "name")
+
     kind: ConflictKind
     name: str
+
+    def __init__(self, kind: ConflictKind, name: str) -> None:
+        """Record an extra or group ``name`` the caller has canonicalised."""
+        self.kind = kind
+        self.name = name
 
     @override
     def __str__(self) -> str:
@@ -231,12 +260,22 @@ class ConflictMember:
         return f"{self.kind.value} {self.name!r}"
 
 
-@dataclass(frozen=True, slots=True)
-class ConflictSet:
+class ConflictSet(ValueType):
     """A set of mutually-exclusive members with an exclusivity policy."""
 
+    __slots__ = __match_args__ = ("members", "policy")
+
     members: tuple[ConflictMember, ...]
-    policy: ConflictPolicy = ConflictPolicy.AT_MOST_ONE
+    policy: ConflictPolicy
+
+    def __init__(
+        self,
+        members: tuple[ConflictMember, ...],
+        policy: ConflictPolicy = ConflictPolicy.AT_MOST_ONE,
+    ) -> None:
+        """Record the members ``policy`` makes exclusive."""
+        self.members = members
+        self.policy = policy
 
     @override
     def __str__(self) -> str:
@@ -281,8 +320,7 @@ def conflict_member_groups(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class ConflictFork:
+class ConflictFork(ValueType):
     """One fork of a conflict-driven universal resolve.
 
     ``selection`` is the active conflicting members as ``(kind, name)``
@@ -293,13 +331,33 @@ class ConflictFork:
     unforked resolve is a single fork with an empty ``selection``.
     """
 
+    __slots__ = __match_args__ = (
+        "selection",
+        "active_extras",
+        "active_groups",
+        "active_configured",
+    )
+
     selection: tuple[tuple[str, str], ...]
     active_extras: tuple[str, ...]
     active_groups: tuple[str, ...]
-    active_configured: tuple[str, ...] = ()
+    active_configured: tuple[str, ...]
     """The configured group names (``base-group``, ``build-group``) this
     fork carries.  Their requirements come from a pyproject table rather
     than from ``[dependency-groups]``."""
+
+    def __init__(
+        self,
+        selection: tuple[tuple[str, str], ...],
+        active_extras: tuple[str, ...],
+        active_groups: tuple[str, ...],
+        active_configured: tuple[str, ...] = (),
+    ) -> None:
+        """Record one fork of a conflict-driven resolve."""
+        self.selection = selection
+        self.active_extras = active_extras
+        self.active_groups = active_groups
+        self.active_configured = active_configured
 
 
 # Two active selections engage the set's exclusivity, forcing a fork.
