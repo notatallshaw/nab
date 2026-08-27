@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import gc
+from typing import Any
 
 import pytest
 
 from nab_resolver import partial_solution
-from nab_resolver.partial_solution import PartialSolution
+from nab_resolver.partial_solution import Assignment, PartialSolution
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
+
+# Incompatibility declares no __eq__, so entries that have to compare equal
+# share one cause object.
+_CAUSE: Incompatibility[str, int] = Incompatibility(
+    [Term("foo", Range.at_least(2))], cause=IncompatibilityCause.NO_VERSIONS
+)
 
 
 class TestAssignments:
@@ -611,3 +618,105 @@ class TestRangeOperationMemo:
         assert effective is not None
         assert 5 in effective
         assert 9 not in effective
+
+
+class TestAssignmentEntries:
+    def _entry(self, **overrides: Any) -> Assignment[str, int]:
+        """A derivation entry with every field set, ``overrides`` applied."""
+        fields: dict[str, Any] = {
+            "package": "foo",
+            "accumulated_range": Range.at_least(2),
+            "decision_level": 1,
+            "is_decision": False,
+            "trail_index": 4,
+            "version": 7,
+            "cause": _CAUSE,
+            "positive": True,
+            "cum_positive": Range.at_least(2),
+            "cum_negative": Range.full(),
+        }
+        return Assignment(**{**fields, **overrides})
+
+    def test_the_optional_fields_default(self) -> None:
+        entry = Assignment("foo", Range.at_least(2), 1, is_decision=True)
+
+        assert (entry.trail_index, entry.version, entry.cause) == (0, None, None)
+        assert entry.positive
+        assert (entry.cum_positive, entry.cum_negative) == (None, None)
+
+    def test_entries_carry_no_instance_dict(self) -> None:
+        """One lives per trail step, so the layout is the point."""
+        with pytest.raises(AttributeError):
+            _ = self._entry().__dict__
+
+    def test_equality_covers_every_field_and_declines_other_types(self) -> None:
+        """Vary one field at a time, so no field can drop out of __eq__."""
+        others: dict[str, Any] = {
+            "package": "bar",
+            "accumulated_range": Range.at_least(3),
+            "decision_level": 2,
+            "is_decision": True,
+            "trail_index": 5,
+            "version": 8,
+            "cause": None,
+            "positive": False,
+            "cum_positive": Range.at_least(3),
+            "cum_negative": Range.at_least(4),
+        }
+        assert tuple(sorted(others)) == Assignment.__slots__
+
+        entry = self._entry()
+
+        assert entry == self._entry()
+        for name, value in others.items():
+            assert entry != self._entry(**{name: value}), name
+
+        assert entry.__eq__("foo") is NotImplemented
+
+    def test_a_mutable_trail_entry_is_unhashable(self) -> None:
+        assert Assignment.__hash__ is None
+
+    def test_repr_names_the_class_and_every_field_in_declaration_order(self) -> None:
+        """A property test formats an entry into its failure message."""
+        entry = Assignment(
+            "foo", Range.at_least(2), 1, is_decision=False, trail_index=4
+        )
+
+        assert repr(entry) == (
+            "Assignment(package='foo',"
+            " accumulated_range=Range(((2, True, +inf, False),)), decision_level=1,"
+            " is_decision=False, trail_index=4, version=None, cause=None,"
+            " positive=True, cum_positive=None, cum_negative=None)"
+        )
+
+    def test_pattern_matching_reads_every_field_positionally(self) -> None:
+        """Ten sub-patterns, in declaration order rather than slot order."""
+        match self._entry():
+            case Assignment(
+                package,
+                accumulated_range,
+                decision_level,
+                is_decision,
+                trail_index,
+                version,
+                cause,
+                positive,
+                cum_positive,
+                cum_negative,
+            ):
+                assert (package, accumulated_range, decision_level) == (
+                    "foo",
+                    Range.at_least(2),
+                    1,
+                )
+                assert (is_decision, trail_index, version, cause) == (
+                    False,
+                    4,
+                    7,
+                    _CAUSE,
+                )
+                assert (positive, cum_positive, cum_negative) == (
+                    True,
+                    Range.at_least(2),
+                    Range.full(),
+                )

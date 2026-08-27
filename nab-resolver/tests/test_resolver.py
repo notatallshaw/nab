@@ -4,6 +4,7 @@ and end-to-end resolution with a simple in-memory provider."""
 from __future__ import annotations
 
 import sys
+from collections import defaultdict
 from collections.abc import Mapping
 from typing import Any
 
@@ -40,6 +41,7 @@ from nab_resolver.resolver import (
     ResolutionError,
     Resolver,
     ResolverObserver,
+    ResolverStats,
     Solution,
 )
 from nab_resolver.root import ROOT
@@ -3432,3 +3434,104 @@ class TestSettledClauseSkip:
 
         assert restarted
         assert resolver.solution.contradiction_epoch > before
+
+
+class TestResolverStats:
+    def test_a_fresh_bag_starts_at_zero_with_its_own_counters(self) -> None:
+        """The two count maps are per-instance, not shared class state."""
+        stats: ResolverStats[str] = ResolverStats()
+        other: ResolverStats[str] = ResolverStats()
+
+        assert stats.rounds == 0
+        assert stats.incompatibilities_learned == 0
+        assert stats.package_conflict_counts == {}
+        assert stats.package_culprit_counts == {}
+
+        stats.package_conflict_counts["a"] += 1
+        assert other.package_conflict_counts == {}
+
+    def test_counters_can_be_supplied(self) -> None:
+        stats: ResolverStats[str] = ResolverStats(
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            defaultdict(int, {"a": 1}),
+            defaultdict(int, {"b": 2}),
+        )
+
+        assert (stats.rounds, stats.decisions, stats.conflicts) == (1, 2, 3)
+        assert (stats.derivations, stats.backjumps, stats.restarts) == (4, 5, 6)
+        assert (stats.targeted_backtracks, stats.incompatibilities_learned) == (7, 8)
+        assert stats.package_conflict_counts == {"a": 1}
+        assert stats.package_culprit_counts == {"b": 2}
+
+    def test_equality_covers_every_counter_and_declines_other_types(self) -> None:
+        """Vary one counter at a time, so none can drop out of __eq__."""
+        counters: dict[str, Any] = {
+            "rounds": 1,
+            "decisions": 2,
+            "conflicts": 3,
+            "derivations": 4,
+            "backjumps": 5,
+            "restarts": 6,
+            "targeted_backtracks": 7,
+            "incompatibilities_learned": 8,
+            "package_conflict_counts": defaultdict(int, {"a": 1}),
+            "package_culprit_counts": defaultdict(int, {"b": 2}),
+        }
+        assert tuple(sorted(counters)) == ResolverStats.__slots__
+
+        stats: ResolverStats[str] = ResolverStats(**counters)
+
+        assert stats == ResolverStats(**counters)
+        for name, value in counters.items():
+            other = value + 1 if isinstance(value, int) else defaultdict(int, {"z": 9})
+            assert stats != ResolverStats(**{**counters, name: other}), name
+
+        assert stats.__eq__("stats") is NotImplemented
+
+    def test_a_mutable_bag_of_counters_is_unhashable(self) -> None:
+        assert ResolverStats.__hash__ is None
+
+    def test_a_bag_of_counters_carries_no_instance_dict(self) -> None:
+        """The ten slots are the whole layout."""
+        stats: ResolverStats[str] = ResolverStats()
+
+        with pytest.raises(AttributeError):
+            _ = stats.__dict__
+
+    def test_pattern_matching_reads_every_counter_positionally(self) -> None:
+        """Ten sub-patterns, in declaration order rather than slot order."""
+        stats: ResolverStats[str] = ResolverStats(rounds=2, conflicts=5)
+
+        match stats:
+            case ResolverStats(
+                rounds,
+                decisions,
+                conflicts,
+                derivations,
+                backjumps,
+                restarts,
+                targeted_backtracks,
+                learned,
+                conflict_counts,
+                culprit_counts,
+            ):
+                assert (rounds, decisions, conflicts) == (2, 0, 5)
+                assert (derivations, backjumps, restarts) == (0, 0, 0)
+                assert (targeted_backtracks, learned) == (0, 0)
+                assert (conflict_counts, culprit_counts) == ({}, {})
+
+    def test_repr_names_the_class_and_every_counter(self) -> None:
+        assert repr(ResolverStats(rounds=2)) == (
+            "ResolverStats(rounds=2, decisions=0, conflicts=0, derivations=0,"
+            " backjumps=0, restarts=0, targeted_backtracks=0,"
+            " incompatibilities_learned=0,"
+            " package_conflict_counts=defaultdict(<class 'int'>, {}),"
+            " package_culprit_counts=defaultdict(<class 'int'>, {}))"
+        )

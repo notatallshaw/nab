@@ -12,7 +12,6 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#definition
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 from ._compat import override
@@ -263,10 +262,6 @@ class RelationProtocol(Protocol):
         ...
 
 
-# No ``slots=True``: on 3.10 a frozen slotted dataclass raises TypeError when
-# ``typing._GenericAlias.__call__`` sets ``__orig_class__``, which the
-# subscripted construction in ``resolver._as_root_requirements`` triggers.
-@dataclass(frozen=True)
 class RootRequirement(Generic[PackageType, VersionType]):
     """One requirement as the caller wrote it, kept as its own clause.
 
@@ -279,11 +274,63 @@ class RootRequirement(Generic[PackageType, VersionType]):
     incompatibility, so a caller's own error reporter can identify the
     requirement behind a clause.  Two requirements on one package can share a
     range, so the range alone cannot tell them apart.
+
+    Immutable.  No ``__slots__``: pickle and ``copy`` restore a slotted
+    instance by assignment, which :meth:`__setattr__` refuses.
     """
+
+    __match_args__ = ("package", "constraint", "origin")
 
     package: PackageType
     constraint: RangeProtocol[VersionType]
-    origin: Any = None
+    origin: Any
+
+    def __init__(
+        self,
+        package: PackageType,
+        constraint: RangeProtocol[VersionType],
+        origin: Any = None,
+    ) -> None:
+        """Record one requirement on ``package``."""
+        object.__setattr__(self, "package", package)
+        object.__setattr__(self, "constraint", constraint)
+        object.__setattr__(self, "origin", origin)
+
+    @override
+    def __setattr__(self, name: str, value: object) -> None:
+        """Refuse the write."""
+        message = f"cannot assign to field {name!r}"
+        raise AttributeError(message)
+
+    @override
+    def __delattr__(self, name: str) -> None:
+        """Refuse the deletion."""
+        message = f"cannot delete field {name!r}"
+        raise AttributeError(message)
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        """Compare package, constraint and origin."""
+        if not isinstance(other, RootRequirement):
+            return NotImplemented
+        return (self.package, self.constraint, self.origin) == (
+            other.package,
+            other.constraint,
+            other.origin,
+        )
+
+    @override
+    def __hash__(self) -> int:
+        """Hash package, constraint and origin together."""
+        return hash((self.package, self.constraint, self.origin))
+
+    @override
+    def __repr__(self) -> str:
+        """Return a debug representation."""
+        return (
+            f"{type(self).__qualname__}(package={self.package!r}, "
+            f"constraint={self.constraint!r}, origin={self.origin!r})"
+        )
 
 
 class SetRelation(enum.Enum):
