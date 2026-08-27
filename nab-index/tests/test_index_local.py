@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, TypeVar
 
+import pytest
+
 from nab_index.local_index import LocalIndexClient, _scan_pep503_directory
 
 if TYPE_CHECKING:
@@ -56,7 +58,62 @@ def test_scan_directory_without_index_html_returns_empty(tmp_path: Path) -> None
     # exercised directly here.
     package_dir = tmp_path / "foo"
     package_dir.mkdir()
-    assert _scan_pep503_directory(package_dir, "foo") == ([], False)
+    assert _scan_pep503_directory(package_dir, "foo") == ([], False, False)
+
+
+def _anchor(filename: str, *, yanked: bool = False) -> str:
+    """One PEP 503 link, yanked or not."""
+    attribute = ' data-yanked=""' if yanked else ""
+    return f'<a href="{filename}"{attribute}>{filename}</a>'
+
+
+_YANKED_WHEEL = _anchor("foo-1.0-py3-none-any.whl", yanked=True)
+_YANKED_SDIST = _anchor("foo-2.0.tar.gz", yanked=True)
+_MISNAMED = _anchor("foo-1.0.zip")
+_READABLE = _anchor("foo-3.0-py3-none-any.whl")
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        pytest.param(_YANKED_WHEEL, True, id="one-yanked-link"),
+        pytest.param(_YANKED_WHEEL + _YANKED_SDIST, True, id="every-link-yanked"),
+        pytest.param("", False, id="no-links"),
+        pytest.param(_MISNAMED, False, id="misnamed-link-alone"),
+        pytest.param(_YANKED_WHEEL + _MISNAMED, False, id="one-link-stands"),
+        pytest.param(_YANKED_WHEEL + _READABLE, False, id="one-link-admitted"),
+    ],
+)
+def test_the_all_yanked_flag_counts_the_yanked_links(
+    tmp_path: Path, body: str, expected: bool
+) -> None:
+    """Every link on the page has to be yanked, not merely one of them.
+
+    A page whose only link nab cannot read also lists no files, and
+    reporting that as yanked would name a PEP 592 withdrawal the index
+    never declared.
+    """
+    package_dir = _make_index(tmp_path, body)
+    (package_dir / "foo-3.0-py3-none-any.whl").write_bytes(b"")
+
+    _files, _unreadable, all_yanked = _scan_pep503_directory(package_dir, "foo")
+
+    assert all_yanked is expected
+
+
+def test_a_page_of_yanked_misnamed_links_reads_as_yanked(tmp_path: Path) -> None:
+    """The unreadable flag skips yanked links, so only the yank flag answers.
+
+    Nothing can set both flags: the unreadable one needs a link that stands,
+    and the yank one needs every link withdrawn.
+    """
+    package_dir = _make_index(tmp_path, _anchor("foo-1.0.zip", yanked=True))
+
+    files, unreadable, all_yanked = _scan_pep503_directory(package_dir, "foo")
+
+    assert files == []
+    assert not unreadable
+    assert all_yanked
 
 
 def test_get_sdist_archive_returns_file_bytes(tmp_path: Path) -> None:

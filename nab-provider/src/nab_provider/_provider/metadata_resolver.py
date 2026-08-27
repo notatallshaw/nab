@@ -68,6 +68,12 @@ logger = logging.getLogger(__name__)
 
 _OFFLINE_METADATA_MISS = "offline mode skipped a metadata fetch with no cached metadata"
 
+# Naming the rung that took the sdist means walking the whole listing, and
+# look-ahead swallows this error, so a resolve that then succeeds would pay
+# for a sentence nobody reads.  The report names the rung instead, off the
+# marker the error carries.
+_FILTERED_SDIST = "no PEP 658 metadata and the listing filter excluded the sdist"
+
 
 def resolve_metadata(
     provider: Provider,
@@ -170,6 +176,7 @@ def _ladder_failure(
     # skipped offline says nothing about what this one read.
     last_url = sdist.url if sdist is not None else metadata_url
 
+    filtered_sdist = None
     if index.is_offline_metadata_miss(normalized, ver_str, last_url):
         reason = _OFFLINE_METADATA_MISS
         _report_offline_skip(index, normalized, package, version)
@@ -177,15 +184,14 @@ def _ladder_failure(
         # A fetched sdist with no PKG-INFO is distinct from no sdist at all.
         reason = "no PEP 658 metadata and the sdist has no readable PKG-INFO"
     elif _index_published_sdist(index, normalized, version):
-        reason = (
-            "no PEP 658 metadata and the sdist was filtered by"
-            " requires-python, dist-policy, or upload-time"
-        )
+        reason = _FILTERED_SDIST
+        filtered_sdist = version
     else:
         reason = "no PEP 658 metadata and no sdist available"
 
-    msg = f"No metadata for {package}=={version}: {reason}"
-    return MetadataError(msg)
+    error = MetadataError(f"No metadata for {package}=={version}: {reason}")
+    error.filtered_sdist_version = filtered_sdist
+    return error
 
 
 def _index_published_sdist(

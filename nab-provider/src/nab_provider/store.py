@@ -66,6 +66,8 @@ class InMemoryIndex:
         self._offline_listing_misses: set[str] = set()
         # Packages whose empty listing stands for a page of formats nab cannot read.
         self._unreadable_only_listings: set[str] = set()
+        # Packages whose empty listing stands for a page of yanked files.
+        self._all_yanked_listings: set[str] = set()
 
         # Metadata text is keyed by the artifact it came from: the sidecar URL
         # for a wheel's METADATA, or None for text that stands for the version
@@ -128,6 +130,7 @@ class InMemoryIndex:
         *,
         offline_miss: bool = False,
         unreadable_only: bool = False,
+        all_yanked: bool = False,
     ) -> None:
         """Cache the listing for ``package`` and unblock any waiter.
 
@@ -135,7 +138,8 @@ class InMemoryIndex:
 
         ``offline_miss`` marks an empty listing as an index skipped offline
         rather than one that served no files; ``unreadable_only`` marks it as
-        a page of formats nab does not read.
+        a page of formats nab does not read; ``all_yanked`` marks it as a page
+        whose every file is yanked.
         """
         key = f"listing:{package}"
         materialised = list(data)
@@ -145,6 +149,8 @@ class InMemoryIndex:
                 self._offline_listing_misses.add(package)
             if unreadable_only:
                 self._unreadable_only_listings.add(package)
+            if all_yanked:
+                self._all_yanked_listings.add(package)
 
     def is_offline_listing_miss(self, package: str) -> bool:
         """Whether ``package``'s empty listing is an offline cold-cache miss."""
@@ -155,6 +161,11 @@ class InMemoryIndex:
         """Whether ``package``'s empty listing held only unreadable formats."""
         with self._lock:
             return package in self._unreadable_only_listings
+
+    def is_all_yanked_listing(self, package: str) -> bool:
+        """Whether ``package``'s empty listing held files and yanked every one."""
+        with self._lock:
+            return package in self._all_yanked_listings
 
     def store_listing_error(self, package: str, error: BaseException) -> None:
         """Record a failed listing fetch and unblock any waiter.

@@ -88,6 +88,7 @@ from nab_provider.provider import (
     SiblingMetadataDivergenceError,
     UnsupportedVcsError,
 )
+from nab_provider.records import WheelFile
 from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget, host_environment
@@ -2899,6 +2900,117 @@ class TestLockCommandUniversal:
         assert "# base/py312-linux_x86_64: FAILED" in err
         assert "#   ResolutionError: base unresolvable" in err
         assert "#   Diagnostics: missing" in err
+
+    def _cutoff_refused(self, tmp_path: Path, platforms: str) -> Path:
+        """A universal project whose only candidate the upload cutoff refuses."""
+        return _make_pyproject(
+            tmp_path,
+            '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'uploaded-prior-to = "2026-05-01T00:00:00Z"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            f"platforms = [{platforms}]\n",
+        )
+
+    def _lock_against_a_refused_listing(self, pyproject: Path) -> None:
+        """Run a real resolve over one wheel uploaded after the cutoff."""
+        coordinator = make_coordinator(
+            [
+                WheelFile(
+                    filename="foo-1.0-py3-none-any.whl",
+                    url="https://example.com/foo-1.0-py3-none-any.whl",
+                    version="1.0",
+                    requires_python=None,
+                    has_metadata=True,
+                    upload_time="2030-01-01T00:00:00Z",
+                )
+            ],
+            package="foo",
+        )
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(SystemExit, match="1"):
+                lock(pyproject, format="requirements-without-hashes", cache=False)
+
+    def test_a_diagnostics_line_reaches_stderr(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A one-tuple failure prints one line and the setting that lifts it.
+
+        The line and its ``try:`` come from a real resolve, so this is the
+        text a user reads at the default level, not a fixture of it.
+        """
+        self._lock_against_a_refused_listing(
+            self._cutoff_refused(tmp_path, '"linux_x86_64"')
+        )
+
+        assert capsys.readouterr().err.endswith(
+            "\nDiagnostics: (-v for detail)\n"
+            "  - foo: uploaded-prior-to excluded every file\n"
+            '    try: set packages."foo".uploaded-prior-to = false\n'
+        )
+
+    def test_the_verbose_level_replaces_the_try_line_with_the_detail(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``-v`` keeps the line and prints the clauses and the note under it."""
+        with patch("nab.cli._printer", Printer(verbosity=Verbosity.VERBOSE)):
+            self._lock_against_a_refused_listing(
+                self._cutoff_refused(tmp_path, '"linux_x86_64"')
+            )
+
+        assert capsys.readouterr().err.endswith(
+            "\nDiagnostics:\n"
+            "  - foo: uploaded-prior-to excluded every file\n"
+            "    the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded"
+            " 1 file uploaded at 2030-01-01T00:00:00Z (1.0)\n"
+            "    the files nab read hold no sdist to build from\n"
+            "    note: the project-level uploaded-prior-to set that cutoff;"
+            ' setting packages."foo".uploaded-prior-to = false lifts it for this'
+            " package\n"
+        )
+
+    def test_a_diagnostics_line_survives_the_per_tuple_block(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Every line of the body takes the block's comment prefix.
+
+        ``_error_lines`` prefixes each line, so the ``try:`` arrives indented
+        under the package it belongs to rather than at the block's own
+        indent.
+        """
+        self._lock_against_a_refused_listing(
+            self._cutoff_refused(tmp_path, '"linux_x86_64", "windows_amd64"')
+        )
+
+        err = capsys.readouterr().err
+        assert "# py311-linux_x86_64: FAILED" in err
+        assert "#   Diagnostics:" in err
+        assert ("#     - foo: uploaded-prior-to excluded every file") in err
+        assert '#       try: set packages."foo".uploaded-prior-to = false' in err
+
+    def test_the_verbose_level_reaches_the_per_tuple_block(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A matrix block deepens at ``-v`` the way the single-target one does."""
+        with patch("nab.cli._printer", Printer(verbosity=Verbosity.VERBOSE)):
+            self._lock_against_a_refused_listing(
+                self._cutoff_refused(tmp_path, '"linux_x86_64", "windows_amd64"')
+            )
+
+        err = capsys.readouterr().err
+        assert (
+            "#       the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00"
+            " excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0)"
+        ) in err
+        assert (
+            "#       note: the project-level uploaded-prior-to set that cutoff;"
+            ' setting packages."foo".uploaded-prior-to = false lifts it for this'
+            " package"
+        ) in err
 
     def test_template_writes_one_file_per_tuple(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

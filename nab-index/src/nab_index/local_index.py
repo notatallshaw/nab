@@ -218,18 +218,20 @@ _FLAT_EXTS = re.compile(r"\.(whl|tar\.gz)$", re.IGNORECASE)
 def _scan_pep503_directory(
     package_dir: Path,
     canonical: str,
-) -> tuple[list[WheelFile | SdistFile], bool]:
+) -> tuple[list[WheelFile | SdistFile], bool, bool]:
     """Parse ``<package>/index.html`` and return file records.
 
     ``package_dir`` has to be absolute, because the page's URI is the base
     for its relative links.
 
     The second element says the page linked a file in a format nab does
-    not read, which tells a page of ``.zip`` sdists from an empty one.
+    not read, which tells a page of ``.zip`` sdists from an empty one.  The
+    third says every link on it was yanked, which tells a page of yanked
+    releases from a package this index does not carry.
     """
     index_html = package_dir / "index.html"
     if not _is_file(index_html):
-        return [], False
+        return [], False, False
 
     try:
         text = index_html.read_text(encoding="utf-8")
@@ -255,10 +257,12 @@ def _scan_pep503_directory(
 
     files: list[WheelFile | SdistFile] = []
     unreadable = False
+    yanked = 0
 
     for anchor in anchors:
         # PEP 592: a yanked link never reaches the listing.
         if anchor.yanked:
+            yanked += 1
             continue
 
         filename, file_url, local_path, hashes = _resolve_local_link(
@@ -281,7 +285,7 @@ def _scan_pep503_directory(
         )
         if record is not None:
             files.append(record)
-    return files, unreadable
+    return files, unreadable, bool(anchors) and yanked == len(anchors)
 
 
 def _resolve_local_link(
@@ -576,6 +580,7 @@ class LocalIndexClient:
         root = parse_file_url(index_url)
         self._root = Path(os.path.abspath(root))  # noqa: PTH100
         self._unreadable_only: set[str] = set()
+        self._all_yanked: set[str] = set()
 
     async def aclose(self) -> None:
         """No-op; nothing to release."""
@@ -600,22 +605,31 @@ class LocalIndexClient:
 
         try:
             if _is_file(package_dir / "index.html"):
-                files, unreadable = _scan_pep503_directory(package_dir, canonical)
+                files, unreadable, all_yanked = _scan_pep503_directory(
+                    package_dir, canonical
+                )
             elif not _is_dir(self._root):
-                files, unreadable = [], False
+                files, unreadable, all_yanked = [], False, False
             else:
                 files, unreadable = _scan_flat_wheelhouse(self._root, package)
+                all_yanked = False
         except OSError as exc:
             msg = f"cannot read local index {self._root}: {exc}"
             raise UnreadableLocalIndexError(msg) from exc
 
         if not files and unreadable:
             self._unreadable_only.add(package)
+        if not files and all_yanked:
+            self._all_yanked.add(package)
         return files
 
     def served_unreadable_only(self, package: str) -> bool:
         """Whether a listing for ``package`` held only files nab cannot read."""
         return package in self._unreadable_only
+
+    def served_all_yanked(self, package: str) -> bool:
+        """Whether a listing for ``package`` held links and yanked every one."""
+        return package in self._all_yanked
 
     async def get_metadata_text(
         self,

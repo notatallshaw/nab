@@ -44,6 +44,7 @@ class FakeClient:
     def __init__(self, listing: dict[str, list[WheelFile | SdistFile]]) -> None:
         self.listing = listing
         self.unreadable: set[str] = set()
+        self.all_yanked: set[str] = set()
         self.get_files_calls: list[str] = []
         self.metadata_calls: list[tuple[str, str, str]] = []
         self.sdist_calls: list[tuple[str, str, str]] = []
@@ -60,6 +61,9 @@ class FakeClient:
 
     def served_unreadable_only(self, package: str) -> bool:
         return package in self.unreadable
+
+    def served_all_yanked(self, package: str) -> bool:
+        return package in self.all_yanked
 
     async def get_metadata_text(
         self,

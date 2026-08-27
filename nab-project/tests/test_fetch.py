@@ -1650,6 +1650,7 @@ class TestFetchCoordinator:
                 *,
                 offline_miss: bool = False,
                 unreadable_only: bool = False,
+                all_yanked: bool = False,
             ) -> None:
                 serving_at_event.append(self.get_listing_index(package))
                 super().store_listing(
@@ -1657,6 +1658,7 @@ class TestFetchCoordinator:
                     data,
                     offline_miss=offline_miss,
                     unreadable_only=unreadable_only,
+                    all_yanked=all_yanked,
                 )
 
         with _coord() as coord:

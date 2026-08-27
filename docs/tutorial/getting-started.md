@@ -65,8 +65,11 @@ For multi-platform / multi-Python locks see
 
 * [Configuration](../reference/configuration.md): every key under
   `[tool.nab]`, what it does, and what the default is.
-* [CLI](../reference/cli.md): every subcommand, flag, exit code, and
-  environment variable.
+* [CLI](../reference/cli.md): every subcommand, exit code, and
+  environment variable, with
+  [selection](../reference/selection.md),
+  [output formats](../reference/formats.md), and
+  [resolution failures](../reference/diagnostics.md) on their own pages.
 * [Lockfile](../reference/lockfile.md): what is in `pylock.toml`, the
   `requirements.txt --hash` shape, and how `nab download` consumes
   them.

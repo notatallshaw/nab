@@ -682,8 +682,8 @@ class TestWheelTagFiltering:
 class TestPerVersionPruneCounter:
     """A ``(name, version)``-keyed prune count the lock builder reads."""
 
-    def test_count_matches_the_per_canonical_tally(self) -> None:
-        """The per-version count and the per-canonical count share one event."""
+    def test_count_matches_the_resolve_wide_tally(self) -> None:
+        """The per-version counts and the resolve's counter share one event."""
         wheels = [
             _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
             _platform_wheel("1.0", "cp311-cp311-win_amd64"),
@@ -696,7 +696,7 @@ class TestPerVersionPruneCounter:
         provider.filter_distributions("pkg", wheels)
         assert provider.tag_excluded_wheel_count("pkg", Version("1.0")) == 1
         assert provider.tag_excluded_wheel_count("pkg", Version("2.0")) == 1
-        assert provider.tag_excluded_wheels["pkg"] == 2
+        assert provider.stats.excluded_by_wheel_tags == 2
 
     def test_no_prune_leaves_zero(self) -> None:
         """A version whose every wheel the target keeps has a zero count."""
