@@ -10,7 +10,8 @@ and reset it with [`nab cache`](cli.md).
 
 Each record nab writes is one file under a versioned bucket directory.
 Bumping a bucket's version suffix retires the old format: the stale
-directory is harmless and `nab cache clear` reclaims it.
+directory is harmless and `nab cache clear` reclaims it. The one
+exception is `sdist-v1/`, which nab still reads.
 
 | Bucket | Holds |
 | ------ | ----- |
@@ -18,7 +19,12 @@ directory is harmless and `nab cache clear` reclaims it.
 | `simple-parsed-v0/` | the parsed listing, an accelerator for the body |
 | `simple-neg-v0/` | a short-lived record that a name returned a 404 |
 | `metadata-v1/` | PEP 658 metadata and recovered wheel `METADATA`, immutable |
-| `sdist-v1/` | an sdist's `PKG-INFO` and `pyproject.toml`, immutable |
+| `sdist-v2/` | an sdist's `PKG-INFO` and `pyproject.toml`, immutable |
+| `sdist-v1/` | the same records in the retired JSON format |
+
+An `sdist-v1/` record is read when `sdist-v2/` misses, rewritten into
+`sdist-v2/`, and left where it is, so a cache filled by an earlier nab
+keeps its records instead of downloading each archive again.
 
 Record buckets are keyed per index, so two indexes never share an entry.
 A listing body is stored as PEP 691 JSON; when the index answers in PEP
