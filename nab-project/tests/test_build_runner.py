@@ -20,6 +20,7 @@ import json
 import struct
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import tempfile
 import zipfile
@@ -3794,6 +3795,24 @@ class TestVenvSchemeProbeErrors:
         monkeypatch.setattr(subprocess, "run", _run)
         with pytest.raises(BuildEnvError, match="interpreter probe"):
             _venv_scheme_paths(Path("/nonexistent/venv/bin/python"))
+
+
+class TestVenvSchemeProbeIsolation:
+    """A module in the working directory must not answer the scheme probe."""
+
+    def test_sysconfig_module_in_the_working_directory_is_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Runs a real interpreter, so ``-I`` is what the assertion pins."""
+        (tmp_path / "sysconfig.py").write_text(
+            "def get_paths():\n    return {'purelib': '/elsewhere/site-packages'}\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
+        paths = _venv_scheme_paths(Path(sys.executable))
+
+        assert paths["purelib"] == sysconfig.get_paths()["purelib"]
 
 
 @pytest.mark.skipif(
