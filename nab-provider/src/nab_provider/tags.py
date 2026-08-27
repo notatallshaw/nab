@@ -61,9 +61,10 @@ FREE_THREADED_MIN_PYTHON = (3, 13)
 TagsSource = Callable[[], "Iterable[Tag]"]
 
 
-# PEP 427: a wheel filename has at least 5 dash-separated segments
-# (name-version-pythontag-abitag-platformtag.whl), or 6 with a build tag.
-_MIN_WHEEL_FILENAME_PARTS = 5
+# PEP 427: a wheel filename's last 3 dash-separated segments are the tag
+# suffix (pythontag-abitag-platformtag), behind a name, a version, and an
+# optional build tag, so the whole filename has at least 5 segments.
+_WHEEL_TAG_SEGMENTS = 3
 
 # A PEP 425 compressed tag set is a cross product, so an index-supplied
 # filename naming 40 interpreters, 40 abis and 40 platforms would parse into
@@ -474,20 +475,18 @@ def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
     filename or one with too few segments.
 
     The tag set is a pure function of the filename, so the whole
-    result is memoized on it, and a repeated filename skips the string
-    splitting.  The parse and Tag interning are shared further across
-    distinct filenames by :func:`_parse_tag_str`, keyed on the tag
-    suffix.
+    result is memoized on it, and a repeated filename skips the split.
+    The parse and Tag interning are shared further across distinct
+    filenames by :func:`_parse_tag_str`, keyed on the tag suffix.
     """
     if not filename.endswith(".whl"):
         return None
 
-    stem = filename[:-4]
-    parts = stem.split("-")
-    if len(parts) < _MIN_WHEEL_FILENAME_PARTS:
+    head = filename.rsplit("-", _WHEEL_TAG_SEGMENTS)[0]
+    if "-" not in head:  # fewer than five segments
         return None
 
-    return _parse_tag_str("-".join(parts[-3:]))
+    return _parse_tag_str(filename[len(head) + 1 : -4])
 
 
 def _build_tag_sort_key(filename: str) -> tuple[int, str]:

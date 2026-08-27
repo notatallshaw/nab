@@ -733,6 +733,11 @@ class TestWheelCompatibility:
         )
         assert not _compatible(wheel, python_version="3.11", spec=spec)
 
+    def test_four_segment_filename_is_not_a_wheel(self) -> None:
+        """Four segments is one short, even when the last three parse as tags."""
+        assert wheel_tag_set("foo-py3-none-any.whl") is None
+        assert wheel_tag_set("foo-1.0-py3-none.whl") is None
+
     def test_non_whl_extension_rejected(self) -> None:
         """A filename without ``.whl`` extension is rejected."""
         spec = PlatformSpec("linux_x86_64")
