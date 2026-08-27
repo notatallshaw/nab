@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
@@ -27,15 +27,16 @@ from ..vcs_admission import UnsupportedVcsError
 from .metadata_resolver import pick_dist_for_metadata, version_dists
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Iterator, Mapping, Sequence
     from datetime import datetime
+    from typing import Literal, TypeAlias
 
     from nab_provider._vendor.packaging.ranges import VersionRange
     from nab_resolver.types import RangeProtocol
 
     from ..fetch_port import Waitable
     from ..policy import ArchiveSource, LocalSource, VcsSource
-    from ..provider import DistFile, Provider
+    from ..provider import DistFile, Provider, ProviderStats
     from ..tags import TagSet
 
     _PreparedListing = tuple[
@@ -44,11 +45,62 @@ if TYPE_CHECKING:
         bool,
     ]
 
+    # The values :class:`DropCause` names, so a checker holds a cause to
+    # that set rather than to ``str``.
+    Cause: TypeAlias = Literal[
+        "upload-time-missing",
+        "upload-time-unparseable",
+        "upload-time-naive",
+        "upload-time-after-cutoff",
+        "dist-policy",
+        "sdist-install-no-sdist",
+        "requires-python",
+        "wheel-tags",
+        "invalid-version",
+    ]
+
 
 # Matched to the provider's look-ahead abort threshold: prefetching 8 versions
 # covers the worst-case abort scan without overshooting.  Used by the
 # speculative root-batch prefetch and by the pipelined scan's batch.
 PREFETCH_BATCH = 8
+
+
+class DropCause:
+    """Why the listing filter refused one file, or one whole version.
+
+    A namespace of constants rather than an :class:`enum.Enum`, which is
+    the most expensive way to declare a handful of names and is paid on
+    every nab invocation, since every one imports this module.
+
+    :data:`REPORT_ORDER` is the order the clauses print in, which is not
+    the order the filter applies.  A file is refused at the first rung that
+    objects, and the rungs run in this order: ``INVALID_VERSION``,
+    ``DIST_POLICY``, ``REQUIRES_PYTHON``, the four ``UPLOAD_TIME_*``,
+    ``SDIST_INSTALL_NO_SDIST``, ``WHEEL_TAGS``.
+    """
+
+    UPLOAD_TIME_MISSING: Final = "upload-time-missing"
+    UPLOAD_TIME_UNPARSEABLE: Final = "upload-time-unparseable"
+    UPLOAD_TIME_NAIVE: Final = "upload-time-naive"
+    UPLOAD_TIME_AFTER_CUTOFF: Final = "upload-time-after-cutoff"
+    DIST_POLICY: Final = "dist-policy"
+    SDIST_INSTALL_NO_SDIST: Final = "sdist-install-no-sdist"
+    REQUIRES_PYTHON: Final = "requires-python"
+    WHEEL_TAGS: Final = "wheel-tags"
+    INVALID_VERSION: Final = "invalid-version"
+
+    REPORT_ORDER: Final = (
+        UPLOAD_TIME_MISSING,
+        UPLOAD_TIME_UNPARSEABLE,
+        UPLOAD_TIME_NAIVE,
+        UPLOAD_TIME_AFTER_CUTOFF,
+        DIST_POLICY,
+        SDIST_INSTALL_NO_SDIST,
+        REQUIRES_PYTHON,
+        WHEEL_TAGS,
+        INVALID_VERSION,
+    )
 
 
 def fetch_versions(provider: Provider, package: str) -> list[tuple[Version, DistFile]]:
@@ -297,13 +349,7 @@ def filter_distributions(
     linux-only wheel still stays off the Windows target.
     """
     base = base_distributions(provider, normalized, files)
-    result = _apply_wheel_tags(provider, normalized, base)
-
-    if not result and len(base) < len(files):
-        # The base pass (dist-policy, requires-python, upload cutoff) dropped a
-        # file, so an empty result is not the tag pass alone.
-        provider.base_filtered_packages.add(normalized)
-    return result
+    return _apply_wheel_tags(provider, normalized, base)
 
 
 def base_distributions(
@@ -325,12 +371,14 @@ def base_distributions(
 
 
 @dataclass(frozen=True, slots=True)
-class _ListingPolicy:
+class ListingPolicy:
     """The policy config one listing's files are judged under.
 
     ``overridden`` is true when a per-package or per-index override can
     vary an answer by version, so the per-candidate lookups have to run.
-    Without one, the defaults here answer for every file in the listing.
+    Without one, the defaults here answer for every file in the listing:
+    ``default_drops_wheels`` and ``default_drops_sdists`` are
+    ``default_dist_policy``'s artifact-kind verdict, taken once.
     """
 
     index_name: str | None
@@ -338,18 +386,23 @@ class _ListingPolicy:
     default_dist_policy: DistPolicy
     default_cutoff: datetime | None
     time_filter_active: bool
+    default_drops_wheels: bool
+    default_drops_sdists: bool
 
 
-def _listing_policy(provider: Provider, normalized: str) -> _ListingPolicy:
+def listing_policy(provider: Provider, normalized: str) -> ListingPolicy:
     """Return the policy answers for one listing, for its per-file loop to consult."""
-    return _ListingPolicy(
+    default_dist_policy = provider.dist_policy
+    return ListingPolicy(
         index_name=provider.serving_index(normalized),
         overridden=provider.has_overrides,
-        default_dist_policy=provider.dist_policy,
+        default_dist_policy=default_dist_policy,
         default_cutoff=provider.uploaded_prior_to,
         time_filter_active=(
             provider.uploaded_prior_to is not None or provider.overrides_set_time
         ),
+        default_drops_wheels=default_dist_policy == DistPolicy.SDIST_ONLY,
+        default_drops_sdists=default_dist_policy == DistPolicy.WHEEL_ONLY,
     )
 
 
@@ -373,7 +426,7 @@ def _filter_base(
     version alive.  The answer is the same for every target that shares
     the listing and the policy config, which is what the memo assumes.
     """
-    policy = _listing_policy(provider, normalized)
+    policy = listing_policy(provider, normalized)
 
     cache = provider.listing_filter_cache
     if cache is None or not cache.shares_pythons:
@@ -400,9 +453,7 @@ def _filter_base(
         result = [
             pair
             for pair in parsed
-            if not _excluded_by_python_or_time(
-                provider, normalized, pair[0], pair[1], policy
-            )
+            if not python_or_time_cause(provider, normalized, pair[0], pair[1], policy)
         ]
 
     result = _drop_sdist_install_wheel_only(result, sdist_install_versions)
@@ -417,11 +468,22 @@ def _filter_base(
     return _canonicalize_equal_versions(result)
 
 
+def _count_files_seen(stats: ProviderStats, wheels: int, sdists: int) -> None:
+    """Raise the listing counters by the wheels and sdists one pass classified.
+
+    Both preparation passes call this from a ``finally``, so a pass that
+    raises part way through still reports the files it reached.
+    """
+    stats.distributions_seen += wheels + sdists
+    stats.wheels_seen += wheels
+    stats.sdists_seen += sdists
+
+
 def _prepare_listing(
     provider: Provider,
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
-    policy: _ListingPolicy,
+    policy: ListingPolicy,
     *,
     target_drops: bool,
 ) -> _PreparedListing:
@@ -437,48 +499,139 @@ def _prepare_listing(
     :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL`, and whether
     any version's policy wants wheels sorted ahead of sdists.
     """
+    if target_drops and not policy.overridden:
+        return _prepare_listing_defaults(provider, normalized, files, policy)
+
     result: list[tuple[Version, DistFile]] = []
     sort_with_wheel_first = False
     overridden = policy.overridden
     sdist_install_versions: set[Version] = set()
-    for dist in files:
-        provider.stats.distributions_seen += 1
-        if isinstance(dist, WheelFile):
-            provider.stats.wheels_seen += 1
-        else:
-            provider.stats.sdists_seen += 1
+    wheels_walked = 0
+    sdists_walked = 0
+    try:
+        for dist in files:
+            if isinstance(dist, WheelFile):
+                wheels_walked += 1
+            else:
+                sdists_walked += 1
 
-        # Parse the version first: the policy and the cutoff are
-        # version-scoped, so an unparseable version is dropped before
-        # either is consulted.
-        try:
-            version = _intern_version(dist.version)
-        except InvalidVersion:
-            continue
+            # Parse the version first: the policy and the cutoff are
+            # version-scoped, so an unparseable version is dropped before
+            # either is consulted.
+            try:
+                version = _intern_version(dist.version)
+            except InvalidVersion:
+                continue
 
-        if overridden:
-            effective_dist_policy = provider.effective_dist_policy(
-                normalized, version, policy.index_name
+            if overridden:
+                effective_dist_policy = provider.effective_dist_policy(
+                    normalized, version, policy.index_name
+                )
+            else:
+                effective_dist_policy = policy.default_dist_policy
+
+            if excluded_by_dist_policy(dist, effective_dist_policy):
+                provider.stats.excluded_by_dist_policy += 1
+                continue
+
+            if effective_dist_policy is DistPolicy.SDIST_INSTALL:
+                sdist_install_versions.add(version)
+                sort_with_wheel_first = True
+            elif effective_dist_policy is DistPolicy.PREFER_WHEEL:
+                sort_with_wheel_first = True
+
+            if target_drops and python_or_time_cause(
+                provider, normalized, version, dist, policy
+            ):
+                continue
+
+            result.append((version, dist))
+    finally:
+        _count_files_seen(provider.stats, wheels_walked, sdists_walked)
+
+    return result, sdist_install_versions, sort_with_wheel_first
+
+
+def _prepare_listing_defaults(
+    provider: Provider,
+    normalized: str,
+    files: Sequence[WheelFile | SdistFile],
+    policy: ListingPolicy,
+) -> _PreparedListing:
+    """Run :func:`_prepare_listing`'s pass with the policy answers already taken.
+
+    Reached when no override can vary an answer by version and the target
+    drops belong to this pass, so one dist policy and one cutoff hold for
+    the whole listing and each Requires-Python string has one verdict.
+    Per file the general pass calls a dist-policy check and a combined
+    Requires-Python and cutoff check; here the first is a pair of
+    booleans, the second a dict lookup, and only the cutoff still calls
+    out.
+
+    ``sort_with_wheel_first`` follows the policy rather than the files
+    that survive it, so it can be true where the general pass returns
+    false. That happens only when nothing survives, and the caller sorts
+    an empty list either way.
+    """
+    stats = provider.stats
+    requires_python_cache = provider.requires_python_cache
+    drops_wheels = policy.default_drops_wheels
+    drops_sdists = policy.default_drops_sdists
+    time_filter_active = policy.time_filter_active
+    cutoff = policy.default_cutoff
+
+    dist_policy = policy.default_dist_policy
+    sdist_install = dist_policy is DistPolicy.SDIST_INSTALL
+    sort_with_wheel_first = sdist_install or dist_policy is DistPolicy.PREFER_WHEEL
+
+    result: list[tuple[Version, DistFile]] = []
+    sdist_install_versions: set[Version] = set()
+    wheels_walked = 0
+    sdists_walked = 0
+    try:
+        for dist in files:
+            is_wheel = isinstance(dist, WheelFile)
+            if is_wheel:
+                wheels_walked += 1
+            else:
+                sdists_walked += 1
+
+            # Parse before the kind check so an unparseable file is not
+            # counted as a dist-policy exclusion.
+            try:
+                version = _intern_version(dist.version)
+            except InvalidVersion:
+                continue
+
+            wrong_kind = drops_wheels if is_wheel else drops_sdists
+            if wrong_kind:
+                stats.excluded_by_dist_policy += 1
+                continue
+
+            if sdist_install:
+                sdist_install_versions.add(version)
+
+            requires_python = dist.requires_python
+            excluded = (
+                requires_python_cache.get(requires_python) if requires_python else False
             )
-        else:
-            effective_dist_policy = policy.default_dist_policy
+            if excluded is None:
+                excluded = excluded_by_python(provider, dist, None)
+            elif excluded:
+                # excluded_by_python counts its own drops; a cache hit skips it.
+                stats.excluded_by_python += 1
 
-        if _excluded_by_dist_policy(dist, effective_dist_policy):
-            provider.stats.excluded_by_dist_policy += 1
-            continue
+            if excluded:
+                continue
 
-        if effective_dist_policy is DistPolicy.SDIST_INSTALL:
-            sdist_install_versions.add(version)
-            sort_with_wheel_first = True
-        elif effective_dist_policy is DistPolicy.PREFER_WHEEL:
-            sort_with_wheel_first = True
+            if time_filter_active and _excluded_by_upload_time(
+                provider, normalized, dist, cutoff
+            ):
+                continue
 
-        if target_drops and _excluded_by_python_or_time(
-            provider, normalized, version, dist, policy
-        ):
-            continue
-
-        result.append((version, dist))
+            result.append((version, dist))
+    finally:
+        _count_files_seen(stats, wheels_walked, sdists_walked)
 
     return result, sdist_install_versions, sort_with_wheel_first
 
@@ -499,11 +652,27 @@ def _apply_wheel_tags(
 
     result: list[tuple[Version, DistFile]] = []
     tag_rejected_versions: set[Version] = set()
+    run_version: Version | None = None
+    run_length = 0
+
     for version, dist in base:
-        if excluded_by_wheel_tags(provider, normalized, version, dist, tags):
-            tag_rejected_versions.add(version)
+        if not excluded_by_wheel_tags(dist, tags):
+            result.append((version, dist))
             continue
-        result.append((version, dist))
+
+        # ``base`` is sorted by version, so a version's rejected wheels arrive
+        # together and fold into one tally update.  Identity is enough for the
+        # boundary: a split run tallies twice and the counts still add up.
+        if version is not run_version:
+            if run_version is not None:
+                _tally_tag_exclusions(provider, normalized, run_version, run_length)
+            tag_rejected_versions.add(version)
+            run_version = version
+            run_length = 0
+        run_length += 1
+
+    if run_version is not None:
+        _tally_tag_exclusions(provider, normalized, run_version, run_length)
 
     if tag_rejected_versions:
         # A version whose every wheel the target refused, and which ships no
@@ -516,24 +685,31 @@ def _apply_wheel_tags(
     return result
 
 
-def _excluded_by_python_or_time(
+def python_or_time_cause(
     provider: Provider,
     normalized: str,
     version: Version,
     dist: DistFile,
-    policy: _ListingPolicy,
-) -> bool:
-    """Return True when Requires-Python or the upload cutoff rejects ``dist``."""
+    policy: ListingPolicy,
+) -> Cause | None:
+    """Return why Requires-Python or the upload cutoff refuses ``dist``, or None.
+
+    Counts the drop and, on a timezone-naive upload time, refuses the run.
+    The diagnosis walk calls this same body rather than a copy of it, and
+    brackets the counters it raises; see
+    :func:`nab_provider._provider.listing_diagnosis.python_or_time_verdict`,
+    which is the total sibling that answers instead of raising.
+    """
     if policy.overridden:
         override_rp = provider.effective_requires_python(normalized, version)
     else:
         override_rp = None
 
     if excluded_by_python(provider, dist, override_rp):
-        return True
+        return DropCause.REQUIRES_PYTHON
 
     if not policy.time_filter_active:
-        return False
+        return None
 
     if policy.overridden:
         cutoff = provider.effective_uploaded_prior_to(
@@ -542,37 +718,42 @@ def _excluded_by_python_or_time(
     else:
         cutoff = policy.default_cutoff
 
-    return excluded_by_time(provider, normalized, dist, cutoff)
+    cause = upload_time_cause(dist, cutoff)
+    if cause is None:
+        return None
+    if cause == DropCause.UPLOAD_TIME_NAIVE:
+        raise InvalidUploadTimeError(naive_upload_time_message(normalized, dist))
+    provider.stats.excluded_by_time += 1
+    return cause
 
 
-def excluded_by_wheel_tags(
-    provider: Provider,
-    normalized: str,
-    version: Version,
-    dist: DistFile,
-    tags: TagSet,
-) -> bool:
+def excluded_by_wheel_tags(dist: DistFile, tags: TagSet) -> bool:
     """Return True when ``dist`` is a wheel the target cannot install.
 
     An sdist is never excluded here: it carries no tags, and building it
-    produces a wheel for whatever machine runs the build.  Tallied per
-    package (so a no-candidate package can say why) and per
-    ``(package, version)``.
+    produces a wheel for whatever machine runs the build.
     """
-    if not isinstance(dist, WheelFile) or tags.accepts(dist.filename):
-        return False
-    provider.stats.excluded_by_wheel_tags += 1
-    provider.tag_excluded_wheels[normalized] = (
-        provider.tag_excluded_wheels.get(normalized, 0) + 1
-    )
+    return isinstance(dist, WheelFile) and not tags.accepts(dist.filename)
+
+
+def _tally_tag_exclusions(
+    provider: Provider,
+    normalized: str,
+    version: Version,
+    count: int,
+) -> None:
+    """Add one version's ``count`` tag-rejected wheels to the diagnostic tallies.
+
+    The per-``(package, version)`` count feeds the lock's omitted-wheel count.
+    """
+    provider.stats.excluded_by_wheel_tags += count
     key = (normalized, version)
     provider.tag_excluded_wheels_by_version[key] = (
-        provider.tag_excluded_wheels_by_version.get(key, 0) + 1
+        provider.tag_excluded_wheels_by_version.get(key, 0) + count
     )
-    return True
 
 
-def _parsed_version(raw: str) -> Version | None:
+def parsed_version(raw: str) -> Version | None:
     """Return the interned version, or None when it is not a PEP 440 version."""
     try:
         return _intern_version(raw)
@@ -580,17 +761,14 @@ def _parsed_version(raw: str) -> Version | None:
         return None
 
 
-def has_filtered_in_range_release(
-    provider: Provider,
-    normalized: str,
-    version_range: VersionRange,
-    kept: Sequence[Version],
+def dropped_release_in_range(
+    provider: Provider, normalized: str, version_range: VersionRange
 ) -> bool:
-    """Whether a filter dropped a release inside ``version_range``.
+    """Whether a file the filter dropped carries a version inside ``version_range``.
 
     Callers ask only when no surviving version falls in the range, so a
     dropped one that does is the release the requirement asked for.  A
-    dropped version equal to one in ``kept`` survived under another
+    dropped version equal to a surviving one survived under another
     spelling instead: :func:`filter_distributions` collapses equal
     versions onto one representative, and ``===`` compares its string
     form.  Filtering through ``version_range`` keeps the pre-release
@@ -600,15 +778,31 @@ def has_filtered_in_range_release(
     if not files:
         return False
 
-    surviving = set(kept)
+    surviving = {
+        version for version, _dist in provider.versions_cache.get(normalized) or []
+    }
     dropped = (
         version
         for dist in files
-        if (version := _parsed_version(dist.version)) is not None
+        if (version := parsed_version(dist.version)) is not None
         and version not in surviving
     )
-
     return any(version_range.filter(dropped))
+
+
+def sdist_install_wheel_only(
+    result: list[tuple[Version, DistFile]],
+    sdist_install_versions: set[Version],
+) -> set[Version]:
+    """Return the SDIST_INSTALL versions of ``result`` whose artifacts are all wheels.
+
+    Shared with the diagnosis walk, so both read this rung from one body.
+    """
+    if not sdist_install_versions:
+        return set()
+
+    versions_with_sdist = {v for v, d in result if isinstance(d, SdistFile)}
+    return sdist_install_versions - versions_with_sdist
 
 
 def _drop_sdist_install_wheel_only(
@@ -620,11 +814,7 @@ def _drop_sdist_install_wheel_only(
     Such a version has no source to install, so it must not reach the
     resolver even though its wheels stay as a cheap metadata source.
     """
-    if not sdist_install_versions:
-        return result
-
-    versions_with_sdist = {v for v, d in result if isinstance(d, SdistFile)}
-    drop = sdist_install_versions - versions_with_sdist
+    drop = sdist_install_wheel_only(result, sdist_install_versions)
     if not drop:
         return result
     return [pair for pair in result if pair[0] not in drop]
@@ -664,7 +854,7 @@ def _canonicalize_equal_versions(
     return [(representative[version], dist) for version, dist in result]
 
 
-def _excluded_by_dist_policy(dist: DistFile, policy: object) -> bool:
+def excluded_by_dist_policy(dist: DistFile, policy: object) -> bool:
     """Return True when ``policy`` rejects ``dist``'s artifact kind.
 
     ``WHEEL_ONLY`` drops sdists and ``SDIST_ONLY`` drops wheels; the
@@ -710,24 +900,24 @@ def excluded_by_python(
     return cached
 
 
-def excluded_by_time(
-    provider: Provider, normalized: str, dist: DistFile, cutoff: datetime | None
-) -> bool:
-    """Return True when ``dist`` was uploaded after ``cutoff``.
+def upload_time_cause(dist: DistFile, cutoff: datetime | None) -> Cause | None:
+    """Return which upload-time rule refuses ``dist``, or None when none does.
 
-    ``cutoff`` is the effective upload-time cutoff for ``normalized``,
-    already resolved through the overrides and the global
-    ``uploaded-prior-to`` (``None`` means no cutoff applies to this package).
+    ``cutoff`` is the effective upload-time cutoff for the package, already
+    resolved through the overrides and the global ``uploaded-prior-to``
+    (``None`` means no cutoff applies to it).
+
+    Total: a timezone-naive stamp is answered rather than raised, so a
+    diagnosis can meet one without turning a report into an error.  The
+    filter's caller raises on that answer.
     """
-    if cutoff is None:
-        return False
-    if dist.local_path is not None:
-        # A local file:// artifact has no upload time, so the cutoff cannot apply.
-        return False
+    # A local file:// artifact has no upload time, so the cutoff cannot apply.
+    if cutoff is None or dist.local_path is not None:
+        return None
+
     raw = dist.upload_time
     if raw is None:
-        provider.stats.excluded_by_time += 1
-        return True
+        return DropCause.UPLOAD_TIME_MISSING
 
     try:
         upload_dt = fast_iso_parser(raw)
@@ -737,27 +927,47 @@ def excluded_by_time(
         try:
             upload_dt = parse_iso_datetime(raw)
         except ValueError:
-            provider.stats.excluded_by_time += 1
-            return True
+            return DropCause.UPLOAD_TIME_UNPARSEABLE
 
     # PEP 700 mandates timezone-aware UTC upload times; refuse to guess.
     if upload_dt.tzinfo is None:
-        msg = (
-            f"{normalized} {dist.version} has a timezone-naive upload time "
-            f"{raw!r}; the Simple API requires "
-            f"timezone-aware (UTC) upload times"
-        )
-        raise InvalidUploadTimeError(msg)
+        return DropCause.UPLOAD_TIME_NAIVE
 
-    excluded = upload_dt >= cutoff
-    if excluded:
-        provider.stats.excluded_by_time += 1
-    return excluded
+    if upload_dt >= cutoff:
+        return DropCause.UPLOAD_TIME_AFTER_CUTOFF
+    return None
+
+
+def naive_upload_time_message(normalized: str, dist: DistFile) -> str:
+    """Return the error text for a candidate whose upload time carries no zone."""
+    return (
+        f"{normalized} {dist.version} has a timezone-naive upload time "
+        f"{dist.upload_time!r}; the Simple API requires "
+        f"timezone-aware (UTC) upload times"
+    )
+
+
+def _excluded_by_upload_time(
+    provider: Provider, normalized: str, dist: DistFile, cutoff: datetime | None
+) -> bool:
+    """Return True when ``cutoff`` refuses ``dist``, counting the drop.
+
+    The partial sibling of :func:`upload_time_cause`: a timezone-naive
+    stamp refuses the run here rather than being answered.
+    """
+    cause = upload_time_cause(dist, cutoff)
+    if cause is None:
+        return False
+    if cause == DropCause.UPLOAD_TIME_NAIVE:
+        raise InvalidUploadTimeError(naive_upload_time_message(normalized, dist))
+    provider.stats.excluded_by_time += 1
+    return True
 
 
 def prefetch_walk_ahead(
     provider: Provider,
     normalized: str,
+    version_range: RangeProtocol[Version],
     deep_count: int,
 ) -> None:
     """Submit metadata for the next ``deep_count`` wheels of ``normalized``.
@@ -765,6 +975,10 @@ def prefetch_walk_ahead(
     Called at the top of the pipelined scan, so a walk that runs past the
     first ``PREFETCH_BATCH`` window hits cache instead of paying one RTT
     per visit.
+
+    ``version_range`` is the range the scan walks.  A version outside it
+    is not requested, since the scan never reaches it, but it still fills
+    its window slot.
 
     Takes each version's artifact from
     :func:`~nab_provider._provider.metadata_resolver.version_dists`, so the
@@ -786,13 +1000,7 @@ def prefetch_walk_ahead(
     )
 
     items: list[tuple[str, str, str, tuple[str, str] | None]] = []
-    seen_versions: set[Version] = set()
-    for version, _ in ordered:
-        if version in seen_versions:
-            continue
-        seen_versions.add(version)
-        if len(seen_versions) > deep_count:
-            break
+    for version in _walk_ahead_window(ordered, version_range, deep_count):
         if (normalized, version) in provider.deps_cache:
             continue
         dist = picked[version]
@@ -805,6 +1013,27 @@ def prefetch_walk_ahead(
         items.append((normalized, dist.version, url, dist.metadata_hash))
     if items:
         provider.coordinator.request_metadata_batch(items)
+
+
+def _walk_ahead_window(
+    ordered: Sequence[tuple[Version, DistFile]],
+    version_range: RangeProtocol[Version],
+    deep_count: int,
+) -> Iterator[Version]:
+    """Yield the in-range versions among the first ``deep_count`` distinct ones.
+
+    An excluded version still consumes its slot, so the window covers the
+    same stretch of the listing whatever the range is.
+    """
+    seen: set[Version] = set()
+    for version, _ in ordered:
+        if version in seen:
+            continue
+        seen.add(version)
+        if len(seen) > deep_count:
+            return
+        if version in version_range:
+            yield version
 
 
 def prefetch_batch(

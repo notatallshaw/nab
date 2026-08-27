@@ -6,6 +6,7 @@ import gc
 
 import pytest
 
+from nab_resolver import partial_solution
 from nab_resolver.partial_solution import PartialSolution
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -524,3 +525,89 @@ class TestSnapshots:
         assert len(ps._decision_snapshots) == 1
         assert dict(latest) == {"foo": 3}
         assert list(kept) == ["foo"]
+
+
+class TestRangeOperationMemo:
+    """The memo over the range algebra a replayed trail repeats."""
+
+    def _cause(self) -> Incompatibility[str, int]:
+        """An incompatibility to stand as the cause of a derivation."""
+        return Incompatibility(
+            [Term("foo", Range.at_least(5))],
+            cause=IncompatibilityCause.NO_VERSIONS,
+        )
+
+    def test_a_first_derivation_records_the_constraint_itself(self) -> None:
+        """Folding into full() or empty() is skipped, so neither is memoised."""
+        ps: PartialSolution[str, int] = PartialSolution()
+        cause = self._cause()
+        allowed = Range.at_least(1)
+        excluded = Range.singleton(4)
+
+        ps.derive("foo", allowed, positive=True, cause=cause)
+        ps.derive("bar", excluded, positive=False, cause=cause)
+
+        assert ps.positive_range("foo") is allowed
+        assert ps._negative_ranges["bar"] is excluded
+        assert ps._range_ops == {}
+
+    def test_a_later_exclusion_unions_through_the_memo(self) -> None:
+        ps: PartialSolution[str, int] = PartialSolution()
+        cause = self._cause()
+
+        ps.derive("foo", Range.singleton(4), positive=False, cause=cause)
+        ps.derive("foo", Range.singleton(7), positive=False, cause=cause)
+
+        excluded = ps._negative_ranges["foo"]
+        assert 4 in excluded
+        assert 7 in excluded
+        assert len(ps._range_ops) == 1
+
+    def test_a_memoised_combine_keeps_its_operands_alive(self) -> None:
+        """The memo's id() keys stay valid only while it holds both operands."""
+        ps: PartialSolution[str, int] = PartialSolution()
+        cause = self._cause()
+        current = Range.at_least(1)
+        constraint = Range.at_most(9)
+
+        ps.derive("foo", current, positive=True, cause=cause)
+        ps.derive("foo", constraint, positive=True, cause=cause)
+
+        assert ps._range_op_operands[-2] is current
+        assert ps._range_op_operands[-1] is constraint
+
+    def test_replayed_derivation_reuses_the_range_object(self) -> None:
+        """Re-deriving after a backtrack returns the object the first pass built."""
+        ps: PartialSolution[str, int] = PartialSolution()
+        cause = self._cause()
+        constraint = Range.at_most(9)
+
+        ps.derive("foo", Range.at_least(1), positive=True, cause=cause)
+        ps.decide("bar", 1)
+        ps.derive("foo", constraint, positive=True, cause=cause)
+        first = ps.get("foo")
+
+        ps.backtrack(0)
+        ps.derive("foo", constraint, positive=True, cause=cause)
+
+        assert ps.get("foo") is first
+
+    def test_overflow_drops_the_memo_and_the_operands_it_holds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Passing the cap clears both, and the range it answers stays right."""
+        monkeypatch.setattr(partial_solution, "RANGE_OP_MEMO_MAX", 1)
+        ps: PartialSolution[str, int] = PartialSolution()
+        cause = self._cause()
+
+        ps.derive("foo", Range.at_least(1), positive=True, cause=cause)
+        ps.derive("foo", Range.at_most(9), positive=True, cause=cause)
+        ps.derive("foo", Range.at_most(8), positive=True, cause=cause)
+
+        assert len(ps._range_ops) == 1
+        assert len(ps._range_op_operands) == 2
+
+        effective = ps.get("foo")
+        assert effective is not None
+        assert 5 in effective
+        assert 9 not in effective

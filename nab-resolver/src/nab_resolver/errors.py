@@ -32,6 +32,10 @@ class ResolutionError(Exception):
     which attaches one but reports a resolver bug. Neither proves the
     requirements unsatisfiable.
 
+    ``verbose_message`` is the same report at more depth, set by whatever
+    augments the error with what the resolve knows beyond the derivation.
+    It is None when nothing did, and ``str(error)`` is then all there is.
+
     Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#error-reporting
     """
 
@@ -43,3 +47,4 @@ class ResolutionError(Exception):
         """Create a resolution error with an optional incompatibility proof."""
         super().__init__(message)
         self.incompatibility = incompatibility
+        self.verbose_message: str | None = None

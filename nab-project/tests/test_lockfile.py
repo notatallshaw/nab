@@ -354,6 +354,16 @@ class TestSingleTarget:
         data = tomllib.loads(text)
         assert "my-extra" in data["extras"]
 
+    def test_extras_sorted_and_deduplicated(self) -> None:
+        """The array records which extras were selected, not how they were typed."""
+        text = write_lock(
+            LockInput(
+                targets=_one({"foo": _index_pin()}),
+                extras=("xb", "My_Extra", "my-extra"),
+            )
+        )
+        assert tomllib.loads(text)["extras"] == ["my-extra", "xb"]
+
     def test_canonicalises_package_name(self) -> None:
         text = write_lock(
             LockInput(targets=_one({"foo": _index_pin(name="Foo_Bar")})),
@@ -2087,7 +2097,7 @@ class TestDependencyGroups:
             )
         )
         data = tomllib.loads(text)
-        assert tomllib.loads(text)["default-groups"] == ["dev", "base"]
+        assert data["default-groups"] == ["base", "dev"]
         assert data["dependency-groups"] == ["base"]
 
     def test_base_group_joins_both_arrays(self) -> None:
@@ -2104,8 +2114,40 @@ class TestDependencyGroups:
             )
         )
         data = tomllib.loads(text)
-        assert data["dependency-groups"] == ["dev", "default"]
+        assert data["dependency-groups"] == ["default", "dev"]
         assert data["default-groups"] == ["default"]
+
+    def test_group_arrays_are_sorted(self) -> None:
+        """The arrays record a selection, so their order cannot follow the flags."""
+        text = write_lock(
+            LockInput(
+                targets=_one({"foo": _index_pin()}),
+                dependency_groups=("gb", "ga"),
+                default_groups=("gd", "gc"),
+            )
+        )
+        data = tomllib.loads(text)
+        assert data["dependency-groups"] == ["ga", "gb"]
+        assert data["default-groups"] == ["gc", "gd"]
+
+    def test_a_reordered_selection_writes_the_same_bytes(self) -> None:
+        """``nab lock --locked`` compares rendered text, so the bytes must match."""
+
+        def render(extras: tuple[str, ...], groups: tuple[str, ...]) -> str:
+            lock = TargetLock(
+                target=_HOST,
+                pins={"foo": _index_pin(), "bar": _index_pin(name="bar")},
+                package_gates={"bar": (("extra", "xa"), ("group", "gb"))},
+            )
+            return write_lock(
+                LockInput(
+                    targets={_HOST.label: lock},
+                    extras=extras,
+                    dependency_groups=groups,
+                )
+            )
+
+        assert render(("xb", "xa"), ("gb", "ga")) == render(("xa", "xb"), ("ga", "gb"))
 
     def test_omits_arrays_when_empty(self) -> None:
         text = write_lock(LockInput(targets=_one({"foo": _index_pin()})))
@@ -5767,7 +5809,7 @@ class TestLockWheelPrunePredicate:
         assert not result.success
         error = result.target_results[0].error
         assert error is not None
-        assert "none of the wheel's tags are compatible" in str(error)
+        assert "no wheel matches this platform or Python" in str(error)
 
     def test_sdist_survives_when_every_wheel_is_pruned(self) -> None:
         """The same pruned version keeps its sdist and pins the sdist alone."""

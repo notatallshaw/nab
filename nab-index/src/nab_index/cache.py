@@ -14,14 +14,18 @@ Layout under ``root``:
     simple-parsed-v0/<index>[-<serialization>]/<package>.parsed  <- parsed blob
     simple-neg-v0/<index>[-<serialization>]/<package>.neg <- {fetched_at, max_age, etag}
     metadata-v1/<index>/<package>/<url digest>.metadata
-    sdist-v1/<index>/<package>/<version>.json  <- {pkg_info, pyproject}
+    sdist-v2/<index>/<package>/<version>.record  <- pkg_info and pyproject,
+                                                    length-prefixed UTF-8
+    sdist-v1/<index>/<package>/<version>.json    <- the same pair, as JSON
 
 An index pinned to one serialization gets its own listings directory,
 since a stored body records nothing about which serialization it came from.
 
 A versioned bucket name (``simple-v2``) gives zero-cost schema
 migration: when the on-disk format changes, bump the suffix and the
-old directory is harmless.
+old directory is harmless. ``sdist-v1`` is the exception, still read
+when ``sdist-v2`` misses, since rebuilding one of its records means
+downloading the archive again.
 
 When the index serves PEP 503 HTML the stored body is nab's own rendering
 of the page. A 304 revalidation keeps the old body, so changing that
@@ -54,7 +58,7 @@ from .atomic import atomic_write
 from .parsed_listing import corruption_reason as _parsed_corruption
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +79,10 @@ CACHE_VERSION_SIMPLE = "v2"
 CACHE_VERSION_SIMPLE_PARSED = "v0"
 CACHE_VERSION_SIMPLE_NEG = "v0"
 CACHE_VERSION_METADATA = "v1"
-CACHE_VERSION_SDIST = "v1"
+CACHE_VERSION_SDIST = "v2"
+# Retired bucket of JSON sdist records, read when the current bucket misses
+# and rewritten there, since rebuilding one costs an archive download.
+_CACHE_VERSION_SDIST_JSON = "v1"
 CACHE_VERSION_VCS = "v1"
 CACHE_VERSION_ARCHIVE = "v1"
 
@@ -231,6 +238,7 @@ class OnDiskCache:
         self._neg_dir = root / f"simple-neg-{CACHE_VERSION_SIMPLE_NEG}" / simple_index
         self._metadata_dir = root / f"metadata-{CACHE_VERSION_METADATA}" / self._index
         self._sdist_dir = root / f"sdist-{CACHE_VERSION_SDIST}" / self._index
+        self._sdist_json_dir = root / f"sdist-{_CACHE_VERSION_SDIST_JSON}" / self._index
         self._store_failed = False
 
     def _store(self, path: Path, data: bytes) -> bool:
@@ -267,18 +275,31 @@ class OnDiskCache:
     def _sdist_path(self, package: str, version: str) -> Path:
         package_segment = _require_single_segment(package)
         version_segment = _require_single_segment(version)
-        return self._sdist_dir / package_segment / f"{version_segment}.json"
+        return self._sdist_dir / package_segment / f"{version_segment}.record"
 
-    def _metadata_path(self, package: str, metadata_url: str) -> Path:
-        """Return the file holding the sidecar published at ``metadata_url``.
+    def _sdist_json_path(self, package: str, version: str) -> Path:
+        package_segment = _require_single_segment(package)
+        version_segment = _require_single_segment(version)
+        return self._sdist_json_dir / package_segment / f"{version_segment}.json"
+
+    def _metadata_file(self, package: str, metadata_url: str) -> str:
+        """Return the path of the file holding the sidecar at ``metadata_url``.
 
         :pep:`658` attaches a sidecar to one file, so the wheels of a version
         each have their own. The URL is digested to keep the key a single
         path segment whatever path shape the index serves.
+
+        A string rather than a ``Path`` because the read side only opens it.
         """
         package_segment = _require_single_segment(package)
         digest = hashlib.sha256(metadata_url.encode("utf-8")).hexdigest()
-        return self._metadata_dir / package_segment / f"{digest}.metadata"
+        return os.path.join(  # noqa: PTH118
+            str(self._metadata_dir), package_segment, f"{digest}.metadata"
+        )
+
+    def _metadata_path(self, package: str, metadata_url: str) -> Path:
+        """Return :meth:`_metadata_file` as a ``Path``."""
+        return Path(self._metadata_file(package, metadata_url))
 
     def get_simple(self, package: str) -> tuple[bytes, CachePolicy] | None:
         """Return ``(body_bytes, policy)`` if cached, else ``None``."""
@@ -383,9 +404,11 @@ class OnDiskCache:
         A present file that is not valid UTF-8 is a corrupt entry: logged
         and treated as a miss. An absent file is a silent miss.
         """
-        path = self._metadata_path(package, metadata_url)
+        path = self._metadata_file(package, metadata_url)
         try:
-            raw = path.read_bytes()
+            # Unbuffered: the file is read whole, so buffering only adds a copy.
+            with open(path, "rb", buffering=0) as handle:  # noqa: PTH123
+                raw = handle.read()
         except OSError:
             return None
         try:
@@ -414,16 +437,38 @@ class OnDiskCache:
         try:
             raw = path.read_bytes()
         except OSError:
-            return None
-        try:
-            doc = json.loads(raw)
-            return (doc["pkg_info"], doc["pyproject"])
-        except (ValueError, KeyError, TypeError):
+            return self._carry_over_json_record(package, version)
+        record = _decode_sdist_record(raw)
+        if record is None:
             logger.warning(
-                "Corrupt sdist cache record %s: not parseable; treating as a miss",
+                "Corrupt sdist cache record %s: not decodable; treating as a miss",
+                path,
+            )
+        return record
+
+    def _carry_over_json_record(
+        self, package: str, version: str
+    ) -> tuple[str | None, str | None] | None:
+        """Return a record from the retired JSON bucket, rewriting it in this one.
+
+        Rebuilding an sdist record means downloading the archive again, so a
+        cache filled before the format change stays warm. The JSON record is
+        left in place, so a downgrade still reads it.
+        """
+        path = self._sdist_json_path(package, version)
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return None
+        record = _decode_json_sdist_record(raw)
+        if record is None:
+            logger.warning(
+                "Corrupt sdist cache record %s: not decodable; treating as a miss",
                 path,
             )
             return None
+        self.put_sdist_files(package, version, *record)
+        return record
 
     def put_sdist_files(
         self,
@@ -435,9 +480,7 @@ class OnDiskCache:
         """Write the ``(pkg_info, pyproject_toml)`` pair as one record."""
         self._store(
             self._sdist_path(package, version),
-            json.dumps({"pkg_info": pkg_info, "pyproject": pyproject_toml}).encode(
-                "utf-8"
-            ),
+            _encode_sdist_record(pkg_info, pyproject_toml),
         )
 
     def get_negative(self, package: str) -> CachePolicy | None:
@@ -515,10 +558,10 @@ class OnDiskCache:
         """Return a corruption reason for a cache entry, or ``None`` if it parses.
 
         Parses by suffix, matching each kind's read path: ``.policy`` and
-        ``.neg`` decode as a policy, ``.metadata`` as UTF-8, ``.json`` as
-        JSON (an sdist record also carries its two fields), ``.parsed`` as a
-        parsed-listing blob. Any other suffix is not a nab entry and is
-        reported clean.
+        ``.neg`` decode as a policy, ``.metadata`` as UTF-8, ``.record`` as an
+        sdist record, ``.json`` as JSON (a retired sdist record also carries
+        its two fields), ``.parsed`` as a parsed-listing blob. Any other
+        suffix is not a nab entry and is reported clean.
         """
         try:
             raw = path.read_bytes()
@@ -527,13 +570,10 @@ class OnDiskCache:
         suffix = path.suffix
         if suffix in (".policy", ".neg"):
             return None if _decode_policy(raw) is not None else "policy not decodable"
-        if suffix == ".parsed":
-            return _read_parsed_reason(raw)
-        if suffix == ".metadata":
-            return _read_metadata_reason(raw)
         if suffix == ".json":
             return self._read_json_reason(path, raw)
-        return None
+        read_reason = _ENTRY_READERS.get(suffix)
+        return read_reason(raw) if read_reason is not None else None
 
     def _read_json_reason(self, path: Path, raw: bytes) -> str | None:
         try:
@@ -577,6 +617,112 @@ class OnDiskCache:
         return removed
 
 
+# A record is this magic, the two field lengths, a newline, then the fields.
+# A change to that shape bumps both this and CACHE_VERSION_SDIST.
+_SDIST_MAGIC = b"nabsdist1 "
+# Length stored for a file the sdist does not ship. An empty file stores 0.
+_SDIST_ABSENT = -1
+
+
+def _decode_json_sdist_record(raw: bytes) -> tuple[str | None, str | None] | None:
+    """Decode a retired JSON sdist record, or ``None`` when it is not one.
+
+    A field holds a file's text, or ``null`` for a file the sdist does not
+    ship. Any other JSON type is corruption, since the pair is re-encoded
+    into the current bucket.
+    """
+    try:
+        doc = json.loads(raw)
+        pkg_info, pyproject = doc["pkg_info"], doc["pyproject"]
+    except (ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(pkg_info, str | None) or not isinstance(pyproject, str | None):
+        return None
+    return (pkg_info, pyproject)
+
+
+def _encode_sdist_field(text: str | None) -> tuple[bytes, int]:
+    """Return one field's bytes and the length the header stores for it.
+
+    ``surrogatepass`` keeps every ``str`` a caller can store round-tripping,
+    including a lone surrogate with no UTF-8 form.
+    """
+    if text is None:
+        return (b"", _SDIST_ABSENT)
+    blob = text.encode("utf-8", "surrogatepass")
+    return (blob, len(blob))
+
+
+def _encode_sdist_record(pkg_info: str | None, pyproject: str | None) -> bytes:
+    """Encode the pair as a header of byte lengths followed by the two texts."""
+    pkg_blob, pkg_len = _encode_sdist_field(pkg_info)
+    pyproject_blob, pyproject_len = _encode_sdist_field(pyproject)
+    header = f"{pkg_len} {pyproject_len}\n".encode("ascii")
+    return b"".join([_SDIST_MAGIC, header, pkg_blob, pyproject_blob])
+
+
+def _sdist_record_header(raw: bytes) -> tuple[int, int, int] | None:
+    """Return the two field lengths and the body offset, or ``None``.
+
+    A length of ``-1`` marks a file the sdist does not ship. Bytes in any
+    other format fail the magic rather than misdecoding.
+    """
+    if not raw.startswith(_SDIST_MAGIC):
+        return None
+    header_end = raw.find(b"\n", len(_SDIST_MAGIC))
+    if header_end < 0:
+        return None
+    try:
+        pkg_len, pyproject_len = (
+            int(field) for field in raw[len(_SDIST_MAGIC) : header_end].split(b" ")
+        )
+    except ValueError:
+        return None
+    if pkg_len < _SDIST_ABSENT or pyproject_len < _SDIST_ABSENT:
+        return None
+    return (pkg_len, pyproject_len, header_end + 1)
+
+
+def _decode_sdist_record(raw: bytes) -> tuple[str | None, str | None] | None:
+    """Decode stored sdist-record bytes, or ``None`` when they are not a record.
+
+    A truncated or overlong body is rejected by the total length, so a field
+    is only ever decoded from the bytes the writer put in it.
+    """
+    header = _sdist_record_header(raw)
+    if header is None:
+        return None
+    pkg_len, pyproject_len, pkg_start = header
+    pyproject_start = pkg_start + max(pkg_len, 0)
+    if len(raw) != pyproject_start + max(pyproject_len, 0):
+        return None
+    view = memoryview(raw)
+    try:
+        return (
+            _decode_sdist_field(view, pkg_start, pkg_len),
+            _decode_sdist_field(view, pyproject_start, pyproject_len),
+        )
+    except UnicodeDecodeError:
+        return None
+
+
+def _decode_sdist_field(view: memoryview, start: int, length: int) -> str | None:
+    """Decode one record field, or ``None`` for a file the sdist does not ship.
+
+    Decodes from a slice of the view, so the field is never copied out of the
+    record first.
+    """
+    if length == _SDIST_ABSENT:
+        return None
+    return str(view[start : start + length], "utf-8", "surrogatepass")
+
+
+def _read_sdist_reason(raw: bytes) -> str | None:
+    if _decode_sdist_record(raw) is None:
+        return "sdist record not decodable"
+    return None
+
+
 def _read_metadata_reason(raw: bytes) -> str | None:
     try:
         raw.decode("utf-8")
@@ -590,6 +736,15 @@ def _read_parsed_reason(raw: bytes) -> str | None:
     # blob at read time, so verify does not check it. The codec owns the check so
     # verify and the read path agree on what counts as corrupt.
     return _parsed_corruption(raw)
+
+
+# Suffixes whose corruption check is one reader over the bytes. ``.policy`` and
+# ``.neg`` share a reader and ``.json`` also needs the path, so both stay inline.
+_ENTRY_READERS: dict[str, Callable[[bytes], str | None]] = {
+    ".parsed": _read_parsed_reason,
+    ".metadata": _read_metadata_reason,
+    ".record": _read_sdist_reason,
+}
 
 
 def _encode_policy(policy: CachePolicy) -> bytes:

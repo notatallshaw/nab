@@ -11,8 +11,7 @@ own scheme; which archives are permitted is a policy decision in
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
+from ._value import SlottedValue
 from .digest import is_hex_digest
 from .records import ACCEPTED_HASH_ALGORITHMS
 from .subdir import subdirectory_escapes
@@ -27,8 +26,7 @@ class ArchiveRequestError(Exception):
     """Raised when an archive URL cannot be parsed."""
 
 
-@dataclass(frozen=True, slots=True)
-class ArchiveRequest:
+class ArchiveRequest(SlottedValue):
     """Parsed representation of a direct-URL archive requirement.
 
     ``url`` is the archive URL with the ``#`` fragment stripped.
@@ -37,9 +35,19 @@ class ArchiveRequest:
     extracted tree, or ``""`` for the archive root.
     """
 
-    url: str
-    hashes: tuple[tuple[str, str], ...]
-    subdirectory: str = ""
+    __slots__ = ("hashes", "subdirectory", "url")
+    __match_args__ = ("url", "hashes", "subdirectory")
+
+    def __init__(
+        self,
+        url: str,
+        hashes: tuple[tuple[str, str], ...],
+        subdirectory: str = "",
+    ) -> None:
+        """Record one parsed archive URL."""
+        self.url = url
+        self.hashes = hashes
+        self.subdirectory = subdirectory
 
     @property
     def has_usable_hash(self) -> bool:

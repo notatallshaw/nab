@@ -20,6 +20,7 @@ import json
 import struct
 import subprocess
 import sys
+import sysconfig
 import tarfile
 import tempfile
 import zipfile
@@ -47,6 +48,7 @@ from nab_project._build.env import (
     NabBuildEnv,
     _FastSchemeDictionaryDestination,
     _PendingBuild,
+    _remove_files,
     _venv_scheme_paths,
 )
 from nab_project._build.runner import (
@@ -477,15 +479,12 @@ class TestRunBuildBackend:
         ):
             run_build_backend(tmp_path, config=config)
 
-    def test_legacy_setup_py_uses_default_backend(
+    def test_legacy_setup_py_returns_parsed_metadata(
         self, tmp_path: Path, config: NabProjectConfig
     ) -> None:
-        """A source tree with only ``setup.py`` invokes the PEP 517 fallback.
+        """A tree with only ``setup.py`` builds through to parsed metadata.
 
-        The legacy ``setuptools.build_meta:__legacy__`` backend handles
-        projects that pre-date ``pyproject.toml``.  We exercise the
-        branch by stubbing :class:`NabBuildEnv` and ``ProjectBuilder``
-        so the test stays offline and fast.
+        ``NabBuildEnv`` and ``ProjectBuilder`` are stubbed to keep the test offline.
         """
         from nab_provider.metadata import WheelMetadata
 
@@ -934,13 +933,14 @@ class TestReadBuildSystem:
     """Defaults for absent ``[build-system]`` fields, errors for malformed ones."""
 
     def test_no_build_system_table_returns_defaults(self) -> None:
-        from nab_project._build.runner import (
-            _DEFAULT_BACKEND,
-            _DEFAULT_REQUIRES,
-            _read_build_system,
-        )
+        """The defaults are spelled out here, so changing one fails this test."""
+        from nab_project._build.runner import _read_build_system
 
-        assert _read_build_system({}) == (_DEFAULT_BACKEND, _DEFAULT_REQUIRES, None)
+        assert _read_build_system({}) == (
+            "setuptools.build_meta:__legacy__",
+            ("setuptools >= 40.8.0",),
+            None,
+        )
 
     @pytest.mark.parametrize("value", ["hatchling.build", ["setuptools>=61"], 1])
     def test_build_system_not_a_table_raises(self, value: object) -> None:
@@ -952,10 +952,10 @@ class TestReadBuildSystem:
 
     def test_absent_optional_keys_take_their_defaults(self) -> None:
         """Only ``requires`` is mandatory; PEP 517 supplies the backend."""
-        from nab_project._build.runner import _DEFAULT_BACKEND, _read_build_system
+        from nab_project._build.runner import _read_build_system
 
         assert _read_build_system({"build-system": {"requires": ["hatchling"]}}) == (
-            _DEFAULT_BACKEND,
+            "setuptools.build_meta:__legacy__",
             ("hatchling",),
             None,
         )
@@ -1964,7 +1964,7 @@ class TestResolveAndDownload:
         monkeypatch.setattr("nab_project.resolve.resolve_for_targets", fake_resolve)
         monkeypatch.setattr(
             "nab_project._build.env.download_lock",
-            lambda *_a, **_k: MagicMock(written=[], skipped=[]),
+            lambda *_a, **_k: DownloadResult(written=(), skipped=()),
         )
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
@@ -2062,7 +2062,7 @@ class TestResolveAndDownload:
         monkeypatch.setattr("nab_project.resolve.resolve_for_targets", fake_resolve)
         monkeypatch.setattr(
             "nab_project._build.env.download_lock",
-            lambda *_a, **_k: MagicMock(written=[], skipped=[]),
+            lambda *_a, **_k: DownloadResult(written=(), skipped=()),
         )
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
@@ -2332,6 +2332,20 @@ class TestBuildEnvOffline:
             BuildBackendError, match=r"unavailable in offline mode: hatchling"
         ):
             run_build_backend(source, config=NabProjectConfig(), offline=True)
+
+    def test_legacy_setup_py_refusal_names_both_defaults(self, tmp_path: Path) -> None:
+        """The refusal names the default backend and the default requirement."""
+        (tmp_path / "setup.py").write_text(
+            "from setuptools import setup\nsetup()\n", encoding="utf-8"
+        )
+
+        with pytest.raises(
+            BuildBackendError,
+            match=r"build env setup for 'setuptools\.build_meta:__legacy__' failed:"
+            r" build requirements unavailable in offline mode:"
+            r" setuptools >= 40\.8\.0$",
+        ):
+            run_build_backend(tmp_path, config=NabProjectConfig(), offline=True)
 
     def test_backend_with_no_build_requirements_still_builds(
         self, tmp_path: Path, config: NabProjectConfig
@@ -3755,6 +3769,61 @@ class TestBuildEnvFollowUpInstall:
 
         assert not (site / "probebar").exists()
 
+    def test_bytecode_of_a_module_named_like_a_pattern_goes_with_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Glob syntax in a wheel member name does not strand its bytecode."""
+        env, scheme, site = self._env(tmp_path, monkeypatch)
+
+        kept = tmp_path / "probefoo-1.0-py3-none-any.whl"
+        _make_installable_wheel(kept, "probefoo", "1.0")
+        dropped = tmp_path / "probebar-1.0-py3-none-any.whl"
+        _make_installable_wheel(
+            dropped, "probebar", "1.0", package_files={"mod[1].py": b""}
+        )
+        env._install_wheels([kept, dropped], scheme)
+
+        compiled = Path(cache_from_source(str(site / "probebar" / "mod[1].py")))
+        compiled.parent.mkdir()
+        compiled.write_bytes(b"")
+
+        monkeypatch.setattr(env, "_resolve_and_download", lambda *_a, **_k: [kept])
+
+        env.install(["probefoo<2"])
+
+        assert not (site / "probebar").exists()
+
+
+# Windows rejects ``*`` and ``?`` in a filename, leaving the bracket stem.
+_GLOB_PATTERN_STEMS = ["mod[1]"]
+if sys.platform != "win32":
+    _GLOB_PATTERN_STEMS += ["mod*", "mod?", "mod**"]
+
+
+class TestRemoveFilesNameEscaping:
+    """An installed file's name is matched literally, not as glob syntax."""
+
+    @pytest.mark.parametrize("stem", _GLOB_PATTERN_STEMS)
+    def test_a_module_named_like_a_pattern_takes_only_its_own_bytecode(
+        self, tmp_path: Path, stem: str
+    ) -> None:
+        """``mod1`` is the neighbour an unescaped ``mod[1]`` would match."""
+        package = tmp_path / "pkg"
+        package.mkdir()
+        (package / f"{stem}.py").write_bytes(b"")
+        (package / "mod1.py").write_bytes(b"")
+
+        removed = Path(cache_from_source(str(package / f"{stem}.py")))
+        kept = Path(cache_from_source(str(package / "mod1.py")))
+        removed.parent.mkdir()
+        removed.write_bytes(b"")
+        kept.write_bytes(b"")
+
+        _remove_files([(tmp_path, Path(f"pkg/{stem}.py"))])
+
+        assert not removed.exists()
+        assert kept.is_file()
+
 
 class TestVenvSchemeProbeErrors:
     """A failed interpreter scheme probe is wrapped as BuildEnvError."""
@@ -3782,6 +3851,24 @@ class TestVenvSchemeProbeErrors:
         monkeypatch.setattr(subprocess, "run", _run)
         with pytest.raises(BuildEnvError, match="interpreter probe"):
             _venv_scheme_paths(Path("/nonexistent/venv/bin/python"))
+
+
+class TestVenvSchemeProbeIsolation:
+    """A module in the working directory must not answer the scheme probe."""
+
+    def test_sysconfig_module_in_the_working_directory_is_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Runs a real interpreter, so ``-I`` is what the assertion pins."""
+        (tmp_path / "sysconfig.py").write_text(
+            "def get_paths():\n    return {'purelib': '/elsewhere/site-packages'}\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
+        paths = _venv_scheme_paths(Path(sys.executable))
+
+        assert paths["purelib"] == sysconfig.get_paths()["purelib"]
 
 
 @pytest.mark.skipif(

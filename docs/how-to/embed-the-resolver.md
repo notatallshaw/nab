@@ -12,8 +12,8 @@ Install it with `pip install nab-resolver`.
 
 ## What you supply
 
-The resolver calls eleven methods on a provider. `BaseProvider` supplies
-six of them, which leaves five to write:
+A provider answers eleven methods. `BaseProvider` supplies six of them,
+which leaves five to write:
 
 `choose_version`
 : Pick a version of a package inside a range, or return `None` when none

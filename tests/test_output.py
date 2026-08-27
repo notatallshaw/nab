@@ -402,20 +402,47 @@ def test_progress_renders_counter_line() -> None:
     assert "Resolving... 1 fetched, 0 pinned" in out
 
 
-def test_progress_pin_updates_line() -> None:
-    times = iter([0.0, 10.0])
+def test_progress_pin_replaces_the_count() -> None:
+    times = iter([0.0, 10.0, 20.0])
     reporter, err = _enabled_reporter(clock=lambda: next(times), min_interval=1.0)
     reporter.on_fetch()
     reporter.on_pin(4)
-    assert "1 fetched, 4 pinned" in err.getvalue()
+    assert err.getvalue().endswith("1 fetched, 4 pinned")
+
+    reporter.on_pin(2)
+    assert err.getvalue().endswith("1 fetched, 2 pinned")
+
+
+def test_progress_fetch_counts_every_call() -> None:
+    times = iter([0.0, 10.0])
+    reporter, err = _enabled_reporter(clock=lambda: next(times), min_interval=1.0)
+    reporter.on_fetch()
+    reporter.on_fetch()
+    assert err.getvalue().endswith("2 fetched, 0 pinned")
 
 
 def test_progress_throttle_skips_rapid_repaint() -> None:
-    reporter, err = _enabled_reporter(clock=lambda: 5.0, min_interval=1.0)
+    times = iter([5.0, 5.5, 7.0])
+    reporter, err = _enabled_reporter(clock=lambda: next(times), min_interval=1.0)
     reporter.on_fetch()
     first = err.getvalue()
     reporter.on_fetch()
     assert err.getvalue() == first
+
+    reporter.on_fetch()
+    assert err.getvalue().endswith("3 fetched, 0 pinned")
+
+
+def test_progress_throttled_pin_shows_on_next_repaint() -> None:
+    times = iter([5.0, 5.5, 7.0])
+    reporter, err = _enabled_reporter(clock=lambda: next(times), min_interval=1.0)
+    reporter.on_fetch()
+    first = err.getvalue()
+    reporter.on_pin(5)
+    assert err.getvalue() == first
+
+    reporter.on_fetch()
+    assert err.getvalue().endswith("2 fetched, 5 pinned")
 
 
 def test_progress_colour_dims_the_line() -> None:

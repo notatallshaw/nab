@@ -17,15 +17,14 @@ Relative `path` entries resolve against the directory holding
 `pyproject.toml`, not the process's current working directory.
 Absolute paths are recorded as-is.
 
-The `[project].name` in the target directory must canonicalise to
-the declared `name`.  A `path` that lands on a different project
-fails the resolve.
+The target project's name must canonicalise to the declared
+`name`.  A `path` that lands on a different project fails the
+resolve.
 
 The directory is read once.  nab reads the version from
-`[project].version` in the local pyproject.toml.  When the pyproject
-declares `dynamic = ["version"]`, nab computes it through the build
-backend instead, the same PEP 517 path used for dynamic dependencies
-below.
+`[project].version` in the local pyproject.toml.  A `version` listed
+in `[project].dynamic` comes from the build backend instead, one of
+the cases under "Dynamic metadata" below.
 
 The named package becomes the only candidate the resolver will
 consider for that name; the resolver does not fall back to
@@ -34,8 +33,8 @@ PyPI for it.  This is the same single-source semantics as
 
 ## Reading static metadata
 
-Reading static `[project].dependencies` from a local pyproject
-works at every `build-policy` level:
+Reading static metadata from a local pyproject works at every
+`build-policy` level:
 
 ```toml
 [tool.nab]
@@ -48,13 +47,20 @@ path = "../my-fork"
 
 See [build policy](../reference/build-policy.md) for the full ladder.
 
-## Dynamic dependencies
+## Dynamic metadata
 
-Local sources whose pyproject.toml lists `dynamic = ["dependencies"]`
-require `build-policy = "build-local"` (the default) or
-`"build-remote"`.  nab spins up an isolated venv, installs the
-declared build requirements, and invokes the PEP 517 backend
-through `pyproject_hooks` to extract the live dependency list.
+When the static read of the checkout's pyproject.toml comes up
+empty, nab builds the project instead.  That needs
+`build-policy = "build-local"` (the default) or `"build-remote"`.
+Empty means a missing or malformed `[project]`, or a `dynamic` list
+covering `version`, `requires-python`, `dependencies`, or
+`optional-dependencies`.
+
+nab spins up an isolated venv, installs the declared build
+requirements, and asks the PEP 517 backend for the wheel
+`METADATA`, building the wheel when the backend does not supply
+that metadata on its own.
+
 Setting `"never"` instead ends the resolve.  nab reads the source
 while listing its one version, so there is no candidate to
 reject.  The error names the source and the policy that forbade
@@ -63,8 +69,11 @@ the build.
 ## Lockfile shape
 
 Local pins land in the lockfile as `LocalPin` records.  The path
-is written relative to the lockfile's own directory, with POSIX
-separators, as PEP 751 requires, so a committed lockfile stays
-usable on another machine.  They do not carry a `sha256` (the
-contents are not under nab's control), so `nab download` skips
-them.
+is written with POSIX separators, relative to the lockfile's own
+directory, so a committed lockfile keeps working on another
+machine as long as the checkout moves with it.  The records carry
+no `sha256` (the contents are not under nab's control), so
+`nab download` skips them.
+
+See [Portable paths](../reference/lockfile.md) for the two cases
+where the path is not relative to the lockfile.

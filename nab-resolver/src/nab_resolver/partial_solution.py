@@ -14,6 +14,7 @@ Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#partial-so
 
 from __future__ import annotations
 
+import operator
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -25,9 +26,12 @@ from .ranges import Range
 from .types import PackageType, RangeProtocol, VersionType
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Callable, Iterator, Sequence
+    from typing import TypeAlias
 
     from .types import Incompatibility, Term
+
+    _RangeOp: TypeAlias = Callable[[RangeProtocol[Any], RangeProtocol[Any]], Any]
 
 
 __all__ = [
@@ -35,6 +39,12 @@ __all__ = [
     "PartialSolution",
 ]
 
+
+# An entry in the range-algebra memo pins both of its operands, so this cap
+# bounds what the memo retains, not just how large it gets.  It sits below
+# what a large resolve fills, trading a little hit rate for a memo that clears
+# instead of holding every operand to the end.
+RANGE_OP_MEMO_MAX = 2_048
 
 # Marks a missing map entry, where None can itself be the stored value.
 _UNSET = object()
@@ -249,6 +259,14 @@ class PartialSolution(Generic[PackageType, VersionType]):
         ] = []
         self._decision_snapshots: list[ref[_Snapshot[PackageType, VersionType]]] = []
 
+        # Results of the range algebra the trail replays, keyed by operand
+        # identity.  A key is only sound while both its operands are alive, so
+        # the list beside the memo holds them and the two clear together.
+        self._range_ops: dict[
+            tuple[int, int, _RangeOp], RangeProtocol[VersionType]
+        ] = {}
+        self._range_op_operands: list[RangeProtocol[VersionType]] = []
+
     @property
     def decision_level(self) -> int:
         """Return the current decision depth."""
@@ -282,14 +300,43 @@ class PartialSolution(Generic[PackageType, VersionType]):
             return ()
         return entries
 
+    def _combine(
+        self,
+        op: _RangeOp,
+        left: RangeProtocol[VersionType],
+        right: RangeProtocol[VersionType],
+    ) -> RangeProtocol[VersionType]:
+        """Apply ``op`` to two ranges, reusing the result for a repeated pair.
+
+        Backtracking replays the trail from the same stored range objects, so
+        the same operands recur and the memo returns the object the first pass
+        built.  Reuse preserves the value because :class:`RangeProtocol`
+        requires immutable ranges.
+        """
+        key = (id(left), id(right), op)
+        memo = self._range_ops
+        hit = memo.get(key)
+        if hit is not None:
+            return hit
+
+        result: RangeProtocol[VersionType] = op(left, right)
+        if len(memo) >= RANGE_OP_MEMO_MAX:
+            memo.clear()
+            self._range_op_operands.clear()
+        memo[key] = result
+        self._range_op_operands.append(left)
+        self._range_op_operands.append(right)
+        return result
+
     def get(self, package: PackageType) -> RangeProtocol[VersionType] | None:
         """Get the combined allowed range for a package, or None if unassigned.
 
         Computes ``positive - negative``, cached per package.
         """
-        cached = self._effective_range_cache.get(package, _UNSET)
-        if cached is not _UNSET:
-            return cast("RangeProtocol[VersionType] | None", cached)
+        # ``None`` is a cached answer, so membership decides the hit.
+        cache = self._effective_range_cache
+        if package in cache:
+            return cache[package]
 
         positive = self._positive_ranges.get(package)
         negative = self._negative_ranges.get(package)
@@ -304,9 +351,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
         elif negative is None:
             result = positive
         else:
-            result = positive - negative
+            result = self._combine(operator.sub, positive, negative)
 
-        self._effective_range_cache[package] = result
+        cache[package] = result
         return result
 
     def _refresh_effective_range(self, package: PackageType) -> None:
@@ -354,24 +401,31 @@ class PartialSolution(Generic[PackageType, VersionType]):
     ) -> None:
         """Record a derivation from unit propagation.
 
+        A package's first derivation of a sign has nothing to fold into, so it
+        records ``constraint`` itself.
+
         See: https://github.com/dart-lang/pub/blob/master/doc/solver.md#unit-propagation
         """
         if positive:
             # Positive derivation narrows the package's allowed range.
-            if package in self._positive_ranges:
-                new_range = self._positive_ranges[package] & constraint
-            else:
-                new_range = self._range_type.full() & constraint
+            current = self._positive_ranges.get(package)
+            new_range = (
+                constraint
+                if current is None
+                else self._combine(operator.and_, current, constraint)
+            )
             self._freeze_ranges(package)
             self._positive_ranges[package] = new_range
             if package not in self._decided_versions:
                 self._undecided.add(package)
         else:
             # Negative derivation accumulates excluded versions.
-            if package in self._negative_ranges:
-                new_range = self._negative_ranges[package] | constraint
-            else:
-                new_range = self._range_type.empty() | constraint
+            excluded = self._negative_ranges.get(package)
+            new_range = (
+                constraint
+                if excluded is None
+                else self._combine(operator.or_, excluded, constraint)
+            )
             self._negative_ranges[package] = new_range
 
         self._refresh_effective_range(package)
@@ -552,7 +606,9 @@ class PartialSolution(Generic[PackageType, VersionType]):
         elif assignment.cum_negative is None:
             effective = cum_positive
         else:
-            effective = cum_positive - assignment.cum_negative
+            effective = self._combine(
+                operator.sub, cum_positive, assignment.cum_negative
+            )
 
         return term.satisfies(effective)
 
