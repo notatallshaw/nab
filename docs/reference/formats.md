@@ -3,6 +3,11 @@
 What each `nab lock` format writes, where `--output` sends it, and how a
 universal resolve renders across the matrix.
 
+`nab lock` itself is on the [CLI](cli.md) page. A matrix expands into
+one resolve target, called a tuple below, per
+`(python, platform, implementation)` point it names; see
+[Universal resolution](../explanation/universal.md).
+
 ## `--format`
 
 Three formats:

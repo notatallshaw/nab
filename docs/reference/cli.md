@@ -33,11 +33,14 @@ shorthands for those two values.
 
 Resolve and emit a lockfile or pin list.
 
-* What a run selects, and when a selection forks it:
-  [Selecting what to lock](selection.md).
+* What a run selects, and when a selection forks it: `--groups`,
+  `--all-groups`, `--extras`, `--all-extras`, `--build-requirements`,
+  and the workspace flags `--workspace-discovery` and
+  `--no-emit-workspace`. See [Selecting what to lock](selection.md), and
+  [Lock a workspace](../how-to/workspaces.md) for declaring one.
 * What each format writes, where it is written, and what universal mode
-  changes: [Output formats](formats.md).
-* What a failed resolve prints:
+  changes: `--format` and `--output`. See [Output formats](formats.md).
+* What a failed resolve prints, and what `-v` adds to it. See
   [Resolution failures](diagnostics.md).
 
 ### Resolving for another Python
@@ -118,6 +121,9 @@ read for `nab download` as for `nab lock`.
 Offline covers the artefacts too: an artefact that is neither already in
 the output directory with a matching digest nor readable from a local
 `file://` path fails the run instead of being fetched.
+
+A failed resolve prints the same message and `Diagnostics:` section as
+`nab lock`; see [Resolution failures](diagnostics.md).
 
 A summary of how many files were written and how many were
 already present is printed to stderr.
@@ -271,4 +277,5 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | ---- | ------- |
 | `0`  | Success. |
 | `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
+| `2`  | Bad usage: an unrecognised flag or subcommand, or a malformed `--color` value or `NAB_VERBOSITY`. |
 | `130` | Interrupted with Ctrl-C. `nab` prints `error: interrupted` and exits. |

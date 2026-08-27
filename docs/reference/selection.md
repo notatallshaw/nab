@@ -1,7 +1,10 @@
 # Selecting what to lock
 
-Which dependency groups, extras and build requirements a `nab lock` or
-`nab download` run covers, and what a workspace adds to it.
+Which dependency groups and extras a `nab lock` or `nab download` run
+covers, and what a workspace adds to it. `--build-requirements` and
+`--no-emit-workspace` are `nab lock` only.
+
+The commands themselves are on the [CLI](cli.md) page.
 
 ## Dependency-group selection (PEP 735)
 

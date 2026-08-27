@@ -1,18 +1,22 @@
 # Resolution failures
 
-What `nab lock` prints when a resolve fails, and what `-v` adds to it.
+What `nab lock` and `nab download` print when a resolve fails, and what
+`-v` adds to it. Both commands are on the [CLI](cli.md) page.
 
 ## The failure message
 
-`nab lock` exits non-zero on resolution failure; the message starts with
-`error: resolution failed:` followed by a derivation tree, and any
-captured diagnostics are appended under a `Diagnostics:` section.
+`nab lock` and `nab download` exit non-zero on resolution failure; the
+message starts with `error: resolution failed:` followed by a derivation
+tree, and any captured diagnostics are appended under a `Diagnostics:`
+section.
 
 ## The `Diagnostics:` section
 
 Each package that ran out of versions gets one line, naming the setting
 that refused its files. An indented `try:` line follows where changing a
-setting would admit them again.
+setting would admit them again. Where the line names a config entry, it
+is one of the per-package or per-index overrides in
+[Configuration](configuration.md).
 
 ```
 Diagnostics: (-v for detail)

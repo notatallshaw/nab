@@ -35,6 +35,10 @@ _CONFLICTS_DOC = _DOCS / "explanation" / "conflicts.md"
 
 _SUBCOMMANDS = ("lock", "download", "config", "cache")
 
+# A ``--flag`` opening a code span, so prose naming one is matched and a
+# ``--hash=`` inside a fenced example is not.
+_CODE_FLAG = re.compile(r"`(--[a-z][\w-]*)")
+
 
 def _page(path: Path) -> str:
     return path.read_text(encoding="utf-8")
@@ -76,6 +80,32 @@ def _names_flag(text: str, flag: str) -> bool:
     if flag.startswith("--project-"):
         forms.append("--project-*")
     return any(re.search(rf"`{re.escape(form)}(?![\w-])", text) for form in forms)
+
+
+def _prose_chunks(text: str) -> list[str]:
+    """Split a page or section into one string per paragraph and bullet."""
+    chunks: list[str] = []
+    current: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if current and (not line or raw.startswith("* ")):
+            chunks.append(" ".join(current))
+            current = []
+        if line:
+            current.append(line)
+
+    if current:
+        chunks.append(" ".join(current))
+    return chunks
+
+
+def _command_flags(command: Callable[..., None]) -> list[str]:
+    """The ``--flag`` spelling of every keyword-only parameter of ``command``."""
+    return [
+        "--" + name.replace("_", "-")
+        for name, param in inspect.signature(command).parameters.items()
+        if param.kind is inspect.Parameter.KEYWORD_ONLY
+    ]
 
 
 def _doc_paragraph(text: str, needle: str) -> str:
@@ -140,19 +170,44 @@ class TestCliReferenceFlagCoverage:
             ]
         )
 
-        for name, param in inspect.signature(command).parameters.items():
-            if param.kind is not inspect.Parameter.KEYWORD_ONLY:
-                continue
-            flag = "--" + name.replace("_", "-")
+        for flag in _command_flags(command):
             assert _names_flag(scope, flag), f"{heading} omits {flag}"
 
 
 class TestCliReferenceSplitPages:
-    """Every page the CLI reference splits into is one hop from it."""
+    """Every page the CLI reference splits into is one hop from it.
+
+    The hop has to hold in both directions: a reader who searches
+    ``cli.md`` for a flag has to find it named there, and a flag named
+    there has to be documented on the page the link leads to.
+    """
 
     @pytest.mark.parametrize("page", [_SELECTION, _FORMATS, _DIAGNOSTICS])
     def test_cli_reference_links_the_page(self, page: Path) -> None:
         assert f"]({page.name})" in _page(_CLI_REFERENCE), page.name
+
+    @pytest.mark.parametrize("page", [_SELECTION, _FORMATS])
+    def test_lock_section_names_the_flags_the_page_documents(self, page: Path) -> None:
+        """A browser search of the `nab lock` section finds a flag that moved."""
+        section = _reference_section(_CLI_REFERENCE, "## `nab lock`")
+        moved = _page(page)
+        for flag in _command_flags(lock):
+            if _names_flag(moved, flag):
+                assert _names_flag(section, flag), f"`nab lock` omits {flag}"
+
+    @pytest.mark.parametrize("page", [_SELECTION, _FORMATS])
+    def test_the_page_documents_the_flags_its_link_advertises(self, page: Path) -> None:
+        """A flag named beside a link is a signpost until the page carries it.
+
+        Without this, ``test_section_names_every_flag`` would be satisfied
+        by the signpost alone and the page it points at never read.
+        """
+        moved = _page(page)
+        for chunk in _prose_chunks(_page(_CLI_REFERENCE)):
+            if f"]({page.name})" not in chunk:
+                continue
+            for flag in _CODE_FLAG.findall(chunk):
+                assert _names_flag(moved, flag), f"{page.name} omits {flag}"
 
 
 class TestCliReferenceSelectionShape:
@@ -306,23 +361,6 @@ class TestLockReferenceDocumentsProjectOverrides:
 
 
 _FLAG = "--include-rejected"
-
-
-def _prose_chunks(section: str) -> list[str]:
-    """Split a reference section into one string per paragraph and bullet."""
-    chunks: list[str] = []
-    current: list[str] = []
-    for raw in section.splitlines():
-        line = raw.strip()
-        if current and (not line or raw.startswith("* ")):
-            chunks.append(" ".join(current))
-            current = []
-        if line:
-            current.append(line)
-
-    if current:
-        chunks.append(" ".join(current))
-    return chunks
 
 
 def _include_rejected_chunks() -> list[str]:
