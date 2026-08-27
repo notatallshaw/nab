@@ -52,6 +52,12 @@ class InMemoryIndex:
     """Thread-safe slots for fetched data, plus the events readers wait on.
 
     The async fetcher writes; the sync provider reads.
+
+    A read of a single dict or set runs without the lock: the keys hash and
+    compare in C, so one lookup cannot interleave with a write.  Writers put the
+    marks that qualify a slot in place before the slot itself.  The lock still
+    covers every write, every read spanning two slots, and the test-and-set
+    accessors.
     """
 
     def __init__(self) -> None:
@@ -120,8 +126,7 @@ class InMemoryIndex:
 
     def get_listing(self, package: str) -> list[WheelFile | SdistFile] | None:
         """Return the cached listing for ``package``, or ``None``."""
-        with self._lock:
-            return self._listings.get(package)
+        return self._listings.get(package)
 
     def store_listing(
         self,
@@ -144,7 +149,7 @@ class InMemoryIndex:
         key = f"listing:{package}"
         materialised = list(data)
         with self._publishing(key):
-            self._listings[package] = materialised
+            # The marks land first, so an unlocked reader sees them with the listing.
             if offline_miss:
                 self._offline_listing_misses.add(package)
             if unreadable_only:
@@ -152,20 +157,19 @@ class InMemoryIndex:
             if all_yanked:
                 self._all_yanked_listings.add(package)
 
+            self._listings[package] = materialised
+
     def is_offline_listing_miss(self, package: str) -> bool:
         """Whether ``package``'s empty listing is an offline cold-cache miss."""
-        with self._lock:
-            return package in self._offline_listing_misses
+        return package in self._offline_listing_misses
 
     def is_unreadable_only_listing(self, package: str) -> bool:
         """Whether ``package``'s empty listing held only unreadable formats."""
-        with self._lock:
-            return package in self._unreadable_only_listings
+        return package in self._unreadable_only_listings
 
     def is_all_yanked_listing(self, package: str) -> bool:
         """Whether ``package``'s empty listing held files and yanked every one."""
-        with self._lock:
-            return package in self._all_yanked_listings
+        return package in self._all_yanked_listings
 
     def store_listing_error(self, package: str, error: BaseException) -> None:
         """Record a failed listing fetch and unblock any waiter.
@@ -179,8 +183,7 @@ class InMemoryIndex:
 
     def get_listing_error(self, package: str) -> BaseException | None:
         """Return ``package``'s recorded listing fetch error, or ``None``."""
-        with self._lock:
-            return self._listing_errors.get(package)
+        return self._listing_errors.get(package)
 
     def store_listing_index(self, package: str, index_name: str) -> None:
         """Record which configured index served ``package``."""
@@ -189,8 +192,7 @@ class InMemoryIndex:
 
     def get_listing_index(self, package: str) -> str | None:
         """Return the configured index name that served ``package``, or ``None``."""
-        with self._lock:
-            return self._listing_indexes.get(package)
+        return self._listing_indexes.get(package)
 
     def _read_metadata(
         self, package: str, version: str, metadata_url: str | None
@@ -271,6 +273,9 @@ class InMemoryIndex:
                 self._metadata_from_sdist.add((package, version))
             else:
                 self._metadata_from_sdist.discard((package, version))
+
+        # The text lands last, so an unlocked reader never pairs it with sdist
+        # metadata derived from the text it replaced.
         self._metadata[slot] = text
 
     def store_metadata(
@@ -343,8 +348,7 @@ class InMemoryIndex:
         self, package: str, version: str, url: str | None
     ) -> bool:
         """Whether the metadata fetch at ``url`` was skipped offline."""
-        with self._lock:
-            return (package, version, url) in self._offline_metadata_misses
+        return (package, version, url) in self._offline_metadata_misses
 
     def claim_offline_metadata_warning(self, package: str) -> bool:
         """Whether the caller owns ``package``'s one offline-skip warning.
@@ -387,8 +391,7 @@ class InMemoryIndex:
 
     def metadata_from_sdist(self, package: str, version: str) -> bool:
         """Return ``True`` when the version-level slot was written from an sdist."""
-        with self._lock:
-            return (package, version) in self._metadata_from_sdist
+        return (package, version) in self._metadata_from_sdist
 
     def store_range_metadata(
         self, package: str, version: str, wheel_url: str, data: str
@@ -439,8 +442,7 @@ class InMemoryIndex:
         self, package: str, version: str, wheel_url: str
     ) -> RangeOutcome | None:
         """Return the recorded range-read outcome, or ``None`` if none ran."""
-        with self._lock:
-            return self._range_outcomes.get((package, version, wheel_url))
+        return self._range_outcomes.get((package, version, wheel_url))
 
     def store_sdist_pyproject(
         self, package: str, version: str, data: Mapping[str, Any] | None
@@ -457,8 +459,7 @@ class InMemoryIndex:
         self, package: str, version: str
     ) -> Mapping[str, Any] | None:
         """Return the parsed sdist pyproject, or ``None`` if absent or unfetched."""
-        with self._lock:
-            return self._sdist_pyproject.get((package, version))
+        return self._sdist_pyproject.get((package, version))
 
     def store_sdist_archive(
         self, package: str, version: str, data: bytes | None
@@ -470,8 +471,7 @@ class InMemoryIndex:
 
     def get_sdist_archive(self, package: str, version: str) -> bytes | None:
         """Return cached sdist archive bytes, or ``None`` if absent or unfetched."""
-        with self._lock:
-            return self._sdist_archives.get((package, version))
+        return self._sdist_archives.get((package, version))
 
     def store_sdist_archive_error(
         self, package: str, version: str, error: BaseException
@@ -490,8 +490,7 @@ class InMemoryIndex:
         self, package: str, version: str
     ) -> BaseException | None:
         """Return a recorded sdist-archive fetch error, or ``None``."""
-        with self._lock:
-            return self._sdist_archive_errors.get((package, version))
+        return self._sdist_archive_errors.get((package, version))
 
     def get_or_create_pending(self, key: str) -> tuple[threading.Event, bool]:
         """Return ``key``'s waitable event, and whether it already existed.
@@ -515,11 +514,10 @@ class InMemoryIndex:
         share one ``(package, version)`` slot, so a key-only hit could hand
         back another artifact's deps.
         """
-        with self._lock:
-            entry = self._parsed_metadata.get((package, version))
-            if entry is None or entry[0] != source_text:
-                return None
-            return entry[1]
+        entry = self._parsed_metadata.get((package, version))
+        if entry is None or entry[0] != source_text:
+            return None
+        return entry[1]
 
     def store_parsed_metadata(
         self, package: str, version: str, metadata: Any, source_text: str
@@ -535,8 +533,7 @@ class InMemoryIndex:
         :func:`nab_provider._provider.metadata_resolver.resolve_dynamic_sdist`
         returned.
         """
-        with self._lock:
-            return self._resolved_sdist_metadata.get((package, version))
+        return self._resolved_sdist_metadata.get((package, version))
 
     def store_resolved_sdist_metadata(
         self, package: str, version: str, metadata: Any
@@ -552,8 +549,7 @@ class InMemoryIndex:
 
     def get_source(self, package: str) -> SourceMaterialization | None:
         """Return ``package``'s materialised source, or ``None``."""
-        with self._lock:
-            return self._sources.get(package)
+        return self._sources.get(package)
 
     def store_built_metadata(self, package: str, version: str, metadata: Any) -> None:
         """Record the METADATA a host's :pep:`517` build produced."""
@@ -566,5 +562,4 @@ class InMemoryIndex:
         Unlike :meth:`get_resolved_sdist_metadata`, this is what the build
         declared, before the provider checks it against the candidate.
         """
-        with self._lock:
-            return self._built_metadata.get((package, version))
+        return self._built_metadata.get((package, version))

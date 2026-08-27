@@ -144,6 +144,27 @@ class TestInMemoryIndex:
         idx.store_listing("foo", [], offline_miss=True)
         assert event.is_set()
 
+    def test_the_yank_mark_is_set_before_the_listing_lands(self) -> None:
+        """The yank mark lands first, so a page caught mid-store never reads absent."""
+        idx = InMemoryIndex()
+        readback: list[str] = []
+
+        class _ReadOnPublish(dict[str, list[WheelFile | SdistFile]]):
+            """Classify the page the instant its listing slot becomes readable."""
+
+            def __setitem__(self, key: str, value: list[WheelFile | SdistFile]) -> None:
+                super().__setitem__(key, value)
+                assert idx.get_listing(key) == []
+                readback.append(
+                    "yanked" if idx.is_all_yanked_listing(key) else "absent"
+                )
+
+        idx._listings = _ReadOnPublish()
+        idx.store_listing("foo", [], all_yanked=True)
+
+        assert readback == ["yanked"]
+        assert idx.is_all_yanked_listing("foo")
+
     def test_metadata_roundtrip(self) -> None:
         idx = InMemoryIndex()
         assert idx.get_metadata("foo", "1.0") is None
