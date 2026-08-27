@@ -34,7 +34,6 @@ from nab_project.config import (
     NabProjectConfig,
     ResolveMode,
     plan_targets,
-    with_python_override,
 )
 from nab_project.lockfile import (
     DisjointnessError,
@@ -295,7 +294,9 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     if locked:
         _fast_fail_locked(run, config=config, workspace_to_drop=workspace_to_drop)
 
-    transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
+    transport = _cli._make_resolve_transport(  # noqa: SLF001
+        settings.http_backend, offline=settings.offline
+    )
     result = _cli._resolve(  # noqa: SLF001
         path,
         config=config,
@@ -527,7 +528,13 @@ def _fast_fail_locked(
     Reads and parses the committed lock, then runs the envelope and validity
     checks.  On the first disqualification it prints the reason and exits
     non-zero; otherwise it returns and the full resolve runs.
+
+    ``--python`` is applied first so a rejected value reports as the flag
+    error: reporting a stale lock instead would point at a refresh command
+    carrying the same rejected value.
     """
+    retargeted = _cli._python_override_or_exit(config, run.python)  # noqa: SLF001
+
     target = _locked_target_path(run)
     refresh = run.refresh_command()
 
@@ -559,7 +566,7 @@ def _fast_fail_locked(
         )
         sys.exit(1)
 
-    resolve_target = _locked_resolve_target(config, python=run.python)
+    resolve_target = _locked_resolve_target(retargeted)
 
     try:
         disqualification = check_locked(
@@ -599,18 +606,17 @@ def _fast_fail_locked(
     sys.exit(1)
 
 
-def _locked_resolve_target(
-    config: NabProjectConfig, *, python: str | None
-) -> ResolveTarget | None:
+def _locked_resolve_target(config: NabProjectConfig) -> ResolveTarget | None:
     """Return the target the validity checks evaluate markers against.
 
-    ``None`` when the declaration excludes this run's target, which leaves
-    the validity checks to the full resolve.  The envelope checks still run.
-    The checks read the target's marker environment; the target itself says
-    which markers its micro slices decide instead.
+    ``config`` arrives retargeted onto any ``--python``.  ``None`` when the
+    declaration excludes this run's target, which leaves the validity checks
+    to the full resolve.  The envelope checks still run.  The checks read the
+    target's marker environment; the target itself says which markers its
+    micro slices decide instead.
     """
     try:
-        return plan_targets(with_python_override(config, python))[0]
+        return plan_targets(config)[0]
     except ConfigError:
         return None
 

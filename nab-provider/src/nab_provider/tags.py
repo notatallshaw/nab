@@ -61,9 +61,10 @@ FREE_THREADED_MIN_PYTHON = (3, 13)
 TagsSource = Callable[[], "Iterable[Tag]"]
 
 
-# PEP 427: a wheel filename has at least 5 dash-separated segments
-# (name-version-pythontag-abitag-platformtag.whl), or 6 with a build tag.
-_MIN_WHEEL_FILENAME_PARTS = 5
+# PEP 427: a wheel filename's last 3 dash-separated segments are the tag
+# suffix (pythontag-abitag-platformtag), behind a name, a version, and an
+# optional build tag, so the whole filename has at least 5 segments.
+_WHEEL_TAG_SEGMENTS = 3
 
 # A PEP 425 compressed tag set is a cross product, so an index-supplied
 # filename naming 40 interpreters, 40 abis and 40 platforms would parse into
@@ -474,20 +475,18 @@ def wheel_tag_set(filename: str) -> frozenset[Tag] | None:
     filename or one with too few segments.
 
     The tag set is a pure function of the filename, so the whole
-    result is memoized on it, and a repeated filename skips the string
-    splitting.  The parse and Tag interning are shared further across
-    distinct filenames by :func:`_parse_tag_str`, keyed on the tag
-    suffix.
+    result is memoized on it, and a repeated filename skips the split.
+    The parse and Tag interning are shared further across distinct
+    filenames by :func:`_parse_tag_str`, keyed on the tag suffix.
     """
     if not filename.endswith(".whl"):
         return None
 
-    stem = filename[:-4]
-    parts = stem.split("-")
-    if len(parts) < _MIN_WHEEL_FILENAME_PARTS:
+    head = filename.rsplit("-", _WHEEL_TAG_SEGMENTS)[0]
+    if "-" not in head:  # fewer than five segments
         return None
 
-    return _parse_tag_str("-".join(parts[-3:]))
+    return _parse_tag_str(filename[len(head) + 1 : -4])
 
 
 def _build_tag_sort_key(filename: str) -> tuple[int, str]:
@@ -671,6 +670,20 @@ class TagSet:
             rank_index = self._place(wheel_tags)
         return rank_index is not None
 
+    def _rank_index(self, wheel_filename: str) -> int | None:
+        """Return the rank of the most specific tag the wheel and target share.
+
+        None when the filename is not a wheel, or names no tag the target
+        accepts.
+        """
+        wheel_tags = wheel_tag_set(wheel_filename)
+        if not wheel_tags:
+            return None
+        rank_index = self._placed.get(wheel_tags, _UNPLACED)
+        if rank_index is _UNPLACED:
+            rank_index = self._place(wheel_tags)
+        return rank_index
+
     def wheel_rank(self, wheel_filename: str) -> tuple[int, tuple[int, str]] | None:
         """Return the target's install-preference key for a wheel, or None.
 
@@ -682,12 +695,7 @@ class TagSet:
         Two wheels the target's own rules cannot order return an equal,
         non-None key, so an equal, non-None pair is exactly a tie.
         """
-        wheel_tags = wheel_tag_set(wheel_filename)
-        if not wheel_tags:
-            return None
-        rank_index = self._placed.get(wheel_tags, _UNPLACED)
-        if rank_index is _UNPLACED:
-            rank_index = self._place(wheel_tags)
+        rank_index = self._rank_index(wheel_filename)
         if rank_index is None:
             return None
         return (rank_index, _build_tag_sort_key(wheel_filename))
@@ -704,20 +712,25 @@ class TagSet:
         ``wheels`` is anything carrying a ``filename``: an index
         listing's wheel or a lockfile's wheel artefact.
         """
-        best_key: tuple[int, tuple[int, str]] | None = None
         best_wheel: _WheelT | None = None
+        best_rank = 0  # ignored until best_wheel is set
+        best_build: tuple[int, str] | None = None
+
         for wheel in wheels:
-            key = self.wheel_rank(wheel.filename)
-            if key is None:
+            rank_index = self._rank_index(wheel.filename)
+            if rank_index is None:
                 continue
-            rank_index, build_key = key
-            if (
-                best_key is None
-                or rank_index < best_key[0]
-                or (rank_index == best_key[0] and build_key > best_key[1])
-            ):
-                best_key = key
-                best_wheel = wheel
+
+            if best_wheel is None or rank_index < best_rank:
+                best_wheel, best_rank, best_build = wheel, rank_index, None
+            elif rank_index == best_rank:
+                # A build tag settles nothing but a tie, so derive it only here.
+                if best_build is None:
+                    best_build = _build_tag_sort_key(best_wheel.filename)
+                build_key = _build_tag_sort_key(wheel.filename)
+                if build_key > best_build:
+                    best_wheel, best_build = wheel, build_key
+
         return best_wheel
 
     @classmethod

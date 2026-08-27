@@ -103,6 +103,12 @@ project forks, and `at-most-one` and `exactly-one` say the same thing
 there. An `at-least-one` set that names either of them is refused, since
 a group that is always active means the set can never fail.
 
+Selecting an extra never deselects the project's own dependencies, so
+pairing `base-group` with an extra is refused when the config is read,
+under `at-most-one` and `exactly-one` alike. `build-group` pairs with
+an extra fine: the project's own dependencies stay in every fork of
+that set.
+
 A member belongs to at most one set, so putting the build requirements
 in a set with both the project's dependencies and `dev` is one
 three-member declaration, and it makes all three mutually exclusive:
