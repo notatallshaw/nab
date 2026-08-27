@@ -50,8 +50,8 @@ Static metadata only, from any source:
 
 Picks the most reproducible posture: every input to the SAT
 problem is a file read, not a sandboxed subprocess.  Use `never`
-when you want a lockdown resolve with no backend invocations at
-all.
+for a lockdown resolve; only a per-package or per-index override
+lets a backend run.
 
 ## `build-local` (default)
 
@@ -173,8 +173,12 @@ being built, pin it to wheels:
 dist-policy = "wheel-only"
 ```
 
-The setting is inert where builds cannot run: under
-`build-policy = "never"`, and for any target that declares a platform.
+`build-requires-depth` is inert only where no build can run.  A target
+that declares a platform is such a case: there an explicit non-`never`
+build policy, global or in any override, is a config error.  A global
+`build-policy = "never"` is not, since a per-package or per-index
+override can still permit a build, and the environment opened for it
+reads `build-requires-depth` from the same config.
 
 ## Overrides
 
