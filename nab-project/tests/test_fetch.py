@@ -2342,7 +2342,7 @@ class TestMultiIndexCoordinator:
                 index_routes=[IndexRoute("torch", "torch-cpu")],
             ) as coord,
         ):
-            coord.request_listing("torch").wait(timeout=5)
+            assert coord.request_listing("torch").wait(timeout=30)
             assert coord.index.get_listing_index("torch") == "torch-cpu"
 
     def test_explicit_cache_backend_with_multi_index_raises(self) -> None:

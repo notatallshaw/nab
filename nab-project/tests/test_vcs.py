@@ -664,6 +664,17 @@ class TestPrepareClone:
         assert payload.read_text() == "kept"
 
 
+_EXPECTED_SCRUBBED_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+)
+
+
 class TestCacheLayout:
     """The clone cache key, and the git commands that fill an entry."""
 
@@ -745,14 +756,48 @@ class TestAmbientGitEnvironment:
     """git's repo-selection variables must not reach nab's git calls."""
 
     def _set_ambient_vars(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+        """Seed the environment a git call would inherit from the caller."""
         for name in _REPO_SELECTION_VARS:
             monkeypatch.setenv(name, str(home / name.lower()))
         monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /keys/id_ed25519")
 
-    def _assert_scrubbed(self, names: list[str]) -> None:
-        assert [name for name in _REPO_SELECTION_VARS if name in names] == []
+        # nab only defaults these, so an ambient value would hide the default.
+        monkeypatch.delenv("GIT_CONFIG_GLOBAL", raising=False)
+        monkeypatch.delenv("GIT_CONFIG_SYSTEM", raising=False)
+
+    def _run_ls_remote(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        sha: str,
+    ) -> list[dict[str, str]]:
+        """Run _resolve_sha against a fake git and return each call's GIT_ vars."""
+        seen: list[dict[str, str]] = []
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            env = kwargs["env"]
+            assert isinstance(env, dict)
+            seen.append({k: v for k, v in env.items() if k.startswith("GIT_")})
+            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n".encode()})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "https://example/repo.git", "main", "")
+        assert _resolve_sha(req, require_pin=False) == sha
+        return seen
+
+    def _assert_scrubbed(self, env: dict[str, str]) -> None:
+        """Assert one env dropped the repo-selection vars and kept nab's own."""
+        assert [name for name in _REPO_SELECTION_VARS if name in env] == []
+
         # The scrub stays narrow: git+ssh reaches credentials through this one.
-        assert "GIT_SSH_COMMAND" in names
+        assert env["GIT_SSH_COMMAND"] == "ssh -i /keys/id_ed25519"
+
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+        assert env["GIT_CONFIG_GLOBAL"] == "/dev/null"
+        assert env["GIT_CONFIG_SYSTEM"] == "/dev/null"
+
+    def test_scrubbed_vars_are_pinned(self) -> None:
+        """The other tests read the production tuple, so nothing else sees it change."""
+        assert _REPO_SELECTION_VARS == _EXPECTED_SCRUBBED_VARS
 
     def test_clone_drops_inherited_repo_selection_vars(
         self,
@@ -761,12 +806,12 @@ class TestAmbientGitEnvironment:
     ) -> None:
         self._set_ambient_vars(monkeypatch, tmp_path / "elsewhere")
         sha = "a" * 40
-        seen: list[list[str]] = []
+        seen: list[dict[str, str]] = []
 
         def fake_run(cmd: list[str], **kwargs: object) -> object:
             env = kwargs["env"]
             assert isinstance(env, dict)
-            seen.append([name for name in env if name.startswith("GIT_")])
+            seen.append({k: v for k, v in env.items() if k.startswith("GIT_")})
             cwd = Path(str(kwargs["cwd"]))
             if cmd[:2] == ["git", "init"]:
                 (cwd / ".git").mkdir(exist_ok=True)
@@ -777,9 +822,8 @@ class TestAmbientGitEnvironment:
         prepare_clone(tmp_path, req, require_pin=True)
 
         assert len(seen) == 3
-        for names in seen:
-            self._assert_scrubbed(names)
-            assert "GIT_TERMINAL_PROMPT" in names
+        for env in seen:
+            self._assert_scrubbed(env)
 
     def test_ls_remote_drops_inherited_repo_selection_vars(
         self,
@@ -787,19 +831,25 @@ class TestAmbientGitEnvironment:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         self._set_ambient_vars(monkeypatch, tmp_path / "elsewhere")
-        sha = "b" * 40
-        seen: list[str] = []
+        seen = self._run_ls_remote(monkeypatch, "b" * 40)
 
-        def fake_run(cmd: list[str], **kwargs: object) -> object:
-            env = kwargs["env"]
-            assert isinstance(env, dict)
-            seen.extend(name for name in env if name.startswith("GIT_"))
-            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n".encode()})()
+        assert len(seen) == 1
+        self._assert_scrubbed(seen[0])
 
-        monkeypatch.setattr(subprocess, "run", fake_run)
-        req = VcsRequest("git", "https://example/repo.git", "main", "")
-        assert _resolve_sha(req, require_pin=False) == sha
-        self._assert_scrubbed(seen)
+    def test_ls_remote_keeps_ambient_git_config_paths(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """nab defaults the config paths, so a caller's own values survive."""
+        self._set_ambient_vars(monkeypatch, tmp_path / "elsewhere")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/some/path")
+        monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/other/path")
+
+        seen = self._run_ls_remote(monkeypatch, "d" * 40)
+
+        assert seen[0]["GIT_CONFIG_GLOBAL"] == "/some/path"
+        assert seen[0]["GIT_CONFIG_SYSTEM"] == "/other/path"
 
     def test_marker_write_failure_does_not_blame_the_remote(
         self,
