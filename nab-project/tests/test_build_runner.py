@@ -477,15 +477,12 @@ class TestRunBuildBackend:
         ):
             run_build_backend(tmp_path, config=config)
 
-    def test_legacy_setup_py_uses_default_backend(
+    def test_legacy_setup_py_returns_parsed_metadata(
         self, tmp_path: Path, config: NabProjectConfig
     ) -> None:
-        """A source tree with only ``setup.py`` invokes the PEP 517 fallback.
+        """A tree with only ``setup.py`` builds through to parsed metadata.
 
-        The legacy ``setuptools.build_meta:__legacy__`` backend handles
-        projects that pre-date ``pyproject.toml``.  We exercise the
-        branch by stubbing :class:`NabBuildEnv` and ``ProjectBuilder``
-        so the test stays offline and fast.
+        ``NabBuildEnv`` and ``ProjectBuilder`` are stubbed to keep the test offline.
         """
         from nab_provider.metadata import WheelMetadata
 
@@ -934,13 +931,14 @@ class TestReadBuildSystem:
     """Defaults for absent ``[build-system]`` fields, errors for malformed ones."""
 
     def test_no_build_system_table_returns_defaults(self) -> None:
-        from nab_project._build.runner import (
-            _DEFAULT_BACKEND,
-            _DEFAULT_REQUIRES,
-            _read_build_system,
-        )
+        """The defaults are spelled out here, so changing one fails this test."""
+        from nab_project._build.runner import _read_build_system
 
-        assert _read_build_system({}) == (_DEFAULT_BACKEND, _DEFAULT_REQUIRES, None)
+        assert _read_build_system({}) == (
+            "setuptools.build_meta:__legacy__",
+            ("setuptools >= 40.8.0",),
+            None,
+        )
 
     @pytest.mark.parametrize("value", ["hatchling.build", ["setuptools>=61"], 1])
     def test_build_system_not_a_table_raises(self, value: object) -> None:
@@ -952,10 +950,10 @@ class TestReadBuildSystem:
 
     def test_absent_optional_keys_take_their_defaults(self) -> None:
         """Only ``requires`` is mandatory; PEP 517 supplies the backend."""
-        from nab_project._build.runner import _DEFAULT_BACKEND, _read_build_system
+        from nab_project._build.runner import _read_build_system
 
         assert _read_build_system({"build-system": {"requires": ["hatchling"]}}) == (
-            _DEFAULT_BACKEND,
+            "setuptools.build_meta:__legacy__",
             ("hatchling",),
             None,
         )
@@ -2332,6 +2330,20 @@ class TestBuildEnvOffline:
             BuildBackendError, match=r"unavailable in offline mode: hatchling"
         ):
             run_build_backend(source, config=NabProjectConfig(), offline=True)
+
+    def test_legacy_setup_py_refusal_names_both_defaults(self, tmp_path: Path) -> None:
+        """The refusal names the default backend and the default requirement."""
+        (tmp_path / "setup.py").write_text(
+            "from setuptools import setup\nsetup()\n", encoding="utf-8"
+        )
+
+        with pytest.raises(
+            BuildBackendError,
+            match=r"build env setup for 'setuptools\.build_meta:__legacy__' failed:"
+            r" build requirements unavailable in offline mode:"
+            r" setuptools >= 40\.8\.0$",
+        ):
+            run_build_backend(tmp_path, config=NabProjectConfig(), offline=True)
 
     def test_backend_with_no_build_requirements_still_builds(
         self, tmp_path: Path, config: NabProjectConfig
