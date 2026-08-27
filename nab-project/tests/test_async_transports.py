@@ -1820,6 +1820,28 @@ def _build_tarball(members: list[tuple[str, bytes | None]]) -> bytes:
     return buf.getvalue()
 
 
+# A digit run just past CPython's int-from-string limit.
+_OVERSIZED_DIGITS = "1" * sys.get_int_max_str_digits() + "1"
+
+
+def _build_pax_sparse_map_tarball(sparse_map: str) -> bytes:
+    """Build a tar.gz whose first member carries a PAX ``GNU.sparse.map`` record.
+
+    The PKG-INFO after it is valid, so a ``(None, None)`` result comes from the
+    sparse map rather than from absent metadata.
+    """
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as tar:
+        sparse = tarfile.TarInfo("pkg-1.0/sparse")
+        sparse.pax_headers = {"GNU.sparse.map": sparse_map}
+        tar.addfile(sparse, io.BytesIO(b""))
+        pkg_info = b"Metadata-Version: 2.1\nName: pkg\n"
+        info = tarfile.TarInfo("pkg-1.0/PKG-INFO")
+        info.size = len(pkg_info)
+        tar.addfile(info, io.BytesIO(pkg_info))
+    return buf.getvalue()
+
+
 SDIST_BODY = _build_tarball(
     [
         ("demo-1.0/PKG-INFO", b"Metadata-Version: 2.2\nName: demo\nVersion: 1.0\n"),
@@ -2242,6 +2264,18 @@ class TestExtractSdistFiles:
 
     def test_returns_none_on_tar_error(self) -> None:
         assert _extract_sdist_files(b"not-a-tarball") == (None, None)
+
+    @pytest.mark.parametrize(
+        "sparse_map",
+        [_OVERSIZED_DIGITS + ",1", "nope,1"],
+        ids=["digits-past-int-limit", "non-numeric"],
+    )
+    def test_returns_none_when_gnu_sparse_map_will_not_convert(
+        self, sparse_map: str
+    ) -> None:
+        """A ``GNU.sparse.map`` that tarfile cannot convert reads as unreadable."""
+        body = _build_pax_sparse_map_tarball(sparse_map)
+        assert _extract_sdist_files(body) == (None, None)
 
     def test_returns_none_when_pkg_info_missing(self) -> None:
         body = _build_tarball([("pkg-1.0/setup.py", b"# nothing")])

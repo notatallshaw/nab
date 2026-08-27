@@ -694,7 +694,9 @@ def _extract_sdist_files_if_readable(
     except (
         tarfile.TarError,
         OSError,
-        UnicodeDecodeError,
+        # tarfile converts archive-controlled header text with int(), and a
+        # member's bad UTF-8 fails decode(); both surface as ValueError.
+        ValueError,
         KeyError,
         EOFError,
         zlib.error,
@@ -803,11 +805,19 @@ def extract_sdist_archive(
     except KeyError as exc:
         msg = f"broken link in sdist member: {exc}"
         raise ValueError(msg) from exc
-    except (tarfile.TarError, OSError, EOFError, zlib.error, RecursionError) as exc:
+    except (
+        tarfile.TarError,
+        OSError,
+        EOFError,
+        zlib.error,
+        RecursionError,
+        ValueError,
+    ) as exc:
         # gzip raises BadGzipFile (an OSError) on a bad header, a bare EOFError on
         # a truncated stream, and zlib.error on a corrupt deflate block; none of
         # them is a TarError.  RecursionError comes from tarfile recursing once
-        # per link to resolve a chain of link members.
+        # per link to resolve a chain of link members, and tarfile converts header
+        # text with int(), so a bad value arrives as ValueError.
         msg = f"unreadable sdist archive: {exc}"
         raise ValueError(msg) from exc
 
