@@ -15,7 +15,7 @@ python nab-project/benchmarks/deterministic_smoke.py --lane performance --runs 5
 
 The scenarios use Nab's default highest resolution strategy and default cross-target alignment. `strategy-lowest`, `strategy-lowest-direct`, and `universal-independent` declare the only exceptions.
 
-Each resolve gets a fresh coordinator against the same prebuilt offline fixture. Warmups happen before measurement, and each recorded inner interval covers only the resolver call; fixture generation, coordinator lifecycle, semantic validation, and lock emission stay outside it. Timing samples are local diagnostics, not a reusable baseline or comparative result, and should be collected sequentially under controlled conditions.
+Each resolve gets a fresh coordinator against the same prebuilt offline fixture, and prefetches only the listings the scenario's own requirements and constraints can reach, so a new scenario adds no listing work to the existing ones. Warmups happen before measurement, and each recorded inner interval covers only the resolver call; fixture generation, coordinator lifecycle, semantic validation, and lock emission stay outside it. Metadata reads that the fetcher starts when a listing lands can still run inside the interval, so changing what a scenario prefetches moves its recorded time. Timing samples are local diagnostics, not a reusable baseline or comparative result, and should be collected sequentially under controlled conditions.
 
 ## Single-environment scenarios
 
