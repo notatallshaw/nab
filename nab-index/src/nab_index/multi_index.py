@@ -12,11 +12,9 @@ an absent package.
 
 Per-package overrides route a package to a *named* index regardless
 of order; when an override matches, *only* that index is consulted
-(strict pin), matching uv's ``[tool.uv.sources]`` semantics.
-
-Marker evaluation for overrides happens upstream; this layer just sees
-a ``canonical_package_name -> index_name`` mapping that has already
-been resolved against the active environment.
+(strict pin), matching uv's ``[tool.uv.sources]`` semantics.  The
+index is chosen before any version is known, so a route carries no
+version scope and no marker.
 """
 
 from __future__ import annotations
