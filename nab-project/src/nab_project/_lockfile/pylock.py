@@ -281,7 +281,11 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
     base = (lock_dir if lock_dir is not None else Path.cwd()).resolve()
     exclusion_groups = conflict_exclusion_groups(lock_input.conflicts)
     store = DecisionStore()
-    universe = _emission_universe(lock_input, store)
+    # The universe and the coverage gate share these rows, so build them once.
+    environment_rows = [
+        MarkerSet.from_marker(marker) for marker in lock_input.environments
+    ]
+    universe = _emission_universe(lock_input, store, rows=environment_rows)
     package_records = _build_packages(
         lock_input, base, exclusion_groups, universe, store
     )
@@ -298,6 +302,7 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
         [lock.target for lock in lock_input.targets.values()],
         environments=lock_input.environments,
         store=store,
+        environment_sets=environment_rows,
     )
     tool: dict[str, Any] | None = (
         {"nab": lock_input.provenance.to_block()}
@@ -545,7 +550,9 @@ def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
 
 
 def _emission_universe(
-    lock_input: LockInput, store: DecisionStore | None = None
+    lock_input: LockInput,
+    store: DecisionStore | None = None,
+    rows: Sequence[MarkerSet] | None = None,
 ) -> MarkerSet:
     """Return the environment universe simplification must agree over.
 
@@ -559,10 +566,14 @@ def _emission_universe(
     every environment is sound inside an empty one too.  A union is empty
     exactly when every row is, so rows are tested one at a time rather than as a
     whole-matrix product, and a row too wide to decide counts as inhabited.
+
+    ``rows`` are ``lock_input.environments`` already built as sets; they are
+    built here when omitted.
     """
     if not lock_input.environments:
         return MarkerSet.full()
-    rows = [MarkerSet.from_marker(m) for m in lock_input.environments]
+    if rows is None:
+        rows = [MarkerSet.from_marker(m) for m in lock_input.environments]
     try:
         uninhabited = all(row.is_empty(store=store) for row in rows)
     except IntractableMarkerSet:
@@ -606,14 +617,15 @@ def _finalize_marker(
     if raw is None:
         return None
     try:
-        simplified = MarkerSet.from_marker(raw).simplify(within=within, store=store)
+        source = MarkerSet.from_marker(raw)
+        simplified = source.simplify(within=within, store=store)
         text = simplified.to_marker_string(store=store)
         rebuilt = None if text is None else _parsed_marker(text)
         emitted = (
             MarkerSet.full() if rebuilt is None else MarkerSet.from_marker(rebuilt)
         )
         shown = "no marker" if rebuilt is None else str(rebuilt)
-        sound = _sound_within_universe(raw, emitted, within, store)
+        sound = source.equivalent_within(emitted, within, store=store)
     except (IntractableMarkerSet, UnserializableMarkerSet):
         return raw
     if not sound:
@@ -644,21 +656,6 @@ def _finalize_cached(
     if key not in memo:
         memo[key] = _finalize_marker(raw, within, name, store)
     return memo[key]
-
-
-def _sound_within_universe(
-    raw: Marker,
-    emitted: MarkerSet,
-    within: MarkerSet,
-    store: DecisionStore | None = None,
-) -> bool:
-    """Whether ``emitted`` and ``raw`` agree on every environment in ``within``.
-
-    ``emitted`` is what the lock ships: the reparsed marker bytes, or
-    :meth:`MarkerSet.full` when no marker field is emitted.  Decided per universe
-    row, under the same budget as the operator it checks.
-    """
-    return MarkerSet.from_marker(raw).equivalent_within(emitted, within, store=store)
 
 
 def _build_packages(

@@ -74,6 +74,7 @@ def validate_marker_coverage(
     *,
     environments: Sequence[Marker],
     store: DecisionStore | None = None,
+    environment_sets: Sequence[MarkerSet] | None = None,
 ) -> None:
     """Confirm the emitted rows cover every target the resolve ran.
 
@@ -83,15 +84,16 @@ def validate_marker_coverage(
 
     An empty ``environments`` returns early: an omitted field declares
     support for every environment, so it must not be read as the empty set.
+
+    ``environment_sets`` are ``environments`` already built as sets; they are
+    built here when omitted.
     """
     if not environments:
         return
 
-    covered = reduce(
-        MarkerSet.union,
-        (MarkerSet.from_marker(marker) for marker in environments),
-        MarkerSet.empty(),
-    )
+    if environment_sets is None:
+        environment_sets = [MarkerSet.from_marker(marker) for marker in environments]
+    covered = reduce(MarkerSet.union, environment_sets, MarkerSet.empty())
     covered = _project_implementation_version(covered, environments, targets)
 
     for pins, references in _references_by_pins(targets).items():

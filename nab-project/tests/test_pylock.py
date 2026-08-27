@@ -858,9 +858,15 @@ class TestEmissionStore:
             *,
             environments: Sequence[Marker],
             store: DecisionStore | None = None,
+            environment_sets: Sequence[MarkerSet] | None = None,
         ) -> None:
             seen.append(store)
-            real_coverage(targets, environments=environments, store=store)
+            real_coverage(
+                targets,
+                environments=environments,
+                store=store,
+                environment_sets=environment_sets,
+            )
 
         monkeypatch.setattr(MarkerSet, "simplify", recording_simplify)
         monkeypatch.setattr(MarkerSet, "equivalent_within", recording_equivalent)
