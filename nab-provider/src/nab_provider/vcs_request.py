@@ -8,9 +8,9 @@ vocabulary.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ._value import SlottedValue
 from .subdir import subdirectory_escapes
 
 if TYPE_CHECKING:
@@ -32,8 +32,7 @@ class VcsCloneError(Exception):
     """Raised when a clone or ref resolution fails."""
 
 
-@dataclass(frozen=True, slots=True)
-class VcsClone:
+class VcsClone(SlottedValue):
     """Result of :func:`nab_index.vcs.prepare_clone`.
 
     ``path`` is the absolute filesystem path to the (possibly
@@ -43,13 +42,17 @@ class VcsClone:
     pyproject.toml; ``""`` means the repo root.
     """
 
-    path: Path
-    commit_sha: str
-    subdirectory: str = ""
+    __slots__ = ("commit_sha", "path", "subdirectory")
+    __match_args__ = ("path", "commit_sha", "subdirectory")
+
+    def __init__(self, path: Path, commit_sha: str, subdirectory: str = "") -> None:
+        """Record a checkout of ``commit_sha`` at ``path``."""
+        self.path = path
+        self.commit_sha = commit_sha
+        self.subdirectory = subdirectory
 
 
-@dataclass(frozen=True, slots=True)
-class VcsRequest:
+class VcsRequest(SlottedValue):
     """Parsed representation of a ``git+https://repo.git@ref#...`` URL.
 
     ``ref`` may be a 40-char SHA or a branch / tag name.  ``ref`` of
@@ -58,10 +61,15 @@ class VcsRequest:
     if present.
     """
 
-    scheme: str
-    repo_url: str
-    ref: str
-    subdirectory: str
+    __slots__ = ("ref", "repo_url", "scheme", "subdirectory")
+    __match_args__ = ("scheme", "repo_url", "ref", "subdirectory")
+
+    def __init__(self, scheme: str, repo_url: str, ref: str, subdirectory: str) -> None:
+        """Record one parsed VCS URL."""
+        self.scheme = scheme
+        self.repo_url = repo_url
+        self.ref = ref
+        self.subdirectory = subdirectory
 
     @classmethod
     def parse(cls, url: str) -> VcsRequest:
