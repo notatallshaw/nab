@@ -62,11 +62,11 @@ build-group = "build"
 requires-python = ">=3.10"
 
 # Reproducibility cutoff.  Distributions uploaded after this timestamp
-# are ignored.  Accepts ISO 8601 strings, native TOML datetimes, or a
-# "P<n>D" duration relative to the resolve anchor.  Artifacts from a
-# local file:// index carry no upload time and are always kept.  An
-# HTML listing rarely carries one either, and those files are then
-# excluded; see "Serialization" below.
+# are ignored.  Accepts an ISO 8601 string or a native TOML datetime,
+# each with an explicit timezone offset, or a "P<n>D" duration relative
+# to the resolve anchor.  Artifacts from a local file:// index carry no
+# upload time and are always kept.  An HTML listing rarely carries one
+# either, and those files are then excluded; see "Serialization" below.
 uploaded-prior-to = "2026-05-01T00:00:00Z"
 
 # Version selection within an allowed range.  Mirrors uv's --resolution.
@@ -298,8 +298,8 @@ A body sets any combination of:
 * `dist-policy`: an enum string, or `{ policy = "...",
   trust-unverified-deps = true|false }`.
 * `build-policy`: an enum string.
-* `uploaded-prior-to`: a datetime, a `P<n>D` duration, or `false` (no
-  cutoff for the selected versions).
+* `uploaded-prior-to`: a datetime with an explicit timezone offset, a
+  `P<n>D` duration, or `false` (no cutoff for the selected versions).
 * `index`: route the selected packages to this declared index (a
   strict pin: only that index is consulted).  Routing requires
   bare-name selectors, because the routing decision happens before any
