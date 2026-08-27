@@ -5,8 +5,8 @@ from the workspace check-out.
 
 ## Development install
 
-nab uses [hatch] as its environment manager; clone the repository and
-let hatch do the editable installs:
+nab uses [hatch] as its environment manager. Install it, then clone the
+repository and let it do the editable installs:
 
 ```bash
 git clone https://github.com/notatallshaw/nab.git
@@ -15,9 +15,12 @@ hatch shell
 nab --version
 ```
 
-`hatch shell` enters a virtual environment (`.venv` by default) with
-all five distributions installed editable, plus the test, lint, docs,
-and types environments available via `hatch run`.
+That shell runs in the check-out's `.venv`, with all five distributions
+installed editable plus the `tests` and `nox` dependency-groups. The
+commands below run its tools by path, so they work outside the shell too.
+
+Ruff and the docs toolchain live in their own hatch environments, reached
+through `hatch run`.
 
 [hatch]: https://hatch.pypa.io/
 
@@ -42,12 +45,11 @@ own data file, so combine before reporting:
 ```
 
 CI gates each workspace's coverage on its own tests through nox (see
-`noxfile.py`). With nox installed (`pip install nox`), reproduce a single
-workspace, or all of them, with:
+`noxfile.py`). Reproduce a single workspace, or all of them, with:
 
 ```bash
-nox -s tests                              # every workspace, each gated
-nox -s tests -- project                   # just one workspace
+.venv/bin/nox -s tests                    # every workspace, each gated
+.venv/bin/nox -s tests -- project         # just one workspace
 ```
 
 Property-based tests are opt-in via marker:
@@ -56,18 +58,22 @@ Property-based tests are opt-in via marker:
 .venv/bin/python -m pytest -m property    # Hypothesis-only suites
 ```
 
-Lint and format with ruff; type-check with pyright:
+Lint and format with ruff, out of the `lint` environment:
 
 ```bash
-.venv/bin/python -m ruff check .
-.venv/bin/python -m ruff format .
-.venv/bin/python -m pyright
+hatch run lint:check
+hatch run lint:fmt
 ```
 
-CI checks the same trees with five checkers rather than one, so a change
-pyright accepts can still fail the matrix. Reproduce a single cell with
-`nox -s "types(checker='mypy')"`; the trees are `TYPED_TREES` in
-`noxfile.py`.
+Type-check through nox, which installs the pinned checker lock and runs
+one checker over its own scope:
+
+```bash
+.venv/bin/nox -s "types(checker='pyright')"   # or mypy, ty, pyrefly, zuban
+```
+
+CI runs all five rather than one, so a change pyright accepts can still
+fail the matrix; the trees are `TYPED_TREES` in `noxfile.py`.
 
 ## The build backend
 
