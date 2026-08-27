@@ -854,6 +854,11 @@ class TestMarkerVariables:
         """
         assert set(default_environment()) == PEP508_MARKER_VARIABLES
 
+    def test_a_repeated_marker_text_is_parsed_once(self) -> None:
+        """The second call reads the memo instead of parsing the text again."""
+        text = 'sys_platform == "linux" and python_version >= "3.10"'
+        assert marker_variables(text) is marker_variables(text)
+
 
 class TestEnvironmentDeclaration:
     """A single-environment lock declares the environment it was resolved
