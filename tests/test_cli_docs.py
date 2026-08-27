@@ -2,7 +2,8 @@
 
 The reference page lists each subcommand's invocation, its own flags, the env
 vars and the statuses; selection, output formats and resolution failures have
-a page each; the conflicts page quotes refusal lines verbatim.
+a page each; the config reference groups the ``nab lock`` flags by what each
+one decides; the conflicts page quotes refusal lines verbatim.
 
 These tests read ``docs/``, which the umbrella sdist does not ship, so the
 module is on that sdist's exclude list in pyproject.toml.
@@ -31,6 +32,7 @@ _CLI_REFERENCE = _DOCS / "reference" / "cli.md"
 _SELECTION = _DOCS / "reference" / "selection.md"
 _FORMATS = _DOCS / "reference" / "formats.md"
 _DIAGNOSTICS = _DOCS / "reference" / "diagnostics.md"
+_CONFIG_REFERENCE = _DOCS / "reference" / "configuration.md"
 _CONFLICTS_DOC = _DOCS / "explanation" / "conflicts.md"
 
 _SUBCOMMANDS = ("lock", "download", "config", "cache")
@@ -74,12 +76,24 @@ def _run_config(args: list[str]) -> str:
     return buf.getvalue()
 
 
-def _names_flag(text: str, flag: str) -> bool:
-    """Whether ``text`` names ``flag``, its ``--no-`` form, or a covering wildcard."""
+def _flag_forms(flag: str, *, wildcard: str) -> list[str]:
+    """The spellings a page may use for ``flag``: itself or its ``--no-`` form.
+
+    A ``--project-`` flag is also covered by ``wildcard``, the placeholder a
+    page writes when it stands for the whole family rather than one member.
+    """
     forms = [flag, f"--no-{flag.removeprefix('--')}"]
     if flag.startswith("--project-"):
-        forms.append("--project-*")
-    return any(re.search(rf"`{re.escape(form)}(?![\w-])", text) for form in forms)
+        forms.append(wildcard)
+    return forms
+
+
+def _names_flag(text: str, flag: str) -> bool:
+    """Whether ``text`` names ``flag``, its ``--no-`` form, or a covering wildcard."""
+    return any(
+        re.search(rf"`{re.escape(form)}(?![\w-])", text)
+        for form in _flag_forms(flag, wildcard="--project-*")
+    )
 
 
 def _prose_chunks(text: str) -> list[str]:
@@ -106,6 +120,41 @@ def _command_flags(command: Callable[..., None]) -> list[str]:
         for name, param in inspect.signature(command).parameters.items()
         if param.kind is inspect.Parameter.KEYWORD_ONLY
     ]
+
+
+def _cli_flag_section() -> str:
+    """The config reference's CLI flags section."""
+    return _reference_section(_CONFIG_REFERENCE, "## CLI flags")
+
+
+def _flag_block() -> str:
+    """The fenced ``nab lock`` usage block that opens the CLI flags section."""
+    block = re.search(r"```\n(.*?)```", _cli_flag_section(), re.DOTALL)
+    if block is None:
+        msg = "no fenced flag block under the config reference's CLI flags heading"
+        raise AssertionError(msg)
+
+    return block.group(1)
+
+
+def _block_flags(block: str) -> list[str]:
+    """The flags a fenced usage ``block`` declares, one per line."""
+    return re.findall(r"(?m)^\s+(--[\w<>-]+)", block)
+
+
+def _first_flag_group() -> set[str]:
+    """The flags of the flag block's first group, the one its bullets explain."""
+    return set(_block_flags(_flag_block().split("\n\n")[0]))
+
+
+def _bullet_flags() -> set[str]:
+    """The flags the bullets under the flag block name in a code span."""
+    bullets = [
+        chunk
+        for chunk in _prose_chunks(_cli_flag_section().rpartition("```")[2])
+        if chunk.startswith("* ")
+    ]
+    return set(re.findall(r"`(--[\w<>-]+)`", "\n".join(bullets)))
 
 
 def _doc_paragraph(text: str, needle: str) -> str:
@@ -358,6 +407,39 @@ class TestLockReferenceDocumentsProjectOverrides:
 
         assert "replaces the file value" in prose
         assert "append" not in prose
+
+
+class TestConfigReferenceCliFlags:
+    """The config reference's flag block matches what ``nab lock`` accepts.
+
+    The block groups the flags by what each one decides, and the bullets
+    under it say what the first group does to ``[tool.nab]``.  One
+    ``--project-<key>`` line stands for the whole family, so the block is
+    not read for the individual names.
+    """
+
+    _WILDCARD = "--project-<key>"
+
+    def test_block_lists_every_lock_flag(self) -> None:
+        declared = set(_block_flags(_flag_block()))
+
+        for flag in _command_flags(lock):
+            forms = _flag_forms(flag, wildcard=self._WILDCARD)
+            assert declared.intersection(forms), f"the flag block omits {flag}"
+
+    def test_block_lists_only_flags_lock_accepts(self) -> None:
+        accepted = {
+            form
+            for flag in _command_flags(lock)
+            for form in _flag_forms(flag, wildcard=self._WILDCARD)
+        }
+
+        for flag in _block_flags(_flag_block()):
+            assert flag in accepted, f"the flag block still lists {flag}"
+
+    def test_bullets_cover_exactly_the_first_group(self) -> None:
+        """A flag in the wrong group leaves the bullets covering the wrong set."""
+        assert _bullet_flags() == _first_flag_group()
 
 
 _FLAG = "--include-rejected"

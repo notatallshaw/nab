@@ -2,10 +2,10 @@
 
 `nab` exposes four subcommands: `lock`, `download`, `config`, and
 `cache`. The first two read project shape from `[tool.nab]` in the
-project's `pyproject.toml` or a project-directory `nab.toml`; the CLI
-carries runtime knobs and can override a project key for one run with a
-`--project-<key>` flag. `config` inspects the layered configuration, and
-`cache` inspects and clears the on-disk cache.
+project's `pyproject.toml` or a project-directory `nab.toml`, and their
+flags shape the resolve as well as the run; `--project-<key>` overrides
+a project key for one run. `config` inspects the layered configuration,
+and `cache` inspects and clears the on-disk cache.
 
 ## Synopsis
 
