@@ -44,10 +44,11 @@ RELATION_GATE_WINDOW = 4_096
 RELATION_GATE_MIN_HITS = 1_024
 RELATION_GATE_RECHECK = 65_536
 
-# Upper bound on the address-keyed token memo, cleared on overflow together
-# with the range objects it holds alive.  A larger cap wipes less often and so
-# holds on to more ranges, which costs peak memory.
+# Upper bounds on the two token memos.  Both hold ranges alive, the value memo
+# as its own keys and the address memo through interned_ranges, so a larger cap
+# wipes less often and holds on to more ranges, which costs peak memory.
 RANGE_ID_MEMO_MAX = 8_192
+RANGE_TOKEN_MEMO_MAX = 8_192
 
 
 def unit_propagation(
@@ -152,13 +153,23 @@ def _intern_range(resolver: Resolver[Any, Any], range_: RangeProtocol[Any]) -> i
     """Return the token for ``range_``, minting one the first time it is seen.
 
     Equal ranges share a token, so the relation cache keys on range value
-    rather than on identity.  The address memo the caller reads first is only
-    sound while the object it answers for is alive, so ``interned_ranges``
-    holds on to every range that memo records.
+    rather than on identity.  A wipe frees ranges only if ``interned_ranges``,
+    which holds them alive too, goes with the value memo.  The address memo
+    then has to go as well: a reused address would answer with the freed
+    range's token.
+
+    A range seen again after a wipe is minted a second, higher token.
+    ``next_range_token`` never rewinds, so relation-cache entries under a
+    retired token, including a key that mixes one token from each side of a
+    wipe, become unreachable rather than wrong.
     """
     tokens = resolver.range_tokens
     token = tokens.get(range_)
     if token is None:
+        if len(tokens) >= RANGE_TOKEN_MEMO_MAX:
+            tokens.clear()
+            resolver.range_token_by_id.clear()
+            resolver.interned_ranges.clear()
         token = resolver.next_range_token
         resolver.next_range_token = token + 1
         tokens[range_] = token

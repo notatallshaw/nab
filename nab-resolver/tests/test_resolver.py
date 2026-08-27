@@ -3146,6 +3146,97 @@ class TestRelationCache:
         """
         term_relation(resolver, Term("foo", Range.at_least(lower), positive=True))
 
+    @classmethod
+    def _probe_distinct_ranges(cls, resolver: Resolver[str, int], count: int) -> int:
+        """Probe ``>= 1`` through ``>= count``, returning the value memo's peak size.
+
+        The peak is sampled after every probe: a length read only at the end
+        cannot see a table that overshot its cap and was then wiped.
+        """
+        peak = 0
+        for lower in range(1, count + 1):
+            cls._probe(resolver, lower)
+            peak = max(peak, len(resolver.range_tokens))
+        return peak
+
+    def test_value_memo_never_grows_past_its_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The value memo holds its keys alive, so it needs a cap of its own."""
+        monkeypatch.setattr(propagate, "RANGE_TOKEN_MEMO_MAX", 4)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+
+        peak = self._probe_distinct_ranges(resolver, 39)
+
+        assert peak == propagate.RANGE_TOKEN_MEMO_MAX
+
+    def test_an_overflow_releases_the_ranges_the_memo_held(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The cap exists to free ranges nothing else holds.
+
+        ``Range`` sets ``__slots__`` without ``__weakref__``, so a weak reference
+        cannot watch one go and the reference count is the next best witness.
+        """
+        monkeypatch.setattr(propagate, "RANGE_TOKEN_MEMO_MAX", 4)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+
+        constraint = Range.at_least(99)
+        baseline = sys.getrefcount(constraint)
+        term_relation(resolver, Term("foo", constraint, positive=True))
+
+        assert sys.getrefcount(constraint) > baseline
+
+        self._probe_distinct_ranges(resolver, 39)
+
+        assert sys.getrefcount(constraint) == baseline
+
+    def test_equal_ranges_share_a_token_after_an_overflow(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Equal ranges still land on one token: no address outlives the wipe."""
+        monkeypatch.setattr(propagate, "RANGE_TOKEN_MEMO_MAX", 4)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+
+        self._probe_distinct_ranges(resolver, 39)
+
+        live_tokens = set(resolver.range_tokens.values())
+        assert set(resolver.range_token_by_id.values()) <= live_tokens
+
+        term = Term("foo", Range.at_least(99), positive=True)
+        equal_term = Term("foo", Range.at_least(99), positive=True)
+        assert equal_term.constraint is not term.constraint
+
+        term_relation(resolver, term)
+        term_relation(resolver, equal_term)
+        tokens_by_address = resolver.range_token_by_id
+
+        assert (
+            tokens_by_address[id(term.constraint)]
+            == tokens_by_address[id(equal_term.constraint)]
+        )
+
+    def test_bounded_memo_reaches_the_same_solution(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A cap that wipes on all but the first mint must not change the answer."""
+        packages = {
+            "root": {1: {"left": Range.at_least(1), "right": Range.at_least(1)}},
+            "left": {v: {"shared": Range.singleton(v)} for v in (1, 2, 3)},
+            "right": {v: {"shared": Range.singleton(max(1, v - 1))} for v in (1, 2, 3)},
+            "shared": {1: {}, 2: {}, 3: {}},
+        }
+        at_default_cap: Resolver[str, int] = Resolver(DictProvider(packages))
+        expected = at_default_cap.resolve({"root": Range.at_least(1)})
+
+        monkeypatch.setattr(propagate, "RANGE_TOKEN_MEMO_MAX", 1)
+        at_cap_of_one: Resolver[str, int] = Resolver(DictProvider(packages))
+
+        assert at_cap_of_one.resolve({"root": Range.at_least(1)}) == expected
+
     def test_gate_switches_the_memo_off_when_probes_mostly_miss(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

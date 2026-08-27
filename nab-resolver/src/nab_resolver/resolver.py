@@ -690,9 +690,9 @@ class Resolver(Generic[PackageType, VersionType]):
         self.relation_gate_probes_left = propagate.RELATION_GATE_WINDOW
 
         # One token per distinct range, so a relation-cache probe compares ints
-        # rather than bound structures. The counter never rewinds, so clearing
-        # this table alone only strands relation_cache entries; it can never
-        # point a live one at a different range.
+        # rather than bound structures. The table holds every key alive, which is
+        # why it is capped; the counter never rewinds, so a wipe strands
+        # relation_cache entries rather than pointing a live one at another range.
         self.range_tokens: dict[RangeProtocol[Any], int] = {}
         self.next_range_token = 0
 
