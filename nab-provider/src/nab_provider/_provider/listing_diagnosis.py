@@ -385,7 +385,7 @@ def walk_listing(provider: Provider, normalized: str) -> ListingDiagnosis | None
     dropped, survivors, sdist_install = _shared_base_pass(
         provider, normalized, files, policy
     )
-    tag_dropped, kept = _tag_pass(provider, normalized, survivors, sdist_install)
+    tag_dropped, kept = _tag_pass(provider, survivors, sdist_install)
 
     filtered = provider.versions_cache.get(normalized) or []
     return ListingDiagnosis(
@@ -478,7 +478,6 @@ def _base_pass(
 
 def _tag_pass(
     provider: Provider,
-    normalized: str,
     survivors: Sequence[tuple[Version, DistFile]],
     sdist_install: set[Version],
 ) -> tuple[list[DroppedFile], set[Version]]:
@@ -500,9 +499,7 @@ def _tag_pass(
             )
             continue
 
-        if tags is not None and _listing.excluded_by_wheel_tags(
-            provider, normalized, version, dist, tags
-        ):
+        if tags is not None and _listing.excluded_by_wheel_tags(dist, tags):
             dropped.append(DroppedFile(dist, version, DropCause.WHEEL_TAGS))
             continue
 

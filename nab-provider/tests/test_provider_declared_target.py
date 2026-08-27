@@ -698,6 +698,24 @@ class TestPerVersionPruneCounter:
         assert provider.tag_excluded_wheel_count("pkg", Version("2.0")) == 1
         assert provider.stats.excluded_by_wheel_tags == 2
 
+    def test_count_sums_every_wheel_one_version_loses(self) -> None:
+        """A version's several lost wheels add up in its count and in the total."""
+        wheels = [
+            _platform_wheel("1.0", "cp311-cp311-win_amd64"),
+            _platform_wheel("1.0", "cp311-cp311-macosx_11_0_arm64"),
+            _platform_wheel("1.0", "cp311-cp311-manylinux_2_17_x86_64"),
+            _platform_wheel("2.0", "cp311-cp311-win_amd64"),
+        ]
+        provider = Provider(
+            _index_with_files(wheels),
+            _linux_target(PlatformSpec("linux_x86_64")),
+        )
+        provider.filter_distributions("pkg", wheels)
+
+        assert provider.tag_excluded_wheel_count("pkg", Version("1.0")) == 2
+        assert provider.tag_excluded_wheel_count("pkg", Version("2.0")) == 1
+        assert provider.stats.excluded_by_wheel_tags == 3
+
     def test_no_prune_leaves_zero(self) -> None:
         """A version whose every wheel the target keeps has a zero count."""
         wheels = [_platform_wheel("1.0", "py3-none-any")]
