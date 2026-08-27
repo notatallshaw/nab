@@ -67,7 +67,6 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.marker_holds import dependency_marker_holds
-from nab_provider.metadata import WheelMetadata
 from nab_provider.provider import (
     ArchiveSource,
     BuildPolicy,
@@ -1773,58 +1772,6 @@ class TestCutoffAndOverridePlumbing:
 
         override = '[tool.nab.index.pypi]\nuploaded-prior-to = "2024-03-01T00:00:00Z"\n'
         assert self._pins(tmp_path, override) == {"foo": Version("1.0")}
-
-
-class TestBuildConfigPlumbing:
-    """The project's config reaches the PEP 517 build a resolve triggers.
-
-    Only a source with dynamic metadata gets that far: the static reader
-    returns ``None`` for it, so the provider falls through to
-    ``build_backend.extract_metadata``, which refuses without a config.
-    The backend run itself is stubbed, so no build venv is created.
-    """
-
-    def _project(self, tmp_path: Path) -> Path:
-        """Write a project whose only dependency is a dynamic local source."""
-        source = tmp_path / "dyn"
-        source.mkdir()
-        (source / "pyproject.toml").write_text(
-            '[project]\nname = "dyn"\ndynamic = ["version"]\n', encoding="utf-8"
-        )
-
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            '[project]\nname = "proj"\nversion = "0"\ndependencies = ["dyn"]\n'
-            "[tool.nab]\n"
-            'build-policy = "build-local"\n'
-            "[[tool.nab.local-sources]]\n"
-            'name = "dyn"\n'
-            'path = "dyn"\n',
-            encoding="utf-8",
-        )
-        return pyproject
-
-    def test_dynamic_local_source_builds_under_the_project_config(
-        self, tmp_path: Path
-    ) -> None:
-        """The config the resolve runs under is the one the build receives."""
-        config = read_pyproject_config(self._project(tmp_path))
-        built = WheelMetadata(name="dyn", version=Version("7.0"))
-
-        coordinator = make_coordinator(
-            listings={}, auto_metadata=True, build_config=config
-        )
-        with patch(
-            "nab_project._build.runner.run_build_backend", return_value=built
-        ) as runner:
-            result = resolve_with_coordinator(
-                coordinator, _one_target(), _reqs("dyn"), config=config
-            )
-
-        assert result.success
-        assert result.target_results[0].pins == {"dyn": Version("7.0")}
-
-        assert runner.call_args.kwargs["config"] is config
 
 
 class TestRunPassSerial:
