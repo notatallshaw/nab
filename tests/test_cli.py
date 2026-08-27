@@ -63,7 +63,7 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.config import ConfigError, read_pyproject_config
 from nab_project.config_sources import SourceRoots
-from nab_project.download import DownloadError
+from nab_project.download import DownloadError, DownloadResult
 from nab_project.fetch import FetchCoordinator
 from nab_project.lockfile import (
     ArchivePin,
@@ -2000,7 +2000,7 @@ class TestPythonFlag:
             ) as mock_resolve,
             patch(
                 "nab._download.download_lock",
-                return_value=MagicMock(written=(out / "x.whl",), skipped=()),
+                return_value=DownloadResult(written=(out / "x.whl",), skipped=()),
             ),
         ):
             download(pyproject, output=out, python="3.11")
@@ -5796,7 +5796,7 @@ class TestProgressReachesTheResolve:
             ["nab", "download", str(pyproject), "--output", str(tmp_path / "vendor")],
             patch(
                 "nab._download.download_lock",
-                return_value=MagicMock(written=(), skipped=()),
+                return_value=DownloadResult(written=(), skipped=()),
             ),
         )
 
@@ -5843,7 +5843,7 @@ class TestProgressReachesTheResolve:
             ],
             patch(
                 "nab._download.download_lock",
-                return_value=MagicMock(written=(), skipped=()),
+                return_value=DownloadResult(written=(), skipped=()),
             ),
         )
 
@@ -6121,7 +6121,7 @@ class TestDownloadCommand:
     def test_invokes_download_lock(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "vendor"
-        download_result = MagicMock(written=(out / "x.whl",), skipped=())
+        download_result = DownloadResult(written=(out / "x.whl",), skipped=())
         with (
             patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
             patch(
@@ -6138,7 +6138,7 @@ class TestDownloadCommand:
         """``--offline`` must reach the download, not just the resolve."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "vendor"
-        download_result = MagicMock(written=(), skipped=())
+        download_result = DownloadResult(written=(), skipped=())
         with (
             patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
             patch(
@@ -6152,7 +6152,7 @@ class TestDownloadCommand:
         """``--http-backend`` must reach the download, not just the resolve."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "vendor"
-        download_result = MagicMock(written=(), skipped=())
+        download_result = DownloadResult(written=(), skipped=())
 
         resolve_transport = MagicMock(name="resolve_transport")
         fetch_transport = MagicMock(name="fetch_transport")
@@ -6218,6 +6218,36 @@ class TestDownloadCommand:
 
         assert transport.peak == 2
 
+    def test_summary_counts_swap_on_a_second_download(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A second download into the same directory swaps the two counts."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "vendor"
+        result, payloads = _fetchable_resolve_result(3)
+
+        def run() -> str:
+            """Download into ``out`` and return what the run wrote to stderr."""
+            with (
+                patch("nab.cli.resolve_for_targets", return_value=result),
+                patch(
+                    "nab.cli._make_transport",
+                    return_value=_ConcurrencyProbeTransport(payloads),
+                ),
+            ):
+                download(pyproject, output=out)
+            return capsys.readouterr().err
+
+        first = run()
+        second = run()
+
+        assert first.splitlines() == [
+            f"Downloaded 3 files, 0 already present, into {out}"
+        ]
+        assert second.splitlines() == [
+            f"Downloaded 0 files, 3 already present, into {out}"
+        ]
+
     def test_cache_dir_flag_roots_the_index_cache(
         self, hermetic_roots: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -6278,7 +6308,7 @@ class TestDownloadCommand:
         """A CLI PROJECT override on ``nab download`` uses the no-lock wording."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "vendor"
-        download_result = MagicMock(written=(out / "x.whl",), skipped=())
+        download_result = DownloadResult(written=(out / "x.whl",), skipped=())
         monkeypatch.setattr(
             "nab.cli._config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
@@ -6311,7 +6341,7 @@ class TestDownloadCommand:
         """Universal mode re-resolves the matrix and downloads the union."""
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "vendor"
-        download_result = MagicMock(written=(out / "foo.whl",), skipped=())
+        download_result = DownloadResult(written=(out / "foo.whl",), skipped=())
         with (
             patch(
                 "nab.cli.resolve_for_targets",
@@ -6499,7 +6529,7 @@ class TestDownloadCommand:
             '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
             "[project.optional-dependencies]\ncpu = []\ngpu = []\n",
         )
-        download_result = MagicMock(written=(), skipped=())
+        download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
@@ -6515,7 +6545,7 @@ class TestDownloadCommand:
             '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
             "[dependency-groups]\ndev = []\n",
         )
-        download_result = MagicMock(written=(), skipped=())
+        download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
@@ -6531,7 +6561,7 @@ class TestDownloadCommand:
             '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
             "[project.optional-dependencies]\ncpu = []\ngpu = []\n",
         )
-        download_result = MagicMock(written=(), skipped=())
+        download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
@@ -6547,7 +6577,7 @@ class TestDownloadCommand:
             '[project]\nname = "x"\nversion = "0"\ndependencies = ["foo"]\n'
             "[dependency-groups]\ndev = []\ntest = []\n",
         )
-        download_result = MagicMock(written=(), skipped=())
+        download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
@@ -6559,7 +6589,7 @@ class TestDownloadCommand:
 
     def test_universal_forwards_selection(self, tmp_path: Path) -> None:
         pyproject = _universal_pyproject(tmp_path)
-        download_result = MagicMock(written=(), skipped=())
+        download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
                 "nab.cli.resolve_for_targets",

@@ -1962,7 +1962,7 @@ class TestResolveAndDownload:
         monkeypatch.setattr("nab_project.resolve.resolve_for_targets", fake_resolve)
         monkeypatch.setattr(
             "nab_project._build.env.download_lock",
-            lambda *_a, **_k: MagicMock(written=[], skipped=[]),
+            lambda *_a, **_k: DownloadResult(written=(), skipped=()),
         )
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
@@ -2060,7 +2060,7 @@ class TestResolveAndDownload:
         monkeypatch.setattr("nab_project.resolve.resolve_for_targets", fake_resolve)
         monkeypatch.setattr(
             "nab_project._build.env.download_lock",
-            lambda *_a, **_k: MagicMock(written=[], skipped=[]),
+            lambda *_a, **_k: DownloadResult(written=(), skipped=()),
         )
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
