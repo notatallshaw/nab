@@ -6275,11 +6275,17 @@ class TestTrustUnverifiedSdistDeps:
     def test_without_the_opt_out_the_sdist_has_no_usable_metadata(
         self, tmp_path: Path
     ) -> None:
-        """With the opt-out off, the pre-2.2 ``PKG-INFO`` supplies nothing."""
+        """With the opt-out off, the pre-2.2 ``PKG-INFO`` supplies nothing.
+
+        The sdist's own reason lands in the detailed diagnostics block, the one
+        ``nab lock -v`` prints, not in ``str(exc)``.
+        """
         with pytest.raises(ResolutionError) as info:
             self._resolve(tmp_path, trust=False)
 
+        detail = info.value.verbose_message
+        assert detail is not None
         assert (
             "foo==1.0 sdist has dynamic dependencies and no static"
-            " pyproject.toml fallback" in str(info.value)
+            " pyproject.toml fallback" in detail
         )
