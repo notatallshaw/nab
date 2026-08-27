@@ -16,11 +16,12 @@ from nab_project import _sources as sources
 from nab_project import build_backend
 from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.config_sources import OPTIONS
+from nab_project.workspace import read_workspace_members
 from nab_provider._provider import build_remote, metadata_resolver
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import SourceBuildPolicyError, UnsupportedSdistError
 from nab_provider.metadata import WheelMetadata
-from nab_provider.policy import BuildPolicy
+from nab_provider.policy import BuildPolicy, SourceRequest
 from nab_provider.provider import Provider
 from nab_provider.records import SdistFile
 from nab_provider.vcs_admission import UnsupportedVcsError, VcsConfig, admit_vcs_url
@@ -29,14 +30,22 @@ README = Path(__file__).resolve().parents[1] / "README.md"
 
 PINNED_URL = f"git+https://github.com/myorg/pkg.git@{'0' * 40}"
 
-# Every way of declaring a source, and the kind it reaches the build gate as.
-# Workspace discovery synthesises a LocalSource per member, so members and
-# local-sources entries arrive as the same kind.
+# The kind each config source table's entries reach the build gate as.
+TABLE_KINDS = {
+    "local-sources": "local",
+    "vcs-sources": "vcs",
+    "archive-sources": "archive",
+}
+
+WORKSPACE_MEMBERS = "workspace members"
+
+# Every way of declaring a source, spelled as the README spells it, and the
+# kind it reaches the build gate as.  Declared, not derived: the table names
+# are checked against the registry below and the member row against discovery,
+# but each table's own kind is a literal in ``nab_project._sources``.
 SOURCE_ROUTES = {
-    "[[tool.nab.local-sources]]": "local",
-    "workspace members": "local",
-    "[[tool.nab.vcs-sources]]": "vcs",
-    "[[tool.nab.archive-sources]]": "archive",
+    **{f"[[tool.nab.{key}]]": kind for key, kind in TABLE_KINDS.items()},
+    WORKSPACE_MEMBERS: "local",
 }
 
 INDEX_SDIST_PHRASE = "sdists from an index"
@@ -193,6 +202,65 @@ def test_build_policy_bullets_name_the_declared_sources_each_level_adds(
         for policy, kinds in admitted_additions.items()
     }
     assert _documented_routes() == expected
+
+
+def test_every_source_table_the_registry_defines_has_a_route() -> None:
+    """Every ``*-sources`` table the config registry defines has a row above.
+
+    The bullets have to answer for each one, so a new table fails here rather
+    than going unnamed in the README.
+    """
+    assert set(TABLE_KINDS) == {
+        option.key for option in OPTIONS if option.key.endswith("-sources")
+    }
+
+
+def test_a_workspace_member_takes_the_route_its_row_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A discovered member reaches the build gate as the kind its row names.
+
+    Every other row is spelled as the table its entries parse from; a member
+    is declared by path, so the route from discovery to the gate is run here.
+    """
+    root = tmp_path / "pyproject.toml"
+    root.write_text(
+        '[project]\nname = "root"\n[tool.nab.workspace]\nmembers = ["member"]\n',
+        encoding="utf-8",
+    )
+    member = tmp_path / "member"
+    member.mkdir()
+    (member / "pyproject.toml").write_text(DYNAMIC_PYPROJECT, encoding="utf-8")
+
+    monkeypatch.setattr(
+        build_backend, "extract_metadata", lambda *args, **kwargs: BUILT
+    )
+
+    (source,) = read_workspace_members(root)
+    port = make_coordinator()
+
+    admitting: set[BuildPolicy] = set()
+    for policy in BuildPolicy:
+        request = SourceRequest(
+            package="pkg",
+            source=source,
+            build_policy=policy,
+            vcs_cache_dir=None,
+            archive_cache_dir=None,
+            require_pin=False,
+        )
+        try:
+            materialized = sources.materialize_source(port, request, None)
+        except SourceBuildPolicyError:
+            continue
+        assert materialized.metadata is BUILT
+        admitting.add(policy)
+
+    assert admitting == {
+        policy
+        for policy in BuildPolicy
+        if SOURCE_ROUTES[WORKSPACE_MEMBERS] in _admitted_kinds(policy, member)
+    }
 
 
 @pytest.fixture
