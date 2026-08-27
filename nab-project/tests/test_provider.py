@@ -12377,8 +12377,46 @@ class TestExtrasProxyDiagnostics:
             "foo 1.0 declares the extra, and the resolve cannot choose that version",
         )
 
-    def test_a_base_with_no_candidate_in_range_records_nothing(self) -> None:
-        """The base package's own entry already says its listing is empty."""
+    def test_a_filter_that_emptied_the_base_listing_is_named(self) -> None:
+        """A proxy whose base has no version at all reports the base's listing.
+
+        The extra never comes into it: the cutoff took every file before
+        anything read a ``Provides-Extra``, so the entry is the one the
+        base package would have printed, and its remedy names the base's
+        own configuration entry rather than the proxy.
+        """
+        coordinator = make_coordinator([make_wheel("1.0")], package="foo")
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            uploaded_prior_to=datetime(2026, 5, 1, tzinfo=timezone.utc),
+        )
+        assert provider.choose_version("foo[security]", VersionRange.full()) is None
+
+        diagnostic = provider.get_no_versions_reason("foo[security]")
+        assert diagnostic is not None
+        assert (
+            diagnostic.short == "uploaded-prior-to excluded every file; none is dated"
+        )
+        assert diagnostic.remedy == 'set packages."foo".uploaded-prior-to = false'
+
+    def test_a_base_no_index_serves_is_reported_absent(self) -> None:
+        """The listing-level answer reaches the proxy whatever it says."""
+        provider = Provider(make_coordinator([], package="foo"), target=_PY312)
+        assert provider.choose_version("foo[security]", VersionRange.full()) is None
+
+        assert (
+            short_reason(provider, "foo[security]")
+            == "package not found on any configured index"
+        )
+
+    def test_a_base_whose_versions_are_all_out_of_range_records_nothing(self) -> None:
+        """No filter refused anything here, so there is nothing to name.
+
+        The base published 1.0 and the ask was for ``>=9``, so the range
+        that emptied the proxy is the resolve's own rather than the
+        listing's.
+        """
         provider = self._backtracking({"1.0": EXTRA_METADATA})
         assert (
             provider.choose_version("foo[security]", SpecifierSet(">=9").to_range())

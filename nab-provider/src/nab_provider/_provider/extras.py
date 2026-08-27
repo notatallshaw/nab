@@ -104,6 +104,7 @@ def choose_extra_version(
             provider,
             package,
             admit_range,
+            all_versions,
             candidates,
             unreadable,
             declared_outside=declared_outside,
@@ -115,6 +116,7 @@ def _record_extra_reason(
     provider: Provider,
     package: str,
     admit_range: VersionRange,
+    all_versions: list[Version],
     candidates: list[Version],
     unreadable: list[MetadataBlock],
     *,
@@ -122,16 +124,19 @@ def _record_extra_reason(
 ) -> None:
     """Record why the proxy has no version, so the report can name the extra.
 
-    Three situations are worth telling apart, and none of them is visible
+    Four situations are worth telling apart, and none of them is visible
     once the proxy's empty candidate list reaches the resolver: the search
     narrowed the base off every version declaring the extra, no version
-    that could be read declares it, or none could be read at all.  A proxy
-    whose base has no candidate in range at all records nothing, since the
-    base package's own entry says that already.
+    that could be read declares it, none could be read at all, or the base
+    has no version to offer at all.  The resolver never asks after the base
+    by name, so nothing else records that last one.
 
     ``declared_outside`` is the version the narrowing put out of reach,
     which the report names in place of a range: the range the search was
     left with is the solver's own and does not always spell as one.
+
+    A base that published versions with none of them in range records
+    nothing: no filter refused anything, so there is nothing to name.
     """
     if declared_outside is not None:
         provider.record_extra_no_versions(
@@ -145,6 +150,8 @@ def _record_extra_reason(
         provider.record_extra_no_versions(
             package, ReasonKind.EXTRA_UNDECLARED, version_range=admit_range
         )
+    elif not all_versions:
+        provider.record_extra_base_empty(package)
 
 
 def _pick_in_mode(

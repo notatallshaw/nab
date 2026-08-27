@@ -45,4 +45,5 @@ Diagnostics:
 | An entry covering several packages changes all of them | A `[[tool.nab.package-rules]]` entry matching two names lifts the key for both. |
 | Four or more filters are counted, not named | The line reads `4 filters excluded every file`, and `-v` names them one to a clause. Three or fewer are named outright. |
 | `requires-python` never gets a `try:` | The override that lifts it replaces the package's declared metadata, so the line names the target instead: `no file supports Python 3.12`. |
+| An extras line can be about the base package | `foo[bar]` has versions only where `foo` does, so a filter that empties `foo`'s listing gives the line and its `try:` under `foo[bar]`, naming `foo` as the entry to edit. |
 | Some lines name no setting | Nothing in the configuration produced them, such as `package not found on any configured index` or `the index lists this package but every file is yanked`. |

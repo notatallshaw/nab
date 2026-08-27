@@ -63,6 +63,7 @@ if TYPE_CHECKING:
         "extra-undeclared",
         "extra-metadata",
         "extra-narrowed",
+        "extra-base-empty",
         "no-match",
     ]
     Blocked: TypeAlias = Literal["decided", "held", "root"]
@@ -133,6 +134,7 @@ class ReasonKind:
     EXTRA_UNDECLARED: Final = "extra-undeclared"
     EXTRA_METADATA: Final = "extra-metadata"
     EXTRA_NARROWED: Final = "extra-narrowed"
+    EXTRA_BASE_EMPTY: Final = "extra-base-empty"
     NO_MATCH: Final = "no-match"
 
 
@@ -332,6 +334,7 @@ UNREADABLE_ONLY = NoVersionsReason(ReasonKind.UNREADABLE_ONLY)
 YANKED_ONLY = NoVersionsReason(ReasonKind.YANKED_ONLY)
 ABSENT = NoVersionsReason(ReasonKind.ABSENT)
 FILTERED_EMPTY = NoVersionsReason(ReasonKind.FILTERED_EMPTY)
+EXTRA_BASE_EMPTY = NoVersionsReason(ReasonKind.EXTRA_BASE_EMPTY)
 
 
 NO_MATCH = Diagnostic("no version matches the requirement")

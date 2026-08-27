@@ -1699,6 +1699,15 @@ class Provider:
             declaring_version=declaring_version,
         )
 
+    def record_extra_base_empty(self, package: str) -> None:
+        """Record that ``package``'s base has no version to offer at all.
+
+        Which listing-level situation the base is in is left to the render.
+        This runs during the resolve, where an ask that finds nothing is
+        ordinary backtracking rather than a failure.
+        """
+        self._no_versions_reasons[package] = _diagnosis.EXTRA_BASE_EMPTY
+
     def _empty_listing_marker(self, normalized: str) -> _diagnosis.NoVersionsReason:
         """Classify a package the filter left with nothing, without walking it.
 
@@ -1836,9 +1845,24 @@ class Provider:
             return _diagnosis.blockers_diagnostic(
                 self, normalized, recorded.blockers, recorded.metadata
             )
+        if recorded.kind == _diagnosis.ReasonKind.EXTRA_BASE_EMPTY:
+            return self._render_extra_base_reason(package)
         if recorded.kind in _EXTRA_KINDS:
             return self._render_extra_reason(package, recorded)
         return self._render_listing_reason(package, recorded)
+
+    def _render_extra_base_reason(self, package: str) -> Diagnostic:
+        """Render an extras proxy whose base package ran out of versions.
+
+        The extra plays no part: nothing read a ``Provides-Extra`` before
+        the base came back empty.  So the entry is the base package's own,
+        remedy included, since ``packages."foo"`` is the entry a user edits
+        to admit files for ``foo[bar]``.
+        """
+        _, _, normalized = self.split_and_normalize(package)
+        return self._render_no_versions_reason(
+            package, self._empty_listing_marker(normalized)
+        )
 
     def _render_extra_reason(
         self, package: str, recorded: _diagnosis.NoVersionsReason
