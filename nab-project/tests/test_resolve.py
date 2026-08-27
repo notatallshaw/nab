@@ -6212,3 +6212,80 @@ class TestBuildConfigPlumbing:
         assert _pins(result) == {"dyn": Version("7.0")}
 
         assert runner.call_args.kwargs["config"] is config
+
+
+class TestTrustUnverifiedSdistDeps:
+    """``dist-policy.trust-unverified-deps`` reaches the resolve.
+
+    ``foo`` is served only as an sdist, its ``PKG-INFO`` predates :pep:`643`, and it
+    carries no ``pyproject.toml`` to fall back on. ``build-policy = "never"`` then bars
+    the build, so the flag decides whether ``foo``'s ``Requires-Dist`` line is read.
+    """
+
+    _PKG_INFO = "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\nRequires-Dist: bar\n"
+
+    @staticmethod
+    def _pyproject(tmp_path: Path, *, trust: bool) -> Path:
+        """A project depending on ``foo``, with the opt-out set to ``trust``."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+            '[tool.nab]\nbuild-policy = "never"\n'
+            'dist-policy = { policy = "wheel-or-sdist",'
+            f" trust-unverified-deps = {str(trust).lower()}"
+            " }\n",
+            encoding="utf-8",
+        )
+        return pyproject
+
+    @classmethod
+    def _coordinator(cls) -> FakeFetchPort:
+        """An index serving ``foo`` as a lone sdist and ``bar`` as a wheel."""
+        sdist = SdistFile(
+            filename="foo-1.0.tar.gz",
+            url="https://example.com/foo-1.0.tar.gz",
+            version="1.0",
+            requires_python=None,
+            upload_time=None,
+        )
+        return make_coordinator(
+            listings={"foo": [sdist], "bar": _index_wheels("bar", "1.0")},
+            sdist_pkg_info=cls._PKG_INFO,
+            auto_metadata=True,
+        )
+
+    def _resolve(self, tmp_path: Path, *, trust: bool) -> ResolveResult:
+        """Resolve the project against that index, with the opt-out set to ``trust``."""
+        pyproject = self._pyproject(tmp_path, trust=trust)
+        coordinator = self._coordinator()
+
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            return _resolved(pyproject, _FAKE_TRANSPORT)
+
+    def test_trusting_the_pkg_info_reads_its_requires_dist(
+        self, tmp_path: Path
+    ) -> None:
+        """With the opt-out set, ``foo``'s unverified ``Requires-Dist`` is honoured."""
+        result = self._resolve(tmp_path, trust=True)
+
+        assert _pins(result) == {"foo": V("1.0"), "bar": V("1.0")}
+
+    def test_without_the_opt_out_the_sdist_has_no_usable_metadata(
+        self, tmp_path: Path
+    ) -> None:
+        """With the opt-out off, the pre-2.2 ``PKG-INFO`` supplies nothing.
+
+        The sdist's own reason lands in the detailed diagnostics block, the one
+        ``nab lock -v`` prints, not in ``str(exc)``.
+        """
+        with pytest.raises(ResolutionError) as info:
+            self._resolve(tmp_path, trust=False)
+
+        detail = info.value.verbose_message
+        assert detail is not None
+        assert (
+            "foo==1.0 sdist has dynamic dependencies and no static"
+            " pyproject.toml fallback" in detail
+        )
