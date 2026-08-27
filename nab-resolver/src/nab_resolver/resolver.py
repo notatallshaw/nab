@@ -266,7 +266,12 @@ class BaseProvider(Generic[PackageType, VersionType]):
         positive_ranges: Mapping[PackageType, RangeProtocol[VersionType]],
         decisions: Mapping[PackageType, VersionType],
     ) -> None:
-        """Drop the snapshot: nothing here forward-checks against it."""
+        """Drop the snapshot: nothing here forward-checks against it.
+
+        A provider that inherits this is not called, and the resolver does
+        not build the two snapshots it would be handed.  Writing an
+        equivalent no-op of your own pays for both.
+        """
         del positive_ranges, decisions
 
     def consume_pending_clauses(
@@ -289,6 +294,25 @@ class BaseProvider(Generic[PackageType, VersionType]):
         """
         del package
         return constraint
+
+
+_BASE_PARTIAL_SOLUTION_HINT = BaseProvider.receive_partial_solution_hint
+
+
+def _provider_with_inherited_hint(
+    provider: ResolverProvider[PackageType, VersionType],
+) -> ResolverProvider[PackageType, VersionType] | None:
+    """Return ``provider`` when its hint is :class:`BaseProvider`'s no-op.
+
+    Any other shape gives None, so anything that might read the hint keeps
+    being called: an override on the class, an override on the instance, and
+    a structural implementer.  A provider with no such method gives None as
+    well, and so fails where the resolver calls it rather than here.
+    """
+    hint = getattr(provider, "receive_partial_solution_hint", None)
+    if getattr(hint, "__func__", None) is _BASE_PARTIAL_SOLUTION_HINT:
+        return provider
+    return None
 
 
 @dataclass
@@ -443,6 +467,12 @@ class Resolver(Generic[PackageType, VersionType]):
         is a debug representation needs its own.
         """
         self.provider = provider
+
+        # Recording the provider rather than a flag keeps the answer tied to
+        # the object it was asked about, so a provider swapped into
+        # ``self.provider`` mid-resolve is not this one and is sent the hint.
+        self._hint_ignoring_provider = _provider_with_inherited_hint(provider)
+
         self.observer: ResolverObserver[PackageType, VersionType] = (
             observer or ResolverObserver()
         )
@@ -727,6 +757,9 @@ class Resolver(Generic[PackageType, VersionType]):
         self.range_tokens.clear()
         self.range_token_by_id.clear()
         self.interned_ranges.clear()
+
+        # Re-asked here, so a hook installed since the last resolve is honoured.
+        self._hint_ignoring_provider = _provider_with_inherited_hint(self.provider)
 
     def _add_root_requirements(
         self, requirements: Sequence[RootRequirement[PackageType, VersionType]]
