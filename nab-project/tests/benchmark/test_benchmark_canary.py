@@ -16,8 +16,10 @@ from typing_extensions import Self
 
 from nab_index.multi_index import IndexConfig
 from nab_project.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
+from nab_provider.provider import ProviderStats
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.target import ResolveTarget
+from nab_resolver.resolver import ResolverStats
 
 # canary.py imports its siblings by bare name.
 pytestmark = [
@@ -26,6 +28,11 @@ pytestmark = [
 ]
 
 _CANARY = Path(__file__).resolve().parents[2] / "benchmarks" / "canary.py"
+
+# The keys run_one emits from outside the resolver and provider stats.
+_NON_STAT_KEYS = frozenset(
+    {"settings", "success", "error", "packages", "wall_time_seconds"}
+)
 
 
 def _harness() -> ModuleType:
@@ -467,23 +474,24 @@ def test_canary_configures_lowest_direct_roots(
         def __exit__(self, *_args: object) -> None:
             pass
 
+    # Distinct values pin each summary key to the counter it names.
     class FakeProvider:
         def __init__(self) -> None:
-            self.stats = SimpleNamespace(
-                metadata_fetched=0,
-                distributions_seen=0,
-                look_ahead_rejections=0,
+            self.stats = ProviderStats(
+                metadata_fetched=102,
+                distributions_seen=108,
+                look_ahead_rejections=121,
             )
 
     class FakeResolver:
         def __init__(self, *_args: object, **kwargs: object) -> None:
             resolver_kwargs.update(kwargs)
-            self.stats = SimpleNamespace(
-                decisions=0,
-                conflicts=0,
-                backjumps=0,
-                restarts=0,
-                incompatibilities_learned=0,
+            self.stats: ResolverStats[str] = ResolverStats(
+                decisions=202,
+                conflicts=203,
+                backjumps=205,
+                restarts=206,
+                incompatibilities_learned=208,
             )
 
         def resolve(self, roots: object, **kwargs: object) -> dict:
@@ -526,6 +534,21 @@ def test_canary_configures_lowest_direct_roots(
     )
 
     assert result["success"] is True
+
+    counters = {
+        key: value for key, value in result.items() if key not in _NON_STAT_KEYS
+    }
+    assert counters == {
+        "decisions": 202,
+        "conflicts": 203,
+        "backjumps": 205,
+        "restarts": 206,
+        "incompatibilities_learned": 208,
+        "metadata_fetched": 102,
+        "distributions_seen": 108,
+        "look_ahead_rejections": 121,
+    }
+
     settings = result["settings"]
     assert settings["resolution"] == "lowest-direct"
     assert settings["dist_policy"] == "wheel-or-sdist"
