@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import sys
 import threading
+import weakref
 from functools import lru_cache
 from itertools import pairwise, product
 from typing import TYPE_CHECKING, NamedTuple, cast
@@ -178,19 +179,30 @@ def _oversized_numeric(text: str) -> bool:
 # ---------------------------------------------------------------------------- atoms
 
 
+# A strong table would keep an entry for every distinct atom the process ever
+# built, so values are weak and an entry lives only while its atom does. The lock
+# stops two threads minting rival atoms for one key, which the algebra would then
+# treat as two leaves rather than one.
+_INTERNED: weakref.WeakValueDictionary[
+    tuple[str, str, str, str, str, bool, bool, bool], Atom
+] = weakref.WeakValueDictionary()
+_INTERN_LOCK = threading.Lock()
+
+
 class Atom:
     """A normalised leaf whose ``holds`` gives its denotation on one point.
 
-    Immutable once constructed, apart from the version pool a version atom mints
-    lazily from its own literal. Equality and hashing run off a field tuple
-    precomputed at construction. A decision re-reads the same atom on the same point
-    across partitions of one axis; that memo belongs to the operation, not here, so
-    ``holds`` recomputes. The comparison it runs is memoised in :func:`_apply`.
+    Interned on its fields, so two equal atoms are one object and equality is
+    identity. The only mutation after construction is the version pool it mints
+    lazily, a pure function of those same fields, so sharing it is sound.
+
+    A decision re-reads the same atom on the same point across partitions of one
+    axis; that memo belongs to the operation, not here, so ``holds`` recomputes.
+    The comparison it runs is memoised in :func:`_apply`.
     """
 
     __slots__ = (
-        "_hash",
-        "_key",
+        "__weakref__",
         "_pool_entries",
         "derive_mm",
         "kind",
@@ -211,12 +223,10 @@ class Atom:
     positive: bool
     derive_mm: bool  # A1: evaluate on the major.minor of the point
 
-    _key: tuple[str, str, str, str, str, bool, bool, bool]
-    _hash: int
     _pool_entries: tuple[tuple[Version, str], ...] | None
 
-    def __init__(
-        self,
+    def __new__(
+        cls,
         kind: str,
         variable: str,
         origin: str,
@@ -226,29 +236,30 @@ class Atom:
         swapped: bool = False,
         positive: bool = True,
         derive_mm: bool = False,
-    ) -> None:
-        self.kind = kind
-        self.variable = variable
-        self.origin = origin
-        self.op = op
-        self.literal = literal
-        self.swapped = swapped
-        self.positive = positive
-        self.derive_mm = derive_mm
-        self._key = (kind, variable, origin, op, literal, swapped, positive, derive_mm)
-        self._hash = hash(self._key)
-        self._pool_entries = None
+    ) -> Atom:
+        """Return the interned atom for these fields, building one if none is live."""
+        key = (kind, variable, origin, op, literal, swapped, positive, derive_mm)
+        with _INTERN_LOCK:
+            interned = _INTERNED.get(key)
+            if interned is not None:
+                return interned
 
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Atom):
-            return NotImplemented
-        return self._key == other._key
+            self = super().__new__(cls)
+            self.kind = kind
+            self.variable = variable
+            self.origin = origin
+            self.op = op
+            self.literal = literal
+            self.swapped = swapped
+            self.positive = positive
+            self.derive_mm = derive_mm
+            self._pool_entries = None
 
-    def __hash__(self) -> int:
-        return self._hash
+            _INTERNED[key] = self
+            return self
 
     def replaced(self, *, op: str | None = None, positive: bool | None = None) -> Atom:
-        """Return a copy with ``op`` or ``positive`` swapped out, for complements."""
+        """Return the atom with ``op`` or ``positive`` swapped out, for complements."""
         return Atom(
             self.kind,
             self.variable,
