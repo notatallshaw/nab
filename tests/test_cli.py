@@ -188,6 +188,37 @@ def _stub_resolve_result(
     )
 
 
+def _foo_index_bodies() -> dict[str, bytes]:
+    """The URL-keyed bodies a ``foo`` resolve-and-download fetches.
+
+    Both digests are taken over the bodies served, so the PEP 658 sidecar and
+    the wheel pass their hash checks.
+    """
+    wheel = b"foo wheel"
+    sidecar = b"Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n\n"
+    url = "https://files.example.com/foo-1.0-py3-none-any.whl"
+    listing = {
+        "files": [
+            {
+                "filename": "foo-1.0-py3-none-any.whl",
+                "url": url,
+                "hashes": {"sha256": hashlib.sha256(wheel).hexdigest()},
+                "core-metadata": {"sha256": hashlib.sha256(sidecar).hexdigest()},
+            }
+        ]
+    }
+    return {
+        "https://pypi.org/simple/foo/": json.dumps(listing).encode(),
+        f"{url}.metadata": sidecar,
+        url: wheel,
+    }
+
+
+def _cached_listings(root: Path) -> list[str]:
+    """Names of the packages whose Simple API listing is cached under ``root``."""
+    return sorted(path.stem for path in root.glob("simple-*/*/*.json"))
+
+
 def _fetchable_resolve_result(count: int) -> tuple[ResolveResult, dict[str, bytes]]:
     """A host resolve of ``count`` wheel-only pins, with the bytes each URL serves.
 
@@ -6179,6 +6210,57 @@ class TestDownloadCommand:
             download(pyproject, output=out)
 
         assert transport.peak == 2
+
+    def test_cache_dir_flag_roots_the_index_cache(
+        self, hermetic_roots: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--cache-dir`` roots the download's index cache."""
+        default_root = tmp_path / "xdg"
+        cache = tmp_path / "flagged"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(default_root))
+        pyproject = _make_pyproject(hermetic_roots)
+
+        transport = _SidecarTransport(_foo_index_bodies())
+        with patch("nab.cli._make_transport", return_value=transport):
+            download(pyproject, output=tmp_path / "vendor", cache_dir=cache)
+
+        assert _cached_listings(cache) == ["foo"]
+        assert not default_root.exists()
+
+    def test_env_cache_dir_roots_the_index_cache(
+        self, hermetic_roots: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``NAB_CACHE_DIR`` roots the download's cache the way the flag does."""
+        default_root = tmp_path / "xdg"
+        cache = tmp_path / "env-declared"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(default_root))
+        monkeypatch.setenv("NAB_CACHE_DIR", str(cache))
+        pyproject = _make_pyproject(hermetic_roots)
+
+        transport = _SidecarTransport(_foo_index_bodies())
+        with patch("nab.cli._make_transport", return_value=transport):
+            download(pyproject, output=tmp_path / "vendor")
+
+        assert _cached_listings(cache) == ["foo"]
+        assert not default_root.exists()
+
+    def test_no_cache_flag_leaves_the_index_uncached(
+        self, hermetic_roots: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--no-cache`` beats ``--cache-dir``, so the download caches nothing."""
+        default_root = tmp_path / "xdg"
+        cache = tmp_path / "flagged"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(default_root))
+        pyproject = _make_pyproject(hermetic_roots)
+
+        transport = _SidecarTransport(_foo_index_bodies())
+        with patch("nab.cli._make_transport", return_value=transport):
+            download(
+                pyproject, output=tmp_path / "vendor", cache_dir=cache, cache=False
+            )
+
+        assert _cached_listings(cache) == []
+        assert not default_root.exists()
 
     def test_project_override_uses_download_wording(
         self,
