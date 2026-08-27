@@ -31,178 +31,23 @@ shorthands for those two values.
 
 ## `nab lock`
 
-Resolve and emit a lockfile or pin list. Three formats:
+Resolve and emit a lockfile or pin list.
 
-* `--format pylock` (default) writes a [PEP 751] `pylock.toml`.
-* `--format requirements` writes a pip-compatible
-  `requirements.txt` with one `--hash=<algo>:<digest>` line per
-  recorded digest.
-* `--format requirements-without-hashes` writes a sorted
-  `name==version` list with no hashes.
+* What a run selects, and when a selection forks it:
+  [Selecting what to lock](selection.md).
+* What each format writes, where it is written, and what universal mode
+  changes: [Output formats](formats.md).
+* What a failed resolve prints:
+  [Resolution failures](diagnostics.md).
 
-Dependency-group selection (PEP 735):
-
-* `--groups foo bar` folds the named groups from the project's
-  `[dependency-groups]` table into the resolve. The selected
-  group names land in the lockfile's top-level
-  `dependency-groups` array. The separate `default-groups` array
-  records the `[tool.nab].default-groups` project setting, not
-  this run's selection, plus the group named by
-  `[tool.nab].base-group` when it is set.
-* `--all-groups` selects every group defined in the project.
-
-Extras selection:
-
-* `--extras foo bar` folds entries from the project's own
-  `[project.optional-dependencies]` table into the resolve. The
-  selected extra names land in the lockfile's top-level `extras`
-  array.
-* `--all-extras` selects every declared extra.
-
-Both `--groups` and `--extras` produce a single union resolve, unless
-two or more members of a mutually exclusive `[tool.nab].conflicts` set
-are active, either because the selection names them or because they are
-the groups `base-group` and `build-group` name, which are active on
-every run. The run then forks into one resolve per choice of member;
-see [Conflicting extras and groups](../explanation/conflicts.md).
-
-A package that only a selected extra or group reaches is emitted with
-a `'X' in extras` or `'X' in dependency_groups` marker, so an
-installer given neither leaves it out; see
-[Lockfiles](lockfile.md).
-
-Build requirements:
-
-* `--build-requirements` locks the project's `[build-system].requires`
-  instead of its dependencies, so the lock describes the environment
-  the project is built in rather than the one it runs in. `--output`
-  defaults to `pylock.build.toml` (or `build-requirements.txt` for the
-  requirements formats), which keeps it clear of the project's runtime
-  lock, and `--locked` then checks that file. Nothing can be selected alongside it: `[build-system].requires`
-  is one flat list, so `--groups`, `--all-groups`, `--extras`,
-  `--all-extras`, `--project-default-group`, `--project-base-group` and
-  `--project-build-group` are all rejected, and `[tool.nab].default-groups`,
-  `[tool.nab].base-group`, `[tool.nab].build-group` and
-  `[tool.nab].conflicts` declared in the project's files do not apply.
-* A project that declares no `[build-system]` is an error. nab does not
-  fall back to the PEP 517 default backend, because pinning an implied
-  `setuptools` would put a build requirement in the lock that the project
-  never declared. `[tool.nab].build-group`, which carries the build
-  requirements in the project's own lock instead of a separate one, is
-  the same, and it requires `[tool.nab].base-group` so the two sets can
-  be asked for separately.
-* Only the static list is read. Neither this flag nor `build-group`
-  invokes the project's own backend, so whatever that backend would add
-  from `get_requires_for_build_wheel` is not covered.
-* `[tool.nab].build-group` gates its packages on a marker, and the two
-  requirements formats have nowhere to put one, so they render the build
-  requirements as ordinary pins. Use `pylock` output, or this flag, when
-  the two sets have to stay apart.
-
-Workspace flags (see [Lock a workspace](../how-to/workspaces.md)):
-
-* `--workspace-discovery` (default) walks upward from the locked
-  project for a `[tool.nab.workspace]` root and prefers its in-tree
-  members over PyPI. `--no-workspace-discovery` skips that search, so
-  the run resolves the named project alone.
-* `--no-emit-workspace` drops the workspace members' own `[[packages]]`
-  entries from the emitted lockfile, along with the dependency edges
-  and membership gates that reference them; the resolver still uses the
-  members during the resolve. Default off (`--no-no-emit-workspace`). Use it
-  when the lockfile is consumed by pip's PEP 751 install or
-  `--require-hashes`, which reject the directory entry a member pin
-  emits because it cannot be hashed; pair it with `pip install
-  --no-deps -e <member>`.
-
-`--output` defaults to `pylock.toml` for `pylock` and
-`requirements.txt` for the two requirements formats, or to
-`pylock.build.toml` and `build-requirements.txt` under
-`--build-requirements`. Pass
-`--output -` to write to stdout instead. A matrix has no default
-requirements file: no one file can carry every tuple's pins (see
-below), so the requirements formats print to stdout unless `--output`
-names a template.
-
-A requirements `--output` template writes one file per tuple. The
-variables are `{python_version}`, `{platform_id}`, and `{selection}`,
-which names the conflict fork a tuple belongs to (`extra-cpu`,
-`group-black22.group-isort5`, empty when the resolve did not fork):
-
-```console
-$ nab lock --format requirements-without-hashes --extras cpu gpu \
-    --output 'req-{python_version}-{selection}.txt'
-Wrote req-3.12-extra-cpu.txt (12 packages, tuple py312-linux_x86_64-extra-cpu)
-Wrote req-3.12-extra-gpu.txt (14 packages, tuple py312-linux_x86_64-extra-gpu)
-```
-
-A template that maps two tuples onto one path is rejected, naming the
-variables that would give every tuple its own file. When the tuples
-split on an axis no variable names, such as the libc or the
-implementation, no template separates them and the message points at
-pylock output instead.
-
-Exits non-zero on resolution failure; the message starts with
-`error: resolution failed:` followed by a derivation tree, and any
-captured diagnostics are appended under a `Diagnostics:` section.
-
-Each package that ran out of versions gets one line, naming the setting
-that refused its files. An indented `try:` line follows where changing a
-setting would admit them again.
-
-```
-Diagnostics: (-v for detail)
-  - foo: uploaded-prior-to excluded every file
-    try: set packages."foo".uploaded-prior-to = false
-```
-
-`-v` replaces the `try:` line with the whole record: one clause per
-cause, and a closing `note:` naming the configuration layer that set the
-key.
-
-```
-Diagnostics:
-  - foo: uploaded-prior-to excluded every file
-    the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0)
-    the files nab read hold no sdist to build from
-    note: the project-level uploaded-prior-to set that cutoff; setting packages."foo".uploaded-prior-to = false lifts it for this package
-```
-
-Worth knowing:
-
-| | |
-| ---- | ------ |
-| `try:` is an instruction, not a fragment to paste | The table the key belongs in usually exists already, and a second one is a TOML error. The line names the entry or table to edit. |
-| Lifting a filter admits files, it does not promise a resolve | A file two filters would both refuse is charged to the first that did, so lifting the named key can uncover a second. |
-| An entry covering several packages changes all of them | A `[[tool.nab.package-rules]]` entry matching two names lifts the key for both. |
-| Four or more filters are counted, not named | The line reads `4 filters excluded every file`, and `-v` names them one to a clause. Three or fewer are named outright. |
-| `requires-python` never gets a `try:` | The override that lifts it replaces the package's declared metadata, so the line names the target instead: `no file supports Python 3.12`. |
-| Some lines name no setting | Nothing in the configuration produced them, such as `package not found on any configured index` or `the index lists this package but every file is yanked`. |
-
-Universal mode (`[tool.nab].mode = "universal"`) is supported for
-all three formats:
-
-* `pylock` produces one PEP 751 file with per-tuple `Package`
-  entries gated by markers (`python_version`, `sys_platform`,
-  `platform_machine`, plus `implementation_name` when the matrix
-  declares a non-CPython implementation or more than one). Versions
-  agreed across every tuple appear once without a marker; divergent
-  versions appear once per `(version, source)` group with the
-  matching tuples disjoined.
-* `requirements` and `requirements-without-hashes` emit a
-  sequence of `# label` comment blocks, one per
-  `(python, platform, implementation)` tuple, followed by that
-  tuple's pins. Pip's hash-checking mode cannot install a single
-  requirements.txt across multiple tuples, so the per-tuple block
-  format is for inspection or for tools that consume one block at
-  a time.
-
-Failed tuples render as `# {label}: FAILED` followed by the error,
-every line of it commented and indented, and exit `1`.
+### Resolving for another Python
 
 `--python X.Y` resolves for that Python on this machine instead of the
 running interpreter, like pip's `--python-version`; it moves only the
 python axis, so a declared `[tool.nab.environment].platform` stays. It is
 rejected in universal mode, where the matrix declares the Python axis.
+
+### Project overrides
 
 A project option can be overridden for one run with a `--project-<key>`
 flag: `--project-resolution`, `--project-mode`, `--project-requires-python`,
@@ -217,6 +62,8 @@ declared one. Each changes what the run writes, so passing one prints a
 reproducibility notice on stderr and records the override in the
 lockfile's `[tool.nab]` block, since the lock no longer derives from the
 committed files alone.
+
+### Checking and refreshing a lock
 
 `--locked` re-resolves and checks that the committed `pylock.toml` is
 already up to date, writing nothing. It exits non-zero if the lock would
@@ -253,7 +100,8 @@ wheel shared across tuples is fetched once.
   `NAB_MAX_CONCURRENCY`.
 * `--groups foo bar` / `--all-groups` and `--extras foo bar` /
   `--all-extras` fold dependency groups and extras into the resolve as
-  they do on `nab lock`, so they decide which artefacts are downloaded.
+  they do on `nab lock` (see [Selecting what to lock](selection.md)), so
+  they decide which artefacts are downloaded.
 * `--python X.Y` resolves for that Python on this machine instead of
   the running interpreter, as on `nab lock`. It is rejected in
   universal mode, where the matrix declares the Python axis.
@@ -424,5 +272,3 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | `0`  | Success. |
 | `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
 | `130` | Interrupted with Ctrl-C. `nab` prints `error: interrupted` and exits. |
-
-[PEP 751]: https://peps.python.org/pep-0751/

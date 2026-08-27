@@ -1,7 +1,8 @@
 """Check the published CLI pages against what the CLI does.
 
-The reference page lists each subcommand's flags, env vars and statuses; the
-conflicts page quotes refusal lines verbatim.
+The reference page lists each subcommand's invocation, its own flags, the env
+vars and the statuses; selection, output formats and resolution failures have
+a page each; the conflicts page quotes refusal lines verbatim.
 
 These tests read ``docs/``, which the umbrella sdist does not ship, so the
 module is on that sdist's exclude list in pyproject.toml.
@@ -27,18 +28,25 @@ from nab_project.config_sources import OPTIONS
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 _CLI_REFERENCE = _DOCS / "reference" / "cli.md"
+_SELECTION = _DOCS / "reference" / "selection.md"
+_FORMATS = _DOCS / "reference" / "formats.md"
+_DIAGNOSTICS = _DOCS / "reference" / "diagnostics.md"
 _CONFLICTS_DOC = _DOCS / "explanation" / "conflicts.md"
 
 _SUBCOMMANDS = ("lock", "download", "config", "cache")
 
 
-def _reference_text() -> str:
-    return _CLI_REFERENCE.read_text(encoding="utf-8")
+def _page(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
-def _reference_section(heading: str) -> str:
-    """The reference body under ``heading``, up to the next ``##``."""
-    return _reference_text().partition(f"\n{heading}\n")[2].partition("\n## ")[0]
+def _reference_section(page: Path, heading: str) -> str:
+    """The body of ``page`` under ``heading``, up to the next ``##``.
+
+    A ``###`` subheading does not end a section, so a subcommand's own
+    subsections come back with it.
+    """
+    return _page(page).partition(f"\n{heading}\n")[2].partition("\n## ")[0]
 
 
 def _write(path: Path, body: str) -> Path:
@@ -109,17 +117,28 @@ def _emitted_labels(
 
 
 class TestCliReferenceFlagCoverage:
-    """Each run subcommand's reference section names every flag it accepts."""
+    """Every flag a run subcommand accepts is named on one of its pages."""
 
     @pytest.mark.parametrize(
-        ("heading", "command"),
-        [("## `nab lock`", lock), ("## `nab download`", download)],
+        ("heading", "command", "pages"),
+        [
+            ("## `nab lock`", lock, (_SELECTION, _FORMATS)),
+            ("## `nab download`", download, ()),
+        ],
     )
     def test_section_names_every_flag(
-        self, heading: str, command: Callable[..., None]
+        self, heading: str, command: Callable[..., None], pages: tuple[Path, ...]
     ) -> None:
-        # Flags shared by both commands are documented once, in their own section.
-        scope = _reference_section(heading) + _reference_section("## Runtime flags")
+        # Flags shared by both commands are documented once, in Runtime
+        # flags; what `nab lock` selects and what it writes have their own
+        # pages.
+        scope = "\n".join(
+            [
+                _reference_section(_CLI_REFERENCE, heading),
+                _reference_section(_CLI_REFERENCE, "## Runtime flags"),
+                *(_page(page) for page in pages),
+            ]
+        )
 
         for name, param in inspect.signature(command).parameters.items():
             if param.kind is not inspect.Parameter.KEYWORD_ONLY:
@@ -128,8 +147,16 @@ class TestCliReferenceFlagCoverage:
             assert _names_flag(scope, flag), f"{heading} omits {flag}"
 
 
+class TestCliReferenceSplitPages:
+    """Every page the CLI reference splits into is one hop from it."""
+
+    @pytest.mark.parametrize("page", [_SELECTION, _FORMATS, _DIAGNOSTICS])
+    def test_cli_reference_links_the_page(self, page: Path) -> None:
+        assert f"]({page.name})" in _page(_CLI_REFERENCE), page.name
+
+
 class TestCliReferenceSelectionShape:
-    """The reference's selection paragraph matches the number of resolves run."""
+    """The selection page's paragraph matches the number of resolves run."""
 
     _EXTRAS = (
         '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
@@ -141,8 +168,8 @@ class TestCliReferenceSelectionShape:
     _CONFLICT = '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
 
     def _selection_paragraph(self) -> str:
-        """The ``nab lock`` paragraph that states what a selection resolves to."""
-        return _doc_paragraph(_reference_section("## `nab lock`"), "union resolve")
+        """The selection page's paragraph stating what a selection resolves to."""
+        return _doc_paragraph(_page(_SELECTION), "union resolve")
 
     def test_selection_alone_is_one_union_resolve(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -171,12 +198,12 @@ class TestCliReferenceDocumentsOutputPolicy:
     """The CLI reference lists every output-policy flag and env var the CLI accepts."""
 
     def test_verbosity_flags_documented(self) -> None:
-        text = _reference_text()
+        text = _page(_CLI_REFERENCE)
         for flag in ("-v", "-vv", "-q", "-qq", "--verbose", "--quiet"):
             assert f"`{flag}`" in text, f"CLI reference omits verbosity flag {flag}"
 
     def test_color_flags_documented(self) -> None:
-        text = _reference_text()
+        text = _page(_CLI_REFERENCE)
         assert "`--color`" in text
         assert "`--no-color`" in text
         for choice in ColorChoice:
@@ -185,17 +212,17 @@ class TestCliReferenceDocumentsOutputPolicy:
             )
 
     def test_progress_documented(self) -> None:
-        text = _reference_text()
+        text = _page(_CLI_REFERENCE)
         assert "`--no-progress`" in text
         assert "Resolving" in text
 
     def test_output_env_vars_documented(self) -> None:
-        text = _reference_text()
+        text = _page(_CLI_REFERENCE)
         for var in ("NAB_VERBOSITY", "NAB_NO_PROGRESS", "NO_COLOR", "FORCE_COLOR"):
             assert var in text, f"CLI reference omits env var {var}"
 
     def test_nab_verbosity_values_documented(self) -> None:
-        text = _reference_text()
+        text = _page(_CLI_REFERENCE)
         for level in Verbosity:
             name = level.name.lower()
             assert f"`{name}`" in text, (
@@ -214,7 +241,9 @@ class TestCliReferenceDocumentsOutputPolicy:
 
         scope = next(
             para
-            for para in _reference_section("## Output control").split("\n\n")
+            for para in _reference_section(_CLI_REFERENCE, "## Output control").split(
+                "\n\n"
+            )
             if "before the subcommand" in para
         )
         for sub in _SUBCOMMANDS:
@@ -250,7 +279,7 @@ class TestConfigExplainReferenceDocs:
             ]
         )
 
-        section = _reference_section("## `nab config`")
+        section = _reference_section(_CLI_REFERENCE, "## `nab config`")
         for status in ("winner", "shadowed", "rejected"):
             assert status in printed, status
             assert f"`{status}`" in section, status
@@ -263,7 +292,9 @@ class TestLockReferenceDocumentsProjectOverrides:
         prefix = "--project-"
         prose = "\n\n".join(
             para
-            for para in _reference_section("## `nab lock`").split("\n\n")
+            for para in _reference_section(_CLI_REFERENCE, "## `nab lock`").split(
+                "\n\n"
+            )
             if prefix in para
         )
         for spec in OPTIONS:
@@ -296,7 +327,9 @@ def _prose_chunks(section: str) -> list[str]:
 
 def _include_rejected_chunks() -> list[str]:
     return [
-        c for c in _prose_chunks(_reference_section("## `nab config`")) if _FLAG in c
+        c
+        for c in _prose_chunks(_reference_section(_CLI_REFERENCE, "## `nab config`"))
+        if _FLAG in c
     ]
 
 
@@ -350,7 +383,7 @@ class TestCliReferenceDocumentsIncludeRejected:
 
         label = "rejected:"
         assert any(line.strip() == label for line in out.splitlines())
-        assert f"`{label}`" in _reference_section("## `nab config`")
+        assert f"`{label}`" in _reference_section(_CLI_REFERENCE, "## `nab config`")
 
     def test_exit_without_the_flag_is_documented(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
@@ -368,7 +401,9 @@ class TestCliReferenceDocumentsIncludeRejected:
         assert out.getvalue() == ""
         assert "config error" in err.getvalue()
         assert "resolutionn" in _run_config(["list", _FLAG, "--path", path])
-        assert f"exits {exc.value.code}" in _reference_section("## `nab config`")
+        assert f"exits {exc.value.code}" in _reference_section(
+            _CLI_REFERENCE, "## `nab config`"
+        )
 
     def test_get_renders_no_rejection(
         self,
