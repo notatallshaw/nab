@@ -59,6 +59,7 @@ from nab_provider.target import (
     ResolveTarget,
     check_free_threaded,
     host_environment,
+    names_a_micro,
     python_axis_environment,
 )
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
@@ -146,10 +147,6 @@ _PEP508_MARKER_VARIABLES = frozenset(
 
 # Marker variables whose values must parse as PEP 440 versions.
 _VERSION_MARKER_VARIABLES = frozenset({"python_version", "python_full_version"})
-
-# Release-component count of a bare ``major.minor`` python declaration; more
-# parts name a concrete patch level.
-_PYTHON_MINOR_PARTS = 2
 
 # How a ``requires-python`` declaration is named back to the user.  The
 # [tool.nab] key stays bare because the CLI's error prefix already names that
@@ -1022,7 +1019,9 @@ def _declared_target(environment: EnvironmentConfig) -> ResolveTarget:
     The platform is named, so the target's markers and wheel tags are
     synthesized from it rather than read off the host.  An unset ``python``
     takes the host's release, and an unset ``implementation`` is CPython,
-    matching the matrix default.
+    matching the matrix default.  A python naming a point inside its minor
+    (``"3.12.0"``, ``"3.14rc1"``) is pinned whole; a bare ``"3.12"`` resolves
+    as a micro interval.
     """
     assert environment.platform is not None  # the caller checked
     python = environment.python or host_environment()["python_full_version"]
@@ -1033,16 +1032,13 @@ def _declared_target(environment: EnvironmentConfig) -> ResolveTarget:
         environment, (axis["python_version"],) if environment.python else ()
     )
 
-    # More than major.minor ("3.10.5", "3.12.0", or the host's release) names a
-    # concrete micro, resolved whole.  A bare minor ("3.12") gets a synthetic
-    # .0 floor and resolves as a micro interval.
-    pinned_micro = len(Version(python).release) > _PYTHON_MINOR_PARTS
-
     return ResolveTarget.for_declared(
         python_version=axis["python_version"],
         spec=environment.platform,
         implementation=implementation,
-        python_full_version=axis["python_full_version"] if pinned_micro else None,
+        python_full_version=(
+            axis["python_full_version"] if names_a_micro(Version(python)) else None
+        ),
     )
 
 
