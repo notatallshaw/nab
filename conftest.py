@@ -113,23 +113,28 @@ def _cap_writes(budget: int) -> Iterator[None]:
 
 @contextmanager
 def _deny_access(target: Path) -> Iterator[None]:
-    real_stat, real_open = os.stat, Path.open
+    real_os_stat, real_path_stat, real_open = os.stat, Path.stat, Path.open
     denied = os.fspath(target)
 
     def refuse(candidate: Any) -> None:
         if isinstance(candidate, (str, os.PathLike)) and os.fspath(candidate) == denied:
             raise PermissionError(errno.EACCES, "Permission denied", denied)
 
-    def denying_stat(path: Any, *args: Any, **kwargs: Any) -> Any:
+    def denying_os_stat(path: Any, *args: Any, **kwargs: Any) -> Any:
         refuse(path)
-        return real_stat(path, *args, **kwargs)
+        return real_os_stat(path, *args, **kwargs)
+
+    def denying_path_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        refuse(self)
+        return real_path_stat(self, *args, **kwargs)
 
     def denying_open(self: Path, *args: Any, **kwargs: Any) -> Any:
         refuse(self)
         return real_open(self, *args, **kwargs)
 
     with (
-        patch.object(os, "stat", denying_stat),
+        patch.object(os, "stat", denying_os_stat),
+        patch.object(Path, "stat", denying_path_stat),
         patch.object(Path, "open", denying_open),
     ):
         yield
@@ -142,9 +147,11 @@ def deny_access() -> Callable[[Path], AbstractContextManager[None]]:
     Inside ``deny_access(p)`` every stat and open of ``p`` raises ``EACCES``,
     which is what a parent directory without the search bit does to both
     halves of a read. chmod cannot express that on Windows, so the state is
-    simulated rather than created. ``os.stat`` is the patch point rather than
-    ``Path.stat`` because every presence check ends up there, whether it went
-    through ``pathlib`` or ``os.path``.
+    simulated rather than created.
+
+    Both stat routes are patched: on Python 3.10 ``Path.stat`` calls an
+    ``os.stat`` pathlib bound at import, which a patch of ``os.stat`` does
+    not reach.
     """
     return _deny_access
 
