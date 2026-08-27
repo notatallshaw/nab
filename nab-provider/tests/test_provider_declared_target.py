@@ -77,6 +77,8 @@ def _make_coordinator(
     return make_coordinator(wheels, package=package, auto_metadata=True)
 
 
+_ANY_VERSION = VersionRange.full()
+
 _LINUX_TARGET = ResolveTarget.for_declared(
     python_version="3.11", spec=PlatformSpec("linux_x86_64")
 )
@@ -1517,7 +1519,7 @@ class TestTwoInstallableSiblingWheels:
         provider.fetch_versions("pkg")
         coordinator.reset()
 
-        provider.prefetch_walk_ahead("pkg")
+        provider._prefetch_walk_ahead("pkg", _ANY_VERSION)
 
         items = coordinator.calls_to("request_metadata_batch")[-1][0]
         assert [url for _pkg, _ver, url, _hash in items] == [_sidecar(_LINUX_WHEEL)]
