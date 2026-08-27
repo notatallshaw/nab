@@ -19,6 +19,13 @@ if TYPE_CHECKING:
     from .resolver import Resolver
     from .types import Incompatibility, RangeProtocol
 
+# Bound once so the hot paths load a module global instead of a class attribute.
+_SATISFIED_REL = SetRelation.SATISFIED
+_CONTRADICTED_REL = SetRelation.CONTRADICTED
+_UNDETERMINED_REL = SetRelation.UNDETERMINED
+_CONTRADICTED_STATE = IncompatibilityState.CONTRADICTED
+_CONFLICT_STATE = IncompatibilityState.CONFLICT
+
 __all__ = [
     "classify_relation",
     "evaluate_incompatibility",
@@ -77,11 +84,11 @@ def unit_propagation(
             incompatibility = resolver.incompatibilities[incompatibility_index]
             evaluation = evaluate_incompatibility(resolver, incompatibility)
 
-            if evaluation is IncompatibilityState.CONTRADICTED:
+            if evaluation is _CONTRADICTED_STATE:
                 contradicted_at[incompatibility_index] = epoch
                 continue
 
-            if evaluation is IncompatibilityState.CONFLICT:
+            if evaluation is _CONFLICT_STATE:
                 return incompatibility
 
             if isinstance(evaluation, Term):
@@ -128,17 +135,17 @@ def evaluate_incompatibility(
 
     for term in incompatibility.terms:
         relation = term_relation(resolver, term)
-        if relation is SetRelation.SATISFIED:
+        if relation is _SATISFIED_REL:
             continue
-        if relation is SetRelation.CONTRADICTED:
-            return IncompatibilityState.CONTRADICTED
+        if relation is _CONTRADICTED_REL:
+            return _CONTRADICTED_STATE
         if undetermined_term is not None:
             return None
         undetermined_term = term
 
     if undetermined_term is not None:
         return undetermined_term
-    return IncompatibilityState.CONFLICT
+    return _CONFLICT_STATE
 
 
 def _intern_range(resolver: Resolver[Any, Any], range_: RangeProtocol[Any]) -> int:
@@ -196,7 +203,7 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
     """
     assignment = resolver.solution.get(term.package)
     if assignment is None:
-        return SetRelation.UNDETERMINED
+        return _UNDETERMINED_REL
 
     positive = term.is_positive()
     constraint = term.constraint
@@ -237,11 +244,11 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
     else:
         resolver.relation_gate_hits += 1
 
-    needs_positive = (positive and result is SetRelation.SATISFIED) or (
-        not positive and result is SetRelation.CONTRADICTED
+    needs_positive = (positive and result is _SATISFIED_REL) or (
+        not positive and result is _CONTRADICTED_REL
     )
     if needs_positive and not resolver.solution.has_positive_constraint(term.package):
-        return SetRelation.UNDETERMINED
+        return _UNDETERMINED_REL
 
     return result
 
@@ -268,7 +275,7 @@ def classify_relation(
         satisfied, contradicted = disjoint, subset
 
     if satisfied:
-        return SetRelation.SATISFIED
+        return _SATISFIED_REL
     if contradicted:
-        return SetRelation.CONTRADICTED
-    return SetRelation.UNDETERMINED
+        return _CONTRADICTED_REL
+    return _UNDETERMINED_REL
