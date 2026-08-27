@@ -1453,6 +1453,67 @@ class TestArchiveBuildPolicyLevels:
             self._extract(policy, tmp_path)
         assert "dynamic metadata" not in str(caught.value)
 
+    @pytest.mark.parametrize(
+        "policy",
+        [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL, BuildPolicy.BUILD_REMOTE],
+    )
+    def test_unparseable_pyproject_reports_the_parse_error(
+        self, policy: BuildPolicy, tmp_path: Path
+    ) -> None:
+        """A pyproject that is not TOML is a read failure at every level.
+
+        No build policy makes the file parse, so none of them is the remedy.
+        """
+        (tmp_path / "pyproject.toml").write_text(
+            '[project]\nname = "pkg"\nversion =\n', encoding="utf-8"
+        )
+        with pytest.raises(UnsupportedSdistError) as caught:
+            self._extract(policy, tmp_path)
+
+        msg = str(caught.value)
+        assert msg.startswith(
+            f"archive source 'pkg': could not read pyproject.toml at {tmp_path}: "
+        )
+        assert "line 3" in msg
+        assert "dynamic metadata" not in msg
+
+    @pytest.mark.parametrize(
+        "policy",
+        [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL, BuildPolicy.BUILD_REMOTE],
+    )
+    def test_non_utf8_pyproject_reports_the_decode_error(
+        self, policy: BuildPolicy, tmp_path: Path
+    ) -> None:
+        """Bytes that will not decode as UTF-8 are unread, not dynamic."""
+        (tmp_path / "pyproject.toml").write_bytes(
+            b'[project]\nname = "pkg"\nversion = "1.0"\ndescription = "\xe9"\n'
+        )
+        with pytest.raises(UnsupportedSdistError) as caught:
+            self._extract(policy, tmp_path)
+
+        msg = str(caught.value)
+        assert msg.startswith(
+            f"archive source 'pkg': could not read pyproject.toml at {tmp_path}: "
+        )
+        assert "utf-8" in msg
+        assert "dynamic metadata" not in msg
+
+    @pytest.mark.parametrize(
+        "policy",
+        [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL, BuildPolicy.BUILD_REMOTE],
+    )
+    def test_non_regular_pyproject_reports_the_file_type(
+        self, policy: BuildPolicy, tmp_path: Path
+    ) -> None:
+        """A directory in place of pyproject.toml is unread, not dynamic."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.mkdir()
+        with pytest.raises(UnsupportedSdistError) as caught:
+            self._extract(policy, tmp_path)
+        assert str(caught.value) == (
+            f"archive source 'pkg': {pyproject} exists but is not a regular file"
+        )
+
     @pytest.mark.parametrize("policy", [BuildPolicy.NEVER, BuildPolicy.BUILD_LOCAL])
     def test_dynamic_archive_raises_below_build_remote(
         self, policy: BuildPolicy, tmp_path: Path

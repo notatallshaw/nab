@@ -1646,6 +1646,40 @@ class TestLockCommandSpecific:
         assert "has dynamic metadata" in err
         assert "Traceback" not in err
 
+    def test_local_source_with_unparseable_pyproject_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A local source whose pyproject is not TOML names the parse error.
+
+        The policy bars the build, so nothing has read the file and it cannot
+        be reported as dynamic metadata.
+        """
+        member = tmp_path / "mylocal"
+        member.mkdir()
+        (member / "pyproject.toml").write_text(
+            '[project]\nname = "mylocal"\nversion =\n', encoding="utf-8"
+        )
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "root"\nversion = "0"\n'
+            'dependencies = ["mylocal"]\n'
+            "[tool.nab]\n"
+            'build-policy = "never"\n'
+            "[[tool.nab.local-sources]]\n"
+            'name = "mylocal"\n'
+            'path = "mylocal"\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, offline=True, output=Path("-"), cache=False)
+
+        lines = capsys.readouterr().err.splitlines()
+        assert len(lines) == 1
+        assert lines[0].startswith(
+            "error: cannot lock: local source 'mylocal': could not read"
+            f" pyproject.toml at {member.resolve()}: "
+        )
+        assert "line 3" in lines[0]
+
     def test_local_source_naming_another_project_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
