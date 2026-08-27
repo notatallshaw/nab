@@ -22,6 +22,7 @@ from nab_index import vcs as vcs_mod
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
+from nab_project import resolve as resolve_mod
 from nab_project._resolve import engine as engine_mod
 from nab_project._resolve.engine import _EngineSettings, _resolve_one_target, _run_pass
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
@@ -61,6 +62,7 @@ from nab_project.resolve import (
     resolve_with_coordinator,
 )
 from nab_provider._provider import listing as listing_mod
+from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
@@ -2024,6 +2026,40 @@ class TestBuildLockInput:
         assert len(merged.targets) == 2
         versions = {lock.pins["pkg"].version for lock in merged.targets.values()}
         assert versions == {"1.0", "2.0"}
+
+    def test_a_marker_consulted_on_every_target_is_read_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Declaring environments calls marker_variables once per distinct text."""
+        linux, windows = _linux_311(), _windows_311()
+        marker = Marker('platform_system == "Linux"')
+        results = [
+            TargetResult(
+                target=target,
+                success=True,
+                pins={"pkg": Version("1.0")},
+                consulted=frozenset({marker}),
+                lock=TargetLock(
+                    target=target,
+                    pins={"pkg": IndexPin(name="pkg", version="1.0", index="pypi")},
+                ),
+            )
+            for target in (linux, windows)
+        ]
+
+        texts: list[str] = []
+        real_marker_variables = resolve_mod.marker_variables
+
+        def spy_marker_variables(text: str) -> frozenset[str]:
+            texts.append(text)
+            return real_marker_variables(text)
+
+        monkeypatch.setattr(resolve_mod, "marker_variables", spy_marker_variables)
+        build_lock_input(
+            ResolveResult(targets=(linux, windows), target_results=results)
+        )
+
+        assert texts == ['platform_system == "Linux"']
 
     def test_a_double_quote_in_a_consulted_marker_value_still_locks(self) -> None:
         """A marker value carrying a double quote still locks.

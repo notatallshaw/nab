@@ -409,10 +409,11 @@ def _declared_environments(
     target's resolve read (see
     :func:`~nab_provider.target.environment_declaration`).
     """
+    # A matrix consults the same marker on every target it expands to.
+    texts = {str(marker) for markers in consulted.values() for marker in markers}
     variables: set[str] = set()
-    for markers in consulted.values():
-        for marker in markers:
-            variables |= marker_variables(str(marker))
+    for text in texts:
+        variables |= marker_variables(text)
 
     unboundable = sorted(variables & UNBOUNDABLE_MARKER_VARIABLES)
     if unboundable:
