@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
-from functools import reduce
+from functools import lru_cache, reduce
 from itertools import product
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -572,6 +572,17 @@ def _emission_universe(
     return reduce(MarkerSet.union, rows, MarkerSet.empty())
 
 
+@lru_cache(maxsize=4096)
+def _parsed_marker(text: str) -> Marker:
+    """Return a shared :class:`Marker` for ``text``.
+
+    Emission rebuilds the same few marker expressions once per package that
+    carries them, so the parse is memoised.  Nothing mutates a Marker after
+    construction, so handing the same object to several callers is safe.
+    """
+    return Marker(text)
+
+
 def _finalize_marker(
     raw: Marker | None,
     within: MarkerSet,
@@ -597,7 +608,7 @@ def _finalize_marker(
     try:
         simplified = MarkerSet.from_marker(raw).simplify(within=within, store=store)
         text = simplified.to_marker_string(store=store)
-        rebuilt = None if text is None else Marker(text)
+        rebuilt = None if text is None else _parsed_marker(text)
         emitted = (
             MarkerSet.full() if rebuilt is None else MarkerSet.from_marker(rebuilt)
         )
@@ -1058,7 +1069,7 @@ def _build_marker(
 
         if collapses and agreed_gate:
             merged = _merge_gates(gates[label] for label in env_labels)
-            by_gate[merged].append(Marker(head.environment_marker_string))
+            by_gate[merged].append(_parsed_marker(head.environment_marker_string))
             continue
 
         # Forks that disagree on the gate still agree on what they share,
@@ -1067,10 +1078,10 @@ def _build_marker(
         if collapses:
             shared = _common_gate(gates[label] for label in env_labels)
             if shared:
-                by_gate[shared].append(Marker(head.environment_marker_string))
+                by_gate[shared].append(_parsed_marker(head.environment_marker_string))
 
         loose.extend(
-            Marker(text)
+            _parsed_marker(text)
             for text in _fork_contributions(axes, projections, name, env_labels)
         )
         unconditional = False
@@ -1454,8 +1465,8 @@ def _gated_marker(marker: Marker | None, gate: Sequence[tuple[str, str]]) -> Mar
     are parenthesised, since they may disjoin and ``and`` binds tighter.
     """
     if marker is None:
-        return Marker(_gate_clause(gate))
-    return Marker(_with_gate(f"({marker})", gate))
+        return _parsed_marker(_gate_clause(gate))
+    return _parsed_marker(_with_gate(f"({marker})", gate))
 
 
 def _with_gate(marker: str, gate: Sequence[tuple[str, str]]) -> str:
@@ -1503,7 +1514,7 @@ def _or_markers(markers: Sequence[Marker]) -> Marker:
     # str(Marker) does not canonicalise OR-clause order, so sort the
     # fragments by string to keep the joined marker order-independent.
     parts = [f"({m})" for m in sorted(markers, key=str)]
-    return Marker(" or ".join(parts))
+    return _parsed_marker(" or ".join(parts))
 
 
 def _wheel_sort_key(wheel: WheelArtifact) -> tuple[str, str, str]:
