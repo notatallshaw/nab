@@ -47,8 +47,8 @@ dependencies = [
 nab lock pyproject.toml
 ```
 
-Writes `pylock.toml` next to the project. For a sorted
-`name==version` list instead, use
+Writes `pylock.toml` next to the project. For a pip-style
+requirements list instead, use
 `nab lock --format requirements-without-hashes --output -`.
 
 # Security
