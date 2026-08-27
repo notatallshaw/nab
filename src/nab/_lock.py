@@ -29,6 +29,7 @@ import tomli_w
 import tyro
 
 from nab._version import __version__
+from nab_project import toml_io
 from nab_project.config import (
     ConfigError,
     NabProjectConfig,
@@ -104,12 +105,27 @@ _DEFAULT_PROJECT_PATH = Path("pyproject.toml")
 
 
 def _emit_or_exit(emit: Callable[[], None]) -> None:
-    """Run an emit step, mapping an unwritable ``--output`` to a clean exit."""
+    """Run an emit step, mapping a write nab cannot complete to a clean exit.
+
+    A lock is written as strict UTF-8, so text carrying a surrogate from an
+    undecodable path or argument fails at the encode, not at the filesystem.
+    """
     try:
         emit()
-    except OSError as e:
+    except (OSError, UnicodeEncodeError) as e:
         _cli.printer().error(f"cannot write output: {e}")
         sys.exit(1)
+
+
+def _print_lock(text: str) -> None:
+    """Write rendered lock text to stdout, refusing text that is not valid UTF-8.
+
+    ``sys.stdout`` uses ``errors="surrogateescape"`` under the C and C.UTF-8
+    locales, where a lone surrogate would go out as a raw byte instead of
+    failing.
+    """
+    text.encode("utf-8")
+    sys.stdout.write(text)
 
 
 @app.command
@@ -359,7 +375,7 @@ def _packages_only(text: str) -> str:
     run) so two locks compare equal whenever their packages, environments,
     and metadata match.
     """
-    data = tomli.loads(text)
+    data = toml_io.loads(text)
     data.pop("tool", None)
     return tomli_w.dumps(data)
 
@@ -714,7 +730,7 @@ def _emit_pylock(
 ) -> None:
     """Write the PEP 751 lock to a file, or print it."""
     if _cli.is_stdout(output):
-        sys.stdout.write(_write_lock_or_exit(lock_input, target=None))
+        _print_lock(_write_lock_or_exit(lock_input, target=None))
         return
 
     target = output if output is not None else default_output
@@ -861,7 +877,7 @@ def _emit_requirements(
     multi_target = len(lock_input.targets) > 1
     if _cli.is_stdout(output) or (output is None and multi_target):
         text, _ = _render_requirements_or_exit(lock_input, with_hashes)
-        sys.stdout.write(text)
+        _print_lock(text)
         return
 
     target = output if output is not None else default_output
@@ -1005,7 +1021,7 @@ def _write_requirements_files(rendered: list[_RenderedFile]) -> None:
             staged.append((tmp, item))
             tmp.write_text(item.text, encoding="utf-8")
             tmp.chmod(_destination_mode(item.path))
-    except OSError:
+    except (OSError, UnicodeEncodeError):
         for tmp, _ in staged:
             _discard(tmp)
         raise

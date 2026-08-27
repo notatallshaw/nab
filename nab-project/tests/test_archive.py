@@ -107,6 +107,23 @@ def _half(data: bytes) -> bytes:
     return data[: len(data) // 2]
 
 
+# A digit run just past CPython's int-from-string limit.
+_OVERSIZED_DIGITS = "1" * sys.get_int_max_str_digits() + "1"
+
+
+def _pax_sparse_map_sdist(sparse_map: str) -> bytes:
+    """Return ``.tar.gz`` bytes carrying ``sparse_map`` as a PAX ``GNU.sparse.map``.
+
+    ``tarfile`` runs ``int()`` over the record while opening the archive.
+    """
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as tar:
+        info = tarfile.TarInfo("foo-1.0.0/sparse")
+        info.pax_headers = {"GNU.sparse.map": sparse_map}
+        tar.addfile(info, io.BytesIO(b""))
+    return buf.getvalue()
+
+
 _CLEAN_PREFIX = 1 << 20
 _INVALID_DEFLATE_BLOCK = b"\x07" * 8
 
@@ -1349,8 +1366,18 @@ class TestExtractArchive:
             gzip.compress(b"not a tar"),
             _half(_make_sdist("foo", "1.0.0", _PYPROJECT)),
             _corrupt_deflate_sdist(),
+            _pax_sparse_map_sdist(_OVERSIZED_DIGITS + ",1"),
+            _pax_sparse_map_sdist("nope,1"),
         ],
-        ids=["empty", "not-gzip", "gzip-not-tar", "truncated", "corrupt-deflate"],
+        ids=[
+            "empty",
+            "not-gzip",
+            "gzip-not-tar",
+            "truncated",
+            "corrupt-deflate",
+            "sparse-map-past-int-limit",
+            "sparse-map-non-numeric",
+        ],
     )
     def test_unreadable_archive_raises_value_error(
         self, data: bytes, tmp_path: Path

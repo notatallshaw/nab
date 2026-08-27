@@ -427,6 +427,15 @@ class TestRunBuildBackend:
         with pytest.raises(BuildBackendError, match="no pyproject.toml or setup.py"):
             run_build_backend(tmp_path, config=config)
 
+    def test_oversized_integer_pyproject(
+        self, tmp_path: Path, config: NabProjectConfig, oversized_integer: str
+    ) -> None:
+        (tmp_path / "pyproject.toml").write_text(
+            f"[tool.other]\ncount = {oversized_integer}\n", encoding="utf-8"
+        )
+        with pytest.raises(BuildBackendError, match="could not read pyproject.toml"):
+            run_build_backend(tmp_path, config=config)
+
     def test_unsearchable_pyproject_reports_the_errno(
         self,
         tmp_path: Path,

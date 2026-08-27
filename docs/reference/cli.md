@@ -276,6 +276,6 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | Code | Meaning |
 | ---- | ------- |
 | `0`  | Success. |
-| `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
+| `1`  | Resolution failed, lockfile cannot be written (a missing hash, or text that is not valid UTF-8), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
 | `2`  | Bad usage: an unrecognised flag or subcommand, or a malformed `--color` value or `NAB_VERBOSITY`. |
 | `130` | Interrupted with Ctrl-C. `nab` prints `error: interrupted` and exits. |

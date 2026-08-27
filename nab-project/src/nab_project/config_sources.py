@@ -55,6 +55,7 @@ from nab_provider.records import IndexConfig
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.vcs_admission import VcsConfig
 
+from . import toml_io
 from ._toml import tool_nab_section
 from ._value import ValueType
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
@@ -1430,7 +1431,7 @@ def _read_raw_table(path: Path, kind: SourceKind) -> Mapping[str, Any]:
     # TOML is UTF-8, so a file that will not decode is invalid TOML.
     try:
         with path.open("rb") as f:
-            data = tomli.load(f)
+            data = toml_io.load(f)
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
         msg = f"{path} is not valid TOML: {exc}"
         raise SourceConfigError(msg) from exc

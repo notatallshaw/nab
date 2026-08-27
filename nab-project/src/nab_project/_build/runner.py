@@ -51,6 +51,7 @@ from nab_provider.requirements_file import (
 )
 from nab_resolver.errors import ResolutionError
 
+from .. import toml_io
 from ..paths import PathState, path_state
 from .env import BuildChain, BuildEnvError, NabBuildEnv
 from .errors import BuildBackendError
@@ -256,7 +257,7 @@ def _read_pyproject(source_dir: Path) -> dict:
 
     if state.should_read:
         try:
-            return tomli.loads(pyproject.read_text(encoding="utf-8"))
+            return toml_io.loads(pyproject.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
             msg = f"could not read pyproject.toml at {source_dir}: {exc}"
             raise BuildBackendError(msg) from exc

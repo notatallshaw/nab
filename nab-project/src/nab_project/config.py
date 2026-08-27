@@ -64,6 +64,7 @@ from nab_provider.target import (
 )
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 
+from . import toml_io
 from ._toml import tool_nab_section
 from ._value import ValueType
 from .config_sources import (
@@ -80,7 +81,7 @@ from .config_sources import (
     resolve_config,
 )
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
-from .paths import resolve_path
+from .paths import realpath, resolve_path
 from .workspace import (
     WorkspaceConfig,
     discover_workspace_root,
@@ -657,11 +658,11 @@ def read_pyproject_config(
     """
     if anchor is None:
         anchor = datetime.now(timezone.utc)
-    pyproject_dir = path.parent.resolve()
+    pyproject_dir = realpath(path.parent)
     _reject_unknown_pyproject_keys(path)
     project_requires_python = _read_project_requires_python(path)
     # Point the pyproject root at ``pyproject_dir / path.name`` (not
-    # ``path.resolve()``) so the registry's declaring directory is the
+    # ``realpath(path)``) so the registry's declaring directory is the
     # symlink's own directory, matching the historical local-sources base
     # and the project-dir nab.toml lookup.  ``open`` still follows the
     # symlink, so the same file is read.
@@ -893,7 +894,7 @@ def _apply_workspace_discovery(
     if config.workspace is not None:
         discovered = workspace_local_sources(
             config.workspace.members,
-            root_dir=path.parent.resolve(),
+            root_dir=realpath(path.parent),
             declared_in=declared_in,
         )
     else:
@@ -933,7 +934,7 @@ def _reject_unknown_pyproject_keys(path: Path) -> None:
     """
     try:
         with path.open("rb") as f:
-            data = tomli.load(f)
+            data = toml_io.load(f)
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
         msg = f"{path} is not valid TOML: {exc}"
         raise ConfigError(msg) from exc
@@ -1395,7 +1396,7 @@ def _validate_base_group_is_free(base_group: EffectiveValue, path: Path) -> None
     if name is None:
         return
     with path.open("rb") as f:
-        data = tomli.load(f)
+        data = toml_io.load(f)
     groups = data.get("dependency-groups")
     if not isinstance(groups, dict):
         return
@@ -1471,7 +1472,7 @@ def _validate_build_group_is_free(
         raise ConfigError(msg)
 
     with path.open("rb") as f:
-        data = tomli.load(f)
+        data = toml_io.load(f)
     groups = data.get("dependency-groups")
     if not isinstance(groups, dict):
         return
@@ -1500,7 +1501,7 @@ def _read_project_requires_python(path: Path) -> str | None:
     here.
     """
     with path.open("rb") as f:
-        data = tomli.load(f)
+        data = toml_io.load(f)
     project = data.get("project")
     if not isinstance(project, dict) or "requires-python" not in project:
         return None

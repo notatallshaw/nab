@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import errno
+import os
 import stat
 from enum import Enum
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from pathlib import Path
 
 __all__ = [
     "PathState",
     "is_absent_error",
     "is_usable_path_name",
     "path_state",
+    "realpath",
     "resolve_path",
 ]
 
@@ -88,6 +87,16 @@ def is_usable_path_name(entry: str) -> bool:
     return "\x00" not in entry
 
 
+def realpath(path: Path) -> Path:
+    """Resolve ``path``, leaving a symlink loop along it unresolved.
+
+    :meth:`Path.resolve` raises ``RuntimeError`` on a loop below Python
+    3.13.  A loop is filesystem state, so it is left for the stat or the
+    read to report.
+    """
+    return Path(os.path.realpath(path))
+
+
 def resolve_path(base: Path, entry: str) -> Path | None:
     """Resolve ``entry`` against ``base``, or ``None`` for an unusable name.
 
@@ -96,6 +105,6 @@ def resolve_path(base: Path, entry: str) -> Path | None:
     if not is_usable_path_name(entry):
         return None
     try:
-        return (base / entry).resolve()
+        return realpath(base / entry)
     except ValueError:
         return None

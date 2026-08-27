@@ -441,6 +441,22 @@ class TestOutOfContractInputs:
         assert oracle_relation(degenerate, other) is RangeRelation.EMPTY
         assert degenerate.relation(other) is RangeRelation.SUBSET, WIDENING_CHANGES_THIS
 
+    def test_a_reversed_interval_splits_relation_from_the_subset_walk(self) -> None:
+        """``[2, 1]`` is a subset for ``is_subset`` and disjoint for ``relation``.
+
+        ``relation`` asks whether the left interval ends below the right one
+        before rebuilding the intersection.  A reversed interval both ends
+        below and rebuilds to itself, so the two walks disagree.
+        """
+        reversed_bounds: Range[int] = Range(((2, True, 1, True),))
+        other: Range[int] = Range(((2, True, 3, False),))
+
+        assert oracle_relation(reversed_bounds, other) is RangeRelation.EMPTY
+        assert reversed_bounds.is_subset(other), WIDENING_CHANGES_THIS
+        assert reversed_bounds.relation(other) is RangeRelation.DISJOINT, (
+            WIDENING_CHANGES_THIS
+        )
+
 
 class TestMembershipDoesNotNeedTheInvariant:
     """``__contains__`` scans every interval, so it defines membership on any list.

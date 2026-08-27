@@ -8,10 +8,12 @@ Usage:
 ``Range`` is what ``Resolver`` and ``PartialSolution`` fall back to when a
 consumer passes no ``range_type``, and nab-project always passes packaging's
 ``VersionRange``, so nothing in nab's other benchmark suites runs it. A change
-to Range's algebra can win on one graph shape and lose on another, so both
+to Range's algebra can win on one graph shape and lose on another, so three
 regimes run here: ``wrong-package-backtracking`` drives the set predicates and
-the differences that fragment a range, and ``conflict-free-fanout`` is almost
-all membership tests against single-interval ranges.
+the differences that fragment a range, ``conflict-free-fanout`` is almost all
+membership tests against single-interval ranges, and
+``satisfied-ceiling-fanin`` puts every ``relation`` question the resolver asks
+on a requirement that already holds, so all of them answer SUBSET.
 
 Every scenario reports its Range call counts, how many ``__hash__`` calls found
 the memo empty, the intervals per range that membership was tested against, and
@@ -51,6 +53,14 @@ Graph = dict[str, dict[int, dict[str, Range[int]]]]
 
 FANOUT_RELEASES = 50
 DEFAULT_REPEATS = 5
+
+# The release the fan-in's anchor caps its hub at, leaving every other
+# dependent's cap above it and so already satisfied.
+FANIN_SUPPORTED = 200
+
+# Hub releases every dependent excludes, which is what leaves the hub's range
+# in several intervals rather than one.
+FANIN_YANKED = (3, 8, 13, 18, 23)
 
 # The Range methods worth counting: the set predicates, the operators an
 # implementation might answer them with, and the equality and hash a dict keyed
@@ -104,6 +114,43 @@ def conflict_free_fanout_graph(packages: int) -> Graph:
     return graph
 
 
+def _hub_ceiling(cap: int) -> Range[int]:
+    """Return ``hub <= cap`` with the yanked releases cut out of it."""
+    ceiling = Range.at_most(cap)
+    for yanked in FANIN_YANKED:
+        ceiling -= Range.singleton(yanked)
+    return ceiling
+
+
+def satisfied_ceiling_fanin_graph(dependents: int) -> Graph:
+    """Build one root over ``dependents`` packages that all cap a single hub.
+
+    ``anchor`` is the only package with one release, so the provider's
+    prioritization decides it first and the hub's range is settled before any
+    other dependent is looked at. Every remaining requirement caps the hub
+    above that, at its own release, so every ``relation`` the resolver asks
+    answers SUBSET, against a range the yanked releases have cut into
+    ``len(FANIN_YANKED) + 1`` intervals.
+    """
+    releases = FANIN_SUPPORTED + dependents
+    graph: Graph = {
+        "root": {1: {}},
+        "hub": {version: {} for version in range(1, releases + 1)},
+        "anchor": {1: {"hub": _hub_ceiling(FANIN_SUPPORTED)}},
+    }
+
+    root = graph["root"][1]
+    root["anchor"] = Range.at_least(1)
+
+    for index in range(dependents):
+        name = f"d{index}"
+        ceiling = _hub_ceiling(FANIN_SUPPORTED + 1 + index)
+        graph[name] = {version: {"hub": ceiling} for version in range(1, 3)}
+        root[name] = Range.at_least(1)
+
+    return graph
+
+
 @dataclass(frozen=True)
 class Scenario:
     """One graph shape and the size the standard run builds it at."""
@@ -116,6 +163,7 @@ class Scenario:
 SCENARIOS = (
     Scenario("wrong-package-backtracking", 64, wrong_package_backtracking_graph),
     Scenario("conflict-free-fanout", 120, conflict_free_fanout_graph),
+    Scenario("satisfied-ceiling-fanin", 1000, satisfied_ceiling_fanin_graph),
 )
 
 

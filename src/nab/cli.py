@@ -27,6 +27,7 @@ import tyro
 from tyro.extras import SubcommandApp
 
 from nab._version import __version__
+from nab_project import toml_io
 from nab_project.config import (
     ConfigError,
     NabProjectConfig,
@@ -52,7 +53,7 @@ from nab_project.config_sources import (
     resolve_config,
 )
 from nab_project.lockfile import MissingHashError, MissingSdistError
-from nab_project.paths import PathState, path_state
+from nab_project.paths import PathState, path_state, realpath
 from nab_project.resolve import resolve_for_targets
 from nab_project.workspace import WorkspaceDiscoveryError
 from nab_provider.errors import (
@@ -272,7 +273,7 @@ def _config_search_roots(pyproject: Path) -> SourceRoots:
     """
     base = os.environ.get("XDG_CONFIG_HOME")
     user_dir = Path(base) if base else Path.home() / ".config"
-    project_dir = pyproject.parent.resolve()
+    project_dir = realpath(pyproject.parent)
     return SourceRoots(
         system_toml=Path("/etc/nab/nab.toml"),
         user_toml=user_dir / "nab" / "nab.toml",
@@ -517,7 +518,7 @@ def _is_pylock(path: Path) -> bool:
     the pyproject parser to report.
     """
     try:
-        data = tomli.loads(path.read_text(encoding="utf-8"))
+        data = toml_io.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError):
         return False
     return "lock-version" in data and "project" not in data

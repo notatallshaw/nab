@@ -1922,6 +1922,17 @@ class TestReadLockfileAnchor:
         path.write_bytes(b"\xff\xfe not utf-8")
         assert read_lockfile_anchor(path) is None
 
+    def test_returns_none_when_integer_too_long(
+        self, tmp_path: Path, oversized_integer: str
+    ) -> None:
+        # The anchor is there and valid; the file still will not parse.
+        path = tmp_path / "pylock.toml"
+        path.write_text(
+            "[tool.nab]\ncreated-at = 2026-05-01T00:00:00+00:00\n"
+            f"[tool.other]\ncount = {oversized_integer}\n"
+        )
+        assert read_lockfile_anchor(path) is None
+
     def test_returns_none_when_no_tool_nab(self, tmp_path: Path) -> None:
         path = tmp_path / "pylock.toml"
         path.write_text('lock-version = "1.0"\n')
