@@ -721,9 +721,11 @@ the cached tree was not checked against downloads the archive again.
 
 Universal resolution resolves one target per declared
 `(python, platform, implementation)` point, on the same engine a
-single-environment resolve uses, sharing one fetcher so metadata is
-fetched at most once per package.  The multi-target lockfile format it
-produces is experimental and may change without notice.
+single-environment resolve uses.  The targets share one fetcher: a
+package's listing is read once for the whole matrix, a version's wheel
+metadata once per wheel the targets pick, and an sdist's PKG-INFO once
+for the version.  The multi-target lockfile format it produces is
+experimental and may change without notice.
 
 ```toml
 [tool.nab]
