@@ -3,7 +3,8 @@
 Covers the static path (``extract_static_metadata``) and the
 dynamic dispatch in ``extract_metadata``, including the
 ``BuildBackendError`` raised when the caller did not supply the
-``NabProjectConfig`` the runner needs.
+``NabProjectConfig`` the runner needs, and the build-policy page's
+account of when the dynamic path runs.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import tomli
 
 from nab_project.build_backend import (
     BuildBackendError,
@@ -35,6 +37,11 @@ from nab_provider.requirements_file import InvalidProjectRequirementError
 def _write_pyproject(tmp: Path, body: str) -> Path:
     (tmp / "pyproject.toml").write_text(body, encoding="utf-8")
     return tmp
+
+
+DOCS_BUILD_POLICY = (
+    Path(__file__).resolve().parents[2] / "docs" / "reference" / "build-policy.md"
+)
 
 
 class TestExtractStaticMetadata:
@@ -99,15 +106,25 @@ class TestExtractStaticMetadata:
         ):
             extract_static_metadata(tmp_path)
 
-    def test_malformed_toml_returns_none(self, tmp_path: Path) -> None:
+    def test_malformed_toml_reports_the_parse_error(self, tmp_path: Path) -> None:
+        """Text that does not parse leaves the contents unknown."""
         _write_pyproject(tmp_path, "this is not toml [")
-        assert extract_static_metadata(tmp_path) is None
+        with pytest.raises(
+            BuildBackendError, match="could not read pyproject.toml"
+        ) as caught:
+            extract_static_metadata(tmp_path)
+        assert isinstance(caught.value.__cause__, tomli.TOMLDecodeError)
 
-    def test_non_utf8_toml_returns_none(self, tmp_path: Path) -> None:
+    def test_non_utf8_toml_reports_the_decode_error(self, tmp_path: Path) -> None:
+        """Bytes that do not decode leave the contents unknown too."""
         (tmp_path / "pyproject.toml").write_bytes(
             b'[project]\nname = "foo"\nversion = "1.0"\ndescription = "\xe9"\n'
         )
-        assert extract_static_metadata(tmp_path) is None
+        with pytest.raises(
+            BuildBackendError, match="could not read pyproject.toml"
+        ) as caught:
+            extract_static_metadata(tmp_path)
+        assert isinstance(caught.value.__cause__, UnicodeDecodeError)
 
     def test_no_project_table_returns_none(self, tmp_path: Path) -> None:
         _write_pyproject(tmp_path, '[build-system]\nrequires = ["setuptools"]\n')
@@ -369,11 +386,15 @@ class TestExtractStaticMetadata:
         ):
             extract_static_metadata(tmp_path)
 
-    def test_pyproject_is_a_directory_returns_none(self, tmp_path: Path) -> None:
-        # A directory in place of pyproject.toml is not a readable file, so
-        # the static reader bails before the read.
-        (tmp_path / "pyproject.toml").mkdir()
-        assert extract_static_metadata(tmp_path) is None
+    def test_pyproject_is_a_directory_reports_the_file_type(
+        self, tmp_path: Path
+    ) -> None:
+        """A directory in place of the file is a read failure, not absence."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.mkdir()
+        with pytest.raises(BuildBackendError) as caught:
+            extract_static_metadata(tmp_path)
+        assert str(caught.value) == f"{pyproject} exists but is not a regular file"
 
     def test_pyproject_vanishing_before_the_read_returns_none(
         self, tmp_path: Path
@@ -607,3 +628,48 @@ class TestStaticExtractAugmentParity:
         )
         with pytest.raises(ValueError, match="Expected"):
             parse_metadata(md)
+
+
+class TestBuildLocalDocSection:
+    """The build-policy page's ``build-local`` section against the static read.
+
+    A local checkout goes to a backend when ``extract_static_metadata``
+    returns ``None`` for it, so the section names the shapes that produce
+    one.  A read that raises instead, on an unreadable file or a corrupt
+    static value, never reaches a backend and is outside that claim.
+    """
+
+    @staticmethod
+    def _build_local_section() -> str:
+        """Return the ``build-local`` section, down to the next heading."""
+        text = DOCS_BUILD_POLICY.read_text(encoding="utf-8")
+        start = text.index("## `build-local` (default)")
+        return text[start:].split("\n## ", 1)[0]
+
+    @pytest.mark.parametrize(
+        "field",
+        ["dependencies", "optional-dependencies", "version", "requires-python"],
+    )
+    def test_section_names_every_dynamic_field(
+        self, field: str, tmp_path: Path
+    ) -> None:
+        _write_pyproject(
+            tmp_path,
+            f"""
+            [project]
+            name = "foo"
+            version = "1.0"
+            dynamic = ["{field}"]
+            """,
+        )
+        assert extract_static_metadata(tmp_path) is None
+
+        assert f"`{field}`" in self._build_local_section()
+
+    def test_section_names_a_missing_project_table(self, tmp_path: Path) -> None:
+        _write_pyproject(tmp_path, '[build-system]\nrequires = ["setuptools"]\n')
+        assert extract_static_metadata(tmp_path) is None
+
+        section = self._build_local_section()
+        assert "missing" in section
+        assert "`[project]`" in section

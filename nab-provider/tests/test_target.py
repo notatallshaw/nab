@@ -854,6 +854,11 @@ class TestMarkerVariables:
         """
         assert set(default_environment()) == PEP508_MARKER_VARIABLES
 
+    def test_a_repeated_marker_text_is_parsed_once(self) -> None:
+        """The second call reads the memo instead of parsing the text again."""
+        text = 'sys_platform == "linux" and python_version >= "3.10"'
+        assert marker_variables(text) is marker_variables(text)
+
 
 class TestEnvironmentDeclaration:
     """A single-environment lock declares the environment it was resolved
@@ -1442,6 +1447,22 @@ class TestMicroBoundarySplitting:
         assert [str(point) for point in found] == ["3.12.5"]
 
     @pytest.mark.parametrize(
+        ("marker", "points"),
+        [
+            ('python_full_version > "3.12.4rc1"', ["3.12.4"]),
+            ('python_full_version > "3.12.4.post1"', ["3.12.5"]),
+        ],
+    )
+    def test_an_after_literal_pre_or_post_release_splits_above_the_literal(
+        self, marker: str, points: list[str]
+    ) -> None:
+        """``>`` puts its boundary past the literal, so it lands on a real
+        micro either way: a prerelease cuts at its own release, 3.12.4, and a
+        post release at the one after it, 3.12.5."""
+        found = micro_boundary_points(self._target(), [Marker(marker)])
+        assert [str(point) for point in found] == points
+
+    @pytest.mark.parametrize(
         "marker",
         [
             "python_full_version < python_version",
@@ -1452,7 +1473,9 @@ class TestMicroBoundarySplitting:
             'python_full_version in "3.12.4"',
             'python_full_version not in "3.12.4"',
             'python_full_version < "3.12.4rc1"',
+            'python_full_version >= "3.12.4rc1"',
             'python_full_version == "3.12.4rc1"',
+            'python_full_version != "3.12.4rc1"',
             'python_full_version ~= "3.12.4b1"',
             '"3.12.4" ~= python_full_version',
             '"3.12.4rc1" == python_full_version',

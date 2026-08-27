@@ -462,6 +462,10 @@ def test_full_body_not_a_zip_is_missing() -> None:
     assert result.outcome is RangeOutcome.MISSING
 
 
+# Fail a reader that loops re-requesting the same range, rather than hang.
+_SCRIPTED_REQUEST_CAP = 20
+
+
 class _ScriptedTransport:
     """Serve responses from per-request-shape callables."""
 
@@ -475,6 +479,9 @@ class _ScriptedTransport:
         self, url: str, *, headers: dict[str, str] | None = None
     ) -> _FakeResponse:
         await asyncio.sleep(0)
+        if len(self.requests) >= _SCRIPTED_REQUEST_CAP:
+            msg = f"reader still requesting after {_SCRIPTED_REQUEST_CAP} round trips"
+            raise AssertionError(msg)
         headers = headers or {}
         rng = headers.get("Range")
         if rng is None:
@@ -979,6 +986,40 @@ def test_suffix_206_oversized_total_downgrades() -> None:
     result = _run_scripted(script, wheel=build_wheel_member_front())
     assert result.outcome is RangeOutcome.PARTIAL
     assert result.text == _META.decode("utf-8")
+
+
+def test_suffix_206_empty_range_downgrades() -> None:
+    """A 206 selecting no bytes is not a tail.
+
+    Taking it as one leaves a window that holds nothing and cannot grow.
+    """
+
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            headers = {"content-range": f"bytes {t.total}-{t.total - 1}/{t.total}"}
+            return _FakeResponse(206, headers, b"")
+        return t.partial(a, b)
+
+    result = _run_scripted(script)
+    assert result.outcome is RangeOutcome.PARTIAL
+    assert result.text == _META.decode("utf-8")
+
+
+def test_zero_tail_size_gives_up_instead_of_re_requesting() -> None:
+    """A window with nothing to double ends the read rather than looping.
+
+    A zero-length tail request comes back as the empty range at the end of the
+    file, so the window starts at zero width.
+    """
+
+    def script(t: _ScriptedTransport, kind: str, a: int, b: int) -> _FakeResponse:
+        if kind == "suffix":
+            return t.partial(max(0, t.total - a), t.total - 1)
+        return t.partial(a, b)
+
+    result = _run_scripted(script, tail_size=0)
+    assert result.outcome is RangeOutcome.MISSING
+    assert result.text is None
 
 
 def test_parse_content_range_at_int_limit() -> None:

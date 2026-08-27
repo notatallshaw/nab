@@ -1,12 +1,14 @@
 """Tests for nab_index.vcs URL parsing + clone helpers.
 
-The clone path itself shells out to ``git`` and is not unit-tested
-here; integration tests live alongside the runner.
+The clone path shells out to ``git``, so its tests stub
+:func:`subprocess.run`.
 """
 
 from __future__ import annotations
 
+import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -129,6 +131,11 @@ class TestVcsRequestParse:
     def test_bzr_scheme_refused(self) -> None:
         with pytest.raises(VcsCloneError, match="not a recognised"):
             VcsRequest.parse("bzr+https://bzr.example.com/repo")
+
+    def test_vcs_prefix_refused(self) -> None:
+        """``vcs+`` is not a scheme: ``git+`` is the only prefix stripped."""
+        with pytest.raises(VcsCloneError, match="not a recognised"):
+            VcsRequest.parse("vcs+https://example.com/repo.git")
 
     def test_ssh_shortcut_with_ref(self) -> None:
         req = VcsRequest.parse("git+git@github.com:x/y.git@" + "c" * 40)
@@ -270,6 +277,25 @@ class TestResolveSha:
             raise FileNotFoundError("git not on PATH")
 
         monkeypatch.setattr(subprocess, "run", boom)
+        req = VcsRequest("git", "https://x", "main", "")
+        with pytest.raises(VcsCloneError):
+            _resolve_sha(req, require_pin=False)
+
+    def test_unusable_scratch_directory_raises(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A scratch directory nab cannot create surfaces as a clone error.
+
+        The temporary root is a regular file, so ``mkdtemp`` fails with a
+        ``NotADirectoryError`` rather than the ``FileNotFoundError`` a
+        missing ``git`` binary raises.
+        """
+        not_a_directory = tmp_path / "tmp"
+        not_a_directory.write_text("")
+        monkeypatch.setattr(tempfile, "tempdir", str(not_a_directory))
+
         req = VcsRequest("git", "https://x", "main", "")
         with pytest.raises(VcsCloneError):
             _resolve_sha(req, require_pin=False)
@@ -659,18 +685,140 @@ class TestPrepareClone:
         assert payload.read_text() == "kept"
 
 
+_EXPECTED_SCRUBBED_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+    "GIT_NAMESPACE",
+)
+
+
+class TestCacheLayout:
+    """The clone cache key, and the git commands that fill an entry."""
+
+    def _clone(
+        self,
+        cache_root: Path,
+        requirement_url: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> tuple[Path, list[list[str]]]:
+        """Clone a ``git+`` URL with git stubbed; return the tree and the argv."""
+        argv: list[list[str]] = []
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            argv.append(cmd)
+            if cmd[:2] == ["git", "init"]:
+                (Path(str(kwargs["cwd"])) / ".git").mkdir(exist_ok=True)
+            return type("P", (), {"returncode": 0})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        clone = prepare_clone(
+            cache_root,
+            VcsRequest.parse(requirement_url),
+            require_pin=True,
+        )
+        return clone.path, argv
+
+    def test_repo_key_covers_the_repo_url_alone(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The ``git+`` prefix, the ``@<sha>`` ref and the fragment are not keyed."""
+        sha = "a" * 40
+        path, _ = self._clone(
+            tmp_path,
+            f"git+https://example.com/repo.git@{sha}#subdirectory=pkg",
+            monkeypatch,
+        )
+
+        # 3f71ca0a9a455fa9 is sha256("https://example.com/repo.git")[:16].
+        assert path == tmp_path / "vcs" / "3f71ca0a9a455fa9" / sha
+
+    def test_spellings_of_one_repo_do_not_share_an_entry(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """One repo written three ways gets three entries: nothing canonicalises."""
+        sha = "b" * 40
+        spellings = (
+            "https://example.com/repo.git",
+            "https://example.com/repo",
+            "https://example.com/repo.git/",
+        )
+        trees = [
+            self._clone(tmp_path, f"git+{url}@{sha}", monkeypatch)[0]
+            for url in spellings
+        ]
+
+        assert len({tree.parent for tree in trees}) == len(spellings)
+
+    def test_entry_is_filled_by_init_fetch_checkout(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        sha = "c" * 40
+        url = "https://example.com/repo.git"
+        _, argv = self._clone(tmp_path, f"git+{url}@{sha}", monkeypatch)
+
+        assert argv == [
+            ["git", "init", "--quiet"],
+            ["git", "fetch", "--quiet", "--depth", "1", url, sha],
+            ["git", "checkout", "--quiet", "FETCH_HEAD"],
+        ]
+
+
 class TestAmbientGitEnvironment:
     """git's repo-selection variables must not reach nab's git calls."""
 
     def _set_ambient_vars(self, monkeypatch: pytest.MonkeyPatch, home: Path) -> None:
+        """Seed the environment a git call would inherit from the caller."""
         for name in _REPO_SELECTION_VARS:
             monkeypatch.setenv(name, str(home / name.lower()))
         monkeypatch.setenv("GIT_SSH_COMMAND", "ssh -i /keys/id_ed25519")
 
-    def _assert_scrubbed(self, names: list[str]) -> None:
-        assert [name for name in _REPO_SELECTION_VARS if name in names] == []
+        # nab only defaults these, so an ambient value would hide the default.
+        monkeypatch.delenv("GIT_CONFIG_GLOBAL", raising=False)
+        monkeypatch.delenv("GIT_CONFIG_SYSTEM", raising=False)
+
+    def _run_ls_remote(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        sha: str,
+    ) -> list[dict[str, str]]:
+        """Run _resolve_sha against a fake git and return each call's GIT_ vars."""
+        seen: list[dict[str, str]] = []
+
+        def fake_run(cmd: list[str], **kwargs: object) -> object:
+            env = kwargs["env"]
+            assert isinstance(env, dict)
+            seen.append({k: v for k, v in env.items() if k.startswith("GIT_")})
+            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n".encode()})()
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+        req = VcsRequest("git", "https://example/repo.git", "main", "")
+        assert _resolve_sha(req, require_pin=False) == sha
+        return seen
+
+    def _assert_scrubbed(self, env: dict[str, str]) -> None:
+        """Assert one env dropped the repo-selection vars and kept nab's own."""
+        assert [name for name in _REPO_SELECTION_VARS if name in env] == []
+
         # The scrub stays narrow: git+ssh reaches credentials through this one.
-        assert "GIT_SSH_COMMAND" in names
+        assert env["GIT_SSH_COMMAND"] == "ssh -i /keys/id_ed25519"
+
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
+        assert env["GIT_CONFIG_GLOBAL"] == "/dev/null"
+        assert env["GIT_CONFIG_SYSTEM"] == "/dev/null"
+
+    def test_scrubbed_vars_are_pinned(self) -> None:
+        """The other tests read the production tuple, so nothing else sees it change."""
+        assert _REPO_SELECTION_VARS == _EXPECTED_SCRUBBED_VARS
 
     def test_clone_drops_inherited_repo_selection_vars(
         self,
@@ -679,12 +827,12 @@ class TestAmbientGitEnvironment:
     ) -> None:
         self._set_ambient_vars(monkeypatch, tmp_path / "elsewhere")
         sha = "a" * 40
-        seen: list[list[str]] = []
+        seen: list[dict[str, str]] = []
 
         def fake_run(cmd: list[str], **kwargs: object) -> object:
             env = kwargs["env"]
             assert isinstance(env, dict)
-            seen.append([name for name in env if name.startswith("GIT_")])
+            seen.append({k: v for k, v in env.items() if k.startswith("GIT_")})
             cwd = Path(str(kwargs["cwd"]))
             if cmd[:2] == ["git", "init"]:
                 (cwd / ".git").mkdir(exist_ok=True)
@@ -695,9 +843,8 @@ class TestAmbientGitEnvironment:
         prepare_clone(tmp_path, req, require_pin=True)
 
         assert len(seen) == 3
-        for names in seen:
-            self._assert_scrubbed(names)
-            assert "GIT_TERMINAL_PROMPT" in names
+        for env in seen:
+            self._assert_scrubbed(env)
 
     def test_ls_remote_drops_inherited_repo_selection_vars(
         self,
@@ -705,19 +852,25 @@ class TestAmbientGitEnvironment:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         self._set_ambient_vars(monkeypatch, tmp_path / "elsewhere")
-        sha = "b" * 40
-        seen: list[str] = []
+        seen = self._run_ls_remote(monkeypatch, "b" * 40)
 
-        def fake_run(cmd: list[str], **kwargs: object) -> object:
-            env = kwargs["env"]
-            assert isinstance(env, dict)
-            seen.extend(name for name in env if name.startswith("GIT_"))
-            return type("P", (), {"stdout": f"{sha}\trefs/heads/main\n".encode()})()
+        assert len(seen) == 1
+        self._assert_scrubbed(seen[0])
 
-        monkeypatch.setattr(subprocess, "run", fake_run)
-        req = VcsRequest("git", "https://example/repo.git", "main", "")
-        assert _resolve_sha(req, require_pin=False) == sha
-        self._assert_scrubbed(seen)
+    def test_ls_remote_keeps_ambient_git_config_paths(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """nab defaults the config paths, so a caller's own values survive."""
+        self._set_ambient_vars(monkeypatch, tmp_path / "elsewhere")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/some/path")
+        monkeypatch.setenv("GIT_CONFIG_SYSTEM", "/other/path")
+
+        seen = self._run_ls_remote(monkeypatch, "d" * 40)
+
+        assert seen[0]["GIT_CONFIG_GLOBAL"] == "/some/path"
+        assert seen[0]["GIT_CONFIG_SYSTEM"] == "/other/path"
 
     def test_marker_write_failure_does_not_blame_the_remote(
         self,
@@ -739,6 +892,98 @@ class TestAmbientGitEnvironment:
         assert "could not be marked complete" in message
         assert "failed to clone" not in message
         assert list((tmp_path / "vcs").rglob("*.tmp")) == []
+
+
+class TestAmbientGitRepository:
+    """A checkout nab is invoked from must not configure nab's git calls."""
+
+    def _run_git(self, args: list[str], cwd: Path) -> str:
+        """Run git with ``args`` in ``cwd`` and return its stripped stdout."""
+        git = shutil.which("git")
+        assert git is not None
+        proc = subprocess.run(  # noqa: S603 - git is a runtime dep
+            [git, *args],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return proc.stdout.strip()
+
+    def _commit_repo(self, path: Path, content: str) -> str:
+        """Create a one-commit repo on ``main`` at ``path``, returning its SHA."""
+        path.mkdir()
+        self._run_git(["init", "--quiet", "-b", "main"], path)
+        (path / "f.txt").write_text(content)
+        self._run_git(["add", "f.txt"], path)
+        self._run_git(
+            [
+                "-c",
+                "user.name=nab tests",
+                "-c",
+                "user.email=tests@example.invalid",
+                "commit",
+                "--quiet",
+                "--no-gpg-sign",
+                "-m",
+                content,
+            ],
+            path,
+        )
+        return self._run_git(["rev-parse", "HEAD"], path)
+
+    def _rewriting_checkout(self, tmp_path: Path) -> tuple[Path, str, str]:
+        """Build an origin, a diverged mirror, and a checkout that swaps them.
+
+        The checkout's local config rewrites the origin's URL to the
+        mirror's, so any git command that reads that config answers from
+        the wrong repository.  Returns the checkout, the origin's URL,
+        and the SHA the origin's ``main`` names.
+        """
+        origin_sha = self._commit_repo(tmp_path / "origin", "origin")
+        mirror_sha = self._commit_repo(tmp_path / "mirror", "mirror")
+        assert origin_sha != mirror_sha
+
+        origin_url = (tmp_path / "origin").as_uri()
+        mirror_url = (tmp_path / "mirror").as_uri()
+
+        work = tmp_path / "work"
+        work.mkdir()
+        self._run_git(["init", "--quiet"], work)
+        self._run_git(
+            ["config", "--local", f"url.{mirror_url}.insteadOf", origin_url],
+            work,
+        )
+        return work, origin_url, origin_sha
+
+    def test_ls_remote_ignores_a_rewrite_in_the_invoking_checkout(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The rewrite in the current directory's checkout does not apply."""
+        work, origin_url, origin_sha = self._rewriting_checkout(tmp_path)
+        monkeypatch.chdir(work)
+
+        req = VcsRequest("git", origin_url, "main", "")
+
+        assert _resolve_sha(req, require_pin=False) == origin_sha
+
+    def test_ls_remote_ignores_a_rewrite_around_the_temporary_directory(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A scratch directory inside the checkout does not expose the rewrite."""
+        work, origin_url, origin_sha = self._rewriting_checkout(tmp_path)
+        scratch_root = work / "tmp"
+        scratch_root.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(scratch_root))
+        monkeypatch.chdir(work)
+
+        req = VcsRequest("git", origin_url, "main", "")
+
+        assert _resolve_sha(req, require_pin=False) == origin_sha
 
 
 class TestOfflineClone:

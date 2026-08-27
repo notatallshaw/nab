@@ -361,11 +361,92 @@ class TestOnDiskCache:
         cache.put_sdist_files("foo", "1.0", "Name: foo\n", None)
         assert cache.get_sdist_files("foo", "1.0") == ("Name: foo\n", None)
 
-    def test_sdist_corrupt_record_is_a_miss(self, tmp_path: Path) -> None:
+    def test_sdist_no_pkg_info_is_a_hit_not_a_miss(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        cache.put_sdist_files("foo", "1.0", None, "[project]\n")
+        assert cache.get_sdist_files("foo", "1.0") == (None, "[project]\n")
+
+    def test_sdist_empty_field_is_not_an_absent_one(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        cache.put_sdist_files("foo", "1.0", "", "")
+        assert cache.get_sdist_files("foo", "1.0") == ("", "")
+
+    def test_sdist_lone_surrogate_round_trips(self, tmp_path: Path) -> None:
+        """A text field holds any ``str``, including one with no UTF-8 form."""
+        cache = self._make(tmp_path)
+        cache.put_sdist_files("foo", "1.0", "Name: \ud800\n", None)
+        assert cache.get_sdist_files("foo", "1.0") == ("Name: \ud800\n", None)
+
+    def test_sdist_json_record_is_carried_over(self, tmp_path: Path) -> None:
+        """A record the retired bucket holds is a hit, and is rewritten here."""
+        cache = self._make(tmp_path)
+        legacy = cache._sdist_json_path("foo", "1.0")
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text(
+            json.dumps({"pkg_info": "Name: foo\n", "pyproject": None}),
+            encoding="utf-8",
+        )
+
+        assert cache.get_sdist_files("foo", "1.0") == ("Name: foo\n", None)
+
+        assert cache._sdist_path("foo", "1.0").exists()
+        assert legacy.exists()
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            pytest.param(b"nabsdist1 10 -1", id="no-header-end"),
+            pytest.param(b"nabsdist1 x -1\n", id="length-not-a-number"),
+            pytest.param(b"nabsdist1 1\n", id="one-length"),
+            pytest.param(b"nabsdist1 -2 -1\nA", id="length-below-absent"),
+            pytest.param(b"nabsdist1 1 -1\nAB", id="body-longer-than-declared"),
+            pytest.param(b"nabsdist1 1 -1\n\xff", id="field-not-utf-8"),
+        ],
+    )
+    def test_sdist_malformed_record_is_a_miss(self, tmp_path: Path, raw: bytes) -> None:
         cache = self._make(tmp_path)
         path = cache._sdist_path("foo", "1.0")
         path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        assert cache.get_sdist_files("foo", "1.0") is None
+
+    def test_sdist_record_without_magic_is_a_miss(self, tmp_path: Path) -> None:
+        """Bytes that would parse as a record, but do not carry the magic."""
+        cache = self._make(tmp_path)
+        path = cache._sdist_path("foo", "1.0")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"otherfmt1 5 -1\nhello")
+        assert cache.get_sdist_files("foo", "1.0") is None
+
+    def test_sdist_json_record_not_json_is_a_miss(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        path = cache._sdist_json_path("foo", "1.0")
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("not-json", encoding="utf-8")
+        assert cache.get_sdist_files("foo", "1.0") is None
+
+    @pytest.mark.parametrize(
+        "record",
+        [
+            {"pkg_info": 5, "pyproject": None},
+            {"pkg_info": [], "pyproject": None},
+            {"pkg_info": "Name: foo\n", "pyproject": 5},
+        ],
+    )
+    def test_sdist_json_record_non_text_field_is_a_miss(
+        self, tmp_path: Path, record: dict[str, object]
+    ) -> None:
+        cache = self._make(tmp_path)
+        path = cache._sdist_json_path("foo", "1.0")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record), encoding="utf-8")
+        assert cache.get_sdist_files("foo", "1.0") is None
+
+    def test_sdist_json_record_not_an_object_is_a_miss(self, tmp_path: Path) -> None:
+        cache = self._make(tmp_path)
+        path = cache._sdist_json_path("foo", "1.0")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('["Name: foo\\n", null]', encoding="utf-8")
         assert cache.get_sdist_files("foo", "1.0") is None
 
     def test_put_metadata_rejects_multi_segment_package(self, tmp_path: Path) -> None:
@@ -378,7 +459,7 @@ class TestOnDiskCache:
         cache = self._make(tmp_path)
         with pytest.raises(ValueError, match="not a single path segment"):
             cache.put_sdist_files("foo", "1.0/../../elsewhere", "Name: foo\n", None)
-        assert list(tmp_path.rglob("*.json")) == []
+        assert list(tmp_path.rglob("*.record")) == []
 
     def test_metadata_url_cannot_escape_the_package_dir(self, tmp_path: Path) -> None:
         cache = self._make(tmp_path)
@@ -626,7 +707,20 @@ class TestCorruptEntryLogging:
         cache = self._make(tmp_path)
         path = cache._sdist_path("foo", "1.0")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("not-json", encoding="utf-8")
+        path.write_bytes(b"not a record")
+        with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
+            assert cache.get_sdist_files("foo", "1.0") is None
+        warnings = _warnings(caplog)
+        assert len(warnings) == 1
+        assert str(path) in warnings[0].getMessage()
+
+    def test_non_text_sdist_json_field_logs_one_warning(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = self._make(tmp_path)
+        path = cache._sdist_json_path("foo", "1.0")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"pkg_info": 5, "pyproject": null}', encoding="utf-8")
         with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
             assert cache.get_sdist_files("foo", "1.0") is None
         warnings = _warnings(caplog)
@@ -639,7 +733,7 @@ class TestCorruptEntryLogging:
         cache = self._make(tmp_path)
         path = cache._sdist_path("foo", "1.0")
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"\xff\xfe not utf-8")
+        path.write_bytes(b"nabsdist1 1 -1\n\xff")
         with caplog.at_level(logging.WARNING, logger="nab_index.cache"):
             assert cache.get_sdist_files("foo", "1.0") is None
         warnings = _warnings(caplog)
@@ -828,9 +922,9 @@ class TestReadCacheEntry:
         path = tmp_path / SIMPLE_BUCKET / "pypi" / "foo.json"
         assert cache.read_cache_entry(path) is None
 
-    def test_sdist_record_missing_fields(self, tmp_path: Path) -> None:
+    def test_sdist_json_record_missing_fields(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
-        path = tmp_path / "sdist-v1" / "pypi" / "foo" / "1.0.json"
+        path = cache._sdist_json_path("foo", "1.0")
         path.parent.mkdir(parents=True)
         path.write_bytes(b'{"pkg_info": "x"}')
         assert cache.read_cache_entry(path) is not None
@@ -838,8 +932,15 @@ class TestReadCacheEntry:
     def test_valid_sdist_record(self, tmp_path: Path) -> None:
         cache = self._cache(tmp_path)
         cache.put_sdist_files("foo", "1.0", "info", None)
-        path = tmp_path / "sdist-v1" / "pypi" / "foo" / "1.0.json"
+        path = tmp_path / SDIST_BUCKET / "pypi" / "foo" / "1.0.record"
         assert cache.read_cache_entry(path) is None
+
+    def test_undecodable_sdist_record(self, tmp_path: Path) -> None:
+        cache = self._cache(tmp_path)
+        path = tmp_path / SDIST_BUCKET / "pypi" / "foo" / "1.0.record"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"nabsdist1 4 -1\nab")
+        assert cache.read_cache_entry(path) == "sdist record not decodable"
 
     def test_unknown_suffix_is_clean(self, tmp_path: Path) -> None:
         # A leftover atomic-write temp file is not a nab entry and is ignored.
@@ -903,10 +1004,10 @@ class TestClearCache:
             SIMPLE_BUCKET,
             "simple-neg-v0",
             "metadata-v1",
-            "sdist-v1",
+            SDIST_BUCKET,
         }
         assert not (tmp_path / SIMPLE_BUCKET).exists()
-        assert not (tmp_path / "sdist-v1").exists()
+        assert not (tmp_path / SDIST_BUCKET).exists()
 
     def test_unlinks_symlinked_bucket_without_following(self, tmp_path: Path) -> None:
         outside = tmp_path / "outside"

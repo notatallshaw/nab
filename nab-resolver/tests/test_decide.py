@@ -10,6 +10,10 @@ PEP 440 semantics.
 any sort key, which is how a provider fed by another thread knows when its
 answers may move.  The same scan hands the provider both search counters, one
 per parameter.
+
+``choose_version`` skips the partial-solution hint, and the two snapshots it
+carries, when the provider inherits ``BaseProvider``'s no-op.  The provider
+classes below are the shapes that check has to tell apart.
 """
 
 from __future__ import annotations
@@ -17,9 +21,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
+import pytest
+
 from nab_resolver import decide
+from nab_resolver.partial_solution import PartialSolution
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import Resolver, ResolverObserver
+from nab_resolver.resolver import (
+    BaseProvider,
+    Resolver,
+    ResolverObserver,
+    ResolverProvider,
+)
 from nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
@@ -199,7 +211,7 @@ class _ScanOrderProvider(_InertProvider):
 
 
 def _resolver_with(
-    provider: _InertProvider,
+    provider: ResolverProvider[Any, int],
 ) -> tuple[Resolver[Any, int], _RecordingObserver]:
     observer = _RecordingObserver()
     # RefiningRange is a valid range at runtime; the cast satisfies the
@@ -378,3 +390,259 @@ class TestBothCountersReachTheProvider:
 
         assert decide.choose_package_to_decide(resolver) is not None
         assert provider.counters == [({"a": 3}, {"b": 7})] * 2
+
+
+_GRAPH: Mapping[Any, Mapping[Any, RangeProtocol[int]]] = {
+    "a": {"b": RefiningRange.at_least(1)}
+}
+
+
+def _graph_dependencies(package: Any) -> Mapping[Any, RangeProtocol[int]]:
+    """Dependencies in the graph the hint tests resolve: ``a`` needs ``b``."""
+    return _GRAPH.get(package, {})
+
+
+class _SnapshotCountingSolution(PartialSolution[Any, Any]):
+    """A real partial solution that counts the snapshots it hands out."""
+
+    def __init__(self, range_type: type[RangeProtocol[Any]]) -> None:
+        super().__init__(range_type=range_type)
+        self.snapshots_taken = 0
+
+    def positive_ranges(self) -> Mapping[Any, RangeProtocol[Any]]:
+        self.snapshots_taken += 1
+        return super().positive_ranges()
+
+    def decisions(self) -> Mapping[Any, Any]:
+        self.snapshots_taken += 1
+        return super().decisions()
+
+
+class _HintRecordingProvider(_InertProvider):
+    """Copies each hint it is given, and answers 1 wherever the range allows."""
+
+    def __init__(self) -> None:
+        self.hints: list[tuple[dict[Any, RangeProtocol[int]], dict[Any, int]]] = []
+
+    def receive_partial_solution_hint(
+        self,
+        positive_ranges: Mapping[Any, RangeProtocol[int]],
+        decisions: Mapping[Any, int],
+    ) -> None:
+        self.hints.append((dict(positive_ranges), dict(decisions)))
+
+    def choose_version(
+        self, package: Any, version_range: RangeProtocol[int]
+    ) -> int | None:
+        return 1 if 1 in version_range else None
+
+    def has_satisfying_version(
+        self, package: Any, version_range: RangeProtocol[int]
+    ) -> bool:
+        return 1 in version_range
+
+    def get_dependencies(
+        self, package: Any, version: int
+    ) -> Mapping[Any, RangeProtocol[int]]:
+        return _graph_dependencies(package)
+
+
+class _InheritedHintProvider(BaseProvider[Any, int]):
+    """The five methods ``BaseProvider`` leaves owed, and its no-op hint."""
+
+    def choose_version(
+        self, package: Any, version_range: RangeProtocol[int]
+    ) -> int | None:
+        return 1 if 1 in version_range else None
+
+    def has_satisfying_version(
+        self, package: Any, version_range: RangeProtocol[int]
+    ) -> bool:
+        return 1 in version_range
+
+    def get_dependencies(
+        self, package: Any, version: int
+    ) -> Mapping[Any, RangeProtocol[int]]:
+        return _graph_dependencies(package)
+
+    def prioritize(
+        self,
+        package: Any,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[Any, int],
+        culprit_counts: Mapping[Any, int] | None = None,
+    ) -> Any:
+        return 0
+
+    def widen_decision(self, package: Any, version: int) -> RangeProtocol[int] | None:
+        return None
+
+
+class _OverridingHintProvider(_InheritedHintProvider):
+    """A ``BaseProvider`` subclass that does read the hint."""
+
+    def __init__(self) -> None:
+        self.hints: list[tuple[dict[Any, RangeProtocol[int]], dict[Any, int]]] = []
+
+    def receive_partial_solution_hint(
+        self,
+        positive_ranges: Mapping[Any, RangeProtocol[int]],
+        decisions: Mapping[Any, int],
+    ) -> None:
+        self.hints.append((dict(positive_ranges), dict(decisions)))
+
+
+class _HooklessProvider:
+    """A provider that never grew a ``receive_partial_solution_hint``."""
+
+    def choose_version(
+        self, package: Any, version_range: RangeProtocol[int]
+    ) -> int | None:
+        return 1 if 1 in version_range else None
+
+
+class _ProviderSwappingObserver(ResolverObserver[Any, int]):
+    """Hands the resolver a different provider as soon as a decision lands."""
+
+    def __init__(self, replacement: ResolverProvider[Any, int]) -> None:
+        self.replacement = replacement
+        self.resolver: Resolver[Any, int] | None = None
+
+    def on_decision(self, package: Any, version: int, level: int) -> None:
+        assert self.resolver is not None
+        self.resolver.provider = self.replacement
+
+
+def _counting_resolver(
+    provider: ResolverProvider[Any, int],
+) -> tuple[Resolver[Any, int], _SnapshotCountingSolution]:
+    """A resolver whose solution counts snapshots, ``a`` decided, ``b`` derived."""
+    resolver, _ = _resolver_with(provider)
+    solution = _SnapshotCountingSolution(resolver.range_type)
+    resolver.solution = solution
+
+    solution.decide("a", 2)
+    solution.derive(
+        "b", RefiningRange.at_least(1), positive=True, cause=_dependency_cause()
+    )
+    solution.snapshots_taken = 0
+    return resolver, solution
+
+
+class TestThePartialSolutionHint:
+    """Each provider shape that might read the hint is given it.
+
+    The two snapshots ``choose_version`` passes are what the hook costs, so a
+    provider inheriting the no-op must not make the solution build them.
+    """
+
+    def test_a_structural_implementer_is_given_both_maps(self) -> None:
+        """Both maps arrive as they stand: a range each, a decision only for ``a``."""
+        provider = _HintRecordingProvider()
+        resolver, solution = _counting_resolver(provider)
+
+        assert decide.choose_version(resolver, "b") == 1
+
+        assert len(provider.hints) == 1
+        positive_ranges, decisions = provider.hints[0]
+        assert set(positive_ranges) == {"a", "b"}
+        assert decisions == {"a": 2}
+        assert solution.snapshots_taken == 2
+
+    def test_an_overriding_subclass_is_given_the_hint(self) -> None:
+        """Inheriting ``BaseProvider`` does not disqualify an override."""
+        provider = _OverridingHintProvider()
+        resolver, solution = _counting_resolver(provider)
+
+        assert decide.choose_version(resolver, "b") == 1
+
+        assert len(provider.hints) == 1
+        assert solution.snapshots_taken == 2
+
+    def test_an_instance_attribute_override_is_given_the_hint(self) -> None:
+        """A hook installed on the instance is not the inherited no-op."""
+        hints: list[tuple[Mapping[Any, RangeProtocol[int]], Mapping[Any, int]]] = []
+
+        def record(
+            positive_ranges: Mapping[Any, RangeProtocol[int]],
+            decisions: Mapping[Any, int],
+        ) -> None:
+            hints.append((positive_ranges, decisions))
+
+        provider = _InheritedHintProvider()
+        provider.receive_partial_solution_hint = record
+
+        resolver, solution = _counting_resolver(provider)
+
+        assert decide.choose_version(resolver, "b") == 1
+
+        assert len(hints) == 1
+        assert solution.snapshots_taken == 2
+
+    def test_the_inherited_no_op_costs_no_snapshot(self) -> None:
+        """Nothing can read the hint, so the solution is never asked for one."""
+        resolver, solution = _counting_resolver(_InheritedHintProvider())
+
+        assert decide.choose_version(resolver, "b") == 1
+
+        assert solution.snapshots_taken == 0
+
+    def test_a_provider_missing_the_hook_raises_at_the_call(self) -> None:
+        """Construction does not read the method, so the decision is where it fails."""
+        provider = cast("ResolverProvider[Any, int]", _HooklessProvider())
+        resolver, _ = _counting_resolver(provider)
+
+        with pytest.raises(AttributeError, match="receive_partial_solution_hint"):
+            decide.choose_version(resolver, "b")
+
+    def test_a_provider_swapped_mid_resolve_is_given_the_hint(self) -> None:
+        """The provider is read per decision, so a swap lands on the new one."""
+        recorder = _HintRecordingProvider()
+        observer = _ProviderSwappingObserver(recorder)
+        resolver = Resolver(
+            _InheritedHintProvider(),
+            observer=observer,
+            range_type=cast("type[RangeProtocol[int]]", RefiningRange),
+        )
+        observer.resolver = resolver
+
+        assert resolver.resolve({"a": RefiningRange.at_least(1)}) == {"a": 1, "b": 1}
+
+        assert len(recorder.hints) == 1
+
+    def test_a_hint_installed_between_resolves_is_honoured(self) -> None:
+        """The answer is re-asked per resolve, not kept from the one before."""
+        hints: list[tuple[Mapping[Any, RangeProtocol[int]], Mapping[Any, int]]] = []
+
+        def record(
+            positive_ranges: Mapping[Any, RangeProtocol[int]],
+            decisions: Mapping[Any, int],
+        ) -> None:
+            hints.append((positive_ranges, decisions))
+
+        provider = _InheritedHintProvider()
+        resolver, _ = _resolver_with(provider)
+        requirements = {"a": RefiningRange.at_least(1)}
+
+        assert resolver.resolve(requirements) == {"a": 1, "b": 1}
+        assert hints == []
+
+        provider.receive_partial_solution_hint = record
+
+        assert resolver.resolve(requirements) == {"a": 1, "b": 1}
+        assert len(hints) == 2
+
+    def test_a_whole_resolve_takes_one_snapshot_for_the_result(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The one snapshot a whole resolve takes is the result being built."""
+        monkeypatch.setattr(
+            "nab_resolver.resolver.PartialSolution", _SnapshotCountingSolution
+        )
+        resolver, _ = _resolver_with(_InheritedHintProvider())
+
+        assert resolver.resolve({"a": RefiningRange.at_least(1)}) == {"a": 1, "b": 1}
+
+        solution = cast("_SnapshotCountingSolution", resolver.solution)
+        assert resolver.stats.decisions == 3
+        assert solution.snapshots_taken == 1

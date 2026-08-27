@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from ._value import SlottedValue
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -138,8 +139,7 @@ class DecisionOrder(enum.Enum):
     """Wait for each listing, so the sort key cannot see arrival order."""
 
 
-@dataclass(frozen=True, slots=True)
-class LocalSource:
+class LocalSource(SlottedValue):
     """A source tree on disk used as the only candidate for a package.
 
     The package is pinned to the version the tree declares in
@@ -150,10 +150,22 @@ class LocalSource:
     layouts, and ``editable`` records an editable install in the lockfile.
     """
 
-    name: str
-    path: str
-    editable: bool = False
-    subdirectory: str | None = None
+    __slots__ = ("editable", "name", "path", "subdirectory")
+    __match_args__ = ("name", "path", "editable", "subdirectory")
+
+    def __init__(
+        self,
+        name: str,
+        path: str,
+        *,
+        editable: bool = False,
+        subdirectory: str | None = None,
+    ) -> None:
+        """Record the tree at ``path`` as the only candidate for ``name``."""
+        self.name = name
+        self.path = path
+        self.editable = editable
+        self.subdirectory = subdirectory
 
     @property
     def descriptor(self) -> str:
@@ -161,8 +173,7 @@ class LocalSource:
         return f"local source {self.name!r}"
 
 
-@dataclass(frozen=True, slots=True)
-class VcsSource:
+class VcsSource(SlottedValue):
     """A VCS reference used as the only candidate for a package.
 
     ``url`` is a pip-style VCS URL, e.g.
@@ -170,8 +181,13 @@ class VcsSource:
     read for metadata as a :class:`LocalSource` is.
     """
 
-    name: str
-    url: str
+    __slots__ = ("name", "url")
+    __match_args__ = ("name", "url")
+
+    def __init__(self, name: str, url: str) -> None:
+        """Record the repository at ``url`` as the only candidate for ``name``."""
+        self.name = name
+        self.url = url
 
     @property
     def descriptor(self) -> str:
@@ -179,8 +195,7 @@ class VcsSource:
         return f"vcs source {self.name!r}"
 
 
-@dataclass(frozen=True, slots=True)
-class ArchiveSource:
+class ArchiveSource(SlottedValue):
     """A direct-URL archive used as the only candidate for a package.
 
     ``url`` carries the archive's hash, and an optional subdirectory, in its
@@ -189,8 +204,13 @@ class ArchiveSource:
     :class:`LocalSource` is.
     """
 
-    name: str
-    url: str
+    __slots__ = ("name", "url")
+    __match_args__ = ("name", "url")
+
+    def __init__(self, name: str, url: str) -> None:
+        """Record the archive at ``url`` as the only candidate for ``name``."""
+        self.name = name
+        self.url = url
 
     @property
     def descriptor(self) -> str:
@@ -198,8 +218,7 @@ class ArchiveSource:
         return f"archive source {self.name!r}"
 
 
-@dataclass(frozen=True, slots=True)
-class SourceRequest:
+class SourceRequest(SlottedValue):
     """One declared source and everything a host needs to materialise it.
 
     ``build_policy`` is the source's effective policy, per-package overrides
@@ -207,16 +226,43 @@ class SourceRequest:
     demands a full commit sha.
     """
 
-    package: str
-    source: LocalSource | VcsSource | ArchiveSource
-    build_policy: BuildPolicy
-    vcs_cache_dir: Path | None
-    archive_cache_dir: Path | None
-    require_pin: bool
+    __slots__ = (
+        "archive_cache_dir",
+        "build_policy",
+        "package",
+        "require_pin",
+        "source",
+        "vcs_cache_dir",
+    )
+    __match_args__ = (
+        "package",
+        "source",
+        "build_policy",
+        "vcs_cache_dir",
+        "archive_cache_dir",
+        "require_pin",
+    )
+
+    def __init__(
+        self,
+        package: str,
+        source: LocalSource | VcsSource | ArchiveSource,
+        build_policy: BuildPolicy,
+        vcs_cache_dir: Path | None,
+        archive_cache_dir: Path | None,
+        *,
+        require_pin: bool,
+    ) -> None:
+        """Record what a host needs to materialise ``source`` for ``package``."""
+        self.package = package
+        self.source = source
+        self.build_policy = build_policy
+        self.vcs_cache_dir = vcs_cache_dir
+        self.archive_cache_dir = archive_cache_dir
+        self.require_pin = require_pin
 
 
-@dataclass(frozen=True, slots=True)
-class SourceMaterialization:
+class SourceMaterialization(SlottedValue):
     """What a host produced for one declared source.
 
     ``path`` is the directory the metadata was read from.  ``commit_sha`` is
@@ -224,6 +270,13 @@ class SourceMaterialization:
     an archive.
     """
 
-    path: Path
-    metadata: WheelMetadata
-    commit_sha: str | None
+    __slots__ = ("commit_sha", "metadata", "path")
+    __match_args__ = ("path", "metadata", "commit_sha")
+
+    def __init__(
+        self, path: Path, metadata: WheelMetadata, commit_sha: str | None
+    ) -> None:
+        """Record the tree at ``path`` and the metadata read out of it."""
+        self.path = path
+        self.metadata = metadata
+        self.commit_sha = commit_sha

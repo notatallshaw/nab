@@ -12,7 +12,7 @@ It provides:
 - A Simple-API client with JSON and HTML decoders.
 - A disk cache for project listings and file metadata responses.
 - A multi-index router (ordered named indexes plus per-package
-  overrides guarded by PEP 508 markers).
+  overrides that pin a package to one index).
 - A small VCS clone helper used by the higher-level VCS policy.
 
 ## When to use it

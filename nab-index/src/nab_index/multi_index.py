@@ -12,11 +12,9 @@ an absent package.
 
 Per-package overrides route a package to a *named* index regardless
 of order; when an override matches, *only* that index is consulted
-(strict pin), matching uv's ``[tool.uv.sources]`` semantics.
-
-Marker evaluation for overrides happens upstream; this layer just sees
-a ``canonical_package_name -> index_name`` mapping that has already
-been resolved against the active environment.
+(strict pin), matching uv's ``[tool.uv.sources]`` semantics.  The
+index is chosen before any version is known, so a route carries no
+version scope and no marker.
 """
 
 from __future__ import annotations
@@ -62,6 +60,10 @@ class IndexClient(Protocol):
 
     def served_unreadable_only(self, package: str) -> bool:
         """Whether a listing for ``package`` held only files nab cannot read."""
+        ...
+
+    def served_all_yanked(self, package: str) -> bool:
+        """Whether a listing for ``package`` held files and yanked every one."""
         ...
 
     async def get_metadata_text(
@@ -234,6 +236,17 @@ class MultiIndexClient:
         """
         return any(
             client.served_unreadable_only(package) for client in self._clients.values()
+        )
+
+    def served_all_yanked(self, package: str) -> bool:
+        """Whether a walked index listed ``package`` and yanked every file.
+
+        Asked of every client for the same reason
+        :meth:`served_unreadable_only` is: an empty walk routes ``package``
+        to the first index, which need not be the one that served it.
+        """
+        return any(
+            client.served_all_yanked(package) for client in self._clients.values()
         )
 
     async def get_metadata_text(
