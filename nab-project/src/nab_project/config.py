@@ -80,7 +80,7 @@ from .config_sources import (
     resolve_config,
 )
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
-from .paths import resolve_path
+from .paths import realpath, resolve_path
 from .workspace import (
     WorkspaceConfig,
     discover_workspace_root,
@@ -657,11 +657,11 @@ def read_pyproject_config(
     """
     if anchor is None:
         anchor = datetime.now(timezone.utc)
-    pyproject_dir = path.parent.resolve()
+    pyproject_dir = realpath(path.parent)
     _reject_unknown_pyproject_keys(path)
     project_requires_python = _read_project_requires_python(path)
     # Point the pyproject root at ``pyproject_dir / path.name`` (not
-    # ``path.resolve()``) so the registry's declaring directory is the
+    # ``realpath(path)``) so the registry's declaring directory is the
     # symlink's own directory, matching the historical local-sources base
     # and the project-dir nab.toml lookup.  ``open`` still follows the
     # symlink, so the same file is read.
@@ -893,7 +893,7 @@ def _apply_workspace_discovery(
     if config.workspace is not None:
         discovered = workspace_local_sources(
             config.workspace.members,
-            root_dir=path.parent.resolve(),
+            root_dir=realpath(path.parent),
             declared_in=declared_in,
         )
     else:

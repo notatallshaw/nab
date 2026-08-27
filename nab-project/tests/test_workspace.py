@@ -172,6 +172,17 @@ class TestDiscoverWorkspaceRoot:
         )
         assert discover_workspace_root(member) == (root / "pyproject.toml")
 
+    def test_symlink_loop_below_the_root_still_finds_it(self, tmp_path: Path) -> None:
+        """The walk starts inside the loop, so it still reaches the root above."""
+        root = _write(
+            tmp_path / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\nmembers = []\n",
+        )
+        (tmp_path / "loop").symlink_to("loop")
+        member = tmp_path / "loop" / "pyproject.toml"
+        assert discover_workspace_root(member) == root.resolve()
+
     def test_walks_past_non_table_tool_nab(self, tmp_path: Path) -> None:
         _write(
             tmp_path / "outer" / "pyproject.toml",
@@ -308,6 +319,25 @@ class TestReadWorkspaceMembers:
         )
         with pytest.raises(
             WorkspaceDiscoveryError, match="is not a usable filesystem path"
+        ):
+            read_workspace_members(root)
+
+    def test_member_through_a_symlink_loop_raises(self, tmp_path: Path) -> None:
+        """A loop below a member is reported against the member's path.
+
+        Whether the loop stats as unreadable or as absent varies by
+        platform, so only the path is asserted.
+        """
+        root = _write(
+            tmp_path / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\n"
+            'members = ["loop"]\n',
+        )
+        (tmp_path / "loop").symlink_to("loop")
+        member_pyproject = tmp_path.resolve() / "loop" / "pyproject.toml"
+        with pytest.raises(
+            WorkspaceDiscoveryError, match=re.escape(str(member_pyproject))
         ):
             read_workspace_members(root)
 
