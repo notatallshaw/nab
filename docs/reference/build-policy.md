@@ -50,18 +50,21 @@ Static metadata only, from any source:
 
 Picks the most reproducible posture: every input to the SAT
 problem is a file read, not a sandboxed subprocess.  Use `never`
-when you want a lockdown resolve with no backend invocations at
-all.
+for a lockdown resolve; only a per-package or per-index override
+lets a backend run.
 
 ## `build-local` (default)
 
-Adds PEP 517 backend invocation on local checkouts.  When a
-`[[tool.nab.local-sources]]` entry (or a workspace member) has
-`dynamic = ["dependencies"]`, the project's
+Adds PEP 517 backend invocation on local checkouts.  When the
+static read of a `[[tool.nab.local-sources]]` entry (or a
+workspace member) comes up empty, the project's
 `[build-system].build-backend` runs inside an isolated venv via
-`nab_project._build.runner` and the
-resulting wheel `METADATA` is used.  Remote PyPI sdists, VCS
-clones, and archive sources remain static-only.
+`nab_project._build.runner` and the resulting wheel `METADATA` is
+used.  Empty means a missing or malformed `[project]`, or a
+`dynamic` list naming `version`, `requires-python`,
+`dependencies`, or `optional-dependencies`, the same cases that
+end the resolve under `never`.  Remote PyPI sdists, VCS clones,
+and archive sources remain static-only.
 
 ## `build-remote`
 
@@ -170,8 +173,12 @@ being built, pin it to wheels:
 dist-policy = "wheel-only"
 ```
 
-The setting is inert where builds cannot run: under
-`build-policy = "never"`, and for any target that declares a platform.
+`build-requires-depth` is inert only where no build can run.  A target
+that declares a platform is such a case: there an explicit non-`never`
+build policy, global or in any override, is a config error.  A global
+`build-policy = "never"` is not, since a per-package or per-index
+override can still permit a build, and the environment opened for it
+reads `build-requires-depth` from the same config.
 
 ## Overrides
 

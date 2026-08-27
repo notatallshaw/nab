@@ -22,10 +22,16 @@ targets one at a time, each on the same engine and the same
 single-environment resolve a project without a matrix runs once for the
 host.
 
-The targets share one fetcher, so each package's metadata is fetched at
-most once across the whole matrix. After a target resolves, its pins
-flow forward as preferences for the next, giving best-effort alignment
-across targets.
+The targets share one fetcher, so a package's listing is read once for
+the whole matrix rather than once per target. Metadata is shared per
+wheel rather than per package, so a release publishing one wheel per
+interpreter or per platform costs one read for each wheel the matrix
+picks (see Where a version's metadata comes from below). An sdist's
+`PKG-INFO` stands for the whole version, so one read serves every
+target that picks it.
+
+After a target resolves, its pins flow forward as preferences for the
+next, giving best-effort alignment across targets.
 
 The lock a matrix produces is the lock a single environment produces,
 with more environments in it: the same shape, the same
@@ -201,7 +207,7 @@ operators (`<`, `<=`, `>`, `>=`) and the ones naming a region (`==`,
 into an interval is a loud error rather than a silent guess: a
 membership test (`in`, `not in`), a verbatim `===`, a non-version
 comparison, a comparison against another marker variable, or certain
-prerelease literals strictly inside the minor.
+pre- or post-release literals strictly inside the minor.
 
 To resolve a minor as one real release rather than split it, name the
 patch you deploy on:

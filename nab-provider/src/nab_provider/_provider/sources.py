@@ -3,8 +3,8 @@
 A declared source becomes the only candidate for its package: PyPI is not
 consulted.  The clone, the download and the directory read are the host's,
 behind :meth:`~nab_provider.fetch_port.FetchPort.request_source_listing`; what
-comes back becomes one synthetic ``SdistFile`` whose version is read from
-``[project].version``.
+comes back becomes one synthetic ``SdistFile`` whose version the host read
+from ``[project].version`` or took from the build backend.
 """
 
 from __future__ import annotations
@@ -61,9 +61,9 @@ def seed_synthetic_listing(
     actual = canonicalize_name(metadata.name)
     if actual != normalized:
         msg = (
-            f"{descriptor} declares package {normalized!r} but its"
-            f" [project].name is {actual!r} (at {path}); a source declared for"
-            f" one name must not provide a different project"
+            f"{descriptor} declares package {normalized!r} but the project at"
+            f" {path} is named {actual!r}; a source declared for one name must"
+            f" not provide a different project"
         )
         raise SourceNameMismatchError(msg)
 

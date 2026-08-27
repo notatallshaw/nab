@@ -244,7 +244,7 @@ def test_a_lock_offering_a_build_group_is_up_to_date(
     out = tmp_path / "pylock.toml"
     _write_lock(pyproject, out, _result({"foo": "1.0"}))
     capsys.readouterr()
-    assert tomli.loads(out.read_text())["dependency-groups"] == ["main", "build"]
+    assert tomli.loads(out.read_text())["dependency-groups"] == ["build", "main"]
 
     _run_locked(pyproject, out, _locked_mock(_result({"foo": "1.0"})))
 
@@ -538,6 +538,54 @@ def test_satisfiable_and_reproducible_falls_through_up_to_date(
     assert out.read_bytes() == before
 
 
+def test_a_reordered_selection_falls_through_up_to_date(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Flag order is no part of the selection, so the lock is still up to date."""
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+        "[project.optional-dependencies]\n"
+        'xb = ["foo"]\nxa = ["foo"]\n'
+        "[dependency-groups]\n"
+        'gb = ["foo"]\nga = ["foo"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    selection = ["--groups", "gb", "ga", "--extras", "xb", "xa"]
+    _write_lock(pyproject, out, _result({"foo": "1.0"}), *selection)
+    capsys.readouterr()
+    before = out.read_bytes()
+
+    reordered = ["--groups", "ga", "gb", "--extras", "xa", "xb"]
+    mock = _locked_mock()
+    _run_locked(pyproject, out, mock, *reordered)
+
+    assert "is up to date" in capsys.readouterr().err
+    mock.assert_called_once()
+    assert out.read_bytes() == before
+
+
+def test_all_groups_falls_through_up_to_date_on_a_listed_selection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--all-groups`` reaches the same names, in the order they are declared."""
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\ndependencies = ["foo"]\n'
+        "[dependency-groups]\n"
+        'gb = ["foo"]\nga = ["foo"]\n',
+    )
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}), "--groups", "ga", "gb")
+    capsys.readouterr()
+
+    mock = _locked_mock()
+    _run_locked(pyproject, out, mock, "--all-groups")
+
+    assert "is up to date" in capsys.readouterr().err
+    mock.assert_called_once()
+
+
 def test_the_base_group_named_in_default_groups_falls_through(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -554,7 +602,7 @@ def test_the_base_group_named_in_default_groups_falls_through(
     out = tmp_path / "pylock.toml"
     _write_lock(pyproject, out, _result({"foo": "1.0", "bb": "1.0"}))
     capsys.readouterr()
-    assert tomli.loads(out.read_text())["default-groups"] == ["dev", "base"]
+    assert tomli.loads(out.read_text())["default-groups"] == ["base", "dev"]
 
     mock = _locked_mock(_result({"foo": "1.0", "bb": "1.0"}))
     _run_locked(pyproject, out, mock)
@@ -958,6 +1006,74 @@ def test_unreadable_requirement_with_changed_envelope_reports_the_parse_error(
     err = capsys.readouterr().err
     assert "[project].dependencies" in err
     assert "is out of date" not in err
+
+
+# --- --python cases: the flag is named, never the lock ---
+
+
+def test_invalid_python_value_reports_the_flag_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A malformed --python names the flag, not the stale lock."""
+    body = '[project]\ndependencies = ["foo"]\n[tool.nab]\nrequires-python = ">=3.8"\n'
+    pyproject = _write_pyproject(tmp_path, body)
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    pyproject.write_text(body.replace(">=3.8", ">=3.9"), encoding="utf-8")
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--python", "3.x")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "error: --python must be a version like '3.12' or '3.12.4', got '3.x'" in err
+    assert "is out of date" not in err
+    assert "re-run `nab lock" not in err
+    mock.assert_not_called()
+
+
+def test_invalid_python_value_is_reported_before_a_missing_lock(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The missing-lock remedy would hand the rejected value back."""
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo"]\n')
+    out = tmp_path / "pylock.toml"
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--python", "3.x")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "error: --python must be a version like" in err
+    assert "no lockfile" not in err
+    assert "run `nab lock" not in err
+    mock.assert_not_called()
+
+
+def test_python_outside_requires_python_reports_the_declaration_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A --python the declaration excludes names requires-python, not the lock."""
+    body = '[project]\ndependencies = ["foo"]\n[tool.nab]\nrequires-python = ">=3.8"\n'
+    pyproject = _write_pyproject(tmp_path, body)
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    pyproject.write_text(body.replace(">=3.8", ">=3.9"), encoding="utf-8")
+
+    mock = _locked_mock()
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock, "--python", "3.7")
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "requires-python = '>=3.9' excludes the resolve target Python 3.7" in err
+    assert "is out of date" not in err
+    assert "re-run `nab lock" not in err
+    mock.assert_not_called()
 
 
 # --- precondition cases: no resolve runs ---

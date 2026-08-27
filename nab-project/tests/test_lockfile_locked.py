@@ -481,11 +481,32 @@ class TestSummarizeLock:
         lock_input = _lock_input({"foo": _pin("foo", "1.0")})
         assert summarize_lock(lock_input, {"foo": Version("1.0")}) == "1 packages"
 
-    def test_added_upgraded_and_removed(self) -> None:
-        lock_input = _lock_input({"foo": _pin("foo", "2.0"), "baz": _pin("baz", "1.0")})
-        prior = {"foo": Version("1.0"), "bar": Version("1.0")}
+    def test_each_change_kind_reports_its_own_count(self) -> None:
+        """Each kind gets a distinct count, so a swapped label changes the summary."""
+        lock_input = _lock_input(
+            {
+                "added1": _pin("added1", "1.0"),
+                "added2": _pin("added2", "1.0"),
+                "added3": _pin("added3", "1.0"),
+                "upgraded1": _pin("upgraded1", "2.0"),
+                "upgraded2": _pin("upgraded2", "2.0"),
+                "downgraded1": _pin("downgraded1", "1.0"),
+                "unchanged": _pin("unchanged", "1.0"),
+            }
+        )
+        prior = {
+            "upgraded1": Version("1.0"),
+            "upgraded2": Version("1.0"),
+            "downgraded1": Version("2.0"),
+            "unchanged": Version("1.0"),
+            "removed1": Version("1.0"),
+            "removed2": Version("1.0"),
+            "removed3": Version("1.0"),
+            "removed4": Version("1.0"),
+        }
+
         assert summarize_lock(lock_input, prior) == (
-            "2 packages: 1 added, 1 upgraded, 1 removed"
+            "7 packages: 3 added, 2 upgraded, 1 downgraded, 4 removed"
         )
 
     def test_downgrade_is_reported(self) -> None:

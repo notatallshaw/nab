@@ -81,6 +81,7 @@ from .output import (
     OutputOptionError,
     Printer,
     ProgressReporter,
+    Verbosity,
     install_log_handler,
     parse_output_options,
 )
@@ -89,7 +90,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
     from typing import TextIO
 
-    from nab_index.transport import AsyncHttpTransport
+    from nab_index.transport import AsyncHttpTransport, HttpResponse
     from nab_project.resolve import ResolveResult
     from nab_provider.provider import ResolutionStrategy
 
@@ -155,6 +156,15 @@ def printer() -> Printer:
     return _printer if _printer is not None else Printer()
 
 
+def _make_urllib3_transport() -> AsyncHttpTransport:
+    """Return a urllib3 transport, importing urllib3 and truststore to build it."""
+    from nab_index.urllib3_async_transport import (  # noqa: PLC0415
+        Urllib3AsyncTransport,
+    )
+
+    return Urllib3AsyncTransport()
+
+
 def _make_transport(backend: HttpBackend) -> AsyncHttpTransport:
     """Return the transport for ``backend``.
 
@@ -181,11 +191,44 @@ def _make_transport(backend: HttpBackend) -> AsyncHttpTransport:
             )
             sys.exit(1)
 
-    from nab_index.urllib3_async_transport import (  # noqa: PLC0415
-        Urllib3AsyncTransport,
-    )
+    return _make_urllib3_transport()
 
-    return Urllib3AsyncTransport()
+
+class _DeferredUrllib3Transport:
+    """Transport that builds a urllib3 transport on the first request.
+
+    Building one imports urllib3 and truststore, which a resolve answered
+    entirely from the cache never needs.
+    """
+
+    def __init__(self) -> None:
+        self._transport: AsyncHttpTransport | None = None
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> HttpResponse:
+        if self._transport is None:
+            self._transport = _make_urllib3_transport()
+        return await self._transport.get(url, headers=headers)
+
+    async def aclose(self) -> None:
+        if self._transport is not None:
+            await self._transport.aclose()
+
+
+def _make_resolve_transport(
+    backend: HttpBackend, *, offline: bool
+) -> AsyncHttpTransport:
+    """Return the transport for a resolve on ``backend``.
+
+    An offline resolve is served from the cache and asks for no URL, so the
+    urllib3 transport is built only if something does. httpx is built up front
+    either way: a missing httpx exits the CLI, which has to happen on the main
+    thread before the resolve starts.
+    """
+    if offline and backend == "urllib3":
+        return _DeferredUrllib3Transport()
+    return _make_transport(backend)
 
 
 def _default_cache_dir() -> Path:
@@ -660,7 +703,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
             if progress is not None:
                 progress.clear()
     except ResolutionError as e:
-        printer().error(f"resolution failed: {e}")
+        printer().error(f"resolution failed: {_error_text(e)}")
         sys.exit(1)
     except (
         UnsupportedVcsError,
@@ -727,7 +770,7 @@ def _report_failures(result: ResolveResult) -> None:
     """
     if len(result.target_results) <= 1:
         first = next(tr.error for tr in result.every_result if tr.error is not None)
-        printer().error(f"resolution failed: {first}")
+        printer().error(f"resolution failed: {_error_text(first)}")
         return
 
     blocks: list[str] = []
@@ -753,8 +796,21 @@ def _report_failures(result: ResolveResult) -> None:
 
 def _error_lines(error: ResolutionError | None) -> list[str]:
     """Render a failed target's error as commented block lines."""
-    text = f"{type(error).__name__}: {error}" if error is not None else ""
+    text = f"{type(error).__name__}: {_error_text(error)}" if error is not None else ""
     return [f"#   {line}" for line in text.splitlines()]
+
+
+def _error_text(error: ResolutionError) -> str:
+    """Return the error at the depth the run's verbosity asks for.
+
+    A resolution failure carries two renderings of its ``Diagnostics:``
+    section: one line per package by default, and each package's clauses
+    and ``note:`` at ``-v``.  An error nothing augmented carries only the
+    one.
+    """
+    if printer().verbosity >= Verbosity.VERBOSE and error.verbose_message is not None:
+        return error.verbose_message
+    return str(error)
 
 
 # Layered boolean flags (currently just --offline) are tri-state, which tyro

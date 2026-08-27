@@ -29,11 +29,12 @@ from .client import (
     MalformedSimpleResponseError,
     SdistFile,
     WheelFile,
-    _extract_sdist_files,
+    _extract_sdist_files_if_readable,
     _header,
     _listing_body,
     _parse_files,
     _verify_metadata_hash,
+    holds_only_yanked,
     holds_unreadable_format,
     verify_sdist_hash,
 )
@@ -345,6 +346,7 @@ class CachedAsyncSimpleClient:
         self._offline = offline
         self._serialization = serialization
         self._unreadable_only: set[str] = set()
+        self._all_yanked: set[str] = set()
         self._range_memo = (
             range_memo if range_memo is not None else RangeCapabilityMemo()
         )
@@ -613,11 +615,17 @@ class CachedAsyncSimpleClient:
         files = _parse_files(data, self._index_url, package, page_url=page_url)
         if not files and holds_unreadable_format(data):
             self._unreadable_only.add(package)
+        if not files and holds_only_yanked(data):
+            self._all_yanked.add(package)
         return files
 
     def served_unreadable_only(self, package: str) -> bool:
         """Whether a listing for ``package`` held only files nab cannot read."""
         return package in self._unreadable_only
+
+    def served_all_yanked(self, package: str) -> bool:
+        """Whether a listing for ``package`` held files and yanked every one."""
+        return package in self._all_yanked
 
     def _unmodified_records(
         self, package: str, policy: CachePolicy
@@ -829,7 +837,10 @@ class CachedAsyncSimpleClient:
         Cache miss + offline raises :class:`OfflineError`.  Either
         element may be ``None`` if the corresponding file is absent
         from the archive (or the archive cannot be parsed).  Both are
-        treated as immutable: cached forever, never revalidated.
+        treated as immutable: cached forever, never revalidated.  An
+        archive that was read is cached even when neither file came out
+        of it; one that could not be read is not, so a later run can try
+        again.
 
         When ``sdist_hashes`` carries an acceptable published digest, the
         downloaded archive is verified against it before extraction. A
@@ -853,15 +864,16 @@ class CachedAsyncSimpleClient:
         selected = select_artifact_hash(sdist_hashes)
         if selected is not None:
             verify_sdist_hash(response.content, selected)
-        pkg_info, pyproject_toml = _extract_sdist_files(response.content)
+        files = _extract_sdist_files_if_readable(response.content)
 
         if self._sdist_archive_hold is not None:
             self._sdist_archive_hold.put(package, version, response.content)
 
-        if pkg_info is not None or pyproject_toml is not None:
-            self._cache.put_sdist_files(package, version, pkg_info, pyproject_toml)
+        if files is None:
+            return (None, None)
 
-        return (pkg_info, pyproject_toml)
+        self._cache.put_sdist_files(package, version, *files)
+        return files
 
     async def get_sdist_archive(
         self,

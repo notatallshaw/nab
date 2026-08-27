@@ -144,6 +144,27 @@ class TestInMemoryIndex:
         idx.store_listing("foo", [], offline_miss=True)
         assert event.is_set()
 
+    def test_the_yank_mark_is_set_before_the_listing_lands(self) -> None:
+        """The yank mark lands first, so a page caught mid-store never reads absent."""
+        idx = InMemoryIndex()
+        readback: list[str] = []
+
+        class _ReadOnPublish(dict[str, list[WheelFile | SdistFile]]):
+            """Classify the page the instant its listing slot becomes readable."""
+
+            def __setitem__(self, key: str, value: list[WheelFile | SdistFile]) -> None:
+                super().__setitem__(key, value)
+                assert idx.get_listing(key) == []
+                readback.append(
+                    "yanked" if idx.is_all_yanked_listing(key) else "absent"
+                )
+
+        idx._listings = _ReadOnPublish()
+        idx.store_listing("foo", [], all_yanked=True)
+
+        assert readback == ["yanked"]
+        assert idx.is_all_yanked_listing("foo")
+
     def test_metadata_roundtrip(self) -> None:
         idx = InMemoryIndex()
         assert idx.get_metadata("foo", "1.0") is None
@@ -1650,6 +1671,7 @@ class TestFetchCoordinator:
                 *,
                 offline_miss: bool = False,
                 unreadable_only: bool = False,
+                all_yanked: bool = False,
             ) -> None:
                 serving_at_event.append(self.get_listing_index(package))
                 super().store_listing(
@@ -1657,6 +1679,7 @@ class TestFetchCoordinator:
                     data,
                     offline_miss=offline_miss,
                     unreadable_only=unreadable_only,
+                    all_yanked=all_yanked,
                 )
 
         with _coord() as coord:
@@ -2319,7 +2342,7 @@ class TestMultiIndexCoordinator:
                 index_routes=[IndexRoute("torch", "torch-cpu")],
             ) as coord,
         ):
-            coord.request_listing("torch").wait(timeout=5)
+            assert coord.request_listing("torch").wait(timeout=30)
             assert coord.index.get_listing_index("torch") == "torch-cpu"
 
     def test_explicit_cache_backend_with_multi_index_raises(self) -> None:

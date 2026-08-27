@@ -22,6 +22,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import pytest
 from packaging.utils import canonicalize_name
+from urllib3 import HTTPHeaderDict
 
 import nab_index.cache as cache_mod
 import nab_index.cached_client as cached_client_mod
@@ -42,8 +43,6 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelFile,
     WheelHashMismatchError,
-    _advertises_sidecar,
-    _metadata_value,
     _normalized_url,
     _parse_files,
     _parse_sdist_filename,
@@ -169,6 +168,14 @@ class _PathRoutingTransport:
         return None
 
 
+def _field_lines(*lines: tuple[str, str]) -> HTTPHeaderDict:
+    """Headers holding one entry per field line, the shape urllib3 returns."""
+    headers = HTTPHeaderDict()
+    for name, value in lines:
+        headers.add(name, value)
+    return headers
+
+
 def _make_cache(tmp_path: Path) -> OnDiskCache:
     return OnDiskCache(tmp_path, "https://pypi.org/simple/")
 
@@ -202,14 +209,26 @@ def _build_tarball(members: list[tuple[str, bytes]]) -> bytes:
     return buf.getvalue()
 
 
+def _parsed_wheel(file_info: Mapping[Any, object]) -> WheelFile:
+    """The ``WheelFile`` ingest builds for an entry carrying ``file_info``."""
+    entry: dict[Any, object] = {
+        "filename": "foo-1.0-py3-none-any.whl",
+        "url": "https://example.com/foo-1.0-py3-none-any.whl",
+        **file_info,
+    }
+    (wheel,) = _parse_files({"files": [entry]}, "https://example.com/", "foo")
+    assert isinstance(wheel, WheelFile)
+    return wheel
+
+
 def _has_metadata(file_info: Mapping[Any, object]) -> bool:
     """Whether ``file_info`` advertises a sidecar, read the way ingest reads it."""
-    return _advertises_sidecar(_metadata_value(file_info))
+    return _parsed_wheel(file_info).has_metadata
 
 
 def _metadata_hash(file_info: Mapping[Any, object]) -> tuple[str, str] | None:
     """The sidecar hash ``file_info`` publishes, read the way ingest reads it."""
-    return sidecar_hash(_metadata_value(file_info))
+    return _parsed_wheel(file_info).metadata_hash
 
 
 class TestHasMetadataFlag:
@@ -838,6 +857,9 @@ class TestParseHashes:
     def test_uppercase_digest_kept_lowercased(self) -> None:
         assert parse_hash_table({"sha256": "A" * 64}) == (("sha256", "a" * 64),)
 
+    def test_bare_true_publishes_no_sidecar_hash(self) -> None:
+        assert sidecar_hash(True) is None  # noqa: FBT003
+
 
 class TestSelectArtifactHash:
     def test_prefers_sha256(self) -> None:
@@ -909,7 +931,7 @@ class TestFreshnessLifetime:
     def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(time, "time", lambda: self._NOW)
 
-    def _lifetime(self, headers: dict[str, str]) -> int:
+    def _lifetime(self, headers: Mapping[str, str]) -> int:
         return _freshness_lifetime(_FakeResponse(b"", headers=headers))
 
     def _http_date(self, offset: float) -> str:
@@ -920,6 +942,12 @@ class TestFreshnessLifetime:
 
     def test_heuristic_when_cache_control_carries_no_max_age(self) -> None:
         assert self._lifetime({"cache-control": "public"}) == 600
+
+    def test_max_age_read_from_a_second_cache_control_line(self) -> None:
+        lines = _field_lines(
+            ("Cache-Control", "public"), ("Cache-Control", "max-age=60")
+        )
+        assert self._lifetime(lines) == 60
 
     def test_max_age_outranks_expires(self) -> None:
         headers = {
@@ -1029,6 +1057,38 @@ class TestHeader:
         """RFC 9112 5.2: a receiver replaces a line fold with a space."""
         resp = _FakeResponse(b"", headers={"etag": '"abc\r\n def"'})
         assert _header(resp, "etag") == '"abc def"'
+
+    def test_repeated_field_lines_are_combined(self) -> None:
+        """RFC 9110 5.3: repeated lines are one value, joined in order."""
+        resp = _FakeResponse(
+            b"",
+            headers=_field_lines(
+                ("Cache-Control", "public"),
+                ("Cache-Control", "max-age=60"),
+            ),
+        )
+        assert _header(resp, "cache-control") == "public, max-age=60"
+
+    def test_combined_lines_are_unfolded(self) -> None:
+        resp = _FakeResponse(
+            b"",
+            headers=_field_lines(
+                ("Cache-Control", "public,\r\n max-age=60"),
+                ("Cache-Control", "no-transform"),
+            ),
+        )
+        assert _header(resp, "cache-control") == "public, max-age=60, no-transform"
+
+    def test_repeated_singleton_field_keeps_the_first_line(self) -> None:
+        """A field that is not defined as a list is not combined."""
+        resp = _FakeResponse(
+            b"",
+            headers=_field_lines(
+                ("Content-Type", "text/html"),
+                ("Content-Type", "text/html"),
+            ),
+        )
+        assert _header(resp, "content-type") == "text/html"
 
 
 class TestGetFiles:
@@ -3305,6 +3365,36 @@ class TestGetSdistFiles:
         assert asyncio.run(go()) == (None, None)
         assert cache.get_sdist_files("pkg", "1.0") is None
 
+    @pytest.mark.parametrize(
+        "members",
+        [
+            pytest.param([("pkg-1.0/setup.py", b"setup()\n")], id="no-metadata-file"),
+            pytest.param(
+                [("pkg-1.0/pyproject.toml", b'[project]\nname = "pkg"\n')],
+                id="pyproject-only",
+            ),
+        ],
+    )
+    def test_sdist_without_pkg_info_is_cached_and_not_refetched(
+        self, tmp_path: Path, members: list[tuple[str, bytes]]
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(_build_tarball(members))])
+
+        async def go() -> list[tuple[str | None, str | None]]:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return [
+                    await client.get_sdist_files("pkg", "1.0", "https://x/pkg.tar.gz")
+                    for _ in range(2)
+                ]
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == [(None, None), (None, None)]
+        assert cache.get_sdist_files("pkg", "1.0") == (None, None)
+        assert len(transport.calls) == 1
+
     def test_offline_miss_raises(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
         transport = _FakeTransport()
@@ -4785,3 +4875,54 @@ class TestAssumeFreshFloor:
         assert pkg_info == "Name: cached\n"
         assert pyproject is None
         assert transport.calls == []
+
+
+class TestRepeatedCacheControlLines:
+    """An index that sends Cache-Control on two field lines."""
+
+    _LINES = (("Cache-Control", "public"), ("Cache-Control", "max-age=60"))
+
+    def _stored_policy(
+        self, tmp_path: Path, response: _FakeResponse, seed: CachePolicy | None = None
+    ) -> CachePolicy:
+        """Serve ``response`` to one get_files and return the policy it stored.
+
+        ``seed`` pre-fills the cache, so the request goes out as a
+        revalidation rather than a cold fetch.
+        """
+        cache = _make_cache(tmp_path)
+        if seed is not None:
+            cache.put_simple("pkg", LISTING_BYTES, seed)
+
+        transport = _FakeTransport([response])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        assert len(asyncio.run(go())) == 1
+
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        return cached[1]
+
+    def test_cold_fetch_stores_max_age_from_the_second_line(
+        self, tmp_path: Path
+    ) -> None:
+        response = _FakeResponse(LISTING_BYTES, headers=_field_lines(*self._LINES))
+
+        policy = self._stored_policy(tmp_path, response)
+
+        assert policy.max_age == 60
+        assert not policy.is_fresh(policy.fetched_at + 120)
+
+    def test_304_reads_max_age_instead_of_the_heuristic(self, tmp_path: Path) -> None:
+        response = _FakeResponse(b"", status=304, headers=_field_lines(*self._LINES))
+        seed = CachePolicy(fetched_at=0, max_age=1, etag="v1")
+
+        policy = self._stored_policy(tmp_path, response, seed)
+
+        assert policy.max_age == 60

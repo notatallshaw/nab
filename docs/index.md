@@ -15,7 +15,10 @@ installer you trust.
   [embedding the resolver](how-to/embed-the-resolver.md).
 * Looking something up: the reference covers the
   [`[tool.nab]` keys](reference/configuration.md), the
-  [CLI](reference/cli.md), the
+  [CLI](reference/cli.md) and its
+  [selection](reference/selection.md),
+  [output format](reference/formats.md) and
+  [resolution failure](reference/diagnostics.md) pages, the
   [lockfile formats](reference/lockfile.md), the
   [build policy](reference/build-policy.md), and the
   [on-disk cache](reference/cache.md).
@@ -48,6 +51,9 @@ how-to/embed-the-resolver
 :caption: Reference
 
 reference/cli
+reference/selection
+reference/formats
+reference/diagnostics
 reference/configuration
 reference/lockfile
 reference/build-policy
