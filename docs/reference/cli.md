@@ -143,12 +143,11 @@ pylock output instead.
 
 Exits non-zero on resolution failure; the message starts with
 `error: resolution failed:` followed by a derivation tree, and any
-captured diagnostics are appended under a `Diagnostics:` section. Each
-package that ran out of versions gets one line there, naming the
-configuration key that refused its files as the key is spelled in
-`pyproject.toml`, or naming what the resolve was aiming at where no key
-turns that filter on. Where changing a setting would admit those files
-again, an indented `try:` line says which setting:
+captured diagnostics are appended under a `Diagnostics:` section.
+
+Each package that ran out of versions gets one line, naming the setting
+that refused its files. An indented `try:` line follows where changing a
+setting would admit them again.
 
 ```
 Diagnostics: (-v for detail)
@@ -156,34 +155,9 @@ Diagnostics: (-v for detail)
     try: set packages."foo".uploaded-prior-to = false
 ```
 
-The header carries the pointer to `-v`, and carries it only when some
-line has more behind it. A line says why in its own words only where
-the key does not: an `uploaded-prior-to` that excluded everything reads
-as a cutoff nothing was old enough for unless the line says otherwise.
-
-The `try:` line is an instruction rather than a fragment to paste: the
-table the key belongs in usually exists already, and a second one is a
-TOML error. Where an entry already sets that key, the line names the
-entry instead of a path, since the same override is written on two
-surfaces. Where the package has a `[tool.nab.packages."<name>"]` table
-setting some other key, the line says to add the key to that table. An
-index name goes in whichever quoting form TOML takes it back in.
-
-It states what to set, not what follows: lifting a filter admits files
-rather than promising a resolve, and a file two filters would both
-refuse is attributed to the first one that did, so lifting the named
-key can uncover a second. Where an entry covers more than one package,
-following the line changes the setting for all of them.
-
-A line that would grow with your configuration counts instead. Up to
-three keys are named, four or more read as `4 filters excluded every
-file`, and `-v` names them one to a clause. The look-ahead line naming
-the packages that block every candidate counts them the same way.
-
-`-v` keeps the line and replaces the `try:` with the whole record: one
-clause per cause, with its count, the newest version it refused and the
-cutoff that applied, and a closing `note:` naming the configuration
-layer that set the setting the `try:` line was cut from.
+`-v` replaces the `try:` line with the whole record: one clause per
+cause, and a closing `note:` naming the configuration layer that set the
+key.
 
 ```
 Diagnostics:
@@ -193,21 +167,16 @@ Diagnostics:
     note: the project-level uploaded-prior-to set that cutoff; setting packages."foo".uploaded-prior-to = false lifts it for this package
 ```
 
-A note names the setting rather than the file it belongs in, since the
-same key is spelled under `[tool.nab]` in `pyproject.toml` and at the
-top level of a `nab.toml`. Where a line has nothing more behind it than
-it already says, `-v` prints nothing under it.
+Worth knowing:
 
-A remedy is offered for the upload-time cutoff, for `dist-policy` and
-for offline mode. `requires-python` never gets one: the override that
-lifts it replaces the package's declared metadata, so the line names
-the Python the resolve targets instead (`no file supports Python
-3.12`), which is what a different interpreter or a wider `[project]
-requires-python` would change. Some lines name no key at all, because
-nothing in the configuration produced them: a package no configured
-index served reads `package not found on any configured index`, and a
-project whose every file the index yanked reads `the index lists this
-package but every file is yanked`.
+| | |
+| ---- | ------ |
+| `try:` is an instruction, not a fragment to paste | The table the key belongs in usually exists already, and a second one is a TOML error. The line names the entry or table to edit. |
+| Lifting a filter admits files, it does not promise a resolve | A file two filters would both refuse is charged to the first that did, so lifting the named key can uncover a second. |
+| An entry covering several packages changes all of them | A `[[tool.nab.package-rules]]` entry matching two names lifts the key for both. |
+| Four or more filters are counted, not named | The line reads `4 filters excluded every file`, and `-v` names them one to a clause. Three or fewer are named outright. |
+| `requires-python` never gets a `try:` | The override that lifts it replaces the package's declared metadata, so the line names the target instead: `no file supports Python 3.12`. |
+| Some lines name no setting | Nothing in the configuration produced them, such as `package not found on any configured index` or `the index lists this package but every file is yanked`. |
 
 Universal mode (`[tool.nab].mode = "universal"`) is supported for
 all three formats:
