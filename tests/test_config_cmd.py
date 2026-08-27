@@ -1337,7 +1337,7 @@ class TestDownloadCliOverrides:
 
     def _resolve_kwargs(self, proj: Path, extra: list[str]) -> Mapping[str, object]:
         """The kwargs a ``nab download`` argv hands ``resolve_for_targets``."""
-        download_result = MagicMock(written=(), skipped=())
+        download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
