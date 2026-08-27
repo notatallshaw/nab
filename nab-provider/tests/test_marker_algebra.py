@@ -1108,6 +1108,34 @@ def test_mint_overflow_at_parse_limit_reports_complexity() -> None:
         sys.set_int_max_str_digits(original)
 
 
+def test_warm_version_pool_does_not_bypass_the_oversized_literal_guard() -> None:
+    # A store carries its parsed versions across decisions, so a parse taken under
+    # a disabled int-string limit outlives that limit. A decision under a limit the
+    # literal overruns has to reach the guard rather than the store's copy.
+    literal = "1." + "9" * 700
+    store = markersets.DecisionStore()
+    original = sys.get_int_max_str_digits()
+
+    sys.set_int_max_str_digits(0)
+    try:
+        assert ms(f'python_full_version >= "{literal}"').is_empty(store=store) is False
+    finally:
+        sys.set_int_max_str_digits(original)
+
+    assert literal in store.versions
+
+    sys.set_int_max_str_digits(640)
+    try:
+        # Both parse-limit guards reject this literal, so the match is on the
+        # oversize guard's own message to pin which one fired.
+        with pytest.raises(
+            IntractableMarkerSet, match="exceeds the 640-digit parse limit"
+        ):
+            ms(f'python_full_version < "{literal}"').is_empty(store=store)
+    finally:
+        sys.set_int_max_str_digits(original)
+
+
 def _nested_alternating(depth: int) -> MarkerSet:
     # Algebra assembles the op-tree without recursing, so a tree far deeper than
     # the stack is built at any recursion limit; only the walk that decides it
