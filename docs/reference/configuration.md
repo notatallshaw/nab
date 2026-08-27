@@ -2,9 +2,10 @@
 
 The keys that decide what nab resolves live in `[tool.nab]` inside the
 project's `pyproject.toml`, or in a project-directory `nab.toml` that
-sets the same keys.  The CLI carries runtime knobs (cache directory,
-offline mode, HTTP backend), and can also override a project key for a
-single run with a `--project-<key>` flag.
+sets the same keys.  A CLI flag applies to one run.  The CLI flags
+section below groups the flags by whether they decide what gets
+resolved, what comes out, or how the run executes, and says what each
+of the first group does to `[tool.nab]`.
 
 ## Top-level keys
 
@@ -891,17 +892,42 @@ nab lock --project-mode specific --python 3.13
 
 ```
 nab lock [PATH]
+  # what gets resolved
+  --python X.Y                 # resolve for this Python on this machine
+  --groups NAME ...            # fold these dependency groups into the resolve
+  --all-groups                 # fold in every group the project declares
+  --extras NAME ...            # fold these extras into the resolve
+  --all-extras                 # fold in every extra the project declares
+  --build-requirements         # lock [build-system].requires, not the dependencies
+  --no-workspace-discovery     # resolve this project alone, ignoring [tool.nab.workspace]
+  --upgrade                    # re-anchor the P<n>D window to now
+  --project-<key> VALUE        # override a project option for this run
+
+  # what comes out
   --output PATH                # output file (or "-" for stdout)
   --format FORMAT              # pylock | requirements | requirements-without-hashes
+  --no-emit-workspace          # leave workspace members out of the lockfile
+  --locked                     # verify the committed pylock is current; write nothing
+
+  # how the run executes
   --cache-dir PATH             # override on-disk cache location
   --no-cache                   # disable cache for this run
   --offline True|False         # use cache only, no network (or bare --offline / --no-offline)
-  --python X.Y                 # resolve for this Python on this machine
   --http-backend X             # urllib3 (default) | httpx (layered)
-  --locked                     # verify the committed pylock is current; write nothing
-  --upgrade                    # re-anchor the P<n>D window to now
-  --project-<key> VALUE        # override a project option for this run
 ```
+
+What each flag in the first group does to `[tool.nab]`:
+
+* `--project-<key>` replaces the key it names.
+* `--python` overrides `[tool.nab.environment].python`.
+* `--build-requirements` clears `conflicts`, `default-groups`,
+  `base-group` and `build-group` for the run.
+* `--no-workspace-discovery` skips `[tool.nab.workspace]`, the project's
+  own table included.
+* `--upgrade` re-anchors a relative `uploaded-prior-to` window without
+  changing its value.
+* `--groups`, `--all-groups`, `--extras` and `--all-extras` add to the
+  selection rather than replacing a key.
 
 A project option can be overridden for a single run with a
 `--project-<key>` flag (for example `--project-resolution`,
@@ -914,10 +940,6 @@ it prints a notice and is recorded in the lockfile.
 `--project-dist-policy` takes a bare policy, so it replaces the whole
 `dist-policy` value and resets `trust-unverified-deps`; set the table form
 in a file to keep that flag.
-
-The CLI carries knobs about *how this run executes*; the one exception
-is a `--project-*` flag, which overrides a *what-gets-resolved* key for
-the single run.
 
 ## Layered configuration sources
 

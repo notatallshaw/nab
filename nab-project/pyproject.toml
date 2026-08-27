@@ -23,7 +23,8 @@ dependencies = [
     "nab-provider==0.0.15.dev0",
     "nab-resolver==0.0.15.dev0",
     "nab-index==0.0.15.dev0",
-    "tomli>=2.0",
+    # toml_io builds TOMLDecodeError(msg, doc, pos), a signature 2.2 added.
+    "tomli>=2.2",
     "tomli_w>=1.2",
     "build>=1.2",
     "installer>=1.0",

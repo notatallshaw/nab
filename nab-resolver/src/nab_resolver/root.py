@@ -18,15 +18,14 @@ class _RootPackage:
     """Singleton sentinel for the virtual root package.
 
     Uses object identity so it can never collide with user package names.
+    The resolver's package-keyed dicts hash it on every lookup, so it
+    defines no ``__hash__`` of its own and hashes through ``object``
+    without a Python frame.
     """
 
     @override
     def __repr__(self) -> str:
         return "<root>"
-
-    @override
-    def __hash__(self) -> int:
-        return hash("__nab_root__")
 
 
 ROOT = _RootPackage()

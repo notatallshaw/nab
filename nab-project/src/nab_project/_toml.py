@@ -6,6 +6,8 @@ from typing import Any
 
 import tomli
 
+from . import toml_io
+
 
 def tool_nab_section(data: dict[str, Any]) -> Any:
     """Return the raw ``[tool.nab]`` value from parsed TOML ``data``.
@@ -25,6 +27,6 @@ def parse_pyproject_table(text: str) -> dict[str, Any] | None:
     one that was never fetched, so the failure is a value not an exception.
     """
     try:
-        return tomli.loads(text)
+        return toml_io.loads(text)
     except tomli.TOMLDecodeError:
         return None

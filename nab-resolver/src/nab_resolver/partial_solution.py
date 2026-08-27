@@ -17,8 +17,7 @@ from __future__ import annotations
 import operator
 from collections import defaultdict
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Final, Generic, TypeVar, cast, overload
 from weakref import ref
 
 from ._compat import override
@@ -174,9 +173,39 @@ def _detach_snapshots(
             snapshot.detach()
 
 
-@dataclass(slots=True)
+# Every field in declaration order.  ``__slots__`` holds the same names sorted,
+# so equality, the repr and ``__match_args__`` read this one instead.
+_ASSIGNMENT_FIELDS: Final = (
+    "package",
+    "accumulated_range",
+    "decision_level",
+    "is_decision",
+    "trail_index",
+    "version",
+    "cause",
+    "positive",
+    "cum_positive",
+    "cum_negative",
+)
+
+
 class Assignment(Generic[PackageType, VersionType]):
     """A single entry in the partial solution trail."""
+
+    __slots__ = (
+        "accumulated_range",
+        "cause",
+        "cum_negative",
+        "cum_positive",
+        "decision_level",
+        "is_decision",
+        "package",
+        "positive",
+        "trail_index",
+        "version",
+    )
+
+    __match_args__ = _ASSIGNMENT_FIELDS
 
     package: PackageType
     """Which package this assignment constrains."""
@@ -190,23 +219,68 @@ class Assignment(Generic[PackageType, VersionType]):
     is_decision: bool
     """True if this is a version choice; False if derived by propagation."""
 
-    trail_index: int = 0
+    trail_index: int
     """Chronological position in the assignment trail."""
 
-    version: VersionType | None = None
+    version: VersionType | None
     """The chosen version (only set for decisions)."""
 
-    cause: Incompatibility[PackageType, VersionType] | None = None
+    cause: Incompatibility[PackageType, VersionType] | None
     """The incompatibility that forced this derivation (only for derivations)."""
 
-    positive: bool = True
+    positive: bool
     """Whether this constrains the package positively or negatively."""
 
-    cum_positive: RangeProtocol[VersionType] | None = None
+    cum_positive: RangeProtocol[VersionType] | None
     """Latest positive accumulated range for the package as of this entry."""
 
-    cum_negative: RangeProtocol[VersionType] | None = None
+    cum_negative: RangeProtocol[VersionType] | None
     """Latest negative accumulated range for the package as of this entry."""
+
+    def __init__(  # noqa: PLR0913, PLR0917 - one parameter per field
+        self,
+        package: PackageType,
+        accumulated_range: RangeProtocol[VersionType],
+        decision_level: int,
+        is_decision: bool,  # noqa: FBT001
+        trail_index: int = 0,
+        version: VersionType | None = None,
+        cause: Incompatibility[PackageType, VersionType] | None = None,
+        positive: bool = True,  # noqa: FBT001, FBT002
+        cum_positive: RangeProtocol[VersionType] | None = None,
+        cum_negative: RangeProtocol[VersionType] | None = None,
+    ) -> None:
+        """Record one trail entry."""
+        self.package = package
+        self.accumulated_range = accumulated_range
+        self.decision_level = decision_level
+        self.is_decision = is_decision
+
+        self.trail_index = trail_index
+        self.version = version
+        self.cause = cause
+        self.positive = positive
+        self.cum_positive = cum_positive
+        self.cum_negative = cum_negative
+
+    @override
+    def __eq__(self, other: object) -> bool:
+        """Compare every field."""
+        if not isinstance(other, Assignment):
+            return NotImplemented
+        return tuple(getattr(self, name) for name in _ASSIGNMENT_FIELDS) == tuple(
+            getattr(other, name) for name in _ASSIGNMENT_FIELDS
+        )
+
+    __hash__ = None  # type: ignore[assignment]
+
+    @override
+    def __repr__(self) -> str:
+        """Return a debug representation, fields in declaration order."""
+        fields = ", ".join(
+            f"{name}={getattr(self, name)!r}" for name in _ASSIGNMENT_FIELDS
+        )
+        return f"{type(self).__qualname__}({fields})"
 
 
 class PartialSolution(Generic[PackageType, VersionType]):

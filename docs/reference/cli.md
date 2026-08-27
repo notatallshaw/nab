@@ -2,10 +2,10 @@
 
 `nab` exposes four subcommands: `lock`, `download`, `config`, and
 `cache`. The first two read project shape from `[tool.nab]` in the
-project's `pyproject.toml` or a project-directory `nab.toml`; the CLI
-carries runtime knobs and can override a project key for one run with a
-`--project-<key>` flag. `config` inspects the layered configuration, and
-`cache` inspects and clears the on-disk cache.
+project's `pyproject.toml` or a project-directory `nab.toml`, and their
+flags shape the resolve as well as the run; `--project-<key>` overrides
+a project key for one run. `config` inspects the layered configuration,
+and `cache` inspects and clears the on-disk cache.
 
 ## Synopsis
 
@@ -276,6 +276,6 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | Code | Meaning |
 | ---- | ------- |
 | `0`  | Success. |
-| `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
+| `1`  | Resolution failed, lockfile cannot be written (a missing hash, or text that is not valid UTF-8), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
 | `2`  | Bad usage: an unrecognised flag or subcommand, or a malformed `--color` value or `NAB_VERBOSITY`. |
 | `130` | Interrupted with Ctrl-C. `nab` prints `error: interrupted` and exits. |

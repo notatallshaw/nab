@@ -126,6 +126,21 @@ class TestExtractStaticMetadata:
             extract_static_metadata(tmp_path)
         assert isinstance(caught.value.__cause__, UnicodeDecodeError)
 
+    def test_oversized_integer_toml_reports_the_parse_error(
+        self, tmp_path: Path, oversized_integer: str
+    ) -> None:
+        """An integer past the int-from-string limit does not parse either."""
+        _write_pyproject(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\n'
+            f"[tool.other]\ncount = {oversized_integer}\n",
+        )
+        with pytest.raises(
+            BuildBackendError, match="could not read pyproject.toml"
+        ) as caught:
+            extract_static_metadata(tmp_path)
+        assert isinstance(caught.value.__cause__, tomli.TOMLDecodeError)
+
     def test_no_project_table_returns_none(self, tmp_path: Path) -> None:
         _write_pyproject(tmp_path, '[build-system]\nrequires = ["setuptools"]\n')
         assert extract_static_metadata(tmp_path) is None

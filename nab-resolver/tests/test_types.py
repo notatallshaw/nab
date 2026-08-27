@@ -2,8 +2,19 @@
 
 from __future__ import annotations
 
+import copy
+import pickle
+from typing import Any
+
+import pytest
+
 from nab_resolver.ranges import Range
-from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
+from nab_resolver.types import (
+    Incompatibility,
+    IncompatibilityCause,
+    RootRequirement,
+    Term,
+)
 
 
 class TestTerm:
@@ -102,3 +113,85 @@ class TestIncompatibility:
         t = Term("foo", Range.at_least(99))
         inc = Incompatibility([t], cause=IncompatibilityCause.NO_VERSIONS)
         assert len(inc.terms) == 1
+
+
+class TestRootRequirement:
+    def test_origin_defaults_to_none_and_fields_are_readable(self) -> None:
+        bare = RootRequirement("foo", Range.at_least(2))
+        tagged = RootRequirement("foo", Range.at_least(2), origin="foo>=2 (line 3)")
+
+        assert (bare.package, bare.constraint, bare.origin) == (
+            "foo",
+            Range.at_least(2),
+            None,
+        )
+        assert tagged.origin == "foo>=2 (line 3)"
+
+    def test_equality_reads_every_field_and_declines_other_types(self) -> None:
+        fields: dict[str, Any] = {
+            "package": "foo",
+            "constraint": Range.at_least(2),
+            "origin": "from the lockfile",
+        }
+        others: dict[str, Any] = {
+            "package": "bar",
+            "constraint": Range.at_least(3),
+            "origin": "from the command line",
+        }
+        requirement: RootRequirement[str, int] = RootRequirement(**fields)
+
+        assert requirement == RootRequirement(**fields)
+        for name, other in others.items():
+            assert requirement != RootRequirement(**{**fields, name: other}), name
+
+        assert requirement.__eq__("foo") is NotImplemented
+
+    def test_equal_requirements_hash_alike(self) -> None:
+        requirement = RootRequirement("foo", Range.at_least(2), "origin")
+        twin = RootRequirement("foo", Range.at_least(2), "origin")
+
+        assert len({requirement, twin}) == 1
+
+    def test_repr_names_the_class_and_every_field(self) -> None:
+        requirement = RootRequirement("foo", Range.singleton(2), "origin")
+
+        assert repr(requirement) == (
+            "RootRequirement(package='foo', constraint=Range(((2, True, 2, True),)),"
+            " origin='origin')"
+        )
+
+    def test_fields_cannot_be_reassigned_or_deleted(self) -> None:
+        """A requirement is hashable, so a write after use as a key is a bug."""
+        requirement = RootRequirement("foo", Range.at_least(2))
+
+        with pytest.raises(AttributeError, match="cannot assign to field 'package'"):
+            requirement.package = "bar"
+        with pytest.raises(AttributeError, match="cannot delete field 'package'"):
+            del requirement.package
+
+    def test_a_requirement_survives_copying_and_pickling(self) -> None:
+        requirement = RootRequirement("foo", Range.at_least(2), "origin")
+
+        assert copy.copy(requirement) == requirement
+        assert copy.deepcopy(requirement) == requirement
+        assert pickle.loads(pickle.dumps(requirement)) == requirement  # noqa: S301
+
+    def test_subscripted_construction_keeps_working(self) -> None:
+        """``resolver._as_root_requirements`` builds these subscripted.
+
+        Subscripted construction tries to set ``__orig_class__``, which
+        ``__setattr__`` refuses.
+        """
+        requirement = RootRequirement[str, int]("foo", Range.at_least(2))
+
+        assert requirement.package == "foo"
+        assert not hasattr(requirement, "__orig_class__")
+
+    def test_pattern_matching_reads_the_three_fields_positionally(self) -> None:
+        match RootRequirement("foo", Range.at_least(2), "origin"):
+            case RootRequirement(package, constraint, origin):
+                assert (package, constraint, origin) == (
+                    "foo",
+                    Range.at_least(2),
+                    "origin",
+                )

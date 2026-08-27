@@ -541,14 +541,56 @@ class Range(Generic[VersionType]):
     def relation(self, other: Range[VersionType]) -> RangeRelation:
         """Return how self's members sit against other's.
 
-        The empty range is both a subset and disjoint, so it is answered ahead
-        of the walks instead of by running both of them.
+        The empty range is both a subset and disjoint, so it is answered
+        before the walk rather than by it.
+
+        One walk answers subset and disjoint together, on the same invariant
+        :meth:`is_subset` relies on.  Each interval of self is decided by the
+        first interval of other that does not end below it: everything the
+        walk skipped ended below, and the invariant leaves a gap after the one
+        it stopped on, so nothing else can cover what that one leaves out.
         """
         if self.is_empty:
             return _EMPTY_REL
-        if self.is_subset(other):
+
+        right_intervals = other._intervals
+        right_count = len(right_intervals)
+        right_index = 0
+
+        # subset is cleared by an interval of self that other leaves
+        # uncovered, disjoint by one that meets other.
+        subset = True
+        disjoint = True
+
+        for left in self._intervals:
+            while right_index < right_count and _ends_before(
+                right_intervals[right_index], left
+            ):
+                right_index += 1
+
+            if right_index >= right_count:
+                # Every remaining interval of self sits above all of other, so
+                # none is covered and none meets anything.
+                subset = False
+                break
+
+            right = right_intervals[right_index]
+            if _ends_before(left, right):
+                # This interval meets nothing: the walk skipped everything below
+                # it, and right starts above it.  Leave right for the next one.
+                subset = False
+                continue
+
+            disjoint = False
+            lower, lower_inclusive = _max_lower_bound(left, right)
+            upper, upper_inclusive = _min_upper_bound(left, right)
+
+            if (lower, lower_inclusive, upper, upper_inclusive) != left:
+                return _OVERLAPPING_REL
+
+        if subset:
             return _SUBSET_REL
-        if self.is_disjoint(other):
+        if disjoint:
             return _DISJOINT_REL
         return _OVERLAPPING_REL
 

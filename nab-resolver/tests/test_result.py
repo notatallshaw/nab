@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import pickle
 from itertools import permutations
 from typing import Any
@@ -64,6 +65,55 @@ class TestPublicSolution:
         assert not hasattr(result_module, "Solution")
         assert b"cnab_resolver.resolver\nSolution\n" in serialized
         assert restored == solution
+
+    def test_a_solution_survives_copying_and_the_default_pickle(self) -> None:
+        solution = solve({"a": {1: {"b": Range.full()}}, "b": {1: {}}}, a=Range.full())
+
+        assert copy.copy(solution) == solution
+        assert copy.deepcopy(solution) == solution
+        assert pickle.loads(pickle.dumps(solution)) == solution  # noqa: S301
+
+    def test_equality_reads_every_field_and_declines_other_types(self) -> None:
+        fields: dict[str, Any] = {
+            "pins": {"a": 1},
+            "edges": (("a", "b"),),
+            "roots": ("a",),
+        }
+        others: dict[str, Any] = {"pins": {"a": 2}, "edges": (), "roots": ("b",)}
+        solution: Solution[str, int] = Solution(**fields)
+
+        assert solution == Solution(**fields)
+        for name, other in others.items():
+            assert solution != Solution(**{**fields, name: other}), name
+
+        assert solution.__eq__("a") is NotImplemented
+
+    def test_repr_names_the_class_and_every_field(self) -> None:
+        solution = Solution(pins={"a": 1}, edges=(("a", "b"),), roots=("a",))
+
+        assert repr(solution) == (
+            "Solution(pins={'a': 1}, edges=(('a', 'b'),), roots=('a',))"
+        )
+
+    def test_hash_is_declared_but_the_pins_dict_defeats_it(self) -> None:
+        solution = Solution(pins={"a": 1}, edges=(), roots=("a",))
+
+        assert Solution.__hash__ is not None
+        with pytest.raises(TypeError):
+            hash(solution)
+
+    def test_fields_cannot_be_reassigned_or_deleted(self) -> None:
+        solution = solve({"a": {1: {}}}, a=Range.full())
+
+        with pytest.raises(AttributeError, match="cannot assign to field 'pins'"):
+            solution.pins = {}
+        with pytest.raises(AttributeError, match="cannot delete field 'pins'"):
+            del solution.pins
+
+    def test_pattern_matching_reads_the_three_fields_positionally(self) -> None:
+        match Solution(pins={"a": 1}, edges=(("a", "b"),), roots=("a",)):
+            case Solution(pins, edges, roots):
+                assert (pins, edges, roots) == ({"a": 1}, (("a", "b"),), ("a",))
 
 
 class TestRoots:

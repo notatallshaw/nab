@@ -38,6 +38,7 @@ from nab._lock import (
     _BUILD_DEFAULT_OUTPUT,
     _determine_lock_anchor,
     _emit,
+    _emit_or_exit,
     _emit_pylock,
     lock,
     resolve_extra_selection,
@@ -56,6 +57,7 @@ from nab.cli import (
     main,
 )
 from nab.output import Printer, ProgressReporter, Verbosity
+from nab_index.atomic import atomic_write_text
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError
@@ -1741,6 +1743,21 @@ class TestLockCommandSpecific:
         """A byte that will not decode reports a clean message, not a traceback."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_bytes(b'[project]\ndescription = "\xe9"\ndependencies = []\n')
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, output=Path("-"))
+        assert "is not valid TOML" in capsys.readouterr().err
+
+    def test_oversized_integer_toml_exits(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        oversized_integer: str,
+    ) -> None:
+        """An integer too long to convert reports a clean message, not a traceback."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            f"[project]\ndependencies = []\n[tool.other]\ncount = {oversized_integer}\n"
+        )
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject, output=Path("-"))
         assert "is not valid TOML" in capsys.readouterr().err
@@ -3935,6 +3952,16 @@ class TestConfigErrors:
             lock(member)
         assert "workspace discovery error" in capsys.readouterr().err
 
+    def test_symlink_loop_in_the_path_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A loop in the project path exits 1 naming the path, rather than raising."""
+        (tmp_path / "loop").symlink_to("loop")
+        pyproject = tmp_path / "loop" / "pyproject.toml"
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject)
+        assert str(pyproject) in capsys.readouterr().err
+
 
 class TestCliDocstringCommandModules:
     """``nab.cli``'s docstring names every module that registers a subcommand."""
@@ -4726,6 +4753,119 @@ class TestLockProvenanceCliOverrides:
         assert recorded == ["nab", "lock", "--offline"]
 
 
+class TestLockNonUtf8Text:
+    """Text that will not encode as UTF-8 exits 1 with a message, not a traceback.
+
+    Python decodes ``sys.argv`` and path arguments with ``surrogateescape`` on
+    POSIX, so a byte that is not valid UTF-8 reaches the lock as a lone surrogate.
+    """
+
+    def _bad_argv(self) -> list[str]:
+        """An invocation whose ``--cache-dir`` carries a byte that is not UTF-8."""
+        return ["nab", "lock", "--cache-dir", "/tmp/cache-\udce9"]
+
+    def test_argv_byte_exits_when_writing_the_file(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The recorded command line lands in ``[tool.nab]``, so the write fails."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with (
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
+            patch.object(sys, "argv", self._bad_argv()),
+            pytest.raises(SystemExit) as exc,
+        ):
+            lock(pyproject, output=out, offline=True, cache=False)
+
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert "cannot write output" in err
+        assert "\\udce9" in err
+
+        assert not out.exists()
+
+    def test_argv_byte_exits_when_printing(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Printing refuses the byte even where stdout would escape it.
+
+        ``sys.stdout`` carries ``errors="surrogateescape"`` under the C and
+        C.UTF-8 locales, where the write emits the raw byte rather than failing.
+        """
+        pyproject = _make_pyproject(tmp_path)
+        raw = io.BytesIO()
+        stream = io.TextIOWrapper(raw, encoding="utf-8", errors="surrogateescape")
+        with (
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
+            patch.object(sys, "argv", self._bad_argv()),
+            patch.object(sys, "stdout", stream),
+            pytest.raises(SystemExit) as exc,
+        ):
+            lock(pyproject, output=Path("-"), offline=True, cache=False)
+
+        assert exc.value.code == 1
+        assert "cannot write output" in capsys.readouterr().err
+
+        stream.flush()
+        assert raw.getvalue() == b""
+
+    def test_any_unencodable_lock_text_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The guard is on the write, so any unencodable field exits the same way.
+
+        A directory name that is not valid UTF-8 reaches the packages table just
+        as the command line reaches ``[tool.nab]``.
+        """
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            _emit_or_exit(lambda: atomic_write_text(out, 'directory = "src-\udce9"\n'))
+
+        assert exc.value.code == 1
+        assert "cannot write output" in capsys.readouterr().err
+
+        assert not out.exists()
+
+    def test_template_stages_are_discarded_on_unencodable_text(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A tuple whose text will not encode leaves no staged file behind."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "req-{python_version}.txt"
+        with (
+            patch(
+                "nab.cli.resolve_for_targets",
+                return_value=_multi_tuple_universal_result(),
+            ),
+            patch(
+                "nab._lock.write_requirements_without_hashes",
+                return_value="pkg @ file:///src-\udce9\n",
+            ),
+            pytest.raises(SystemExit) as exc,
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+
+        assert exc.value.code == 1
+        assert "cannot write output" in capsys.readouterr().err
+
+        assert not list(tmp_path.glob("*.tmp"))
+        assert not list(tmp_path.glob("req-*.txt"))
+
+    def test_requirements_format_still_locks(self, tmp_path: Path) -> None:
+        """The requirements formats record no ``[tool.nab]``, so they still lock."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "requirements.txt"
+        with (
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
+            patch.object(sys, "argv", self._bad_argv()),
+        ):
+            lock(
+                pyproject, output=out, format="requirements", offline=True, cache=False
+            )
+
+        assert "foo==1.0" in out.read_text()
+
+
 class TestGroupAndExtraSelection:
     """Selection guards for ``--all-groups`` / ``--all-extras``.
 
@@ -4924,6 +5064,20 @@ class TestGroupAndExtraSelection:
     ) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_bytes(b"[project]\nname = '\xe9'\n[dependency-groups]\n")
+        with pytest.raises(SystemExit, match="1"):
+            resolve_group_selection(pyproject, groups=(), all_groups=True)
+        assert "is not valid TOML" in capsys.readouterr().err
+
+    def test_all_groups_oversized_integer_exits(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        oversized_integer: str,
+    ) -> None:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            f"[project]\nname = 'x'\n[tool.other]\ncount = {oversized_integer}\n"
+        )
         with pytest.raises(SystemExit, match="1"):
             resolve_group_selection(pyproject, groups=(), all_groups=True)
         assert "is not valid TOML" in capsys.readouterr().err

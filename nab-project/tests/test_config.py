@@ -321,6 +321,23 @@ class TestTopLevelKeys:
         with pytest.raises(ConfigError, match="not valid TOML"):
             read_pyproject_config(path)
 
+    def test_oversized_integer_rejected(
+        self, tmp_path: Path, oversized_integer: str
+    ) -> None:
+        # The literal sits in a table nab never reads, and still fails the parse.
+        path = write(tmp_path, f"[tool.other]\ncount = {oversized_integer}\n")
+        with pytest.raises(ConfigError, match="not valid TOML"):
+            read_pyproject_config(path)
+
+    def test_over_nested_inline_arrays_rejected(self, tmp_path: Path) -> None:
+        # tomli reports nesting this deep as a RecursionError, not a decode error.
+        depth = 1100
+        path = write(
+            tmp_path, "[tool.other]\nvalue = " + "[" * depth + "]" * depth + "\n"
+        )
+        with pytest.raises(ConfigError, match="not valid TOML"):
+            read_pyproject_config(path)
+
     def test_unreadable_rejected(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[project]\nname = "demo"\n')
         denied = PermissionError(errno.EACCES, "Permission denied", str(path))
@@ -329,6 +346,12 @@ class TestTopLevelKeys:
             pytest.raises(ConfigError, match="cannot read .*Permission denied"),
         ):
             read_pyproject_config(path)
+
+    def test_symlink_loop_in_the_path_rejected(self, tmp_path: Path) -> None:
+        """A loop reaches the read, so the error names the errno."""
+        (tmp_path / "loop").symlink_to("loop")
+        with pytest.raises(ConfigError, match="cannot read"):
+            read_pyproject_config(tmp_path / "loop" / "pyproject.toml")
 
     @pytest.mark.parametrize("user_key", ["offline = true", 'cache-dir = "x"'])
     def test_user_scope_key_in_pyproject_rejected(
@@ -2819,6 +2842,16 @@ class TestLocalSources:
         )
         with pytest.raises(ConfigError, match="escapes the source tree"):
             read_pyproject_config(path)
+
+    def test_path_through_a_symlink_loop_parses(self, tmp_path: Path) -> None:
+        """A loop is a bad tree, not a bad config, so parsing accepts it."""
+        (tmp_path / "loop").symlink_to("loop")
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "x"\npath = "loop"\n',
+        )
+        srcs = read_pyproject_config(path).local_sources
+        assert srcs[0].path == str(tmp_path.resolve() / "loop")
 
     def test_unknown_key_rejected(self, tmp_path: Path) -> None:
         path = write(

@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from nab_project.paths import PathState, path_state, resolve_path
+from nab_project import paths
+from nab_project.paths import PathState, path_state, realpath, resolve_path
 
 
 def _fake_stat(mode: int) -> os.stat_result:
@@ -85,6 +86,19 @@ class TestDenyAccessFixture:
         assert state is PathState.UNREADABLE
 
 
+class TestRealpath:
+    def test_follows_links(self, tmp_path: Path) -> None:
+        base = tmp_path.resolve()
+        (base / "real").mkdir()
+        (base / "link").symlink_to("real", target_is_directory=True)
+        assert realpath(base / "link") == base / "real"
+
+    def test_symlink_loop_is_left_unresolved(self, tmp_path: Path) -> None:
+        base = tmp_path.resolve()
+        (base / "loop").symlink_to("loop")
+        assert realpath(base / "loop") == base / "loop"
+
+
 class TestResolvePath:
     def test_normalises_against_base(self, tmp_path: Path) -> None:
         base = tmp_path.resolve()
@@ -95,8 +109,8 @@ class TestResolvePath:
         assert resolve_path(tmp_path, "pk\x00g") is None
 
     def test_unencodable_name(self, tmp_path: Path) -> None:
-        # A lone surrogate only fails the encode on POSIX, so the resolve is
-        # mocked to reach the arm on every platform.
+        # A lone surrogate only fails the encode on POSIX, so ``realpath``
+        # is mocked to reach the branch on every platform.
         broken = UnicodeEncodeError("utf-8", "\ud800", 0, 1, "surrogates not allowed")
-        with patch.object(Path, "resolve", side_effect=broken):
+        with patch.object(paths, "realpath", side_effect=broken):
             assert resolve_path(tmp_path, "pkg") is None

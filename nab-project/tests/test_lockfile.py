@@ -402,6 +402,36 @@ class TestPerTargetMarkerSimplification:
         assert any('python_version == "3.10"' in m for m in markers)
         assert any('python_version == "3.11"' in m for m in markers)
 
+    def test_micro_slice_pin_gated_on_python_full_version(self) -> None:
+        """A pin held by only one slice of a split minor names the slice bounds.
+
+        The slices agree on every other axis, so shortening against the
+        declared environments leaves the micro bounds as the whole marker.
+        """
+        consulted = [Marker('python_full_version < "3.10.4"')]
+        minor = _target("3.10")
+        lower, upper = slices_from_points(
+            minor, micro_boundary_points(minor, consulted)
+        )
+
+        text = write_lock(
+            LockInput(
+                targets=_targets(
+                    (lower, {"foo": _index_pin(), "bar": _index_pin("bar")}),
+                    (upper, {"foo": _index_pin()}),
+                ),
+                environments=[
+                    Marker(environment_declaration(target, consulted))
+                    for target in (lower, upper)
+                ],
+            )
+        )
+        data = tomllib.loads(text)
+
+        markers = {p["name"]: p.get("marker") for p in data["packages"]}
+        assert markers["foo"] is None
+        assert markers["bar"] == 'python_full_version < "3.10.4"'
+
     def test_three_targets_two_groups(self) -> None:
         # 3.10 + 3.11 share v1.0; 3.12 has v2.0 -> two groups
         text = write_lock(
@@ -1890,6 +1920,17 @@ class TestReadLockfileAnchor:
     def test_returns_none_when_not_utf8(self, tmp_path: Path) -> None:
         path = tmp_path / "pylock.toml"
         path.write_bytes(b"\xff\xfe not utf-8")
+        assert read_lockfile_anchor(path) is None
+
+    def test_returns_none_when_integer_too_long(
+        self, tmp_path: Path, oversized_integer: str
+    ) -> None:
+        # The anchor is there and valid; the file still will not parse.
+        path = tmp_path / "pylock.toml"
+        path.write_text(
+            "[tool.nab]\ncreated-at = 2026-05-01T00:00:00+00:00\n"
+            f"[tool.other]\ncount = {oversized_integer}\n"
+        )
         assert read_lockfile_anchor(path) is None
 
     def test_returns_none_when_no_tool_nab(self, tmp_path: Path) -> None:
