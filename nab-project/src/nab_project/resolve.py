@@ -4,8 +4,9 @@
 :class:`~nab_provider.target.ResolveTarget` per environment, whether
 ``[tool.nab.matrix]`` declares many or a bare project declares none (the
 host is the target).  Each gets a single-environment resolve against a
-shared :class:`~nab_project.fetch.FetchCoordinator`, so metadata is
-fetched once across them.
+shared :class:`~nab_project.fetch.FetchCoordinator`, so a package's
+listing is read once across them, a version's wheel metadata once per
+wheel they pick, and an sdist's ``PKG-INFO`` once for the version.
 
 A declared conflict, matrix or not, is where a resolve produces more than
 one result for an environment.  Directly co-selecting two members of an
@@ -409,10 +410,11 @@ def _declared_environments(
     target's resolve read (see
     :func:`~nab_provider.target.environment_declaration`).
     """
+    # A matrix consults the same marker on every target it expands to.
+    texts = {str(marker) for markers in consulted.values() for marker in markers}
     variables: set[str] = set()
-    for markers in consulted.values():
-        for marker in markers:
-            variables |= marker_variables(str(marker))
+    for text in texts:
+        variables |= marker_variables(text)
 
     unboundable = sorted(variables & UNBOUNDABLE_MARKER_VARIABLES)
     if unboundable:

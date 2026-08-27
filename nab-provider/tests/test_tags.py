@@ -733,6 +733,11 @@ class TestWheelCompatibility:
         )
         assert not _compatible(wheel, python_version="3.11", spec=spec)
 
+    def test_four_segment_filename_is_not_a_wheel(self) -> None:
+        """Four segments is one short, even when the last three parse as tags."""
+        assert wheel_tag_set("foo-py3-none-any.whl") is None
+        assert wheel_tag_set("foo-1.0-py3-none.whl") is None
+
     def test_non_whl_extension_rejected(self) -> None:
         """A filename without ``.whl`` extension is rejected."""
         spec = PlatformSpec("linux_x86_64")
@@ -912,6 +917,34 @@ class TestSelectWheel:
         )
         assert forward is build5
         assert reverse is build5
+
+    def test_highest_build_tag_wins_among_three_at_one_rank(self) -> None:
+        """A third wheel at the same rank is weighed against the running best."""
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
+        build1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_17_x86_64.whl")
+        build5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
+        build3 = _wheel("pkg-1.0-3-cp311-cp311-manylinux_2_17_x86_64.whl")
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(
+            [build1, build5, build3]
+        )
+        assert chosen is build5
+
+    def test_better_rank_discards_the_incumbent_build_key(self) -> None:
+        """A better tag rank drops the incumbent's build key instead of carrying it.
+
+        The first two wheels tie at manylinux_2_5 and settle on build 9.
+        manylinux_2_17 then outranks both, so build 5 is weighed against
+        build 0 rather than against the discarded build 9.
+        """
+        spec = PlatformSpec("linux_x86_64", runs_on_libc=(2, 17))
+        generic9 = _wheel("pkg-1.0-9-cp311-cp311-manylinux_2_5_x86_64.whl")
+        generic1 = _wheel("pkg-1.0-1-cp311-cp311-manylinux_2_5_x86_64.whl")
+        specific0 = _wheel("pkg-1.0-0-cp311-cp311-manylinux_2_17_x86_64.whl")
+        specific5 = _wheel("pkg-1.0-5-cp311-cp311-manylinux_2_17_x86_64.whl")
+        chosen = TagSet.for_spec(python_version="3.11", spec=spec).pick(
+            [generic9, generic1, specific0, specific5]
+        )
+        assert chosen is specific5
 
     def test_build_tagged_wheel_beats_untagged_at_same_rank(self) -> None:
         """An absent build tag sorts lowest, so a tagged wheel wins."""

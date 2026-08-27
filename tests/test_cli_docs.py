@@ -1,8 +1,9 @@
 """Check the published CLI pages against what the CLI does.
 
-The CLI reference lists each subcommand's flags, env vars and statuses; the
-config reference groups the ``nab lock`` flags by what they decide; the
-conflicts page quotes refusal lines verbatim.
+The reference page lists each subcommand's invocation, its own flags, the env
+vars and the statuses; selection, output formats and resolution failures have
+a page each; the config reference groups the ``nab lock`` flags by what each
+one decides; the conflicts page quotes refusal lines verbatim.
 
 These tests read ``docs/``, which the umbrella sdist does not ship, so the
 module is on that sdist's exclude list in pyproject.toml.
@@ -28,57 +29,30 @@ from nab_project.config_sources import OPTIONS
 
 _DOCS = Path(__file__).resolve().parents[1] / "docs"
 _CLI_REFERENCE = _DOCS / "reference" / "cli.md"
+_SELECTION = _DOCS / "reference" / "selection.md"
+_FORMATS = _DOCS / "reference" / "formats.md"
+_DIAGNOSTICS = _DOCS / "reference" / "diagnostics.md"
 _CONFIG_REFERENCE = _DOCS / "reference" / "configuration.md"
 _CONFLICTS_DOC = _DOCS / "explanation" / "conflicts.md"
 
 _SUBCOMMANDS = ("lock", "download", "config", "cache")
 
-
-def _reference_text() -> str:
-    return _CLI_REFERENCE.read_text(encoding="utf-8")
-
-
-def _section(text: str, heading: str) -> str:
-    """The body of ``text`` under ``heading``, up to the next ``##``."""
-    return text.partition(f"\n{heading}\n")[2].partition("\n## ")[0]
+# A ``--flag`` opening a code span, so prose naming one is matched and a
+# ``--hash=`` inside a fenced example is not.
+_CODE_FLAG = re.compile(r"`(--[a-z][\w-]*)")
 
 
-def _reference_section(heading: str) -> str:
-    """The CLI reference body under ``heading``."""
-    return _section(_reference_text(), heading)
+def _page(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
-def _config_reference_section(heading: str) -> str:
-    """The config reference body under ``heading``."""
-    return _section(_CONFIG_REFERENCE.read_text(encoding="utf-8"), heading)
+def _reference_section(page: Path, heading: str) -> str:
+    """The body of ``page`` under ``heading``, up to the next ``##``.
 
-
-def _config_reference_flag_block() -> str:
-    """The fenced ``nab lock`` block that opens the config reference's CLI flags."""
-    block = re.search(
-        r"```\n(.*?)```", _config_reference_section("## CLI flags"), re.DOTALL
-    )
-    if block is None:
-        msg = "no fenced flag block under the config reference's CLI flags heading"
-        raise AssertionError(msg)
-
-    return block.group(1)
-
-
-def _config_reference_flag_prose() -> str:
-    """The config reference's CLI-flags prose, everything after the fenced block."""
-    return _config_reference_section("## CLI flags").rpartition("```")[2]
-
-
-def _resolve_group_lines() -> str:
-    """The ``# what gets resolved`` lines of the config reference's flag block."""
-    block = _config_reference_flag_block()
-    header = "  # what gets resolved\n"
-    if header not in block:
-        msg = "no 'what gets resolved' group in the config reference's flag block"
-        raise AssertionError(msg)
-
-    return block.partition(header)[2].partition("\n\n")[0]
+    A ``###`` subheading does not end a section, so a subcommand's own
+    subsections come back with it.
+    """
+    return _page(page).partition(f"\n{heading}\n")[2].partition("\n## ")[0]
 
 
 def _write(path: Path, body: str) -> Path:
@@ -102,28 +76,45 @@ def _run_config(args: list[str]) -> str:
     return buf.getvalue()
 
 
-def _flag_forms(flag: str) -> list[str]:
-    """The spellings a page may use for ``flag``: itself, ``--no-``, a wildcard."""
+def _flag_forms(flag: str, *, wildcard: str) -> list[str]:
+    """The spellings a page may use for ``flag``: itself or its ``--no-`` form.
+
+    A ``--project-`` flag is also covered by ``wildcard``, the placeholder a
+    page writes when it stands for the whole family rather than one member.
+    """
     forms = [flag, f"--no-{flag.removeprefix('--')}"]
     if flag.startswith("--project-"):
-        forms += ["--project-*", "--project-<key>"]
+        forms.append(wildcard)
     return forms
 
 
-def _spells_flag(text: str, flag: str, *, left: str) -> bool:
-    """Whether ``text`` names ``flag`` in any of its forms, preceded by ``left``.
-
-    ``left`` is what the page puts to a flag's left: a backtick in prose, a
-    non-word boundary inside a fenced block.
-    """
+def _names_flag(text: str, flag: str) -> bool:
+    """Whether ``text`` names ``flag``, its ``--no-`` form, or a covering wildcard."""
     return any(
-        re.search(rf"{left}{re.escape(form)}(?![\w-])", text)
-        for form in _flag_forms(flag)
+        re.search(rf"`{re.escape(form)}(?![\w-])", text)
+        for form in _flag_forms(flag, wildcard="--project-*")
     )
 
 
-def _keyword_flags(command: Callable[..., None]) -> list[str]:
-    """The flags ``command`` accepts, one per keyword-only parameter."""
+def _prose_chunks(text: str) -> list[str]:
+    """Split a page or section into one string per paragraph and bullet."""
+    chunks: list[str] = []
+    current: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if current and (not line or raw.startswith("* ")):
+            chunks.append(" ".join(current))
+            current = []
+        if line:
+            current.append(line)
+
+    if current:
+        chunks.append(" ".join(current))
+    return chunks
+
+
+def _command_flags(command: Callable[..., None]) -> list[str]:
+    """The ``--flag`` spelling of every keyword-only parameter of ``command``."""
     return [
         "--" + name.replace("_", "-")
         for name, param in inspect.signature(command).parameters.items()
@@ -131,9 +122,39 @@ def _keyword_flags(command: Callable[..., None]) -> list[str]:
     ]
 
 
+def _cli_flag_section() -> str:
+    """The config reference's CLI flags section."""
+    return _reference_section(_CONFIG_REFERENCE, "## CLI flags")
+
+
+def _flag_block() -> str:
+    """The fenced ``nab lock`` usage block that opens the CLI flags section."""
+    block = re.search(r"```\n(.*?)```", _cli_flag_section(), re.DOTALL)
+    if block is None:
+        msg = "no fenced flag block under the config reference's CLI flags heading"
+        raise AssertionError(msg)
+
+    return block.group(1)
+
+
 def _block_flags(block: str) -> list[str]:
     """The flags a fenced usage ``block`` declares, one per line."""
     return re.findall(r"(?m)^\s+(--[\w<>-]+)", block)
+
+
+def _first_flag_group() -> set[str]:
+    """The flags of the flag block's first group, the one its bullets explain."""
+    return set(_block_flags(_flag_block().split("\n\n")[0]))
+
+
+def _bullet_flags() -> set[str]:
+    """The flags the bullets under the flag block name in a code span."""
+    bullets = [
+        chunk
+        for chunk in _prose_chunks(_cli_flag_section().rpartition("```")[2])
+        if chunk.startswith("* ")
+    ]
+    return set(re.findall(r"`(--[\w<>-]+)`", "\n".join(bullets)))
 
 
 def _doc_paragraph(text: str, needle: str) -> str:
@@ -175,56 +196,71 @@ def _emitted_labels(
 
 
 class TestCliReferenceFlagCoverage:
-    """Each run subcommand's reference section names every flag it accepts."""
+    """Every flag a run subcommand accepts is named on one of its pages."""
 
     @pytest.mark.parametrize(
-        ("heading", "command"),
-        [("## `nab lock`", lock), ("## `nab download`", download)],
+        ("heading", "command", "pages"),
+        [
+            ("## `nab lock`", lock, (_SELECTION, _FORMATS)),
+            ("## `nab download`", download, ()),
+        ],
     )
     def test_section_names_every_flag(
-        self, heading: str, command: Callable[..., None]
+        self, heading: str, command: Callable[..., None], pages: tuple[Path, ...]
     ) -> None:
-        # Flags shared by both commands are documented once, in their own section.
-        scope = _reference_section(heading) + _reference_section("## Runtime flags")
+        # Flags shared by both commands are documented once, in Runtime
+        # flags; what `nab lock` selects and what it writes have their own
+        # pages.
+        scope = "\n".join(
+            [
+                _reference_section(_CLI_REFERENCE, heading),
+                _reference_section(_CLI_REFERENCE, "## Runtime flags"),
+                *(_page(page) for page in pages),
+            ]
+        )
 
-        for flag in _keyword_flags(command):
-            assert _spells_flag(scope, flag, left="`"), f"{heading} omits {flag}"
+        for flag in _command_flags(command):
+            assert _names_flag(scope, flag), f"{heading} omits {flag}"
 
 
-class TestConfigReferenceCliFlags:
-    """The config reference's CLI flags section matches the ``nab lock`` surface.
+class TestCliReferenceSplitPages:
+    """Every page the CLI reference splits into is one hop from it.
 
-    The section lists the flags in groups, then says what each flag of the
-    first group does to ``[tool.nab]``.  These check both halves against the
-    ``lock`` signature.
+    The hop has to hold in both directions: a reader who searches
+    ``cli.md`` for a flag has to find it named there, and a flag named
+    there has to be documented on the page the link leads to.
     """
 
-    def test_block_lists_every_lock_flag(self) -> None:
-        block = _config_reference_flag_block()
+    @pytest.mark.parametrize("page", [_SELECTION, _FORMATS, _DIAGNOSTICS])
+    def test_cli_reference_links_the_page(self, page: Path) -> None:
+        assert f"]({page.name})" in _page(_CLI_REFERENCE), page.name
 
-        for flag in _keyword_flags(lock):
-            assert _spells_flag(block, flag, left=r"(?<![\w-])"), (
-                f"the CLI flags block omits {flag}"
-            )
+    @pytest.mark.parametrize("page", [_SELECTION, _FORMATS])
+    def test_lock_section_names_the_flags_the_page_documents(self, page: Path) -> None:
+        """A browser search of the `nab lock` section finds a flag that moved."""
+        section = _reference_section(_CLI_REFERENCE, "## `nab lock`")
+        moved = _page(page)
+        for flag in _command_flags(lock):
+            if _names_flag(moved, flag):
+                assert _names_flag(section, flag), f"`nab lock` omits {flag}"
 
-    def test_block_lists_only_flags_lock_accepts(self) -> None:
-        accepted = {form for flag in _keyword_flags(lock) for form in _flag_forms(flag)}
+    @pytest.mark.parametrize("page", [_SELECTION, _FORMATS])
+    def test_the_page_documents_the_flags_its_link_advertises(self, page: Path) -> None:
+        """A flag named beside a link is a signpost until the page carries it.
 
-        for flag in _block_flags(_config_reference_flag_block()):
-            assert flag in accepted, f"the CLI flags block still lists {flag}"
-
-    def test_prose_places_every_resolve_flag(self) -> None:
-        """The prose says what each flag of the first group does to ``[tool.nab]``."""
-        prose = _config_reference_flag_prose()
-
-        for flag in _block_flags(_resolve_group_lines()):
-            assert _spells_flag(prose, flag, left="`"), (
-                f"the section never says what {flag} does to [tool.nab]"
-            )
+        Without this, ``test_section_names_every_flag`` would be satisfied
+        by the signpost alone and the page it points at never read.
+        """
+        moved = _page(page)
+        for chunk in _prose_chunks(_page(_CLI_REFERENCE)):
+            if f"]({page.name})" not in chunk:
+                continue
+            for flag in _CODE_FLAG.findall(chunk):
+                assert _names_flag(moved, flag), f"{page.name} omits {flag}"
 
 
 class TestCliReferenceSelectionShape:
-    """The reference's selection paragraph matches the number of resolves run."""
+    """The selection page's paragraph matches the number of resolves run."""
 
     _EXTRAS = (
         '[project]\nname = "proj"\nversion = "0.1.0"\ndependencies = []\n'
@@ -236,8 +272,8 @@ class TestCliReferenceSelectionShape:
     _CONFLICT = '[tool.nab]\nconflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
 
     def _selection_paragraph(self) -> str:
-        """The ``nab lock`` paragraph that states what a selection resolves to."""
-        return _doc_paragraph(_reference_section("## `nab lock`"), "union resolve")
+        """The selection page's paragraph stating what a selection resolves to."""
+        return _doc_paragraph(_page(_SELECTION), "union resolve")
 
     def test_selection_alone_is_one_union_resolve(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -266,12 +302,12 @@ class TestCliReferenceDocumentsOutputPolicy:
     """The CLI reference lists every output-policy flag and env var the CLI accepts."""
 
     def test_verbosity_flags_documented(self) -> None:
-        text = _reference_text()
+        text = _page(_CLI_REFERENCE)
         for flag in ("-v", "-vv", "-q", "-qq", "--verbose", "--quiet"):
             assert f"`{flag}`" in text, f"CLI reference omits verbosity flag {flag}"
 
     def test_color_flags_documented(self) -> None:
-        text = _reference_text()
+        text = _page(_CLI_REFERENCE)
         assert "`--color`" in text
         assert "`--no-color`" in text
         for choice in ColorChoice:
@@ -280,17 +316,17 @@ class TestCliReferenceDocumentsOutputPolicy:
             )
 
     def test_progress_documented(self) -> None:
-        text = _reference_text()
+        text = _page(_CLI_REFERENCE)
         assert "`--no-progress`" in text
         assert "Resolving" in text
 
     def test_output_env_vars_documented(self) -> None:
-        text = _reference_text()
+        text = _page(_CLI_REFERENCE)
         for var in ("NAB_VERBOSITY", "NAB_NO_PROGRESS", "NO_COLOR", "FORCE_COLOR"):
             assert var in text, f"CLI reference omits env var {var}"
 
     def test_nab_verbosity_values_documented(self) -> None:
-        text = _reference_text()
+        text = _page(_CLI_REFERENCE)
         for level in Verbosity:
             name = level.name.lower()
             assert f"`{name}`" in text, (
@@ -309,7 +345,9 @@ class TestCliReferenceDocumentsOutputPolicy:
 
         scope = next(
             para
-            for para in _reference_section("## Output control").split("\n\n")
+            for para in _reference_section(_CLI_REFERENCE, "## Output control").split(
+                "\n\n"
+            )
             if "before the subcommand" in para
         )
         for sub in _SUBCOMMANDS:
@@ -345,7 +383,7 @@ class TestConfigExplainReferenceDocs:
             ]
         )
 
-        section = _reference_section("## `nab config`")
+        section = _reference_section(_CLI_REFERENCE, "## `nab config`")
         for status in ("winner", "shadowed", "rejected"):
             assert status in printed, status
             assert f"`{status}`" in section, status
@@ -358,7 +396,9 @@ class TestLockReferenceDocumentsProjectOverrides:
         prefix = "--project-"
         prose = "\n\n".join(
             para
-            for para in _reference_section("## `nab lock`").split("\n\n")
+            for para in _reference_section(_CLI_REFERENCE, "## `nab lock`").split(
+                "\n\n"
+            )
             if prefix in para
         )
         for spec in OPTIONS:
@@ -369,29 +409,47 @@ class TestLockReferenceDocumentsProjectOverrides:
         assert "append" not in prose
 
 
+class TestConfigReferenceCliFlags:
+    """The config reference's flag block matches what ``nab lock`` accepts.
+
+    The block groups the flags by what each one decides, and the bullets
+    under it say what the first group does to ``[tool.nab]``.  One
+    ``--project-<key>`` line stands for the whole family, so the block is
+    not read for the individual names.
+    """
+
+    _WILDCARD = "--project-<key>"
+
+    def test_block_lists_every_lock_flag(self) -> None:
+        declared = set(_block_flags(_flag_block()))
+
+        for flag in _command_flags(lock):
+            forms = _flag_forms(flag, wildcard=self._WILDCARD)
+            assert declared.intersection(forms), f"the flag block omits {flag}"
+
+    def test_block_lists_only_flags_lock_accepts(self) -> None:
+        accepted = {
+            form
+            for flag in _command_flags(lock)
+            for form in _flag_forms(flag, wildcard=self._WILDCARD)
+        }
+
+        for flag in _block_flags(_flag_block()):
+            assert flag in accepted, f"the flag block still lists {flag}"
+
+    def test_bullets_cover_exactly_the_first_group(self) -> None:
+        """A flag in the wrong group leaves the bullets covering the wrong set."""
+        assert _bullet_flags() == _first_flag_group()
+
+
 _FLAG = "--include-rejected"
-
-
-def _prose_chunks(section: str) -> list[str]:
-    """Split a reference section into one string per paragraph and bullet."""
-    chunks: list[str] = []
-    current: list[str] = []
-    for raw in section.splitlines():
-        line = raw.strip()
-        if current and (not line or raw.startswith("* ")):
-            chunks.append(" ".join(current))
-            current = []
-        if line:
-            current.append(line)
-
-    if current:
-        chunks.append(" ".join(current))
-    return chunks
 
 
 def _include_rejected_chunks() -> list[str]:
     return [
-        c for c in _prose_chunks(_reference_section("## `nab config`")) if _FLAG in c
+        c
+        for c in _prose_chunks(_reference_section(_CLI_REFERENCE, "## `nab config`"))
+        if _FLAG in c
     ]
 
 
@@ -445,7 +503,7 @@ class TestCliReferenceDocumentsIncludeRejected:
 
         label = "rejected:"
         assert any(line.strip() == label for line in out.splitlines())
-        assert f"`{label}`" in _reference_section("## `nab config`")
+        assert f"`{label}`" in _reference_section(_CLI_REFERENCE, "## `nab config`")
 
     def test_exit_without_the_flag_is_documented(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
@@ -463,7 +521,9 @@ class TestCliReferenceDocumentsIncludeRejected:
         assert out.getvalue() == ""
         assert "config error" in err.getvalue()
         assert "resolutionn" in _run_config(["list", _FLAG, "--path", path])
-        assert f"exits {exc.value.code}" in _reference_section("## `nab config`")
+        assert f"exits {exc.value.code}" in _reference_section(
+            _CLI_REFERENCE, "## `nab config`"
+        )
 
     def test_get_renders_no_rejection(
         self,

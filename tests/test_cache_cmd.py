@@ -8,12 +8,18 @@ import pytest
 
 from nab import cli as nab_cli
 from nab.cli import app
-from nab_index.cache import CACHE_VERSION_SIMPLE, CachePolicy, OnDiskCache
+from nab_index.cache import (
+    CACHE_VERSION_SDIST,
+    CACHE_VERSION_SIMPLE,
+    CachePolicy,
+    OnDiskCache,
+)
 from nab_index.parsed_listing import encode as _encode_parsed
 from nab_project.config_sources import SourceRoots
 
 # Derived so a bucket-version bump does not need every path updated.
 SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
+SDIST_BUCKET = f"sdist-{CACHE_VERSION_SDIST}"
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
 
@@ -335,7 +341,7 @@ class TestCacheClear:
         assert not (root / SIMPLE_BUCKET).exists()
         assert not (root / "simple-neg-v0").exists()
         assert not (root / "metadata-v1").exists()
-        assert not (root / "sdist-v1").exists()
+        assert not (root / SDIST_BUCKET).exists()
         assert sibling.read_text() == "keep me"
         assert str(root) in capsys.readouterr().err
 
