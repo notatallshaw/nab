@@ -62,6 +62,10 @@ class RangeProtocol(Protocol[VersionType_contra]):
     term; conflict resolution's step budget reports one as an internal error
     rather than spinning on it.
 
+    Ranges must be immutable.  The resolver keeps the ones it is handed and
+    reuses the results of range operations by operand identity, so mutating
+    one afterwards changes assignments already recorded.
+
     Mixing range types within a single resolution is unsupported.
     """
 

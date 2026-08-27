@@ -18,6 +18,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from ..errors import MetadataError, MissingExtraError
 from ..extra_keys import join_extra
 from ..policy import ExtrasMode
+from .listing_diagnosis import MetadataBlock, ReasonKind
 from .lookahead import flush_pending_blocks
 from .metadata_resolver import refuse_url_dep
 
@@ -70,9 +71,10 @@ def choose_extra_version(
     if provider.wants_lowest(normalized):
         candidates.reverse()
 
-    chosen = _pick_in_mode(provider, base, extra, candidates)
+    chosen, unreadable = _pick_in_mode(provider, base, extra, candidates)
+    declared_outside: Version | None = None
     if chosen is not None and (normalized, extra) in provider.root_extras:
-        chosen = _pick_for_user_extra(
+        chosen, declared_outside = _pick_for_user_extra(
             provider, base, extra, chosen, candidates, all_versions
         )
 
@@ -97,7 +99,59 @@ def choose_extra_version(
         _record_base_range_blocks(
             provider, package, normalized, base_range, excluded_by_base
         )
+    if chosen is None:
+        _record_extra_reason(
+            provider,
+            package,
+            admit_range,
+            all_versions,
+            candidates,
+            unreadable,
+            declared_outside=declared_outside,
+        )
     return chosen
+
+
+def _record_extra_reason(
+    provider: Provider,
+    package: str,
+    admit_range: VersionRange,
+    all_versions: list[Version],
+    candidates: list[Version],
+    unreadable: list[MetadataBlock],
+    *,
+    declared_outside: Version | None,
+) -> None:
+    """Record why the proxy has no version, so the report can name the extra.
+
+    Four situations are worth telling apart, and none of them is visible
+    once the proxy's empty candidate list reaches the resolver: the search
+    narrowed the base off every version declaring the extra, no version
+    that could be read declares it, none could be read at all, or the base
+    has no version to offer at all.  The resolver never asks after the base
+    by name, so nothing else records that last one.
+
+    ``declared_outside`` is the version the narrowing put out of reach,
+    which the report names in place of a range: the range the search was
+    left with is the solver's own and does not always spell as one.
+
+    A base that published versions with none of them in range records
+    nothing: no filter refused anything, so there is nothing to name.
+    """
+    if declared_outside is not None:
+        provider.record_extra_no_versions(
+            package, ReasonKind.EXTRA_NARROWED, declaring_version=declared_outside
+        )
+    elif candidates and len(unreadable) == len(candidates):
+        provider.record_extra_no_versions(
+            package, ReasonKind.EXTRA_METADATA, metadata=tuple(unreadable)
+        )
+    elif candidates:
+        provider.record_extra_no_versions(
+            package, ReasonKind.EXTRA_UNDECLARED, version_range=admit_range
+        )
+    elif not all_versions:
+        provider.record_extra_base_empty(package)
 
 
 def _pick_in_mode(
@@ -105,8 +159,8 @@ def _pick_in_mode(
     base: str,
     extra: str,
     candidates: list[Version],
-) -> Version | None:
-    """Pick a candidate honoring ``ExtrasMode``.
+) -> tuple[Version | None, list[MetadataBlock]]:
+    """Pick a candidate honoring ``ExtrasMode``, and say what was unreadable.
 
     Fetches base metadata so an extraction failure (unparseable PKG-INFO,
     a disallowed sdist build, or no metadata source at all) skips the
@@ -114,19 +168,27 @@ def _pick_in_mode(
     to expand the extra. This applies to user-requested extras too, since
     the proxy always needs the base metadata. BACKTRACK mode additionally
     checks ``Provides-Extra`` for transitive extras.
+
+    The second return value carries one record per candidate skipped for
+    an unreadable metadata source, which tells a proxy that found nothing
+    apart from one whose candidates simply do not declare the extra.
     """
     _, _, normalized = provider.split_and_normalize(base)
     is_user = (normalized, extra) in provider.root_extras
     backtrack = provider.extras_mode == ExtrasMode.BACKTRACK
+    unreadable: list[MetadataBlock] = []
     for version in candidates:
-        if provider.has_invalid_metadata(normalized, version):
+        cached = provider.invalid_metadata_reason(normalized, version)
+        if cached is not None:
+            unreadable.append(MetadataBlock(cached))
             continue
         try:
             provider.get_dependencies(base, version)
-        except MetadataError:
+        except MetadataError as exc:
+            unreadable.append(MetadataBlock(str(exc), exc.filtered_sdist_version))
             continue
         if is_user or not backtrack:
-            return version
+            return version, unreadable
         metadata = provider.metadata_cache.get((normalized, version))
         provided = (
             {canonicalize_name(e) for e in metadata.provides_extra}
@@ -134,8 +196,8 @@ def _pick_in_mode(
             else set()
         )
         if metadata is None or extra in provided:
-            return version
-    return None
+            return version, unreadable
+    return None, unreadable
 
 
 def _pick_for_user_extra(
@@ -145,7 +207,7 @@ def _pick_for_user_extra(
     chosen: Version,
     candidates: list[Version],
     all_versions: list[Version],
-) -> Version | None:
+) -> tuple[Version | None, Version | None]:
     """Keep or drop ``chosen`` when the root asked for ``extra``.
 
     A root extra pins the first in-range version even when that version
@@ -156,9 +218,12 @@ def _pick_for_user_extra(
     check runs against the root requirement's range intersected with the
     user's constraint, so the answer follows the index rather than the
     metadata fetched so far.
+
+    Returns the version to offer and, where the narrowing is what lost the
+    extra, the newest version outside the search that declares it.
     """
     if provider.extras_mode == ExtrasMode.WARN:
-        return chosen
+        return chosen, None
 
     _, _, normalized = provider.split_and_normalize(base)
     root_range = provider.root_requirements.get(normalized, VersionRange.full())
@@ -169,16 +234,20 @@ def _pick_for_user_extra(
     admitted = set(candidates)
     outside = [v for v in root_range.filter(all_versions) if v not in admitted]
     if not outside:
-        return chosen
+        return chosen, None
 
     if any(version_provides_extra(provider, base, extra, v) for v in candidates):
-        return chosen
+        return chosen, None
 
     # Declared outside the narrowed range but not inside it: the
     # narrowing is what lost the extra, so let it be backjumped away.
-    if any(version_provides_extra(provider, base, extra, v) for v in outside):
-        return None
-    return chosen
+    declaring = next(
+        (v for v in outside if version_provides_extra(provider, base, extra, v)),
+        None,
+    )
+    if declaring is not None:
+        return None, declaring
+    return chosen, None
 
 
 def version_provides_extra(

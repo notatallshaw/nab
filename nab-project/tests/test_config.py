@@ -130,18 +130,44 @@ def indexes_doc_example() -> str:
     return blocks[0]
 
 
-def default_groups_doc_comment() -> str:
-    """Return the comment above ``default-groups`` in the config reference."""
+def top_level_doc_comment(key: str) -> str:
+    """Return the comment above ``key`` in the config reference's example block."""
     lines = first_tool_nab_example().splitlines()
     for i, line in enumerate(lines):
-        if line.startswith("default-groups"):
+        if line.startswith(key):
             comment: list[str] = []
             j = i - 1
             while j >= 0 and lines[j].lstrip().startswith("#"):
                 comment.insert(0, lines[j].lstrip("# ").rstrip())
                 j -= 1
             return " ".join(comment)
-    raise AssertionError("no default-groups key in the config reference example")
+    msg = f"no {key} key in the config reference example"
+    raise AssertionError(msg)
+
+
+def override_body_doc_bullet(key: str) -> str:
+    """Return the config reference's override-body bullet for ``key``.
+
+    Bullets wrap across source lines, so the text comes back on one line.
+    """
+    text = DOCS_CONFIGURATION.read_text()
+    section = re.search(
+        r"^A body sets any combination of:\n\n(.*?)\n\n",
+        text,
+        flags=re.DOTALL | re.MULTILINE,
+    )
+    if section is None:
+        raise AssertionError("no override-body list in configuration.md")
+
+    bullet = re.search(
+        rf"^\* `{re.escape(key)}`:(.*?)(?=^\* |\Z)",
+        section.group(1),
+        flags=re.DOTALL | re.MULTILINE,
+    )
+    if bullet is None:
+        msg = f"no {key} bullet in configuration.md's override body"
+        raise AssertionError(msg)
+    return " ".join(bullet.group(1).split())
 
 
 class TestCliOverridesFold:
@@ -884,13 +910,13 @@ class TestDefaultGroups:
     def test_doc_describes_resolve_activation(self) -> None:
         # default-groups activates the groups for the resolve, not just records
         # them in the lockfile, so the reference has to say so.
-        comment = default_groups_doc_comment().lower()
+        comment = top_level_doc_comment("default-groups").lower()
         assert any(word in comment for word in ("resolve", "activat")), comment
 
     def test_doc_notes_the_conflict_fork(self) -> None:
         # A default that --groups joins to another member of its conflict
         # set forks rather than unions, so "every resolve" needs the caveat.
-        comment = default_groups_doc_comment()
+        comment = top_level_doc_comment("default-groups")
         assert "forks" in comment, comment
 
 
@@ -1038,6 +1064,21 @@ class TestMainGroup:
         with pytest.raises(ConfigError, match="nothing could install that extra"):
             read_pyproject_config(path)
 
+    def test_a_base_group_extra_set_is_refused_under_exactly_one(
+        self, tmp_path: Path
+    ) -> None:
+        """The extra makes the pair impossible, whichever exclusive policy is set."""
+        path = write(
+            tmp_path,
+            '[project.optional-dependencies]\ncli = ["clitool"]\n'
+            "[tool.nab]\n"
+            'base-group = "main"\n'
+            'conflicts = [{ members = [{ group = "main" }, { extra = "cli" }],'
+            ' policy = "exactly-one" }]\n',
+        )
+        with pytest.raises(ConfigError, match="nothing could install that extra"):
+            read_pyproject_config(path)
+
     def test_a_build_group_may_conflict_with_an_extra(self, tmp_path: Path) -> None:
         """The project's dependencies stay in every fork of that set."""
         path = write(
@@ -1050,6 +1091,10 @@ class TestMainGroup:
             'conflicts = [[{ group = "build" }, { extra = "cli" }]]\n',
         )
         assert read_pyproject_config(path).build_group == "build"
+
+    def test_doc_states_the_base_group_extra_refusal(self) -> None:
+        page = " ".join(DOCS_CONFLICTS.read_text(encoding="utf-8").lower().split())
+        assert "pairing `base-group` with an extra is refused" in page
 
     def test_build_group_rejects_the_base_group_name(self, tmp_path: Path) -> None:
         path = write(
@@ -1470,6 +1515,27 @@ class TestUploadedPriorTo:
             ),
         ):
             read_pyproject_config(path)
+
+    def test_top_level_doc_states_the_offset_requirement(self) -> None:
+        # Offset-less values are ISO 8601 strings and TOML datetimes too, so
+        # naming those two forms is not enough on its own.
+        comment = top_level_doc_comment("uploaded-prior-to").lower()
+        assert "timezone offset" in comment, comment
+
+    def test_override_doc_states_the_offset_requirement(self) -> None:
+        bullet = override_body_doc_bullet("uploaded-prior-to").lower()
+        assert "timezone offset" in bullet, bullet
+
+    def test_top_level_doc_example_carries_an_offset(self, tmp_path: Path) -> None:
+        """The reference's own example has to be a value the parser accepts."""
+        block = first_tool_nab_example()
+        match = re.search(r"^uploaded-prior-to = (.*)$", block, re.MULTILINE)
+        assert match is not None, "top-level example dropped uploaded-prior-to"
+
+        path = write(tmp_path, f"[tool.nab]\nuploaded-prior-to = {match.group(1)}\n")
+        dt = read_pyproject_config(path).uploaded_prior_to
+        assert dt is not None
+        assert dt.utcoffset() is not None
 
 
 class TestPolicies:
@@ -3271,6 +3337,28 @@ class TestPackageRules:
         assert second.name == "xmlsec"
         assert first.dist_policy is DistPolicy.SDIST_ONLY
         assert second.dist_policy is DistPolicy.SDIST_ONLY
+
+    def test_a_rule_is_not_the_name_keyed_table(self, tmp_path: Path) -> None:
+        """A rule is an array element, so it declares no ``packages.<name>`` table.
+
+        The diagnostic remedy reads this to decide whether writing that
+        table would collide with one the file already has.
+        """
+        path = write(
+            tmp_path,
+            "[[tool.nab.package-rules]]\n"
+            'match = ["lxml"]\n'
+            'dist-policy = "sdist-only"\n'
+            "[tool.nab.packages.xmlsec]\n"
+            'dist-policy = "sdist-only"\n',
+        )
+        table, rule = read_pyproject_config(
+            path, discover_workspace=False
+        ).package_overrides
+        assert table.name == "xmlsec"
+        assert table.name_keyed is True
+        assert rule.name == "lxml"
+        assert rule.name_keyed is False
 
     def test_routing_many_packages_to_one_index(self, tmp_path: Path) -> None:
         path = write(

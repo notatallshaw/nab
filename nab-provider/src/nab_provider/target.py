@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging import tags as ptags
@@ -263,6 +264,7 @@ _MARKER_CLAUSE_RE = re.compile(
 )
 
 
+@lru_cache(maxsize=8192)
 def marker_variables(marker_text: str) -> frozenset[str]:
     """Return the PEP 508 environment variables ``marker_text`` names.
 
@@ -282,6 +284,10 @@ def marker_variables(marker_text: str) -> frozenset[str]:
 
     Every call site passes a serialised :class:`Marker`; an input that is not
     a valid marker raises :class:`InvalidMarker`.
+
+    Memoised on the text, which a matrix lock asks for again on every
+    target.  The keys are marker texts out of resolved metadata, so the
+    distinct texts one resolve sees stay well short of ``maxsize``.
     """
     return variable_names(marker_text) & PEP508_MARKER_VARIABLES
 

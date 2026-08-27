@@ -5737,7 +5737,7 @@ class TestLockWheelPrunePredicate:
         assert not result.success
         error = result.target_results[0].error
         assert error is not None
-        assert "none of the wheel's tags are compatible" in str(error)
+        assert "no wheel matches this platform or Python" in str(error)
 
     def test_sdist_survives_when_every_wheel_is_pruned(self) -> None:
         """The same pruned version keeps its sdist and pins the sdist alone."""

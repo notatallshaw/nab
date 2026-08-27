@@ -85,6 +85,10 @@ _WHEEL_NAME_RE = re.compile(r"^[\w._]+\Z", re.UNICODE)
 _WHEEL_DASHES = (4, 5)
 _WHEEL_DASHES_WITH_BUILD = 5
 
+# The pre-PEP 714 spelling.  PEP 714 blesses no ``data-`` prefixed key for JSON,
+# so that spelling is never read.
+_LEGACY_METADATA_KEY = "dist-info-metadata"
+
 
 @lru_cache(maxsize=65536)
 def _canonical_version(version: str) -> str:
@@ -111,37 +115,20 @@ def _tag_triple_is_parseable(tag_str: str) -> bool:
     return all("" not in field.split(".") for field in (abis, platforms))
 
 
-def _is_usable_filename(filename: str) -> bool:
-    """Whether ``filename`` has a UTF-8 form and holds no NUL.
-
-    nab records the name in a UTF-8 lockfile and writes the artefact
-    under it, so a name failing either is unusable however well it
-    parses.  A lone surrogate has no UTF-8 form, including the
-    ``U+DC80``..``U+DCFF`` range POSIX carries through ``surrogateescape``.
-    """
-    if "\x00" in filename:
-        return False
-    try:
-        filename.encode()
-    except UnicodeEncodeError:
-        return False
-    return True
-
-
 def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     """Parse a wheel filename per PEP 427.
 
     Returns ``(canonical_name, version_string)`` or ``None`` for any
     filename packaging rejects (wrong extension, malformed, etc.), for a
-    version digit run past CPython's int-from-string limit, and for a name
-    :func:`_is_usable_filename` refuses.  Never raises.
+    version digit run past CPython's int-from-string limit, and for a
+    filename holding a NUL or with no UTF-8 form.  Never raises.
     The version string is the canonical form produced by
     :class:`packaging.version.Version`, so trailing-zero handling
     matches what packaging records on the file; e.g. a wheel
     declaring ``2.0.0`` in its filename comes back as ``"2.0.0"``,
     not ``"2"``.
 
-    Unusable names aside, this accepts what nab-provider's vendored
+    Those rejections aside, this accepts what nab-provider's vendored
     ``parse_wheel_filename`` accepts, but discards the ``frozenset[Tag]`` the
     tag parser builds and nab does not use. The vendored copy is the one to
     match, not the released ``packaging`` this package depends on, because the
@@ -153,7 +140,7 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
     nab reads a build tag only to sort by it and sorts an unconvertible run
     lowest.
     """
-    if not filename.endswith(".whl") or not _is_usable_filename(filename):
+    if not filename.endswith(".whl") or "\x00" in filename:
         return None
 
     stem = filename[:-4]
@@ -167,9 +154,12 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
         return None
 
     try:
+        # Encode only to reject a string with no UTF-8 form.
+        filename.encode()
         version = _canonical_version(parts[1])
     except ValueError:
-        # InvalidVersion, or int() refusing a digit run past CPython's limit.
+        # UnicodeEncodeError, InvalidVersion, or int() refusing a digit run
+        # past CPython's limit.
         return None
 
     bad_build = (
@@ -189,8 +179,8 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
 
     Accepts what nab-provider's vendored ``parse_sdist_filename`` accepts,
     except ``.zip`` sdists, which nab does not support (gzip-tar only, and
-    not part of the PEP 625 standard), and names :func:`_is_usable_filename`
-    refuses.  Returns ``None`` for everything else, including a version digit
+    not part of the PEP 625 standard), and filenames holding a NUL or with no
+    UTF-8 form.  Returns ``None`` for everything else, including a version digit
     run past CPython's int-from-string limit, and never raises.  The vendored
     copy is the one to match, not the released ``packaging`` this package
     depends on; the two can differ on an empty project name, which releases
@@ -201,7 +191,7 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
     MUST drop files whose canonical name does not match the queried
     package.  See :func:`_parse_files`.
     """
-    if not filename.endswith(".tar.gz") or not _is_usable_filename(filename):
+    if not filename.endswith(".tar.gz") or "\x00" in filename:
         return None
 
     stem = filename[: -len(".tar.gz")]
@@ -210,9 +200,12 @@ def _parse_sdist_filename(filename: str) -> tuple[NormalizedName, str] | None:
         return None
 
     try:
+        # Encode only to reject a string with no UTF-8 form.
+        filename.encode()
         version = _canonical_version(version_part)
     except ValueError:
-        # InvalidVersion, or int() refusing a digit run past CPython's limit.
+        # UnicodeEncodeError, InvalidVersion, or int() refusing a digit run
+        # past CPython's limit.
         return None
 
     return (_intern_name(name_part), version)
@@ -238,6 +231,22 @@ def holds_unreadable_format(data: object) -> bool:
         if isinstance(filename, str) and not is_readable_filename(filename):
             return True
     return False
+
+
+def holds_only_yanked(data: object) -> bool:
+    """Whether a Simple-API body served file entries and yanked every one.
+
+    :pep:`592` yanks are never admitted, so such a page parses to no files
+    and would otherwise read as a package no configured index carries.
+    """
+    if not isinstance(data, dict):
+        return False
+    raw_files = data.get("files")
+    if not isinstance(raw_files, list):
+        return False
+
+    entries = [entry for entry in raw_files if isinstance(entry, dict)]
+    return bool(entries) and all(entry.get("yanked") for entry in entries)
 
 
 def is_readable_filename(filename: str) -> bool:
@@ -551,7 +560,16 @@ def _parse_file_entry(
     if file_url is None:
         return None
 
-    size = _parse_size(file_info.get("size"))
+    # bool is an int subclass, so reject it explicitly rather than read True as 1.
+    raw_size = file_info.get("size")
+    size = (
+        raw_size
+        if isinstance(raw_size, int)
+        and not isinstance(raw_size, bool)
+        and raw_size >= 0
+        else None
+    )
+
     # ``requires-python`` has only a few dozen distinct values across
     # all of PyPI (``>=3.7``, ``>=3.8`` etc.) but appears once per
     # wheel.  Interning collapses the duplicates into one shared
@@ -577,13 +595,20 @@ def _parse_file_entry(
         parsed_name, version = wheel_parsed
         if parsed_name != expected:
             return None
-        sidecar = _metadata_value(file_info)
+        # PEP 714: ``core-metadata`` wins when present, so ``false`` there
+        # means no sidecar even if a stale legacy entry lingers.  Its value is
+        # ``true`` or the digest table, and both promise ``<file>.metadata``.
+        sidecar = (
+            file_info["core-metadata"]
+            if "core-metadata" in file_info
+            else file_info.get(_LEGACY_METADATA_KEY)
+        )
         wheel = WheelFile(
             filename=filename,
             url=file_url,
             version=version,
             requires_python=requires_python,
-            has_metadata=_advertises_sidecar(sidecar),
+            has_metadata=sidecar is True or isinstance(sidecar, dict),
             upload_time=upload_time,
             size=size,
         )
@@ -607,40 +632,6 @@ def _parse_file_entry(
     )
     defer_hashes(sdist, raw_hashes)
     return sdist
-
-
-def _parse_size(value: object) -> int | None:
-    # bool is an int subclass, so reject it explicitly rather than read True as 1.
-    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
-        return value
-    return None
-
-
-_LEGACY_METADATA_KEY = "dist-info-metadata"
-
-
-def _metadata_value(file_info: _FileEntry) -> object:
-    """Return the metadata field, applying PEP 714 key precedence.
-
-    When ``core-metadata`` is present it wins and the legacy
-    ``dist-info-metadata`` key is ignored, so ``core-metadata: false``
-    means no sidecar even if a stale legacy entry lingers.  The legacy key
-    applies only when ``core-metadata`` is absent.  ``data-dist-info-metadata``
-    is the HTML attribute name and never appears in the JSON response.
-    """
-    if "core-metadata" in file_info:
-        return file_info.get("core-metadata")
-    return file_info.get(_LEGACY_METADATA_KEY)
-
-
-def _advertises_sidecar(value: object) -> bool:
-    """Return True when a metadata value promises a PEP 658/714 sidecar.
-
-    The value is either ``true`` (the sidecar exists, with no digest
-    published) or the digest table itself; both mean the index will serve
-    ``<file>.metadata``.
-    """
-    return value is True or isinstance(value, dict)
 
 
 def _verify_metadata_hash(content: bytes, metadata_hash: tuple[str, str]) -> None:

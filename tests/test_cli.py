@@ -13,6 +13,7 @@ import inspect
 import io
 import json
 import logging
+import os
 import re
 import runpy
 import stat
@@ -45,6 +46,7 @@ from nab._lock import (
 from nab.cli import (
     _DEFAULT_OUTPUT,
     _default_cache_dir,
+    _make_resolve_transport,
     _make_transport,
     _normalize_layered_bool_flags,
     _resolve,
@@ -88,6 +90,7 @@ from nab_provider.provider import (
     SiblingMetadataDivergenceError,
     UnsupportedVcsError,
 )
+from nab_provider.records import WheelFile
 from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget, host_environment
@@ -183,6 +186,37 @@ def _stub_resolve_result(
     return ResolveResult(
         targets=(target,), target_results=[_resolved(target, real_pins)]
     )
+
+
+def _foo_index_bodies() -> dict[str, bytes]:
+    """The URL-keyed bodies a ``foo`` resolve-and-download fetches.
+
+    Both digests are taken over the bodies served, so the PEP 658 sidecar and
+    the wheel pass their hash checks.
+    """
+    wheel = b"foo wheel"
+    sidecar = b"Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n\n"
+    url = "https://files.example.com/foo-1.0-py3-none-any.whl"
+    listing = {
+        "files": [
+            {
+                "filename": "foo-1.0-py3-none-any.whl",
+                "url": url,
+                "hashes": {"sha256": hashlib.sha256(wheel).hexdigest()},
+                "core-metadata": {"sha256": hashlib.sha256(sidecar).hexdigest()},
+            }
+        ]
+    }
+    return {
+        "https://pypi.org/simple/foo/": json.dumps(listing).encode(),
+        f"{url}.metadata": sidecar,
+        url: wheel,
+    }
+
+
+def _cached_listings(root: Path) -> list[str]:
+    """Names of the packages whose Simple API listing is cached under ``root``."""
+    return sorted(path.stem for path in root.glob("simple-*/*/*.json"))
 
 
 def _fetchable_resolve_result(count: int) -> tuple[ResolveResult, dict[str, bytes]]:
@@ -2632,28 +2666,29 @@ class TestLockCommandUniversal:
     def test_per_tuple_pins_to_dash_stdout(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Universal + --output - writes per-tuple blocks to stdout."""
+        """An explicit ``--output -`` prints the same per-tuple blocks."""
         pyproject = _universal_pyproject(tmp_path)
-        with (
-            patch(
-                "nab.cli.resolve_for_targets",
-                return_value=_universal_result(success=True),
-            ),
-            patch(
-                "nab._lock.build_lock_input",
-                return_value=MagicMock(name="LockInput"),
-            ),
-            patch(
-                "nab._lock.write_requirements_without_hashes",
-                return_value="# py311-linux_x86_64\nfoo==1.0\n",
-            ),
+        with patch(
+            "nab.cli.resolve_for_targets",
+            return_value=_multi_tuple_universal_result(),
         ):
-            lock(
-                pyproject,
-                format="requirements-without-hashes",
-                output=Path("-"),
-            )
-        assert "# py311-linux_x86_64" in capsys.readouterr().out
+            lock(pyproject, format="requirements-without-hashes", output=Path("-"))
+        assert capsys.readouterr().out == (
+            "# py311-linux_x86_64\nbar==2.0\nfoo==1.0\n\n"
+            "# py312-linux_x86_64\nfoo==1.0\n"
+        )
+
+    def test_per_tuple_pins_to_dash_stdout_single_tuple(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Single-tuple matrix + ``--output -``: just the pins, no header."""
+        pyproject = _universal_pyproject(tmp_path)
+        with patch(
+            "nab.cli.resolve_for_targets",
+            return_value=_universal_result(success=True),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=Path("-"))
+        assert capsys.readouterr().out == "foo==1.0\n"
 
     def test_failed_tuple_exits_1(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2899,6 +2934,117 @@ class TestLockCommandUniversal:
         assert "# base/py312-linux_x86_64: FAILED" in err
         assert "#   ResolutionError: base unresolvable" in err
         assert "#   Diagnostics: missing" in err
+
+    def _cutoff_refused(self, tmp_path: Path, platforms: str) -> Path:
+        """A universal project whose only candidate the upload cutoff refuses."""
+        return _make_pyproject(
+            tmp_path,
+            '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo"]\n'
+            "[tool.nab]\n"
+            'mode = "universal"\n'
+            'uploaded-prior-to = "2026-05-01T00:00:00Z"\n'
+            "[tool.nab.matrix]\n"
+            'python = "==3.11"\n'
+            f"platforms = [{platforms}]\n",
+        )
+
+    def _lock_against_a_refused_listing(self, pyproject: Path) -> None:
+        """Run a real resolve over one wheel uploaded after the cutoff."""
+        coordinator = make_coordinator(
+            [
+                WheelFile(
+                    filename="foo-1.0-py3-none-any.whl",
+                    url="https://example.com/foo-1.0-py3-none-any.whl",
+                    version="1.0",
+                    requires_python=None,
+                    has_metadata=True,
+                    upload_time="2030-01-01T00:00:00Z",
+                )
+            ],
+            package="foo",
+        )
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(SystemExit, match="1"):
+                lock(pyproject, format="requirements-without-hashes", cache=False)
+
+    def test_a_diagnostics_line_reaches_stderr(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A one-tuple failure prints one line and the setting that lifts it.
+
+        The line and its ``try:`` come from a real resolve, so this is the
+        text a user reads at the default level, not a fixture of it.
+        """
+        self._lock_against_a_refused_listing(
+            self._cutoff_refused(tmp_path, '"linux_x86_64"')
+        )
+
+        assert capsys.readouterr().err.endswith(
+            "\nDiagnostics: (-v for detail)\n"
+            "  - foo: uploaded-prior-to excluded every file\n"
+            '    try: set packages."foo".uploaded-prior-to = false\n'
+        )
+
+    def test_the_verbose_level_replaces_the_try_line_with_the_detail(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``-v`` keeps the line and prints the clauses and the note under it."""
+        with patch("nab.cli._printer", Printer(verbosity=Verbosity.VERBOSE)):
+            self._lock_against_a_refused_listing(
+                self._cutoff_refused(tmp_path, '"linux_x86_64"')
+            )
+
+        assert capsys.readouterr().err.endswith(
+            "\nDiagnostics:\n"
+            "  - foo: uploaded-prior-to excluded every file\n"
+            "    the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded"
+            " 1 file uploaded at 2030-01-01T00:00:00Z (1.0)\n"
+            "    the files nab read hold no sdist to build from\n"
+            "    note: the project-level uploaded-prior-to set that cutoff;"
+            ' setting packages."foo".uploaded-prior-to = false lifts it for this'
+            " package\n"
+        )
+
+    def test_a_diagnostics_line_survives_the_per_tuple_block(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Every line of the body takes the block's comment prefix.
+
+        ``_error_lines`` prefixes each line, so the ``try:`` arrives indented
+        under the package it belongs to rather than at the block's own
+        indent.
+        """
+        self._lock_against_a_refused_listing(
+            self._cutoff_refused(tmp_path, '"linux_x86_64", "windows_amd64"')
+        )
+
+        err = capsys.readouterr().err
+        assert "# py311-linux_x86_64: FAILED" in err
+        assert "#   Diagnostics:" in err
+        assert ("#     - foo: uploaded-prior-to excluded every file") in err
+        assert '#       try: set packages."foo".uploaded-prior-to = false' in err
+
+    def test_the_verbose_level_reaches_the_per_tuple_block(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A matrix block deepens at ``-v`` the way the single-target one does."""
+        with patch("nab.cli._printer", Printer(verbosity=Verbosity.VERBOSE)):
+            self._lock_against_a_refused_listing(
+                self._cutoff_refused(tmp_path, '"linux_x86_64", "windows_amd64"')
+            )
+
+        err = capsys.readouterr().err
+        assert (
+            "#       the uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00"
+            " excluded 1 file uploaded at 2030-01-01T00:00:00Z (1.0)"
+        ) in err
+        assert (
+            "#       note: the project-level uploaded-prior-to set that cutoff;"
+            ' setting packages."foo".uploaded-prior-to = false lifts it for this'
+            " package"
+        ) in err
 
     def test_template_writes_one_file_per_tuple(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -3533,21 +3679,27 @@ class TestRelockDiffSummary:
     def test_relock_reports_added_upgraded_removed(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        """Each kind gets a distinct count, so a swapped label changes the line."""
         out = tmp_path / "pylock.toml"
-        _emit(
-            _stub_lock_input({"foo": V("1.0"), "bar": V("1.0")}),
-            format="pylock",
-            output=out,
-        )
+        prior = {
+            "upgraded": V("1.0"),
+            "removed1": V("1.0"),
+            "removed2": V("1.0"),
+            "removed3": V("1.0"),
+        }
+        _emit(_stub_lock_input(prior), format="pylock", output=out)
         capsys.readouterr()
-        # foo upgraded 1.0 -> 2.0, bar removed, baz added.
+
         _emit(
-            _stub_lock_input({"foo": V("2.0"), "baz": V("1.0")}),
+            _stub_lock_input(
+                {"upgraded": V("2.0"), "added1": V("1.0"), "added2": V("1.0")}
+            ),
             format="pylock",
             output=out,
         )
+
         err = capsys.readouterr().err.strip()
-        assert err.endswith("(2 packages: 1 added, 1 upgraded, 1 removed)")
+        assert err.endswith("(3 packages: 2 added, 1 upgraded, 3 removed)")
 
     def test_relock_reports_downgrade(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -5774,6 +5926,154 @@ class TestMakeTransport:
         assert "httpx is not installed" not in err
 
 
+class _RecordingTransport:
+    """Transport that records every request it is asked for and every close."""
+
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, dict[str, str] | None]] = []
+        self.closes = 0
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> tuple[str, dict[str, str] | None]:
+        self.requests.append((url, headers))
+        return self.requests[-1]
+
+    async def aclose(self) -> None:
+        self.closes += 1
+
+
+_OFFLINE_LOCK_PROBE = """
+import sys
+
+from nab.cli import main
+
+sys.argv = ["nab", "lock", sys.argv[1], "--offline", "--no-cache", "--output", "-"]
+try:
+    main()
+except SystemExit as exc:
+    assert not exc.code, f"the lock exited {exc.code}"
+
+roots = {name.partition(".")[0] for name in sys.modules}
+leaked = sorted(roots & {"truststore", "urllib3"})
+assert not leaked, f"an offline lock loaded {leaked}"
+"""
+
+
+class TestResolveTransport:
+    """Which transport a resolve is handed, and when it is built."""
+
+    def test_online_resolve_gets_the_transport_up_front(self) -> None:
+        """A resolve that may fetch is handed the real transport."""
+        with patch("nab.cli._make_transport") as make:
+            transport = _make_resolve_transport("urllib3", offline=False)
+
+        assert transport is make.return_value
+        make.assert_called_once_with("urllib3")
+
+    def test_offline_httpx_resolve_gets_it_up_front_too(self) -> None:
+        """Only urllib3 defers; httpx is built while the CLI can still exit."""
+        with patch("nab.cli._make_transport") as make:
+            transport = _make_resolve_transport("httpx", offline=True)
+
+        assert transport is make.return_value
+        make.assert_called_once_with("httpx")
+
+    def test_offline_lock_without_httpx_exits_with_the_hint(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """An offline lock on a urllib3-only install still names the extra."""
+        pyproject = _make_pyproject(
+            tmp_path, '[project]\nname = "root"\nversion = "0"\ndependencies = []\n'
+        )
+        original_import = builtins.__import__
+
+        def fake_import(name: str, *args: object, **kwargs: object) -> object:
+            if name == "nab_index.httpx_async_transport":
+                raise ImportError(name)
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        with pytest.raises(SystemExit) as info:
+            lock(
+                pyproject,
+                output=tmp_path / "pylock.toml",
+                offline=True,
+                http_backend="httpx",
+                cache=False,
+            )
+
+        assert info.value.code == 1
+        assert "httpx is not installed" in capsys.readouterr().err
+
+    def test_offline_lock_builds_no_transport(self, tmp_path: Path) -> None:
+        """An offline lock resolves without building a urllib3 transport."""
+        pyproject = _make_pyproject(
+            tmp_path, '[project]\nname = "root"\nversion = "0"\ndependencies = []\n'
+        )
+        with patch("nab.cli._make_urllib3_transport") as make:
+            lock(pyproject, output=tmp_path / "pylock.toml", offline=True, cache=False)
+
+        make.assert_not_called()
+
+    def test_first_request_builds_one_transport_and_forwards(self) -> None:
+        """A deferred transport builds its inner one once, on the first get."""
+        inner = _RecordingTransport()
+        with patch("nab.cli._make_urllib3_transport", return_value=inner) as make:
+            transport = _make_resolve_transport("urllib3", offline=True)
+            make.assert_not_called()
+
+            async def fetch_twice() -> None:
+                await transport.get("https://example.invalid/a")
+                await transport.get(
+                    "https://example.invalid/b", headers={"Accept": "x"}
+                )
+
+            asyncio.run(fetch_twice())
+
+        make.assert_called_once_with()
+        assert inner.requests == [
+            ("https://example.invalid/a", None),
+            ("https://example.invalid/b", {"Accept": "x"}),
+        ]
+
+    def test_close_closes_the_transport_it_built(self) -> None:
+        """Closing a deferred transport that fetched closes the inner one."""
+        inner = _RecordingTransport()
+        with patch("nab.cli._make_urllib3_transport", return_value=inner):
+            transport = _make_resolve_transport("urllib3", offline=True)
+
+            async def fetch_then_close() -> None:
+                await transport.get("https://example.invalid/a")
+                await transport.aclose()
+
+            asyncio.run(fetch_then_close())
+
+        assert inner.closes == 1
+
+    def test_close_without_a_request_builds_nothing(self) -> None:
+        """Closing a deferred transport that never fetched builds nothing."""
+        with patch("nab.cli._make_urllib3_transport") as make:
+            transport = _make_resolve_transport("urllib3", offline=True)
+            asyncio.run(transport.aclose())
+
+        make.assert_not_called()
+
+    def test_an_offline_lock_leaves_urllib3_unimported(self, tmp_path: Path) -> None:
+        """urllib3 and truststore stay unimported across a whole offline lock."""
+        pyproject = _make_pyproject(
+            tmp_path, '[project]\nname = "root"\nversion = "0"\ndependencies = []\n'
+        )
+        subprocess.run(  # noqa: S603 - the probe is this file's own source
+            [sys.executable, "-c", _OFFLINE_LOCK_PROBE, str(pyproject)],
+            check=True,
+            env={**os.environ, "XDG_CONFIG_HOME": str(tmp_path / "config")},
+        )
+
+
 _HTTP_LIBRARY_PROBE = """
 import sys
 
@@ -5785,6 +6085,16 @@ assert not leaked, f"importing nab.cli loaded {leaked}"
 """
 
 
+_STDLIB_MODULE_PROBE = """
+import sys
+
+import nab.cli
+
+leaked = sorted({"html.parser", "urllib.request"} & sys.modules.keys())
+assert not leaked, f"importing nab.cli loaded {leaked}"
+"""
+
+
 class TestCliImportPath:
     """What importing :mod:`nab.cli` is allowed to pull in."""
 
@@ -5792,6 +6102,16 @@ class TestCliImportPath:
         """Neither library belongs on the path of a command that never fetches."""
         subprocess.run(  # noqa: S603 - the probe is this file's own source
             [sys.executable, "-c", _HTTP_LIBRARY_PROBE], check=True
+        )
+
+    def test_html_parser_and_urllib_request_stay_unimported(self) -> None:
+        """Neither belongs on startup: one reads an HTML page, one a file:// URL.
+
+        Matched on full module names rather than first path components,
+        since :mod:`urllib.parse` is always loaded.
+        """
+        subprocess.run(  # noqa: S603 - the probe is this file's own source
+            [sys.executable, "-c", _STDLIB_MODULE_PROBE], check=True
         )
 
 
@@ -5897,6 +6217,57 @@ class TestDownloadCommand:
             download(pyproject, output=out)
 
         assert transport.peak == 2
+
+    def test_cache_dir_flag_roots_the_index_cache(
+        self, hermetic_roots: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--cache-dir`` roots the download's index cache."""
+        default_root = tmp_path / "xdg"
+        cache = tmp_path / "flagged"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(default_root))
+        pyproject = _make_pyproject(hermetic_roots)
+
+        transport = _SidecarTransport(_foo_index_bodies())
+        with patch("nab.cli._make_transport", return_value=transport):
+            download(pyproject, output=tmp_path / "vendor", cache_dir=cache)
+
+        assert _cached_listings(cache) == ["foo"]
+        assert not default_root.exists()
+
+    def test_env_cache_dir_roots_the_index_cache(
+        self, hermetic_roots: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``NAB_CACHE_DIR`` roots the download's cache the way the flag does."""
+        default_root = tmp_path / "xdg"
+        cache = tmp_path / "env-declared"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(default_root))
+        monkeypatch.setenv("NAB_CACHE_DIR", str(cache))
+        pyproject = _make_pyproject(hermetic_roots)
+
+        transport = _SidecarTransport(_foo_index_bodies())
+        with patch("nab.cli._make_transport", return_value=transport):
+            download(pyproject, output=tmp_path / "vendor")
+
+        assert _cached_listings(cache) == ["foo"]
+        assert not default_root.exists()
+
+    def test_no_cache_flag_leaves_the_index_uncached(
+        self, hermetic_roots: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--no-cache`` beats ``--cache-dir``, so the download caches nothing."""
+        default_root = tmp_path / "xdg"
+        cache = tmp_path / "flagged"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(default_root))
+        pyproject = _make_pyproject(hermetic_roots)
+
+        transport = _SidecarTransport(_foo_index_bodies())
+        with patch("nab.cli._make_transport", return_value=transport):
+            download(
+                pyproject, output=tmp_path / "vendor", cache_dir=cache, cache=False
+            )
+
+        assert _cached_listings(cache) == []
+        assert not default_root.exists()
 
     def test_project_override_uses_download_wording(
         self,
