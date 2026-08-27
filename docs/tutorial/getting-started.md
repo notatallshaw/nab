@@ -71,5 +71,4 @@ For multi-platform / multi-Python locks see
   [output formats](../reference/formats.md), and
   [resolution failures](../reference/diagnostics.md) on their own pages.
 * [Lockfile](../reference/lockfile.md): what is in `pylock.toml`, the
-  `requirements.txt --hash` shape, and how `nab download` consumes
-  them.
+  `requirements.txt --hash` shape, and what `nab download` fetches.
