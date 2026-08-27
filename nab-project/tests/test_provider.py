@@ -771,6 +771,19 @@ class TestFetchVersions:
         provider = Provider(coordinator)
         assert provider.fetch_versions("foo") == []
 
+    def test_skips_unparseable_version_under_overrides(self) -> None:
+        """An override does not rescue a version that does not parse.
+
+        The override is what selects the version-scoped pass, which still
+        drops an unparseable version before consulting anything.
+        """
+        coordinator = make_coordinator([make_wheel("not-a-version!")], package="foo")
+        provider = Provider(
+            coordinator,
+            package_overrides=(pkg_override("foo", provides_extra=("e",)),),
+        )
+        assert provider.fetch_versions("foo") == []
+
     def test_filters_requires_python(self) -> None:
         """Wheels that don't match python_version are excluded."""
         coordinator = make_coordinator(
@@ -8173,6 +8186,22 @@ class TestDistPolicy:
             metadata_text="Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n",
         )
         provider = Provider(coordinator, dist_policy=DistPolicy.PREFER_WHEEL)
+        versions = provider.fetch_versions("pkg")
+        assert len(versions) == 2
+        assert isinstance(versions[0][1], WheelFile)
+        assert isinstance(versions[1][1], SdistFile)
+
+    def test_prefer_wheel_wheels_before_sdists_under_overrides(self) -> None:
+        """An override that leaves the policy alone keeps PREFER_WHEEL's order."""
+        coordinator = make_coordinator(
+            [make_sdist("1.0"), make_wheel("1.0")],
+            metadata_text="Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n",
+        )
+        provider = Provider(
+            coordinator,
+            dist_policy=DistPolicy.PREFER_WHEEL,
+            package_overrides=(pkg_override("pkg", provides_extra=("e",)),),
+        )
         versions = provider.fetch_versions("pkg")
         assert len(versions) == 2
         assert isinstance(versions[0][1], WheelFile)

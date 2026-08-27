@@ -376,7 +376,9 @@ class ListingPolicy:
 
     ``overridden`` is true when a per-package or per-index override can
     vary an answer by version, so the per-candidate lookups have to run.
-    Without one, the defaults here answer for every file in the listing.
+    Without one, the defaults here answer for every file in the listing:
+    ``default_drops_wheels`` and ``default_drops_sdists`` are
+    ``default_dist_policy``'s artifact-kind verdict, taken once.
     """
 
     index_name: str | None
@@ -384,18 +386,23 @@ class ListingPolicy:
     default_dist_policy: DistPolicy
     default_cutoff: datetime | None
     time_filter_active: bool
+    default_drops_wheels: bool
+    default_drops_sdists: bool
 
 
 def listing_policy(provider: Provider, normalized: str) -> ListingPolicy:
     """Return the policy answers for one listing, for its per-file loop to consult."""
+    default_dist_policy = provider.dist_policy
     return ListingPolicy(
         index_name=provider.serving_index(normalized),
         overridden=provider.has_overrides,
-        default_dist_policy=provider.dist_policy,
+        default_dist_policy=default_dist_policy,
         default_cutoff=provider.uploaded_prior_to,
         time_filter_active=(
             provider.uploaded_prior_to is not None or provider.overrides_set_time
         ),
+        default_drops_wheels=default_dist_policy == DistPolicy.SDIST_ONLY,
+        default_drops_sdists=default_dist_policy == DistPolicy.WHEEL_ONLY,
     )
 
 
@@ -481,6 +488,9 @@ def _prepare_listing(
     :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL`, and whether
     any version's policy wants wheels sorted ahead of sdists.
     """
+    if target_drops and not policy.overridden:
+        return _prepare_listing_defaults(provider, normalized, files, policy)
+
     result: list[tuple[Version, DistFile]] = []
     sort_with_wheel_first = False
     overridden = policy.overridden
@@ -519,6 +529,86 @@ def _prepare_listing(
 
         if target_drops and python_or_time_cause(
             provider, normalized, version, dist, policy
+        ):
+            continue
+
+        result.append((version, dist))
+
+    return result, sdist_install_versions, sort_with_wheel_first
+
+
+def _prepare_listing_defaults(
+    provider: Provider,
+    normalized: str,
+    files: Sequence[WheelFile | SdistFile],
+    policy: ListingPolicy,
+) -> _PreparedListing:
+    """Run :func:`_prepare_listing`'s pass with the policy answers already taken.
+
+    Reached when no override can vary an answer by version and the target
+    drops belong to this pass, so one dist policy and one cutoff hold for
+    the whole listing and each Requires-Python string has one verdict.
+    Per file the general pass calls a dist-policy check and a combined
+    Requires-Python and cutoff check; here the first is a pair of
+    booleans, the second a dict lookup, and only the cutoff still calls
+    out.
+
+    ``sort_with_wheel_first`` follows the policy rather than the files
+    that survive it, so it can be true where the general pass returns
+    false. That happens only when nothing survives, and the caller sorts
+    an empty list either way.
+    """
+    stats = provider.stats
+    requires_python_cache = provider.requires_python_cache
+    drops_wheels = policy.default_drops_wheels
+    drops_sdists = policy.default_drops_sdists
+    time_filter_active = policy.time_filter_active
+    cutoff = policy.default_cutoff
+
+    dist_policy = policy.default_dist_policy
+    sdist_install = dist_policy is DistPolicy.SDIST_INSTALL
+    sort_with_wheel_first = sdist_install or dist_policy is DistPolicy.PREFER_WHEEL
+
+    result: list[tuple[Version, DistFile]] = []
+    sdist_install_versions: set[Version] = set()
+    for dist in files:
+        stats.distributions_seen += 1
+        is_wheel = isinstance(dist, WheelFile)
+        if is_wheel:
+            stats.wheels_seen += 1
+        else:
+            stats.sdists_seen += 1
+
+        # Parse before the kind check so an unparseable file is not
+        # counted as a dist-policy exclusion.
+        try:
+            version = _intern_version(dist.version)
+        except InvalidVersion:
+            continue
+
+        wrong_kind = drops_wheels if is_wheel else drops_sdists
+        if wrong_kind:
+            stats.excluded_by_dist_policy += 1
+            continue
+
+        if sdist_install:
+            sdist_install_versions.add(version)
+
+        requires_python = dist.requires_python
+        excluded = (
+            requires_python_cache.get(requires_python) if requires_python else False
+        )
+        if excluded is None:
+            excluded = excluded_by_python(provider, dist, None)
+        elif excluded:
+            # excluded_by_python counts its own drops; a cache hit skips it.
+            stats.excluded_by_python += 1
+
+        if excluded:
+            continue
+
+        if time_filter_active and _excluded_by_upload_time(
+            provider, normalized, dist, cutoff
         ):
             continue
 
@@ -817,6 +907,23 @@ def naive_upload_time_message(normalized: str, dist: DistFile) -> str:
         f"{dist.upload_time!r}; the Simple API requires "
         f"timezone-aware (UTC) upload times"
     )
+
+
+def _excluded_by_upload_time(
+    provider: Provider, normalized: str, dist: DistFile, cutoff: datetime | None
+) -> bool:
+    """Return True when ``cutoff`` refuses ``dist``, counting the drop.
+
+    The partial sibling of :func:`upload_time_cause`: a timezone-naive
+    stamp refuses the run here rather than being answered.
+    """
+    cause = upload_time_cause(dist, cutoff)
+    if cause is None:
+        return False
+    if cause == DropCause.UPLOAD_TIME_NAIVE:
+        raise InvalidUploadTimeError(naive_upload_time_message(normalized, dist))
+    provider.stats.excluded_by_time += 1
+    return True
 
 
 def prefetch_walk_ahead(
