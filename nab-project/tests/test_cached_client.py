@@ -22,6 +22,7 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import pytest
 from packaging.utils import canonicalize_name
+from urllib3 import HTTPHeaderDict
 
 import nab_index.cache as cache_mod
 import nab_index.cached_client as cached_client_mod
@@ -165,6 +166,14 @@ class _PathRoutingTransport:
 
     async def aclose(self) -> None:
         return None
+
+
+def _field_lines(*lines: tuple[str, str]) -> HTTPHeaderDict:
+    """Headers holding one entry per field line, the shape urllib3 returns."""
+    headers = HTTPHeaderDict()
+    for name, value in lines:
+        headers.add(name, value)
+    return headers
 
 
 def _make_cache(tmp_path: Path) -> OnDiskCache:
@@ -922,7 +931,7 @@ class TestFreshnessLifetime:
     def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(time, "time", lambda: self._NOW)
 
-    def _lifetime(self, headers: dict[str, str]) -> int:
+    def _lifetime(self, headers: Mapping[str, str]) -> int:
         return _freshness_lifetime(_FakeResponse(b"", headers=headers))
 
     def _http_date(self, offset: float) -> str:
@@ -933,6 +942,12 @@ class TestFreshnessLifetime:
 
     def test_heuristic_when_cache_control_carries_no_max_age(self) -> None:
         assert self._lifetime({"cache-control": "public"}) == 600
+
+    def test_max_age_read_from_a_second_cache_control_line(self) -> None:
+        lines = _field_lines(
+            ("Cache-Control", "public"), ("Cache-Control", "max-age=60")
+        )
+        assert self._lifetime(lines) == 60
 
     def test_max_age_outranks_expires(self) -> None:
         headers = {
@@ -1042,6 +1057,38 @@ class TestHeader:
         """RFC 9112 5.2: a receiver replaces a line fold with a space."""
         resp = _FakeResponse(b"", headers={"etag": '"abc\r\n def"'})
         assert _header(resp, "etag") == '"abc def"'
+
+    def test_repeated_field_lines_are_combined(self) -> None:
+        """RFC 9110 5.3: repeated lines are one value, joined in order."""
+        resp = _FakeResponse(
+            b"",
+            headers=_field_lines(
+                ("Cache-Control", "public"),
+                ("Cache-Control", "max-age=60"),
+            ),
+        )
+        assert _header(resp, "cache-control") == "public, max-age=60"
+
+    def test_combined_lines_are_unfolded(self) -> None:
+        resp = _FakeResponse(
+            b"",
+            headers=_field_lines(
+                ("Cache-Control", "public,\r\n max-age=60"),
+                ("Cache-Control", "no-transform"),
+            ),
+        )
+        assert _header(resp, "cache-control") == "public, max-age=60, no-transform"
+
+    def test_repeated_singleton_field_keeps_the_first_line(self) -> None:
+        """A field that is not defined as a list is not combined."""
+        resp = _FakeResponse(
+            b"",
+            headers=_field_lines(
+                ("Content-Type", "text/html"),
+                ("Content-Type", "text/html"),
+            ),
+        )
+        assert _header(resp, "content-type") == "text/html"
 
 
 class TestGetFiles:
@@ -4828,3 +4875,54 @@ class TestAssumeFreshFloor:
         assert pkg_info == "Name: cached\n"
         assert pyproject is None
         assert transport.calls == []
+
+
+class TestRepeatedCacheControlLines:
+    """An index that sends Cache-Control on two field lines."""
+
+    _LINES = (("Cache-Control", "public"), ("Cache-Control", "max-age=60"))
+
+    def _stored_policy(
+        self, tmp_path: Path, response: _FakeResponse, seed: CachePolicy | None = None
+    ) -> CachePolicy:
+        """Serve ``response`` to one get_files and return the policy it stored.
+
+        ``seed`` pre-fills the cache, so the request goes out as a
+        revalidation rather than a cold fetch.
+        """
+        cache = _make_cache(tmp_path)
+        if seed is not None:
+            cache.put_simple("pkg", LISTING_BYTES, seed)
+
+        transport = _FakeTransport([response])
+
+        async def go() -> list:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        assert len(asyncio.run(go())) == 1
+
+        cached = cache.get_simple("pkg")
+        assert cached is not None
+        return cached[1]
+
+    def test_cold_fetch_stores_max_age_from_the_second_line(
+        self, tmp_path: Path
+    ) -> None:
+        response = _FakeResponse(LISTING_BYTES, headers=_field_lines(*self._LINES))
+
+        policy = self._stored_policy(tmp_path, response)
+
+        assert policy.max_age == 60
+        assert not policy.is_fresh(policy.fetched_at + 120)
+
+    def test_304_reads_max_age_instead_of_the_heuristic(self, tmp_path: Path) -> None:
+        response = _FakeResponse(b"", status=304, headers=_field_lines(*self._LINES))
+        seed = CachePolicy(fetched_at=0, max_age=1, etag="v1")
+
+        policy = self._stored_policy(tmp_path, response, seed)
+
+        assert policy.max_age == 60
