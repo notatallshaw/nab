@@ -994,10 +994,11 @@ class ResolveTarget:
 
         Combines ``python_version``, ``sys_platform`` and
         ``platform_machine``, plus ``implementation_name`` when
-        :attr:`declares_implementation` and the :attr:`micro_clauses`
-        bounds on a slice of a split minor.  It carries no conflict-fork
-        ``selection``, so it selects this target's platform/Python point,
-        not which extras or groups are active.
+        :attr:`declares_implementation`, then every clause in
+        :attr:`micro_clauses`, which bound a slice of a split minor.  It
+        carries no conflict-fork ``selection``, so it selects this
+        target's platform/Python point, not which extras or groups are
+        active.
         """
         env = self.marker_env
         marker = (
