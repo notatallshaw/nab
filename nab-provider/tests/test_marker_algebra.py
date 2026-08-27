@@ -7,8 +7,10 @@ decision, restriction, serialisation, witness, and guard surfaces.
 
 from __future__ import annotations
 
+import gc
 import sys
 import traceback
+import weakref
 
 import pytest
 
@@ -264,6 +266,79 @@ def test_direct_construction_is_refused() -> None:
     # The op-tree is private; a set is built only through the factories.
     with pytest.raises(TypeError, match="from_marker"):
         MarkerSet()  # type: ignore[call-arg]
+
+
+# ---------------------------------------------------------------- interning
+
+
+_CONSTRUCTION_PATHS = (
+    'python_full_version >= "3.10"',  # a plain value atom
+    'python_version < "3.12"',  # A1-lowered onto python_full_version
+    '"x" in platform_release',  # an opaque contains atom
+    'platform_release in "5.10"',  # the exact-substring direction
+    'extra == "dev"',  # a set atom
+    '"linux" == sys_platform',  # a swapped value atom
+)
+
+
+def _atoms(text: str) -> list[_markersets.Atom]:
+    return _markersets.collect_atoms(_markersets.parse(text))
+
+
+@pytest.mark.parametrize("text", _CONSTRUCTION_PATHS)
+def test_every_construction_path_returns_the_interned_atom(text: str) -> None:
+    """A second parse of a clause reaches the atom the first parse built.
+
+    Atoms compare and hash by identity, so a construction path that skipped the
+    table would leave the algebra carrying one leaf as two.
+    """
+    (first,) = _atoms(text)
+    (second,) = _atoms(text)
+
+    assert second is first
+
+
+def test_reversed_operands_do_not_collapse_onto_one_atom() -> None:
+    """The intern key carries every field, ``swapped`` included.
+
+    Only ``swapped`` separates these two leaves, and sharing one atom between
+    them would read the literal as the same operand in both, making two
+    disjoint sets equal.
+    """
+    (below,) = _atoms('python_full_version < "3.10"')
+    (above,) = _atoms('"3.10" < python_full_version')
+
+    assert below is not above
+
+    lower = ms('python_full_version < "3.10"')
+    upper = ms('"3.10" < python_full_version')
+
+    assert lower.is_disjoint(upper)
+
+
+def test_a_complement_interns_back_to_the_atom_it_negates() -> None:
+    """``replaced`` interns too, so complementing twice returns the original."""
+    (atom,) = _atoms('sys_platform == "linux"')
+
+    assert atom.replaced(op="!=").replaced(op="==") is atom
+
+    (contains,) = _atoms('"x" in platform_release')
+
+    assert contains.replaced(positive=False).replaced(positive=True) is contains
+
+
+def test_an_atom_leaves_the_table_with_the_last_tree_holding_it() -> None:
+    """Nothing prunes this table, so a strong one would only ever grow."""
+    tree = _markersets.parse('extra == "nab-intern-probe"')
+    (atom,) = _markersets.collect_atoms(tree)
+    probe = weakref.ref(atom)
+
+    assert atom in _markersets._INTERNED.values()
+
+    del tree, atom
+    gc.collect()
+
+    assert probe() is None
 
 
 # ----------------------------------------------------------------- algebra
