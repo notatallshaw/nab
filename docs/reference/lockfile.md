@@ -156,7 +156,7 @@ The lock carries that name in both group arrays and gates those packages
 on it:
 
 ```toml
-dependency-groups = ["dev", "base"]
+dependency-groups = ["base", "dev"]
 default-groups = ["base"]
 
 [[packages]]
@@ -197,7 +197,7 @@ build-group = "build"
 ```
 
 ```toml
-dependency-groups = ["dev", "default", "build"]
+dependency-groups = ["build", "default", "dev"]
 default-groups = ["default"]
 
 [[packages]]
@@ -497,8 +497,11 @@ The committed pins are never seeded into the resolve, so the
 check confirms the lock still reflects those inputs rather than
 that it round-trips through itself. Only a real change to the
 locked packages fails it; volatile provenance metadata is
-ignored. `--locked` applies to a `pylock.toml` file in
-single-environment mode.
+ignored. The lock sorts the extras and groups it records, so
+listing the same names in another order, or naming that set with
+`--all-extras` or `--all-groups`, writes the same arrays.
+`--locked` applies to a `pylock.toml` file in single-environment
+mode.
 
 Some mismatches are provable from your inputs without resolving, so
 `--locked` can fail fast with the reason before it re-resolves; see the

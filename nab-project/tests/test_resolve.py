@@ -4986,7 +4986,7 @@ class TestExtraAndGroupMembershipMarkers:
         root = self._ROOT + '[tool.nab]\ndefault-groups = ["dev", "base"]\n'
         pylock = self._lock(tmp_path, root=root + 'base-group = "base"\n')
 
-        assert pylock.default_groups == ("dev", "base")
+        assert pylock.default_groups == ("base", "dev")
         assert _pylock_selected(pylock) == {"core", "mydev"}
 
     def test_selecting_the_base_group_by_name_refuses(self, tmp_path: Path) -> None:
@@ -5764,7 +5764,7 @@ class TestBuildGroupMarkers:
         """An install that asks for no group is installing, not building."""
         pylock = self._lock(tmp_path, tool=_BOTH_GROUPS)
 
-        assert pylock.dependency_groups == ("main", "build")
+        assert pylock.dependency_groups == ("build", "main")
         assert pylock.default_groups == ("main",)
 
         assert _pylock_selected(pylock) == {"core"}
@@ -6053,7 +6053,7 @@ class TestConfiguredGroupConflictMarkers:
         """Only the project's own dependencies are a default install."""
         pylock = self._lock(tmp_path)
 
-        assert pylock.dependency_groups == ("main", "build")
+        assert pylock.dependency_groups == ("build", "main")
         assert pylock.default_groups == ("main",)
 
 

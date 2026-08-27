@@ -790,7 +790,7 @@ class TestLockCommandSpecific:
         ):
             lock(pyproject, output=out)
         written = tomli.loads(out.read_text())
-        assert written["dependency-groups"] == ["main", "build"]
+        assert written["dependency-groups"] == ["build", "main"]
         assert written["default-groups"] == ["main"]
 
     def test_build_group_naming_a_declared_group_exits(

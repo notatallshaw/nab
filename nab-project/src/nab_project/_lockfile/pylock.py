@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from collections.abc import Set as AbstractSet
 
+    from nab_provider._vendor.packaging.utils import NormalizedName
     from nab_provider.target import ResolveTarget
 
     from ..lockfile import (
@@ -324,11 +325,7 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
             if lock_input.requires_python
             else None
         ),
-        extras=(
-            tuple(canonicalize_name(e) for e in lock_input.extras)
-            if lock_input.extras
-            else None
-        ),
+        extras=_name_array(lock_input.extras),
         dependency_groups=_group_array(
             lock_input.dependency_groups,
             lock_input.base_group,
@@ -371,13 +368,21 @@ def _name_base_group(lock_input: LockInput) -> LockInput:
     return replace(lock_input, targets=targets)
 
 
+def _name_array(names: Iterable[str]) -> tuple[NormalizedName, ...] | None:
+    """Return ``names`` canonicalized, deduplicated and sorted, or ``None`` if empty.
+
+    PEP 751 gives these arrays no ordering semantics, so the order a
+    selection was typed in must not reach the file.
+    """
+    return tuple(sorted({canonicalize_name(name) for name in names})) or None
+
+
 def _group_array(
     groups: Sequence[str], *configured: str | None
-) -> tuple[str, ...] | None:
+) -> tuple[NormalizedName, ...] | None:
     """Render one of the lock's group arrays, or ``None`` when it is empty.
 
-    Every name is canonicalized here and deduplicated in order.  Which
-    arrays a ``configured`` name belongs in is the caller's decision:
+    Which arrays a ``configured`` name belongs in is the caller's decision:
     ``build-group`` joins ``dependency-groups`` alone, and ``base-group``
     joins it too, since an installer that offers only those names would
     otherwise never reach it.  ``base-group`` joins ``default-groups``
@@ -385,11 +390,7 @@ def _group_array(
     ``default-groups`` replaces the default selection rather than
     extending it.
     """
-    names = dict.fromkeys(str(canonicalize_name(group)) for group in groups)
-    for name in configured:
-        if name is not None:
-            names[str(canonicalize_name(name))] = None
-    return tuple(names) or None
+    return _name_array([*groups, *(name for name in configured if name is not None)])
 
 
 def _relativize_path(target: str | os.PathLike[str], lock_dir: Path) -> str:
