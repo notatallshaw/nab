@@ -241,17 +241,17 @@ accepts `ppXY-pypyXY_pp73` wheel tags instead of `cpXY`. Labels use the
 `pp` interpreter prefix (`pp311-linux_x86_64`).
 
 A CPython-only matrix leaves the axis open: its lockfile markers carry
-`python_version`, `sys_platform` and `platform_machine` only. Any other
-matrix, whether it names two implementations or one non-CPython one,
-puts `implementation_name` on every target's marker and on the
-`environments` entry it declares. The CPython and PyPy entries for one
-`(python, platform)` point stay mutually exclusive, and a PyPy-only
-lock refuses CPython. PyPy's `implementation_version` is modelled as
-the Python level, not PyPy's own release, so the rare marker comparing
-`implementation_version` against a PyPy version misevaluates during the
-resolve. The lockfile does not carry that synthetic value: a non-CPython
-`environments` entry leaves `implementation_version` open, so a real PyPy
-still accepts the lock (a dep gated on the axis may be missed at install).
+no `implementation_name`. Any other matrix, whether it names two
+implementations or one non-CPython one, puts `implementation_name` on
+every target's marker and on the `environments` entry it declares. The
+CPython and PyPy entries for one `(python, platform)` point stay
+mutually exclusive, and a PyPy-only lock refuses CPython. PyPy's
+`implementation_version` is modelled as the Python level, not PyPy's
+own release, so the rare marker comparing `implementation_version`
+against a PyPy version misevaluates during the resolve. The lockfile
+does not carry that synthetic value: a non-CPython `environments` entry
+leaves `implementation_version` open, so a real PyPy still accepts the
+lock (a dep gated on the axis may be missed at install).
 
 ## Resolution axes
 

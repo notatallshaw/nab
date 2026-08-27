@@ -56,7 +56,10 @@ all three formats:
 * `pylock` produces one PEP 751 file with per-tuple `Package`
   entries gated by markers (`python_version`, `sys_platform`,
   `platform_machine`, plus `implementation_name` when the matrix
-  declares a non-CPython implementation or more than one). Versions
+  declares a non-CPython implementation or more than one). A minor
+  split into micro slices contributes one tuple per slice, and each
+  slice's markers name its `python_full_version` bounds as well (see
+  [Universal resolution](../explanation/universal.md)). Versions
   agreed across every tuple appear once without a marker; divergent
   versions appear once per `(version, source)` group with the
   matching tuples disjoined.

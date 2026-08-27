@@ -402,6 +402,36 @@ class TestPerTargetMarkerSimplification:
         assert any('python_version == "3.10"' in m for m in markers)
         assert any('python_version == "3.11"' in m for m in markers)
 
+    def test_micro_slice_pin_gated_on_python_full_version(self) -> None:
+        """A pin held by only one slice of a split minor names the slice bounds.
+
+        The slices agree on every other axis, so shortening against the
+        declared environments leaves the micro bounds as the whole marker.
+        """
+        consulted = [Marker('python_full_version < "3.10.4"')]
+        minor = _target("3.10")
+        lower, upper = slices_from_points(
+            minor, micro_boundary_points(minor, consulted)
+        )
+
+        text = write_lock(
+            LockInput(
+                targets=_targets(
+                    (lower, {"foo": _index_pin(), "bar": _index_pin("bar")}),
+                    (upper, {"foo": _index_pin()}),
+                ),
+                environments=[
+                    Marker(environment_declaration(target, consulted))
+                    for target in (lower, upper)
+                ],
+            )
+        )
+        data = tomllib.loads(text)
+
+        markers = {p["name"]: p.get("marker") for p in data["packages"]}
+        assert markers["foo"] is None
+        assert markers["bar"] == 'python_full_version < "3.10.4"'
+
     def test_three_targets_two_groups(self) -> None:
         # 3.10 + 3.11 share v1.0; 3.12 has v2.0 -> two groups
         text = write_lock(

@@ -364,13 +364,14 @@ whose pinned version is identical across every target appear once with
 no marker; packages that diverge appear as multiple `Package` entries
 with PEP 508 markers built from each target's `python_version`,
 `sys_platform` and `platform_machine`, plus `implementation_name` on
-the same terms as the `environments` declarations above. Each such
-marker is emitted in its shortest form equivalent over the lock's
-declared environments, and the emitted bytes are checked against the
-original over those environments before the lock is written, one
-declared environment at a time so that a matrix spanning many platforms
-stays decidable. A marker whose shortening or check runs out of budget
-is emitted unsimplified, as is one that selects nothing inside the
+the same terms as the `environments` declarations above. A slice of a
+split minor adds its `python_full_version` bounds. Each such marker is
+emitted in its shortest form equivalent over the lock's declared
+environments, and the emitted bytes are checked against the original
+over those environments before the lock is written, one declared
+environment at a time so that a matrix spanning many platforms stays
+decidable. A marker whose shortening or check runs out of budget is
+emitted unsimplified, as is one that selects nothing inside the
 declared environments.
 
 `environments` carries a declaration per target, built the same way a
