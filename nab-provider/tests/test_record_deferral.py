@@ -7,7 +7,13 @@ import threading
 import pytest
 
 from nab_provider import records
-from nab_provider.records import SdistFile, WheelFile, defer_hashes, defer_sidecar_hash
+from nab_provider.records import (
+    SdistFile,
+    WheelFile,
+    defer_hashes,
+    defer_sidecar_hash,
+    rehydrated_wheel,
+)
 
 DIGEST = "a" * 64
 SHA256 = "sha256"
@@ -27,6 +33,21 @@ def _deferred_wheel(hashes: object, *, sidecar: object) -> WheelFile:
     defer_hashes(wheel, hashes)
     defer_sidecar_hash(wheel, sidecar)
     return wheel
+
+
+def _rehydrated_wheel(table: dict[object, str]) -> WheelFile:
+    """A wheel rebuilt from a cached listing row that holds ``table`` for both fields."""
+    return rehydrated_wheel(
+        filename="pkg-1.0-py3-none-any.whl",
+        url="https://files.example/pkg-1.0-py3-none-any.whl",
+        version="1.0",
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+        hashes=table,
+        size=None,
+        metadata_hash=table,
+    )
 
 
 def _deferred_sdist(hashes: object) -> SdistFile:
@@ -70,6 +91,38 @@ def test_a_many_algorithm_table_is_held_as_it_stands() -> None:
     table = {"sha256": DIGEST, "sha512": "f" * 128}
 
     wheel = _deferred_wheel(table, sidecar=table)
+
+    assert wheel._raw_hashes == table
+    assert wheel._raw_metadata == table
+
+
+def test_a_rehydrated_one_algorithm_table_keeps_the_name_the_row_carried() -> None:
+    """One blob decodes to one name object, so re-interning it per row buys nothing."""
+    algo = b"sha256".decode()
+    assert algo is not SHA256
+
+    wheel = _rehydrated_wheel({algo: DIGEST})
+    hashes, metadata = wheel._raw_hashes, wheel._raw_metadata
+    assert isinstance(hashes, tuple)
+    assert isinstance(metadata, tuple)
+
+    assert hashes == (algo, DIGEST)
+    assert hashes[0] is algo
+    assert metadata[0] is algo
+
+    # Reading the field parses and interns, so the pair a caller sees is unchanged.
+    assert wheel.hashes == ((SHA256, DIGEST),)
+    assert wheel.hashes[0][0] is SHA256
+
+
+@pytest.mark.parametrize(
+    "table", [{"sha256": DIGEST, "sha512": "f" * 128}, {7: DIGEST}]
+)
+def test_a_rehydrated_table_the_pair_form_cannot_hold_is_kept_whole(
+    table: dict[object, str],
+) -> None:
+    """Several algorithms, or a name that is not a string, is held as it stands."""
+    wheel = _rehydrated_wheel(table)
 
     assert wheel._raw_hashes == table
     assert wheel._raw_metadata == table
