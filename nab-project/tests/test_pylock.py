@@ -8,6 +8,7 @@ fail-closed verify on the emitted bytes.
 from __future__ import annotations
 
 import importlib.util
+import itertools
 import json
 import sys
 from functools import reduce
@@ -26,9 +27,14 @@ from nab_project._lockfile.coverage import CoverageError
 from nab_project._lockfile.disjointness import validate_marker_disjointness
 from nab_project._lockfile.pylock import (
     UnsoundSimplificationError,
-    _emission_universe,
+    _collapsed_env_marker,
+    _emission_scope,
+    _env_disjunction,
     _finalize_cached,
     _finalize_marker,
+    _or_markers,
+    _pinned_env_rows,
+    _pinned_values,
     build_pylock,
     render_lock,
 )
@@ -362,8 +368,8 @@ class TestNonCoveringEnvironments:
         assert str(result) == str(raw)
 
 
-class TestEmissionUniverse:
-    """The universe the emitter simplifies against.
+class TestEmissionScope:
+    """The universe the emitter simplifies against, and its row table.
 
     These declarations are hand-built; nab's own resolve never produces them.
     """
@@ -378,18 +384,37 @@ class TestEmissionUniverse:
         )
 
     def test_no_environments_is_the_full_set(self) -> None:
-        assert _emission_universe(self._with_environments([])).is_full()
+        assert _emission_scope(self._with_environments([]))[0].is_full()
 
     def test_uninhabited_rows_fall_back_to_the_full_set(self) -> None:
         rows = [Marker('sys_platform == "linux" and sys_platform == "win32"')]
-        assert _emission_universe(self._with_environments(rows)).is_full()
+        assert _emission_scope(self._with_environments(rows))[0].is_full()
+
+    def test_uninhabited_point_rows_leave_no_table_to_factor_against(self) -> None:
+        # Each row is a point, and each is empty because its two python axes
+        # contradict, so the universe widens to the full set.
+        rows = [
+            Marker(
+                f'python_version == "3.10" and sys_platform == "{platform}"'
+                ' and python_full_version == "3.11.0"'
+            )
+            for platform in ("linux", "win32")
+        ]
+        universe, env_rows = _emission_scope(self._with_environments(rows))
+        assert universe.is_full()
+        assert env_rows is None
+
+    def test_inhabited_point_rows_carry_their_table(self) -> None:
+        _, env_rows = _emission_scope(self._with_environments(_ENVS))
+        assert env_rows is not None
+        assert len(env_rows) == len(_ENVS)
 
     def test_one_inhabited_row_keeps_the_declared_union(self) -> None:
         rows = [
             Marker('sys_platform == "linux" and sys_platform == "win32"'),
             Marker('sys_platform == "linux"'),
         ]
-        universe = _emission_universe(self._with_environments(rows))
+        universe, _ = _emission_scope(self._with_environments(rows))
         assert universe.equivalent(MarkerSet.from_marker('sys_platform == "linux"'))
 
     @pytest.mark.usefixtures("ungated")
@@ -405,7 +430,7 @@ class TestEmissionUniverse:
 
     def test_undecidable_row_counts_as_inhabited(self) -> None:
         wide = Marker(" and ".join(f'"e{i}" in extras' for i in range(20)))
-        universe = _emission_universe(self._with_environments([wide]))
+        universe, _ = _emission_scope(self._with_environments([wide]))
         # The full set would drop a tautology; an undecidable universe decides
         # nothing, so the marker ships raw.
         tautology = Marker('python_version == "3.11" or python_version != "3.11"')
@@ -876,3 +901,203 @@ class TestEmissionStore:
         assert len(seen) >= 3
         assert {id(store) for store in seen} == {id(seen[0])}
         assert isinstance(seen[0], DecisionStore)
+
+
+def _env_rows(*texts: str) -> tuple[Mapping[str, str], ...] | None:
+    """The pinned-value table for environment rows written as marker text."""
+    return _pinned_env_rows([Marker(text) for text in texts])
+
+
+def _point(python: str, platform: str) -> str:
+    """One environment, pinned on both axes, as marker text."""
+    return f'python_version == "{python}" and sys_platform == "{platform}"'
+
+
+def _grid(*axes: tuple[str, tuple[str, ...]]) -> list[str]:
+    """Every point of the product of ``axes``, as environment marker text."""
+    names = [name for name, _ in axes]
+    return [
+        " and ".join(
+            f'{name} == "{value}"' for name, value in zip(names, values, strict=True)
+        )
+        for values in itertools.product(*(values for _, values in axes))
+    ]
+
+
+_PYTHONS = ("3.10", "3.11", "3.12")
+_PLATFORMS = ("darwin", "linux", "win32")
+_THREE_BY_THREE_POINTS = [
+    _point(python, platform) for python in _PYTHONS for platform in _PLATFORMS
+]
+_THREE_BY_THREE = _env_rows(*_THREE_BY_THREE_POINTS)
+
+
+class TestPinnedEnvironmentRows:
+    """What a declared environment has to be for the factoring to place it."""
+
+    def test_a_repeated_variable_is_not_a_point(self) -> None:
+        assert (
+            _pinned_values('sys_platform == "linux" and sys_platform == "win32"')
+            is None
+        )
+
+    def test_no_declared_environments_leave_no_table(self) -> None:
+        assert _pinned_env_rows([]) is None
+
+    def test_a_disjoined_row_leaves_no_table(self) -> None:
+        assert _env_rows('sys_platform == "linux" or sys_platform == "win32"') is None
+
+    def test_two_spellings_of_one_version_leave_no_table(self) -> None:
+        assert _env_rows(_point("3.10", "linux"), _point("3.10.0", "win32")) is None
+
+    def test_a_value_no_specifier_accepts_is_kept_as_a_string(self) -> None:
+        rows = _env_rows('python_version == "unreleased"', 'python_version == "3.10"')
+        assert rows is not None
+
+
+class TestEnvironmentDisjunctFactoring:
+    """What :func:`_collapsed_env_marker` hands to simplification.
+
+    One disjunct per target becomes the product of the values those targets
+    take, so what these pin is the guards that keep the product equal to the
+    disjunction it replaces.
+    """
+
+    def test_a_variable_every_row_agrees_on_drops_out(self) -> None:
+        texts = [_point("3.10", platform) for platform in _PLATFORMS]
+        assert (
+            _collapsed_env_marker(texts, _THREE_BY_THREE) == 'python_version == "3.10"'
+        )
+
+    def test_a_product_keeps_the_variables_it_narrows(self) -> None:
+        texts = [
+            _point(python, platform)
+            for python in ("3.10", "3.11")
+            for platform in ("darwin", "linux")
+        ]
+        assert _collapsed_env_marker(texts, _THREE_BY_THREE) == (
+            '(python_version == "3.10" or python_version == "3.11")'
+            ' and (sys_platform == "darwin" or sys_platform == "linux")'
+        )
+
+    def test_texts_naming_every_row_render_one_variable(self) -> None:
+        assert _collapsed_env_marker(_THREE_BY_THREE_POINTS, _THREE_BY_THREE) == (
+            'python_version == "3.10" or python_version == "3.11"'
+            ' or python_version == "3.12"'
+        )
+
+    def test_a_selection_the_product_overshoots_keeps_its_disjuncts(self) -> None:
+        texts = [_point("3.10", "darwin"), _point("3.11", "linux")]
+        assert _collapsed_env_marker(texts, _THREE_BY_THREE) is None
+
+    def test_disjuncts_pinning_different_variables_keep_their_shape(self) -> None:
+        texts = [_point("3.10", "darwin"), 'python_version == "3.11"']
+        assert _collapsed_env_marker(texts, _THREE_BY_THREE) is None
+
+    def test_an_interval_is_not_a_point(self) -> None:
+        texts = ['python_full_version >= "3.10.0"', _point("3.11", "linux")]
+        assert _collapsed_env_marker(texts, _THREE_BY_THREE) is None
+
+    def test_a_row_leaving_a_variable_open_places_nothing(self) -> None:
+        rows = _env_rows('python_version == "3.10"', _point("3.11", "linux"))
+        texts = [_point("3.10", "darwin"), _point("3.11", "linux")]
+        assert _collapsed_env_marker(texts, rows) is None
+
+    def test_a_single_disjunct_is_left_to_the_algebra(self) -> None:
+        assert (
+            _collapsed_env_marker([_point("3.10", "darwin")], _THREE_BY_THREE) is None
+        )
+
+
+_THREE_AXIS_POINTS = _grid(
+    ("python_version", ("3.10", "3.11")),
+    ("sys_platform", ("linux", "win32")),
+    ("platform_machine", ("arm64", "x86_64")),
+)
+_SPARE_VARIABLE_ROWS = _grid(
+    ("python_version", _PYTHONS),
+    ("sys_platform", ("linux", "win32")),
+    ("platform_machine", ("arm64", "x86_64")),
+)
+_SPARE_VARIABLE_TEXTS = [
+    _point(python, platform) for python in _PYTHONS for platform in ("linux", "win32")
+]
+_RAGGED_ROWS = [
+    _point("3.10", "linux"),
+    _point("3.10", "win32"),
+    _point("3.11", "linux"),
+    _point("3.12", "win32"),
+]
+
+# Declared rows, the texts to select from, and how many of those selections
+# the factoring collapses.
+_SELECTION_TABLES = [
+    ("two full axes", _THREE_BY_THREE_POINTS, _THREE_BY_THREE_POINTS, 40),
+    ("three full axes", _THREE_AXIS_POINTS, _THREE_AXIS_POINTS, 19),
+    ("a variable only the rows pin", _SPARE_VARIABLE_ROWS, _SPARE_VARIABLE_TEXTS, 15),
+    ("a ragged matrix", _RAGGED_ROWS, _RAGGED_ROWS, 7),
+]
+
+
+class TestFactoringEquivalence:
+    """Every collapse selects the environments its disjunction selects.
+
+    The factoring runs before :func:`_finalize_marker`, whose soundness check
+    compares the emitted bytes against what it was handed, so a collapse that
+    widened a marker would pass that check.  Each case selects every subset of
+    a declared matrix and checks the collapse against the ``or`` it replaced.
+    """
+
+    @pytest.mark.parametrize(
+        ("rows", "texts", "collapses"),
+        [case[1:] for case in _SELECTION_TABLES],
+        ids=[case[0] for case in _SELECTION_TABLES],
+    )
+    def test_a_collapse_is_equivalent_within_the_declared_rows(
+        self, rows: Sequence[str], texts: Sequence[str], collapses: int
+    ) -> None:
+        table = _env_rows(*rows)
+        assert table is not None
+        within = _union([Marker(row) for row in rows])
+
+        seen = 0
+        for size in range(1, len(texts) + 1):
+            for selection in itertools.combinations(texts, size):
+                emitted = _env_disjunction(list(selection), table)
+                raw = _or_markers([Marker(text) for text in selection])
+                if str(emitted) == str(raw):
+                    continue
+                seen += 1
+                assert MarkerSet.from_marker(emitted).equivalent_within(
+                    MarkerSet.from_marker(raw), within
+                ), (selection, str(emitted))
+
+        # Counting them keeps a table that never collapses from passing.
+        assert seen == collapses
+
+
+class TestFactoringReachesEmission:
+    """A lock build hands the factored marker to simplification."""
+
+    def test_the_span_lock_finalises_the_product(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        handed: dict[str, str] = {}
+        real = pylock._finalize_marker
+
+        def capture(
+            raw: Marker | None,
+            within: MarkerSet,
+            name: str = "",
+            store: DecisionStore | None = None,
+        ) -> Marker | None:
+            if raw is not None:
+                handed[name] = str(raw)
+            return real(raw, within, name, store)
+
+        monkeypatch.setattr(pylock, "_finalize_marker", capture)
+        assert _marker_of(_span_lock(), "foo") == 'sys_platform == "linux"'
+
+        assert handed == {
+            "foo": 'sys_platform == "linux" and platform_machine == "x86_64"'
+        }

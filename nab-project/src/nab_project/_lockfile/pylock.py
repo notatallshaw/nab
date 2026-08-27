@@ -11,6 +11,7 @@ disjointness validation lives in
 from __future__ import annotations
 
 import os
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from functools import lru_cache, reduce
@@ -21,7 +22,10 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import tomli_w
 
 from nab_index.atomic import atomic_write_text
-from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.markers import (
+    MARKERS_REQUIRING_VERSION,
+    Marker,
+)
 from nab_provider._vendor.packaging.markersets import (
     DecisionStore,
     IntractableMarkerSet,
@@ -40,7 +44,7 @@ from nab_provider._vendor.packaging.pylock import (
 )
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name, is_normalized_name
-from nab_provider._vendor.packaging.version import Version
+from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 
 from ..config import conflict_exclusion_groups, conflict_member_groups
@@ -93,6 +97,8 @@ class _ForkAxes:
     held fixed.  ``markers`` is each fork's unprojected selection marker,
     which does not vary by package, and ``gates`` each fork's
     :attr:`~nab_project.lockfile.TargetLock.package_gates` as sets.
+    ``env_rows`` is the values the declared environments pin, or ``None``
+    when the factoring has no table to read (:func:`_emission_scope`).
     """
 
     exclusion_groups: tuple[AbstractSet[tuple[str, str]], ...]
@@ -101,6 +107,7 @@ class _ForkAxes:
     env_signatures: Mapping[str, _EnvSignature]
     markers: Mapping[str, str]
     gates: Mapping[tuple[str, str], _Members]
+    env_rows: tuple[Mapping[str, str], ...] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,9 +292,9 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
     environment_rows = [
         MarkerSet.from_marker(marker) for marker in lock_input.environments
     ]
-    universe = _emission_universe(lock_input, store, rows=environment_rows)
+    universe, env_rows = _emission_scope(lock_input, store, rows=environment_rows)
     package_records = _build_packages(
-        lock_input, base, exclusion_groups, universe, store
+        lock_input, base, exclusion_groups, universe, env_rows, store
     )
     package_records.sort(key=_package_sort_key)
     validate_marker_disjointness(
@@ -549,12 +556,12 @@ def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
     )
 
 
-def _emission_universe(
+def _emission_scope(
     lock_input: LockInput,
     store: DecisionStore | None = None,
     rows: Sequence[MarkerSet] | None = None,
-) -> MarkerSet:
-    """Return the environment universe simplification must agree over.
+) -> tuple[MarkerSet, tuple[Mapping[str, str], ...] | None]:
+    """Return the universe simplification must agree over, with its row table.
 
     The union of the declared ``environments`` rows, or the full set when none
     are declared.  PEP 751 step 4 has a conforming installer read a per-package
@@ -567,11 +574,15 @@ def _emission_universe(
     exactly when every row is, so rows are tested one at a time rather than as a
     whole-matrix product, and a row too wide to decide counts as inhabited.
 
+    The row table it returns is the point form of the same environments.  It
+    comes back ``None`` on both routes to the full set, so the factoring never
+    selects over rows the universe has stopped covering.
+
     ``rows`` are ``lock_input.environments`` already built as sets; they are
     built here when omitted.
     """
     if not lock_input.environments:
-        return MarkerSet.full()
+        return MarkerSet.full(), None
     if rows is None:
         rows = [MarkerSet.from_marker(m) for m in lock_input.environments]
     try:
@@ -579,8 +590,11 @@ def _emission_universe(
     except IntractableMarkerSet:
         uninhabited = False
     if uninhabited:
-        return MarkerSet.full()
-    return reduce(MarkerSet.union, rows, MarkerSet.empty())
+        return MarkerSet.full(), None
+    return (
+        reduce(MarkerSet.union, rows, MarkerSet.empty()),
+        _pinned_env_rows(lock_input.environments),
+    )
 
 
 @lru_cache(maxsize=4096)
@@ -663,6 +677,7 @@ def _build_packages(
     lock_dir: Path,
     exclusion_groups: Sequence[AbstractSet[tuple[str, str]]],
     universe: MarkerSet,
+    env_rows: tuple[Mapping[str, str], ...] | None,
     store: DecisionStore,
 ) -> list[Package]:
     """Collapse the per-target pins into Package entries with markers.
@@ -731,6 +746,7 @@ def _build_packages(
             for label, lock in targets.items()
             for name, gate in lock.package_gates.items()
         },
+        env_rows=env_rows,
     )
     projections = _fork_projections(axes, pin_groups, env_fork_counts, base_names)
 
@@ -1051,7 +1067,7 @@ def _build_marker(
     # every environment collapsed to its env-only marker. A member-only
     # dep present in all forks of an env keeps the membership OR, so it
     # is not unconditional even at full coverage.
-    by_gate: defaultdict[tuple[tuple[str, str], ...], list[Marker]] = defaultdict(list)
+    by_gate: defaultdict[tuple[tuple[str, str], ...], list[str]] = defaultdict(list)
     loose: list[Marker] = []
     unconditional = len(labels) >= len(targets)
     for signature, env_labels in by_env.items():
@@ -1066,7 +1082,7 @@ def _build_marker(
 
         if collapses and agreed_gate:
             merged = _merge_gates(gates[label] for label in env_labels)
-            by_gate[merged].append(_parsed_marker(head.environment_marker_string))
+            by_gate[merged].append(head.environment_marker_string)
             continue
 
         # Forks that disagree on the gate still agree on what they share,
@@ -1075,7 +1091,7 @@ def _build_marker(
         if collapses:
             shared = _common_gate(gates[label] for label in env_labels)
             if shared:
-                by_gate[shared].append(_parsed_marker(head.environment_marker_string))
+                by_gate[shared].append(head.environment_marker_string)
 
         loose.extend(
             _parsed_marker(text)
@@ -1084,7 +1100,7 @@ def _build_marker(
         unconditional = False
 
     parts = tuple(
-        _GatedMarker(_or_markers(environments), gate)
+        _GatedMarker(_env_disjunction(environments, axes.env_rows), gate)
         for gate, environments in by_gate.items()
     )
     if loose:
@@ -1499,6 +1515,156 @@ def _count(
     for signature in signatures:
         counts[signature] += 1
     return counts
+
+
+_PINNED_ATOM = re.compile(r'\A(\w+) == "([^"]*)"\Z')
+
+
+def _pinned_values(text: str) -> dict[str, str] | None:
+    """Return the value each variable of ``text`` is pinned to.
+
+    ``None`` unless ``text`` is an ``and`` of ``variable == "value"`` atoms over
+    distinct variables.  Anything else, an interval or a disjunction, selects a
+    region rather than a point.
+    """
+    if "(" in text or " or " in text:
+        return None
+    pinned: dict[str, str] = {}
+    for atom in text.split(" and "):
+        match = _PINNED_ATOM.match(atom)
+        if match is None or match[1] in pinned:
+            return None
+        pinned[match[1]] = match[2]
+    return pinned
+
+
+def _pinned_env_rows(
+    environments: Sequence[Marker],
+) -> tuple[Mapping[str, str], ...] | None:
+    """Return the values each declared environment row pins, or ``None``.
+
+    ``None`` when nothing is declared, when a row is not a conjunction of
+    equality atoms, or when two rows spell one version differently.  The table
+    is matched by string, so those are the rows it can stand for.
+    """
+    if not environments:
+        return None
+    rows: list[Mapping[str, str]] = []
+    for row in environments:
+        pinned = _pinned_values(str(row))
+        if pinned is None:
+            return None
+        rows.append(pinned)
+    if _version_spellings_collide(rows):
+        return None
+    return tuple(rows)
+
+
+def _version_spellings_collide(rows: Sequence[Mapping[str, str]]) -> bool:
+    """Whether two rows write one version two ways on a version-compared name.
+
+    ``==`` on those variables is PEP 440 comparison, so ``"3.10"`` and
+    ``"3.10.0"`` each select the other's row while the table reads them as two
+    values.  A value no specifier accepts compares as a string, so it keys on
+    itself.
+    """
+    for name in MARKERS_REQUIRING_VERSION:
+        spellings: dict[object, str] = {}
+        for row in rows:
+            value = row.get(name)
+            if value is None:
+                continue
+            try:
+                key: object = Version(value)
+            except InvalidVersion:
+                key = value
+            if spellings.setdefault(key, value) != value:
+                return True
+    return False
+
+
+def _pinned_points(
+    texts: Sequence[str],
+) -> tuple[tuple[str, ...], set[tuple[str, ...]]] | None:
+    """Return the variables the non-empty ``texts`` pin and the points they name.
+
+    ``None`` unless every text pins the same variables in the same order, which
+    is what makes the points comparable across the declared rows.
+    """
+    first = _pinned_values(texts[0])
+    if first is None:
+        return None
+    variables = tuple(first)
+    points = {tuple(first.values())}
+    for text in texts[1:]:
+        pinned = _pinned_values(text)
+        if pinned is None or tuple(pinned) != variables:
+            return None
+        points.add(tuple(pinned.values()))
+    return variables, points
+
+
+def _collapsed_env_marker(
+    texts: Sequence[str], rows: tuple[Mapping[str, str], ...] | None
+) -> str | None:
+    """Return ``texts`` as one factored marker, or ``None`` to keep the ``or``.
+
+    Each text pins the same variables to a point.  Read off the values those
+    points give each variable and offer the product of those value sets: where
+    the product selects exactly the declared rows the texts do, it is equivalent
+    to their ``or``.  A variable already taking every value the rows take
+    narrows nothing and drops out.
+
+    ``None`` when the texts do not pin one variable set, when a row leaves one
+    of those variables open, or when the product reaches a row the texts do not.
+    """
+    if rows is None or len(texts) <= 1:
+        return None
+    named = _pinned_points(texts)
+    if named is None:
+        return None
+    variables, selected = named
+    if any(name not in row for row in rows for name in variables):
+        return None
+
+    points = {tuple(row[name] for name in variables) for row in rows}
+    axes = range(len(variables))
+    chosen = [{point[axis] for point in selected} for axis in axes]
+
+    if {p for p in points if all(p[axis] in chosen[axis] for axis in axes)} != selected:
+        return None
+
+    kept = [axis for axis in axes if chosen[axis] != {p[axis] for p in points}]
+    if not kept:
+        # Every row is named, so one variable's values already spell all of them.
+        return _product_marker([(variables[0], chosen[0])])
+    return _product_marker([(variables[axis], chosen[axis]) for axis in kept])
+
+
+def _product_marker(factors: Sequence[tuple[str, AbstractSet[str]]]) -> str:
+    """Render the marker selecting the product of ``factors``.
+
+    Each factor is a variable and the values it may take.  ``and`` binds tighter
+    than ``or``, so a variable given several values is parenthesised whenever
+    there is more than one factor.
+    """
+    clauses = []
+    for name, values in factors:
+        clause = " or ".join(f'{name} == "{value}"' for value in sorted(values))
+        clauses.append(
+            f"({clause})" if len(values) > 1 and len(factors) > 1 else clause
+        )
+    return " and ".join(clauses)
+
+
+def _env_disjunction(
+    texts: Sequence[str], rows: tuple[Mapping[str, str], ...] | None
+) -> Marker:
+    """Return the marker selecting the environments ``texts`` name."""
+    collapsed = _collapsed_env_marker(texts, rows)
+    if collapsed is not None:
+        return _parsed_marker(collapsed)
+    return _or_markers([_parsed_marker(text) for text in texts])
 
 
 def _or_markers(markers: Sequence[Marker]) -> Marker:
