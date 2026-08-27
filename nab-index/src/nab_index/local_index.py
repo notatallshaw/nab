@@ -29,7 +29,7 @@ import zipfile
 from email.parser import BytesParser, Parser
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urljoin, urlparse, urlsplit
+from urllib.parse import ParseResult, unquote, urljoin, urlparse, urlsplit
 
 from packaging.utils import canonicalize_name as _canonical
 from packaging.utils import parse_sdist_filename
@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from packaging.utils import NormalizedName
     from typing_extensions import Self
 
+    from ._html_page import Anchor
     from .lazy_wheel import RangeMetadataResult
 
 __all__ = [
@@ -121,7 +122,14 @@ def parse_file_url(url: str) -> Path:
     null character, which names no file on any platform, so it raises
     :class:`ValueError` here instead.
     """
-    parsed = urlparse(url)
+    return _parsed_file_url_path(urlparse(url), url)
+
+
+def _parsed_file_url_path(parsed: ParseResult, url: str) -> Path:
+    """:func:`parse_file_url` for a caller that already holds the parse.
+
+    ``url`` is the string ``parsed`` came from and is quoted in the errors.
+    """
     if parsed.scheme != "file":
         msg = f"expected file:// URL, got {url!r}"
         raise ValueError(msg)
@@ -255,6 +263,8 @@ def _scan_pep503_directory(
             msg = f"{index_html} has an unparseable <base href>: {exc}"
             raise MalformedLocalListingError(msg) from exc
 
+    bases = _merging_bases(base_url, anchors)
+
     files: list[WheelFile | SdistFile] = []
     unreadable = False
     yanked = 0
@@ -267,7 +277,7 @@ def _scan_pep503_directory(
             continue
 
         filename, file_url, local_path, hashes = _resolve_local_link(
-            anchor.href, base_url
+            anchor.href, base_url, bases
         )
         if filename is None:
             nameless += 1
@@ -296,16 +306,17 @@ def _scan_pep503_directory(
 def _resolve_local_link(
     href: str,
     base_url: str,
+    bases: list[str] | None,
 ) -> tuple[str | None, str, Path | None, tuple[tuple[str, str], ...]]:
     """Resolve an anchor href to ``(filename, url, local_path, hashes)``.
 
     ``filename`` is ``None`` when the href names no file.
 
     ``base_url`` is the page's ``<base href>`` when it carries one, else the
-    ``index.html`` URL.  An href is a URL reference, so only its path
-    component names the artefact, and the target may sit outside the package
-    directory: the standard mirror layout links to a shared
-    ``../../packages/`` tree.
+    ``index.html`` URL, and ``bases`` is :func:`_merging_bases` over the page.
+    An href is a URL reference, so only its path component names the artefact,
+    and the target may sit outside the package directory: the standard mirror
+    layout links to a shared ``../../packages/`` tree.
 
     The href's hash fragment is surfaced as the file record's ``hashes``
     tuple so the lockfile writer has something to round-trip.
@@ -317,12 +328,16 @@ def _resolve_local_link(
     href_no_frag, _, fragment = href.partition("#")
     hashes = hash_fragment(fragment)
 
+    absolute = None if bases is None else _merged_href(bases, href_no_frag)
+
     # A malformed authority (an unterminated IPv6 bracket) makes these raise,
     # so the drop guard has to start here rather than at the path resolution
     # below.  urljoin leaves an href alone when its scheme differs from the
     # page's, so the split round trip is what drops a tab, CR or LF.
     try:
-        url = _normalized_url(urljoin(base_url, href_no_frag))
+        if absolute is None:
+            absolute = urljoin(base_url, href_no_frag)
+        url = _normalized_url(absolute)
         parsed = urlparse(url)
         page = urlparse(base_url)
     except ValueError:
@@ -346,11 +361,120 @@ def _resolve_local_link(
 
     # Drop an anchor naming no local file rather than fail the whole listing.
     try:
-        path = parse_file_url(url)
+        path = _parsed_file_url_path(parsed, url)
     except ValueError:
         return (None, url, None, hashes)
 
     return (path.name, url, path, hashes)
+
+
+# A mirror href climbs out of the package directory to the shared packages
+# tree, which is two steps.  Building a base per level costs the page whatever
+# its directory is deep, so the list stops here and a longer climb goes back to
+# urljoin.
+_MAX_CLIMB = 4
+
+
+def _listing_bases(base_url: str) -> list[str] | None:
+    """Return the page's directory URL and its nearest parents, deepest first.
+
+    ``bases[n]`` is what an href prefixed by ``n`` ``../`` steps resolves
+    against, so a listing splits its base once rather than once per anchor.
+
+    ``None`` puts every anchor back on :func:`urljoin`: a base whose
+    :func:`urlsplit` raises, one that is not ``file:``, one whose path is
+    relative (``file:relative/index.html``), and one whose directory holds an
+    empty or a dot segment, which reference resolution normalises away and a
+    string merge would keep.
+    """
+    try:
+        scheme, netloc, path, _, _ = urlsplit(base_url)
+    except ValueError:
+        return None
+    if scheme != "file" or not path.startswith("/"):
+        return None
+
+    # Every segment of the directory is bracketed by slashes, so these three
+    # substrings are the whole of the empty and dot segment test.
+    directory = path[: path.rindex("/") + 1]
+    if "//" in directory or "/./" in directory or "/../" in directory:
+        return None
+
+    # Every parent is a prefix of the deepest base, so they are sliced out of
+    # it rather than rebuilt segment by segment.
+    deepest = f"file://{netloc}{directory}"
+    root = len(deepest) - len(directory)
+    bases = [deepest]
+    cut = len(deepest)
+    while cut > root + 1 and len(bases) < _MAX_CLIMB:
+        cut = deepest.rindex("/", root, cut - 1) + 1
+        bases.append(deepest[:cut])
+    return bases
+
+
+_DOT_OR_EMPTY_SEGMENTS = frozenset(("", ".", ".."))
+
+
+def _merged_href(bases: list[str], href: str) -> str | None:
+    """Join ``href`` onto ``bases`` by string, or ``None`` to fall back.
+
+    A run of leading ``../`` steps followed by plain path segments is what a
+    PEP 503 listing emits, and concatenating it onto ``bases[steps]`` is what
+    RFC 3986 reference resolution gives.  Anything else returns ``None`` and
+    goes back to :func:`urljoin`; each guard below names the shape it turns
+    away.
+    """
+    steps = 0
+    while href.startswith("../", 3 * steps):
+        steps += 1
+
+    # ``bases`` stops at the root or at ``_MAX_CLIMB``, so a longer run has
+    # no entry to merge onto.
+    if steps >= len(bases):
+        return None
+
+    # An empty href resolves to the page's own URL, not to ``bases[0]``.  A
+    # bare ``../`` run lands here too, and names a directory, not an artefact.
+    tail = href[3 * steps :]
+    if not tail:
+        return None
+
+    # urlsplit strips a leading C0 control or space, which only an href with
+    # no ``../`` run can begin with.
+    if steps == 0 and tail[0] <= "\x20":
+        return None
+
+    # It also lifts a query or a fragment out of the path, and deletes a tab,
+    # CR or LF anywhere in a reference.
+    if "?" in tail or "#" in tail or "\t" in tail or "\r" in tail or "\n" in tail:
+        return None
+
+    # A ``:`` in the first segment can make the href a URL in its own right,
+    # so every one is declined.  Reference resolution normalises a dot or an
+    # empty segment away.
+    segments = tail.split("/")
+    if ":" in segments[0] or not _DOT_OR_EMPTY_SEGMENTS.isdisjoint(segments):
+        return None
+
+    return bases[steps] + tail
+
+
+def _merging_bases(base_url: str, anchors: list[Anchor]) -> list[str] | None:
+    """Return the bases this page's hrefs merge onto, or ``None`` for urljoin.
+
+    A page's hrefs come from one generator, so its first and last anchor
+    settle it, and a page that merges neither is spared the guards on top of
+    the :func:`urljoin` it still has to run.  Both ends are read because an
+    autoindex opens with links to its parent directory and to its own sort
+    orders, and none of those merge.
+    """
+    bases = _listing_bases(base_url)
+    if bases is None:
+        return None
+    for anchor in anchors[:1] + anchors[-1:]:
+        if _merged_href(bases, anchor.href.partition("#")[0]) is not None:
+            return bases
+    return None
 
 
 def _scan_flat_wheelhouse(
