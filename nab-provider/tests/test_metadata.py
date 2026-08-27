@@ -10,6 +10,7 @@ import pytest
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import (
+    _READ_FIELDS,
     _read_header_fields,
     metadata_deps_are_static,
     metadata_header_block,
@@ -407,6 +408,13 @@ class TestReadHeaderFields:
             "From nobody Wed Aug 20 03:00:00 2026\nName: foo\nFrom someone else\n"
         ) == {"name": ["foo"]}
 
+    def test_last_field_stays_open_to_the_end_of_the_text(self) -> None:
+        """A document that stops without a line ending still yields its last field."""
+        assert _read_header_fields("Name: foo\nVersion: 1.0") == {
+            "name": ["foo"],
+            "version": ["1.0"],
+        }
+
     def test_bare_carriage_return_ends_a_line(self) -> None:
         """A lone ``\\r`` ends a line, as it does in :mod:`email`'s own reader."""
         assert _read_header_fields("Name: foo\rVersion: 1.0\r") == {
@@ -427,11 +435,15 @@ class TestReadHeaderFields:
         """Anything but a continuation or ``name:`` ends the headers."""
         assert _read_header_fields(text) == {"name": ["foo"]}
 
-    def test_field_name_is_checked_before_it_is_lowercased(self) -> None:
+    def test_a_non_ascii_name_that_lowercases_to_ascii_is_not_a_field(self) -> None:
         """U+212A lowercases to ASCII ``k``, which does not make it a field name."""
         assert _read_header_fields("Name: foo\n\u212a: x\nVersion: 1.0\n") == {
             "name": ["foo"]
         }
+
+    def test_no_read_field_name_contains_k(self) -> None:
+        """A ``k`` in a read field would let U+212A reach the lookup as that field."""
+        assert not any("k" in name for name in _READ_FIELDS)
 
     def test_field_with_an_empty_name_is_skipped(self) -> None:
         """A line starting with a colon has no name, and the headers continue."""

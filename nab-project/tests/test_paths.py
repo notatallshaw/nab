@@ -5,7 +5,10 @@ from __future__ import annotations
 import errno
 import os
 import stat
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 from nab_project.paths import PathState, path_state, resolve_path
@@ -56,6 +59,30 @@ class TestPathState:
             state = path_state(path)
         assert state is PathState.UNREADABLE
         assert state.should_read
+
+
+class TestDenyAccessFixture:
+    """The shared ``deny_access`` fixture, exercised through ``path_state``."""
+
+    def test_denies_stat_bound_into_pathlib_at_import(
+        self,
+        tmp_path: Path,
+        deny_access: Callable[[Path], AbstractContextManager[None]],
+    ) -> None:
+        path = tmp_path / "pyproject.toml"
+        path.write_text("")
+
+        # Python 3.10's pathlib stats through an os.stat bound at import.
+        # Rebuilding that binding puts every interpreter on the 3.10 route.
+        bound_at_import = os.stat
+
+        def stat_through_binding(self: Path, **kwargs: Any) -> os.stat_result:
+            return bound_at_import(self, **kwargs)
+
+        with patch.object(Path, "stat", stat_through_binding), deny_access(path):
+            state = path_state(path)
+
+        assert state is PathState.UNREADABLE
 
 
 class TestResolvePath:

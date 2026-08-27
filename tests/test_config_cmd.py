@@ -28,7 +28,7 @@ from contextlib import (
 )
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -40,6 +40,7 @@ from nab._lock import lock
 from nab.cli import app, effective_config
 from nab_project.config import NabProjectConfig
 from nab_project.config_sources import OPTIONS, OptionSpec, Scope, SourceRoots
+from nab_project.download import DownloadResult
 from nab_project.lockfile import (
     IndexPin,
     SdistArtifact,
@@ -216,15 +217,23 @@ class TestConfigList:
         self,
         hermetic_roots: Path,
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
         var: str,
         value: str,
     ) -> None:
-        # NAB_VERBOSITY / NAB_NO_PROGRESS belong to the output layer, so the
-        # config env-layer must not reject them as unknown NAB_* settings.
+        # NAB_VERBOSITY and NAB_NO_PROGRESS belong to the output layer, so the
+        # config env-layer skips them: no warning, and no rejected entry.
         _project(hermetic_roots)
         monkeypatch.setenv(var, value)
-        out = _run_config(["list", "--path", str(hermetic_roots / "pyproject.toml")])
+        path = str(hermetic_roots / "pyproject.toml")
+
+        with caplog.at_level(logging.WARNING, logger="nab_project"):
+            out = _run_config(["list", "--path", path])
+            rejected = _run_config(["list", "--include-rejected", "--path", path])
+
         assert "offline" in out
+        assert var not in caplog.text
+        assert var not in rejected
 
     def test_unknown_env_var_warns_and_runs(
         self,
@@ -1268,7 +1277,7 @@ class TestDownloadLadder:
     def _resolve_kwargs(
         self, proj: Path, out: Path, *, offline: bool | None = None
     ) -> Mapping[str, object]:
-        download_result = MagicMock(written=(), skipped=())
+        download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()

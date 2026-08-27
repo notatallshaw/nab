@@ -25,8 +25,8 @@ class PackageOverride:
     """One per-package override: a requirement plus a body.
 
     Built from either ``[tool.nab.packages.<name>]`` (the name-keyed sugar
-    table) or a ``[[tool.nab.package-rules]]`` entry (one body across the
-    requirements in its ``match`` selector).
+    table, which sets ``name_keyed``) or a ``[[tool.nab.package-rules]]``
+    entry (one body across the requirements in its ``match`` selector).
 
     The selector is a single PEP 508 ``requirement`` (name plus an optional
     version specifier; no extras, marker, or URL); ``name`` is its canonical
@@ -58,6 +58,9 @@ class PackageOverride:
     dependencies: tuple[Requirement, ...] | None = None
     requires_python: str | None = None
     provides_extra: tuple[str, ...] | None = None
+    # Whether the entry is a table keyed by this selector, which a second
+    # entry under the same key cannot be declared beside.
+    name_keyed: bool = False
     # The config surface this entry was declared on (e.g. "packages.'numpy'"
     # or "package-rules[0]").  Only used to name the source in an error that
     # is raised after the two project files merge, so it is excluded from

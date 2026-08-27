@@ -72,12 +72,14 @@ URL in each `[[tool.nab.vcs-sources]]` table is run through the
 same admission as project-root requirements, so it must pass
 `allowed-schemes`, `allowed-repos`, and `require-pin`.
 
-Reading static dependencies from the cloned tree works at any
-`build-policy` level.  Dynamic dependencies on a VCS clone
-require `build-policy = "build-remote"` (a clone is considered
-"remote" for build purposes because the source bytes are
-network-fetched, even though they end up on disk before the
-backend runs).  See the [build policy](../reference/build-policy.md) page.
+Reading static metadata from the cloned tree works at any
+`build-policy` level.  When the static read comes up empty, nab
+builds the clone instead, which needs
+`build-policy = "build-remote"` (a clone counts as remote because
+the source bytes are network-fetched, even though they end up on
+disk before the backend runs).  The
+[build policy](../reference/build-policy.md) page lists what
+counts as empty.
 
 ## Offline runs
 

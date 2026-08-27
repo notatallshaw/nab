@@ -1030,6 +1030,7 @@ class FetchCoordinator:
             req.package,
             files,
             unreadable_only=client.served_unreadable_only(req.package),
+            all_yanked=client.served_all_yanked(req.package),
         )
         logger.debug("fetched listing: %s (%d files)", req.package, len(files))
         if self._on_fetch is not None:
@@ -1041,16 +1042,24 @@ class FetchCoordinator:
     ) -> None:
         """Enqueue metadata for the newest candidates of a stored listing.
 
-        Files are oldest-first. One wheel per version: the first with a sidecar
-        is the one the provider picks for that version's metadata.
-        """
-        first_wheel: dict[str, WheelFile] = {}
-        for f in files:
-            if isinstance(f, WheelFile) and f.has_metadata:
-                first_wheel.setdefault(f.version, f)
+        Assumes a listing is oldest-first and keeps a version's files together,
+        which nab does not enforce. An index that interleaves versions warms an
+        older release, costing a request rather than a wrong resolve.
 
-        newest = list(first_wheel.values())[-self.PREFETCH_METADATA_COUNT :]
-        for w in newest:
+        One wheel per version: the first with a sidecar is the one the provider
+        picks for that version's metadata. The backwards walk assigns
+        unconditionally, so that first wheel is the one left in place.
+        """
+        wanted = self.PREFETCH_METADATA_COUNT
+        newest: dict[str, WheelFile] = {}
+        for f in reversed(files):
+            if not (isinstance(f, WheelFile) and f.has_metadata):
+                continue
+            if f.version not in newest and len(newest) == wanted:
+                break
+            newest[f.version] = f
+
+        for w in reversed(newest.values()):
             url = w.metadata_url
             assert url is not None
             self.request_metadata(package, w.version, url, w.metadata_hash)

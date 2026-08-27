@@ -31,145 +31,26 @@ shorthands for those two values.
 
 ## `nab lock`
 
-Resolve and emit a lockfile or pin list. Three formats:
+Resolve and emit a lockfile or pin list.
 
-* `--format pylock` (default) writes a [PEP 751] `pylock.toml`.
-* `--format requirements` writes a pip-compatible
-  `requirements.txt` with one `--hash=<algo>:<digest>` line per
-  recorded digest.
-* `--format requirements-without-hashes` writes a sorted
-  `name==version` list with no hashes.
+* What a run selects, and when a selection forks it: `--groups`,
+  `--all-groups`, `--extras`, `--all-extras`, `--build-requirements`,
+  and the workspace flags `--workspace-discovery` and
+  `--no-emit-workspace`. See [Selecting what to lock](selection.md), and
+  [Lock a workspace](../how-to/workspaces.md) for declaring one.
+* What each format writes, where it is written, and what universal mode
+  changes: `--format` and `--output`. See [Output formats](formats.md).
+* What a failed resolve prints, and what `-v` adds to it. See
+  [Resolution failures](diagnostics.md).
 
-Dependency-group selection (PEP 735):
-
-* `--groups foo bar` folds the named groups from the project's
-  `[dependency-groups]` table into the resolve. The selected
-  group names land in the lockfile's top-level
-  `dependency-groups` array. The separate `default-groups` array
-  records the `[tool.nab].default-groups` project setting, not
-  this run's selection, plus the group named by
-  `[tool.nab].base-group` when it is set.
-* `--all-groups` selects every group defined in the project.
-
-Extras selection:
-
-* `--extras foo bar` folds entries from the project's own
-  `[project.optional-dependencies]` table into the resolve. The
-  selected extra names land in the lockfile's top-level `extras`
-  array.
-* `--all-extras` selects every declared extra.
-
-Both `--groups` and `--extras` produce a single union resolve, unless
-two or more members of a mutually exclusive `[tool.nab].conflicts` set
-are active, either because the selection names them or because they are
-the groups `base-group` and `build-group` name, which are active on
-every run. The run then forks into one resolve per choice of member;
-see [Conflicting extras and groups](../explanation/conflicts.md).
-
-A package that only a selected extra or group reaches is emitted with
-a `'X' in extras` or `'X' in dependency_groups` marker, so an
-installer given neither leaves it out; see
-[Lockfiles](lockfile.md).
-
-Build requirements:
-
-* `--build-requirements` locks the project's `[build-system].requires`
-  instead of its dependencies, so the lock describes the environment
-  the project is built in rather than the one it runs in. `--output`
-  defaults to `pylock.build.toml` (or `build-requirements.txt` for the
-  requirements formats), which keeps it clear of the project's runtime
-  lock, and `--locked` then checks that file. Nothing can be selected alongside it: `[build-system].requires`
-  is one flat list, so `--groups`, `--all-groups`, `--extras`,
-  `--all-extras`, `--project-default-group`, `--project-base-group` and
-  `--project-build-group` are all rejected, and `[tool.nab].default-groups`,
-  `[tool.nab].base-group`, `[tool.nab].build-group` and
-  `[tool.nab].conflicts` declared in the project's files do not apply.
-* A project that declares no `[build-system]` is an error. nab does not
-  fall back to the PEP 517 default backend, because pinning an implied
-  `setuptools` would put a build requirement in the lock that the project
-  never declared. `[tool.nab].build-group`, which carries the build
-  requirements in the project's own lock instead of a separate one, is
-  the same, and it requires `[tool.nab].base-group` so the two sets can
-  be asked for separately.
-* Only the static list is read. Neither this flag nor `build-group`
-  invokes the project's own backend, so whatever that backend would add
-  from `get_requires_for_build_wheel` is not covered.
-* `[tool.nab].build-group` gates its packages on a marker, and the two
-  requirements formats have nowhere to put one, so they render the build
-  requirements as ordinary pins. Use `pylock` output, or this flag, when
-  the two sets have to stay apart.
-
-Workspace flags (see [Lock a workspace](../how-to/workspaces.md)):
-
-* `--workspace-discovery` (default) walks upward from the locked
-  project for a `[tool.nab.workspace]` root and prefers its in-tree
-  members over PyPI. `--no-workspace-discovery` skips that search, so
-  the run resolves the named project alone.
-* `--no-emit-workspace` drops the workspace members' own `[[packages]]`
-  entries from the emitted lockfile, along with the dependency edges
-  and membership gates that reference them; the resolver still uses the
-  members during the resolve. Default off (`--no-no-emit-workspace`). Use it
-  when the lockfile is consumed by pip's PEP 751 install or
-  `--require-hashes`, which reject the directory entry a member pin
-  emits because it cannot be hashed; pair it with `pip install
-  --no-deps -e <member>`.
-
-`--output` defaults to `pylock.toml` for `pylock` and
-`requirements.txt` for the two requirements formats, or to
-`pylock.build.toml` and `build-requirements.txt` under
-`--build-requirements`. Pass
-`--output -` to write to stdout instead. A matrix has no default
-requirements file: no one file can carry every tuple's pins (see
-below), so the requirements formats print to stdout unless `--output`
-names a template.
-
-A requirements `--output` template writes one file per tuple. The
-variables are `{python_version}`, `{platform_id}`, and `{selection}`,
-which names the conflict fork a tuple belongs to (`extra-cpu`,
-`group-black22.group-isort5`, empty when the resolve did not fork):
-
-```console
-$ nab lock --format requirements-without-hashes --extras cpu gpu \
-    --output 'req-{python_version}-{selection}.txt'
-Wrote req-3.12-extra-cpu.txt (12 packages, tuple py312-linux_x86_64-extra-cpu)
-Wrote req-3.12-extra-gpu.txt (14 packages, tuple py312-linux_x86_64-extra-gpu)
-```
-
-A template that maps two tuples onto one path is rejected, naming the
-variables that would give every tuple its own file. When the tuples
-split on an axis no variable names, such as the libc or the
-implementation, no template separates them and the message points at
-pylock output instead.
-
-Exits non-zero on resolution failure; the message starts with
-`error: resolution failed:` followed by a derivation tree, and any
-captured diagnostics are appended under a `Diagnostics:` section.
-
-Universal mode (`[tool.nab].mode = "universal"`) is supported for
-all three formats:
-
-* `pylock` produces one PEP 751 file with per-tuple `Package`
-  entries gated by markers (`python_version`, `sys_platform`,
-  `platform_machine`, plus `implementation_name` when the matrix
-  declares a non-CPython implementation or more than one). Versions
-  agreed across every tuple appear once without a marker; divergent
-  versions appear once per `(version, source)` group with the
-  matching tuples disjoined.
-* `requirements` and `requirements-without-hashes` emit a
-  sequence of `# label` comment blocks, one per
-  `(python, platform, implementation)` tuple, followed by that
-  tuple's pins. Pip's hash-checking mode cannot install a single
-  requirements.txt across multiple tuples, so the per-tuple block
-  format is for inspection or for tools that consume one block at
-  a time.
-
-Failed tuples render as `# {label}: FAILED` followed by the
-indented error and exit `1`.
+### Resolving for another Python
 
 `--python X.Y` resolves for that Python on this machine instead of the
 running interpreter, like pip's `--python-version`; it moves only the
 python axis, so a declared `[tool.nab.environment].platform` stays. It is
 rejected in universal mode, where the matrix declares the Python axis.
+
+### Project overrides
 
 A project option can be overridden for one run with a `--project-<key>`
 flag: `--project-resolution`, `--project-mode`, `--project-requires-python`,
@@ -184,6 +65,8 @@ declared one. Each changes what the run writes, so passing one prints a
 reproducibility notice on stderr and records the override in the
 lockfile's `[tool.nab]` block, since the lock no longer derives from the
 committed files alone.
+
+### Checking and refreshing a lock
 
 `--locked` re-resolves and checks that the committed `pylock.toml` is
 already up to date, writing nothing. It exits non-zero if the lock would
@@ -220,7 +103,8 @@ wheel shared across tuples is fetched once.
   `NAB_MAX_CONCURRENCY`.
 * `--groups foo bar` / `--all-groups` and `--extras foo bar` /
   `--all-extras` fold dependency groups and extras into the resolve as
-  they do on `nab lock`, so they decide which artefacts are downloaded.
+  they do on `nab lock` (see [Selecting what to lock](selection.md)), so
+  they decide which artefacts are downloaded.
 * `--python X.Y` resolves for that Python on this machine instead of
   the running interpreter, as on `nab lock`. It is rejected in
   universal mode, where the matrix declares the Python axis.
@@ -237,6 +121,9 @@ read for `nab download` as for `nab lock`.
 Offline covers the artefacts too: an artefact that is neither already in
 the output directory with a matching digest nor readable from a local
 `file://` path fails the run instead of being fetched.
+
+A failed resolve prints the same message and `Diagnostics:` section as
+`nab lock`; see [Resolution failures](diagnostics.md).
 
 A summary of how many files were written and how many were
 already present is printed to stderr.
@@ -352,7 +239,7 @@ verbosity.
 
 | Flag | Effect |
 | ---- | ------ |
-| `-v`, `-vv`, `--verbose` | Raise verbosity. `-v` adds the engine's `INFO` records, `-vv` adds `DEBUG`. `--verbose` counts as one `-v`; repeats add, and `-vvv` saturates at `-vv`. |
+| `-v`, `-vv`, `--verbose` | Raise verbosity. `-v` adds the engine's `INFO` records and deepens the `Diagnostics:` section of a resolution failure, `-vv` adds `DEBUG`. `--verbose` counts as one `-v`; repeats add, and `-vvv` saturates at `-vv`. |
 | `-q`, `-qq`, `--quiet` | Lower verbosity. `-q` drops the run summary and notes, keeping warnings and errors; `-qq` keeps only errors. `--quiet` counts as one `-q`. |
 | `--color` | When to colour stderr: `auto` (default), `always`, or `never`. `auto` colours only an stderr terminal and honours `NO_COLOR`, `FORCE_COLOR`, and `TERM=dumb`; `always` and `never` win outright. Colour touches only a message's leading token, so it reads the same stripped. |
 | `--no-color` | Shorthand for `--color never`. |
@@ -390,6 +277,5 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | ---- | ------- |
 | `0`  | Success. |
 | `1`  | Resolution failed, lockfile cannot be written (missing hash), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
+| `2`  | Bad usage: an unrecognised flag or subcommand, or a malformed `--color` value or `NAB_VERBOSITY`. |
 | `130` | Interrupted with Ctrl-C. `nab` prints `error: interrupted` and exits. |
-
-[PEP 751]: https://peps.python.org/pep-0751/

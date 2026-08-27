@@ -87,11 +87,17 @@ def choose_version(resolver: Resolver[Any, Any], package: Any) -> Any | None:
     constraint = resolver.constraints.get(package)
     if constraint is not None:
         current_range = current_range & constraint
-    resolver.provider.receive_partial_solution_hint(
-        resolver.solution.positive_ranges(),
-        resolver.solution.decisions(),
-    )
-    return resolver.provider.choose_version(package, current_range)
+
+    provider = resolver.provider
+    # The hint costs two snapshots of the solution, so it is skipped for the
+    # provider whose hook is ``BaseProvider``'s discarding no-op.
+    if provider is not resolver._hint_ignoring_provider:  # noqa: SLF001
+        provider.receive_partial_solution_hint(
+            resolver.solution.positive_ranges(),
+            resolver.solution.decisions(),
+        )
+
+    return provider.choose_version(package, current_range)
 
 
 def _normalize_terms(

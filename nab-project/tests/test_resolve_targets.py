@@ -22,6 +22,7 @@ from nab_index import vcs as vcs_mod
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
+from nab_project import resolve as resolve_mod
 from nab_project._resolve import engine as engine_mod
 from nab_project._resolve.engine import _EngineSettings, _resolve_one_target, _run_pass
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
@@ -61,11 +62,11 @@ from nab_project.resolve import (
     resolve_with_coordinator,
 )
 from nab_provider._provider import listing as listing_mod
+from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.marker_holds import dependency_marker_holds
-from nab_provider.metadata import WheelMetadata
 from nab_provider.provider import (
     ArchiveSource,
     BuildPolicy,
@@ -1050,6 +1051,77 @@ class TestMatrixPerTargetWheelDivergence:
         }
 
 
+class TestMatrixMetadataReadGranularity:
+    """Which metadata a matrix reads per wheel, and which per version.
+
+    A wheel's metadata comes from its own sidecar, so a matrix asks for one
+    URL per wheel its targets pick between them.  An sdist's ``PKG-INFO``
+    stands for the version, so one read serves the whole matrix.  Collapsing
+    repeat requests for one URL is the coordinator's job, covered by
+    ``property_python/test_fetch_coordinator.py``.
+    """
+
+    def _wheel(self, tag: str) -> WheelFile:
+        """A ``pkg`` 1.0 wheel tagged ``tag``, advertising a sidecar."""
+        return WheelFile(
+            filename=f"pkg-1.0-{tag}.whl",
+            url=f"https://example.com/pkg-1.0-{tag}.whl",
+            version="1.0",
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+        )
+
+    def _resolve_three_targets(self, coordinator: FakeFetchPort) -> None:
+        """Resolve ``pkg`` for 3.11 through 3.13 on one platform, and expect success."""
+        targets = Matrix(
+            python=">=3.11,<3.14", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+        assert len(targets) == 3
+
+        result = resolve_with_coordinator(
+            coordinator, targets, _reqs("pkg"), config=_no_build()
+        )
+        assert result.success
+
+    def _metadata_urls(self, wheels: list[WheelFile]) -> set[str]:
+        """The distinct sidecar URLs the three targets ask for, given ``wheels``."""
+        coordinator = make_coordinator(listings={"pkg": wheels}, auto_metadata=True)
+        self._resolve_three_targets(coordinator)
+
+        calls = coordinator.calls_to("request_metadata")
+        return {url for _package, _version, url, _hash in calls}
+
+    def test_two_wheels_across_three_targets_name_two_urls(self) -> None:
+        """3.11 picks its own wheel; 3.12 and 3.13 both pick the universal one."""
+        universal = self._wheel("py3-none-any")
+        for_311 = self._wheel("cp311-cp311-manylinux_2_17_x86_64")
+
+        urls = self._metadata_urls([universal, for_311])
+
+        assert urls == {universal.metadata_url, for_311.metadata_url}
+
+    def test_a_wheel_per_interpreter_is_a_url_per_target(self) -> None:
+        """Nothing is shared when every target ranks a different wheel first."""
+        wheels = [
+            self._wheel(f"cp3{minor}-cp3{minor}-manylinux_2_17_x86_64")
+            for minor in (11, 12, 13)
+        ]
+
+        assert self._metadata_urls(wheels) == {wheel.metadata_url for wheel in wheels}
+
+    def test_an_sdist_is_read_once_for_the_whole_matrix(self) -> None:
+        """No wheel to pick, so all three targets read the one PKG-INFO."""
+        coordinator = make_coordinator(
+            listings={"pkg": [_make_sdist("1.0", package="pkg")]},
+            sdist_pkg_info="Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\n",
+        )
+
+        self._resolve_three_targets(coordinator)
+
+        assert len(coordinator.calls_to("request_sdist")) == 1
+
+
 _FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"
 
 
@@ -1773,58 +1845,6 @@ class TestCutoffAndOverridePlumbing:
         assert self._pins(tmp_path, override) == {"foo": Version("1.0")}
 
 
-class TestBuildConfigPlumbing:
-    """The project's config reaches the PEP 517 build a resolve triggers.
-
-    Only a source with dynamic metadata gets that far: the static reader
-    returns ``None`` for it, so the provider falls through to
-    ``build_backend.extract_metadata``, which refuses without a config.
-    The backend run itself is stubbed, so no build venv is created.
-    """
-
-    def _project(self, tmp_path: Path) -> Path:
-        """Write a project whose only dependency is a dynamic local source."""
-        source = tmp_path / "dyn"
-        source.mkdir()
-        (source / "pyproject.toml").write_text(
-            '[project]\nname = "dyn"\ndynamic = ["version"]\n', encoding="utf-8"
-        )
-
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            '[project]\nname = "proj"\nversion = "0"\ndependencies = ["dyn"]\n'
-            "[tool.nab]\n"
-            'build-policy = "build-local"\n'
-            "[[tool.nab.local-sources]]\n"
-            'name = "dyn"\n'
-            'path = "dyn"\n',
-            encoding="utf-8",
-        )
-        return pyproject
-
-    def test_dynamic_local_source_builds_under_the_project_config(
-        self, tmp_path: Path
-    ) -> None:
-        """The config the resolve runs under is the one the build receives."""
-        config = read_pyproject_config(self._project(tmp_path))
-        built = WheelMetadata(name="dyn", version=Version("7.0"))
-
-        coordinator = make_coordinator(
-            listings={}, auto_metadata=True, build_config=config
-        )
-        with patch(
-            "nab_project._build.runner.run_build_backend", return_value=built
-        ) as runner:
-            result = resolve_with_coordinator(
-                coordinator, _one_target(), _reqs("dyn"), config=config
-            )
-
-        assert result.success
-        assert result.target_results[0].pins == {"dyn": Version("7.0")}
-
-        assert runner.call_args.kwargs["config"] is config
-
-
 class TestRunPassSerial:
     """``_run_pass`` resolves each target in turn, covering the alignment chain."""
 
@@ -2024,6 +2044,40 @@ class TestBuildLockInput:
         assert len(merged.targets) == 2
         versions = {lock.pins["pkg"].version for lock in merged.targets.values()}
         assert versions == {"1.0", "2.0"}
+
+    def test_a_marker_consulted_on_every_target_is_read_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Declaring environments calls marker_variables once per distinct text."""
+        linux, windows = _linux_311(), _windows_311()
+        marker = Marker('platform_system == "Linux"')
+        results = [
+            TargetResult(
+                target=target,
+                success=True,
+                pins={"pkg": Version("1.0")},
+                consulted=frozenset({marker}),
+                lock=TargetLock(
+                    target=target,
+                    pins={"pkg": IndexPin(name="pkg", version="1.0", index="pypi")},
+                ),
+            )
+            for target in (linux, windows)
+        ]
+
+        texts: list[str] = []
+        real_marker_variables = resolve_mod.marker_variables
+
+        def spy_marker_variables(text: str) -> frozenset[str]:
+            texts.append(text)
+            return real_marker_variables(text)
+
+        monkeypatch.setattr(resolve_mod, "marker_variables", spy_marker_variables)
+        build_lock_input(
+            ResolveResult(targets=(linux, windows), target_results=results)
+        )
+
+        assert texts == ['platform_system == "Linux"']
 
     def test_a_double_quote_in_a_consulted_marker_value_still_locks(self) -> None:
         """A marker value carrying a double quote still locks.

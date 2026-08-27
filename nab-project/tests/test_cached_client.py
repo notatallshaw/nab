@@ -42,8 +42,6 @@ from nab_index.client import (
     SdistHashMismatchError,
     WheelFile,
     WheelHashMismatchError,
-    _advertises_sidecar,
-    _metadata_value,
     _normalized_url,
     _parse_files,
     _parse_sdist_filename,
@@ -202,14 +200,26 @@ def _build_tarball(members: list[tuple[str, bytes]]) -> bytes:
     return buf.getvalue()
 
 
+def _parsed_wheel(file_info: Mapping[Any, object]) -> WheelFile:
+    """The ``WheelFile`` ingest builds for an entry carrying ``file_info``."""
+    entry: dict[Any, object] = {
+        "filename": "foo-1.0-py3-none-any.whl",
+        "url": "https://example.com/foo-1.0-py3-none-any.whl",
+        **file_info,
+    }
+    (wheel,) = _parse_files({"files": [entry]}, "https://example.com/", "foo")
+    assert isinstance(wheel, WheelFile)
+    return wheel
+
+
 def _has_metadata(file_info: Mapping[Any, object]) -> bool:
     """Whether ``file_info`` advertises a sidecar, read the way ingest reads it."""
-    return _advertises_sidecar(_metadata_value(file_info))
+    return _parsed_wheel(file_info).has_metadata
 
 
 def _metadata_hash(file_info: Mapping[Any, object]) -> tuple[str, str] | None:
     """The sidecar hash ``file_info`` publishes, read the way ingest reads it."""
-    return sidecar_hash(_metadata_value(file_info))
+    return _parsed_wheel(file_info).metadata_hash
 
 
 class TestHasMetadataFlag:
@@ -837,6 +847,9 @@ class TestParseHashes:
 
     def test_uppercase_digest_kept_lowercased(self) -> None:
         assert parse_hash_table({"sha256": "A" * 64}) == (("sha256", "a" * 64),)
+
+    def test_bare_true_publishes_no_sidecar_hash(self) -> None:
+        assert sidecar_hash(True) is None  # noqa: FBT003
 
 
 class TestSelectArtifactHash:
@@ -3304,6 +3317,36 @@ class TestGetSdistFiles:
 
         assert asyncio.run(go()) == (None, None)
         assert cache.get_sdist_files("pkg", "1.0") is None
+
+    @pytest.mark.parametrize(
+        "members",
+        [
+            pytest.param([("pkg-1.0/setup.py", b"setup()\n")], id="no-metadata-file"),
+            pytest.param(
+                [("pkg-1.0/pyproject.toml", b'[project]\nname = "pkg"\n')],
+                id="pyproject-only",
+            ),
+        ],
+    )
+    def test_sdist_without_pkg_info_is_cached_and_not_refetched(
+        self, tmp_path: Path, members: list[tuple[str, bytes]]
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport([_FakeResponse(_build_tarball(members))])
+
+        async def go() -> list[tuple[str | None, str | None]]:
+            client = CachedAsyncSimpleClient(transport, cache)
+            try:
+                return [
+                    await client.get_sdist_files("pkg", "1.0", "https://x/pkg.tar.gz")
+                    for _ in range(2)
+                ]
+            finally:
+                await client.aclose()
+
+        assert asyncio.run(go()) == [(None, None), (None, None)]
+        assert cache.get_sdist_files("pkg", "1.0") == (None, None)
+        assert len(transport.calls) == 1
 
     def test_offline_miss_raises(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
