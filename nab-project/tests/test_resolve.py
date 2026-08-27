@@ -15,7 +15,7 @@ import respx
 
 from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_index.transport import HttpError
+from nab_index.transport import AsyncHttpTransport, HttpError
 from nab_project._resolve.engine import (
     _augment_resolution_error,
     _raise_for_source_python,
@@ -80,14 +80,15 @@ from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 V = Version
 
-# A sentinel transport. resolve_pyproject just hands it to FetchCoordinator,
-# which is mocked in these tests, so the value never gets used.
-_FAKE_TRANSPORT = MagicMock(name="FakeTransport")
+# Specced so aclose() is awaitable: the coordinator awaits it on shutdown.
+_FAKE_TRANSPORT = MagicMock(spec=AsyncHttpTransport, name="FakeTransport")
 
 _FORTY = "0123456789abcdef0123456789abcdef01234567"
 
 
-def _resolved(path: Path, transport: object = None, **kwargs: object) -> ResolveResult:
+def _resolved(
+    path: Path, transport: object = _FAKE_TRANSPORT, **kwargs: object
+) -> ResolveResult:
     """Resolve and surface a failed target's error.
 
     The engine records a target that did not resolve rather than raising,
@@ -2182,6 +2183,29 @@ class TestResolvePyprojectVcs:
                 _FAKE_TRANSPORT,
                 python_version="3.12.0",
             )
+
+    def test_refused_dependency_closes_the_transport(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """A refusal closes the transport, and the fetcher thread survives it."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            "[project]\ndependencies = "
+            f'["foo @ git+https://github.com/foo/bar.git@{_FORTY}"]\n',
+        )
+        closes_before = _FAKE_TRANSPORT.aclose.await_count
+
+        with pytest.raises(UnsupportedVcsError):
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        fetch_errors = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "nab_project.fetch" and record.levelno >= logging.ERROR
+        ]
+
+        assert fetch_errors == []
+        assert _FAKE_TRANSPORT.aclose.await_count > closes_before
 
     def test_vcs_constraint_refused_at_config_load(self, tmp_path: Path) -> None:
         """An admitting VCS policy does not matter: config load refuses it first."""
