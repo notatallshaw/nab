@@ -296,7 +296,9 @@ async def _suffix_attempt(
 
     A 206 whose Content-Range is absent, unparseable, or of unknown length
     (``bytes a-b/*``) gives no offset to anchor the returned bytes, so it
-    steps down to absolute ranges rather than guessing what the body is.
+    steps down to absolute ranges rather than guessing what the body is.  One
+    selecting no bytes (``bytes 10-9/10``, invalid under RFC 9110 section
+    14.4) steps down too: the window it anchors holds nothing and cannot grow.
     """
     response = await _range_get(transport, url, f"bytes=-{tail_size}")
     status = response.status_code
@@ -308,7 +310,8 @@ async def _suffix_attempt(
         if parsed is None:
             return _SuffixOutcome("downgrade")
         start, end, total = parsed
-        if end == total - 1 and end - start + 1 == len(body):
+        width = end - start + 1
+        if width > 0 and end == total - 1 and width == len(body):
             return _SuffixOutcome("suffix", total=total, low=start, body=body)
         return _SuffixOutcome("downgrade")
     if status not in _RANGE_REJECT_STATUSES and status not in (
@@ -489,16 +492,22 @@ async def _open_zip(
     tail_low: int,
     wheel_hash: tuple[str, str] | None,
 ) -> zipfile.ZipFile | None:
-    """Open a ZipFile over the sparse buffer, growing the window on demand."""
+    """Open a ZipFile over the sparse buffer, doubling the window on demand.
+
+    A window that doubling cannot widen ends the read: it already spans the
+    whole file, or it holds no bytes to double.
+    """
     total = sparse._length  # noqa: SLF001
     while True:
         opened = _try_open(sparse)
         if opened is not None:
             return opened
+
         have = total - tail_low
-        if have >= total:
-            return None
         new_size = min(have * 2, total)
+        if new_size <= have:
+            return None
+
         new_low = total - new_size
         response = await _range_get(transport, url, f"bytes={new_low}-{tail_low - 1}")
         low = _absorb_range(response, sparse, new_low, wheel_hash)
