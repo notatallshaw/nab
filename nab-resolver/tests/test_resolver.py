@@ -3097,10 +3097,18 @@ class TestRelationCache:
         assert self._token_key(resolver, term) == key
         assert resolver.relation_cache == {key: first}
 
+    @staticmethod
+    def _probe(resolver: Resolver[str, int], lower: int) -> None:
+        """Probe ``foo`` against ``>= lower``.
+
+        A ``lower`` not used before misses; a repeat hits while the memo is on.
+        """
+        term_relation(resolver, Term("foo", Range.at_least(lower), positive=True))
+
     def test_gate_switches_the_memo_off_when_probes_mostly_miss(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The window closes on probes alone, and the entries it collected go too."""
+        """Too few hits in a window switch the memo off and drop its entries."""
         monkeypatch.setattr(propagate, "RELATION_GATE_WINDOW", 3)
         resolver: Resolver[str, int] = Resolver(DictProvider({}))
         resolver.solution.decide("foo", 2)
@@ -3109,46 +3117,84 @@ class TestRelationCache:
 
         # A distinct constraint each time, so no probe in the window hits.
         for lower in (1, 3, 5):
-            term_relation(resolver, Term("foo", Range.at_least(lower), positive=True))
+            self._probe(resolver, lower)
 
         assert resolver.relation_cache_on is False
         assert resolver.relation_cache == {}
-        assert resolver.relation_gate_countdown == propagate.RELATION_GATE_RECHECK
+        assert resolver.relation_gate_probes_left == propagate.RELATION_GATE_RECHECK
 
     def test_gate_keeps_the_memo_while_probes_hit(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """A window that closes well starts the next one, so the count restarts.
+        """Enough hits keep the memo and its entries, and the next window opens.
 
-        The final hit count is the probe that closed the window, counted after
-        the reset rather than the one asserted before it.
+        A hit spends a probe of the window without recomputing anything, so the
+        third probe here closes a window of three on the second miss.
         """
+        monkeypatch.setattr(propagate, "RELATION_GATE_WINDOW", 3)
         monkeypatch.setattr(propagate, "RELATION_GATE_MIN_HITS", 1)
         resolver: Resolver[str, int] = Resolver(DictProvider({}))
         resolver.solution.decide("foo", 2)
-        term = Term("foo", Range.at_least(1), positive=True)
-        term_relation(resolver, term)
-        term_relation(resolver, term)
+
+        self._probe(resolver, 1)
+        self._probe(resolver, 1)
         assert resolver.relation_gate_hits == 1
 
-        resolver.relation_gate_countdown = 1
-        term_relation(resolver, term)
+        self._probe(resolver, 3)
 
         assert resolver.relation_cache_on is True
-        assert resolver.relation_gate_countdown == propagate.RELATION_GATE_WINDOW
-        assert resolver.relation_gate_hits == 1
+        assert len(resolver.relation_cache) == 2
 
-    def test_gate_tries_the_memo_again_after_the_recheck_window(self) -> None:
+        assert resolver.relation_gate_hits == 0
+        assert resolver.relation_gate_probes_left == propagate.RELATION_GATE_WINDOW
+
+    def test_a_hit_never_closes_the_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A hit fills a probe of the window but leaves the judging to a miss.
+
+        Two probes fill a window of two here, and it stays open because the
+        second of them was a hit.
+        """
+        monkeypatch.setattr(propagate, "RELATION_GATE_WINDOW", 2)
         resolver: Resolver[str, int] = Resolver(DictProvider({}))
         resolver.solution.decide("foo", 2)
-        resolver.relation_cache_on = False
-        resolver.relation_gate_countdown = 1
-        term = Term("foo", Range.at_least(1), positive=True)
 
-        result = term_relation(resolver, term)
+        self._probe(resolver, 1)
+        self._probe(resolver, 1)
 
+        assert resolver.relation_gate_probes_left == 1
+        assert resolver.relation_gate_hits == 1
+
+        # One hit is under the default threshold, so a window judged here would
+        # have switched the memo off.
         assert resolver.relation_cache_on is True
-        assert resolver.relation_gate_countdown == propagate.RELATION_GATE_WINDOW
+        assert len(resolver.relation_cache) == 1
+
+    def test_gate_tries_the_memo_again_after_the_recheck_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A switched-off memo comes back, and starts collecting again."""
+        monkeypatch.setattr(propagate, "RELATION_GATE_WINDOW", 2)
+        monkeypatch.setattr(propagate, "RELATION_GATE_RECHECK", 3)
+        resolver: Resolver[str, int] = Resolver(DictProvider({}))
+        resolver.solution.decide("foo", 2)
+
+        self._probe(resolver, 1)
+        self._probe(resolver, 3)
+        assert resolver.relation_cache_on is False
+
+        # The recheck window is longer than the one that judged the memo.
+        self._probe(resolver, 5)
+        self._probe(resolver, 7)
+        assert resolver.relation_cache_on is False
+
+        self._probe(resolver, 9)
+        assert resolver.relation_cache_on is True
+        assert resolver.relation_cache == {}
+
+        term = Term("foo", Range.at_least(11), positive=True)
+        result = term_relation(resolver, term)
         assert resolver.relation_cache == {self._token_key(resolver, term): result}
 
     def test_relation_is_unchanged_while_the_memo_is_off(self) -> None:

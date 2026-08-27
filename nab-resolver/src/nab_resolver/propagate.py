@@ -173,16 +173,16 @@ def _resample_relation_gate(resolver: Resolver[Any, Any]) -> None:
     off and drop the entries it collected.  While it is off, the window is only
     the wait before the memo is tried again.
     """
+    window = RELATION_GATE_WINDOW
     if not resolver.relation_cache_on:
         resolver.relation_cache_on = True
     elif resolver.relation_gate_hits < RELATION_GATE_MIN_HITS:
         resolver.relation_cache_on = False
         resolver.relation_cache.clear()
-        resolver.relation_gate_countdown = RELATION_GATE_RECHECK
-        return
+        window = RELATION_GATE_RECHECK
 
     resolver.relation_gate_hits = 0
-    resolver.relation_gate_countdown = RELATION_GATE_WINDOW
+    resolver.relation_gate_probes_left = window
 
 
 def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRelation:
@@ -201,13 +201,6 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
     positive = term.is_positive()
     constraint = term.constraint
 
-    countdown = resolver.relation_gate_countdown - 1
-    if countdown:
-        resolver.relation_gate_countdown = countdown
-    else:
-        _resample_relation_gate(resolver)
-
-    cache = resolver.relation_cache
     # key stays None while the memo is off, so a miss below stores nothing.
     key = None
     result = None
@@ -223,17 +216,28 @@ def term_relation(resolver: Resolver[Any, Any], term: Term[Any, Any]) -> SetRela
             constraint_token = _intern_range(resolver, constraint)
 
         key = (positive, assignment_token, constraint_token)
-        result = cache.get(key)
+        result = resolver.relation_cache.get(key)
 
     if result is None:
         relation = assignment.relation(constraint)
         result = classify_relation(
             term, subset=relation.is_subset, disjoint=relation.is_disjoint
         )
+
+        # A hit must not write this counter, so it is charged here and not above.
+        probes_left = resolver.relation_gate_probes_left - 1
+        resolver.relation_gate_probes_left = probes_left
+
         if key is not None:
+            cache = resolver.relation_cache
             if len(cache) >= RELATION_CACHE_MAX:
                 cache.clear()
             cache[key] = result
+
+        # Nothing hits while the memo is off, so the recheck wait runs its
+        # full length.
+        if probes_left <= resolver.relation_gate_hits:
+            _resample_relation_gate(resolver)
     else:
         resolver.relation_gate_hits += 1
 
