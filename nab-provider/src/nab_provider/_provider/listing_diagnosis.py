@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Final
 
+from nab_provider._vendor.packaging.version import Version
 from nab_provider.diagnostics import Diagnostic
 from nab_provider.records import SdistFile, WheelFile
 
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from typing import Literal, TypeAlias
 
     from nab_provider._vendor.packaging.ranges import VersionRange
-    from nab_provider._vendor.packaging.version import Version
+    from nab_resolver.types import RangeProtocol
 
     from ..provider import DistFile, Provider
     from .listing import Cause, ListingPolicy
@@ -263,12 +264,27 @@ class ListingDiagnosis:
 
 
 class Blocker:
-    """One dependency the look-ahead found no candidate could satisfy."""
+    """One dependency the look-ahead found no candidate could satisfy.
+
+    Neither side is rendered here.  A scan that exhausts its candidates is
+    ordinary backtracking, so nothing reads them unless the resolve then
+    fails, and the report spells them when it is built.
+    """
 
     __slots__ = ("declared", "held", "kind", "package")
 
-    def __init__(self, kind: Blocked, package: str, declared: str, held: str) -> None:
-        """Record that ``package`` is wanted in ``declared`` but stands at ``held``."""
+    def __init__(
+        self,
+        kind: Blocked,
+        package: str,
+        declared: tuple[RangeProtocol[Version], ...],
+        held: Version | RangeProtocol[Version],
+    ) -> None:
+        """Record that ``package`` is wanted in ``declared`` but stands at ``held``.
+
+        ``held`` is the version a decided blocker was pinned to, and the range
+        a held or root blocker stands in.
+        """
         self.kind = kind
         self.package = package
         self.declared = declared
@@ -1221,24 +1237,49 @@ def blockers_diagnostic(
     One rejection states its ranges on the line, and gets no ``-v`` body:
     the detail would be that same pair of ranges again.  Several name their
     packages and leave the ranges to ``-v``, since two pairs do not fit.
-    ``provider`` and ``normalized`` are read only where the one rejection is
-    a metadata failure the walk can say more about.
+    ``provider`` spells every range, and ``normalized`` is read only where
+    the one rejection is a metadata failure the walk can say more about.
     """
     if len(blockers) + bool(metadata) == 1:
         if not blockers:
             return metadata_diagnostic(provider, normalized, metadata)
-        return Diagnostic(f"every version {_blocker_clause(blockers[0])}")
+        return Diagnostic(f"every version {_blocker_clause(provider, blockers[0])}")
 
-    detail = [_blocker_clause(blocker) for blocker in blockers]
+    detail = [_blocker_clause(provider, blocker) for blocker in blockers]
     detail.extend(block.message for block in metadata)
     return Diagnostic(_several_blockers_short(blockers, metadata), tuple(detail))
 
 
-def _blocker_clause(blocker: Blocker) -> str:
+def _blocker_clause(provider: Provider, blocker: Blocker) -> str:
     """Say what one rejection wanted and what stands in its way."""
+    declared, held = _render_blocker(provider, blocker)
     return _BLOCKER_CLAUSES[blocker.kind].format(
-        package=blocker.package, declared=blocker.declared, held=blocker.held
+        package=blocker.package, declared=declared, held=held
     )
+
+
+def _render_blocker(provider: Provider, blocker: Blocker) -> tuple[str, str]:
+    """Spell one look-ahead rejection's two sides for the failure report.
+
+    Returns what the rejected candidates asked of the blocker, and where the
+    blocker stands: a decided one at a version, a held or root one over a
+    range.
+    """
+    declared = " or ".join(_blocker_side(provider, part) for part in blocker.declared)
+    held = blocker.held
+    if isinstance(held, Version):
+        return declared, str(held)
+    return declared, _blocker_side(provider, held)
+
+
+def _blocker_side(provider: Provider, constraint: RangeProtocol[Version]) -> str:
+    """Render one side of a blocker clause, naming an unconstrained range.
+
+    :meth:`~nab_provider.provider.Provider.format_range` spells an
+    unconstrained range as nothing, which would end the clause on a
+    dangling ``in``.
+    """
+    return provider.format_range(constraint) or "any version"
 
 
 def _several_blockers_short(

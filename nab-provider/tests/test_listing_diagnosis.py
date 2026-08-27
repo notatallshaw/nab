@@ -44,6 +44,7 @@ from nab_provider.testing import make_coordinator, pkg_override
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from nab_provider._vendor.packaging.ranges import VersionRange
     from nab_provider.provider import DistFile
 
 CUTOFF = datetime(2026, 5, 1, tzinfo=timezone.utc)
@@ -1610,8 +1611,19 @@ class TestSharedPredicates:
 
 
 def blocker(package: str, kind: diagnosis_mod.BlockerKind) -> diagnosis_mod.Blocker:
-    """A look-ahead record wanting ``package`` in ``==2.0``, held at ``1.0``."""
-    return diagnosis_mod.Blocker(kind, package, "==2.0", "1.0")
+    """A look-ahead record wanting ``package`` in ``==2.0``, blocked at 1.0.
+
+    Only a decided blocker stands at a version; a held or root one stands in
+    a range, which is what the capture records for them.
+    """
+    held: Version | VersionRange = (
+        Version("1.0")
+        if kind is diagnosis_mod.BlockerKind.DECIDED
+        else SpecifierSet("==1.0").to_range()
+    )
+    return diagnosis_mod.Blocker(
+        kind, package, (SpecifierSet("==2.0").to_range(),), held
+    )
 
 
 class TestBlockerLines:
@@ -1625,8 +1637,8 @@ class TestBlockerLines:
     ) -> Diagnostic:
         """Render a look-ahead rejection for ``pkg``.
 
-        The provider is only read where a metadata block carries the ladder's
-        marker, so the blocker cases hand over a listing that resolves.
+        The provider spells every blocker's ranges, so the default hands over
+        a listing that resolves; a marked metadata block passes its own.
         """
         return diagnosis_mod.blockers_diagnostic(
             build([wheel("1.0")]) if provider is None else provider,
@@ -1647,13 +1659,13 @@ class TestBlockerLines:
     def test_one_held_blocker(self) -> None:
         held = blocker("bar", diagnosis_mod.BlockerKind.HELD)
         assert self._diagnostic([held]).short == (
-            "every version needs bar in ==2.0, but the resolve holds bar in 1.0"
+            "every version needs bar in ==2.0, but the resolve holds bar in ==1.0"
         )
 
     def test_one_root_blocker(self) -> None:
         root = blocker("bar", diagnosis_mod.BlockerKind.ROOT)
         assert self._diagnostic([root]).short == (
-            "every version needs bar in ==2.0, but your project requires bar 1.0"
+            "every version needs bar in ==2.0, but your project requires bar ==1.0"
         )
 
     def test_two_blockers_name_their_packages_and_stop(self) -> None:

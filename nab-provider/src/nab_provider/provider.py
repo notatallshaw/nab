@@ -340,6 +340,17 @@ _EXTRA_KINDS = frozenset(
 _MAX_EXCLUSIONS = 3
 
 
+def _declared_ranges(
+    recorded: _lookahead.DepRangeUnion,
+) -> tuple[RangeProtocol[Version], ...]:
+    """Return the ranges a blocker's rejected candidates declared on it.
+
+    Stating them one by one keeps the line spellable where their union is
+    not; a group that recorded no range falls back to its union.
+    """
+    return recorded.declared or (recorded.union,)
+
+
 def _requirement_over_listing(
     constraint: VersionRange,
     universe: Sequence[Version],
@@ -1746,41 +1757,39 @@ class Provider:
 
         Returns one record per dependency the scan found holding every
         candidate out, plus the metadata failures recorded against them.
-        Both queues reset at the next flush, so what the report will need
-        is taken now and rendered only if the resolve fails.
+        The queues reset at the next flush, so the ranges are taken now and
+        spelled only if the resolve fails.
         """
         out: list[_diagnosis.Blocker] = []
 
         for cand, blocker_pkg, blocker_version in self.pending_blocks:
             if cand != normalized:
                 continue
-            declared = self._format_declared_ranges(
-                self.pending_decision_dep_ranges[(cand, blocker_pkg, blocker_version)]
-            )
+            recorded = self.pending_decision_dep_ranges[
+                (cand, blocker_pkg, blocker_version)
+            ]
 
-            # The blocker is decided, so the record names that version rather
+            # The blocker is decided, so the record keeps that version rather
             # than a singleton range, which has no specifier spelling.
             out.append(
                 _diagnosis.Blocker(
                     _diagnosis.BlockerKind.DECIDED,
                     blocker_pkg,
-                    declared,
-                    str(blocker_version),
+                    _declared_ranges(recorded),
+                    blocker_version,
                 )
             )
 
         for cand, blocker_pkg, pos_range in self.pending_range_blocks:
             if cand != normalized:
                 continue
-            declared = self._format_declared_ranges(
-                self.pending_range_dep_ranges[(cand, blocker_pkg, pos_range)]
-            )
+            recorded = self.pending_range_dep_ranges[(cand, blocker_pkg, pos_range)]
             out.append(
                 _diagnosis.Blocker(
                     _diagnosis.BlockerKind.HELD,
                     blocker_pkg,
-                    declared,
-                    self._format_blocker_range(pos_range),
+                    _declared_ranges(recorded),
+                    pos_range,
                 )
             )
 
@@ -1796,8 +1805,8 @@ class Provider:
                 _diagnosis.Blocker(
                     _diagnosis.BlockerKind.ROOT,
                     blocker_pkg,
-                    self._format_blocker_range(dep_range),
-                    self._format_blocker_range(root_range),
+                    (dep_range,),
+                    root_range,
                 )
             )
 
@@ -2357,15 +2366,6 @@ class Provider:
         would end the line on a dangling ``in``.
         """
         return self.format_range(constraint) or "any version"
-
-    def _format_declared_ranges(self, recorded: _lookahead.DepRangeUnion) -> str:
-        """Render the ranges a blocker's rejected candidates declared on it.
-
-        Stating them one by one keeps the line spellable where their union is
-        not; a group that recorded no range falls back to its union.
-        """
-        declared = recorded.declared or (recorded.union,)
-        return " or ".join(self._format_blocker_range(part) for part in declared)
 
     def get_dependencies(
         self, package: str, version: Version

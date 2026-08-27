@@ -100,7 +100,12 @@ from nab_provider.target import ResolveTarget
 from nab_provider.testing import pkg_override
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
-from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
+from nab_resolver.types import (
+    Incompatibility,
+    IncompatibilityCause,
+    RangeProtocol,
+    Term,
+)
 
 V = Version
 
@@ -1135,7 +1140,10 @@ class TestHasSatisfyingVersion:
         provider = Provider(coordinator)
         provider._no_versions_reasons["foo"] = _blocker_reason(
             diagnosis_mod.Blocker(
-                diagnosis_mod.BlockerKind.DECIDED, "bar", "==2.0", "1.0"
+                diagnosis_mod.BlockerKind.DECIDED,
+                "bar",
+                (SpecifierSet("==2.0").to_range(),),
+                V("1.0"),
             )
         )
         assert not provider.has_satisfying_version(
@@ -2210,7 +2218,10 @@ class TestNoVersionsReasons:
         provider = Provider(coordinator)
         provider._no_versions_reasons["foo"] = _blocker_reason(
             diagnosis_mod.Blocker(
-                diagnosis_mod.BlockerKind.HELD, "bar", "==2.0", "<2.0"
+                diagnosis_mod.BlockerKind.HELD,
+                "bar",
+                (SpecifierSet("==2.0").to_range(),),
+                SpecifierSet("<2.0").to_range(),
             )
         )
 
@@ -2341,6 +2352,53 @@ class TestNoVersionsReasons:
         assert "AFTER_LOCALS" not in reason
         assert "needs bar in ==2.0, but the resolve holds bar in <2.0" in reason
         assert "disjoint with current solution range" not in reason
+
+    def test_a_rejected_scan_spells_no_range_until_the_report(self) -> None:
+        """A capture keeps the ranges; the report is where they get spelled.
+
+        An ask that returns nothing is ordinary backtracking, so a resolve
+        that goes on to succeed reads none of what the scan recorded.  The
+        three ``foo`` versions are rejected down the three capture paths, so
+        the count covers all of them.
+        """
+
+        class CountsSpelledRanges(Provider):
+            spelled = 0
+
+            def format_range(self, constraint: RangeProtocol[Version]) -> str:
+                self.spelled += 1
+                return super().format_range(constraint)
+
+        coordinator = make_coordinator(
+            listings={"foo": [make_wheel(v) for v in ("1.0", "2.0", "3.0")]},
+            metadata_by_version={
+                "1.0": make_metadata("foo", "1.0", "qux==2.0"),
+                "2.0": make_metadata("foo", "2.0", "baz==2.0"),
+                "3.0": make_metadata("foo", "3.0", "bar==2.0"),
+            },
+        )
+        provider = CountsSpelledRanges(
+            coordinator,
+            target=_PY312,
+            root_requirements={
+                "foo": VersionRange.full(admit_arbitrary=False),
+                "bar": SpecifierSet("==1.0").to_range(),
+            },
+        )
+        provider.solution_decisions["baz"] = V("1.0")
+        provider.solution_ranges["qux"] = SpecifierSet("<2.0").to_range()
+
+        assert provider.choose_version("foo", VersionRange.full()) is None
+        assert provider.spelled == 0
+
+        reason = rendered_reason(provider, "foo")
+        assert "needs bar in ==2.0, but your project requires bar ==1.0" in reason
+        assert "needs baz in ==2.0, but the resolve chose baz 1.0" in reason
+        assert "needs qux in ==2.0, but the resolve holds qux in <2.0" in reason
+
+        # One declared range each, plus a held range for the two blockers
+        # standing in one; the decided blocker's side is a version.
+        assert provider.spelled == 5
 
     @pytest.mark.parametrize("cache_listing", [True, False])
     def test_range_block_rejection_spells_each_declared_range(
