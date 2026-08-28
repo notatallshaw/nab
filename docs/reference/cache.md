@@ -53,9 +53,15 @@ A listing follows a small subset of RFC 9111. The `.policy` sidecar
 records when the body was fetched and its `max-age`. A fresh entry is
 served directly; a stale one is revalidated with `If-None-Match`, and a
 `304 Not Modified` slides the window forward without refetching the body.
+A listing the index marks `no-cache` or `no-store` gets no window at
+all, so every online read revalidates it unless an `assume-fresh-seconds`
+floor (see [Configuration](configuration.md)) still covers it.
+
 Metadata and sdist records are immutable: cached once, never revalidated.
 A 404 is remembered briefly so a repeated lookup of an absent name is
-answered from cache, offline included.
+answered from cache, offline included. One the index marks `no-cache` or
+`no-store` gets no window either, so an online repeat asks the index
+again while offline still answers from the record.
 
 ## Parsed-listing accelerator
 

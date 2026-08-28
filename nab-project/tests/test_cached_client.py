@@ -73,6 +73,21 @@ LISTING = {
 }
 LISTING_BYTES = json.dumps(LISTING).encode()
 
+# The same page after a second release lands on it.
+RELISTING_BYTES = json.dumps(
+    {
+        "meta": {"api-version": "1.0"},
+        "name": "pkg",
+        "files": [
+            *LISTING["files"],
+            {
+                "filename": "pkg-2.0-py3-none-any.whl",
+                "url": "https://files.example.com/pkg-2.0-py3-none-any.whl",
+            },
+        ],
+    }
+).encode()
+
 # A page whose only file is in a format nab does not read.
 ZIP_ONLY_LISTING = {
     "meta": {"api-version": "1.0"},
@@ -1027,6 +1042,56 @@ class TestFreshnessLifetime:
 
     def test_far_future_expires_clamped(self) -> None:
         assert self._lifetime({"expires": "Fri, 31 Dec 9999 23:59:59 GMT"}) == 2**31
+
+
+class TestNoReuseDirectives:
+    """A response that bars reuse gets no freshness window of its own."""
+
+    _NOW = 1_700_000_000.0
+
+    @pytest.fixture(autouse=True)
+    def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(time, "time", lambda: self._NOW)
+
+    def _lifetime(self, cache_control: str) -> int:
+        return _freshness_lifetime(
+            _FakeResponse(b"", headers={"cache-control": cache_control})
+        )
+
+    def test_no_cache_has_no_window(self) -> None:
+        assert self._lifetime("no-cache") == 0
+
+    def test_full_directive_list_has_no_window(self) -> None:
+        assert self._lifetime("no-cache,no-store,must-revalidate") == 0
+
+    def test_no_cache_outranks_max_age(self) -> None:
+        assert self._lifetime("max-age=600, no-cache") == 0
+
+    def test_no_cache_is_case_insensitive(self) -> None:
+        assert self._lifetime("public, No-Cache") == 0
+
+    def test_qualified_no_cache_reads_as_bare(self) -> None:
+        """RFC 9111 5.2.2.4 allows field names; nab revalidates either way."""
+        assert self._lifetime('no-cache="set-cookie", max-age=600') == 0
+
+    def test_no_store_has_no_window(self) -> None:
+        assert self._lifetime("no-store") == 0
+
+    def test_longer_directive_ending_in_no_cache_is_ignored(self) -> None:
+        assert self._lifetime("x-no-cache, max-age=300") == 300
+
+    def test_longer_directive_ending_in_no_store_is_ignored(self) -> None:
+        assert self._lifetime("x-no-store, max-age=300") == 300
+
+    def test_expires_is_not_consulted(self) -> None:
+        response = _FakeResponse(
+            b"",
+            headers={
+                "cache-control": "no-cache",
+                "expires": formatdate(self._NOW + 86400, usegmt=True),
+            },
+        )
+        assert _freshness_lifetime(response) == 0
 
 
 class TestParseAge:
@@ -1988,19 +2053,6 @@ class TestExpiresFreshness:
     """
 
     _NOW = 1_700_000_000.0
-    _RELISTING = json.dumps(
-        {
-            "meta": {"api-version": "1.0"},
-            "name": "pkg",
-            "files": [
-                *LISTING["files"],
-                {
-                    "filename": "pkg-2.0-py3-none-any.whl",
-                    "url": "https://files.example.com/pkg-2.0-py3-none-any.whl",
-                },
-            ],
-        }
-    ).encode()
 
     def _freeze(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(time, "time", lambda: self._NOW)
@@ -2013,7 +2065,7 @@ class TestExpiresFreshness:
         transport = _FakeTransport(
             [
                 _FakeResponse(LISTING_BYTES, headers=headers),
-                _FakeResponse(self._RELISTING, headers=headers),
+                _FakeResponse(RELISTING_BYTES, headers=headers),
             ]
         )
         assert len(_run_get_files(transport, cache, "pkg")) == 1
@@ -2131,6 +2183,140 @@ class TestExpiresFreshness:
         cached = cache.get_simple("pkg")
         assert cached is not None
         assert cached[1].max_age == 1800
+
+
+class TestNoReuseListings:
+    """A listing the origin bars from unvalidated reuse is checked every read.
+
+    RFC 9111 5.2.2.4 for ``no-cache`` and 5.2.2.5 for ``no-store``. The
+    responses here carry no max-age and no Expires, the case the heuristic
+    window would otherwise cover.
+    """
+
+    def _read_twice(
+        self, tmp_path: Path, cache_control: str
+    ) -> tuple[_FakeTransport, list]:
+        """Read pkg, then read it again once a second release has landed.
+
+        Returns the transport, so its calls can be counted, and the records the
+        second read answered with.
+        """
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    LISTING_BYTES,
+                    headers={"etag": "v1", "cache-control": cache_control},
+                ),
+                _FakeResponse(
+                    RELISTING_BYTES,
+                    headers={"etag": "v2", "cache-control": cache_control},
+                ),
+            ]
+        )
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+        return transport, _run_get_files(transport, cache, "pkg")
+
+    def test_no_cache_sees_a_release_published_between_reads(
+        self, tmp_path: Path
+    ) -> None:
+        transport, files = self._read_twice(tmp_path, "no-cache")
+
+        assert len(transport.calls) == 2
+        assert [file.filename for file in files] == [
+            "pkg-1.0-py3-none-any.whl",
+            "pkg-2.0-py3-none-any.whl",
+        ]
+
+    def test_full_directive_list_sees_it_too(self, tmp_path: Path) -> None:
+        transport, files = self._read_twice(
+            tmp_path, "no-cache,no-store,must-revalidate"
+        )
+
+        assert len(transport.calls) == 2
+        assert len(files) == 2
+
+    @pytest.mark.parametrize("cache_control", ["no-cache", "no-store"])
+    def test_listing_is_stored_and_revalidated_conditionally(
+        self, tmp_path: Path, cache_control: str
+    ) -> None:
+        """The body is still written, so the next read costs a 304, not a refetch."""
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    LISTING_BYTES,
+                    headers={"etag": "v1", "cache-control": cache_control},
+                ),
+                _FakeResponse(b"", status=304, headers={"etag": "v1"}),
+            ]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+        stored = cache.get_simple("pkg")
+        assert stored is not None
+        assert stored[1].max_age == 0
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 1
+        sent = transport.calls[1][1]
+        assert sent is not None
+        assert sent.get("If-None-Match") == "v1"
+
+    def test_no_store_body_replaces_the_stored_one(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        cache.put_simple("pkg", LISTING_BYTES, _stale_etag_policy())
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    RELISTING_BYTES, headers={"etag": "v2", "cache-control": "no-store"}
+                )
+            ]
+        )
+
+        assert len(_run_get_files(transport, cache, "pkg")) == 2
+
+        stored = cache.get_simple("pkg")
+        assert stored is not None
+        assert stored[0] == RELISTING_BYTES
+
+    def test_offline_serves_a_no_store_listing_from_disk(self, tmp_path: Path) -> None:
+        cache = _make_cache(tmp_path)
+        online = _FakeTransport(
+            [
+                _FakeResponse(
+                    LISTING_BYTES, headers={"etag": "v1", "cache-control": "no-store"}
+                )
+            ]
+        )
+        assert len(_run_get_files(online, cache, "pkg")) == 1
+
+        offline = _FakeTransport()
+        assert len(_run_get_files(offline, cache, "pkg", offline=True)) == 1
+        assert offline.calls == []
+
+    @pytest.mark.parametrize("cache_control", ["no-cache", "no-store"])
+    def test_404_sentinel_is_stale_at_once(
+        self, tmp_path: Path, cache_control: str
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        transport = _FakeTransport(
+            [
+                _FakeResponse(
+                    b"", status=404, headers={"cache-control": cache_control}
+                ),
+                _FakeResponse(
+                    b"", status=404, headers={"cache-control": cache_control}
+                ),
+            ]
+        )
+
+        assert _run_get_files(transport, cache, "absent") == []
+        sentinel = cache.get_negative("absent")
+        assert sentinel is not None
+        assert sentinel.max_age == 0
+
+        assert _run_get_files(transport, cache, "absent") == []
+        assert len(transport.calls) == 2
 
 
 class TestRedirectedProjectPage:
