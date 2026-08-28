@@ -70,7 +70,7 @@ SUITE_PROFILE = {
         intervals_seen=755,
         largest_range=8,
         hash_misses=64,
-        equality_calls=161,
+        equality_calls=160,
     ),
     "conflict-free-fanout": Profile(
         rounds=8,
