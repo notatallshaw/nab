@@ -29,7 +29,7 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import fields, replace
 from datetime import datetime, timezone
-from importlib.util import cache_from_source
+from importlib.util import cache_from_source, module_from_spec, spec_from_file_location
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -1759,6 +1759,105 @@ class TestDeclaredInstallerFloor:
         assert not found[0].specifier.contains(
             self._LAST_RELEASE_WITHOUT_OVERWRITE_EXISTING
         )
+
+
+class TestLauncherKind:
+    """``_LAUNCHER_KIND`` names the launcher stub for the interpreter's architecture."""
+
+    _MAXSIZE_64BIT = 2**63 - 1
+    _MAXSIZE_32BIT = 2**31 - 1
+
+    def _launcher_kind_on(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        os_name: str,
+        platform: str,
+        version: str,
+        maxsize: int,
+    ) -> str:
+        """Return the ``_LAUNCHER_KIND`` a copy of ``env`` computes on a simulated host.
+
+        Reloading ``env`` instead would leave the shared module holding the simulated
+        value and rebind ``BuildEnvError`` out from under the tests that imported it.
+        """
+        probe_name = f"{env_mod.__name__}_launcher_probe"
+        spec = spec_from_file_location(probe_name, env_mod.__file__)
+        assert spec is not None
+        assert spec.loader is not None
+
+        probe = module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, probe_name, probe)
+
+        monkeypatch.setattr(os, "name", os_name)
+        monkeypatch.setattr(sys, "platform", platform)
+        monkeypatch.setattr(sys, "version", version)
+        monkeypatch.setattr(sys, "maxsize", maxsize)
+
+        spec.loader.exec_module(probe)
+        return probe._LAUNCHER_KIND
+
+    @pytest.mark.parametrize(
+        ("version", "maxsize", "expected"),
+        [
+            ("3.13.5 [MSC v.1943 64 bit (AMD64)]", _MAXSIZE_64BIT, "win-amd64"),
+            ("3.13.5 [MSC v.1943 64 bit (ARM64)]", _MAXSIZE_64BIT, "win-arm64"),
+            ("3.13.5 [MSC v.1943 32 bit (Intel)]", _MAXSIZE_32BIT, "win-ia32"),
+            ("3.13.5 [MSC v.1943 32 bit (ARM)]", _MAXSIZE_32BIT, "win-arm"),
+        ],
+        ids=["amd64", "arm64", "ia32", "arm"],
+    )
+    def test_windows_kind_names_the_architecture(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        version: str,
+        maxsize: int,
+        expected: str,
+    ) -> None:
+        kind = self._launcher_kind_on(
+            monkeypatch,
+            os_name="nt",
+            platform="win32",
+            version=version,
+            maxsize=maxsize,
+        )
+        assert kind == expected
+
+    @pytest.mark.parametrize(
+        "version",
+        [
+            "3.13.5 (main, Jun  1 2025, 09:00:00) [GCC 14.2.0]",
+            "3.13.5 (tags/v3.13.5) [MSC v.1943 64 bit (Unknown)]",
+        ],
+        ids=["mingw", "msvc-unknown-architecture"],
+    )
+    def test_64bit_windows_kind_without_an_architecture_is_amd64(
+        self, monkeypatch: pytest.MonkeyPatch, version: str
+    ) -> None:
+        """CPython leaves the architecture out of ``sys.version`` on two Windows builds.
+
+        mingw-w64 gives ``[GCC ...]`` and an MSVC target that is neither x86-64 nor
+        ARM64 gives ``64 bit (Unknown)``.  A 32-bit launcher would run emulated on
+        both.
+        """
+        kind = self._launcher_kind_on(
+            monkeypatch,
+            os_name="nt",
+            platform="win32",
+            version=version,
+            maxsize=self._MAXSIZE_64BIT,
+        )
+        assert kind == "win-amd64"
+
+    def test_non_windows_kind_is_posix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        kind = self._launcher_kind_on(
+            monkeypatch,
+            os_name="posix",
+            platform="linux",
+            version="3.13.5 [GCC 14.2.0]",
+            maxsize=self._MAXSIZE_64BIT,
+        )
+        assert kind == "posix"
 
 
 class TestNabBuildEnvOutsideContext:

@@ -39,6 +39,7 @@ import tomli_w
 from installer import install as installer_install
 from installer.destinations import SchemeDictionaryDestination
 from installer.sources import WheelFile
+from installer.utils import get_launcher_kind
 
 from nab_index.client import extract_sdist_archive
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
@@ -61,6 +62,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping
 
     from installer.records import RecordEntry
+    from installer.scripts import LauncherKind
     from installer.utils import Scheme
     from typing_extensions import Self
 
@@ -120,13 +122,20 @@ class _FastSchemeDictionaryDestination(SchemeDictionaryDestination):
 logger = logging.getLogger(__name__)
 
 
-_LAUNCHER_KIND = (
-    "win-amd64"
-    if sys.platform == "win32" and sys.maxsize > 2**32
-    else "win-ia32"
-    if sys.platform == "win32"
-    else "posix"
-)
+def _detect_launcher_kind() -> LauncherKind:
+    """Name the script-launcher stub this interpreter needs.
+
+    ``get_launcher_kind`` reads the architecture out of ``sys.version``, which
+    carries none on a Windows build MSVC did not compile.  It answers
+    ``win-ia32`` whenever it cannot tell, so fall back to the word size there.
+    """
+    kind = get_launcher_kind()
+    if kind == "win-ia32" and sys.maxsize > 2**32:
+        return "win-amd64"
+    return kind
+
+
+_LAUNCHER_KIND = _detect_launcher_kind()
 
 _SCHEME_PROBE = (
     "import json, sys, sysconfig;"
