@@ -55,7 +55,7 @@ from nab_provider.vcs_admission import UnsupportedVcsError
 
 from ..config import NabProjectConfig
 from ..download import DownloadError, download_lock
-from ..lockfile import IndexPin
+from ..lockfile import IndexPin, strip_userinfo
 from .errors import BuildBackendError
 
 if TYPE_CHECKING:
@@ -564,22 +564,24 @@ class NabBuildEnv:
 
         label = chain_label(pin.name, pin.version)
         chain = self._chain
+
         if pin.sdist is None:
-            msg = (
-                f"{label} publishes no wheel this build host can install,"
-                f" and no sdist to build{_chain_suffix(chain)}"
-            )
+            reason = _no_wheel_clause(self._config, pin, label)
+            msg = f"{reason}, and no sdist to build{_chain_suffix(chain)}"
             raise BuildEnvError(msg)
+
         # A cycle before a depth: raising the depth to walk into a loop is
         # the one piece of advice that cannot help.
         if label in chain:
             msg = f"cyclic build requirement: {' -> '.join([*chain, label])}"
             raise BuildEnvError(msg)
+
         if self._build_budget <= 0:
+            reason = _no_wheel_clause(self._config, pin, label)
             msg = (
-                f"{label} publishes no wheel this build host can install, so"
-                " satisfying it means building it; [tool.nab].build-requires-depth"
-                f" is {self._config.build_requires_depth}{_chain_suffix(chain)}"
+                f"{reason}, so satisfying it means building it;"
+                " [tool.nab].build-requires-depth is"
+                f" {self._config.build_requires_depth}{_chain_suffix(chain)}"
             )
             raise BuildEnvError(msg)
 
@@ -656,6 +658,75 @@ def _check_built_identity(pending: _PendingBuild, wheel: Path) -> None:
 def _chain_suffix(chain: BuildChain) -> str:
     """Render ``chain`` for an error message, or nothing when it is empty."""
     return f" (chain: {' -> '.join(chain)})" if chain else ""
+
+
+def _wheel_barring_dist_policy(
+    config: NabProjectConfig, pin: IndexPin
+) -> DistPolicy | None:
+    """Return the ``dist-policy`` in force for ``pin`` when it bars wheels.
+
+    ``None`` when neither a per-package nor a per-index override sets
+    ``sdist-only`` or ``sdist-install``: those two are the whole of what
+    can bar a wheel here, because the build env's own resolve runs at
+    ``wheel-or-sdist``.  Whether the index published a wheel to bar is
+    not known here, so a returned policy says the env would have refused
+    one, not that one existed.
+
+    A per-package and a per-index override that both set the field are a
+    conflict the resolve has already raised, so the per-package one is
+    read first.
+    """
+    canonical = canonicalize_name(pin.name)
+    version = Version(pin.version)
+
+    policy = next(
+        (
+            package.dist_policy
+            for package in config.package_overrides
+            if package.dist_policy is not None
+            and package.name == canonical
+            and version in package.version_range
+        ),
+        None,
+    )
+
+    if policy is None:
+        policy = _serving_index_dist_policy(config, pin.index)
+
+    if policy is DistPolicy.SDIST_ONLY or policy is DistPolicy.SDIST_INSTALL:
+        return policy
+    return None
+
+
+def _serving_index_dist_policy(
+    config: NabProjectConfig, pin_index: str
+) -> DistPolicy | None:
+    """Return the ``dist-policy`` the index that served ``pin_index`` sets.
+
+    An override is keyed by the configured index name, and a pin records
+    its index URL with credentials stripped, so the match runs over
+    stripped URLs.  Two indexes differing only in credentials are
+    indistinguishable to a pin, so neither is read.
+    """
+    serving = [
+        index for index in config.indexes if strip_userinfo(index.url) == pin_index
+    ]
+    if len(serving) != 1:
+        return None
+
+    override = config.index_overrides.get(serving[0].name)
+    return override.dist_policy if override is not None else None
+
+
+def _no_wheel_clause(config: NabProjectConfig, pin: IndexPin, label: str) -> str:
+    """Return the opening of a refusal: why the env has no wheel of ``label``."""
+    barred_by = _wheel_barring_dist_policy(config, pin)
+    if barred_by is None:
+        return f"{label} publishes no wheel this build host can install"
+    return (
+        f"{label} has dist-policy '{barred_by.value}',"
+        " which admits no wheel into the build env"
+    )
 
 
 def _without_build_permission(override: _OverrideT) -> _OverrideT:

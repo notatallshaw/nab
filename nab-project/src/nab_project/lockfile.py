@@ -28,6 +28,7 @@ from ._lockfile.builder import (
     build_target_lock,
     read_lockfile_anchor,
     read_lockfile_packages,
+    strip_userinfo,
 )
 from ._lockfile.disjointness import DisjointnessError
 from ._lockfile.groups import BASE_MEMBER
@@ -94,6 +95,7 @@ __all__ = [
     "read_lockfile_anchor",
     "read_lockfile_packages",
     "render_lock",
+    "strip_userinfo",
     "summarize_lock",
     "write_lock",
     "write_requirements_with_hashes",
