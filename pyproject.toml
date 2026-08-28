@@ -1,6 +1,6 @@
 [project]
 name = "nab"
-version = "0.0.15"
+version = "0.0.16.dev0"
 description = "PubGrub-based dependency resolver for Python packages"
 readme = "README.md"
 license = "MIT"
@@ -20,16 +20,16 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "nab-resolver==0.0.15",
-    "nab-provider==0.0.15",
-    "nab-project==0.0.15",
-    "nab-index==0.0.15",
+    "nab-resolver==0.0.16.dev0",
+    "nab-provider==0.0.16.dev0",
+    "nab-project==0.0.16.dev0",
+    "nab-index==0.0.16.dev0",
     "tyro>=1.0",
     "typing_extensions>=4.6",
 ]
 
 [project.optional-dependencies]
-httpx = ["nab-index[httpx]==0.0.15"]
+httpx = ["nab-index[httpx]==0.0.16.dev0"]
 
 [project.urls]
 Homepage = "https://github.com/notatallshaw/nab"
