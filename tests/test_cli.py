@@ -1739,6 +1739,36 @@ class TestLockCommandSpecific:
         assert "[project].dependencies" not in err
         assert "Traceback" not in err
 
+    def test_local_source_without_a_project_file_exits(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A source tree with no project file reports that, not the policy.
+
+        No policy level can read metadata out of such a tree, so naming the
+        policy would point at a setting that cannot help.
+        """
+        member = tmp_path / "mylocal"
+        member.mkdir()
+        (member / "README").write_text("nothing to build here\n")
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\nname = "root"\nversion = "0"\n'
+            'dependencies = ["mylocal"]\n'
+            "[tool.nab]\n"
+            'build-policy = "never"\n'
+            "[[tool.nab.local-sources]]\n"
+            'name = "mylocal"\n'
+            'path = "mylocal"\n',
+        )
+        with pytest.raises(SystemExit, match="1"):
+            lock(pyproject, offline=True, output=Path("-"), cache=False)
+        err = capsys.readouterr().err
+        expected = (
+            "error: cannot lock: local source 'mylocal':"
+            f" no pyproject.toml or setup.py at {member}"
+        )
+        assert err.splitlines() == [expected]
+
     def test_local_source_naming_another_project_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
