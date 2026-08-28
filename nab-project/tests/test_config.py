@@ -25,6 +25,7 @@ from nab_project.config import (
     NabProjectConfig,
     ResolveMode,
     _check_requires_python_admits_target,
+    _option_label,
     conflict_exclusion_groups,
     conflict_forks,
     index_cache_floors_from_config,
@@ -35,7 +36,11 @@ from nab_project.config import (
     with_python_override,
 )
 from nab_project.config_sources import (
+    OPTIONS,
+    EffectiveValue,
+    Origin,
     SourceConfigError,
+    SourceKind,
     SourceRoots,
     build_cli_layer,
     discover_layers,
@@ -1032,6 +1037,18 @@ class TestMainGroup:
         with pytest.raises(ConfigError, match="but base-group is unset"):
             read_pyproject_config(path)
 
+    def test_a_cli_build_group_without_a_base_group_names_the_flag(
+        self, tmp_path: Path
+    ) -> None:
+        """The project file may not hold the value the run is refusing."""
+        path = write(tmp_path, "")
+        with pytest.raises(ConfigError, match=r"^--project-build-group is 'build',"):
+            read_pyproject_config(
+                path,
+                discover_workspace=False,
+                cli_overrides={"build-group": "build"},
+            )
+
     def test_a_base_group_alone_is_fine(self, tmp_path: Path) -> None:
         """The dependency runs one way: naming the rest needs no build group."""
         path = write(tmp_path, '[tool.nab]\nbase-group = "main"\n')
@@ -1172,6 +1189,26 @@ class TestMainGroup:
         )
         with pytest.raises(ConfigError, match="build-group and base-group"):
             read_pyproject_config(path)
+
+    def test_a_cli_pair_naming_one_group_names_both_flags(self, tmp_path: Path) -> None:
+        """Each half of the message follows the surface that set it."""
+        path = write(tmp_path, "")
+        with pytest.raises(
+            ConfigError,
+            match=r"^--project-build-group and --project-base-group are both 'shared'",
+        ):
+            read_pyproject_config(
+                path,
+                discover_workspace=False,
+                cli_overrides={"base-group": "shared", "build-group": "shared"},
+            )
+
+    def test_a_file_only_option_has_no_flag_to_be_labelled_by(self) -> None:
+        """No such row is CLI-settable, so a CLI origin on one is a bug."""
+        spec = next(row for row in OPTIONS if row.cli_flag is None)
+        value = EffectiveValue(spec, None, Origin(SourceKind.CLI, "cli"), ())
+        with pytest.raises(RuntimeError, match="has no CLI flag"):
+            _option_label(value)
 
 
 class TestRequiresPython:
