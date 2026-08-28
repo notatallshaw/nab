@@ -6,10 +6,12 @@ The clone path shells out to ``git``, so its tests stub
 
 from __future__ import annotations
 
+import errno
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -494,6 +496,22 @@ class TestPrepareClone:
                     or not list(entry.iterdir())
                 ), f"partial clone left behind at {entry}"
 
+    def test_non_executable_git_fails_the_clone(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A git that is present but not runnable fails the clone, not the process."""
+
+        def boom(_cmd: list[str], **_kwargs: object) -> object:
+            raise PermissionError(errno.EACCES, "Permission denied", "git")
+
+        monkeypatch.setattr(subprocess, "run", boom)
+        req = VcsRequest("git", "https://example/repo.git", "a" * 40, "")
+
+        with pytest.raises(VcsCloneError, match="Permission denied"):
+            prepare_clone(tmp_path, req, require_pin=True)
+
     def test_interrupted_fetch_leaves_no_temp_clone(
         self,
         tmp_path: Path,
@@ -683,6 +701,130 @@ class TestPrepareClone:
         clone = prepare_clone(tmp_path, req, require_pin=True)
         assert clone.path == dest
         assert payload.read_text() == "kept"
+
+
+def _deny_below(monkeypatch: pytest.MonkeyPatch, ancestor: Path) -> None:
+    """Refuse every stat and mkdir below ``ancestor``, as a missing search bit does.
+
+    Both calls need denying: ``Path.is_file`` re-raises the stat's EACCES up to
+    Python 3.13 but reports it as absent from 3.14, which leaves the mkdir as
+    the first refusal a newer interpreter reaches.
+    """
+    original_stat, original_mkdir = Path.stat, Path.mkdir
+
+    def refuse(path: Path) -> None:
+        if ancestor in path.parents:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+
+    def denying_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        refuse(self)
+        return original_stat(self, *args, **kwargs)
+
+    def denying_mkdir(self: Path, *args: Any, **kwargs: Any) -> None:
+        refuse(self)
+        original_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", denying_stat)
+    monkeypatch.setattr(Path, "mkdir", denying_mkdir)
+
+
+class TestUnusableCacheEntry:
+    """Reading or creating a clone's cache entry fails as VcsCloneError.
+
+    The refusals are faked because chmod cannot produce them: the superuser
+    ignores the mode bits, and Windows has none.
+    """
+
+    def test_unwritable_cache_root_reports_the_os_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A read-only cache root refuses the first directory nab makes under it."""
+        vcs_dir = tmp_path / "vcs"
+        original_mkdir = Path.mkdir
+
+        def failing_mkdir(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self == vcs_dir:
+                raise PermissionError(errno.EACCES, "Permission denied", str(self))
+            original_mkdir(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "mkdir", failing_mkdir)
+        req = VcsRequest("git", "https://example/repo.git", "a" * 40, "")
+
+        with pytest.raises(VcsCloneError, match="is unusable") as excinfo:
+            prepare_clone(tmp_path, req, require_pin=True)
+
+        assert "Permission denied" in str(excinfo.value)
+
+    def test_unsearchable_cache_ancestor_reports_the_os_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A cache nab cannot search into is reported rather than raised through.
+
+        The cache directory was made by another user, or sits under a home
+        directory NFS squashes.
+        """
+        cache_root = tmp_path / "unsearchable" / "cache"
+        (cache_root / "vcs").mkdir(parents=True)
+        _deny_below(monkeypatch, tmp_path / "unsearchable")
+        req = VcsRequest("git", "https://example/repo.git", "a" * 40, "")
+
+        with pytest.raises(VcsCloneError, match="is unusable") as excinfo:
+            prepare_clone(cache_root, req, require_pin=True)
+
+        assert "Permission denied" in str(excinfo.value)
+
+    def test_full_cache_filesystem_reports_the_os_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def failing_mkdtemp(**_kwargs: object) -> str:
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        monkeypatch.setattr(tempfile, "mkdtemp", failing_mkdtemp)
+        req = VcsRequest("git", "https://example/repo.git", "b" * 40, "")
+
+        with pytest.raises(VcsCloneError, match="is unusable") as excinfo:
+            prepare_clone(tmp_path, req, require_pin=True)
+
+        assert "No space left on device" in str(excinfo.value)
+
+    def test_unremovable_partial_clone_reports_the_os_error(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The pre-clone wipe's own refusal is reported, and nothing clones over it."""
+        sha = "c" * 40
+        repo_key = "5555666677778888"
+        (tmp_path / "vcs" / repo_key / sha / "objects").mkdir(parents=True)
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: repo_key)
+
+        def failing_rmtree(
+            path: object, *, ignore_errors: bool = False, **_kwargs: object
+        ) -> None:
+            """Refuse the wipe, but honour ignore_errors so a silenced wipe shows."""
+            if ignore_errors:
+                return
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+
+        monkeypatch.setattr(shutil, "rmtree", failing_rmtree)
+
+        def boom(*_args: object, **_kwargs: object) -> object:
+            msg = "an unwiped cache path must not be cloned over"
+            raise AssertionError(msg)
+
+        monkeypatch.setattr(subprocess, "run", boom)
+        req = VcsRequest("git", "https://example/repo.git", sha, "")
+
+        with pytest.raises(VcsCloneError, match="is unusable") as excinfo:
+            prepare_clone(tmp_path, req, require_pin=True)
+
+        assert "Permission denied" in str(excinfo.value)
 
 
 _EXPECTED_SCRUBBED_VARS = (
