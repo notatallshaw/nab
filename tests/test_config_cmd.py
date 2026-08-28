@@ -1061,7 +1061,7 @@ class TestProjectCliOverrides:
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
         ):
             app.cli(
                 args=["lock", str(proj), "--no-cache", "--output", str(out), *extra],
@@ -1184,7 +1184,7 @@ class TestProjectCliOverrides:
             patch(
                 "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
         ):
             app.cli(
                 args=[

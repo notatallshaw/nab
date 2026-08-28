@@ -8,6 +8,9 @@ emitters are :func:`write_lock` (PEP 751 ``pylock.toml``),
 collapses them into one ``Package`` per distinct ``(name, version,
 source)`` with a marker disjoining the targets that chose it, and drops
 the marker when every target agrees.
+
+The value types are defined here; the emitter and the reader are
+imported on first use, so importing this module does not load them.
 """
 
 from __future__ import annotations
@@ -15,41 +18,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field, replace
 from datetime import timezone
+from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-from nab_provider._vendor.packaging.pylock import is_valid_pylock_path
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
-
-from ._lockfile.builder import (
-    MissingHashError,
-    MissingSdistError,
-    MissingVcsCommitError,
-    build_target_lock,
-    read_lockfile_anchor,
-    read_lockfile_packages,
-    strip_userinfo,
-)
-from ._lockfile.disjointness import DisjointnessError
-from ._lockfile.groups import BASE_MEMBER
-from ._lockfile.pylock import (
-    DivergentBaseDependencyError,
-    LockValidationError,
-    build_pylock,
-    render_lock,
-    write_lock,
-)
-from ._lockfile.requirements import (
-    write_requirements_with_hashes,
-    write_requirements_without_hashes,
-)
-from ._lockfile.validate import (
-    InvalidLockfileError,
-    LockDisqualification,
-    LockfileSyntaxError,
-    RootRequirement,
-    check_locked,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -57,8 +30,31 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from nab_provider._vendor.packaging.markers import Marker
+    from nab_provider._vendor.packaging.pylock import is_valid_pylock_path
     from nab_provider.target import ResolveTarget
 
+    from ._lockfile.builder import build_target_lock, strip_userinfo
+    from ._lockfile.disjointness import DisjointnessError
+    from ._lockfile.groups import BASE_MEMBER
+    from ._lockfile.pylock import (
+        DivergentBaseDependencyError,
+        LockValidationError,
+        build_pylock,
+        render_lock,
+        write_lock,
+    )
+    from ._lockfile.reader import read_lockfile_anchor, read_lockfile_packages
+    from ._lockfile.requirements import (
+        write_requirements_with_hashes,
+        write_requirements_without_hashes,
+    )
+    from ._lockfile.validate import (
+        InvalidLockfileError,
+        LockDisqualification,
+        LockfileSyntaxError,
+        RootRequirement,
+        check_locked,
+    )
     from .config import ConflictSet, PackageOverride
 
 
@@ -103,6 +99,50 @@ __all__ = [
 ]
 
 
+# Where each lazily bound name lives.  Importing them eagerly would load the
+# emitter, its vendored pylock model and tomli_w on every ``nab`` command,
+# when only ``lock`` writes or reads a lock.
+_LAZY_EXPORTS: dict[str, str] = {
+    "BASE_MEMBER": "._lockfile.groups",
+    "DisjointnessError": "._lockfile.disjointness",
+    "DivergentBaseDependencyError": "._lockfile.pylock",
+    "InvalidLockfileError": "._lockfile.validate",
+    "LockDisqualification": "._lockfile.validate",
+    "LockValidationError": "._lockfile.pylock",
+    "LockfileSyntaxError": "._lockfile.validate",
+    "RootRequirement": "._lockfile.validate",
+    "build_pylock": "._lockfile.pylock",
+    "build_target_lock": "._lockfile.builder",
+    "check_locked": "._lockfile.validate",
+    "is_valid_pylock_path": "nab_provider._vendor.packaging.pylock",
+    "read_lockfile_anchor": "._lockfile.reader",
+    "read_lockfile_packages": "._lockfile.reader",
+    "render_lock": "._lockfile.pylock",
+    "strip_userinfo": "._lockfile.builder",
+    "write_lock": "._lockfile.pylock",
+    "write_requirements_with_hashes": "._lockfile.requirements",
+    "write_requirements_without_hashes": "._lockfile.requirements",
+}
+
+
+def __getattr__(name: str) -> object:
+    """Bind a lazy export on first use, importing the module that defines it."""
+    try:
+        module_name = _LAZY_EXPORTS[name]
+    except KeyError:
+        msg = f"module {__name__!r} has no attribute {name!r}"
+        raise AttributeError(msg) from None
+
+    value = getattr(import_module(module_name, __package__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    """List the public names, including those ``__getattr__`` has yet to bind."""
+    return sorted(__all__)
+
+
 logger = logging.getLogger(__name__)
 
 LOCK_VERSION = "1.0"
@@ -120,6 +160,42 @@ def _select_primary_digest(
         if algo in by_algo:
             return algo, by_algo[algo]
     return None
+
+
+class MissingHashError(ValueError):
+    """A distribution chosen by the resolver has no usable hash.
+
+    PEP 751 requires at least one hash per artefact.  When an index
+    serves a wheel or sdist without a ``hashes`` map (rare on PyPI,
+    common on file:// indexes), the lock writer cannot emit a
+    spec-compliant entry.  Surface the failure with the offending
+    package and filename so the user can either add a hash to their
+    local index or exclude the package.
+    """
+
+
+class MissingSdistError(ValueError):
+    """A ``sdist-install`` package's pinned version has no sdist.
+
+    Under :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` the
+    resolver may read a wheel's metadata but the lock must pin only the
+    sdist.  When the pinned version publishes wheels but no sdist, the
+    wheels are dropped and nothing is left to pin.  Surface the package
+    and version so the user can pick a version with an sdist or relax
+    the policy, rather than emitting an empty package the spec rejects.
+    """
+
+
+class MissingVcsCommitError(ValueError):
+    """A VCS source reached the lock writer without a resolved commit SHA.
+
+    PEP 751 requires ``packages.vcs.commit-id`` to be an immutable
+    identifier.  nab records the post-clone SHA on the provider during
+    materialisation, before any version can be pinned, so a missing SHA
+    here means a VCS source was pinned without being cloned.  Surface it
+    loudly rather than emit a branch name or empty string as the commit
+    id, which would silently produce a non-reproducible lock.
+    """
 
 
 @dataclass(frozen=True, slots=True)

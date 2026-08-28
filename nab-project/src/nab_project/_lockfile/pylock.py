@@ -49,6 +49,7 @@ from nab_provider.conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from nab_provider.marker_holds import intractable_as_error
 
 from ..config import conflict_exclusion_groups, conflict_member_groups
+from ..lockfile import LOCK_VERSION, ArchivePin, IndexPin, LocalPin, VcsPin
 from .builder import require_artifact_hashes
 from .coverage import validate_marker_coverage
 from .disjointness import validate_marker_disjointness
@@ -286,8 +287,6 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
     so the lockfile is portable.  It defaults to the current working
     directory when the caller has no path in mind (e.g. stdout).
     """
-    from ..lockfile import LOCK_VERSION
-
     lock_input = _name_base_group(lock_input)
 
     base = (lock_dir if lock_dir is not None else Path.cwd()).resolve()
@@ -443,8 +442,6 @@ def _pin_to_package(
     lock_dir: Path,
     dependencies: list[dict[str, str]] | None = None,
 ) -> Package:
-    from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
-
     if isinstance(pin, IndexPin):
         return Package(
             name=canonicalize_name(pin.name),
@@ -819,8 +816,6 @@ def _group_pins_by_pin(
 
 def _pin_discriminator(pin: PinShape) -> tuple:
     """Return a hashable key that identifies the source + version of ``pin``."""
-    from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
-
     if isinstance(pin, IndexPin):
         return ("index", pin.version, pin.index)
     if isinstance(pin, LocalPin):
@@ -860,8 +855,6 @@ def _merge_pins_in_group(pins: list[PinShape]) -> PinShape:
     Non-IndexPin shapes are already fully discriminated, so the first
     pin is returned unchanged.
     """
-    from ..lockfile import IndexPin
-
     head = pins[0]
     if not isinstance(head, IndexPin):
         return head

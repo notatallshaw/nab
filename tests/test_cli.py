@@ -2601,7 +2601,10 @@ class TestLockCommandUniversal:
                 "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
-            patch("nab._lock.write_lock", side_effect=MissingHashError("no hash")),
+            patch(
+                "nab_project.lockfile.write_lock",
+                side_effect=MissingHashError("no hash"),
+            ),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
@@ -2626,7 +2629,9 @@ class TestLockCommandUniversal:
                 "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
-            patch("nab._lock.write_lock", side_effect=DisjointnessError(hint)),
+            patch(
+                "nab_project.lockfile.write_lock", side_effect=DisjointnessError(hint)
+            ),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
@@ -2644,7 +2649,10 @@ class TestLockCommandUniversal:
                 "nab.cli.resolve_for_targets",
                 return_value=_universal_result(success=True),
             ),
-            patch("nab._lock.write_lock", side_effect=IntractableMarkerError(message)),
+            patch(
+                "nab_project.lockfile.write_lock",
+                side_effect=IntractableMarkerError(message),
+            ),
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
@@ -2728,7 +2736,7 @@ class TestLockCommandUniversal:
                 return_value=_universal_result(success=True),
             ),
             patch(
-                "nab._lock.write_lock",
+                "nab_project.lockfile.write_lock",
                 side_effect=DivergentBaseDependencyError(message),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -3036,7 +3044,7 @@ class TestLockCommandUniversal:
                 return_value=_universal_result(success=True),
             ),
             patch(
-                "nab._lock.write_requirements_with_hashes",
+                "nab_project.lockfile.write_requirements_with_hashes",
                 side_effect=MissingHashError("no hash"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -3559,7 +3567,7 @@ class TestLockCommandUniversal:
                 return_value=_universal_result(success=True),
             ),
             patch(
-                "nab._lock.write_requirements_with_hashes",
+                "nab_project.lockfile.write_requirements_with_hashes",
                 side_effect=MissingHashError("no hash"),
             ),
             pytest.raises(SystemExit, match="1"),
@@ -4656,7 +4664,10 @@ class TestLockedFlag:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={"foo": V("1.0")}),
             ),
-            patch("nab._lock.render_lock", side_effect=MissingHashError("no hash")),
+            patch(
+                "nab_project.lockfile.render_lock",
+                side_effect=MissingHashError("no hash"),
+            ),
             pytest.raises(SystemExit) as exc,
         ):
             app.cli(
@@ -4703,7 +4714,9 @@ class TestLockedFlag:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={"foo": V("1.0")}),
             ),
-            patch("nab._lock.render_lock", side_effect=DisjointnessError(hint)),
+            patch(
+                "nab_project.lockfile.render_lock", side_effect=DisjointnessError(hint)
+            ),
             pytest.raises(SystemExit) as exc,
         ):
             app.cli(
@@ -4962,7 +4975,7 @@ class TestLockNonUtf8Text:
                 return_value=_multi_tuple_universal_result(),
             ),
             patch(
-                "nab._lock.write_requirements_without_hashes",
+                "nab_project.lockfile.write_requirements_without_hashes",
                 return_value="pkg @ file:///src-\udce9\n",
             ),
             pytest.raises(SystemExit) as exc,
@@ -5313,7 +5326,7 @@ class TestCacheFlags:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
         kwargs = mock_resolve.call_args.kwargs
@@ -5329,7 +5342,7 @@ class TestCacheFlags:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
         ):
             lock(pyproject, cache_dir=cache, output=tmp_path / "pylock.toml")
         assert mock_resolve.call_args.kwargs["cache_dir"] == cache
@@ -5342,7 +5355,7 @@ class TestCacheFlags:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
         ):
             lock(pyproject, cache=False, output=tmp_path / "pylock.toml")
         assert mock_resolve.call_args.kwargs["cache_dir"] is None
@@ -5355,7 +5368,7 @@ class TestCacheFlags:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
         ):
             lock(pyproject, offline=True, output=tmp_path / "pylock.toml")
         assert mock_resolve.call_args.kwargs["offline"] is True
@@ -5430,7 +5443,7 @@ class TestOfflineFlagContract:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
         ):
             app.cli(
                 args=[
@@ -5513,7 +5526,7 @@ class TestMainNormalizesOfflineFlag:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ) as mock_resolve,
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
         ):
             main()
         return mock_resolve.call_args.kwargs["offline"]
@@ -5576,7 +5589,7 @@ class TestLayeredRunKnobFlagContract:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ),
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
             patch("nab.cli._make_transport") as mock_transport,
         ):
             app.cli(
@@ -6026,7 +6039,7 @@ class TestMainWiresOutputOptions:
                 "nab.cli.resolve_for_targets",
                 return_value=_stub_resolve_result(pins={}),
             ),
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
         ):
             main()
 
@@ -6183,7 +6196,7 @@ class TestProgressReachesTheResolve:
         received, stderr = self._run_main(
             monkeypatch,
             ["nab", "lock", str(pyproject), "--output", str(tmp_path / "pylock.toml")],
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
         )
 
         assert len(received) == 1
@@ -6225,7 +6238,7 @@ class TestProgressReachesTheResolve:
                 "--output",
                 str(tmp_path / "pylock.toml"),
             ],
-            patch("nab._lock.write_lock"),
+            patch("nab_project.lockfile.write_lock"),
         )
 
         assert isinstance(received[0], ProgressReporter)
@@ -6267,7 +6280,7 @@ class TestProgressReachesTheResolve:
         _received, stderr = self._run_main(
             monkeypatch,
             ["nab", "lock", str(pyproject), "--output", "-"],
-            patch("nab._lock.write_lock", return_value=""),
+            patch("nab_project.lockfile.write_lock", return_value=""),
         )
 
         assert "Resolving... 1 fetched, 0 pinned" in stderr
@@ -6500,6 +6513,26 @@ assert not leaked, f"importing nab.cli loaded {leaked}"
 """
 
 
+_LOCK_EMITTER_PROBE = """
+import sys
+
+import nab.cli
+
+deferred = {
+    "nab_project._lockfile.coverage",
+    "nab_project._lockfile.disjointness",
+    "nab_project._lockfile.pylock",
+    "nab_project._lockfile.reader",
+    "nab_project._lockfile.requirements",
+    "nab_project._lockfile.validate",
+    "nab_provider._vendor.packaging.pylock",
+    "tomli_w",
+}
+leaked = sorted(deferred & sys.modules.keys())
+assert not leaked, f"importing nab.cli loaded {leaked}"
+"""
+
+
 class TestCliImportPath:
     """What importing :mod:`nab.cli` is allowed to pull in."""
 
@@ -6517,6 +6550,16 @@ class TestCliImportPath:
         """
         subprocess.run(  # noqa: S603 - the probe is this file's own source
             [sys.executable, "-c", _STDLIB_MODULE_PROBE], check=True
+        )
+
+    def test_lock_emitter_stays_unimported(self) -> None:
+        """The pylock writer and reader, their vendored model and tomli_w load lazily.
+
+        Only ``lock`` writes or reads a lock.  The ``LockInput`` builder is not
+        probed: the resolve engine imports it, so it loads with every command.
+        """
+        subprocess.run(  # noqa: S603 - the probe is this file's own source
+            [sys.executable, "-c", _LOCK_EMITTER_PROBE], check=True
         )
 
 

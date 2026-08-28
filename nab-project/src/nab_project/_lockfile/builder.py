@@ -2,9 +2,7 @@
 
 The provider's caches still hold the listings the resolver consumed
 when this runs, so artefact hashes and per-file Requires-Python can
-be read directly without a second fetch.  This module also owns the
-``read_lockfile_anchor`` helper used by ``nab lock`` to keep
-``P<n>D`` durations stable across re-locks.
+be read directly without a second fetch.
 """
 
 from __future__ import annotations
@@ -16,9 +14,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, overload
 from urllib.parse import quote, urlsplit, urlunsplit
 
-import tomli
-
-from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.extra_keys import split_extra
@@ -27,9 +22,19 @@ from nab_provider.metadata import validate_specifier_versions
 from nab_provider.policy import DistPolicy
 from nab_provider.records import SdistFile, WheelFile
 
-from .. import toml_io
-from .._toml import tool_nab_section
-from ..paths import path_state
+from ..lockfile import (
+    ACCEPTED_HASH_ALGORITHMS,
+    ArchivePin,
+    IndexPin,
+    LocalPin,
+    MissingHashError,
+    MissingSdistError,
+    MissingVcsCommitError,
+    SdistArtifact,
+    TargetLock,
+    VcsPin,
+    WheelArtifact,
+)
 from .groups import BASE_MEMBER
 
 if TYPE_CHECKING:
@@ -40,28 +45,14 @@ if TYPE_CHECKING:
     from nab_provider.records import IndexConfig
     from nab_provider.target import ResolveTarget
 
-    from ..lockfile import (
-        ArchivePin,
-        IndexPin,
-        LockInput,
-        PinShape,
-        SdistArtifact,
-        TargetLock,
-        VcsPin,
-        WheelArtifact,
-    )
+    from ..lockfile import LockInput, PinShape
 
 
 logger = logging.getLogger(__name__)
 
 
 __all__ = [
-    "MissingHashError",
-    "MissingSdistError",
-    "MissingVcsCommitError",
     "build_target_lock",
-    "read_lockfile_anchor",
-    "read_lockfile_packages",
     "require_artifact_hashes",
     "strip_userinfo",
 ]
@@ -146,99 +137,6 @@ class LockInputProvider(Protocol):
         ...
 
 
-class MissingHashError(ValueError):
-    """A distribution chosen by the resolver has no usable hash.
-
-    PEP 751 requires at least one hash per artefact.  When an index
-    serves a wheel or sdist without a ``hashes`` map (rare on PyPI,
-    common on file:// indexes), the lock writer cannot emit a
-    spec-compliant entry.  Surface the failure with the offending
-    package and filename so the user can either add a hash to their
-    local index or exclude the package.
-    """
-
-
-class MissingSdistError(ValueError):
-    """A ``sdist-install`` package's pinned version has no sdist.
-
-    Under :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` the
-    resolver may read a wheel's metadata but the lock must pin only the
-    sdist.  When the pinned version publishes wheels but no sdist, the
-    wheels are dropped and nothing is left to pin.  Surface the package
-    and version so the user can pick a version with an sdist or relax
-    the policy, rather than emitting an empty package the spec rejects.
-    """
-
-
-class MissingVcsCommitError(ValueError):
-    """A VCS source reached the lock writer without a resolved commit SHA.
-
-    PEP 751 requires ``packages.vcs.commit-id`` to be an immutable
-    identifier.  nab records the post-clone SHA on the provider during
-    materialisation, before any version can be pinned, so a missing SHA
-    here means a VCS source was pinned without being cloned.  Surface it
-    loudly rather than emit a branch name or empty string as the commit
-    id, which would silently produce a non-reproducible lock.
-    """
-
-
-def read_lockfile_anchor(path: Path) -> datetime | None:
-    """Return the ``[tool.nab].created-at`` timestamp from ``path`` if any.
-
-    Used by ``nab lock`` to keep ``P<n>D`` durations stable across
-    re-locks: the anchor used for the previous resolve is read back
-    and reused unless the user passes ``--upgrade``.
-
-    Returns ``None`` when ``path`` does not exist, cannot be read, is
-    not valid TOML, is not a PEP 751-shaped pylock, or is missing the
-    ``[tool.nab]`` block.  Naive timestamps (no offset) are coerced to UTC
-    for symmetry with the writer; this is informational provenance, so
-    a missing offset is recoverable rather than fatal.
-    """
-    if not path_state(path).should_read:
-        return None
-    try:
-        with path.open("rb") as f:
-            data = toml_io.load(f)
-    except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError):
-        return None
-    nab = tool_nab_section(data)
-    raw = nab.get("created-at") if isinstance(nab, dict) else None
-    if isinstance(raw, datetime):
-        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
-    if isinstance(raw, str):
-        try:
-            dt = parse_iso_datetime(raw)
-        except ValueError:
-            return None
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    return None
-
-
-def read_lockfile_packages(path: Path) -> dict[str, Version] | None:
-    """Return the ``name -> version`` map from a prior pylock at ``path``.
-
-    Used by ``nab lock`` to diff a re-lock against the previous result.
-    Packages without a recorded version (direct-reference entries that
-    omit it) are skipped.
-
-    Returns ``None`` when ``path`` does not exist, cannot be read, is
-    not valid TOML, or is not a spec-compliant PEP 751 lockfile; the
-    caller falls back to a no-diff summary line.
-    """
-    if not path_state(path).should_read:
-        return None
-    try:
-        with path.open("rb") as f:
-            data = toml_io.load(f)
-        pylock = Pylock.from_dict(data)
-    except (OSError, UnicodeDecodeError, tomli.TOMLDecodeError, PylockValidationError):
-        return None
-    return {
-        str(pkg.name): pkg.version for pkg in pylock.packages if pkg.version is not None
-    }
-
-
 def strip_userinfo(url: str) -> str:
     """Return ``url`` with credential userinfo removed.
 
@@ -293,8 +191,6 @@ def build_target_lock(
     Every wheel the target can install, plus the sdist, is recorded for
     each pinned version.
     """
-    from ..lockfile import LocalPin, TargetLock
-
     if base_roots is None:
         if selector_roots:
             msg = (
@@ -521,7 +417,6 @@ def _index_pin_from_listing(
     artefact value.
     """
     from ..fetch import DEFAULT_INDEX_URL
-    from ..lockfile import IndexPin, SdistArtifact, WheelArtifact
 
     files = list(provider.dist_files_for(canonical, version))
     serving = provider.coordinator.index.get_listing_index(canonical)
@@ -631,8 +526,6 @@ def _filter_acceptable_hashes(
     can pick.  Unacceptable algorithms (e.g. md5) are dropped, so the
     result may be empty.
     """
-    from ..lockfile import ACCEPTED_HASH_ALGORITHMS
-
     return tuple(
         (algo, digest)
         for algo, digest in sorted(hashes)
@@ -647,8 +540,6 @@ def require_artifact_hashes(lock_input: LockInput) -> None:
     sha256/sha384/sha512 per artefact.  :func:`write_requirements_without_hashes`
     emits no ``--hash`` lines and does not call this.
     """
-    from ..lockfile import ACCEPTED_HASH_ALGORITHMS, IndexPin
-
     for lock in lock_input.targets.values():
         for pin in lock.pins.values():
             if not isinstance(pin, IndexPin):
@@ -723,8 +614,6 @@ def _vcs_pin_from_source(
     """
     from nab_provider.vcs_request import VcsRequest
 
-    from ..lockfile import VcsPin
-
     if resolved_sha is None:
         msg = (
             f"{canonical}: VCS source pinned without a resolved commit SHA;"
@@ -772,8 +661,6 @@ def _archive_pin_from_source(
     never carries a token.
     """
     from nab_provider.archive import ArchiveRequest
-
-    from ..lockfile import ArchivePin
 
     request = ArchiveRequest.parse(source.url)
     return ArchivePin(

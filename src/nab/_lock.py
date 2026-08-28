@@ -28,7 +28,7 @@ import tomli
 import tyro
 
 from nab._version import __version__
-from nab_project import toml_io
+from nab_project import lockfile, toml_io
 from nab_project.config import (
     ConfigError,
     NabProjectConfig,
@@ -36,27 +36,13 @@ from nab_project.config import (
     plan_targets,
 )
 from nab_project.lockfile import (
-    DisjointnessError,
-    DivergentBaseDependencyError,
-    InvalidLockfileError,
-    LockfileSyntaxError,
     LockInput,
-    LockValidationError,
     MissingHashError,
     Provenance,
-    RootRequirement,
     TargetLock,
-    check_locked,
     drop_workspace_pins,
-    is_valid_pylock_path,
     package_metadata_override_records,
-    read_lockfile_anchor,
-    read_lockfile_packages,
-    render_lock,
     summarize_lock,
-    write_lock,
-    write_requirements_with_hashes,
-    write_requirements_without_hashes,
 )
 from nab_project.paths import PathState, path_state
 from nab_project.pyproject_files import (
@@ -587,7 +573,7 @@ def _fast_fail_locked(
     resolve_target = _locked_resolve_target(retargeted)
 
     try:
-        disqualification = check_locked(
+        disqualification = lockfile.check_locked(
             target,
             requires_python=config.requires_python,
             extras=run.extras,
@@ -603,13 +589,13 @@ def _fast_fail_locked(
     except OSError as e:
         _cli.printer().error(f"--locked: cannot read lockfile {target}: {e}.")
         sys.exit(1)
-    except LockfileSyntaxError as e:
+    except lockfile.LockfileSyntaxError as e:
         _cli.printer().error(
             f"--locked: lockfile {target} is not valid TOML: {e};"
             f" re-run `{refresh}` to regenerate it."
         )
         sys.exit(1)
-    except InvalidLockfileError as e:
+    except lockfile.InvalidLockfileError as e:
         _cli.printer().error(
             f"--locked: lockfile {target} is not a valid PEP 751 lockfile: {e};"
             f" re-run `{refresh}` to regenerate it."
@@ -648,7 +634,7 @@ def _active_root_requirements(
     base_group: str | None = None,
     build_requirements: bool = False,
     build_group: str | None = None,
-) -> list[RootRequirement]:
+) -> list[lockfile.RootRequirement]:
     """Collect this run's active direct requirements with their source clause.
 
     Covers ``[project].dependencies`` plus the requirements each selected extra
@@ -664,12 +650,12 @@ def _active_root_requirements(
     """
     if build_requirements:
         return [
-            RootRequirement(requirement=req, source="[build-system].requires")
+            lockfile.RootRequirement(requirement=req, source="[build-system].requires")
             for req in read_pyproject_build_requires(path)
         ]
 
     roots = [
-        RootRequirement(requirement=req, source="[project].dependencies")
+        lockfile.RootRequirement(requirement=req, source="[project].dependencies")
         for req in read_pyproject_dependencies(path)
     ]
 
@@ -678,7 +664,7 @@ def _active_root_requirements(
         project_name = read_pyproject_name(path)
         for extra in extras:
             roots.extend(
-                RootRequirement(requirement=req, source=f"the {extra!r} extra")
+                lockfile.RootRequirement(requirement=req, source=f"the {extra!r} extra")
                 for req in expand_extra_requirements(optional, project_name, [extra])
             )
 
@@ -692,7 +678,7 @@ def _active_root_requirements(
             if group not in groups:
                 continue
             roots.extend(
-                RootRequirement(
+                lockfile.RootRequirement(
                     requirement=req, source=f"the {group!r} dependency group"
                 )
                 for req in requirements
@@ -700,7 +686,7 @@ def _active_root_requirements(
 
     if build_group is not None:
         roots.extend(
-            RootRequirement(requirement=req, source="[build-system].requires")
+            lockfile.RootRequirement(requirement=req, source="[build-system].requires")
             for req in read_pyproject_build_requires(path)
         )
 
@@ -716,7 +702,9 @@ def _check_locked(lock_input: LockInput, *, run: _LockRun) -> None:
     lock is never read back into the resolve.
     """
     target = _locked_target_path(run)
-    new_text = _render_or_exit(lambda: render_lock(lock_input, lock_dir=target.parent))
+    new_text = _render_or_exit(
+        lambda: lockfile.render_lock(lock_input, lock_dir=target.parent)
+    )
     committed = _packages_only(target.read_text(encoding="utf-8"))
     if _packages_only(new_text) == committed:
         _cli.printer().done(f"Lockfile {target} is up to date.")
@@ -738,7 +726,7 @@ def _emit_pylock(
 
     target = output if output is not None else default_output
     # Read the prior pins before the write overwrites the file.
-    prior = read_lockfile_packages(target)
+    prior = lockfile.read_lockfile_packages(target)
     # Pass the target so wheel/sdist/directory paths are written relative
     # to the lockfile's own directory, not the cwd.
     _write_lock_or_exit(lock_input, target=target)
@@ -747,17 +735,21 @@ def _emit_pylock(
 
 def _write_lock_or_exit(lock_input: LockInput, *, target: Path | None) -> str:
     """Write the lock, printing a render refusal as one error line and exiting 1."""
-    return _render_or_exit(lambda: write_lock(lock_input, output_path=target))
+    return _render_or_exit(lambda: lockfile.write_lock(lock_input, output_path=target))
 
 
 def _render_or_exit(render: Callable[[], str]) -> str:
     """Run a lock render, printing a refusal as one error line and exiting 1."""
     try:
         return render()
-    except (MissingHashError, LockValidationError, IntractableMarkerError) as e:
+    except (
+        MissingHashError,
+        lockfile.LockValidationError,
+        IntractableMarkerError,
+    ) as e:
         _cli.printer().error(f"cannot lock: {e}")
         sys.exit(1)
-    except (DisjointnessError, DivergentBaseDependencyError) as e:
+    except (lockfile.DisjointnessError, lockfile.DivergentBaseDependencyError) as e:
         _cli.printer().error(str(e))
         sys.exit(1)
 
@@ -1087,9 +1079,11 @@ def _render_requirements_or_exit(
     """
     try:
         if with_hashes:
-            text = write_requirements_with_hashes(lock_input, output_path=output_path)
+            text = lockfile.write_requirements_with_hashes(
+                lock_input, output_path=output_path
+            )
         else:
-            text = write_requirements_without_hashes(
+            text = lockfile.write_requirements_without_hashes(
                 lock_input, output_path=output_path
             )
     except MissingHashError as e:
@@ -1233,7 +1227,7 @@ def _reused_lock_anchor(
     if _cli.is_stdout(output) or format != "pylock":
         return None, None
     target = _default_output_path(format, build_requirements=build_requirements)
-    return None, read_lockfile_anchor(output if output is not None else target)
+    return None, lockfile.read_lockfile_anchor(output if output is not None else target)
 
 
 def _determine_lock_anchor(
@@ -1290,7 +1284,7 @@ def _validate_pylock_output_name(
     """
     if format != "pylock" or output is None or _cli.is_stdout(output):
         return
-    if is_valid_pylock_path(output):
+    if lockfile.is_valid_pylock_path(output):
         return
     if not output.name:
         _cli.printer().error(
@@ -1302,7 +1296,9 @@ def _validate_pylock_output_name(
     # Path(name), not output.with_name(name): with_name raises on names its
     # dotted form can produce, such as '.' from a bare '-'.
     dotted = output.name.replace("-", ".")
-    suggestion = dotted if is_valid_pylock_path(Path(dotted)) else "pylock.toml"
+    suggestion = (
+        dotted if lockfile.is_valid_pylock_path(Path(dotted)) else "pylock.toml"
+    )
     _cli.printer().error(
         f"output file name {output.name!r} must match 'pylock.toml'"
         " or 'pylock.<name>.toml' per PEP 751 (note the dot separator,"

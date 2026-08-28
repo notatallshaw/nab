@@ -15,13 +15,14 @@ from urllib.parse import quote
 
 from nab_index.atomic import atomic_write_text
 
+from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
 from .builder import require_artifact_hashes
 
 if TYPE_CHECKING:
     import os
     from collections.abc import Mapping
 
-    from ..lockfile import IndexPin, LockInput, PinShape
+    from ..lockfile import LockInput, PinShape
 
 
 __all__ = [
@@ -101,8 +102,6 @@ def _render_requirements(
 
 def _render_pins(pins: Mapping[str, PinShape], *, with_hashes: bool) -> list[str]:
     """Render a flat ``{name: pin}`` mapping in alphabetical order."""
-    from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
-
     lines: list[str] = []
     for canonical in sorted(pins):
         pin = pins[canonical]

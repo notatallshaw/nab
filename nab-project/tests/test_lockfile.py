@@ -23,6 +23,8 @@ else:
 
 from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.multi_index import IndexConfig
+from nab_project import lockfile
+from nab_project._lockfile import pylock
 from nab_project._lockfile.builder import _common_requires_python
 from nab_project._lockfile.coverage import (
     CoverageError,
@@ -186,6 +188,20 @@ def _index_pin(
         wheels=(_wheel(name, version),),
         requires_python=">=3.10",
     )
+
+
+class TestLazyExports:
+    """:mod:`nab_project.lockfile` binds the emitter's names on first use."""
+
+    def test_first_use_binds_the_emitter_name(self) -> None:
+        assert lockfile.render_lock is pylock.render_lock
+        assert vars(lockfile)["render_lock"] is pylock.render_lock
+
+    def test_unknown_name_raises_attribute_error(self) -> None:
+        assert not hasattr(lockfile, "no_such_name")
+
+    def test_dir_lists_the_public_names(self) -> None:
+        assert dir(lockfile) == sorted(lockfile.__all__)
 
 
 class TestSingleTarget:
