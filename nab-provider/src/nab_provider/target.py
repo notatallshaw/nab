@@ -36,7 +36,7 @@ from nab_provider._vendor.packaging.specifiers import (
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
 
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
-from .marker_holds import UnevaluableMarkerError
+from .marker_holds import IntractableMarkerError, UnevaluableMarkerError
 from .tags import (
     FREE_THREADED_MIN_PYTHON,
     PlatformSpec,
@@ -55,6 +55,7 @@ __all__ = [
     "PLATFORM_MARKERS",
     "UNBOUNDABLE_MARKER_VARIABLES",
     "EnvironmentSource",
+    "IntractableMarkerError",
     "Matrix",
     "NonIntervalMarkerError",
     "ResolveTarget",

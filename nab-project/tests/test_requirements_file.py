@@ -17,7 +17,7 @@ from nab_project.pyproject_files import (
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import InvalidName
-from nab_provider.marker_holds import UnevaluableMarkerError
+from nab_provider.marker_holds import IntractableMarkerError, UnevaluableMarkerError
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
@@ -745,6 +745,35 @@ class TestExpandExtraRequirements:
         out = expand_extra_requirements(opt, "mypkg", ["all"])
         dep = next(r for r in out if r.name == "some-dep")
         assert dep.marker is None
+
+    @pytest.mark.parametrize(
+        "literal",
+        [
+            pytest.param(_AT_LIMIT, id="at-limit"),
+            pytest.param(_OVERSIZED, id="over-limit"),
+        ],
+    )
+    def test_oversized_self_ref_marker_version_refuses(self, literal: str) -> None:
+        """Reducing a self-ref marker decomposes it, so the algebra refuses.
+
+        The limit itself refuses too: decomposition mints neighbouring
+        versions by incrementing a component, which needs a digit of headroom.
+        """
+        opt = {
+            "all": [f'mypkg[fast]; python_full_version < "{literal}"'],
+            "fast": ["some-dep"],
+        }
+        with pytest.raises(IntractableMarkerError, match="parse limit"):
+            expand_extra_requirements(opt, "mypkg", ["all"])
+
+    def test_self_ref_marker_version_below_the_limit_expands(self) -> None:
+        """One digit under the limit leaves the headroom, so the walk runs."""
+        opt = {
+            "all": [f'mypkg[fast]; python_full_version < "{_AT_LIMIT[:-1]}"'],
+            "fast": ["some-dep"],
+        }
+        out = expand_extra_requirements(opt, "mypkg", ["all"])
+        assert [r.name for r in out] == ["some-dep"]
 
     def test_self_ref_siblings_flattened_in_sorted_order(
         self, monkeypatch: pytest.MonkeyPatch

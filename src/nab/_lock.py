@@ -78,7 +78,7 @@ from nab_provider.requirements_file import (
     expand_extra_requirements,
     resolve_groups_to_requirements,
 )
-from nab_provider.target import UnevaluableMarkerError
+from nab_provider.target import IntractableMarkerError, UnevaluableMarkerError
 
 from . import cli as _cli
 from .cli import (
@@ -572,6 +572,7 @@ def _fast_fail_locked(
         InvalidProjectRequirementError,
         LookupError,
         UnevaluableMarkerError,
+        IntractableMarkerError,
     ):
         return
 
@@ -744,15 +745,15 @@ def _emit_pylock(
 
 
 def _write_lock_or_exit(lock_input: LockInput, *, target: Path | None) -> str:
-    """Write the lock, mapping every render-time refusal to a clean exit."""
+    """Write the lock, printing a render refusal as one error line and exiting 1."""
     return _render_or_exit(lambda: write_lock(lock_input, output_path=target))
 
 
 def _render_or_exit(render: Callable[[], str]) -> str:
-    """Run a lock render, mapping every refusal it raises to a clean exit."""
+    """Run a lock render, printing a refusal as one error line and exiting 1."""
     try:
         return render()
-    except (MissingHashError, LockValidationError) as e:
+    except (MissingHashError, LockValidationError, IntractableMarkerError) as e:
         _cli.printer().error(f"cannot lock: {e}")
         sys.exit(1)
     except (DisjointnessError, DivergentBaseDependencyError) as e:

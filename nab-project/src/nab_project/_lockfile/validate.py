@@ -41,7 +41,11 @@ from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
-from nab_provider.marker_holds import UnevaluableMarkerError, dependency_marker_holds
+from nab_provider.marker_holds import (
+    IntractableMarkerError,
+    UnevaluableMarkerError,
+    dependency_marker_holds,
+)
 from nab_provider.metadata import validate_specifier_versions
 from nab_provider.target import NonIntervalMarkerError, micro_boundary_points
 
@@ -339,7 +343,7 @@ def _marker_skips(
         return True
     try:
         active = dependency_marker_holds(marker, marker_env)
-    except (UnevaluableMarkerError, UndefinedEnvironmentName):
+    except (UnevaluableMarkerError, IntractableMarkerError, UndefinedEnvironmentName):
         return True
     return not active
 

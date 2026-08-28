@@ -46,6 +46,7 @@ from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name, is_normalized_name
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
+from nab_provider.marker_holds import intractable_as_error
 
 from ..config import conflict_exclusion_groups, conflict_member_groups
 from .builder import require_artifact_hashes
@@ -235,11 +236,14 @@ def render_lock(lock_input: LockInput, *, lock_dir: Path | None = None) -> str:
     ``nab lock --locked`` to render the would-be lock for comparison.
 
     Raises :class:`LockValidationError` when the document it would build
-    does not satisfy PEP 751.
+    does not satisfy PEP 751, and
+    :class:`~nab_provider.marker_holds.IntractableMarkerError` when a marker
+    overruns the algebra's budget.
     """
     require_artifact_hashes(lock_input)
     _check_extra_names(lock_input.extras)
-    pylock = build_pylock(lock_input, lock_dir=lock_dir)
+    with intractable_as_error():
+        pylock = build_pylock(lock_input, lock_dir=lock_dir)
 
     # ``Pylock.validate`` is ``from_dict(to_dict())``, so validating the mapping
     # about to be emitted runs the same check without a second ``to_dict``.

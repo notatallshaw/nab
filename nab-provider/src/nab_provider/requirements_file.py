@@ -11,7 +11,7 @@ from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 
-from .marker_holds import dependency_marker_holds, marker_set
+from .marker_holds import dependency_marker_holds, intractable_as_error, marker_set
 from .metadata import validate_specifier_versions
 from .resolver_inputs import (
     raise_for_unsatisfiable as raise_for_unsatisfiable,  # noqa: PLC0414  (re-export)
@@ -253,14 +253,16 @@ def _environment_residual(marker: Marker, extra: str) -> str | bool:
     extra``) is kept as a residual atom over the target's own value rather
     than decided against the machine running nab.
     """
-    residual = marker_set(marker).restrict(
-        {"extra": frozenset({extra})}, on_unknown_variable="residual"
-    )
+    with intractable_as_error():
+        residual = marker_set(marker).restrict(
+            {"extra": frozenset({extra})}, on_unknown_variable="residual"
+        )
 
-    if residual.is_empty():
-        return False
+        if residual.is_empty():
+            return False
 
-    text = residual.to_marker_string()
+        text = residual.to_marker_string()
+
     return True if text is None else text
 
 
