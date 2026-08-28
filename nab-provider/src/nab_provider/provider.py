@@ -12,6 +12,7 @@ import logging
 import operator
 from collections import defaultdict, deque
 from dataclasses import dataclass, fields
+from itertools import chain
 from typing import TYPE_CHECKING, TypeVar, cast
 
 from nab_provider._vendor.packaging.markers import prepare_environment
@@ -1235,7 +1236,9 @@ class Provider:
 
         version_list = self.fetch_versions(package)
         all_versions = self.versions_only(normalized, version_list)
-        candidates = self._ordered_candidates(normalized, version_range, all_versions)
+        candidates = self._ordered_candidates(
+            normalized, version_range, all_versions, version_list
+        )
         first = next(candidates, None)
         if first is None:
             self._record_no_versions_reason(
@@ -1263,16 +1266,34 @@ class Provider:
         normalized: str,
         version_range: VersionRange,
         all_versions: list[Version],
+        version_list: list[tuple[Version, DistFile]],
     ) -> Iterator[Version]:
         """Return the in-range versions in the order the strategy walks them.
 
-        ``VersionRange.filter`` yields newest-first, which is the order
-        HIGHEST wants; LOWEST has to read the whole listing to reverse it.
+        ``VersionRange.filter`` bisects a sorted listing lazily, so HIGHEST
+        walks the newest-first view and LOWEST the cached ascending one, and
+        the two reverse each other while a final release is in range. When
+        none is, each walk flushes its buffered pre-releases after the ones
+        it admitted in place, which is not a mirror image, so LOWEST falls
+        back to reversing the newest-first walk whenever its first match is
+        a pre-release.
         """
-        matches = version_range.filter(all_versions, assume_sorted="descending")
-        if self.wants_lowest(normalized):
-            return reversed(list(matches))
-        return matches
+        if not self.wants_lowest(normalized):
+            return version_range.filter(all_versions, assume_sorted="descending")
+
+        ascending = self._ascending_versions(normalized, version_list)
+        oldest_first = version_range.filter(ascending, assume_sorted="ascending")
+        first = next(oldest_first, None)
+        if first is None:
+            return iter(())
+
+        if first.is_prerelease:
+            newest_first = version_range.filter(
+                all_versions, assume_sorted="descending"
+            )
+            return reversed(list(newest_first))
+
+        return chain((first,), oldest_first)
 
     def _preferred_version(
         self,
@@ -2216,7 +2237,7 @@ class Provider:
         normalized: str,
         version_list: list[tuple[Version, DistFile]],
     ) -> list[Version]:
-        """Return the widening universe for ``normalized``: ascending, cached.
+        """Return the ascending version universe for ``normalized``, cached.
 
         The reversed ``versions_only`` view of the post-filter listing, so
         pre-release, dev, post, and local versions all fence widening.

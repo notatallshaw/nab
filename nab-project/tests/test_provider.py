@@ -1488,6 +1488,20 @@ class TestPrereleaseAdmission:
         provider = self._provider(["1.0rc1", "1.0rc2"], ResolutionStrategy.LOWEST)
         assert provider.choose_version("foo", VersionRange.full()) == V("1.0rc1")
 
+    def test_lowest_picks_flushed_prerelease_over_admitted(self) -> None:
+        """With no final in range LOWEST reverses the newest-first walk.
+
+        ``>=1.0a1`` admits ``1.0a1`` in place while ``1.95a1`` arrives only
+        in the end-of-listing flush, so both walk directions end on
+        ``1.95a1`` and only the reversal puts it first.
+        """
+        provider = self._provider(["1.0a1", "1.95a1"], ResolutionStrategy.LOWEST)
+        version_range = (
+            SpecifierSet(">=1.0a1,<1.1").to_range()
+            | SpecifierSet(">1.9,<2.0").to_range()
+        )
+        assert provider.choose_version("foo", version_range) == V("1.95a1")
+
     def test_dependency_prerelease_admits_via_intersection(self) -> None:
         """A dep naming a pre-release propagates admission through ``&``."""
         provider = self._provider(["1.0", "2.0rc1"])
