@@ -15,9 +15,9 @@ The property suite under ``nab-*/tests/property*/`` uses explicit
 ``PROPERTY_SETTINGS``/``DEEP_SETTINGS``/``BRUTE_FORCE_SETTINGS``
 decorators so its example budget is independent of the profile.
 
-``cap_writes``, ``deny_access``, ``oversized_integer`` and
-``refuse_over_nested`` are here rather than in one suite's conftest because
-the ``nab-index``, ``nab-project`` and CLI suites all use them.
+``cap_writes``, ``deny_access``, ``oversized_integer``,
+``over_nested_marker`` and ``refuse_over_nested`` are here rather than in
+one suite's conftest because each is used by more than one suite.
 """
 
 from __future__ import annotations
@@ -207,3 +207,14 @@ def oversized_integer() -> str:
     parse without being a syntax error.
     """
     return "1" * (sys.get_int_max_str_digits() + 1)
+
+
+@pytest.fixture
+def over_nested_marker() -> str:
+    """Return a PEP 508 marker nested past what the interpreter can parse.
+
+    The parser spends two frames per parenthesised level, so nesting to the
+    recursion limit overflows the stack from any starting depth.
+    """
+    depth = sys.getrecursionlimit()
+    return "(" * depth + "os_name == 'posix'" + ")" * depth

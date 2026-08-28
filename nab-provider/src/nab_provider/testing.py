@@ -21,10 +21,10 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from ._vendor.packaging.requirements import Requirement
 from ._vendor.packaging.utils import canonicalize_name
 from .errors import IndexAccessError
 from .overrides import PackageOverride
+from .pep508 import parse_requirement
 from .records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
 from .store import InMemoryIndex
 
@@ -71,7 +71,7 @@ def _done_event() -> threading.Event:
 
 def pkg_override(req_str: str, **body: object) -> PackageOverride:
     """Build a :class:`~nab_provider.overrides.PackageOverride` from a requirement."""
-    requirement = Requirement(req_str)
+    requirement = parse_requirement(req_str)
     return PackageOverride(
         requirement=requirement,
         name=canonicalize_name(requirement.name),

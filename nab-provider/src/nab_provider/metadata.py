@@ -15,14 +15,15 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
+from nab_provider.pep508 import parse_requirement
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from nab_provider._vendor.packaging.markers import Marker
+    from nab_provider._vendor.packaging.requirements import Requirement
 
 __all__ = [
     "DEPENDENCY_FIELDS",
@@ -122,7 +123,7 @@ def _intern_marker(marker: Marker) -> Marker:
 
 @lru_cache(maxsize=16384)
 def _parse_requirement_cached(req_str: str) -> Requirement:
-    """Cache ``Requirement(req_str)`` parsing across wheel metadata.
+    """Cache ``parse_requirement(req_str)`` across wheel metadata.
 
     The same dep strings (``numpy>=1.26``, ``pydantic<3``, etc.) recur
     across many wheels in a dependency graph.  ``Requirement`` exposes
@@ -131,7 +132,7 @@ def _parse_requirement_cached(req_str: str) -> Requirement:
     Raises ``ValueError`` when the string does not parse or a clause
     version will not convert.
     """
-    req = Requirement(req_str)
+    req = parse_requirement(req_str)
     validate_specifier_versions(req.specifier)
     if req.marker is not None:
         req.marker = _intern_marker(req.marker)

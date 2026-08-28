@@ -1121,6 +1121,21 @@ class TestParseMetadata:
         with pytest.raises(BuildBackendError, match="invalid Requires-Dist"):
             _parse_metadata(path)
 
+    def test_over_nested_requires_dist_marker_raises(
+        self, tmp_path: Path, over_nested_marker: str
+    ) -> None:
+        """A marker the parser cannot recurse through is malformed METADATA."""
+        from nab_project._build.runner import _parse_metadata
+
+        path = tmp_path / "METADATA"
+        path.write_text(
+            "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n"
+            f"Requires-Dist: click ; {over_nested_marker}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(BuildBackendError, match="invalid Requires-Dist"):
+            _parse_metadata(path)
+
     def test_oversized_requires_python_raises(self, tmp_path: Path) -> None:
         """A specifier parses fine and only fails when something compares it."""
         from nab_project._build.runner import _parse_metadata

@@ -289,6 +289,31 @@ class TestExtractStaticMetadata:
         with pytest.raises(InvalidProjectRequirementError, match="invalid requirement"):
             extract_static_metadata(tmp_path)
 
+    def test_over_nested_marker_raises(
+        self, tmp_path: Path, over_nested_marker: str
+    ) -> None:
+        """A marker the parser cannot recurse through is a rejected dependency."""
+        _write_pyproject(
+            tmp_path,
+            f'[project]\nname = "foo"\nversion = "1.0"\n'
+            f'dependencies = ["bar ; {over_nested_marker}"]\n',
+        )
+        with pytest.raises(InvalidProjectRequirementError, match="invalid requirement"):
+            extract_static_metadata(tmp_path)
+
+    def test_over_nested_marker_on_an_optional_dep_raises(
+        self, tmp_path: Path, over_nested_marker: str
+    ) -> None:
+        """An optional dependency parses on the extras path, and fails there."""
+        _write_pyproject(
+            tmp_path,
+            f'[project]\nname = "foo"\nversion = "1.0"\n'
+            f"[project.optional-dependencies]\n"
+            f'fast = ["bar ; {over_nested_marker}"]\n',
+        )
+        with pytest.raises(InvalidProjectRequirementError, match="invalid requirement"):
+            extract_static_metadata(tmp_path)
+
     def test_unparseable_optional_dep_raises(self, tmp_path: Path) -> None:
         """An optional dep that is not valid PEP 508 is invalid metadata; raise."""
         _write_pyproject(

@@ -22,7 +22,6 @@ import tomli
 from typing_extensions import override
 
 from nab_index.local_index import is_file_url
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider._vendor.packaging.version import Version
@@ -33,6 +32,7 @@ from nab_provider.errors import (
 )
 from nab_provider.iso8601 import parse_iso_datetime
 from nab_provider.overrides import IndexOverride, PackageOverride
+from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import (
     ArchiveSource,
     BuildPolicy,
@@ -94,6 +94,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
     from collections.abc import Set as AbstractSet
     from pathlib import Path
+
+    from nab_provider._vendor.packaging.requirements import Requirement
 
 __all__ = [
     "ConfigError",
@@ -1299,7 +1301,7 @@ def _require_constraint(key: str, item: str) -> None:
     URLs are rejected here rather than only at resolve.
     """
     try:
-        req = Requirement(item)
+        req = parse_requirement(item)
         # a specifier defers parsing its versions; to_range() forces it
         req.specifier.to_range()
     except ValueError as exc:
@@ -2282,7 +2284,7 @@ def _requirement_from_selector(raw: str, where: str) -> Requirement:
     package name and an optional version specifier.
     """
     try:
-        requirement = Requirement(raw)
+        requirement = parse_requirement(raw)
         # a specifier defers parsing its versions; to_range() forces it
         requirement.specifier.to_range()
     except ValueError as exc:
@@ -2591,7 +2593,7 @@ def _parse_override_dependencies(
             )
             raise ConfigError(msg)
         try:
-            requirement = Requirement(item)
+            requirement = parse_requirement(item)
             # a specifier defers parsing its versions; to_range() forces it
             requirement.specifier.to_range()
         except ValueError as exc:

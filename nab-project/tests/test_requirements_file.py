@@ -202,6 +202,18 @@ class TestReadPyprojectDependencies:
         ):
             read_pyproject_dependencies(p)
 
+    def test_over_nested_marker_raises(
+        self, tmp_path: object, over_nested_marker: str
+    ) -> None:
+        """A marker the parser cannot recurse through is a rejected dependency."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        p.write_text(f'[project]\ndependencies = ["foo ; {over_nested_marker}"]\n')
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[project\].dependencies: .*nested too deeply",
+        ):
+            read_pyproject_dependencies(p)
+
     def test_at_limit_specifier_version_is_read(self, tmp_path: object) -> None:
         """A run of exactly the limit converts, so it stays a legal dependency."""
         p = Path(str(tmp_path)) / "pyproject.toml"
@@ -388,6 +400,16 @@ class TestResolveGroupsToRequirements:
         ):
             resolve_groups_to_requirements({"dev": ["pytest >= bad junk"]}, ("dev",))
 
+    def test_over_nested_marker_raises(self, over_nested_marker: str) -> None:
+        """An over-nested marker fails inside the loader, before the guarded parse."""
+        with pytest.raises(
+            InvalidProjectRequirementError,
+            match=r"\[dependency-groups\]: .*nested too deeply",
+        ):
+            resolve_groups_to_requirements(
+                {"dev": [f"foo ; {over_nested_marker}"]}, ("dev",)
+            )
+
     @pytest.mark.parametrize("operator", ["==", "==="])
     def test_oversized_specifier_version_raises(self, operator: str) -> None:
         """An oversized version converts only on comparison; parsing forces it."""
@@ -516,7 +538,7 @@ class TestExpandSelfExtras:
             return req
 
         monkeypatch.setattr(
-            "nab_provider.requirements_file.Requirement", reversed_extras
+            "nab_provider.requirements_file.parse_requirement", reversed_extras
         )
         assert expand_self_extras(opt, "mypkg", ["all"]) == ["all", "a", "b", "c"]
 
@@ -798,7 +820,7 @@ class TestExpandExtraRequirements:
             return req
 
         monkeypatch.setattr(
-            "nab_provider.requirements_file.Requirement", reversed_extras
+            "nab_provider.requirements_file.parse_requirement", reversed_extras
         )
         out = expand_extra_requirements(opt, "mypkg", ["all"])
         assert [r.name for r in out] == ["depA", "depB", "depC"]
