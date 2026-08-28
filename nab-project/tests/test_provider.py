@@ -17,7 +17,7 @@ import zipfile
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, NoReturn, cast
+from typing import Any, ClassVar, NoReturn
 from unittest.mock import patch
 
 import httpx
@@ -4415,9 +4415,8 @@ class TestLocalSources:
 
         monkeypatch.setattr("nab_project.resolve.resolve_for_targets", _boom)
         coordinator = make_coordinator(
-            [], package="foo", build_config=NabProjectConfig()
+            [], package="foo", build_config=NabProjectConfig(), offline=True
         )
-        coordinator.offline = True
         provider = Provider(
             coordinator,
             target=_PY312,
@@ -10234,8 +10233,8 @@ class TestEffectiveBuildPolicy:
             sdist_pkg_info=PKG_INFO_DYNAMIC_DEPS,
             package="pkg",
             sdist_archive=archive_bytes,
+            offline=offline,
         )
-        coordinator.offline = offline
         provider = Provider(
             coordinator,
             target=_PY312,
@@ -10919,6 +10918,7 @@ class TestBuildRemoteFailureModes:
         build_config: NabProjectConfig | None = None,
         sdist_archive: bytes | None = None,
         sdist_archive_error: BaseException | None = None,
+        offline: bool = False,
     ) -> Provider:
         """A ``BUILD_REMOTE`` provider whose port serves the archive it is given.
 
@@ -10931,6 +10931,7 @@ class TestBuildRemoteFailureModes:
             sdist_archive=sdist_archive,
             sdist_archive_error=sdist_archive_error,
             build_config=build_config,
+            offline=offline,
         )
         return Provider(
             coordinator,
@@ -11066,8 +11067,8 @@ class TestBuildRemoteFailureModes:
             with_sdist=True,
             build_config=NabProjectConfig(),
             sdist_archive=_DYNAMIC_SDIST_TARGZ,
+            offline=True,
         )
-        cast("FakeFetchPort", provider.coordinator).offline = True
         provider.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
 
         with pytest.raises(UnsupportedSdistError, match="offline mode"):

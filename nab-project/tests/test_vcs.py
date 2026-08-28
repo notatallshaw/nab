@@ -27,6 +27,7 @@ from nab_index.vcs import (
     prepare_clone,
 )
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
+from nab_project.config import NabProjectConfig
 from nab_project.fetch import FetchCoordinator
 from nab_project.lockfile import VcsPin, build_target_lock
 from nab_provider._vendor.packaging.requirements import Requirement
@@ -1529,6 +1530,48 @@ class TestProviderVcsIntegration:
             build_policy=BuildPolicy.BUILD_LOCAL,
         )
         with pytest.raises(UnsupportedSdistError, match="build-policy 'build-remote'"):
+            provider.fetch_versions("foo")
+
+    def test_warm_clone_build_refused_under_an_offline_coordinator(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A warm clone needs no fetch, so the refusal comes from its build env."""
+        sha = "a" * 40
+        clone_dir = tmp_path / "cache" / "vcs" / "k" / sha
+        _mark_complete(clone_dir)
+        (clone_dir / "pyproject.toml").write_text(
+            '[project]\nname = "foo"\nversion = "1.0"\ndynamic = ["dependencies"]\n'
+            '\n[build-system]\nrequires = ["hatchling"]\n'
+            'build-backend = "hatchling.build"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("nab_index.vcs._repo_key", lambda _url: "k")
+
+        def _boom(*_args: object, **_kwargs: object) -> object:
+            raise AssertionError("offline must not reach the network")
+
+        monkeypatch.setattr("nab_project.resolve.resolve_for_targets", _boom)
+
+        provider = Provider(
+            make_coordinator(build_config=NabProjectConfig(), offline=True),
+            vcs_config=VcsConfig(
+                policy=VcsPolicy.ALLOW,
+                allowed_schemes=frozenset({"git+https"}),
+                allowed_repos=("https://example.com/",),
+                require_pin=True,
+            ),
+            vcs_sources=[
+                VcsSource(name="foo", url=f"git+https://example.com/foo.git@{sha}"),
+            ],
+            vcs_cache_dir=tmp_path / "cache",
+            build_policy=BuildPolicy.BUILD_REMOTE,
+        )
+        with pytest.raises(
+            UnsupportedSdistError,
+            match="build requirements unavailable in offline mode: hatchling",
+        ):
             provider.fetch_versions("foo")
 
     def test_dynamic_backend_mutation_does_not_poison_cached_clone(

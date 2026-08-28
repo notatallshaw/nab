@@ -152,9 +152,10 @@ def _provider(
     cache_dir: Path | None,
     *,
     build_policy: BuildPolicy = BuildPolicy.NEVER,
+    offline: bool = False,
 ) -> Provider:
     return Provider(
-        make_coordinator(),
+        make_coordinator(offline=offline),
         archive_sources=archive_sources,
         archive_cache_dir=cache_dir,
         build_policy=build_policy,
@@ -665,6 +666,42 @@ class TestArchiveMaterialize:
         assert dependency.samefile(dependency_alias)
         assert first.coordinator.calls_to("request_direct_archive") == []
         assert second.coordinator.calls_to("request_direct_archive") == []
+
+    def test_warm_tree_build_runs_offline(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A warm tree needs no download, so ``--offline`` only reaches its build."""
+        digest = "a" * 64
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        _warm_dynamic_archive_tree(cache, digest)
+
+        captured: dict[str, object] = {}
+
+        def capturing_backend(_path: Path, **kwargs: object) -> WheelMetadata:
+            captured.update(kwargs)
+            return WheelMetadata(
+                name="foo",
+                version=Version("1.0.0"),
+                requires_python=None,
+                requires_dist=[],
+                provides_extra=[],
+            )
+
+        monkeypatch.setattr(
+            "nab_project.build_backend.extract_metadata", capturing_backend
+        )
+
+        provider = _provider(
+            [source], cache, build_policy=BuildPolicy.BUILD_REMOTE, offline=True
+        )
+        provider.fetch_versions("foo")
+
+        assert captured == {"config": None, "offline": True}
 
     @pytest.mark.parametrize(
         ("failure_target", "expected"),
