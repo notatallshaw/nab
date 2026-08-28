@@ -16,6 +16,7 @@ from .types import PackageType
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from collections.abc import Set as AbstractSet
 
 __all__ = ["DecisionQueue"]
 
@@ -52,7 +53,7 @@ class DecisionQueue(Generic[PackageType]):
 
     def pick(
         self,
-        undecided: set[PackageType],
+        undecided: AbstractSet[PackageType],
         sort_key: Callable[[PackageType], tuple[Any, ...]],
         changed: set[PackageType],
         epoch: int,
@@ -75,7 +76,7 @@ class DecisionQueue(Generic[PackageType]):
         return self._live_top()
 
     def _stale_packages(
-        self, undecided: set[PackageType], changed: set[PackageType], epoch: int
+        self, undecided: AbstractSet[PackageType], changed: set[PackageType], epoch: int
     ) -> set[PackageType]:
         """Return the packages this scan has to evaluate again.
 
@@ -83,13 +84,18 @@ class DecisionQueue(Generic[PackageType]):
         """
         if epoch != self._epoch:
             self._epoch = epoch
-            stale = undecided | changed
+            stale = changed | undecided
+            # Every undecided package is stale here, so only ``changed`` can
+            # name one that has left.
+            departed = changed - undecided
         elif self._unready:
             stale = changed | self._unready
+            departed = stale - undecided
         else:
             stale = changed
+            departed = stale - undecided
 
-        for package in stale - undecided:
+        for package in departed:
             self._keys.pop(package, None)
             self._unready.discard(package)
 
@@ -97,7 +103,7 @@ class DecisionQueue(Generic[PackageType]):
 
     def _refresh(
         self,
-        undecided: set[PackageType],
+        undecided: AbstractSet[PackageType],
         stale: set[PackageType],
         sort_key: Callable[[PackageType], tuple[Any, ...]],
     ) -> None:
