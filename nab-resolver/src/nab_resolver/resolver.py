@@ -179,8 +179,8 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         """
         ...
 
-    def begin_decision_scan(self) -> None:
-        """Announce the start of one decision scan.
+    def begin_decision_scan(self) -> Callable[[PackageType], bool] | None:
+        """Announce the start of one decision scan, and offer an arrival probe.
 
         The scan reads sort keys from ``prioritize`` and ``is_ready``, so both
         must answer from state that does not move until the next call.
@@ -193,6 +193,16 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         for a reason only the provider can see fits none of those and may go
         unread, so a provider whose priority is still settling returns False
         from ``is_ready`` until it has.
+
+        A returned probe replaces that every-scan re-read, and is a promise:
+        while it answers False for a package, and that package's range and the
+        counts you were last passed are unchanged, ``prioritize`` and
+        ``is_ready`` must answer what they last answered.  Neither is called
+        for the package meanwhile, over any number of consecutive scans, so a
+        provider that starts its fetch inside ``prioritize`` would wait on a
+        fetch it never begins.  Answering True is always safe.  Return ``None``
+        to decline the probe and keep the every-scan re-read; a provider
+        wrapping another returns the inner probe.
         """
         ...
 
@@ -220,7 +230,9 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
 
         Returning False also holds the package on the scan's re-read list, so a
         provider whose ``prioritize`` key is still moving keeps returning False
-        until it settles.
+        until it settles.  A provider that returns a probe from
+        ``begin_decision_scan`` gives that re-read up: while the probe answers
+        False the key is not read at all.
         """
         ...
 
@@ -318,8 +330,9 @@ class BaseProvider(Generic[PackageType, VersionType]):
     ``from nab_resolver.resolver import BaseProvider``.
     """
 
-    def begin_decision_scan(self) -> None:
-        """Freeze nothing: no state moves between scans."""
+    def begin_decision_scan(self) -> Callable[[PackageType], bool] | None:
+        """Freeze nothing and offer no probe: no state moves between scans."""
+        return None
 
     def is_ready(self, package: PackageType) -> bool:
         """Report every package ready, since answers do not wait on a fetch."""

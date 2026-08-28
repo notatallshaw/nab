@@ -199,13 +199,13 @@ def test_the_heap_is_rebuilt_once_superseded_entries_pile_up() -> None:
 
 
 class ConflictSensitiveProvider(FuzzProvider):
-    """A provider whose sort keys move with no assignment behind them.
+    """A provider whose sort keys move with and without the solution.
 
-    Two of the things a sort key reads sit outside the partial solution, and
-    this drives both. ``prioritize`` ranks a package by how far its culprit
-    count trails the leading one, so crediting the leading culprit moves every
-    other package's key; ``is_ready`` holds one package back for the first
-    scans, the way a listing still in flight does.
+    ``prioritize`` ranks on how far a package's culprit count trails the
+    leading one and then on how many versions its range leaves, so a key moves
+    both when crediting a culprit leaves the solution alone and when the
+    solution narrows the range. ``is_ready`` holds one package back for the
+    first scans, the way a listing still in flight does.
     """
 
     def __init__(
@@ -221,9 +221,10 @@ class ConflictSensitiveProvider(FuzzProvider):
         self._ready_scan = ready_scan
         self.scans = 0
 
-    def begin_decision_scan(self) -> None:
-        """Count the scan, which is what ``is_ready`` answers from."""
+    def begin_decision_scan(self) -> Callable[[str], bool]:
+        """Count the scan, then offer ``is_ready``: nothing else moves it here."""
         self.scans += 1
+        return self.is_ready
 
     def prioritize(
         self,
@@ -232,10 +233,17 @@ class ConflictSensitiveProvider(FuzzProvider):
         conflict_counts: Mapping[str, int],
         culprit_counts: Mapping[str, int] | None = None,
     ) -> int:
-        """Rank the package by how far its culprit count trails the leading one."""
-        del version_range, conflict_counts
+        """Rank on the culprit gap, then on how many versions the range leaves.
+
+        Scaling the gap orders the two the way a tuple would, since no package
+        in this graph has more than two versions.
+        """
         counts = culprit_counts or {}
-        return max(counts.values(), default=0) - counts.get(package, 0)
+        trailing = max(counts.values(), default=0) - counts.get(package, 0)
+        matching = super().prioritize(
+            package, version_range, conflict_counts, culprit_counts
+        )
+        return trailing * 4 + matching
 
     def is_ready(self, package: str) -> bool:
         """Report every package ready but the held-back one, until its scan."""
@@ -247,13 +255,15 @@ class RecheckingDecisionQueue(DecisionQueue[str]):
 
     The cached keys are what the resolver decides on, so a move the queue is
     never told about shows up here as a key the scan's own ``sort_key`` no
-    longer agrees with.
+    longer agrees with. Also counts the keys the probe held back, so a resolve
+    that never took the skip cannot pass as a check of it.
     """
 
     def __init__(self) -> None:
-        """Start empty, with no scan yet seen holding an unready package."""
+        """Start empty, with no unready package seen and no key held back."""
         super().__init__()
         self.unready_picks = 0
+        self.held_keys = 0
 
     def pick(
         self,
@@ -261,12 +271,24 @@ class RecheckingDecisionQueue(DecisionQueue[str]):
         sort_key: Callable[[str], tuple[Any, ...]],
         changed: set[str],
         epoch: int,
+        key_inputs_arrived: Callable[[str], bool] | None = None,
     ) -> str:
         """Pick as usual, then check the cached keys against a fresh scan."""
-        picked = super().pick(undecided, sort_key, changed, epoch)
+        evaluated: set[str] = set()
+
+        def watched(package: str) -> tuple[Any, ...]:
+            """Return the package's key, recording that the scan built it."""
+            evaluated.add(package)
+            return sort_key(package)
+
+        picked = super().pick(undecided, watched, changed, epoch, key_inputs_arrived)
 
         if self._unready:
             self.unready_picks += 1
+
+        # Every unready package is stale, so one the scan never evaluated is
+        # one the probe held back.
+        self.held_keys += len(self._unready - evaluated)
 
         assert self._keys.keys() == undecided
         for package in undecided:
@@ -291,9 +313,11 @@ def test_a_resolve_that_backjumps_keeps_every_cached_key_current() -> None:
     ``a@2`` and ``d@2`` both dead-end, so the resolve backjumps and credits
     culprits, and ``c`` arrives unready. Both move sort keys of packages the
     partial solution reports as unchanged, so a queue that misses either
-    signal decides on a stale key and resolves somewhere else in silence.
+    signal decides on a stale key and resolves somewhere else in silence. The
+    provider hands back a probe, so ``c``'s key is one the queue keeps across
+    scans rather than rebuilds.
     """
-    provider = ConflictSensitiveProvider(BACKJUMPING_GRAPH, unready="c", ready_scan=3)
+    provider = ConflictSensitiveProvider(BACKJUMPING_GRAPH, unready="c", ready_scan=12)
     resolver: Resolver[str, int] = Resolver(provider)
     queue = RecheckingDecisionQueue()
     resolver.decision_queue = queue
@@ -307,3 +331,106 @@ def test_a_resolve_that_backjumps_keeps_every_cached_key_current() -> None:
     assert resolver.stats.backjumps > 0
     assert resolver.priority_epoch > 0
     assert queue.unready_picks > 0
+    assert queue.held_keys > 0
+
+
+class Landings:
+    """A probe over packages whose listings land on cue."""
+
+    def __init__(self) -> None:
+        """Start with nothing landed and nothing probed."""
+        self.landed: set[str] = set()
+        self.probed: list[str] = []
+
+    def probe(self, package: str) -> bool:
+        """Report whether the package's listing has landed, recording the ask."""
+        self.probed.append(package)
+        return package in self.landed
+
+
+def test_a_probe_that_stays_false_leaves_the_unready_key_unread() -> None:
+    """An in-flight package's key is not rebuilt while its probe stays false."""
+    book = KeyBook({"a": (1, 0, "a"), "b": (0, 2, "b")})
+    queue: DecisionQueue[str] = DecisionQueue()
+    landings = Landings()
+    queue.pick({"a", "b"}, book.sort_key, {"a", "b"}, 0, landings.probe)
+    book.take_read()
+
+    picked = queue.pick({"a", "b"}, book.sort_key, set(), 0, landings.probe)
+
+    assert picked == "b"
+    assert book.take_read() == set()
+    assert landings.probed == ["a"]
+
+
+def test_a_probe_turning_true_rebuilds_the_key_it_held() -> None:
+    book = KeyBook({"a": (1, 0, "a"), "b": (0, 2, "b")})
+    queue: DecisionQueue[str] = DecisionQueue()
+    landings = Landings()
+    queue.pick({"a", "b"}, book.sort_key, {"a", "b"}, 0, landings.probe)
+    queue.pick({"a", "b"}, book.sort_key, set(), 0, landings.probe)
+    book.take_read()
+
+    landings.landed.add("a")
+    book.keys["a"] = (0, 1, "a")
+
+    picked = queue.pick({"a", "b"}, book.sort_key, set(), 0, landings.probe)
+
+    assert picked == "a"
+    assert book.take_read() == {"a"}
+
+
+def test_a_changed_package_is_re_evaluated_while_its_probe_is_false() -> None:
+    """A moved range changes the key of a package still waiting on a listing."""
+    book = KeyBook({"a": (1, 0, "a"), "b": (0, 2, "b")})
+    queue: DecisionQueue[str] = DecisionQueue()
+    landings = Landings()
+    queue.pick({"a", "b"}, book.sort_key, {"a", "b"}, 0, landings.probe)
+    book.take_read()
+
+    book.keys["a"] = (1, 5, "a")
+    queue.pick({"a", "b"}, book.sort_key, {"a"}, 0, landings.probe)
+
+    assert book.take_read() == {"a"}
+    assert landings.probed == []
+
+
+def test_a_new_epoch_re_evaluates_an_unready_key_the_probe_denies() -> None:
+    """A new epoch stands for a count move the probe knows nothing about."""
+    book = KeyBook({"a": (1, 0, "a"), "b": (0, 2, "b")})
+    queue: DecisionQueue[str] = DecisionQueue()
+    landings = Landings()
+    queue.pick({"a", "b"}, book.sort_key, {"a", "b"}, 0, landings.probe)
+    book.take_read()
+
+    queue.pick({"a", "b"}, book.sort_key, set(), 1, landings.probe)
+
+    assert book.take_read() == {"a", "b"}
+    assert landings.probed == []
+
+
+def test_a_listing_landing_mid_scan_reaches_the_package_behind_it() -> None:
+    """The probe runs at the package's own place in the walk.
+
+    One snapshot taken at the head of the scan would hold every later arrival
+    back a whole scan, and could pick a different package.
+    """
+    book = KeyBook({"a": (1, 0, "a"), "b": (1, 0, "b")})
+    queue: DecisionQueue[str] = DecisionQueue()
+    landings = Landings()
+    queue.pick({"a", "b"}, book.sort_key, {"a", "b"}, 0, landings.probe)
+    book.take_read()
+
+    def land_the_others(package: str) -> bool:
+        """Publish every other package's listing, then answer for this one."""
+        for other in ("a", "b"):
+            if other != package:
+                landings.landed.add(other)
+                book.keys[other] = (0, 1, other)
+        return landings.probe(package)
+
+    picked = queue.pick({"a", "b"}, book.sort_key, set(), 0, land_the_others)
+
+    _, second = landings.probed
+    assert book.take_read() == {second}
+    assert picked == second

@@ -9,7 +9,7 @@ provider implementations can be shared across files.
 from __future__ import annotations
 
 import itertools
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, RangeProtocol
@@ -51,8 +51,9 @@ class FuzzProvider:
         """Return dependencies for a specific version."""
         return self._graph.get(package, {}).get(version, {})
 
-    def begin_decision_scan(self) -> None:
-        """No-op: nothing in this stub moves under a scan."""
+    def begin_decision_scan(self) -> Callable[[str], bool] | None:
+        """Offer no probe: nothing in this stub moves under a scan."""
+        return None
 
     def prioritize(
         self,
