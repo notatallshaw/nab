@@ -278,4 +278,5 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | `0`  | Success. |
 | `1`  | Resolution failed, lockfile cannot be written (a missing hash, or text that is not valid UTF-8), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
 | `2`  | Bad usage: an unrecognised flag or subcommand, or a malformed `--color` value or `NAB_VERBOSITY`. |
+| `120` | Output was lost: `nab` wrote to a stdout or stderr that was closed before it started, or flushing one of them at exit failed. |
 | `130` | Interrupted with Ctrl-C. `nab` prints `error: interrupted` and exits. |

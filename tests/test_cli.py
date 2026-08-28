@@ -5873,6 +5873,99 @@ class TestConsoleEntry:
         mock_exit.assert_not_called()
 
 
+class TestClosedStandardStreams:
+    """Tests for a run started with stdout or stderr closed.
+
+    CPython leaves the matching ``sys`` attribute as ``None`` when the
+    descriptor is closed before the process starts. ``os._exit`` ends the
+    process outright, so the tests that go through ``console_entry`` patch it.
+    """
+
+    def test_closed_stdout_exits_120(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``--version`` with no stdout exits 120 instead of crashing."""
+        monkeypatch.setattr(sys, "argv", ["nab", "--version"])
+        monkeypatch.setattr(sys, "stdout", None)
+        with patch("nab.cli.os._exit") as mock_exit:
+            console_entry()
+        mock_exit.assert_called_once_with(120)
+
+    def test_an_unwritten_closed_stream_exits_zero(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--version`` writes no diagnostics, so a closed stderr loses nothing."""
+        monkeypatch.setattr(sys, "argv", ["nab", "--version"])
+        monkeypatch.setattr(sys, "stderr", None)
+        with patch("nab.cli.os._exit") as mock_exit:
+            console_entry()
+        mock_exit.assert_called_once_with(0)
+
+    def test_closed_stderr_keeps_the_lockfile(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The lock still lands; only the run summary has nowhere to go."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        monkeypatch.setattr(
+            sys, "argv", ["nab", "lock", str(pyproject), "--output", str(out)]
+        )
+        monkeypatch.setattr(sys, "stderr", None)
+        with (
+            patch("nab.cli.resolve_for_targets", return_value=_stub_resolve_result()),
+            patch("nab.cli.os._exit") as mock_exit,
+        ):
+            console_entry()
+        assert 'name = "foo"' in out.read_text()
+        mock_exit.assert_called_once_with(120)
+
+    def test_closed_stderr_before_the_printer_exists(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A bad ``--color`` value is reported before the printer is built."""
+        monkeypatch.setattr(sys, "argv", ["nab", "--color", "rainbow", "lock"])
+        monkeypatch.setattr(sys, "stderr", None)
+        with patch("nab.cli.os._exit") as mock_exit:
+            console_entry()
+        mock_exit.assert_called_once_with(120)
+
+    def test_both_streams_closed_exits_120(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Losing both streams still exits 120."""
+        monkeypatch.setattr(sys, "argv", ["nab", "--color", "rainbow", "lock"])
+        monkeypatch.setattr(sys, "stdout", None)
+        monkeypatch.setattr(sys, "stderr", None)
+        with patch("nab.cli.os._exit") as mock_exit:
+            console_entry()
+        mock_exit.assert_called_once_with(120)
+
+    def test_python_dash_m_exits_120(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``python -m nab`` exits 120 rather than returning normally."""
+        monkeypatch.setattr(sys, "argv", ["nab", "--version"])
+        monkeypatch.setattr(sys, "stdout", None)
+        with pytest.raises(SystemExit) as excinfo:
+            runpy.run_module("nab", run_name="__main__")
+        assert excinfo.value.code == 120
+
+    def test_python_dash_m_reports_a_loss_over_the_command_status(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failing command whose error had nowhere to go exits 120, not 2."""
+        monkeypatch.setattr(sys, "argv", ["nab", "--color", "rainbow", "lock"])
+        monkeypatch.setattr(sys, "stderr", None)
+        with pytest.raises(SystemExit) as excinfo:
+            runpy.run_module("nab", run_name="__main__")
+        assert excinfo.value.code == 120
+
+    def test_python_dash_m_with_open_streams_keeps_its_status(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A run that loses no output keeps its own exit status."""
+        monkeypatch.setattr(sys, "argv", ["nab", "--color", "rainbow", "lock"])
+        with pytest.raises(SystemExit) as excinfo:
+            runpy.run_module("nab", run_name="__main__")
+        assert excinfo.value.code == 2
+
+
 class TestSystemExitStatus:
     """Tests for mapping a ``SystemExit`` code to a process status."""
 
