@@ -329,9 +329,8 @@ class Specifier(BaseSpecifier):
         )
         """
 
-    _regex = re.compile(
-        r"\s*" + _specifier_regex_str + r"\s*", re.VERBOSE | re.IGNORECASE
-    )
+    # No surrounding \s*, so _tokenizer can share this object; __init__ strips first.
+    _regex = re.compile(_specifier_regex_str, re.VERBOSE | re.IGNORECASE)
 
     # Legacy unused attribute, kept for backward compatibility
     _operators: Final = {
@@ -358,10 +357,11 @@ class Specifier(BaseSpecifier):
         :raises InvalidSpecifier:
             If the given specifier is invalid (i.e. bad syntax).
         """
-        if not self._regex.fullmatch(spec):
+        stripped = spec.strip()
+        if not self._regex.fullmatch(stripped):
             raise InvalidSpecifier(f"Invalid specifier: {spec!r}")
 
-        spec = spec.strip()
+        spec = stripped
         if spec.startswith("==="):
             operator, version = spec[:3], spec[3:].strip()
         elif spec.startswith(("~=", "==", "!=", "<=", ">=")):
