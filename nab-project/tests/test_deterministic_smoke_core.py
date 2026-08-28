@@ -6,6 +6,7 @@ import contextlib
 import importlib.util
 import json
 import sys
+import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -571,7 +572,10 @@ def test_pins_hold_however_the_listings_arrive(smoke_index: Path) -> None:
         if scenario.id == "deep-backjump"
     )
     prepared = harness.prepare_scenario(backjump, smoke_index)
-    packages = harness._fixture_listing_packages(distributions)
+    packages = harness._reachable_listing_packages(
+        harness._fixture_dependency_names(distributions),
+        harness._scenario_root_names(prepared),
+    )
 
     observed: dict[str, dict[str, dict[str, str]]] = {}
     for label, landed in _listing_arrival_states(packages).items():
@@ -580,6 +584,128 @@ def test_pins_hold_however_the_listings_arrive(smoke_index: Path) -> None:
 
     expected = harness._expected(backjump)
     assert observed == dict.fromkeys(observed, expected)
+
+
+def test_a_scenario_prefetches_only_the_listings_it_can_reach(tmp_path: Path) -> None:
+    """The prefetch set follows the scenario's own graph, not the whole manifest.
+
+    The walk is blind to specifiers and markers, so a dependency only some
+    environment activates still counts as reachable.
+    """
+    harness = _harness()
+    distributions, _digest = harness.load_fixture()
+    dependencies = harness._fixture_dependency_names(distributions)
+
+    def prefetched(scenario_id: str) -> tuple[str, ...]:
+        scenario = next(
+            scenario
+            for scenario in harness.load_scenarios()
+            if scenario.id == scenario_id
+        )
+        prepared = harness.prepare_scenario(scenario, tmp_path)
+        return harness._reachable_listing_packages(
+            dependencies, harness._scenario_root_names(prepared)
+        )
+
+    # Every package the fixture publishes, so the sets below have a denominator.
+    assert len(dependencies) == 34
+
+    assert prefetched("pip-deep-backtracking") == (
+        "nab-smoke-pip-a",
+        "nab-smoke-pip-b",
+        "nab-smoke-pip-c",
+    )
+
+    # nab-smoke-extra-speed sits behind an extra and nab-smoke-marker-leaf
+    # behind a Python marker, and both are still reached.
+    assert prefetched("extra-and-python-marker") == (
+        "nab-smoke-extra-app",
+        "nab-smoke-extra-base",
+        "nab-smoke-extra-speed",
+        "nab-smoke-marker-leaf",
+    )
+
+
+def test_the_walk_seeds_constraints_and_unions_across_releases(tmp_path: Path) -> None:
+    """Two widenings the corpus does not exercise on its own.
+
+    The one scenario with constraints constrains a package it already
+    requires, and the one package whose dependencies vary across releases
+    omits a name another edge reaches anyway, so dropping either rule leaves
+    all 11 prefetch sets untouched. A scenario that needed one would
+    under-fetch in silence, so pin both directly.
+    """
+    harness = _harness()
+
+    releases = (
+        harness.Distribution(
+            name="Fixture_Pkg", version="1.0", dependencies=("early",)
+        ),
+        harness.Distribution(
+            name="fixture-pkg", version="2.0", dependencies=("late>=2",)
+        ),
+    )
+    assert harness._fixture_dependency_names(releases) == {
+        "fixture-pkg": frozenset({"early", "late"})
+    }
+
+    ceiling = next(
+        scenario
+        for scenario in harness.load_scenarios()
+        if scenario.id == "constraint-ceiling"
+    )
+    prepared = harness.prepare_scenario(ceiling, tmp_path)
+    widened = replace(
+        prepared,
+        config=replace(prepared.config, constraints=("nab-smoke-pip-a<2.0.0",)),
+    )
+
+    assert set(harness._scenario_root_names(widened)) == {
+        "nab-smoke-constrained",
+        "nab-smoke-pip-a",
+    }
+
+
+def test_no_scenario_asks_for_a_listing_its_prefetch_left_out(
+    smoke_index: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every listing a resolve requests was already landed before it started.
+
+    Under-fetching does not fail loudly: the resolve blocks on the fetcher
+    instead, and the priority scan then orders packages by whichever listing
+    arrived first, which is what drifts the recorded search counters. So the
+    property is coverage, taken from what the resolver asks for rather than
+    from the walk that produced the set.
+    """
+    harness = _harness()
+    distributions, _digest = harness.load_fixture()
+    dependencies = harness._fixture_dependency_names(distributions)
+    requested: list[str] = []
+
+    class _RecordingCoordinator(harness.FetchCoordinator):
+        """A real coordinator that records the listings it is asked for."""
+
+        def request_listing(
+            self, package: str, *, speculative: bool = False
+        ) -> threading.Event:
+            requested.append(package)
+            return super().request_listing(package, speculative=speculative)
+
+    monkeypatch.setattr(harness, "FetchCoordinator", _RecordingCoordinator)
+
+    uncovered: dict[str, set[str]] = {}
+    for scenario in harness.load_scenarios():
+        prepared = harness.prepare_scenario(scenario, smoke_index)
+        packages = harness._reachable_listing_packages(
+            dependencies, harness._scenario_root_names(prepared)
+        )
+        requested.clear()
+        harness._resolve_once(prepared, packages)
+        missing = set(requested) - set(packages)
+        if missing:
+            uncovered[scenario.id] = missing
+
+    assert uncovered == {}
 
 
 def test_asyncio_wakeup_preflight_reports_restricted_execution() -> None:

@@ -1379,21 +1379,64 @@ def prepare_scenario(scenario: Scenario, index_root: Path) -> PreparedScenario:
     )
 
 
-def _fixture_listing_packages(distributions: Sequence[Distribution]) -> tuple[str, ...]:
-    """Every canonical name in the fixture, in a stable order."""
-    return tuple(sorted({canonicalize_name(dist.name) for dist in distributions}))
+def _fixture_dependency_names(
+    distributions: Sequence[Distribution],
+) -> dict[str, frozenset[str]]:
+    """Map every fixture package to the package names its releases require.
+
+    Specifiers, extras and markers are dropped, so an edge stands whenever some
+    release of the package names the dependency under some environment.
+    """
+    edges: dict[str, set[str]] = {}
+    for dist in distributions:
+        edges.setdefault(canonicalize_name(dist.name), set()).update(
+            canonicalize_name(Requirement(dependency).name)
+            for dependency in dist.dependencies
+        )
+    return {name: frozenset(dependencies) for name, dependencies in edges.items()}
+
+
+def _scenario_root_names(prepared: PreparedScenario) -> tuple[str, ...]:
+    """Every canonical name the scenario itself declares, constraints included."""
+    constraints = (Requirement(text) for text in prepared.config.constraints)
+    return tuple(
+        canonicalize_name(requirement.name)
+        for requirement in (*prepared.requirements, *constraints)
+    )
+
+
+def _reachable_listing_packages(
+    dependencies: Mapping[str, frozenset[str]], roots: Sequence[str]
+) -> tuple[str, ...]:
+    """Every fixture package `roots` can reach, in a stable order.
+
+    The walk over-approximates the search: an edge ignores the specifier and
+    the marker that would rule the dependency out, so a dependency only one
+    environment activates still counts as reachable. A name the fixture does
+    not publish is dropped, since the offline index has no page to serve for
+    it.
+    """
+    reachable: set[str] = set()
+    pending = list(roots)
+    while pending:
+        name = pending.pop()
+        if name in reachable or name not in dependencies:
+            continue
+        reachable.add(name)
+        pending.extend(dependencies[name])
+    return tuple(sorted(reachable))
 
 
 def _await_listings(coordinator: FetchCoordinator, packages: Sequence[str]) -> None:
-    """Land every fixture listing before the caller starts timing.
+    """Land every named listing before the caller starts timing.
 
     The priority scan sorts a package whose listing is still in flight behind
     the ready ones, so a resolve racing its own fetches can decide in a
     different order run to run and reach the same pins by a different path.
-    Requesting the whole fixture up front and waiting takes that race out of
-    the measurement; it does not change what the resolver does with a listing
-    once it holds one.  Every request goes out before the first wait so they
-    still overlap.
+    Requesting the set up front and waiting takes that race out of the
+    measurement; it does not change what the resolver does with a listing once
+    it holds one.  Every request goes out before the first wait so they still
+    overlap.
     """
     for event in [coordinator.request_listing(package) for package in packages]:
         event.wait()
@@ -1680,7 +1723,10 @@ def run_scenario(scenario: Scenario, index_root: Path, runs: int) -> dict[str, A
     # index_root happens to hold; the digest check is what ties the two together.
     prepared = prepare_scenario(scenario, index_root)
     distributions, _fixture_manifest_digest = load_fixture()
-    listing_packages = _fixture_listing_packages(distributions)
+
+    listing_packages = _reachable_listing_packages(
+        _fixture_dependency_names(distributions), _scenario_root_names(prepared)
+    )
 
     # A semantic case is validated once and never timed, so it collapses to a
     # single unmeasured batch of one.
