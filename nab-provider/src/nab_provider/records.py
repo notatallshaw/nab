@@ -117,6 +117,21 @@ def _compact_table(table: dict[object, object]) -> object:
     return table
 
 
+def _compact_shared_table(table: dict[object, object]) -> object:
+    """Compact ``table`` for a caller whose rows already share one name object.
+
+    One cached listing's rows are decoded together and get a single object for
+    a repeated name, and :func:`parse_hash_table` interns whatever a reader
+    parses out of the pair, so :func:`_compact_table`'s per-row intern buys
+    nothing here.
+    """
+    if len(table) == 1:
+        ((algo, digest),) = table.items()
+        if type(algo) is str:
+            return (algo, digest)
+    return table
+
+
 def _expand_table(held: object) -> object:
     """Return ``held`` as the index served it, undoing :func:`_compact_table`."""
     if isinstance(held, tuple):
@@ -358,12 +373,12 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     _set_wheel_local_path(wheel, None)
 
     if isinstance(hashes, dict):
-        _set_wheel_raw_hashes(wheel, _compact_table(hashes))
+        _set_wheel_raw_hashes(wheel, _compact_shared_table(hashes))
     else:
         _set_wheel_hashes(wheel, hashes)
 
     if isinstance(metadata_hash, dict):
-        _set_wheel_raw_metadata(wheel, _compact_table(metadata_hash))
+        _set_wheel_raw_metadata(wheel, _compact_shared_table(metadata_hash))
     else:
         _set_wheel_metadata_hash(wheel, metadata_hash)
 
@@ -445,7 +460,7 @@ def rehydrated_sdist(
     _set_sdist_local_path(sdist, None)
 
     if isinstance(hashes, dict):
-        _set_sdist_raw_hashes(sdist, _compact_table(hashes))
+        _set_sdist_raw_hashes(sdist, _compact_shared_table(hashes))
     else:
         _set_sdist_hashes(sdist, hashes)
 
