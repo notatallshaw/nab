@@ -716,6 +716,14 @@ class Provider:
             tuple[str, str, RangeProtocol[Version]], list[Version]
         ] = defaultdict(list)
 
+        # Self-dependency rejections, keyed by (candidate, the range it
+        # declared on itself, the positive range the solution holds).  The
+        # merged clause needs only the declared range; the positive range is
+        # carried for the no-versions reason line.
+        self.pending_self_blocks: defaultdict[
+            tuple[str, VersionRange, RangeProtocol[Version]], list[Version]
+        ] = defaultdict(list)
+
         # The dep range each rejected candidate declared for the blocker,
         # unioned per group.  Feeds the membership widening of the flushed
         # blocker term, and the no-versions message, which names the range the
@@ -1564,14 +1572,13 @@ class Provider:
     def _should_abort_lookahead(self, normalized: str) -> tuple[str, Version] | None:
         """Return the single shared blocker if every rejection blames it.
 
-        The trigger is intentionally narrow: only when *every* rejection
-        for ``normalized`` is a decision block with the same
-        ``(blocker_pkg, blocker_version)`` key and there are no
-        range / root / metadata blocks.  Returns ``(blocker_pkg,
-        blocker_version)`` when the condition holds, else ``None``.
-        Mixed-cause scans keep the per-version clauses because at least
-        one rejection cause is a real constraint the resolver still
-        needs to learn.
+        The trigger is intentionally narrow: only when *every* rejection for
+        ``normalized`` is a decision block with the same ``(blocker_pkg,
+        blocker_version)`` key and no other kind of block was queued.
+        Returns ``(blocker_pkg, blocker_version)`` when the condition holds,
+        else ``None``.  Mixed-cause scans keep the per-version clauses
+        because at least one rejection cause is a real constraint the
+        resolver still needs to learn.
         """
         seen: set[tuple[str, Version]] = set()
         for cand, blocker_pkg, blocker_version in self.pending_blocks:
@@ -1579,25 +1586,33 @@ class Provider:
                 seen.add((blocker_pkg, blocker_version))
                 if len(seen) > 1:
                     return None
-        if len(seen) != 1:
-            return None
-        if any(cand == normalized for cand, *_ in self.pending_range_blocks):
-            return None
-        if any(cand == normalized for cand, *_ in self.pending_root_blocks):
-            return None
-        if normalized in self.pending_metadata_blocks:
+        if len(seen) != 1 or self._has_non_decision_block(normalized):
             return None
         return next(iter(seen))
+
+    def _has_non_decision_block(self, normalized: str) -> bool:
+        """Whether ``normalized`` was rejected for a reason beyond a decision.
+
+        Range, self-dependency, root and metadata blocks each state a
+        constraint the resolver still has to learn, so the abort path must
+        leave their clauses alone.
+        """
+        return (
+            normalized in self.pending_metadata_blocks
+            or any(cand == normalized for cand, *_ in self.pending_range_blocks)
+            or any(cand == normalized for cand, *_ in self.pending_self_blocks)
+            or any(cand == normalized for cand, *_ in self.pending_root_blocks)
+        )
 
     def _discard_pending_decision_blocks(self, normalized: str) -> None:
         """Drop decision-block entries for ``normalized`` without emitting clauses.
 
         Used by the look-ahead abort path: the blocker clauses the queue
         would otherwise produce are exactly the ones that mislead the
-        resolver into picking a deep candidate.  Range / root / metadata
-        blocks are left in place because the abort path only fires when none
-        exist for this candidate; this helper still scopes its delete to the
-        matching candidate name for safety.
+        resolver into picking a deep candidate.  The other block kinds are
+        left in place because the abort path only fires when none exist for
+        this candidate; this helper still scopes its delete to the matching
+        candidate name for safety.
         """
         self.pending_blocks = defaultdict(
             list,
@@ -1791,6 +1806,18 @@ class Provider:
                     _diagnosis.BlockerKind.HELD,
                     blocker_pkg,
                     _declared_ranges(recorded),
+                    pos_range,
+                )
+            )
+
+        for cand, dep_range, pos_range in self.pending_self_blocks:
+            if cand != normalized:
+                continue
+            out.append(
+                _diagnosis.Blocker(
+                    _diagnosis.BlockerKind.HELD,
+                    cand,
+                    (dep_range,),
                     pos_range,
                 )
             )

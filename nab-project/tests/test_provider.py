@@ -2291,10 +2291,17 @@ class TestNoVersionsReasons:
         coordinator = make_coordinator([], package="foo")
         provider = Provider(coordinator)
         # Plant a blocker for a different candidate in each of the
-        # three pending stores so all the filter branches fire.
+        # four pending stores so all the filter branches fire.
         provider.pending_blocks[("other", "bar", V("1.0"))].append(V("1.0"))
         provider.pending_range_blocks[
             ("other", "baz", SpecifierSet("<2.0").to_range())
+        ].append(V("1.0"))
+        provider.pending_self_blocks[
+            (
+                "other",
+                SpecifierSet("==5.0").to_range(),
+                SpecifierSet(">=6.0").to_range(),
+            )
         ].append(V("1.0"))
         provider.pending_root_blocks[
             (
@@ -5041,6 +5048,73 @@ class TestDecisionLookAhead:
         terms = clauses[0].terms
         assert {t.package for t in terms} == {"foo", "bar"}
 
+    def test_self_dependency_rejection_merges_into_one_term(self) -> None:
+        """A candidate excluded by its own requirement gets one merged term.
+
+        ``foo`` 1.0 requires ``foo==5.0`` while the solution holds ``foo<2.0``.
+        Both terms would name ``foo``, and a clause holds at most one term per
+        package, so they merge to the versions the requirement rules out and
+        the clause carries the declared range.
+        """
+        wheels = [make_wheel("1.0")]
+        meta = make_metadata("foo", "1.0", "foo==5.0")
+        coordinator = make_coordinator(wheels, metadata_text=meta, package="foo")
+        provider = Provider(coordinator, target=_PY312)
+        provider.receive_partial_solution_hint(
+            {"foo": SpecifierSet("<2.0").to_range()}, {}
+        )
+
+        assert provider._look_ahead_ok("foo", V("1.0")) is False
+        provider._flush_pending_blocks()
+
+        (clause,) = provider.consume_pending_clauses()
+        (term,) = clause.terms
+        assert term.package == "foo"
+        assert term.is_positive()
+
+        assert V("1.0") in term.constraint
+        assert V("5.0") not in term.constraint
+        assert clause.dependency_range == SpecifierSet("==5.0").to_range()
+
+    def test_self_dependency_report_names_the_edge(self) -> None:
+        """The report states the self-dependency rather than a tautology.
+
+        ``proj`` 3.0 requires ``proj==2.0`` while the solution holds ``>2.0``
+        from ``app``, so look-ahead rejects it.  Two positive terms for
+        ``proj`` would print as ``proj`` being incompatible with itself.
+        """
+        coordinator = make_coordinator(
+            listings={
+                "app": [make_wheel("1.0")],
+                "proj": [make_wheel("3.0"), make_wheel("2.0")],
+            },
+            metadata_by_version={
+                "1.0": make_metadata("app", "1.0", "proj>2.0"),
+                "3.0": make_metadata("proj", "3.0", "proj==2.0"),
+                "2.0": make_metadata("proj", "2.0", "proj==2.0"),
+            },
+        )
+        root_reqs = {"app": VersionRange.full(admit_arbitrary=False)}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+        resolver = Resolver(
+            provider,
+            range_type=VersionRange,
+            root_version="0",
+            format_range=provider.format_range,
+        )
+        with pytest.raises(ResolutionError) as exc_info:
+            resolver.resolve(dict(root_reqs))
+
+        lines = str(exc_info.value).splitlines()
+        assert "because proj >=3.0 depends on proj ==2.0" in lines
+        assert not any(
+            "incompatible with" in line and line.count("proj") > 1 for line in lines
+        )
+
+        assert short_reason(provider, "proj") == (
+            "every version needs proj in ==2.0, but the resolve holds proj in >2.0"
+        )
+
     def test_flush_widens_terms_onto_listed_gaps(self) -> None:
         """Consecutive rejected candidates coalesce into one segment and the
         blocker covers every version the scanned candidates exclude."""
@@ -5554,6 +5628,18 @@ class TestLookAheadAbort:
         provider.pending_blocks[("foo", "bar", V("1.0"))].append(V("0.9"))
         provider.pending_range_blocks[
             ("foo", "baz", SpecifierSet("<2.0").to_range())
+        ].append(V("0.9"))
+        assert provider._should_abort_lookahead("foo") is None
+
+    def test_should_abort_none_when_self_block_present(self) -> None:
+        provider = self._provider()
+        provider.pending_blocks[("foo", "bar", V("1.0"))].append(V("0.9"))
+        provider.pending_self_blocks[
+            (
+                "foo",
+                SpecifierSet("==5.0").to_range(),
+                SpecifierSet(">=6.0").to_range(),
+            )
         ].append(V("0.9"))
         assert provider._should_abort_lookahead("foo") is None
 
