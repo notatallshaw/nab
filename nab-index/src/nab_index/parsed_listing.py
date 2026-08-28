@@ -18,9 +18,9 @@ Wire form (UTF-8 JSON of ``[header, rows]``):
 * rows hold one entry per surviving record, in the order the wire parse
   returned them, so a downstream stable-sort tie-break stays identical. Each
   row is a flat list tagged wheel or sdist by its first element. Every field is
-  type-checked on the way back, and ``requires_python`` and hash-algorithm
-  names are re-interned via ``sys.intern`` so the round trip reproduces the
-  dedup the wire parse builds.
+  type-checked on the way back. ``requires_python`` and hash-algorithm names
+  are re-interned via ``sys.intern``, and consecutive rows of one release
+  share one ``version`` object.
 * the two integrity cells carry the index's own table, as a JSON object, when
   the record was built from one, and the parsed pairs otherwise. A rehydrated
   record defers the same way, so a listing pays the integrity parse only for
@@ -262,13 +262,25 @@ def _decode_zip_sdists(value: object) -> frozenset[str]:
 
 
 def _decode_rows(rows: object) -> list[WheelFile | SdistFile]:
-    """Rehydrate every row, raising :class:`_BadRowError` on the first bad one."""
+    """Rehydrate every row, raising :class:`_BadRowError` on the first bad one.
+
+    JSON gives every array cell its own str, so each row is offered the previous
+    row's version and reuses it when they match. An index lists a release's
+    files together, so no earlier row is worth checking.
+    """
     if not isinstance(rows, list):
         raise _BadRowError
-    return [_decode_row(row) for row in rows]
+
+    files: list[WheelFile | SdistFile] = []
+    prior_version = ""
+    for row in rows:
+        file = _decode_row(row, prior_version)
+        prior_version = file.version
+        files.append(file)
+    return files
 
 
-def _decode_row(row: object) -> WheelFile | SdistFile:
+def _decode_row(row: object, prior_version: str) -> WheelFile | SdistFile:
     """Rehydrate one row, dispatching on the tag its first element carries."""
     if not isinstance(row, list) or not row:
         raise _BadRowError
@@ -277,14 +289,14 @@ def _decode_row(row: object) -> WheelFile | SdistFile:
     if type(tag) is not int:
         raise _BadRowError
     if tag == _TAG_WHEEL:
-        return _decode_wheel(row)
+        return _decode_wheel(row, prior_version)
     if tag == _TAG_SDIST:
-        return _decode_sdist(row)
+        return _decode_sdist(row, prior_version)
     raise _BadRowError
 
 
-def _decode_wheel(row: Sequence[object]) -> WheelFile:
-    """Rehydrate a wheel row.
+def _decode_wheel(row: Sequence[object], prior_version: str) -> WheelFile:
+    """Rehydrate a wheel row, reusing ``prior_version`` when the row repeats it.
 
     An integrity cell holding the index's own table passes through unparsed,
     for the record to parse on first read; any other form is parsed here.
@@ -318,7 +330,7 @@ def _decode_wheel(row: Sequence[object]) -> WheelFile:
     return rehydrated_wheel(
         filename,
         url,
-        version,
+        prior_version if version == prior_version else version,
         None if requires_python is None else sys.intern(requires_python),
         has_metadata,
         upload_time,
@@ -330,7 +342,7 @@ def _decode_wheel(row: Sequence[object]) -> WheelFile:
     )
 
 
-def _decode_sdist(row: Sequence[object]) -> SdistFile:
+def _decode_sdist(row: Sequence[object], prior_version: str) -> SdistFile:
     """Rehydrate a source-distribution row; see :func:`_decode_wheel`."""
     _, filename, url, version, requires_python, upload_time, hashes, size = row
 
@@ -347,7 +359,7 @@ def _decode_sdist(row: Sequence[object]) -> SdistFile:
     return rehydrated_sdist(
         filename,
         url,
-        version,
+        prior_version if version == prior_version else version,
         None if requires_python is None else sys.intern(requires_python),
         upload_time,
         hashes if isinstance(hashes, dict) else _hashes(hashes),

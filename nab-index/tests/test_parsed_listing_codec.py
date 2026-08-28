@@ -148,6 +148,24 @@ def test_requires_python_and_algo_reinterned_by_identity() -> None:
     assert decoded[2].requires_python is None
 
 
+def test_rows_of_one_release_share_a_version_object() -> None:
+    second_two_zero = dataclasses.replace(
+        WHEEL_BARE,
+        filename="pkg-2.0-py3-none-any.whl",
+        url="https://files.example/pkg-2.0-py3-none-any.whl",
+        version="2.0",
+    )
+    decoded = _roundtrip([*SAMPLE, second_two_zero])
+
+    one_zero = decoded[0].version
+    assert decoded[1].version is one_zero
+    assert decoded[2].version is one_zero
+
+    # The carried version advances with the rows, so 2.0 gets an object of its own.
+    assert decoded[3].version is not one_zero
+    assert decoded[4].version is decoded[3].version
+
+
 def test_empty_listing_roundtrips() -> None:
     assert _roundtrip([]) == []
 
