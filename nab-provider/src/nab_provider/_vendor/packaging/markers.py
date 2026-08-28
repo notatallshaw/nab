@@ -440,7 +440,7 @@ class Marker:
         release.
     """
 
-    __slots__ = ("_markers",)
+    __slots__ = ("_markers", "_serialized")
 
     def __init__(self, marker: str) -> None:
         # Note: We create a Marker object without calling this constructor in
@@ -483,7 +483,13 @@ class Marker:
         return new
 
     def __str__(self) -> str:
-        return _format_marker(self._markers)
+        # _markers is never rebound after construction, so serialise once.
+        try:
+            return self._serialized
+        except AttributeError:
+            serialized = _format_marker(self._markers)
+            self._serialized = serialized
+            return serialized
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__}({str(self)!r})>"
