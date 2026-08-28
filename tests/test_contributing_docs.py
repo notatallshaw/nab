@@ -34,6 +34,9 @@ _INLINE = re.compile(r"`([^`\n]+)`")
 _VENV = ".venv"
 _VENV_BIN = f"{_VENV}/bin/"
 
+# Hatch expands its `{root}` field to the project directory before it runs a command.
+_ROOT_PREFIX = "{root}/"
+
 # A dependency specifier down to its bare name.
 _REQUIREMENT_NAME = re.compile(r"^[^\[=<>!~;\s]+")
 
@@ -144,26 +147,46 @@ def _hatch_envs() -> dict[str, Any]:
     return tomli.loads(HATCH_TOML.read_text(encoding="utf-8"))["envs"]
 
 
+def _default_env() -> dict[str, Any]:
+    """The environment docs/contributing.md runs its tools out of."""
+    envs = _hatch_envs()
+    assert "default" in envs, "hatch.toml declares no default environment"
+    return envs["default"]
+
+
+def _default_workspace_members() -> list[str]:
+    """The member directories the default environment installs editable."""
+    members = _default_env().get("workspace", {}).get("members")
+    assert members, "hatch.toml's default environment names no workspace members"
+    return [str(member) for member in members]
+
+
+def _default_dependency_groups() -> list[str]:
+    """The dependency-groups the default environment syncs."""
+    groups = _default_env().get("dependency-groups")
+    assert groups, "hatch.toml's default environment names no dependency-groups"
+    return [str(group) for group in groups]
+
+
 def _installed_names() -> set[str]:
     """The distributions and scripts hatch's default environment names.
 
     Transitive dependencies are left out: the page runs a tool the environment
     asks for, not one pulled in behind another.
     """
-    default = _hatch_envs()["default"]
     groups = tomli.loads(PYPROJECT.read_text(encoding="utf-8"))["dependency-groups"]
 
     # The umbrella installs from the repo root, its members from subdirectories.
     installed = _project_names(REPO_ROOT)
-    for member in default["workspace"]["members"]:
-        installed |= _project_names(REPO_ROOT / str(member))
-    for group in default["dependency-groups"]:
-        installed |= _group_names(str(group), groups)
+    for member in _default_workspace_members():
+        installed |= _project_names(REPO_ROOT / member)
+    for group in _default_dependency_groups():
+        installed |= _group_names(group, groups)
     return installed
 
 
 def _pre_install_editables(env: dict[str, Any]) -> set[str]:
-    """The directories an environment installs editable ahead of hatch's own install."""
+    """The paths an environment installs editable ahead of hatch's own install."""
     paths = set()
     for command in env.get("pre-install-commands", []):
         args = shlex.split(str(command))
@@ -262,14 +285,47 @@ def test_only_the_default_environment_is_the_check_out_venv() -> None:
     )
 
 
+def test_the_docs_environment_carries_no_project() -> None:
+    """CI and Read the Docs build the docs from pylock.docs.toml and nothing else.
+
+    Hatch installs `workspace.members` editable even under `skip-install`, so an
+    environment that names members carries more than that lock does.
+    """
+    envs = _hatch_envs()
+    assert "docs" in envs, "hatch.toml declares no docs environment"
+
+    docs = envs["docs"]
+    assert docs.get("skip-install") is True, (
+        "the docs environment installs the project, which the docs lock does not"
+    )
+    assert "workspace" not in docs, (
+        "the docs environment names workspace members, which hatch installs "
+        "editable even under skip-install"
+    )
+
+
 def test_workspace_members_go_in_before_the_umbrella() -> None:
     """The default environment installs its members ahead of hatch's own install.
 
     The umbrella pins them to the unreleased version under development, so
     hatch's install resolves only once they are already there.
     """
-    default = _hatch_envs()["default"]
-    assert _pre_install_editables(default) == set(default["workspace"]["members"])
+    editables = _pre_install_editables(_default_env())
+    installed = {path.removeprefix(_ROOT_PREFIX) for path in editables}
+    assert installed == set(_default_workspace_members())
+
+
+def test_pre_install_paths_are_anchored_at_the_project_root() -> None:
+    """Hatch runs a pre-install command wherever it was invoked, not at the root."""
+    relative = sorted(
+        path
+        for path in _pre_install_editables(_default_env())
+        if not path.startswith(_ROOT_PREFIX)
+    )
+    assert not relative, (
+        f"hatch.toml installs {relative} relative to the invocation directory, "
+        f"so `hatch shell` fails from any subdirectory of the check-out"
+    )
 
 
 def test_documented_venv_tools_are_installed() -> None:
