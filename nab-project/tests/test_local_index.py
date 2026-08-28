@@ -823,6 +823,37 @@ class TestFlatWheelhouse:
         assert _read_sdist_requires_python(tmp_path / "absent.tar.gz") is None
 
 
+_NGINX_EMPTY_AUTOINDEX = (
+    "<html>\n<head><title>Index of /simple/foo/</title></head>\n"
+    "<body>\n<h1>Index of /simple/foo/</h1><hr><pre>"
+    '<a href="../">../</a>\n'
+    "</pre><hr></body>\n</html>\n"
+)
+
+_APACHE_PLAIN_EMPTY_AUTOINDEX = (
+    "<html>\n <head>\n  <title>Index of /simple/foo</title>\n </head>\n"
+    " <body>\n<h1>Index of /simple/foo</h1>\n"
+    '<ul><li><a href="/simple/"> Parent Directory</a></li>\n</ul>\n'
+    "</body></html>\n"
+)
+
+# Apache's FancyIndexing output: its sort links are bare queries, which resolve
+# against index.html to the page itself.
+_APACHE_FANCY_EMPTY_AUTOINDEX = (
+    "<html>\n <head>\n  <title>Index of /simple/foo</title>\n </head>\n"
+    " <body>\n<h1>Index of /simple/foo</h1>\n  <table>\n"
+    '   <tr><th><img src="/icons/blank.gif" alt="[ICO]"></th>'
+    '<th><a href="?C=N;O=D">Name</a></th>'
+    '<th><a href="?C=M;O=A">Last modified</a></th>'
+    '<th><a href="?C=S;O=A">Size</a></th></tr>\n'
+    '   <tr><th colspan="4"><hr></th></tr>\n'
+    '<tr><td><a href="/simple/">Parent Directory</a></td>'
+    '<td>&nbsp;</td><td align="right">  - </td></tr>\n'
+    '   <tr><th colspan="4"><hr></th></tr>\n</table>\n'
+    "</body></html>\n"
+)
+
+
 class TestPep503Directory:
     def _make_index(self, tmp_path: Path, body: str) -> Path:
         package_dir = tmp_path / "foo"
@@ -865,6 +896,53 @@ class TestPep503Directory:
         (package_dir / "bar-1.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
         assert run(client.get_files("foo")) == []
+        assert not client.served_unreadable_only("foo")
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            _NGINX_EMPTY_AUTOINDEX,
+            _APACHE_PLAIN_EMPTY_AUTOINDEX,
+            _APACHE_FANCY_EMPTY_AUTOINDEX,
+        ],
+        ids=["nginx", "apache-plain", "apache-fancy"],
+    )
+    def test_autoindex_of_empty_package_dir_lists_nothing(
+        self, tmp_path: Path, body: str
+    ) -> None:
+        """Navigation links name no file, so nothing on the page is a release."""
+        self._make_index(tmp_path, body)
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert run(client.get_files("foo")) == []
+        assert not client.served_unreadable_only("foo")
+        assert not client.served_all_yanked("foo")
+
+    def test_navigation_link_beside_yanked_files_reports_all_yanked(
+        self, tmp_path: Path
+    ) -> None:
+        """A link naming no file stays out of the every-file-yanked count."""
+        body = (
+            '<a href="../">../</a>'
+            '<a href="foo-1.0-py3-none-any.whl" data-yanked="broken build">foo</a>'
+        )
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        assert run(client.get_files("foo")) == []
+        assert client.served_all_yanked("foo")
+        assert not client.served_unreadable_only("foo")
+
+    def test_directory_href_named_like_a_wheel_is_dropped(self, tmp_path: Path) -> None:
+        """A trailing slash names a directory, whatever the segment before it says."""
+        body = (
+            '<a href="foo-1.0-py3-none-any.whl/">foo-1.0</a>'
+            '<a href="foo-2.0-py3-none-any.whl">foo-2.0</a>'
+        )
+        package_dir = self._make_index(tmp_path, body)
+        (package_dir / "foo-2.0-py3-none-any.whl").write_bytes(b"")
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert [r.version for r in result] == ["2.0"]
         assert not client.served_unreadable_only("foo")
 
     def test_relative_href_resolves_against_dir(self, tmp_path: Path) -> None:
