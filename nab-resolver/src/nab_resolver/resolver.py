@@ -625,6 +625,13 @@ class Resolver(Generic[PackageType, VersionType]):
         self.fold_identity: RangeProtocol[Any] = range_type.full()
         self.term_top: RangeProtocol[Any] = ~range_type.empty()
 
+        # as_term_range's answer per supplied range object, keyed by id() with
+        # term_range_keepalive holding the keys alive. Uncapped, unlike
+        # propagate's token memo: the keys are clause and decision ranges rather
+        # than every propagation probe.
+        self.term_range_by_id: dict[int, RangeProtocol[Any]] = {}
+        self.term_range_keepalive: list[RangeProtocol[Any]] = []
+
         self.incompatibilities: list[Incompatibility[Any, Any]] = []
         self.package_to_incompatibilities: defaultdict[Any, list[int]] = defaultdict(
             list
@@ -689,8 +696,16 @@ class Resolver(Generic[PackageType, VersionType]):
         the identity :class:`~nab_resolver.types.RangeProtocol` documents
         without equalling ``full()``, such as ``full()`` minus an ``===``
         literal, passes through and reaches conflict resolution's step budget.
+
+        Memoised per supplied range object.
         """
-        return self.term_top if range_ == self.fold_identity else range_
+        key = id(range_)
+        result = self.term_range_by_id.get(key)
+        if result is None:
+            result = self.term_top if range_ == self.fold_identity else range_
+            self.term_range_by_id[key] = result
+            self.term_range_keepalive.append(range_)
+        return result
 
     def resolve(
         self,
@@ -895,6 +910,8 @@ class Resolver(Generic[PackageType, VersionType]):
         self.range_tokens.clear()
         self.range_token_by_id.clear()
         self.interned_ranges.clear()
+        self.term_range_by_id.clear()
+        self.term_range_keepalive.clear()
 
         # Re-asked here, so a hook installed since the last resolve is honoured.
         self._hint_ignoring_provider = _provider_with_inherited_hint(self.provider)

@@ -44,6 +44,9 @@ class FlaggedRange:
 
     __slots__ = ("arbitrary", "base")
 
+    # Counts every ``__eq__`` call, so a test can pin one that is skipped.
+    eq_calls: ClassVar[int] = 0
+
     def __init__(self, base: Range[int], *, arbitrary: bool = False) -> None:
         self.base = base
         self.arbitrary = arbitrary
@@ -131,6 +134,7 @@ class FlaggedRange:
 
     def __eq__(self, other: object) -> bool:
         """Equal when the interval sets and the flags both match."""
+        FlaggedRange.eq_calls += 1
         return (
             isinstance(other, FlaggedRange)
             and self.base == other.base
@@ -379,3 +383,49 @@ class TestTermTopSubstitution:
         )
         assert recorded
         assert all(constraint == resolver.term_top for constraint in recorded)
+
+
+class TestTermRangeMemo:
+    """``as_term_range`` memoises its result per supplied range object."""
+
+    def test_repeat_of_a_full_range_stays_substituted(self) -> None:
+        """A memo hit returns the substitution, not the range it keyed on."""
+        resolver = build_resolver(FlaggedProvider())
+        supplied = FlaggedRange.full()
+        assert resolver.as_term_range(supplied) is resolver.term_top
+        assert resolver.as_term_range(supplied) is resolver.term_top
+
+    def test_repeat_of_a_narrower_range_passes_through(self) -> None:
+        """A memo hit on a narrower range returns that range, not the top."""
+        resolver = build_resolver(FlaggedProvider())
+        supplied = FlaggedRange.singleton(1)
+        assert resolver.as_term_range(supplied) is supplied
+        assert resolver.as_term_range(supplied) is supplied
+
+    def test_a_repeat_makes_no_comparison(self) -> None:
+        """The memo answers a repeat without comparing the range again."""
+        resolver = build_resolver(FlaggedProvider())
+        supplied = FlaggedRange.singleton(1)
+        resolver.as_term_range(supplied)
+
+        before = FlaggedRange.eq_calls
+        resolver.as_term_range(supplied)
+
+        assert FlaggedRange.eq_calls == before
+
+    def test_the_memo_keeps_the_keyed_object_alive(self) -> None:
+        """The memo holds a reference to the object it keyed on."""
+        resolver = build_resolver(FlaggedProvider())
+        supplied = FlaggedRange.full()
+        resolver.as_term_range(supplied)
+        assert any(kept is supplied for kept in resolver.term_range_keepalive)
+
+    def test_a_new_resolution_starts_with_an_empty_memo(self) -> None:
+        """``_reset`` drops the memo, so a second solve reads none of its entries."""
+        resolver = build_resolver(FlaggedProvider())
+        resolver.as_term_range(FlaggedRange.full())
+
+        resolver._reset(None)
+
+        assert not resolver.term_range_by_id
+        assert not resolver.term_range_keepalive
