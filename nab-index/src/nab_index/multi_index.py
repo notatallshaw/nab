@@ -184,7 +184,12 @@ class MultiIndexClient:
         """Close all clients on exit."""
         await self.aclose()
 
-    def _override_index(self, package: str) -> str | None:
+    def pinned_index(self, package: str) -> str | None:
+        """Return the index a routing override pins ``package`` to, or ``None``.
+
+        A pin is a strict route: a pinned package skips the walk over the
+        configured order, so the index named here is the only one asked.
+        """
         return self._override_map.get(_normalise_name(package))
 
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
@@ -195,7 +200,7 @@ class MultiIndexClient:
         client.  Raises :class:`~nab_index.cache.OfflineError` when no
         index served a listing and at least one was skipped offline.
         """
-        override = self._override_index(package)
+        override = self.pinned_index(package)
         if override is not None:
             client = self._clients[override]
             files = await client.get_files(package)
