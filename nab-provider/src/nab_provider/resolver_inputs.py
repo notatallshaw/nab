@@ -18,7 +18,11 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver.errors import ResolutionError
 from nab_resolver.types import RootRequirement
 
-from .conflict_kind import membership_set_in_marker
+from .conflict_kind import (
+    KIND_EXTRA,
+    MARKER_VARIABLE_FOR_KIND,
+    membership_set_in_marker,
+)
 from .errors import ConfigError
 from .extra_keys import join_extra, split_extra
 from .vcs_admission import admit_vcs_url
@@ -36,6 +40,15 @@ if TYPE_CHECKING:
 
 
 _logger = logging.getLogger(__name__)
+
+# What a dropped entry is called in its warning.  A kind not listed here is
+# named after itself, since ``kind`` is a free string on the public entry point.
+_DROPPED_MARKER_SUBJECT = {
+    "requirement": "Root requirement",
+    "constraint": "Constraint",
+}
+
+_EXTRAS_VARIABLE = MARKER_VARIABLE_FOR_KIND[KIND_EXTRA]
 
 
 def raise_for_unsatisfiable(
@@ -61,27 +74,53 @@ def raise_for_unsatisfiable(
     raise ResolutionError(msg)
 
 
-def _warn_dropped_root_marker(req: Requirement, warned: set[str]) -> None:
-    """Warn when a dropped root requirement tests an extra/group membership.
+def _repair_advice(*, kind: str, tests_extra: bool) -> str:
+    """Return the fix a dropped entry's warning ends with.
 
-    Root activates no extra or group, so a marker testing ``extra``,
-    ``extras`` or ``dependency_groups`` membership never holds.  ``warned``
-    holds the requirements already reported, so one mistake warns once.
+    A constraint cannot be pointed at ``pkg[extra]``, since the constraint
+    parser rejects a constraint carrying extras, so it is asked to edit the
+    marker instead.  Every other kind keeps the extras-of-package advice.
+    """
+    if kind == "constraint":
+        if tests_extra:
+            return (
+                "A constraint cannot carry extras, so drop the membership test "
+                "from the marker and keep the rest."
+            )
+        return "Drop the membership test from the marker and keep the rest."
+    return "For an extra, use pkg[extra] (extras-of-package)."
+
+
+def _warn_dropped_membership_marker(
+    req: Requirement, warned: set[tuple[str, str]], *, kind: str
+) -> None:
+    """Warn when a dropped top-level entry tests an extra or group membership.
+
+    A selected extra or group is folded into the requirements rather than the
+    environment, so ``extra``, ``extras`` and ``dependency_groups`` are empty
+    whatever the run selects and a membership test never holds.  ``kind`` names
+    the entry in the message and picks the repair.  ``warned`` holds the
+    ``(kind, text)`` pairs already reported, so one mistake warns once per kind.
     """
     marker_text = str(req.marker)
-    if "extra ==" not in marker_text and not membership_set_in_marker(marker_text):
+    membership_set = membership_set_in_marker(marker_text)
+    if "extra ==" not in marker_text and membership_set is None:
         return
 
     text = str(req)
-    if text in warned:
+    if (kind, text) in warned:
         return
+    warned.add((kind, text))
 
-    warned.add(text)
+    tests_extra = "extra ==" in marker_text or membership_set == _EXTRAS_VARIABLE
     _logger.warning(
-        "Root requirement %r tests an extra or dependency-group membership "
-        "marker; the dep is dropped because root activates no extra or group "
-        "at resolve time. For an extra, use pkg[extra] (extras-of-package).",
+        "%s %r tests an extra or dependency-group membership marker; it is "
+        "dropped because a selected extra or group is folded into the "
+        "requirements rather than the environment, so extra, extras and "
+        "dependency_groups are empty at resolve time. %s",
+        _DROPPED_MARKER_SUBJECT.get(kind, kind.capitalize()),
         text,
+        _repair_advice(kind=kind, tests_extra=tests_extra),
     )
 
 
@@ -100,7 +139,7 @@ def build_resolver_inputs(
     environment: Mapping[str, str],
     marker_holds: MarkerHolds,
     kind: str = "requirement",
-    warned: set[str] | None = None,
+    warned: set[tuple[str, str]] | None = None,
 ) -> _ResolverInputs:
     """Convert PEP 508 requirements to the resolver's input shape.
 
@@ -118,13 +157,14 @@ def build_resolver_inputs(
     constraint intersection is caught here by :func:`raise_for_unsatisfiable`
     rather than by the solver.
 
-    ``warned`` collects the root markers already reported: callers sharing one
-    warn once between them, a caller that omits it warns per call.
+    ``warned`` collects the entries already reported, keyed by ``kind``:
+    callers sharing one set warn once between them, a caller that omits it
+    warns per call.
     """
     roots: list[RootRequirement[str, VersionRange]] = []
     resolver_requirements: dict[str, VersionRange] = {}
     root_extras: set[tuple[str, str]] = set()
-    already_warned = set() if warned is None else warned
+    already_warned: set[tuple[str, str]] = set() if warned is None else warned
 
     for req in requirements:
         if kind == "constraint" and req.extras:
@@ -132,7 +172,7 @@ def build_resolver_inputs(
             raise ConfigError(msg)
 
         if req.marker is not None and not marker_holds(req.marker, environment):
-            _warn_dropped_root_marker(req, already_warned)
+            _warn_dropped_membership_marker(req, already_warned, kind=kind)
             continue
 
         if req.url is not None:

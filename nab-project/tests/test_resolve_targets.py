@@ -806,8 +806,8 @@ class TestTwoConflictSetsPartialInstall:
         }
 
 
-class TestDroppedRootMarkerWarnedOnce:
-    """One mistaken root requirement is reported once per run, however
+class TestDroppedMembershipMarkerWarnedOnce:
+    """One mistaken top-level entry is reported once per run, however
     many targets, forks and base passes read it."""
 
     def _coordinator(self) -> FakeFetchPort:
@@ -861,6 +861,32 @@ class TestDroppedRootMarkerWarnedOnce:
         assert len(warned) == 2
         assert sum('gated; extra == "test"' in msg for msg in warned) == 1
         assert sum('other; "dev" in extras' in msg for msg in warned) == 1
+
+    def test_dropped_constraint_warns_once_across_targets_and_forks(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The constraint pass shares the run's warned set with the root pass."""
+        plain = tuple(_reqs("base"))
+        forks = [
+            ResolveFork((("extra", "cpu"),), plain),
+            ResolveFork((("extra", "gpu"),), plain),
+        ]
+        with caplog.at_level(logging.WARNING, logger="nab_provider.resolver_inputs"):
+            result = resolve_with_coordinator(
+                self._coordinator(),
+                self._two_targets(),
+                forks=forks,
+                base_requirements=plain,
+                config=_no_build(constraints=('base<2.0 ; extra == "test"',)),
+            )
+        assert result.success
+        warned = [
+            rec.getMessage()
+            for rec in caplog.records
+            if "membership marker" in rec.message
+        ]
+        assert len(warned) == 1
+        assert warned[0].startswith("Constraint 'base<2.0; extra == \"test\"'")
 
 
 class TestDirectPackages:

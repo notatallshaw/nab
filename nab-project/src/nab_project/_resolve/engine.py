@@ -496,9 +496,9 @@ class _EngineSettings:
     # of the listing filter reads are fixed for the run.
     listing_filter_cache: ListingFilterCache = field(default_factory=ListingFilterCache)
 
-    # The root requirements _warn_dropped_root_marker already reported, so a
-    # root read once per target per fork and again in the base pass warns once.
-    warned_root_markers: set[str] = field(default_factory=set)
+    # The (kind, text) pairs already reported, so an entry read once per
+    # target per fork and again in the base pass warns once.
+    warned_dropped_markers: set[tuple[str, str]] = field(default_factory=set)
 
 
 def _threaded_preferences(
@@ -556,7 +556,7 @@ def _resolve_one_target(
             config.vcs,
             environment=environment,
             marker_holds=settings.marker_holds,
-            warned=settings.warned_root_markers,
+            warned=settings.warned_dropped_markers,
         )
         constraint_ranges = build_resolver_inputs(
             constraints,
@@ -564,7 +564,7 @@ def _resolve_one_target(
             environment=environment,
             marker_holds=settings.marker_holds,
             kind="constraint",
-            warned=settings.warned_root_markers,
+            warned=settings.warned_dropped_markers,
         ).ranges
         resolver_constraints = ProxyConstraints(constraint_ranges)
     except ResolutionError as exc:
