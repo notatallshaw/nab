@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -51,6 +52,9 @@ _LISTING = {
 }
 _LISTING_BYTES = json.dumps(_LISTING).encode()
 _PARSED = _parse_files(json.loads(_LISTING_BYTES), _INDEX_NORM, "pkg")
+
+# Stands in for a body nested past the decoder's guard (``refuse_over_nested``).
+_OVER_NESTED = b"[[[]]]"
 
 # A page of only formats nab does not read, so it parses to zero files.
 _ZIP_ONLY_BYTES = json.dumps(
@@ -177,6 +181,17 @@ class TestReadFreshParsedListing:
         tmp_path.joinpath(*_POLICY_PATH_PARTS).write_bytes(raw)
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
+    def test_over_nested_policy_returns_none(
+        self,
+        tmp_path: Path,
+        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+    ) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache)
+        tmp_path.joinpath(*_POLICY_PATH_PARTS).write_bytes(_OVER_NESTED)
+        with refuse_over_nested(_OVER_NESTED):
+            assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
+
     def test_stale_online_returns_none(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
         _warm_bound(cache, fresh=False)
@@ -204,6 +219,17 @@ class TestReadFreshParsedListing:
         _warm_bound(cache)
         cache.put_simple_parsed("pkg", blob)
         assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
+
+    def test_over_nested_blob_returns_none(
+        self,
+        tmp_path: Path,
+        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+    ) -> None:
+        cache = _cache(tmp_path)
+        _warm_bound(cache)
+        cache.put_simple_parsed("pkg", _OVER_NESTED)
+        with refuse_over_nested(_OVER_NESTED):
+            assert read_fresh_parsed_listing(cache, "pkg", offline=False) is None
 
     def test_empty_listing_returns_none(self, tmp_path: Path) -> None:
         # A page of formats nab does not read parses to zero files; the blob

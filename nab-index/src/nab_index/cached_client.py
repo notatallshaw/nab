@@ -10,7 +10,6 @@ treated as immutable (cached forever; never revalidated).
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import re
 import time
@@ -22,6 +21,7 @@ from typing import TYPE_CHECKING
 from nab_provider.records import select_artifact_hash
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
 
+from ._json_decode import decode_json
 from .cache import CacheBackend, CachePolicy, OfflineError, is_sendable_etag
 from .client import (
     _HTTP_NOT_FOUND,
@@ -572,13 +572,14 @@ class CachedAsyncSimpleClient:
         raises there, the same as on the wire path.
         """
         try:
-            decoded: object = json.loads(body)
-        except ValueError:
+            decoded: object = decode_json(body)
+        except ValueError as exc:
             logger.warning(
-                "Corrupt cached Simple-API body for %r from %s: not valid JSON; "
+                "Corrupt cached Simple-API body for %r from %s: %s; "
                 "treating as a miss and re-fetching",
                 package,
                 self._index_url,
+                exc,
             )
             return None
         return decoded
@@ -588,18 +589,16 @@ class CachedAsyncSimpleClient:
     ) -> list[WheelFile | SdistFile]:
         """Parse a Simple-API listing body served from ``page_url``.
 
-        A body that is not valid JSON raises the same
+        A body that will not decode raises the same
         :class:`MalformedSimpleResponseError` as a valid-JSON body of the
-        wrong shape, not a raw decode error. ``json.loads`` raises a
-        :class:`ValueError` for every body it rejects, including non-UTF-8
-        bytes and an integer literal past CPython's conversion limit.
+        wrong shape, not a raw decode error.
         """
         try:
-            data = json.loads(body)
+            data = decode_json(body)
         except ValueError as exc:
             msg = (
                 f"{self._index_url} served a malformed Simple-API response for "
-                f"{package!r}: body is not valid JSON"
+                f"{package!r}: body is {exc}"
             )
             raise MalformedSimpleResponseError(msg) from exc
         return self._parse_body(data, package, page_url=page_url)

@@ -1,4 +1,4 @@
-"""Top-level conftest: hypothesis profiles and the ``cap_writes`` fixture.
+"""Top-level conftest: hypothesis profiles and the simulated-failure fixtures.
 
 Three hypothesis profiles, selectable via the ``HYPOTHESIS_PROFILE`` env var:
 
@@ -15,15 +15,16 @@ The property suite under ``nab-*/tests/property*/`` uses explicit
 ``PROPERTY_SETTINGS``/``DEEP_SETTINGS``/``BRUTE_FORCE_SETTINGS``
 decorators so its example budget is independent of the profile.
 
-``cap_writes``, ``deny_access`` and ``oversized_integer`` are here rather than
-in one suite's conftest because both the ``nab-project`` suite and the CLI
-suite use them.
+``cap_writes``, ``deny_access``, ``oversized_integer`` and
+``refuse_over_nested`` are here rather than in one suite's conftest because
+the ``nab-index``, ``nab-project`` and CLI suites all use them.
 """
 
 from __future__ import annotations
 
 import errno
 import io
+import json
 import os
 import sys
 from contextlib import contextmanager
@@ -114,6 +115,20 @@ def _cap_writes(budget: int) -> Iterator[None]:
 
 
 @contextmanager
+def _refuse_over_nested(payload: bytes) -> Iterator[None]:
+    real_loads = json.loads
+
+    def refusing_loads(raw: Any, *args: Any, **kwargs: Any) -> Any:
+        if raw == payload:
+            msg = "maximum recursion depth exceeded while decoding a JSON array"
+            raise RecursionError(msg)
+        return real_loads(raw, *args, **kwargs)
+
+    with patch.object(json, "loads", refusing_loads):
+        yield
+
+
+@contextmanager
 def _deny_access(target: Path) -> Iterator[None]:
     real_os_stat, real_path_stat, real_open = os.stat, Path.stat, Path.open
     denied = os.fspath(target)
@@ -140,6 +155,19 @@ def _deny_access(target: Path) -> Iterator[None]:
         patch.object(Path, "open", denying_open),
     ):
         yield
+
+
+@pytest.fixture
+def refuse_over_nested() -> Callable[[bytes], AbstractContextManager[None]]:
+    """Simulate a JSON body the decoder refuses as nested too deeply.
+
+    Inside ``refuse_over_nested(b)`` decoding ``b`` raises ``RecursionError``
+    and every other body decodes as usual. The depth that provokes one belongs
+    to the interpreter version and to the C stack left to the running thread
+    rather than to the document, so a literal deep enough to trigger it here
+    decodes cleanly on the next machine.
+    """
+    return _refuse_over_nested
 
 
 @pytest.fixture

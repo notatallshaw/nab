@@ -15,7 +15,8 @@ import asyncio
 import hashlib
 import json
 import logging
-from collections.abc import Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping
+from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -40,6 +41,9 @@ from nab_index.parsed_listing import corruption_reason, decode, encode
 _SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
+
+# Stands in for a body nested past the decoder's guard (``refuse_over_nested``).
+_OVER_NESTED = b"[[[]]]"
 
 _T = TypeVar("_T")
 
@@ -702,6 +706,25 @@ class TestReadPathRebuild:
         assert result is not None
         _, policy = result
         assert decode(cache.get_simple_parsed("pkg"), policy) == files
+
+    def test_over_nested_blob_warns_and_reparses(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+    ) -> None:
+        cache = _cache(tmp_path)
+        files, _ = _warm_bound(cache)
+        cache.put_simple_parsed("pkg", _OVER_NESTED)
+        transport = _FakeTransport([])
+        client = CachedAsyncSimpleClient(transport, cache, _INDEX)
+
+        with refuse_over_nested(_OVER_NESTED), caplog.at_level(logging.WARNING):
+            got = _run(client.get_files("pkg"))
+
+        assert got == files
+        assert "Corrupt parsed-listing" in caplog.text
+        assert "nested too deeply to decode" in caplog.text
 
     def test_truncated_blob_warns_and_reparses(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture

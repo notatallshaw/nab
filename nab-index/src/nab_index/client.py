@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 import re
 import sys
 import tarfile
@@ -38,6 +37,7 @@ from nab_provider.records import (
 )
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
 
+from ._json_decode import decode_json
 from ._pep503 import json_listing
 from .transport import IDENTITY_HEADERS, raise_unless_ok
 
@@ -399,7 +399,7 @@ class AsyncSimpleClient:
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
         """Fetch all distribution files for a package.
 
-        A body ``json.loads`` rejects becomes a
+        A body that will not decode becomes a
         :class:`MalformedSimpleResponseError`, not a raw decode error.
         """
         url = f"{self._index_url}{package}/"
@@ -413,11 +413,11 @@ class AsyncSimpleClient:
         )
 
         try:
-            data = json.loads(body)
+            data = decode_json(body)
         except ValueError as exc:
             msg = (
                 f"{self._index_url} served a malformed Simple-API response for "
-                f"{package!r}: body is not valid JSON"
+                f"{package!r}: body is {exc}"
             )
             raise MalformedSimpleResponseError(msg) from exc
         return _parse_files(data, self._index_url, package, page_url=response.url)

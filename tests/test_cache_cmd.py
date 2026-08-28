@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,9 @@ SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
 SDIST_BUCKET = f"sdist-{CACHE_VERSION_SDIST}"
 
 _FRESH = CachePolicy(fetched_at=0, max_age=600, etag=None)
+
+# Stands in for a body nested past the decoder's guard (``refuse_over_nested``).
+_OVER_NESTED = b"[[[]]]"
 
 
 # Relative to tmp_path, which the fixture below points discovery at.
@@ -296,6 +301,22 @@ class TestCacheVerify:
         err = capsys.readouterr().err
         assert str(parsed_path) in err
         assert "not valid JSON" in err
+
+    def test_reports_over_nested_parsed_entry(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+    ) -> None:
+        root = tmp_path / "cache"
+        _populate(root)
+        parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
+        parsed_path.write_bytes(_OVER_NESTED)
+        with refuse_over_nested(_OVER_NESTED):
+            _run_cache(["verify", "--cache-dir", str(root)])
+        err = capsys.readouterr().err
+        assert str(parsed_path) in err
+        assert "nested too deeply to decode" in err
 
     def test_does_not_read_through_symlinked_bucket(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

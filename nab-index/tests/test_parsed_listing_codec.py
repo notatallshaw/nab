@@ -15,6 +15,8 @@ from __future__ import annotations
 import dataclasses
 import json
 import sys
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 
 import pytest
 
@@ -33,6 +35,9 @@ from nab_index.parsed_listing import (
 from nab_provider.records import defer_hashes, defer_sidecar_hash
 
 DIGEST = "a" * 64
+
+# Stands in for a body nested past the decoder's guard (``refuse_over_nested``).
+OVER_NESTED = b"[[[]]]"
 
 SHA256 = sys.intern("sha256")
 SHA512 = sys.intern("sha512")
@@ -328,6 +333,21 @@ def test_absent_optional_fields_decode_as_none() -> None:
     wheel = decoded[0]
     assert isinstance(wheel, WheelFile)
     assert wheel.metadata_hash is None
+
+
+def test_over_nested_blob_is_miss(
+    refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+) -> None:
+    """A blob nested past the JSON decoder's guard is a miss, not a raise."""
+    with refuse_over_nested(OVER_NESTED):
+        assert decode(OVER_NESTED, _policy()) is None
+
+
+def test_over_nested_blob_names_its_depth(
+    refuse_over_nested: Callable[[bytes], AbstractContextManager[None]],
+) -> None:
+    with refuse_over_nested(OVER_NESTED):
+        assert corruption_reason(OVER_NESTED) == "nested too deeply to decode"
 
 
 @pytest.mark.parametrize(
