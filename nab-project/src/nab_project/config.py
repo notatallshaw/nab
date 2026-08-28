@@ -726,22 +726,32 @@ def _config_from_effective(
     if mode is ResolveMode.UNIVERSAL and matrix is None:
         if mode_value.origin.kind is SourceKind.CLI:
             msg = (
-                "--project-mode universal needs a [tool.nab.matrix] table, but"
-                " a matrix can only be declared in the project file (there is"
-                " no --project-matrix flag). Add [tool.nab.matrix] to the"
-                " project's pyproject.toml or nab.toml, or drop --project-mode"
-                " universal."
+                "--project-mode universal needs a matrix table, but a matrix"
+                " can only be declared in a project file (there is no"
+                " --project-matrix flag). Add [tool.nab.matrix] to the"
+                " project's pyproject.toml, or a top-level [matrix] table to"
+                " the project's nab.toml, or drop --project-mode universal."
             )
         else:
+            # PROJECT_TOML is the project-dir nab.toml, whose keys are top-level.
+            table = (
+                "top-level [matrix] table in nab.toml"
+                if mode_value.origin.kind is SourceKind.PROJECT_TOML
+                else "[tool.nab.matrix] table in pyproject.toml"
+            )
             msg = (
-                "mode = 'universal' requires a [tool.nab.matrix] table"
-                " declaring python and platforms"
+                f"mode = 'universal' requires a {table} declaring python and platforms"
             )
         raise ConfigError(msg)
     if mode is ResolveMode.SPECIFIC and matrix is not None:
         if not mode_value.origin.outranks(matrix_value.origin):
+            declared_table = (
+                "[matrix] in nab.toml"
+                if matrix_value.origin.kind is SourceKind.PROJECT_TOML
+                else "[tool.nab.matrix] in pyproject.toml"
+            )
             msg = (
-                "[tool.nab.matrix] is set but mode is 'specific'; set"
+                f"{declared_table} is set but mode is 'specific'; set"
                 " mode = 'universal' to resolve for every target the matrix"
                 " declares, or remove the table. The multi-target lockfile"
                 " format universal mode produces is experimental."
