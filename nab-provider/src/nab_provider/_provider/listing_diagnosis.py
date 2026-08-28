@@ -59,6 +59,7 @@ if TYPE_CHECKING:
         "unreadable-only",
         "yanked-only",
         "absent",
+        "pinned-absent",
         "filtered-empty",
         "blockers",
         "extra-undeclared",
@@ -130,6 +131,7 @@ class ReasonKind:
     UNREADABLE_ONLY: Final = "unreadable-only"
     YANKED_ONLY: Final = "yanked-only"
     ABSENT: Final = "absent"
+    PINNED_ABSENT: Final = "pinned-absent"
     FILTERED_EMPTY: Final = "filtered-empty"
     BLOCKERS: Final = "blockers"
     EXTRA_UNDECLARED: Final = "extra-undeclared"
@@ -349,15 +351,16 @@ OFFLINE_MISS = NoVersionsReason(ReasonKind.OFFLINE_MISS)
 UNREADABLE_ONLY = NoVersionsReason(ReasonKind.UNREADABLE_ONLY)
 YANKED_ONLY = NoVersionsReason(ReasonKind.YANKED_ONLY)
 ABSENT = NoVersionsReason(ReasonKind.ABSENT)
+PINNED_ABSENT = NoVersionsReason(ReasonKind.PINNED_ABSENT)
 FILTERED_EMPTY = NoVersionsReason(ReasonKind.FILTERED_EMPTY)
 EXTRA_BASE_EMPTY = NoVersionsReason(ReasonKind.EXTRA_BASE_EMPTY)
 
 
 NO_MATCH = Diagnostic("no version matches the requirement")
 
-# The four situations the index client answers on its own.  None of them is
-# a walk, so only the two with something to add carry a ``-v`` body: for the
-# other two, saying the same fact at more length is not detail.
+# The four situations the index client answers on its own with a fixed line.
+# None of them is a walk, so only the two with something to add carry a ``-v``
+# body: for the other two, saying the same fact at more length is not detail.
 FIXED_DIAGNOSTICS: dict[Kind, Diagnostic] = {
     ReasonKind.OFFLINE_MISS: Diagnostic(
         "offline mode skipped an index with no cached listing",
@@ -379,6 +382,19 @@ FIXED_DIAGNOSTICS: dict[Kind, Diagnostic] = {
     ),
     ReasonKind.ABSENT: Diagnostic("package not found on any configured index"),
 }
+
+
+def pinned_index_diagnostic(index_name: str) -> Diagnostic:
+    """Say that the one index the package is routed to does not carry it.
+
+    Missing from a pinned index is not missing from the configured set: the
+    route is why no other index was asked.  Built rather than fixed, since
+    the line names the index.
+    """
+    return Diagnostic(
+        f"not found on index {index_name!r}, the only index this package is routed to"
+    )
+
 
 _NO_SDIST_TAIL = "the files nab read hold no sdist to build from"
 

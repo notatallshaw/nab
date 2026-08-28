@@ -1612,6 +1612,87 @@ class TestNoVersionsReasons:
             short_reason(provider, "foo") == "package not found on any configured index"
         )
 
+    def test_route_to_an_index_without_the_package_names_that_index(
+        self, tmp_path: Path
+    ) -> None:
+        """A pinned package missing from its index is not missing everywhere.
+
+        The route is why the index holding ``foo`` was never asked, so the
+        line has to name the one index that was.
+        """
+        public = tmp_path / "pypi"
+        public.mkdir()
+        (public / "foo-1.0-py3-none-any.whl").write_bytes(b"")
+        internal = tmp_path / "internal"
+        internal.mkdir()
+
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            indexes=[
+                IndexConfig("pypi", public.as_uri()),
+                IndexConfig("internal", internal.as_uri()),
+            ],
+            index_routes=[IndexRoute("foo", "internal")],
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+
+        assert rendered_reason(provider, "foo") == (
+            "not found on index 'internal', the only index this package is routed to"
+        )
+
+    def test_route_over_a_lone_index_still_names_absence(self, tmp_path: Path) -> None:
+        """A route that holds no index back leaves the absence line alone."""
+        internal = tmp_path / "internal"
+        internal.mkdir()
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            indexes=[IndexConfig("internal", internal.as_uri())],
+            index_routes=[IndexRoute("foo", "internal")],
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+
+        assert (
+            short_reason(provider, "foo") == "package not found on any configured index"
+        )
+
+    def test_yanked_page_on_the_routed_index_still_names_the_yank(
+        self, tmp_path: Path
+    ) -> None:
+        """The route is the weakest answer: a page that says more wins."""
+        body = json.dumps(
+            {
+                "files": [
+                    {
+                        "filename": "foo-1.0-py3-none-any.whl",
+                        "url": "https://internal.example/foo-1.0-py3-none-any.whl",
+                        "yanked": True,
+                    }
+                ]
+            }
+        ).encode()
+        stale = CachePolicy(fetched_at=0, max_age=1, etag=None)
+        OnDiskCache(tmp_path, "https://internal.example/simple/").put_simple(
+            "foo", body, stale
+        )
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            cache_dir=tmp_path,
+            offline=True,
+            indexes=[
+                IndexConfig("pypi", DEFAULT_INDEX_URL),
+                IndexConfig("internal", "https://internal.example/simple/"),
+            ],
+            index_routes=[IndexRoute("foo", "internal")],
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+
+        assert short_reason(provider, "foo") == (
+            "the index lists this package but every file is yanked"
+        )
+
     def test_all_yanked_listing_reports_the_yank_not_absence(
         self, tmp_path: Path
     ) -> None:

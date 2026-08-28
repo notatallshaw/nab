@@ -1093,13 +1093,20 @@ class FetchCoordinator:
         index returned no listing on every walk) falls back to the
         first configured index name so consumers always see
         something.
+
+        The router also says whether a routing override chose that index,
+        which the name alone cannot: an empty walk records the first
+        configured index too.  A route over a lone index holds no other
+        index back, so it is not recorded as a pin.
         """
         if isinstance(client, MultiIndexClient):
             routed = client.route_for(package)
             name = routed if routed is not None else self.indexes[0].name
+            pinned = len(self.indexes) > 1 and client.pinned_index(package) is not None
         else:
             name = self.indexes[0].name
-        self.index.store_listing_index(package, name)
+            pinned = False
+        self.index.store_listing_index(package, name, pinned=pinned)
 
     async def _fetch_metadata(
         self,

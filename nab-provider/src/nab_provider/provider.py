@@ -1748,6 +1748,8 @@ class Provider:
             return _diagnosis.UNREADABLE_ONLY
         if index.is_all_yanked_listing(normalized):
             return _diagnosis.YANKED_ONLY
+        if index.is_pinned_listing(normalized):
+            return _diagnosis.PINNED_ABSENT
         return _diagnosis.ABSENT
 
     def _capture_lookahead_blockers(
@@ -1866,11 +1868,25 @@ class Provider:
             return _diagnosis.blockers_diagnostic(
                 self, normalized, recorded.blockers, recorded.metadata
             )
+        if recorded.kind == _diagnosis.ReasonKind.PINNED_ABSENT:
+            return self._render_pinned_absent_reason(package)
         if recorded.kind == _diagnosis.ReasonKind.EXTRA_BASE_EMPTY:
             return self._render_extra_base_reason(package)
         if recorded.kind in _EXTRA_KINDS:
             return self._render_extra_reason(package, recorded)
         return self._render_listing_reason(package, recorded)
+
+    def _render_pinned_absent_reason(self, package: str) -> Diagnostic:
+        """Render a package routed to an index that does not carry it.
+
+        The name is read back from the store, which recorded it in the call
+        that marked the pin, so the marker carries nothing and the record
+        path stays allocation-free.
+        """
+        _, _, normalized = self.split_and_normalize(package)
+        index_name = self.serving_index(normalized)
+        assert index_name is not None
+        return _diagnosis.pinned_index_diagnostic(index_name)
 
     def _render_extra_base_reason(self, package: str) -> Diagnostic:
         """Render an extras proxy whose base package ran out of versions.

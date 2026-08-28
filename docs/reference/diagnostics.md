@@ -47,3 +47,4 @@ Diagnostics:
 | `requires-python` never gets a `try:` | The override that lifts it replaces the package's declared metadata, so the line names the target instead: `no file supports Python 3.12`. |
 | An extras line can be about the base package | `foo[bar]` has versions only where `foo` does, so a filter that empties `foo`'s listing gives the line and its `try:` under `foo[bar]`, naming `foo` as the entry to edit. |
 | Some lines name no setting | Nothing in the configuration produced them, such as `package not found on any configured index` or `the index lists this package but every file is yanked`. |
+| A routed package is missing from one index, not from all of them | An `index` entry is a strict pin, so the line names that index: `not found on index 'internal', the only index this package is routed to`. |

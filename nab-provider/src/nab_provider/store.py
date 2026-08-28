@@ -68,6 +68,9 @@ class InMemoryIndex:
         self._listings: dict[str, list[WheelFile | SdistFile]] = {}
         self._listing_errors: dict[str, BaseException] = {}
         self._listing_indexes: dict[str, str] = {}
+        # Packages a routing override sent to one index, which left the
+        # other configured indexes unasked.
+        self._pinned_listings: set[str] = set()
         # Packages whose empty listing stands for an index skipped offline.
         self._offline_listing_misses: set[str] = set()
         # Packages whose empty listing stands for a page of formats nab cannot read.
@@ -185,14 +188,26 @@ class InMemoryIndex:
         """Return ``package``'s recorded listing fetch error, or ``None``."""
         return self._listing_errors.get(package)
 
-    def store_listing_index(self, package: str, index_name: str) -> None:
-        """Record which configured index served ``package``."""
+    def store_listing_index(
+        self, package: str, index_name: str, *, pinned: bool = False
+    ) -> None:
+        """Record which configured index served ``package``.
+
+        ``pinned`` marks ``index_name`` as an index a routing override
+        chose, which left the other configured indexes unasked.
+        """
         with self._lock:
             self._listing_indexes[package] = index_name
+            if pinned:
+                self._pinned_listings.add(package)
 
     def get_listing_index(self, package: str) -> str | None:
         """Return the configured index name that served ``package``, or ``None``."""
         return self._listing_indexes.get(package)
+
+    def is_pinned_listing(self, package: str) -> bool:
+        """Whether a routing override kept other indexes from serving ``package``."""
+        return package in self._pinned_listings
 
     def _read_metadata(
         self, package: str, version: str, metadata_url: str | None
