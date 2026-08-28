@@ -201,8 +201,8 @@ def _assert_roundtrip(package: str, body: bytes) -> None:
     blob = encode(parsed, digest)
     decoded = decode(blob, policy)
     assert decoded is not None
-    assert len(decoded) == len(parsed)
-    for got, want in zip(decoded, parsed, strict=True):
+    assert len(decoded.files) == len(parsed)
+    for got, want in zip(decoded.files, parsed, strict=True):
         _assert_record_equal(got, want)
 
 
@@ -276,7 +276,11 @@ def test_blob_carries_no_interpreter_tag() -> None:
     """The wire form is portable, so a blob written anywhere decodes here."""
     blob, policy = _sample_blob()
     header, _rows = json.loads(blob)
-    assert not any(isinstance(field, list) for field in header)
+    *build, digest, zip_sdists = header
+
+    assert all(isinstance(cell, int) for cell in build)
+    assert isinstance(digest, str)
+    assert zip_sdists == []
     assert decode(blob, policy) is not None
 
 

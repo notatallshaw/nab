@@ -54,6 +54,8 @@ if TYPE_CHECKING:
 
     from typing_extensions import Self
 
+    from nab_index.parsed_listing import ParsedListing
+
 __all__ = [
     "DEFAULT_INDEX_NAME",
     "DEFAULT_INDEX_URL",
@@ -448,7 +450,7 @@ class FetchCoordinator:
         msg = f"Fetcher thread crashed: {self._crash_error}"
         raise RuntimeError(msg)
 
-    def _try_listing_sync(self, package: str) -> list[WheelFile | SdistFile] | None:
+    def _try_listing_sync(self, package: str) -> ParsedListing | None:
         """Read a fresh parsed listing on the caller's thread, or ``None``.
 
         ``read_fresh_parsed_listing`` never raises, so the caller's pending is
@@ -459,9 +461,9 @@ class FetchCoordinator:
         if not self._sync_listing_enabled:
             stats.declined_ineligible += 1
             return None
-        records = read_fresh_parsed_listing(self._cache, package, offline=self._offline)
-        if records is not None:
-            return records
+        parsed = read_fresh_parsed_listing(self._cache, package, offline=self._offline)
+        if parsed is not None:
+            return parsed
         policy = self._cache.get_simple_policy(package)
         if policy is None:
             stats.declined_no_policy += 1
@@ -511,13 +513,16 @@ class FetchCoordinator:
             return event
         if not speculative:
             if self._overlap_gate_admits(package):
-                records = self._try_listing_sync(package)
-                if records is not None:
+                parsed = self._try_listing_sync(package)
+                if parsed is not None:
+                    records = parsed.files
                     # Store the serving index before store_listing fires the
                     # pending, matching the async path's ordering. The tail runs
                     # on the fetcher loop, or inline when the loop is gone.
                     self.index.store_listing_index(package, self.indexes[0].name)
-                    self.index.store_listing(package, records)
+                    self.index.store_listing(
+                        package, records, zip_sdists=parsed.zip_sdists
+                    )
                     self._warm_sync_stats.listing_hits += 1
                     if not self._post_to_loop(self._run_listing_tail, package, records):
                         self._run_listing_tail(package, records)
@@ -1031,6 +1036,7 @@ class FetchCoordinator:
             files,
             unreadable_only=client.served_unreadable_only(req.package),
             all_yanked=client.served_all_yanked(req.package),
+            zip_sdists=client.served_zip_sdists(req.package),
         )
         logger.debug("fetched listing: %s (%d files)", req.package, len(files))
         if self._on_fetch is not None:

@@ -77,6 +77,9 @@ class InMemoryIndex:
         self._unreadable_only_listings: set[str] = set()
         # Packages whose empty listing stands for a page of yanked files.
         self._all_yanked_listings: set[str] = set()
+        # Versions an index served as a ``.zip`` sdist, which the listing parse
+        # drops, so no record of them reaches ``_listings``.
+        self._zip_sdists: dict[str, frozenset[str]] = {}
 
         # Metadata text is keyed by the artifact it came from: the sidecar URL
         # for a wheel's METADATA, or None for text that stands for the version
@@ -139,6 +142,7 @@ class InMemoryIndex:
         offline_miss: bool = False,
         unreadable_only: bool = False,
         all_yanked: bool = False,
+        zip_sdists: frozenset[str] = frozenset(),
     ) -> None:
         """Cache the listing for ``package`` and unblock any waiter.
 
@@ -148,6 +152,10 @@ class InMemoryIndex:
         rather than one that served no files; ``unreadable_only`` marks it as
         a page of formats nab does not read; ``all_yanked`` marks it as a page
         whose every file is yanked.
+
+        ``zip_sdists`` names the releases served as a ``.zip`` sdist, which
+        nothing in ``data`` records.  It replaces whatever a prior store left,
+        so re-storing a listing without one clears it.
         """
         key = f"listing:{package}"
         materialised = list(data)
@@ -159,6 +167,10 @@ class InMemoryIndex:
                 self._unreadable_only_listings.add(package)
             if all_yanked:
                 self._all_yanked_listings.add(package)
+            if zip_sdists:
+                self._zip_sdists[package] = zip_sdists
+            else:
+                self._zip_sdists.pop(package, None)
 
             self._listings[package] = materialised
 
@@ -173,6 +185,10 @@ class InMemoryIndex:
     def is_all_yanked_listing(self, package: str) -> bool:
         """Whether ``package``'s empty listing held files and yanked every one."""
         return package in self._all_yanked_listings
+
+    def zip_sdist_versions(self, package: str) -> frozenset[str]:
+        """Versions of ``package`` an index served as a ``.zip`` sdist."""
+        return self._zip_sdists.get(package, frozenset())
 
     def store_listing_error(self, package: str, error: BaseException) -> None:
         """Record a failed listing fetch and unblock any waiter.

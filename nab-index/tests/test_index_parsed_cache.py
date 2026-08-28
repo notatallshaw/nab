@@ -34,7 +34,7 @@ from nab_index.cache import (
     is_recognized_bucket,
 )
 from nab_index.cached_client import CachedAsyncSimpleClient, ParsedCacheStats
-from nab_index.client import _parse_files
+from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.parsed_listing import corruption_reason, decode, encode
 
 # Derived so a bucket-version bump does not need every path updated.
@@ -133,6 +133,14 @@ class _FakeTransport:
 
 def _cache(root: Path) -> OnDiskCache:
     return OnDiskCache(root, "https://pypi.org/simple")
+
+
+def _decoded(blob: bytes | None, policy: CachePolicy) -> list[WheelFile | SdistFile]:
+    """The records ``blob`` rehydrates to, asserting it decoded at all."""
+    assert blob is not None
+    parsed = decode(blob, policy)
+    assert parsed is not None
+    return parsed.files
 
 
 class TestBodyDigestPolicy:
@@ -421,7 +429,7 @@ class TestWritePathParsedBlob:
         assert policy.body_digest == hashlib.sha256(_LISTING_BYTES).hexdigest()
         blob = cache.get_simple_parsed("pkg")
         assert blob is not None
-        decoded = decode(blob, policy)
+        decoded = _decoded(blob, policy)
         assert decoded == files
         assert decoded == _parse_files(json.loads(body), _INDEX_NORM, "pkg")
 
@@ -444,7 +452,7 @@ class TestWritePathParsedBlob:
         assert policy.body_digest == hashlib.sha256(_LISTING_BYTES).hexdigest()
         blob = cache.get_simple_parsed("pkg")
         assert blob is not None
-        assert decode(blob, policy) == files
+        assert _decoded(blob, policy) == files
 
     def test_revalidate_304_preserves_body_parsed_and_digest(
         self, tmp_path: Path
@@ -472,7 +480,7 @@ class TestWritePathParsedBlob:
         assert new_body == body
         assert policy.body_digest == digest
         assert cache.get_simple_parsed("pkg") == old_blob
-        assert decode(old_blob, policy) == files
+        assert _decoded(old_blob, policy) == files
 
     def test_revalidate_304_from_a_new_page_retires_the_blob(
         self, tmp_path: Path
@@ -631,7 +639,7 @@ class TestReadPathRebuild:
         assert result is not None
         _, policy = result
         assert policy.body_digest == digest
-        assert decode(blob, policy) == got
+        assert _decoded(blob, policy) == got
 
     def test_rebuild_on_digest_mismatch_no_warning(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -651,7 +659,7 @@ class TestReadPathRebuild:
         result = cache.get_simple("pkg")
         assert result is not None
         _, policy = result
-        assert decode(cache.get_simple_parsed("pkg"), policy) == files
+        assert _decoded(cache.get_simple_parsed("pkg"), policy) == files
 
     @pytest.mark.parametrize(
         ("field", "value"),
@@ -685,7 +693,7 @@ class TestReadPathRebuild:
         assert result is not None
         _, policy = result
         # The rebuilt blob is now well-formed and hits.
-        assert decode(cache.get_simple_parsed("pkg"), policy) == files
+        assert _decoded(cache.get_simple_parsed("pkg"), policy) == files
 
     @pytest.mark.parametrize("blob", [b"\xff\xfe not json", b"", b"\x00\x01\x02"])
     def test_garbage_blob_warns_and_reparses(
@@ -705,7 +713,7 @@ class TestReadPathRebuild:
         result = cache.get_simple("pkg")
         assert result is not None
         _, policy = result
-        assert decode(cache.get_simple_parsed("pkg"), policy) == files
+        assert _decoded(cache.get_simple_parsed("pkg"), policy) == files
 
     def test_over_nested_blob_warns_and_reparses(
         self,
@@ -765,7 +773,7 @@ class TestReadPathRebuild:
         result = cache.get_simple("pkg")
         assert result is not None
         _, policy = result
-        assert decode(cache.get_simple_parsed("pkg"), policy) == files
+        assert _decoded(cache.get_simple_parsed("pkg"), policy) == files
 
     def test_pre_c1_policy_without_digest_self_heals(self, tmp_path: Path) -> None:
         cache = _cache(tmp_path)
@@ -791,7 +799,7 @@ class TestReadPathRebuild:
         got_policy = cache.get_simple_policy("pkg")
         assert got_policy is not None
         assert got_policy.body_digest == digest
-        assert decode(cache.get_simple_parsed("pkg"), got_policy) == _PARSED
+        assert _decoded(cache.get_simple_parsed("pkg"), got_policy) == _PARSED
 
 
 class TestReadPathCorruptBody:
@@ -893,7 +901,7 @@ class TestReadPathRevalidate:
         assert result is not None
         body, policy = result
         assert body == _LISTING_V2_BYTES
-        assert decode(cache.get_simple_parsed("pkg"), policy) == got
+        assert _decoded(cache.get_simple_parsed("pkg"), policy) == got
 
     def test_stale_online_200_revalidates_without_reading_the_body(
         self, tmp_path: Path
@@ -933,7 +941,7 @@ class TestReadPathRevalidate:
         result = cache.get_simple("pkg")
         assert result is not None
         _, policy = result
-        assert decode(before, policy) == files
+        assert _decoded(before, policy) == files
 
     def test_stale_online_304_serves_the_blob_without_the_body(
         self, tmp_path: Path
