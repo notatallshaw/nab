@@ -628,6 +628,34 @@ def test_non_sticky_stale_falls_through_out_of_date(
     mock.assert_called_once()
 
 
+def test_a_deeply_nested_extra_table_falls_through_out_of_date(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A table too deep for ``tomli_w`` to render still reaches a verdict.
+
+    tomli parses table depths the writer cannot write back, so the
+    comparison must not round-trip the committed lock through the writer.
+    """
+    pyproject = _write_pyproject(tmp_path, '[project]\ndependencies = ["foo>=1.0"]\n')
+    out = tmp_path / "pylock.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    capsys.readouterr()
+    # Past the writer's per-level recursion, inside the part count tomli takes.
+    deep = ".".join(f"k{level}" for level in range(995))
+    with out.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n[{deep}]\nx = 1\n")
+
+    mock = _locked_mock(_result({"foo": "1.0"}))
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    remedy = _remedy(str(pyproject), "--output", str(out))
+    assert f"is out of date; re-run `{remedy}` to update it" in err
+    mock.assert_called_once()
+
+
 def test_a_stale_build_lock_names_the_build_command(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
