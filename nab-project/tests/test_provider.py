@@ -9431,6 +9431,32 @@ class TestAwaitMetadataBatchEdgeCases:
         assert ("foo", V("2.0")) not in provider.deps_cache
         assert provider.has_invalid_metadata("foo", V("2.0"))
 
+    def test_batch_constants_only_marker_refuses_version(self) -> None:
+        """A marker comparing two literals in the batch path refuses the version.
+
+        A quoted left operand makes packaging read the right one as an
+        environment key, so the clause fails only when the decode evaluates
+        it. The batch leaves v2.0 un-cached and look-ahead's get_dependencies
+        refuses it instead of the failure aborting the resolve, so the scan
+        falls through to v1.0.
+        """
+        wheels = [make_wheel("3.0"), make_wheel("2.0"), make_wheel("1.0")]
+        coordinator = make_coordinator(
+            wheels,
+            metadata_by_version={
+                "3.0": "Metadata-Version: 2.1\nName: foo\nVersion: 3.0\nRequires-Dist: bar>=5.0\n",
+                "2.0": 'Metadata-Version: 2.1\nName: foo\nVersion: 2.0\nRequires-Dist: pytz>=1; "extra" == "gpu"\n',
+                "1.0": "Metadata-Version: 2.1\nName: foo\nVersion: 1.0\n",
+            },
+            package="foo",
+        )
+        root_reqs = {"bar": SpecifierSet("<2.0").to_range()}
+        provider = Provider(coordinator, target=_PY312, root_requirements=root_reqs)
+
+        assert provider.choose_version("foo", SpecifierSet("").to_range()) == V("1.0")
+        assert ("foo", V("2.0")) not in provider.deps_cache
+        assert provider.has_invalid_metadata("foo", V("2.0"))
+
     def test_batch_none_metadata_refuses_version(self) -> None:
         """Missing metadata text in the batch path refuses the version.
 
@@ -12363,6 +12389,32 @@ class TestSiblingMetadataDivergence:
 
         provider = Provider(coordinator, target=_LINUX311)
         assert sorted(provider.get_dependencies("pkg", self._V)) == ["alpha"]
+
+    def test_unevaluable_sibling_marker_stops_the_run(self) -> None:
+        """A tie sibling with an undecidable marker stops the run.
+
+        A quoted left operand makes packaging read the right one as an
+        environment key, so the clause fails only when the sibling is
+        projected.  Skipping the sibling there would pin the pick's
+        ``common`` and lose the ``gamma`` the sibling also declares.
+        """
+        wheel_a = _sib_wheel("py2.py3-none-any")
+        wheel_b = _sib_wheel("py3-none-any")
+        coordinator = make_coordinator([wheel_a, wheel_b], package="pkg")
+
+        coordinator.index.store_metadata(
+            "pkg", "1.0", _sib_meta("common>=1"), metadata_url=wheel_a.metadata_url
+        )
+        coordinator.index.store_metadata(
+            "pkg",
+            "1.0",
+            _sib_meta("common>=1", "gamma>=1", 'beta>=1; "extra" == "gpu"'),
+            metadata_url=wheel_b.metadata_url,
+        )
+
+        provider = Provider(coordinator, target=_LINUX311)
+        with pytest.raises(UnevaluableMarkerError, match='"extra" == "gpu"'):
+            provider.get_dependencies("pkg", self._V)
 
     def test_provides_extra_override_folds_divergence(self) -> None:
         """A provides-extra override is applied to both siblings before compare.
