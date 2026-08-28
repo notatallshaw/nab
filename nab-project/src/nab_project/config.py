@@ -683,13 +683,7 @@ def read_pyproject_config(
         pyproject_dir=pyproject_dir,
         project_requires_python=project_requires_python,
     )
-    _validate_base_group_is_free(effective["base-group"], path)
-    _validate_build_group_has_a_base_group(
-        effective["build-group"], effective["base-group"]
-    )
-    _validate_build_group_is_free(
-        effective["build-group"], effective["base-group"], path
-    )
+    _validate_configured_groups(effective["base-group"], effective["build-group"], path)
     if discover_workspace:
         config = _apply_workspace_discovery(
             path, config, declared_in=effective["workspace"].origin.label
@@ -1397,37 +1391,69 @@ def _parse_requires_python(value: object) -> str | None:
     return raw
 
 
-def _validate_base_group_is_free(base_group: EffectiveValue, path: Path) -> None:
-    """Reject a ``base-group`` the project already declares as a group.
+def _option_label(value: EffectiveValue) -> str:
+    """Name an option by its CLI flag when the CLI set it, else by its config key.
 
-    Both would emit ``'name' in dependency_groups`` and no marker could
-    say which was meant.  Checked as the file is read rather than at
-    emission, so it costs no resolve and holds for every output format.
+    Every CLI-settable row carries a flag, since ``build_cli_overrides``
+    skips the rest, so a CLI origin on a flagless row is a bug and not a
+    value to label by its config key.
     """
-    name: str | None = base_group.value
-    if name is None:
-        return
+    if value.origin.kind is not SourceKind.CLI:
+        return value.spec.key
+    if value.spec.cli_flag is None:
+        msg = f"Bug: {value.spec.key!r} has no CLI flag but carries a CLI origin"
+        raise RuntimeError(msg)
+    return value.spec.cli_flag
+
+
+def _declared_group_names(path: Path) -> tuple[str, ...]:
+    """Return the group names the project declares in ``[dependency-groups]``."""
     with path.open("rb") as f:
         data = toml_io.load(f)
     groups = data.get("dependency-groups")
     if not isinstance(groups, dict):
-        return
-    taken = sorted(
-        declared for declared in groups if canonicalize_name(declared) == name
-    )
+        return ()
+    return tuple(groups)
+
+
+def _reject_declared_group_collision(
+    option: EffectiveValue, declared: Sequence[str]
+) -> None:
+    """Reject ``option``'s group name when a declared group already spells it.
+
+    Both would emit ``'name' in dependency_groups`` and no marker could
+    say which was meant.
+    """
+    name: str = option.value
+    taken = sorted(group for group in declared if canonicalize_name(group) == name)
     if not taken:
         return
-    names = ", ".join(repr(declared) for declared in taken)
-    key = (
-        "--project-base-group"
-        if base_group.origin.kind is SourceKind.CLI
-        else "base-group"
-    )
+
+    names = ", ".join(repr(group) for group in taken)
     msg = (
-        f"{key} {name!r} and [dependency-groups] {names} are the same name;"
-        " one marker cannot mean both"
+        f"{_option_label(option)} {name!r} and [dependency-groups] {names} are"
+        " the same name; one marker cannot mean both"
     )
     raise ConfigError(msg)
+
+
+def _validate_configured_groups(
+    base_group: EffectiveValue, build_group: EffectiveValue, path: Path
+) -> None:
+    """Check ``base-group`` and ``build-group`` against each other and the file.
+
+    Checked as the file is read rather than at emission, so it costs no
+    resolve and holds for every output format.  ``[dependency-groups]`` is
+    read once for both, and only when ``base-group`` is set, since a
+    ``build-group`` without one has already been refused.
+    """
+    _validate_build_group_has_a_base_group(build_group, base_group)
+    if base_group.value is None:
+        return
+
+    declared = _declared_group_names(path)
+    _reject_declared_group_collision(base_group, declared)
+    _validate_build_group_is_free(build_group, base_group, declared)
 
 
 def _validate_build_group_has_a_base_group(
@@ -1443,64 +1469,38 @@ def _validate_build_group_has_a_base_group(
     """
     if build_group.value is None or base_group.value is not None:
         return
-    key = (
-        "--project-build-group"
-        if build_group.origin.kind is SourceKind.CLI
-        else "build-group"
-    )
+
     msg = (
-        f"{key} is {build_group.value!r}, but base-group is unset, so the"
-        " project's own dependencies carry no marker and install alongside"
-        " every group; set base-group to name them, or drop build-group and"
-        " use nab lock --build-requirements for a separate lock"
+        f"{_option_label(build_group)} is {build_group.value!r}, but base-group"
+        " is unset, so the project's own dependencies carry no marker and"
+        " install alongside every group; set base-group to name them, or drop"
+        " build-group and use nab lock --build-requirements for a separate lock"
     )
     raise ConfigError(msg)
 
 
 def _validate_build_group_is_free(
-    build_group: EffectiveValue, base_group: EffectiveValue, path: Path
+    build_group: EffectiveValue, base_group: EffectiveValue, declared: Sequence[str]
 ) -> None:
     """Reject a ``build-group`` some other group already answers to.
 
     A declared ``[dependency-groups]`` name and ``base-group`` are both
     already spoken for, and all three emit ``'name' in dependency_groups``.
-    Checked as the file is read, like :func:`_validate_base_group_is_free`.
     """
     name: str | None = build_group.value
     if name is None:
         return
-    key = (
-        "--project-build-group"
-        if build_group.origin.kind is SourceKind.CLI
-        else "build-group"
-    )
+
     if name == base_group.value:
-        other = (
-            "--project-base-group"
-            if base_group.origin.kind is SourceKind.CLI
-            else "base-group"
+        build_label = _option_label(build_group)
+        base_label = _option_label(base_group)
+        msg = (
+            f"{build_label} and {base_label} are both {name!r};"
+            " one marker cannot mean both"
         )
-        msg = f"{key} and {other} are both {name!r}; one marker cannot mean both"
         raise ConfigError(msg)
 
-    with path.open("rb") as f:
-        data = toml_io.load(f)
-    groups = data.get("dependency-groups")
-    if not isinstance(groups, dict):
-        return
-    taken = sorted(
-        declared
-        for declared in groups
-        if isinstance(declared, str) and canonicalize_name(declared) == name
-    )
-    if not taken:
-        return
-    names = ", ".join(repr(declared) for declared in taken)
-    msg = (
-        f"{key} {name!r} and [dependency-groups] {names} are the same name;"
-        " one marker cannot mean both"
-    )
-    raise ConfigError(msg)
+    _reject_declared_group_collision(build_group, declared)
 
 
 def _read_project_requires_python(path: Path) -> str | None:
