@@ -17,6 +17,7 @@ import base64
 import hashlib
 import io
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -2255,6 +2256,20 @@ class _StubEnvBuilder:
         path.mkdir(parents=True, exist_ok=True)
 
 
+class _PathsepRefusingEnvBuilder:
+    """Stand in for ``venv.EnvBuilder`` on 3.11+: refuses an ``os.pathsep`` path."""
+
+    def __init__(self, **_kw: object) -> None:
+        pass
+
+    def create(self, path: Path) -> None:
+        msg = (
+            f"Refusing to create a venv in {path} because it contains"
+            f" the PATH separator {os.pathsep}."
+        )
+        raise ValueError(msg)
+
+
 class TestBuildEnvMissingExtra:
     """A build requirement naming an undeclared extra fails the build env."""
 
@@ -3423,6 +3438,22 @@ class TestNabBuildEnvEnterInstall:
             env.__enter__()
         assert env._tmpdir is None  # type: ignore[attr-defined]
 
+    def test_enter_wraps_venv_create_valueerror(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A ValueError from ``venv.EnvBuilder.create`` is wrapped as
+        BuildEnvError, and the temp directory is still cleaned up.
+
+        From 3.11 ``venv`` refuses an env path containing ``os.pathsep``,
+        which is where a TMPDIR named with one puts it.
+        """
+        monkeypatch.setattr("venv.EnvBuilder", _PathsepRefusingEnvBuilder)
+        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        with pytest.raises(BuildEnvError, match="build venv"):
+            env.__enter__()
+        assert env._tmpdir is None  # type: ignore[attr-defined]
+
     def test_enter_wraps_inner_project_write_oserror(
         self,
         tmp_path: Path,
@@ -3878,6 +3909,30 @@ class TestVenvSchemeProbeIsolation:
         paths = _venv_scheme_paths(Path(sys.executable))
 
         assert paths["purelib"] == sysconfig.get_paths()["purelib"]
+
+
+class TestRunBuildBackendVenvRefused:
+    """A ValueError from venv creation surfaces as BuildBackendError."""
+
+    def test_valueerror_surfaces_as_build_backend_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The wrapped ValueError reaches the caller with its venv path."""
+        monkeypatch.setattr("venv.EnvBuilder", _PathsepRefusingEnvBuilder)
+
+        source = tmp_path / "src"
+        source.mkdir()
+        (source / "pyproject.toml").write_text(
+            '[build-system]\nrequires = []\nbuild-backend = "dummyreq.backend"\n',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(
+            BuildBackendError,
+            match=r"build env setup for 'dummyreq\.backend' failed: could not"
+            r" create build venv at .*: Refusing to create a venv",
+        ):
+            run_build_backend(source, config=NabProjectConfig())
 
 
 @pytest.mark.skipif(
