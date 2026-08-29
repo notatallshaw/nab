@@ -147,9 +147,13 @@ The target declares both halves of the environment: its PEP 508 markers
 gate every dependency, and its PEP 425 wheel tags gate every candidate.
 A version whose only wheels the target cannot install, and which ships no
 sdist, is not a candidate: the resolve fails on it rather than pinning a
-wheel that will not install (`pywin32` on Linux).  An sdist keeps a
-version alive whatever the build policy, so a pure-source package still
-resolves.  The lockfile records only the wheels the target can install.
+wheel that will not install (`pywin32` on Linux).  The lockfile records
+only the wheels the target can install.
+
+Tags gate wheels only, so a `.tar.gz` sdist keeps a version alive for any
+target.  nab drops every other sdist format when it parses the listing,
+so a version whose only sdist is a `.zip` and which ships no wheel is not
+a candidate either (`pyreadline==2.1`).
 
 The resolve is still for one environment.  A lock made for
 `linux_x86_64` is a lock for `linux_x86_64`; it says so in its PEP 751
@@ -550,6 +554,12 @@ considers and which end up in the lockfile.  The default
 | `wheel-or-sdist` (default) | yes | yes | both |
 | `sdist-only` | no | yes | sdist |
 | `sdist-install` | yes | yes | sdist |
+
+nab drops every sdist format but `.tar.gz` when it parses an index
+listing, before any policy sees it, so a version whose only sdist is a
+`.zip` counts as shipping none.  A wheel-admitting policy sees only its
+wheels, and `sdist-only` and `sdist-install` skip it, since both need an
+sdist to lock.
 
 `wheel-only` is the equivalent of pip's `--only-binary :all:` and
 `sdist-only` of `--no-binary :all:`, scoped per package or per index

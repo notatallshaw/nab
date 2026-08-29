@@ -10,6 +10,9 @@ from every source it admits; the difference is what is permitted
 to fall through to a backend invocation when the static read
 returns nothing usable.
 
+An sdist below means a `.tar.gz`.  nab drops every other format
+when it parses an index listing, so no policy sees one.
+
 The default is `build-local`: local checkouts and workspace
 members may invoke a backend, but remote sources (PyPI sdists,
 VCS clones, archive sources) are read statically only.  Lift
