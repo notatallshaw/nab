@@ -99,6 +99,8 @@ if TYPE_CHECKING:
 
     from nab_provider.target import ResolveTarget
 
+    from .cli import ConfigLadder
+
 
 _DEFAULT_PROJECT_PATH = Path("pyproject.toml")
 
@@ -245,13 +247,13 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     )
     project_overrides = _cli.project_config_overrides(overrides)
     _cli._project_cli_overrides_or_exit(project_overrides)  # noqa: SLF001
+    ladder = _cli.read_config_ladder(path, overrides)
     anchor = _determine_lock_anchor(
-        path,
+        ladder,
         output=output,
         format=format,
         build_requirements=build_requirements,
         upgrade=upgrade,
-        cli_overrides=project_overrides,
     )
     config = _cli._load_config(  # noqa: SLF001
         path,
@@ -265,7 +267,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         _cli.printer().error("--locked is not supported in universal mode.")
         sys.exit(1)
     _cli._reject_python_override_in_universal(config, python)  # noqa: SLF001
-    settings = _cli._layered_run_settings_or_exit(path, overrides)  # noqa: SLF001
+    settings = _cli._layered_run_settings_or_exit(ladder)  # noqa: SLF001
     effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
         settings.cache_dir, cache=cache
     )
@@ -1208,26 +1210,23 @@ def _build_provenance(
 
 
 def _reused_lock_anchor(
-    path: Path,
+    ladder: ConfigLadder,
     *,
     output: Path | None,
     format: str,  # noqa: A002 - shadows builtin by convention
     build_requirements: bool = False,
-    cli_overrides: Mapping[str, object] | None = None,
 ) -> tuple[datetime | None, datetime | None]:
     """Return ``(absolute_cutoff, prior_lock_anchor)`` for the re-lock anchor.
 
     An absolute ``uploaded-prior-to`` fixes the resolve window, so it is the
     anchor regardless of ``--upgrade``, and two locks from identical inputs
-    produce identical bytes.  ``cli_overrides`` carries a
-    ``--project-uploaded-prior-to`` override so the anchor it produces matches
-    the resolve window.  When there is no absolute cutoff, a ``pylock`` written
-    to a file reuses the ``created-at`` from the existing lock so re-locks
-    reproduce the same cutoff; that recorded timestamp is the only anchor
-    ``--upgrade`` actually drops.  Stdout, the requirements formats, and a
-    first lock have nothing to reuse.
+    produce identical bytes.  When there is no absolute cutoff, a ``pylock``
+    written to a file reuses the ``created-at`` from the existing lock so
+    re-locks reproduce the same cutoff; that recorded timestamp is the only
+    anchor ``--upgrade`` actually drops.  Stdout, the requirements formats,
+    and a first lock have nothing to reuse.
     """
-    absolute = _cli.lock_anchor(path, cli_overrides)
+    absolute = _cli.lock_anchor(ladder)
     if absolute is not None:
         return absolute, None
     if _cli.is_stdout(output) or format != "pylock":
@@ -1237,30 +1236,27 @@ def _reused_lock_anchor(
 
 
 def _determine_lock_anchor(
-    path: Path,
+    ladder: ConfigLadder,
     *,
     output: Path | None,
     format: str,  # noqa: A002 - shadows builtin by convention
     build_requirements: bool = False,
     upgrade: bool,
-    cli_overrides: Mapping[str, object] | None = None,
 ) -> datetime:
     """Pick the ``P<n>D`` anchor for ``nab lock``.
 
     Without ``--upgrade`` the anchor is the cutoff a re-lock reuses: an
     absolute ``uploaded-prior-to`` cutoff, or the ``created-at`` from an
-    existing pylock, falling back to ``datetime.now(UTC)``.  ``cli_overrides``
-    is forwarded so a ``--project-uploaded-prior-to`` flag pins the anchor.
-    ``--upgrade`` re-anchors to now.  It changes the resolve only when it drops
-    a reused lockfile ``created-at`` (an absolute cutoff still governs the
-    resolve either way), so the notice fires only in that case.
+    existing pylock, falling back to ``datetime.now(UTC)``.  ``--upgrade``
+    re-anchors to now.  It changes the resolve only when it drops a reused
+    lockfile ``created-at`` (an absolute cutoff still governs the resolve
+    either way), so the notice fires only in that case.
     """
     absolute, prior = _reused_lock_anchor(
-        path,
+        ladder,
         output=output,
         format=format,
         build_requirements=build_requirements,
-        cli_overrides=cli_overrides,
     )
     if upgrade:
         fresh = datetime.now(timezone.utc)

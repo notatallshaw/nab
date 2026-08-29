@@ -118,8 +118,9 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
         discover_workspace=workspace_discovery,
         cli_overrides=project_overrides,
     )
+    ladder = _cli.read_config_ladder(path, overrides)
     settings = _cli._layered_run_settings_or_exit(  # noqa: SLF001
-        path, overrides, produces_lock=False
+        ladder, produces_lock=False
     )
     effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
         settings.cache_dir, cache=cache

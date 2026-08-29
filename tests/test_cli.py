@@ -46,6 +46,7 @@ from nab._lock import (
 )
 from nab.cli import (
     _DEFAULT_OUTPUT,
+    ConfigLadder,
     _default_cache_dir,
     _make_resolve_transport,
     _make_transport,
@@ -55,6 +56,7 @@ from nab.cli import (
     app,
     console_entry,
     main,
+    read_config_ladder,
 )
 from nab.output import Printer, ProgressReporter, Verbosity
 from nab_index.atomic import atomic_write_text
@@ -4109,6 +4111,11 @@ class TestCliDocstringCommandModules:
         )
 
 
+def _ladder(pyproject: Path) -> ConfigLadder:
+    """Read the config ladder as ``nab lock`` does when no flag overrides a key."""
+    return read_config_ladder(pyproject, {})
+
+
 class TestDetermineLockAnchor:
     """``_determine_lock_anchor`` chooses between fresh and reused anchors."""
 
@@ -4127,7 +4134,7 @@ class TestDetermineLockAnchor:
         self._write_prior(target)
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            pyproject, output=target, format="pylock", upgrade=True
+            _ladder(pyproject), output=target, format="pylock", upgrade=True
         )
         assert anchor != self._RECORDED
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
@@ -4141,7 +4148,7 @@ class TestDetermineLockAnchor:
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             _determine_lock_anchor(
-                pyproject, output=target, format="pylock", upgrade=True
+                _ladder(pyproject), output=target, format="pylock", upgrade=True
             )
         notice = err.getvalue()
         assert "--upgrade re-anchored" in notice
@@ -4156,7 +4163,7 @@ class TestDetermineLockAnchor:
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             _determine_lock_anchor(
-                pyproject, output=None, format="pylock", upgrade=True
+                _ladder(pyproject), output=None, format="pylock", upgrade=True
             )
         assert err.getvalue() == ""
 
@@ -4173,7 +4180,7 @@ class TestDetermineLockAnchor:
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             anchor = _determine_lock_anchor(
-                pyproject, output=target, format="pylock", upgrade=True
+                _ladder(pyproject), output=target, format="pylock", upgrade=True
             )
         assert err.getvalue() == ""
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
@@ -4181,7 +4188,7 @@ class TestDetermineLockAnchor:
     def test_stdout_returns_fresh(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            pyproject, output=Path("-"), format="pylock", upgrade=False
+            _ladder(pyproject), output=Path("-"), format="pylock", upgrade=False
         )
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
 
@@ -4189,7 +4196,7 @@ class TestDetermineLockAnchor:
         # requirements format has no [tool.nab] block to read from.
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            pyproject,
+            _ladder(pyproject),
             output=tmp_path / "requirements.txt",
             format="requirements",
             upgrade=False,
@@ -4202,7 +4209,7 @@ class TestDetermineLockAnchor:
         monkeypatch.chdir(tmp_path)
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            pyproject, output=None, format="pylock", upgrade=False
+            _ladder(pyproject), output=None, format="pylock", upgrade=False
         )
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
 
@@ -4211,7 +4218,7 @@ class TestDetermineLockAnchor:
         self._write_prior(target)
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            pyproject, output=target, format="pylock", upgrade=False
+            _ladder(pyproject), output=target, format="pylock", upgrade=False
         )
         assert anchor == self._RECORDED
 
@@ -4223,7 +4230,7 @@ class TestDetermineLockAnchor:
         self._write_prior(tmp_path / "pylock.toml")
         pyproject = _make_pyproject(tmp_path)
         anchor = _determine_lock_anchor(
-            pyproject, output=None, format="pylock", upgrade=False
+            _ladder(pyproject), output=None, format="pylock", upgrade=False
         )
         assert anchor == self._RECORDED
 
@@ -4237,7 +4244,7 @@ class TestDetermineLockAnchor:
             f'[tool.nab]\nuploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n',
         )
         anchor = _determine_lock_anchor(
-            pyproject, output=target, format="pylock", upgrade=False
+            _ladder(pyproject), output=target, format="pylock", upgrade=False
         )
         assert anchor == self._ABSOLUTE
 
@@ -4253,7 +4260,7 @@ class TestDetermineLockAnchor:
             f'uploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n'
         )
         anchor = _determine_lock_anchor(
-            pyproject, output=target, format="pylock", upgrade=False
+            _ladder(pyproject), output=target, format="pylock", upgrade=False
         )
         assert anchor == self._ABSOLUTE
 
@@ -4261,9 +4268,7 @@ class TestDetermineLockAnchor:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # A category-gated value (uploaded-prior-to in a USER source) makes
-        # the best-effort anchor read raise SourceConfigError; it is
-        # swallowed so the full resolve parse reports it, and the anchor
-        # falls through to the prior lock.
+        # the ladder read fail, so the anchor falls through to the prior lock.
         target = tmp_path / "pylock.toml"
         self._write_prior(target)
         pyproject = _make_pyproject(tmp_path)
@@ -4280,7 +4285,7 @@ class TestDetermineLockAnchor:
 
         monkeypatch.setattr("nab.cli._config_search_roots", fake_roots)
         anchor = _determine_lock_anchor(
-            pyproject, output=target, format="pylock", upgrade=False
+            _ladder(pyproject), output=target, format="pylock", upgrade=False
         )
         assert anchor == self._RECORDED
 
@@ -4291,7 +4296,7 @@ class TestDetermineLockAnchor:
             f'[tool.nab]\nuploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n',
         )
         anchor = _determine_lock_anchor(
-            pyproject, output=None, format="pylock", upgrade=True
+            _ladder(pyproject), output=None, format="pylock", upgrade=True
         )
         assert anchor != self._ABSOLUTE
         assert (datetime.now(timezone.utc) - anchor).total_seconds() < 60
@@ -4304,7 +4309,7 @@ class TestDetermineLockAnchor:
             '[project]\ndependencies = ["foo"]\n[tool.nab]\nuploaded-prior-to = "P4D"\n',
         )
         anchor = _determine_lock_anchor(
-            pyproject, output=target, format="pylock", upgrade=False
+            _ladder(pyproject), output=target, format="pylock", upgrade=False
         )
         assert anchor == self._RECORDED
 
