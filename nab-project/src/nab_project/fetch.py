@@ -46,6 +46,7 @@ from nab_provider.serialization import SimpleSerialization
 from nab_provider.store import InMemoryIndex, metadata_pending_key, range_pending_key
 
 from ._build_remote import build_remote_sdist
+from ._routes import IndexRoute
 from ._sources import materialize_source
 from ._toml import parse_pyproject_table
 
@@ -106,22 +107,6 @@ class FetchKind(enum.Enum):
     SDIST = "sdist"
     SDIST_ARCHIVE = "sdist-archive"
     DIRECT_ARCHIVE = "direct-archive"
-
-
-@dataclass(frozen=True, slots=True)
-class IndexRoute:
-    """Per-package index routing rule (a strict pin to one index).
-
-    ``name`` is the package name (canonicalised internally).  ``index``
-    is the *name* of an :class:`IndexConfig` declared in the
-    coordinator's ordered list.  Routing decides where to fetch a
-    package's listing before any version is known, so a route carries no
-    version scope and no marker; the override layer guarantees at most one
-    route per package.
-    """
-
-    name: str
-    index: str
 
 
 def _resolve_routes(routes: list[IndexRoute]) -> dict[str, str]:

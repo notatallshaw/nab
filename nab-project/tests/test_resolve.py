@@ -13,6 +13,8 @@ import httpx
 import pytest
 import respx
 
+import nab_project.fetch
+import nab_project.resolve
 from nab_index.client import SdistFile, WheelFile
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.transport import AsyncHttpTransport, HttpError
@@ -190,6 +192,26 @@ def _malformed_group_pyproject(tmp_path: Path) -> Path:
         'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
     )
     return pyproject
+
+
+class TestLazyFetchCoordinator:
+    """``nab_project.resolve`` serves ``FetchCoordinator`` through PEP 562."""
+
+    def test_binds_the_real_coordinator_class(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Reading the name imports ``nab_project.fetch`` and yields its class."""
+        # An earlier resolve in this process may already have bound the name.
+        monkeypatch.delattr(nab_project.resolve, "FetchCoordinator", raising=False)
+
+        assert (
+            nab_project.resolve.FetchCoordinator is nab_project.fetch.FetchCoordinator
+        )
+
+    def test_unknown_name_still_raises_attribute_error(self) -> None:
+        """The module ``__getattr__`` answers only for the one deferred name."""
+        with pytest.raises(AttributeError, match="no attribute 'no_such_name'"):
+            _ = nab_project.resolve.no_such_name
 
 
 class TestSpecificModeConflictValidation:

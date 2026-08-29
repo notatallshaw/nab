@@ -51,14 +51,13 @@ from nab_provider.policy import (
     ResolveMode,
     VcsSource,
 )
-from nab_provider.records import IndexConfig
+from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.vcs_admission import VcsConfig
 
 from . import toml_io
 from ._toml import tool_nab_section
 from ._value import ValueType
-from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
 from .paths import PathState, is_usable_path_name, path_state
 
 if TYPE_CHECKING:

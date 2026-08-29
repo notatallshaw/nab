@@ -6500,6 +6500,26 @@ assert not leaked, f"importing nab.cli loaded {leaked}"
 """
 
 
+_FETCH_STACK_PROBE = """
+import sys
+
+import nab.cli
+
+leaked = sorted(
+    {
+        "asyncio",
+        "nab_index.cached_client",
+        "nab_index.lazy_wheel",
+        "nab_index.multi_index",
+        "nab_project.fetch",
+        "nab_provider.store",
+    }
+    & sys.modules.keys()
+)
+assert not leaked, f"importing nab.cli loaded {leaked}"
+"""
+
+
 class TestCliImportPath:
     """What importing :mod:`nab.cli` is allowed to pull in."""
 
@@ -6517,6 +6537,12 @@ class TestCliImportPath:
         """
         subprocess.run(  # noqa: S603 - the probe is this file's own source
             [sys.executable, "-c", _STDLIB_MODULE_PROBE], check=True
+        )
+
+    def test_fetch_stack_stays_unimported(self) -> None:
+        """asyncio and the coordinator belong to a resolve, not to startup."""
+        subprocess.run(  # noqa: S603 - the probe is this file's own source
+            [sys.executable, "-c", _FETCH_STACK_PROBE], check=True
         )
 
 

@@ -25,7 +25,7 @@ from nab_provider.extra_keys import split_extra
 from nab_provider.iso8601 import parse_iso_datetime
 from nab_provider.metadata import validate_specifier_versions
 from nab_provider.policy import DistPolicy
-from nab_provider.records import SdistFile, WheelFile
+from nab_provider.records import DEFAULT_INDEX_URL, SdistFile, WheelFile
 
 from .. import toml_io
 from .._toml import tool_nab_section
@@ -520,7 +520,6 @@ def _index_pin_from_listing(
     otherwise reject a widened pin whose lock still carried the narrow
     artefact value.
     """
-    from ..fetch import DEFAULT_INDEX_URL
     from ..lockfile import IndexPin, SdistArtifact, WheelArtifact
 
     files = list(provider.dist_files_for(canonical, version))

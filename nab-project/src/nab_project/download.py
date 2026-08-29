@@ -14,7 +14,6 @@ programmatically after :func:`~nab_project.resolve.build_lock_input`.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import posixpath
@@ -203,6 +202,8 @@ def download_lock(
     already-present files and local ``file://`` artefacts are still
     served.
     """
+    import asyncio  # noqa: PLC0415 (keeps asyncio off the CLI import path)
+
     output_dir.mkdir(parents=True, exist_ok=True)
     artefacts = _coalesce_download_targets(list(iter_artifacts(lock_input)))
     return asyncio.run(
@@ -220,6 +221,8 @@ async def _run_downloads(
     *,
     offline: bool,
 ) -> DownloadResult:
+    import asyncio  # noqa: PLC0415 (keeps asyncio off the CLI import path)
+
     sem = asyncio.Semaphore(max_concurrency)
     client = AsyncSimpleClient(transport)
     written: list[Path] = []

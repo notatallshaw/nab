@@ -43,7 +43,7 @@ from nab_provider.policy import (
     ResolveMode,
     VcsSource,
 )
-from nab_provider.records import IndexConfig
+from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.subdir import subdirectory_escapes
 from nab_provider.tags import (
@@ -65,6 +65,7 @@ from nab_provider.target import (
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 
 from . import toml_io
+from ._routes import IndexRoute
 from ._toml import tool_nab_section
 from ._value import ValueType
 from .config_sources import (
@@ -80,7 +81,6 @@ from .config_sources import (
     resolve_anchor,
     resolve_config,
 )
-from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
 from .paths import realpath, resolve_path
 from .workspace import (
     WorkspaceConfig,

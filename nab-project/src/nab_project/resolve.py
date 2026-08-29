@@ -85,7 +85,6 @@ from .config import (
     validate_conflict_minimums,
     with_python_override,
 )
-from .fetch import FetchCoordinator
 from .lockfile import LockInput, TargetLock
 from .pyproject_files import (
     read_pyproject_build_requires,
@@ -104,6 +103,8 @@ if TYPE_CHECKING:
     from nab_provider.provider import ResolutionStrategy
     from nab_provider.resolver_inputs import MarkerHolds
 
+    from .fetch import FetchCoordinator
+
 
 __all__ = [
     "InstallContexts",
@@ -117,6 +118,30 @@ __all__ = [
     "resolve_for_targets",
     "resolve_with_coordinator",
 ]
+
+
+def _fetch_coordinator() -> type[FetchCoordinator]:
+    """Return the coordinator class, importing the fetch stack on first use.
+
+    Reads the module global first, so a test that patches
+    ``nab_project.resolve.FetchCoordinator`` still decides what a resolve builds.
+    """
+    bound: type[FetchCoordinator] | None = globals().get("FetchCoordinator")
+    if bound is not None:
+        return bound
+
+    from .fetch import FetchCoordinator  # noqa: PLC0415 (startup deferral)
+
+    globals()["FetchCoordinator"] = FetchCoordinator
+    return FetchCoordinator
+
+
+def __getattr__(name: str) -> object:
+    """Serve ``FetchCoordinator`` on first attribute access (PEP 562)."""
+    if name != "FetchCoordinator":
+        msg = f"module {__name__!r} has no attribute {name!r}"
+        raise AttributeError(msg)
+    return _fetch_coordinator()
 
 
 _logger = logging.getLogger(__name__)
@@ -212,7 +237,8 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
         groups=effective_groups,
     )
 
-    with FetchCoordinator(
+    coordinator_class = _fetch_coordinator()
+    with coordinator_class(
         transport,
         indexes=list(config.indexes),
         cache_dir=cache_dir,
