@@ -117,18 +117,28 @@ def _compact_table(table: dict[object, object]) -> object:
     return table
 
 
-def _compact_shared_table(table: dict[object, object]) -> object:
+def _compact_shared_table(
+    table: dict[object, object],
+    pool: dict[tuple[str, str], tuple[str, str]] | None = None,
+) -> object:
     """Compact ``table`` for a caller whose rows already share one name object.
 
     One cached listing's rows are decoded together and get a single object for
     a repeated name, and :func:`parse_hash_table` interns whatever a reader
     parses out of the pair, so :func:`_compact_table`'s per-row intern buys
     nothing here.
+
+    ``pool``, when given, maps a pair to itself, so a caller decoding many rows
+    holds one pair per distinct digest. Only a string digest is pooled: a list
+    cannot key the pool, and ``True`` would share ``1``'s cell.
     """
     if len(table) == 1:
         ((algo, digest),) = table.items()
         if type(algo) is str:
-            return (algo, digest)
+            cell = (algo, digest)
+            if pool is not None and type(digest) is str:
+                return pool.setdefault(cell, cell)
+            return cell
     return table
 
 
@@ -342,7 +352,7 @@ _set_wheel_raw_hashes = _slot_writer(_WheelIntegrity, "_raw_hashes")
 _set_wheel_raw_metadata = _slot_writer(_WheelIntegrity, "_raw_metadata")
 
 
-def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its own order
+def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields in order, then the pool
     filename: str,
     url: str,
     version: str,
@@ -352,6 +362,7 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     hashes: tuple[tuple[str, str], ...] | dict[Any, Any],
     size: int | None,
     metadata_hash: tuple[str, str] | dict[Any, Any] | None,
+    sidecar_pool: dict[tuple[str, str], tuple[str, str]] | None = None,
 ) -> WheelFile:
     """Return a wheel rebuilt from a cached listing row.
 
@@ -359,6 +370,10 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
     index's own table, and a table is held raw for the field's first read to
     parse.  Deferring a field means leaving its slot unwritten, which
     ``__init__`` cannot do, so this writes the slots directly.
+
+    ``sidecar_pool`` lets one listing's rows share the pair they hold when they
+    publish the same METADATA digest. ``hashes`` takes no pool: each file has a
+    digest of its own.
 
     ``local_path`` is ``None``: a cached listing row carries none.
     """
@@ -378,7 +393,9 @@ def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its ow
         _set_wheel_hashes(wheel, hashes)
 
     if isinstance(metadata_hash, dict):
-        _set_wheel_raw_metadata(wheel, _compact_shared_table(metadata_hash))
+        _set_wheel_raw_metadata(
+            wheel, _compact_shared_table(metadata_hash, sidecar_pool)
+        )
     else:
         _set_wheel_metadata_hash(wheel, metadata_hash)
 

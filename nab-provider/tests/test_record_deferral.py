@@ -35,8 +35,14 @@ def _deferred_wheel(hashes: object, *, sidecar: object) -> WheelFile:
     return wheel
 
 
-def _rehydrated_wheel(table: dict[object, str]) -> WheelFile:
-    """A wheel rebuilt from a cached listing row that holds ``table`` for both fields."""
+def _rehydrated_wheel(
+    table: dict[object, object],
+    pool: dict[tuple[str, str], tuple[str, str]] | None = None,
+) -> WheelFile:
+    """A wheel rebuilt from a cached listing row that holds ``table`` for both fields.
+
+    ``pool`` is the sidecar pool the rows of one decoded blob share.
+    """
     return rehydrated_wheel(
         filename="pkg-1.0-py3-none-any.whl",
         url="https://files.example/pkg-1.0-py3-none-any.whl",
@@ -47,6 +53,7 @@ def _rehydrated_wheel(table: dict[object, str]) -> WheelFile:
         hashes=table,
         size=None,
         metadata_hash=table,
+        sidecar_pool=pool,
     )
 
 
@@ -119,13 +126,48 @@ def test_a_rehydrated_one_algorithm_table_keeps_the_name_the_row_carried() -> No
     "table", [{"sha256": DIGEST, "sha512": "f" * 128}, {7: DIGEST}]
 )
 def test_a_rehydrated_table_the_pair_form_cannot_hold_is_kept_whole(
-    table: dict[object, str],
+    table: dict[object, object],
 ) -> None:
     """Several algorithms, or a name that is not a string, is held as it stands."""
     wheel = _rehydrated_wheel(table)
 
     assert wheel._raw_hashes == table
     assert wheel._raw_metadata == table
+
+
+def test_rows_publishing_the_same_digest_share_one_pooled_pair() -> None:
+    """A release's wheels publish one METADATA, so its rows repeat one digest."""
+    pool: dict[tuple[str, str], tuple[str, str]] = {}
+    same_digest = DIGEST.encode().decode()
+    assert same_digest is not DIGEST
+
+    first = _rehydrated_wheel({SHA256: DIGEST}, pool)
+    second = _rehydrated_wheel({SHA256: same_digest}, pool)
+
+    assert first._raw_metadata is second._raw_metadata
+    assert second.metadata_hash == (SHA256, DIGEST)
+
+    # The hashes cell takes no pool: each file publishes its own digest.
+    assert first._raw_hashes is not second._raw_hashes
+
+
+@pytest.mark.parametrize("digest", [[DIGEST], 1, True])
+def test_a_sidecar_digest_that_is_not_a_string_is_kept_per_row(
+    digest: object,
+) -> None:
+    """The pool keys on a string pair, so any other digest is held per row.
+
+    A list cannot key the pool at all, and ``1`` and ``True`` are equal, so
+    pooling those would collapse two rows the index served differently.
+    """
+    pool: dict[tuple[str, str], tuple[str, str]] = {}
+
+    wheel = _rehydrated_wheel({SHA256: digest}, pool)
+
+    held = wheel._raw_metadata
+    assert isinstance(held, tuple)
+    assert held[1] is digest
+    assert pool == {}
 
 
 def test_a_read_keeps_the_table_it_parsed() -> None:

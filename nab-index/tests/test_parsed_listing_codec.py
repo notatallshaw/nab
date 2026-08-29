@@ -488,6 +488,20 @@ def test_a_rehydrated_sdist_defers_its_hashes() -> None:
     assert decoded.hashes == ((SHA256, DIGEST),)
 
 
+def test_wheels_publishing_one_metadata_share_the_pair_they_hold() -> None:
+    """One pool serves the blob, so its rows hold one pair per sidecar digest."""
+    first, second = _roundtrip(
+        [
+            _deferred_wheel({"sha256": "b" * 64}, sidecar={"sha256": DIGEST}),
+            _deferred_wheel({"sha256": "c" * 64}, sidecar={"sha256": DIGEST}),
+        ]
+    )
+    assert isinstance(first, WheelFile)
+    assert isinstance(second, WheelFile)
+
+    assert first._raw_metadata is second._raw_metadata
+
+
 def test_a_row_is_the_same_whether_or_not_the_record_was_read() -> None:
     """A read record keeps its table, so encoding does not depend on read order."""
     unread = _deferred_wheel({"sha256": DIGEST}, sidecar={"sha256": DIGEST})

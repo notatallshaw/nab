@@ -262,13 +262,20 @@ def _decode_zip_sdists(value: object) -> frozenset[str]:
 
 
 def _decode_rows(rows: object) -> list[WheelFile | SdistFile]:
-    """Rehydrate every row, raising :class:`_BadRowError` on the first bad one."""
+    """Rehydrate every row, raising :class:`_BadRowError` on the first bad one.
+
+    One sidecar pool serves the whole blob, so rows publishing the same
+    METADATA digest share the pair they hold.
+    """
     if not isinstance(rows, list):
         raise _BadRowError
-    return [_decode_row(row) for row in rows]
+    sidecar_pool: dict[tuple[str, str], tuple[str, str]] = {}
+    return [_decode_row(row, sidecar_pool) for row in rows]
 
 
-def _decode_row(row: object) -> WheelFile | SdistFile:
+def _decode_row(
+    row: object, sidecar_pool: dict[tuple[str, str], tuple[str, str]]
+) -> WheelFile | SdistFile:
     """Rehydrate one row, dispatching on the tag its first element carries."""
     if not isinstance(row, list) or not row:
         raise _BadRowError
@@ -277,13 +284,15 @@ def _decode_row(row: object) -> WheelFile | SdistFile:
     if type(tag) is not int:
         raise _BadRowError
     if tag == _TAG_WHEEL:
-        return _decode_wheel(row)
+        return _decode_wheel(row, sidecar_pool)
     if tag == _TAG_SDIST:
         return _decode_sdist(row)
     raise _BadRowError
 
 
-def _decode_wheel(row: Sequence[object]) -> WheelFile:
+def _decode_wheel(
+    row: Sequence[object], sidecar_pool: dict[tuple[str, str], tuple[str, str]]
+) -> WheelFile:
     """Rehydrate a wheel row.
 
     An integrity cell holding the index's own table passes through unparsed,
@@ -327,6 +336,7 @@ def _decode_wheel(row: Sequence[object]) -> WheelFile:
         metadata_hash
         if isinstance(metadata_hash, dict)
         else _pair_or_none(metadata_hash),
+        sidecar_pool,
     )
 
 
