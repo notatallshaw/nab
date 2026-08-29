@@ -1,7 +1,8 @@
-"""Check that the resolve engine does not depend on nab's marker sets.
+"""Check that the resolve engine does not reach nab's marker sets.
 
-The marker algebra is its own distribution, ``nab-markersets``, so a host
-embedding nab's engine installs it only if the engine reaches it.
+The marker algebra is its own distribution, ``nab-markersets``. Keeping it out
+of the engine's import closure is what lets the resolve path be read, and one
+day shipped, without it.
 
 Two rules, both computed statically over the shipped ``src`` trees.
 
@@ -69,7 +70,8 @@ EXEMPT = {
     "nab_provider.marker_holds": (
         "Where the marker-set dependency lives so the engine does not import "
         "it. Reached here through target, requirements_file, "
-        "_provider.metadata_resolver and _lockfile.validate."
+        "_provider.metadata_resolver and _lockfile.validate. It pulls released "
+        "packaging's markers module too, to catch what the algebra raises."
     ),
 }
 

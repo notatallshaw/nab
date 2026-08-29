@@ -29,15 +29,10 @@ if TYPE_CHECKING:
 
     from ._markersets import Formula
 
-# The cell budget every decision runs under: a resource cap, not a semantic
-# parameter, so it is private and never reaches the public surface. No result
-# depends on its value; a set too complex to decide within it raises
-# IntractableMarkerSet.
+# Resource caps, not semantic parameters: no answer depends on their value, so
+# neither reaches the public surface. `_MAX_CELLS` bounds one decision and
+# `_MAX_WORK` the greedy loop `simplify` runs over many of them.
 _MAX_CELLS = 100_000
-
-# The total cell work one `simplify` may spend. `_MAX_CELLS` bounds a single
-# decision, this bounds the greedy loop that issues them. A runaway guard rather
-# than a tuning knob: the widest marker in nab's own CI locks spends 4.1 million.
 _MAX_WORK = 100_000_000
 
 __all__ = ["DecisionStore", "MarkerSet", "variable_names"]
@@ -52,12 +47,10 @@ _R = TypeVar("_R")
 
 
 def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
-    """Report stack exhaustion on a deeply nested tree as the resource guard.
+    """Report a walk's :class:`RecursionError` as the algebra's bounded failure.
 
-    A tree walk recurses as deep as the marker nests, so a marker nested past the
-    interpreter's stack raises :class:`RecursionError`. The public methods it
-    decorates report it as :class:`IntractableMarkerSet`, the one bounded failure
-    the algebra promises on pathological input.
+    A tree walk recurses as deep as the marker nests, so pathological input
+    exhausts the stack where the cell budget would otherwise have caught it.
     """
 
     @wraps(method)
@@ -74,13 +67,10 @@ def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
 class DecisionStore(_markersets.Memo):
     """Scratch several decisions can share, for one piece of work.
 
-    A decision partitions the axes its atoms sit on and reads each atom on the
-    resulting cells; a run over related sets repeats most of that. Passing one
-    store to those decisions keeps the work, and passing none is always correct.
-
-    Answers never depend on it. It grows with what it has read, so drop it when
-    the work is done, and do not share one across threads. Only the object is
-    API; what it holds is internal.
+    A run over related sets repeats most of one decision's partitioning. Passing
+    one store keeps that work, and passing none is always correct: answers never
+    depend on it. It grows with what it has read, so drop it when the work is
+    done, and do not share one across threads.
     """
 
     __slots__ = ()
@@ -98,8 +88,8 @@ class MarkerSet:
     can refuse, both at the marker-grammar boundary. ``==`` is structural;
     :meth:`equivalent` is semantic.
 
-    The decision procedures partition each variable a set names into cells on
-    which every atom is constant, and read the set once per cell. That is exact
+    The decision procedures partition each axis a set names into cells on which
+    every atom is constant, and read the set once per cell. That is exact
     except on two constructions, and they err in opposite directions, so neither
     verdict is safe on its own.
 
@@ -218,8 +208,7 @@ class MarkerSet:
     def __eq__(self, other: object) -> bool:
         """Whether ``other`` was built from the same tree over the same atoms.
 
-        Structural, so a set parsed twice from one marker compares equal and can
-        key a dict:
+        Structural, so a set parsed twice from one marker compares equal:
 
         >>> MarkerSet.from_marker('sys_platform == "linux"') == MarkerSet.from_marker(
         ...     'sys_platform == "linux"'
@@ -227,8 +216,7 @@ class MarkerSet:
         True
 
         Two spellings of one set do not: ``a & b`` is unequal to ``b & a``, and
-        ``a | ~a`` to :meth:`full`. :meth:`equivalent` decides whether two sets
-        denote the same environments.
+        ``a | ~a`` to :meth:`full`. :meth:`equivalent` is the semantic test.
         """
         if not isinstance(other, MarkerSet):
             return NotImplemented
@@ -330,10 +318,9 @@ class MarkerSet:
     ) -> bool:
         """Whether the two sets denote the same environments inside ``within``.
 
-        The row-restricted counterpart of :meth:`equivalent`, deciding each of
-        ``within``'s rows under its pins so it stays decidable on wide
-        multi-platform universes. A universe of :meth:`full` reduces it to plain
-        :meth:`equivalent`, which is the cheaper call when that is the universe.
+        Deciding each row of ``within`` under its own pins keeps a wide
+        multi-platform universe decidable, where complementing the whole matrix
+        at once does not. Use :meth:`equivalent` when the universe is full.
 
         :raises IntractableMarkerSet: see :meth:`is_empty`.
         """
@@ -347,8 +334,8 @@ class MarkerSet:
     def restrict(self, env: Mapping[str, str | AbstractSet[str]]) -> MarkerSet:
         """Substitute the variables ``env`` provides, leaving the rest.
 
-        A variable ``env`` omits stays in the result. :meth:`evaluate` is the
-        total counterpart, which raises on a variable it was not given.
+        A variable ``env`` omits stays in the result, where :meth:`evaluate`
+        would raise.
 
         >>> both = MarkerSet.from_marker(
         ...     'sys_platform == "linux" and python_version >= "3.11"'
@@ -406,7 +393,7 @@ class MarkerSet:
     ) -> dict[str, str | frozenset[str]] | None:
         """Return an environment in this set, or ``None`` when none is found.
 
-        Never wrong: the environment is evaluated against the set before it is
+        Never wrong: the environment is checked against the set before it is
         returned, so it inherits neither gap :meth:`is_empty` carries. ``None``
         is weaker than empty, because the search reads the same partition.
 
@@ -425,12 +412,13 @@ class MarkerSet:
     def simplify(
         self, *, within: MarkerSet, store: DecisionStore | None = None
     ) -> MarkerSet:
-        """Return a smaller set that agrees with this one on every point of ``within``.
+        """Return a set that agrees with this one on every point of ``within``.
 
-        ``within`` is the universe the result must agree over: pass the union of
-        a lock's declared environments for a universe-aware result, or
-        :meth:`full` for a context-free factoring. Clauses and atoms come off
-        greedily to a fixpoint, so the result is small rather than minimal.
+        Pass the union of a lock's declared environments as ``within`` for a
+        universe-aware result, or :meth:`full` for a context-free factoring.
+        Clauses and atoms come off greedily to a fixpoint, so the result is not
+        the smallest equivalent set, and a factored input whose clauses are all
+        needed comes back expanded.
 
         >>> wide = MarkerSet.from_marker(
         ...     'python_version == "3.10" or python_version == "3.11"'
@@ -447,8 +435,8 @@ class MarkerSet:
         :raises UnserializableMarkerSet: if the set holds the complement of a
             version comparison, which has no negation in the grammar.
         :raises IntractableMarkerSet: if deciding a removal exceeds the internal
-            cell budget, if the whole run exceeds the internal work budget, or
-            if the marker nests past the stack.
+            cell budget, if the greedy loop exceeds the internal work budget,
+            or if the marker nests past the stack.
         """
         if _markersets.universe_is_empty(within._tree, _MAX_CELLS, store):
             msg = "within must not be the empty set"
@@ -465,15 +453,13 @@ class MarkerSet:
     def to_marker_string(self, *, store: DecisionStore | None = None) -> str | None:
         """Return a marker string denoting this set, or ``None`` for the full set.
 
-        ``None`` means no marker is needed. That is the opposite of
+        ``None`` means no marker is needed, the opposite of
         :meth:`packaging.ranges.VersionRange.to_specifier_set`, whose ``None``
-        means unspellable: a specifier set spells both its extremes and a marker
-        string spells neither, so the two put their sentinel in different places.
+        means unspellable.
 
         A set the grammar cannot spell raises rather than emit a string for some
         other set, and what is returned is parsed back and checked equivalent
-        first. Two sets raise: the empty set, and one holding the complement of a
-        version comparison.
+        first.
 
         >>> MarkerSet.from_marker('os_name == "posix"').to_marker_string()
         'os_name == "posix"'
@@ -495,8 +481,7 @@ class MarkerSet:
         text = _markersets.serialize(_markersets.to_nnf(self._tree))
         rebuilt = MarkerSet.from_marker(text)
         if not self.equivalent(rebuilt):  # pragma: no cover
-            # A last-resort guard: the per-atom complements are sound by
-            # construction, so a non-equivalent round-trip is unreachable.
+            # Unreachable: the per-atom complements are sound by construction.
             msg = "serialisation is not round-trip sound"
             raise UnserializableMarkerSet(msg)
         return text

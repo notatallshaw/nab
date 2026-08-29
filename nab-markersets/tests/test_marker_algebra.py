@@ -449,16 +449,24 @@ def test_contains_is_evaluate() -> None:
     assert {"extra": frozenset({"cpu"})} not in gpu
 
 
-def test_pairwise_predicates_share_a_store() -> None:
-    store = markersets.DecisionStore()
+def test_every_pairwise_predicate_reaches_the_store_it_is_given() -> None:
+    # One store per call, so a predicate that drops the keyword leaves an empty
+    # one rather than riding on a sibling's entries.
     a = ms('python_version >= "3.9" and sys_platform == "linux"')
     b = ms('python_version >= "3.12"')
+    calls = (
+        lambda store: a.is_disjoint(b, store=store),
+        lambda store: a.is_subset(b, store=store),
+        lambda store: a.is_superset(b, store=store),
+        lambda store: a.equivalent(b, store=store),
+        lambda store: a.is_empty(store=store),
+        lambda store: a.is_full(store=store),
+    )
 
-    assert not a.is_disjoint(b, store=store)
-    assert not a.is_subset(b, store=store)
-    assert not a.is_superset(b, store=store)
-    assert not a.equivalent(b, store=store)
-    assert store.decisions
+    for call in calls:
+        store = markersets.DecisionStore()
+        assert not call(store)
+        assert store.decisions
 
 
 # ------------------------------------------------- leaf-shape edge cases

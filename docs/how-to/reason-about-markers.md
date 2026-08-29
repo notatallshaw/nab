@@ -79,9 +79,8 @@ True
 
 ## Making a marker smaller
 
-`simplify` returns the smallest equivalent set over a universe you name.
-Pass the environments your project supports and the parts the universe
-already rules out come off.
+`simplify` drops what a universe you name already rules out. Pass the
+environments your project supports.
 
 ```pycon
 >>> wide = MarkerSet.from_marker(
@@ -94,6 +93,9 @@ already rules out come off.
 ```
 
 `MarkerSet.full()` as the universe gives a context-free factoring instead.
+The result is not the smallest equivalent set, and it is not always
+shorter: clauses are expanded before any come off, so a factored marker
+whose clauses are all needed comes back expanded.
 
 ## Writing a set back out
 

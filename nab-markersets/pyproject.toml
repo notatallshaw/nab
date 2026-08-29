@@ -19,10 +19,11 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
-# The engine imports `packaging._parser`, `packaging._tokenizer` and
-# `packaging.markers._eval_op`, none of which packaging promises, so the range
-# stops at the major this suite has been run against. Raise the cap only after
-# running the suite on the new one.
+# The engine needs packaging's marker parse tree and its single-atom evaluator,
+# and packaging publishes neither: it reads `_parser.parse_marker`, `_parser.Op`,
+# `_parser.Variable`, `_tokenizer.ParserSyntaxError` and `markers._eval_op`. So
+# the range stops at the major this suite has been run against. Raise the cap
+# after running the suite on the new one, not before.
 dependencies = [
     "packaging>=26.3,<27",
 ]
