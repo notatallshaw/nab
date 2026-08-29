@@ -50,10 +50,11 @@ def _reset_nab_output(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 @pytest.fixture
 def restored_gc_state() -> Iterator[None]:
-    """Put the cyclic collector back the way the test found it.
+    """Restore ``gc.isenabled()`` after the test.
 
     A test that lets the CLI switch the collector off leaks that state into
-    the rest of the session when the CLI's own restore is what broke.
+    the rest of the session when the CLI's own restore is what broke. The
+    permanent generation is not part of this; see :func:`stubbed_gc_freeze`.
     """
     enabled = gc.isenabled()
     try:
@@ -63,6 +64,17 @@ def restored_gc_state() -> Iterator[None]:
             gc.enable()
         else:
             gc.disable()
+
+
+@pytest.fixture
+def stubbed_gc_freeze(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace ``gc.freeze`` with a no-op for a test that runs the real entry.
+
+    :func:`nab._entry.console_entry` freezes the import graph, and there is no
+    partial unfreeze to undo it, so a real call would leave everything the
+    session holds in the permanent generation.
+    """
+    monkeypatch.setattr(gc, "freeze", lambda: None)
 
 
 @pytest.fixture
