@@ -14,17 +14,19 @@ Run through hatch::
 
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Any
 
 import tomlkit
-import tyro
 from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
-from tyro.extras import SubcommandApp
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -249,30 +251,49 @@ def _make(release: str, next_dev: str | None, *, assume_yes: bool, push: bool) -
     print(f"Open a PR into main ({location}); merge with a merge commit, not squash.")
 
 
-app = SubcommandApp()
+def _build_parser() -> argparse.ArgumentParser:
+    """Return the parser for the ``make`` and ``check`` subcommands.
+
+    Each summary is passed as both ``help`` and ``description``, so it reads the
+    same in the top-level listing and in the subcommand's own ``--help``.
+    """
+    parser = argparse.ArgumentParser(prog="release", allow_abbrev=False)
+    subcommands = parser.add_subparsers(dest="command", required=True)
+
+    make_summary = "Branch, bump, tag, and push a release, then open the PR yourself."
+    make = subcommands.add_parser(
+        "make", help=make_summary, description=make_summary, allow_abbrev=False
+    )
+    make.add_argument("version", help="Version to release, for example 0.0.3.")
+    make.add_argument("--next-dev", help="Development version to return main to.")
+    make.add_argument("--yes", action="store_true", help="Skip the confirmation.")
+    make.add_argument(
+        "--no-push", action="store_true", help="Build the branch and tag locally."
+    )
+
+    check_summary = (
+        "Verify the working tree matches a release tag (run by the publish workflow)."
+    )
+    check = subcommands.add_parser(
+        "check", help=check_summary, description=check_summary, allow_abbrev=False
+    )
+    check.add_argument("tag", help="Release tag to verify, for example v0.0.3.")
+
+    return parser
 
 
-@app.command
-def make(
-    version: Annotated[str, tyro.conf.Positional],
-    next_dev: str | None = None,
-    *,
-    yes: bool = False,
-    no_push: bool = False,
-) -> None:
-    """Branch, bump, tag, and push a release, then open the PR yourself."""
-    _make(version, next_dev, assume_yes=yes, push=not no_push)
-
-
-@app.command
-def check(tag: Annotated[str, tyro.conf.Positional]) -> None:
-    """Verify the working tree matches a release tag (run by the publish workflow)."""
-    check_release(tag)
-
-
-def main() -> None:
-    """Entry point for the release tooling."""
-    app.cli(prog="release")
+def main(argv: Sequence[str] | None = None) -> None:
+    """Run the subcommand named in ``argv``, or in ``sys.argv`` when it is None."""
+    arguments = _build_parser().parse_args(argv)
+    if arguments.command == "make":
+        _make(
+            arguments.version,
+            arguments.next_dev,
+            assume_yes=arguments.yes,
+            push=not arguments.no_push,
+        )
+    else:
+        check_release(arguments.tag)
 
 
 if __name__ == "__main__":

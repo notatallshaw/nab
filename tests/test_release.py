@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,12 +12,41 @@ from packaging.version import InvalidVersion
 
 pytest.importorskip("tomlkit")
 
-_PATH = Path(__file__).resolve().parents[1] / "tasks" / "release.py"
+_ROOT = Path(__file__).resolve().parents[1]
+_PATH = _ROOT / "tasks" / "release.py"
 _spec = importlib.util.spec_from_file_location("nab_release_tasks", _PATH)
 assert _spec is not None
 assert _spec.loader is not None
 release = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(release)
+
+# Spelled out rather than read off the parser, so a reworded summary fails here.
+_MAKE_SUMMARY = "Branch, bump, tag, and push a release, then open the PR yourself."
+_CHECK_SUMMARY = (
+    "Verify the working tree matches a release tag (run by the publish workflow)."
+)
+
+_MakeCall = tuple[str, str | None, bool, bool]
+
+
+@pytest.fixture
+def wide_help(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Widen the terminal so argparse stops wrapping help text mid-sentence."""
+    monkeypatch.setenv("COLUMNS", "200")
+
+
+@pytest.fixture
+def make_calls(monkeypatch: pytest.MonkeyPatch) -> list[_MakeCall]:
+    """Replace ``_make`` with a recorder and return the list it appends to."""
+    calls: list[_MakeCall] = []
+
+    def recorder(
+        version: str, next_dev: str | None, *, assume_yes: bool, push: bool
+    ) -> None:
+        calls.append((version, next_dev, assume_yes, push))
+
+    monkeypatch.setattr(release, "_make", recorder)
+    return calls
 
 
 def _make_tree(tmp_path: Path, version: str, pin: str) -> tuple[Path, Path]:
@@ -188,3 +219,112 @@ def test_github_slug() -> None:
         == "notatallshaw/nab"
     )
     assert release._github_slug("https://gitlab.com/x/y.git") is None
+
+
+def test_main_make_defaults_to_pushing_and_asking_first(
+    make_calls: list[_MakeCall],
+) -> None:
+    release.main(["make", "0.0.3"])
+
+    assert make_calls == [("0.0.3", None, False, True)]
+
+
+def test_main_make_reads_every_flag(make_calls: list[_MakeCall]) -> None:
+    release.main(["make", "0.0.3", "--next-dev", "0.1.0.dev0", "--yes", "--no-push"])
+
+    assert make_calls == [("0.0.3", "0.1.0.dev0", True, False)]
+
+
+def test_main_check_forwards_the_tag(monkeypatch: pytest.MonkeyPatch) -> None:
+    tags: list[str] = []
+    monkeypatch.setattr(release, "check_release", tags.append)
+
+    release.main(["check", "v0.0.3"])
+
+    assert tags == ["v0.0.3"]
+
+
+def test_main_rejects_a_missing_subcommand(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as error:
+        release.main([])
+
+    assert error.value.code == 2
+    assert "the following arguments are required: command" in capsys.readouterr().err
+
+
+def test_main_rejects_make_without_a_version(make_calls: list[_MakeCall]) -> None:
+    with pytest.raises(SystemExit) as error:
+        release.main(["make"])
+
+    assert error.value.code == 2
+    assert make_calls == []
+
+
+def test_main_rejects_abbreviated_options(make_calls: list[_MakeCall]) -> None:
+    """A prefix must not resolve, or a new option could change what a flag means."""
+    for argv in (["--he"], ["make", "0.0.3", "--next-de", "0.1.0.dev0"]):
+        with pytest.raises(SystemExit) as error:
+            release.main(argv)
+        assert error.value.code == 2
+
+    assert make_calls == []
+
+
+def test_hatch_and_the_publish_workflow_call_make_and_check() -> None:
+    """Pin both callers verbatim, so a change to either has to come back here."""
+    hatch = (_ROOT / "hatch.toml").read_text(encoding="utf-8")
+    workflow = (_ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'make = ["_sync", "python tasks/release.py make {args}"]' in hatch
+    assert 'python tasks/release.py check "${RELEASE_TAG}"' in workflow
+
+
+@pytest.mark.usefixtures("wide_help")
+def test_top_level_help_summarizes_both_subcommands(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        release.main(["--help"])
+
+    assert error.value.code == 0
+    printed = capsys.readouterr().out
+    assert _MAKE_SUMMARY in printed
+    assert _CHECK_SUMMARY in printed
+
+
+@pytest.mark.usefixtures("wide_help")
+def test_subcommand_help_documents_every_argument(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    for command in ("make", "check"):
+        with pytest.raises(SystemExit) as error:
+            release.main([command, "--help"])
+        assert error.value.code == 0
+
+    printed = capsys.readouterr().out
+    for documented in (
+        _MAKE_SUMMARY,
+        "Version to release, for example 0.0.3.",
+        "Development version to return main to.",
+        "Skip the confirmation.",
+        "Build the branch and tag locally.",
+        _CHECK_SUMMARY,
+        "Release tag to verify, for example v0.0.3.",
+    ):
+        assert documented in printed
+
+
+@pytest.mark.usefixtures("wide_help")
+def test_the_script_parses_the_argv_it_is_run_with() -> None:
+    """Both callers run the file, so ``main`` has to read ``sys.argv`` itself."""
+    result = subprocess.run(  # noqa: S603 - this interpreter, the repo's own script
+        [sys.executable, str(_PATH), "make", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert _MAKE_SUMMARY in result.stdout
