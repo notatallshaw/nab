@@ -1,4 +1,4 @@
-"""Runtime fallback for :func:`typing.override`, so this package needs no install.
+"""Runtime fallback for :func:`typing.override`, so this package needs no dependency.
 
 ``override`` runs at class-body time, so unlike the annotation-only helpers it
 cannot hide under ``TYPE_CHECKING``.  It is looked up by name rather than by

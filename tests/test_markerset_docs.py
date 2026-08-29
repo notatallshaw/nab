@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 import nab_markersets
+from nab_markersets import errors, markersets
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 README = REPO_ROOT / "nab-markersets" / "README.md"
@@ -49,12 +50,44 @@ def test_the_docs_print_what_they_document() -> None:
         assert results.attempted > 0, path.name
 
 
-def test_the_readme_copies_the_promised_api_table() -> None:
-    """The README's table and the package docstring's are one list, not two."""
+def test_both_pages_copy_the_promised_api_table() -> None:
+    """The README's table, the guide's and the package docstring's are one list."""
     promised = _api_table(nab_markersets.__doc__ or "")
 
     assert promised
-    assert promised in README.read_text("utf-8")
+    for path in BLOCKS:
+        assert promised in path.read_text("utf-8"), path.name
+
+
+def test_the_promised_table_is_what_the_modules_export() -> None:
+    """Every exported name is promised, and every promised name is exported.
+
+    Without this, dropping a name from the table and the README together
+    satisfies both copies and quietly unpublishes it.
+    """
+    promised = {
+        (module, name)
+        for module, names in _api_rows(nab_markersets.__doc__ or "")
+        for name in names
+    }
+    exported = {
+        (module.__name__, name)
+        for module in (errors, markersets)
+        for name in module.__all__
+    }
+
+    assert promised == exported
+
+
+def _api_rows(text: str) -> list[tuple[str, list[str]]]:
+    """Each ``nab_markersets.<module>  <names>`` row as its module and its names."""
+    rows = []
+    for line in text.splitlines():
+        if not line.startswith("    nab_"):
+            continue
+        module, _, names = line.strip().partition(" ")
+        rows.append((module, [n.strip() for n in names.split(",") if n.strip()]))
+    return rows
 
 
 def _api_table(text: str) -> str:

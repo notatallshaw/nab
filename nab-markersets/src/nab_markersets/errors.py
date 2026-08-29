@@ -1,7 +1,10 @@
-"""The two failures the marker algebra reports.
+"""The failures the algebra raises on its own, beside packaging's.
 
-Both subclass :class:`ValueError`, matching packaging's marker exceptions, so a
-caller that already catches ``ValueError`` around marker handling keeps working.
+A marker the grammar rejects still raises packaging's
+:class:`~packaging.markers.InvalidMarker` and an operator it cannot decide
+packaging's ``UndefinedComparison``, both :class:`ValueError`. These two are
+``ValueError`` to match. An environment missing a variable raises packaging's
+``UndefinedEnvironmentName``, which is a :class:`KeyError`.
 """
 
 from __future__ import annotations
@@ -16,9 +19,10 @@ def __dir__() -> list[str]:
 class IntractableMarkerSet(ValueError):
     """The set is too complex to decide within the budget.
 
-    Raised rather than hanging or failing obscurely: a cell product past the
-    internal cap, a marker nested past the interpreter stack, or a version
-    literal whose numeric component exceeds the digit parse limit.
+    Raised rather than hanging or failing obscurely, for any budget the
+    algebra runs under: the cell caps, the work meter :meth:`simplify` runs
+    the greedy loop under, the interpreter's stack, and the digit parse
+    limit.
     """
 
 

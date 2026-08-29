@@ -3,10 +3,13 @@
 `nab-markersets` reads a PEP 508 marker as the set of environments it
 selects. Two markers that cannot both hold are disjoint sets; a marker no
 environment satisfies is the empty set; a marker you can drop is the full
-one. `packaging` parses and evaluates markers against one environment, and
-that is the operation this package adds to.
+one. `packaging` evaluates a marker against one environment, and these are
+the questions you cannot answer that way.
 
-Install it with `pip install nab-markersets`.
+Install it with `pip install nab-markersets`. A set comes from
+`MarkerSet.from_marker`, `MarkerSet.full` or `MarkerSet.empty`, and the
+examples below spell `intersection`, `union`, `complement` and `difference`
+as `&`, `|`, `~` and `-`.
 
 ## Can both of these apply?
 
@@ -47,7 +50,8 @@ False
 
 ## Do these mean the same thing?
 
-`==` on two sets is identity, so use `equivalent`.
+`==` is structural, over the tree a set was built from, so two spellings
+of one set compare unequal. `equivalent` is the semantic test.
 
 ```pycon
 >>> short = MarkerSet.from_marker('python_version >= "3.11"')
@@ -99,10 +103,10 @@ whose clauses are all needed comes back expanded.
 
 ## Writing a set back out
 
-`to_marker_string` is the one operation that can fail, because the set
-algebra is closed and the grammar is not. It returns `None` for the full
-set, and raises for the empty set and for a complement PEP 508 cannot
-spell.
+The algebra is closed and the grammar is not, so `to_marker_string`
+returns `None` for the full set and raises for the empty set and for a
+complement PEP 508 cannot spell. `simplify` raises the same way, since it
+serialises what it factors.
 
 ```pycon
 >>> MarkerSet.full().to_marker_string() is None
@@ -126,9 +130,8 @@ mutually exclusive: asking for `pkg[cpu,gpu]` makes both true.
 ...     MarkerSet.from_marker('extra == "gpu"')
 ... )
 False
->>> MarkerSet.from_marker('extra != "gpu"').evaluate(
-...     {"extra": frozenset({"cpu", "gpu"})}
-... )
+>>> not_gpu = MarkerSet.from_marker('extra != "gpu"')
+>>> not_gpu.evaluate({"extra": frozenset({"cpu", "gpu"})})
 False
 ```
 
@@ -167,17 +170,15 @@ Every decision runs under a cell budget and raises rather than hanging.
 
 ```pycon
 >>> from nab_markersets.errors import IntractableMarkerSet
->>> axes = ("os_name", "sys_platform", "platform_machine",
-...         "platform_system", "platform_release", "implementation_name")
->>> wide = MarkerSet.from_marker(" and ".join(
-...     "(" + " or ".join(f'{axis} == "v{i}"' for i in range(12)) + ")"
-...     for axis in axes
-... ))
+>>> axes = "os_name sys_platform platform_machine platform_system".split()
+>>> def clause(axis):
+...     return " or ".join(f'{axis} == "v{i}"' for i in range(18))
+>>> wide = MarkerSet.from_marker(" and ".join(f"({clause(a)})" for a in axes))
 >>> try:
 ...     wide.is_empty()
-... except IntractableMarkerSet as exc:
-...     print(exc)
-cell product exceeds max_cells=100000
+... except IntractableMarkerSet:
+...     print("too wide to decide")
+too wide to decide
 ```
 
 `restrict` the variables you already know before deciding, and the axes it
@@ -223,3 +224,15 @@ a set, so it answers for markers `from_marker` refuses.
 >>> sorted(variable_names('python_full_version === "3.11"'))
 ['python_full_version']
 ```
+
+## The supported API
+
+These module paths will not move without a major version bump:
+
+```text
+nab_markersets.errors       IntractableMarkerSet, UnserializableMarkerSet
+nab_markersets.markersets   DecisionStore, MarkerSet, variable_names
+```
+
+The package root binds no names, so importing `nab_markersets` pulls in no
+submodules. Anything else is internal and may move in any release.

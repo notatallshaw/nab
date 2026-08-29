@@ -31,8 +31,8 @@ False
 
 When markers have to be reasoned about rather than tested against one
 environment: whether two lock entries can both apply, whether a
-dependency is reachable inside your `requires-python`, or what a set of
-environment rows leaves uncovered. It is what
+dependency is reachable inside your `requires-python`, or what a marker
+still says once you fix the platform. It is what
 [`nab`](https://pypi.org/project/nab/) uses for markers. The guide walks
 through those, and through what the decisions do not decide:
 <https://nab.readthedocs.io/en/stable/how-to/reason-about-markers.html>
@@ -59,6 +59,7 @@ enumerates representative points rather than solving, so two
 constructions read wrong in opposite directions; `MarkerSet`'s own
 docstring shows both.
 
-The engine reads three private `packaging` names so a marker means here
-exactly what it means there, which is why the dependency carries a
-ceiling. The API is under rapid experimentation: pin an exact version.
+The engine needs packaging's marker parse tree and its single-atom
+evaluator, and packaging publishes neither, which is why the dependency
+carries a ceiling. The API is under rapid experimentation: pin an exact
+version.

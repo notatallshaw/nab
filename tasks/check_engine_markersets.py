@@ -1,8 +1,8 @@
 """Check that the resolve engine does not reach nab's marker sets.
 
-The marker algebra is its own distribution, ``nab-markersets``. Keeping it out
-of the engine's import closure is what lets the resolve path be read, and one
-day shipped, without it.
+The marker algebra is its own distribution, ``nab-markersets``. Keeping the
+engine from calling into it, and holding the modules that do import it to a
+named list, is what lets the resolve path be read as one piece.
 
 Two rules, both computed statically over the shipped ``src`` trees.
 

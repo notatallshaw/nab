@@ -33,7 +33,7 @@ from packaging.version import InvalidVersion, Version
 from .errors import IntractableMarkerSet, UnserializableMarkerSet
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Mapping, Sequence
+    from collections.abc import Container, Iterable, Iterator, Mapping, Sequence
     from typing import TypeAlias
 
     # packaging's parse tree, narrowed to what ``parse_marker`` builds. Its own
@@ -283,7 +283,7 @@ class Atom:
         if self.kind == AXIS_VALUE:
             return _holds_value(self, str(point))
         if self.kind == AXIS_SET:
-            member = self.literal in point  # type: ignore[operator]
+            member = self.literal in cast("Container[str]", point)
             return member if self.positive else not member
         present = self.literal in point if isinstance(point, str) else bool(point)
         return present if self.positive else not present
@@ -456,7 +456,7 @@ def make_not(node: Formula) -> Formula:
 # ------------------------------------------------------------------- construction
 
 
-def _parse_ast(source: str | Marker) -> list[MarkerNode] | None:
+def _parse_ast(source: object) -> list[MarkerNode] | None:
     """Parse a marker with packaging; None for an empty marker."""
     if isinstance(source, Marker):
         source = str(source)
@@ -614,7 +614,7 @@ def _make_set_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Fo
     elif op in _MEMBERSHIP and swapped:
         positive = op == "in"
     else:
-        return FALSE  # a set variable in any non-membership form is constant False.
+        return FALSE  # every other form on a set variable is constant False.
     return AtomLeaf(Atom(AXIS_SET, variable, variable, op, name, positive=positive))
 
 
@@ -692,7 +692,7 @@ class Memo:
     """The verdicts, partitions, atom truths and version parses a decision re-reads.
 
     A decision makes its own unless the caller passes one to share; see
-    :class:`~nab_markersets.DecisionStore`.
+    :class:`~nab_markersets.markersets.DecisionStore`.
     """
 
     __slots__ = ("decisions", "partitions", "truths", "versions")
@@ -1226,7 +1226,8 @@ def evaluate_atom(atom: Atom, env: Mapping[str, object]) -> bool:
         return atom.holds(_require(env, atom.variable))
     if atom.kind == AXIS_SET:
         return atom.holds(as_name_set(_require(env, atom.origin)))
-    return atom.holds(atom.literal in _require(env, atom.variable))  # type: ignore[operator]
+    names = cast("Container[str]", _require(env, atom.variable))
+    return atom.holds(atom.literal in names)
 
 
 # --------------------------------------------------------------------- walking
@@ -1433,7 +1434,7 @@ def _restrict_value(atom: Atom, env: Mapping[str, object]) -> bool | None:
     if atom.kind == AXIS_SET:
         return atom.holds(as_name_set(value))
     if atom.kind == AXIS_CONTAINS:
-        return atom.holds(atom.literal in value)  # type: ignore[operator]
+        return atom.holds(atom.literal in cast("Container[str]", value))
     return atom.holds(value)
 
 
@@ -1658,8 +1659,8 @@ def _to_clauses(node: Formula, max_cells: int) -> list[frozenset[Atom]]:
     """Distribute an NNF tree into a disjunction of atom-set clauses (DNF).
 
     An AND of ORs expands multiplicatively, so that product is held to
-        ``max_cells`` and a pathological non-DNF input raises
-        :class:`IntractableMarkerSet`. A plain OR chain is not counted.
+    ``max_cells`` and a pathological non-DNF input raises
+    :class:`IntractableMarkerSet`. A plain OR chain is not counted.
     """
     if isinstance(node, BoolConst):
         return [frozenset()] if node.value else []
@@ -1923,7 +1924,7 @@ def simplify_within(
     if not clauses:
         return FALSE
     clauses = sorted(clauses, key=_clause_key)
-    common = frozenset.intersection(*clauses)
+    common: frozenset[Atom] = frozenset.intersection(*clauses)
     residual = sorted((clause - common for clause in clauses), key=_clause_key)
     lead = [AtomLeaf(atom) for atom in sorted(common, key=_atom_key)]
     inner = make_or(

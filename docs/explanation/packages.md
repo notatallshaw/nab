@@ -118,6 +118,7 @@ distinct classes that `isinstance` and dict keying disagree about.
 `nab-markersets` is outside that: it takes released `packaging` and never reads
 the fork. Both copies already ran in one process, since `nab-index` reads
 `packaging.utils` and `packaging.version`; marker handling on the released copy
-is what the sixth distribution adds. No object crosses between them. A marker
-goes over as `str(marker)`, and the exceptions the algebra raises are released
-`packaging`'s, which is why `nab_provider.marker_holds` imports both.
+is what the sixth distribution adds. No object built by one copy is handed to
+the other: a marker goes over as `str(marker)`. `nab_provider.marker_holds` is
+the one module that holds both in scope, because a vendored `Marker` and the
+algebra raise different classes for the same condition.

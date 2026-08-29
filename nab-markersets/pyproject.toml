@@ -21,7 +21,8 @@ classifiers = [
 ]
 # The engine needs packaging's marker parse tree and its single-atom evaluator,
 # and packaging publishes neither: it reads `_parser.parse_marker`, `_parser.Op`,
-# `_parser.Variable`, `_tokenizer.ParserSyntaxError` and `markers._eval_op`. So
+# `_parser.Variable`, `_parser.Value`, `_tokenizer.ParserSyntaxError` and
+# `markers._eval_op`. So
 # the range stops at the major this suite has been run against. Raise the cap
 # after running the suite on the new one, not before.
 dependencies = [

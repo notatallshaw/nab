@@ -2,9 +2,9 @@
 
 ``packaging.markers.Marker.evaluate`` binds ``extra`` to a single string and
 cannot say that several extras are active, so this goes through
-:class:`~nab_markersets.MarkerSet` instead.  Its own module so the resolve
-engine never imports ``nab_markersets``; ``tasks/check_engine_markersets.py``
-enforces that.
+:class:`~nab_markersets.markersets.MarkerSet` instead.  Its own module so the resolve
+engine reaches no marker-set definition; ``tasks/check_engine_markersets.py``
+holds the import closure to a named list this module is on.
 """
 
 from __future__ import annotations

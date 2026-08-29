@@ -345,10 +345,10 @@ extend-exclude = ["**/_vendor/**"]
 # this package is written to drop into packaging.
 "nab-markersets/src/nab_markersets/errors.py" = ["N818"]
 
-# PYI034 wants __new__ to return Self, which needs typing_extensions on the 3.10
-# floor, and this distribution declares packaging and nothing else.
+# Atom.__new__ returns an interned instance, so PYI034 wants Self, which needs
+# typing_extensions on the 3.10 floor; this distribution declares packaging and
+# nothing else.
 "nab-markersets/src/nab_markersets/_markersets.py" = ["PYI034"]
-"nab-markersets/src/nab_markersets/markersets.py" = ["PYI034"]
 
 # Subpackages defer imports to break cycles with their parent modules.
 "nab-provider/src/nab_provider/_provider/*.py" = ["PLC0415"]

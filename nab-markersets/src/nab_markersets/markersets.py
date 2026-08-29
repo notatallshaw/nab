@@ -79,8 +79,9 @@ class DecisionStore(_markersets.Memo):
 class MarkerSet:
     """A set of environments: the denotation of a PEP 508 marker. Immutable.
 
-    Instances come only from the factories (:meth:`from_marker`, :meth:`full`,
-    :meth:`empty`); calling ``MarkerSet(...)`` raises :class:`TypeError`.
+    A caller builds one only through the factories (:meth:`from_marker`,
+    :meth:`full`, :meth:`empty`); calling ``MarkerSet(...)`` raises
+    :class:`TypeError`.
 
     The algebra is closed under :meth:`intersection`, :meth:`union`,
     :meth:`complement` and :meth:`difference`, which always return a
@@ -118,7 +119,9 @@ class MarkerSet:
     #: The normalised op-tree this set denotes.
     _tree: Formula
 
-    def __new__(cls, *_args: object, **_kwargs: object) -> MarkerSet:
+    # NoReturn is the truthful annotation and mypy then reads every class-level
+    # access as Never, so this keeps VersionRange.__new__'s spelling and its noqa.
+    def __new__(cls, *_args: object, **_kwargs: object) -> MarkerSet:  # noqa: PYI034
         """Refuse direct construction, naming the three factories instead."""
         msg = (
             "cannot create 'MarkerSet' instances directly; use "
@@ -130,10 +133,9 @@ class MarkerSet:
     @classmethod
     def _wrap(cls, tree: Formula) -> MarkerSet:
         """Return a set wrapping ``tree``, bypassing the :meth:`__new__` refusal."""
-        instance = object.__new__(cls)
-        # SLF001 reads `instance` as a foreign object; it is a `cls`.
-        instance._tree = tree  # noqa: SLF001
-        return instance
+        self = object.__new__(cls)
+        self._tree = tree
+        return self
 
     # ---- construction
 
@@ -234,7 +236,8 @@ class MarkerSet:
         """Whether no environment satisfies this set (the marker is a contradiction).
 
         Not exact: :class:`MarkerSet` names the two constructions it misreads and
-        which way each one errs. Every predicate below reduces to this one.
+        which way each one errs. Every other decision procedure reduces to this
+        one, so all of them inherit both gaps.
 
         :raises IntractableMarkerSet: if deciding the set exceeds the internal
             cell budget, or the marker nests past the stack.

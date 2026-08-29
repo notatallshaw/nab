@@ -14,7 +14,7 @@ import traceback
 import weakref
 
 import pytest
-from packaging._parser import Op, Variable, parse_marker
+from packaging._parser import Op, Value, Variable, parse_marker
 from packaging._tokenizer import ParserSyntaxError
 from packaging.markers import (
     InvalidMarker,
@@ -429,6 +429,8 @@ def test_equality_is_structural_not_semantic() -> None:
 
     assert ms('sys_platform == "linux"') == a
     assert hash(ms('sys_platform == "linux"')) == hash(a)
+    # A constant hash would satisfy the line above and nothing else.
+    assert hash(a) != hash(b)
     assert len({a, ms('sys_platform == "linux"')}) == 1
     assert {a: "kept"}[ms('sys_platform == "linux"')] == "kept"
 
@@ -1440,7 +1442,24 @@ def test_deep_nesting_decision_reports_complexity() -> None:
         # Bound the walk to a fixed headroom over the current stack, so the guard
         # fires below the interpreter limit whatever the ambient limit is.
         sys.setrecursionlimit(len(traceback.extract_stack()) + 300)
-        for decide in (deep.is_empty, deep.to_marker_string, deep.witness):
+        shallow = ms('os_name == "posix"')
+        env = {"sys_platform": "linux", "os_name": "posix", "extra": frozenset()}
+        decisions = (
+            deep.is_empty,
+            deep.is_full,
+            deep.to_marker_string,
+            deep.witness,
+            lambda: deep.is_disjoint(shallow),
+            lambda: deep.is_subset(shallow),
+            lambda: deep.is_superset(shallow),
+            lambda: deep.equivalent(shallow),
+            lambda: deep.equivalent_within(shallow, MarkerSet.full()),
+            lambda: deep.restrict(env),
+            lambda: deep.evaluate(env),
+            deep.set_memberships,
+            lambda: deep.simplify(within=MarkerSet.full()),
+        )
+        for decide in decisions:
             with pytest.raises(IntractableMarkerSet):
                 decide()
     finally:
@@ -1463,15 +1482,6 @@ def test_deep_nesting_construction_reports_complexity() -> None:
 
 
 # -------------------------------------------------- branch-completeness edges
-
-
-def test_atom_equality_declines_a_foreign_operand() -> None:
-    # NotImplemented, not False, so Python still tries the other operand's
-    # __eq__ and falls back to identity rather than settling for inequality.
-    atom = _markersets.Atom(
-        _markersets.AXIS_VALUE, "sys_platform", "sys_platform", "==", "linux"
-    )
-    assert atom.__eq__(object()) is NotImplemented
 
 
 def test_other_cell_survives_literal_collision() -> None:
@@ -1591,13 +1601,14 @@ def test_serialise_absorbs_constant_false_atom() -> None:
 
 
 def test_the_private_packaging_names_the_engine_reaches() -> None:
-    # These three have no public replacement, which is why the manifest caps
-    # packaging at the major this suite has run against. Renaming one, or
-    # reshaping the parse tree, breaks every import of nab_markersets, so raise
-    # the cap only once this passes on the new major.
+    # None of the six the manifest lists has a public replacement, which is why
+    # it caps packaging at the major this suite has run against. Renaming one,
+    # or reshaping the parse tree, breaks every import of nab_markersets, so
+    # raise the cap only once this passes on the new major.
     parsed = parse_marker('sys_platform == "linux"')
     lhs, op, rhs = parsed[0]
     assert isinstance(lhs, Variable)
+    assert isinstance(rhs, Value)
     assert (lhs.value, op.value, rhs.value) == ("sys_platform", "==", "linux")
 
     with pytest.raises(ParserSyntaxError):
