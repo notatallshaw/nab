@@ -2175,8 +2175,7 @@ class TestFetchCoordinatorCache:
         assert failures[0].levelno == logging.DEBUG
         assert failures[0].exc_info is None
 
-    def test_explicit_cache_backend_takes_precedence(self) -> None:
-        """A passed-in cache_backend wins over cache_dir."""
+    def test_explicit_cache_backend_is_stored_without_cache_dir(self) -> None:
         from nab_index.cache import NullCache
 
         backend = NullCache()

@@ -65,7 +65,7 @@ def compute_matching(
     normalized: str,
     version_range: RangeProtocol[Version],
 ) -> int:
-    """Return the count of cached versions of ``normalized`` in ``version_range``.
+    """Count cached artifact records matching ``version_range`` for ``normalized``.
 
     Also fires speculative metadata prefetch when this is the first time we
     notice the listing has arrived in the coordinator index.  Returns

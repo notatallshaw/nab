@@ -51,10 +51,8 @@ Static metadata only, from any source:
   its `pyproject.toml` is read statically.  Same failure when the
   static read comes up empty.
 
-Picks the most reproducible posture: every input to the SAT
-problem is a file read, not a sandboxed subprocess.  Use `never`
-for a lockdown resolve; only a per-package or per-index override
-lets a backend run.
+`never` runs no build backend unless a per-package or per-index override raises
+the policy. It still reads configured indexes and source files.
 
 ## `build-local` (default)
 
@@ -83,14 +81,10 @@ sdists.  On top of `build-local`:
   built when their `PKG-INFO` deps are not PEP 643 static and the
   bundled `pyproject.toml` offers no static fallback.
 
-A backend failure on any of these surfaces as
-`UnsupportedSdistError`; for a PyPI sdist the resolver skips that
-version, then either picks the next candidate or, if no candidate
-works, reports the accumulated build failures as a no-version
-diagnostic.  Honesty over silence: a version that needs a build
-which fails is treated as unbuildable, not as having zero
-dependencies.  A VCS clone or an archive source ends the resolve
-instead; see below.
+A backend failure surfaces as `UnsupportedSdistError`. For a PyPI sdist, the
+resolver rejects that version and tries another candidate; if none works, the
+diagnostic includes the build failures. A VCS or archive source ends the
+resolve instead because it is the only candidate for its name.
 
 ## A source that cannot be read ends the resolve
 
@@ -109,10 +103,9 @@ resolver moves on to the next.
 
 ## Choosing a level
 
-The default `build-local` handles the common case (a local
-checkout with `dynamic = ["version"]` from hatch-vcs or similar)
-without opening the door to remote-sdist builds.  Lower to
-`never` when you want a fully hermetic resolve.
+The default `build-local` handles a local checkout with dynamic metadata
+without running backends for remote sources. Use global `never` to make
+backend execution opt-in through per-package or per-index overrides.
 
 For transitive dependencies that only publish a dynamic sdist
 (native or CUDA-heavy wheels are the usual offenders), prefer a
@@ -123,11 +116,9 @@ per-package override rather than raising the global to `build-remote`:
 build-policy = "build-remote"
 ```
 
-That keeps the rest of the graph in the hermetic default while
-permitting the one package you actually need to build.  When you
-know the package's dependencies, a `dependencies` metadata override
-(see the [configuration reference](configuration.md)) resolves it under
-`never` without building at all.
+The override permits a backend only for that package. If its dependencies are
+known, a `dependencies` metadata override can avoid the build instead; see
+[Configuration](configuration.md).
 
 ## Building a build requirement
 
@@ -228,23 +219,23 @@ a source build.
 
 ## A declared platform forbids host builds
 
-A PEP 517 backend always runs on the host nab runs on, so it reports the
-host's dependencies.  That is correct when you resolve for the host, but
-wrong when you resolve *as if* you were on another machine.  Every target
-that moves the platform axis therefore forbids host builds:
-`build-policy` is forced to `never`, and an explicit non-`never` value
-(global or in any override) is a config error, checked before the resolve
-starts.  That covers both surfaces that declare a machine:
+A PEP 517 backend runs on the host and reports the host's dependencies. That
+is wrong when resolving for another machine, so every target that moves the
+platform axis forbids host builds.
+
+`build-policy` is forced to `never`; an explicit non-`never` value is a config
+error before resolution. This covers both ways to declare a machine:
 
 * `[tool.nab.environment]` with a `platform` or an `implementation`.
-* `mode = "universal"`, where every matrix tuple declares one.
+* `mode = "universal"`, where every matrix target declares one.
 
 This matches pip, which requires `--only-binary=:all:` under `--platform`,
 `--abi`, or `--implementation`.
 
-A retarget of the **python axis alone** (`[tool.nab.environment].python`,
+A retarget of the Python axis alone (`[tool.nab.environment].python`,
 or `--python X.Y`) is different: the machine is still the host.  nab warns
 that a build would report the host interpreter's metadata, and permits it.
+
 This is a deliberate deviation from pip: the machine is still the host, so a
 build can run at all, and refusing every one of them would take the default
 case with it.  Set `build-policy = "never"` to forbid it.

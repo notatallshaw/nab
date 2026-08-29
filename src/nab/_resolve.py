@@ -101,13 +101,10 @@ def resolve_group_selection(
     groups: tuple[str, ...],
     all_groups: bool,
 ) -> tuple[str, ...]:
-    """Return the canonical, deduplicated group selection for this run.
+    """Return selected groups in declaration or CLI order, without duplicates.
 
-    ``groups`` is the list the line gave.  ``all_groups`` overrides it:
-    when set, every group defined in the project's ``[dependency-groups]``
-    table is selected.  An ``--all-groups`` paired with a non-empty
-    ``--groups`` list raises a clean error rather than silently preferring
-    one over the other.
+    ``all_groups`` selects every declared group and cannot be combined with
+    ``groups``.
     """
     if all_groups and groups:
         printer().error("--all-groups and --groups are mutually exclusive")

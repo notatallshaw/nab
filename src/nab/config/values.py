@@ -593,10 +593,8 @@ ENVIRONMENT_KEYS = frozenset({"python", "platform", "implementation"})
 def parse_environment(value: object, where: str) -> dict[str, Any]:
     """Parse ``[tool.nab.environment]``: the one environment to resolve for.
 
-    Kept as the raw table so the registry merges it sub-key by sub-key
-    across the config sources rather than as a whole.  ``platform`` takes
-    the two shapes a ``matrix.platforms`` entry takes, a bare id or a table
-    of the wheel-tag knobs, so a dict value passes through here.
+    The registry treats the table as one value. ``platform`` accepts either a
+    bare id or the wheel-tag table used by ``matrix.platforms``.
     """
     if not isinstance(value, dict):
         msg = f"{where} must be a table, got {type(value).__name__}"

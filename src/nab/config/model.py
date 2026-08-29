@@ -306,48 +306,26 @@ def read_pyproject_config(
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, Any] | None = None,
 ) -> NabProjectConfig:
-    """Parse ``[tool.nab]`` from ``path`` into :class:`NabProjectConfig`.
+    """Read the project's effective :class:`NabProjectConfig`.
 
-    Returns the default ``NabProjectConfig`` when the table is absent.
-    Unknown keys at the top level are rejected so typos fail loud.
+    The project ``nab.toml`` and ``path``'s ``[tool.nab]`` table share one
+    precedence level. Setting the same option differently is an error; lists
+    and tables are each compared as one value. ``cli_overrides`` is the
+    highest layer. A scalar or list replaces the file value; a table override
+    replaces the keys it names.
 
-    When ``discover_workspace`` is true (the default), the merged
-    ``workspace`` table drives discovery and its members resolve against
-    the project directory.  A project that declares no workspace of its
-    own walks up from ``path`` for the first ancestor project file that
-    declares one.  Either way every member is materialised as an
-    additional :class:`LocalSource` (explicit
-    ``[[tool.nab.local-sources]]`` entries win on collision).  A workspace
-    does not change the effective ``build-policy``: a member with dynamic
-    metadata needs a build, and under ``never`` it is refused like any
-    other source.  Pass ``discover_workspace=False`` to skip discovery;
-    useful for tests or for callers that layer their own workspace logic
-    on top of a base config.
+    ``anchor`` fixes the instant used by ``P<n>D`` durations. It defaults to
+    the current UTC time; the lock CLI may reuse a lock's recorded timestamp.
 
-    The ``[tool.nab]``-config portion is sourced from the registry merged
-    ladder (pyproject ``[tool.nab]`` plus a project-dir ``nab.toml``,
-    merged by :func:`nab.config.ladder.resolve_config` with its per-key merge,
-    cross-file conflict check, and category gate), so a project-dir
-    ``nab.toml`` value configures the resolve exactly as the inspector
-    reports it.  The
-    cross-field transforms (mode/matrix, the build-policy host-build gate,
-    universal marker-environment ban, source-name uniqueness, declared
-    index references) then run on the merged config; workspace discovery
-    runs last.
+    By default, workspace discovery finds the declared or nearest ancestor
+    workspace and adds its members as local sources, with explicit sources
+    winning name collisions. It does not relax ``build-policy``. Pass
+    ``discover_workspace=False`` when the caller owns discovery.
 
-    ``anchor`` is the timestamp ``P<n>D`` durations resolve against.
-    Defaults to ``datetime.now(UTC)`` when not supplied, which gives
-    fresh-resolve semantics.  The ``nab lock`` CLI passes the anchor
-    captured in any existing lockfile so re-locks reproduce the same
-    cutoff for relative durations.
-
-    ``cli_overrides`` carries the ``--project-*`` overrides for the
-    PROJECT options that take a CLI flag, keyed by registry key.  They
-    layer as the highest-precedence source, so a flag wins over both
-    project files; a table key arrives as a
-    :class:`~nab.config.subflags.CliTable` and replaces the keys it names
-    inside whatever table the files declared.  ``None`` (the default) is a
-    file-only resolve, byte-identical to before.
+    A missing ``[tool.nab]`` table contributes no values; project ``nab.toml``,
+    ``[project].requires-python``, CLI overrides, and built-in defaults still
+    apply. Unknown keys and invalid cross-field combinations raise
+    :class:`ConfigError`.
     """
     if anchor is None:
         anchor = datetime.now(timezone.utc)
@@ -361,10 +339,6 @@ def read_pyproject_config(
     # and the project-dir nab.toml lookup resolve against.  ``open`` still
     # follows the symlink, so the same file is read.
     roots = SourceRoots(project_dir=pyproject_dir, pyproject=pyproject_dir / path.name)
-    # Bind the lock anchor so the registry resolves ``P<n>D`` durations
-    # (top-level and override-body) against it.  System/user nab.toml and
-    # env/CLI carry no PROJECT key, so they are excluded here: this is the
-    # file-only project config.
     with resolve_anchor(anchor):
         layers = discover_layers(roots)
         cli_layer = build_cli_layer(cli_overrides or {})
@@ -392,18 +366,10 @@ def _config_from_effective(
     pyproject_dir: Path,
     project_requires_python: str | None = None,
 ) -> NabProjectConfig:
-    """Assemble :class:`NabProjectConfig` from the registry merged ladder.
+    """Build a project config after single-option precedence is resolved.
 
-    Each ``[tool.nab]`` config key is taken from its effective (merged)
-    value; the registry has already applied the per-key merge, the
-    cross-file conflict rule, and the category gate.  The cross-field
-    transforms the single-key rows deliberately defer (mode/matrix mutual
-    requirement, declared-index references for routing and per-index
-    overrides, the cross-surface package-override overlap, the resolve-target
-    plan and the build-policy enforcement it drives, the
-    default-groups-vs-conflicts check, and source-name uniqueness) then run
-    here over the merged whole.  Workspace discovery is applied by the
-    caller afterwards.
+    This applies cross-option validation and transformations. The caller
+    applies workspace discovery afterwards.
 
     ``project_requires_python`` is ``[project].requires-python``, the
     fallback source for the declaration when ``[tool.nab]`` sets none.

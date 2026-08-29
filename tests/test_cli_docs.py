@@ -1,11 +1,8 @@
-"""Check the published CLI pages against what the CLI does.
+"""Check the published CLI pages against commands and emitters.
 
-The reference page lists each subcommand's invocation, its own flags, the env
-vars and the statuses; selection, output formats and resolution failures have
-a page each; the config reference groups the ``nab lock`` flags by what
-each one decides; the conflicts page quotes refusal lines verbatim. The
-formats and lockfile pages, ``nab lock --help`` and the README each
-summarise the lock formats, so those are checked against the emitters.
+The CLI reference owns subcommands, flags, environment variables, and statuses.
+Other pages own selection, formats, failures, config overrides, and refusal
+text.
 
 These tests read ``docs/``, which the umbrella sdist does not ship, so the
 module is on that sdist's exclude list in pyproject.toml.
@@ -173,41 +170,6 @@ def _command_flags(command: str) -> list[str]:
     ]
     assert len(flags) == _FLAG_COUNTS[command], flags
     return flags
-
-
-def _cli_flag_section() -> str:
-    """The config reference's CLI flags section."""
-    return _reference_section(_CONFIG_REFERENCE, "## CLI flags")
-
-
-def _flag_block() -> str:
-    """The fenced ``nab lock`` usage block that opens the CLI flags section."""
-    block = re.search(r"```\n(.*?)```", _cli_flag_section(), re.DOTALL)
-    if block is None:
-        msg = "no fenced flag block under the config reference's CLI flags heading"
-        raise AssertionError(msg)
-
-    return block.group(1)
-
-
-def _block_flags(block: str) -> list[str]:
-    """The flags a fenced usage ``block`` declares, one per line."""
-    return re.findall(r"(?m)^\s+(--[\w<>-]+)", block)
-
-
-def _first_flag_group() -> set[str]:
-    """The flags of the flag block's first group, the one its bullets explain."""
-    return set(_block_flags(_flag_block().split("\n\n")[0]))
-
-
-def _bullet_flags() -> set[str]:
-    """The flags the bullets under the flag block name in a code span."""
-    bullets = [
-        chunk
-        for chunk in _prose_chunks(_cli_flag_section().rpartition("```")[2])
-        if chunk.startswith("* ")
-    ]
-    return set(re.findall(r"`(--[\w<>-]+)`", "\n".join(bullets)))
 
 
 def _doc_paragraph(text: str, needle: str) -> str:
@@ -847,7 +809,7 @@ def _format_summaries() -> dict[str, str]:
         "formats.md": _format_bullets(_reference_section(_FORMATS, "## `--format`")),
         "lockfile.md": _format_bullets(preamble),
         "nab lock --help": _unwrapped(
-            _doc_paragraph(inspect.getdoc(lock) or "", "Formats:")
+            _doc_paragraph(inspect.getdoc(lock) or "", _WITHOUT_HASHES)
         ),
         "README.md": _unwrapped(_doc_paragraph(readme, _WITHOUT_HASHES)),
     }
@@ -892,15 +854,36 @@ class TestLockFormatSummaries:
         ]
         assert hashed[2:] == plain[1:]
 
-    def test_no_summary_calls_a_format_hash_free(self, tmp_path: Path) -> None:
-        """An archive pin keeps its digest, so neither format drops every hash."""
+    def test_summaries_scope_hash_removal_to_index_hash_lines(
+        self, tmp_path: Path
+    ) -> None:
+        """Only index hash lines disappear; an archive digest remains in its URL."""
         plain = _requirements_lines(
             _pins_by_shape(tmp_path).values(), with_hashes=False
         )
         assert any(f"sha256={_ARCHIVE_DIGEST}" in line for line in plain)
 
         for source, summary in _format_summaries().items():
-            assert "no hashes" not in summary.lower(), source
+            normalized = summary.lower().replace("`", "")
+            assert "index pin" in normalized, source
+            assert "hash line" in normalized, source
+
+        reference_sections = {
+            "formats.md": _reference_section(_FORMATS, "## `--format`"),
+            "lockfile.md": _page(_LOCKFILE_REFERENCE).partition("\n## ")[0],
+        }
+        for source, text in reference_sections.items():
+            bullet = next(
+                chunk
+                for chunk in _prose_chunks(text)
+                if chunk.startswith("* `--format requirements`")
+            )
+            normalized = bullet.lower().replace("`", "")
+            assert "index pin" in normalized, source
+
+        for source in ("formats.md", "lockfile.md"):
+            assert "archive" in _format_summaries()[source].lower(), source
+            assert "digest" in _format_summaries()[source].lower(), source
 
     def test_a_summary_naming_name_equals_version_says_which_pins(self) -> None:
         """The phrase covers index pins only, so a summary using it says so."""

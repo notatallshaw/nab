@@ -15,7 +15,11 @@ python nab-project/benchmarks/deterministic_smoke.py --lane performance --runs 5
 
 The scenarios use Nab's default highest resolution strategy and default cross-target alignment. `strategy-lowest`, `strategy-lowest-direct`, and `universal-independent` declare the only exceptions.
 
-Each resolve gets a fresh coordinator against the same prebuilt offline fixture, and prefetches only the listings the scenario's own requirements and constraints can reach, so a new scenario adds no listing work to the existing ones. Warmups happen before measurement, and each recorded inner interval covers only the resolver call; fixture generation, coordinator lifecycle, semantic validation, and lock emission stay outside it. Metadata reads that the fetcher starts when a listing lands can still run inside the interval, so changing what a scenario prefetches moves its recorded time. Timing samples are local diagnostics, not a reusable baseline or comparative result, and should be collected sequentially under controlled conditions.
+Each resolve gets a fresh coordinator against the same prebuilt offline fixture. It prefetches only the listings its requirements and constraints can reach, so a new scenario adds no listing work to existing ones.
+
+Warmups happen before measurement. Each recorded interval covers only the resolver call; fixture generation, coordinator lifecycle, semantic validation, and lock emission stay outside it.
+
+Metadata reads started when a listing lands can still run inside the interval, so changing prefetches changes the recorded time. Timing samples are local diagnostics, not a reusable baseline or comparative result, and should be collected sequentially under controlled conditions.
 
 ## Single-environment scenarios
 
@@ -42,12 +46,19 @@ python nab-project/benchmarks/_profile_runner.py \
 
 `strategy_sweep.py` is a compatibility alias for `scenarios.py --strategy-matrix`; it does not implement another resolver or result format. Retired selections such as `--toml pip-lowest` fail with the canonical replacement command.
 
-Each run initializes `_standard_manifest.json` as incomplete before resolving anything. It becomes complete only after every applicable execution has an exact, valid result; every unsupported or host-inapplicable scenario is accounted for; no result is missing or extra; and the source tree is clean. Successful results retain normalized package pins, while failed results have none. The manifest records the source identity at both run boundaries, corpus hash, execution settings, physical host identity, strategies, selected files, scenarios that require a matching host, and terminal key sets. Reusing a result label requires the same mode, corpus, selection, and host. Use a new label or `--force` when any of those inputs changes. `--force` replaces the standard JSON results for the label while preserving universal results and top-level provenance.
+Each run initializes `_standard_manifest.json` as incomplete before resolving anything. It becomes complete only when every applicable execution has an exact, valid result, every unsupported or host-inapplicable scenario is accounted for, no result is missing or extra, and the source tree is clean.
+
+Successful results retain normalized package pins; failed results have none. The manifest records source identity at both run boundaries, corpus hash, execution settings, physical host identity, strategies, selected files, host-specific scenarios, and terminal key sets.
+
+Reusing a result label requires the same mode, corpus, selection, and host. Use a new label or `--force` when an input changes. `--force` replaces the label's standard JSON results while preserving universal results and top-level provenance.
 
 ### Canary subset
 
 `canary.py` runs the small hard-case subset used by the local verification gate.
-`canary.toml` selects canonical scenario definitions and declares the strategy for each case. Manual selections may use an explicit suffix such as `pip:trustllm@lowest`. The runner records the complete TOML input, effective target and policy, source state, and content hashes. Canary artifacts retain contract version 2: non-default cases reconstruct the equivalent historical selector and input definition at the serialization boundary, so existing scoreboards remain comparable even though strategy-clone files are gone. The local verifier compares success results only when their contract version and host-aware execution hashes match and both source trees are clean.
+
+`canary.toml` selects canonical scenario definitions and declares each case's strategy. Manual selections may use an explicit suffix such as `pip:trustllm@lowest`. The runner records the complete TOML input, effective target and policy, source state, and content hashes.
+
+Canary artifacts use contract version 2. An explicit strategy is serialized with the selector and input definition used by that contract's input hash, keeping existing scoreboards comparable. The local verifier compares successful results only when their contract version and host-aware execution hashes match and both source trees are clean.
 
 ## Universal-resolution scenarios
 

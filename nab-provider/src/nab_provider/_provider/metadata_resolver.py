@@ -575,12 +575,9 @@ def augment_from_pyproject(
     is missing, unparseable, or itself marks deps dynamic via
     ``[project].dynamic``.
 
-    Raises :class:`InvalidProjectRequirementError` when ``dependencies``
-    or ``optional-dependencies`` is present but structurally wrong (not
-    an array of strings / not a table), rather than silently dropping the
-    declared dependencies.  ``get_dependencies`` catches it and rejects the
-    candidate version.  A well-typed entry that is not valid PEP 508 is
-    dropped with a warning.
+    Invalid dependency shapes or PEP 508 strings raise
+    :class:`InvalidProjectRequirementError`; ``get_dependencies`` catches it
+    and rejects the candidate version.
     """
     # Late import keeps the resolver-time path off ``WheelMetadata``
     # construction unless the dynamic-deps pyproject fallback fires.
@@ -667,8 +664,8 @@ def fetch_sdist_metadata(
     than the sdist is not put through the :pep:`643` gate as if it were the
     sdist's own PKG-INFO.
 
-    The archive is verified against ``sdist.hashes`` before its PKG-INFO is
-    read. A hash mismatch is recorded as an integrity error and re-raised here.
+    When ``sdist.hashes`` contains an accepted digest, the archive is verified
+    before its PKG-INFO is read. A mismatch is recorded and re-raised here.
     """
     event = provider.coordinator.request_sdist(
         package, version, sdist.url, sdist.hashes

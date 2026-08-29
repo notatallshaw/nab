@@ -1,11 +1,24 @@
 # Configuration
 
-The keys that decide what nab resolves live in `[tool.nab]` inside the
-project's `pyproject.toml`, or in a project-directory `nab.toml` that
-sets the same keys.  A CLI flag applies to one run.  The CLI flags
-section below groups the flags by whether they decide what gets
-resolved, what comes out, or how the run executes, and says what each
-of the first group does to `[tool.nab]`.
+Project settings live in `[tool.nab]` inside `pyproject.toml` or at the
+top level of a project-directory `nab.toml`. CLI flags apply to one run.
+
+## Find the effective value
+
+```bash
+nab config list
+nab config explain resolution
+```
+
+`list` shows every option, value, and winning source. Use `explain` when
+a value is surprising; it shows the sources that lost too.
+
+Project options describe the resolve. Higher sources replace whole values
+rather than merging them.
+
+Runtime options such as `offline` and `cache-dir` may also come from system
+or user files and `NAB_*` variables. The Layered configuration sources
+section below gives the complete order and scope rules.
 
 ## Top-level keys
 
@@ -416,14 +429,16 @@ it both widens and narrows:
 * Narrow: a package that declares `>=3.6` can be held to `>=3.11` so
   older Pythons reject it.
 
-The override goes through the same comparison a declared
-`Requires-Python` value takes, so it admits or rejects a version exactly
-as a declared value would.  That comparison is made at the language
-version: a micro segment neither admits a target nor excludes one, so
+The override uses the same comparison as a declared `Requires-Python`
+value.  That comparison is made at the language version: a micro segment
+neither admits a target nor excludes one, so
 `>=3.13.2`, `==3.13.4` and `==3.13.*` all admit a 3.13 target, while
-`!=3.13` excludes every 3.13 interpreter.  An empty string
-(`requires-python = ""`) removes the Python requirement entirely (admits
-every target).  For an index pin the lock records the overridden
+`!=3.13` excludes every 3.13 interpreter.
+
+An empty string (`requires-python = ""`) removes the Python requirement
+and admits every target.
+
+For an index pin the lock records the overridden
 specifier, so a widened pin stays installable by a conforming PEP 751
 installer, which enforces it in full.  A local-path or VCS pin
 has no `requires-python` field, but the override is still what its Python
@@ -480,9 +495,10 @@ dependencies = ["numpy>=1.8.1"]
 The package listing is still fetched (the lock needs the files, hashes,
 and upload times, and the Python filter still runs), but the resolver
 does not fetch or build the per-version metadata to compute
-dependencies.  A partial override that sets only `requires-python`
-still needs the artifact for its dependencies and does not skip.  Under
-skip-fetch a co-set `trust-unverified-deps` becomes moot, since no
+dependencies.  A partial override that sets only `requires-python` still
+needs the artifact for its dependencies and does not skip.
+
+Under skip-fetch a co-set `trust-unverified-deps` becomes moot, since no
 sdist is parsed.  A co-set `dist-policy` is not: it still filters the
 candidate listing, so `dist-policy = "wheel-only"` on an sdist-only
 package removes every version before the override can apply.
@@ -531,14 +547,12 @@ never affects the metadata and artifacts nab caches by hash.
 
 ### Conflicts across the two surfaces
 
-The per-package and per-index surfaces are not ranked.  For a candidate
-`(package P, version V)` served from index `I` and a field `F`: if a
-per-package entry whose range contains `V` sets `F` **and** the
-per-index entry for `I` also sets `F`, the resolve raises a clear
-error instead of silently choosing one.  Drop one of the two settings
-for that field.  The same package at a version *outside* the
-per-package range is governed only by the per-index entry, with no
-conflict.
+Per-package and per-index overrides have equal precedence. If both set the
+same field for a candidate version, the resolve fails instead of choosing
+one. Remove one setting.
+
+The same package at a version *outside* the per-package range is governed
+only by the per-index entry, with no conflict.
 
 When no override sets a field, the flat global value (then the built-in
 default) applies.
@@ -565,31 +579,24 @@ sdist to lock.
 
 `wheel-only` is the equivalent of pip's `--only-binary :all:` and
 `sdist-only` of `--no-binary :all:`, scoped per package or per index
-via an override.  A wheel that ships no PEP 658 sidecar still resolves
-under any wheel-admitting policy: its METADATA is recovered by an HTTP
-range read of the remote wheel rather than the version being skipped.
-An index that cannot serve usable ranges has the whole wheel fetched
-instead, so recovery still works there at the cost of a full download
-per sidecar-less wheel the resolver visits.
+via an override.
 
-`sdist-install` is the policy to reach for when an installer needs
-to build the package from source (typically to link against
-system libraries like libxml2, libxmlsec, or system OpenSSL), but you
-do not want to pay the cost of building it twice (once during the
-resolve to learn its dependencies, once at install time).  The
-lockfile pins only the sdist so `pip install --require-hashes`
-materialises that archive; the resolver, meanwhile, reads
-dependency metadata from whichever source is cheapest at the
-chosen version.  In practice that means the wheel's METADATA via
-PEP 658 when one is published, or an HTTP range read of the remote
-wheel when no sidecar is published, falling back to the sdist's
-PKG-INFO (with the usual PEP 643 and `pyproject.toml` fallbacks)
-when no wheel exists.  Equivalent in spirit to pip's
-`--no-binary <pkg>` for the install side, without paying the
-build cost on the resolve side.  A version that publishes no sdist
-has no source to install, so it is skipped the way `sdist-only`
-skips a wheel-only release and the resolver settles on the newest
-version that ships one.
+A wheel without a PEP 658 sidecar still resolves under any wheel-admitting
+policy. nab recovers its METADATA with an HTTP range read. If the index cannot
+serve usable ranges, nab downloads the whole wheel instead.
+
+Use `sdist-install` when the lock must select an sdist, typically so an
+installer can link the package against system libraries.
+
+The lockfile pins only the sdist, so `pip install --require-hashes`
+materialises that archive.
+
+For resolution, nab prefers wheel metadata and falls back to the sdist when no
+wheel exists. Dynamic sdist metadata can still require a build allowed by
+`build-policy`.
+
+A version with no sdist is skipped, as under `sdist-only`, and the resolver
+settles on the newest version that ships one.
 
 Scope the policy to a subset of packages with a per-package override:
 
@@ -637,12 +644,14 @@ Decision order is not the only heuristic that picks among valid
 answers.  nab also looks ahead before it decides: for a package
 without extras it reads the candidate version's dependencies, and
 skips that version when they already contradict a root requirement or
-a version the resolve settled on elsewhere.  The look-ahead runs under
-both settings, and it reads the metadata and the decisions taken so
-far rather than what has arrived, so `stable` still gives one
-lockfile.  What it changes is the answer against a resolver that does
-not look ahead: the two can pin different versions of one project, and
-both satisfy every requirement.
+a version the resolve settled on elsewhere.
+
+The look-ahead runs under both settings.  It reads metadata and the
+decisions taken so far rather than arrival timing, so `stable` still gives
+one lockfile.
+
+A resolver that does not look ahead can pin a different version of one
+project.  Both answers can satisfy every requirement.
 
 ## VCS policy
 
@@ -695,12 +704,14 @@ as empty.
 
 `[[tool.nab.vcs-sources]]` pins a package to a VCS URL.  Declaring one
 while `vcs.policy` is left at its default `block` is a contradiction and
-is rejected when the config is read, before any resolve starts.  Each URL
-then passes the same `[tool.nab.vcs]` gate as a direct-URL requirement:
-beyond `vcs.policy = "allow"`, the URL's scheme must be listed in
-`vcs.allowed-schemes` and its repository in `vcs.allowed-repos`, both
-empty by default so each denies every URL until an entry is added, and
-the URL must pin a 40-char commit hash unless `vcs.require-pin = false`.
+is rejected when the config is read, before any resolve starts.
+
+Each URL passes the same `[tool.nab.vcs]` gate as a direct-URL requirement.
+Beyond `vcs.policy = "allow"`, its scheme must be in
+`vcs.allowed-schemes`, its repository in `vcs.allowed-repos`, and it must
+pin a 40-char commit hash unless `vcs.require-pin = false`.  Both allow
+lists are empty by default, so each denies every URL until configured.
+
 Reading static metadata works at any `build-policy`.  Building a clone
 whose static read comes up empty needs `build-policy = "build-remote"`;
 see [Build policy](build-policy.md).
@@ -811,12 +822,11 @@ platforms = [
 
 A machine links one C library, so a target accepts one family's wheels:
 a `glibc` target takes manylinux wheels and never musllinux ones, and a
-`musl` target the reverse.  Left unset, `runs-on-libc` names no system:
-the target accepts a wheel of any manylinux/musllinux level and whether
-it runs is left to install time, the way uv resolves.  Set it to name the
-glibc or musl the lock must run on.  Its major has to match the family
-(glibc `2.x`, musl `1.x`): those are the only majors either has shipped,
-so no wheel targets another.
+`musl` target the reverse.
+
+Left unset, `runs-on-libc` accepts wheels of any manylinux or musllinux level
+and leaves compatibility to install time. Set it to the oldest glibc or musl
+the lock must support. Its major must be glibc `2` or musl `1`.
 
 `runs-on-libc = "2.28"` means the lock must run on glibc 2.28.  A wheel is
 lockable only if it runs on every target machine, so:
@@ -874,12 +884,15 @@ error.  See [Build policy](build-policy.md).
 * `[tool.nab].requires-python` (or `[project].requires-python`): the
   range the project supports.  A declaration.  It is recorded as the
   lockfile's top-level `requires-python` and checked against the resolve
-  target; it does not choose that target.  The check reads the
+  target; it does not choose that target.
+
+  The check reads the
   declaration at the language version, the same way a candidate's
   `Requires-Python` is read, so `==3.13` and `>=3.13.2` both admit a
   3.13 target however precisely that target names its interpreter, and
-  `!=3.13` excludes one however it is named.  A
-  declaration that excludes the target is a config error naming the knob
+  `!=3.13` excludes one however it is named.
+
+  A declaration that excludes the target is a config error naming the knob
   that moves it:
   `[tool.nab.environment] python` for a single-environment resolve,
   `[tool.nab.matrix].python` and `[tool.nab.matrix.python-patches]` for a
@@ -949,57 +962,18 @@ machine: a second bare id is an error rather than a second platform.  An
 axis no flag names keeps the value `[tool.nab.environment]` declares, or
 the host's where no file declares one.
 
-## CLI flags
+## CLI overrides
 
-```
-nab lock [PATH]
-  # what gets resolved
-  --python X.Y                 # resolve for this Python on this machine
-  --groups NAME ...            # fold these dependency groups into the resolve
-  --all-groups                 # fold in every group the project declares
-  --extras NAME ...            # fold these extras into the resolve
-  --all-extras                 # fold in every extra the project declares
-  --build-requirements         # lock [build-system].requires, not the dependencies
-  --no-workspace-discovery     # resolve this project alone, ignoring [tool.nab.workspace]
-  --upgrade                    # re-anchor the P<n>D window to now
-  --project-<key> VALUE        # override a project option for this run
+The [CLI reference](cli.md) lists every flag. See
+[Selecting what to lock](selection.md) for groups, extras, and workspaces,
+and [Output formats](formats.md) for `--format` and `--output`.
 
-  # what comes out
-  --output PATH                # output file (or "-" for stdout)
-  --format FORMAT              # pylock | requirements | requirements-without-hashes
-  --no-emit-workspace          # leave workspace members out of the lockfile
-  --locked                     # verify the committed pylock is current; write nothing
+`--project-<key>` overrides a scalar or list project option for one run.
+The matrix and environment flags replace one key in the file's table and
+leave its other keys in place. Passing `--project-constraint` twice replaces
+the file's entire `constraints` list with those two values. An override
+prints a notice and is recorded in the lockfile.
 
-  # how the run executes
-  --cache-dir PATH             # override on-disk cache location
-  --no-cache                   # disable cache for this run
-  --offline True|False         # use cache only, no network (or bare --offline / --no-offline)
-  --http-backend X             # urllib3 (default) | httpx (layered)
-```
-
-What each flag in the first group does to `[tool.nab]`:
-
-* `--project-<key>` replaces the key it names.
-* `--python` sets `[tool.nab.environment].python` for the run.
-* `--build-requirements` clears `conflicts`, `default-groups`,
-  `base-group` and `build-group` for the run.
-* `--no-workspace-discovery` skips `[tool.nab.workspace]`, the project's
-  own table included.
-* `--upgrade` re-anchors a relative `uploaded-prior-to` window without
-  changing its value.
-* `--groups`, `--all-groups`, `--extras` and `--all-extras` add to the
-  selection rather than replacing a key.
-
-A project option can be overridden for a single run with a
-`--project-<key>` flag (for example `--project-resolution`,
-`--project-dist-policy`, or the repeatable `--project-constraint`); the
-structured table options stay file-only, except `matrix` and
-`environment`, which the `--project-<table>-<key>` flags set one key at a
-time. The flag replaces the file value, list flags included: passing
-`--project-constraint` twice
-resolves against exactly those two constraints, whatever `constraints`
-the files declare. A `--project-*` override changes the resolved set, so
-it prints a notice and is recorded in the lockfile.
 `--project-dist-policy` takes a bare policy, so it replaces the whole
 `dist-policy` value and resets `trust-unverified-deps`; set the table form
 in a file to keep that flag.
@@ -1015,7 +989,9 @@ scope that fixes where it may come from:
   `build-policy`, `environment`, `conflicts`, `matrix`,
   `packages`, `resolution`, and the rest), and each may be set in
   either `pyproject.toml`'s `[tool.nab]` or a project-directory
-  `nab.toml`. They are never read from a user/system file or an
+  `nab.toml`.
+
+  They are never read from a user/system file or an
   environment variable. Each project option with a scalar or list form
   also takes a CLI override under a `--project-` prefix (for example
   `--project-resolution`); the structured table options stay file-only,
@@ -1040,13 +1016,13 @@ Sources are consulted low to high; a higher source wins:
 
 Winning is all-or-nothing. Whatever the key's type, the highest source
 that sets it supplies the whole value and nothing from a lower source
-survives: a `constraints` list on the CLI is the entire constraint set
-for that run, and an `[environment]` table in a file is the entire
-environment. No source adds to the one beneath it, so the value the
-resolve uses is the one you can read in a single place. To extend a
-list, edit the file that declares it. The one exception is a
-`--project-<table>-<key>` flag, which replaces that key inside the table
-the files declare and leaves the rest of it standing.
+survives.
+
+A `constraints` list on the CLI is the entire constraint set for that
+run, and an `[environment]` table in a file is the entire environment.
+No source adds to the one beneath it. To extend a list, edit the file
+that declares it. A `--project-<table>-<key>` flag instead replaces one
+key in the file's table.
 
 Rung 4 is two files at one precedence, so neither can win. Setting one
 key in both is allowed only if the two values are identical; different

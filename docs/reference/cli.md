@@ -104,15 +104,14 @@ prints a notice naming the cutoff it dropped.
 
 ## `nab download`
 
-Resolve and download every wheel, sdist, and direct-URL
-archive into a local directory. The download is idempotent:
-files whose recorded sha256 matches a local file are left
-alone. Local and VCS pins are skipped.
+Resolve project inputs again, then download every wheel, sdist, and direct-URL
+archive into a local directory. This command does not read an existing lock.
+Files whose recorded digest matches are kept; local and VCS pins are skipped.
 
 Universal mode (`[tool.nab].mode = "universal"`) re-resolves
-across the matrix and downloads the union of every tuple's
-artefacts into the same directory, deduplicated by URL so a
-wheel shared across tuples is fetched once.
+across the matrix and downloads the union of every target's
+artifacts into the same directory, deduplicated by URL so a
+wheel shared across targets is fetched once.
 
 * `--output` defaults to `wheels/`.
 * `--max-concurrency` controls parallel HTTP fetches (default `8`,
@@ -121,7 +120,7 @@ wheel shared across tuples is fetched once.
 * `--groups foo bar` / `--all-groups` and `--extras foo bar` /
   `--all-extras` fold dependency groups and extras into the resolve as
   they do on `nab lock` (see [Selecting what to lock](selection.md)), so
-  they decide which artefacts are downloaded.
+  they decide which artifacts are downloaded.
 * `--python X.Y` resolves for that Python on this machine instead of
   the running interpreter, as on `nab lock`. It is the short form of
   `--project-environment-python`, and writing both is refused. It is
@@ -136,7 +135,7 @@ wheel shared across tuples is fetched once.
 lock` uses, so a `NAB_*` variable or a system/user/project `nab.toml` is
 read for `nab download` as for `nab lock`.
 
-Offline covers the artefacts too: an artefact that is neither already in
+Offline covers the artifacts too: an artifact that is neither already in
 the output directory with a matching digest nor readable from a local
 `file://` path fails the run instead of being fetched.
 
@@ -219,7 +218,7 @@ directory uses: `cache-dir` is read off the config source ladder, so a
 | Flag | Default | Effect |
 | ---- | ------- | ------ |
 | `--cache-dir PATH` | `~/.cache/nab` | Override the on-disk cache root. |
-| `--no-cache` | off | Disable cache for this run. A declared VCS or archive source is materialised into a temporary directory instead, so it is refetched every run. Combine with `--offline` only if the cache already has every file. |
+| `--no-cache` | off | Disable cache reads and writes. VCS and archive sources use temporary directories and are refetched on networked runs. |
 | `--offline {True,False}` | unset | Use cache only, never hit the network. Layered: `--offline True` forces offline, `--offline False` forces network even over a lower `offline = true`. Bare `--offline` / `--no-offline` are shorthands for `True` / `False`. |
 | `--http-backend {urllib3,httpx}` | `urllib3` | Pick the async transport for fetches. Layered, so it can also be set in an `nab.toml` or `NAB_HTTP_BACKEND`. `httpx` needs its extra (see [Install nab](../how-to/install.md)). |
 
@@ -232,6 +231,9 @@ At `build-remote` that rejects only the sdist version, and the
 resolve tries the next candidate. A declared local, VCS, or archive
 source, or a workspace member, is the only candidate for its name, so
 the same refusal ends the run. See [Build policy](build-policy.md).
+
+`--no-cache --offline` neither fetches nor reads a warm cache. It works only
+when every required input is local and no build needs an installation step.
 
 `urllib3` is the only backend pulled in by the base install. Selecting
 another without its extra prints one of these and exits 1:

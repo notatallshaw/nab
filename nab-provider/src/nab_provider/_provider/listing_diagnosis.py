@@ -615,14 +615,7 @@ def _detailed(
     return DroppedFile(dist, version, cause, dist.upload_time, cutoff)
 
 
-# One short line per cause, for the listing the filter emptied.  Read only
-# where every group says the same one, so each states the whole of what went
-# wrong.  A why-clause is here only where the key does not carry it: an
-# excluding uploaded-prior-to reads as a cutoff nothing was old enough for
-# unless the line says otherwise, and the dist-policy value says which half
-# of the listing that key kept.  The two rungs this report never offers a
-# remedy for name the target they judged against instead, which is the half
-# a reader can move.
+# Each template describes a whole empty listing for one uniform drop cause.
 _SHORT_EMPTY: dict[Cause, str] = {
     DropCause.UPLOAD_TIME_MISSING: (
         "uploaded-prior-to excluded every file; none is dated"
@@ -1019,18 +1012,8 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
     ),
 }
 
-# The instruction cut out of each remedy, for the one ``try:`` line the
-# default report prints.  It names a setting to change rather than a
-# fragment to paste, since the table holding that setting usually exists
-# already and a second one is a TOML error.  Three layers name an entry
-# the file already holds.  The per-package and scoped-entry layers do it
-# because the same override is written on two surfaces, only one of them
-# spelled ``packages."<selector>"``, and a ``[[package-rules]]`` entry can
-# match several packages, so naming the one being reported would send the
-# reader to change the others too.  The bare-name layer does it because
-# the table its key path would write is that entry.  It states what to
-# set and not what follows: lifting a filter admits files rather than
-# promising a resolve.
+# Name a setting to change, not a TOML fragment that may duplicate
+# its table. Lifting a filter admits files; it does not promise a resolution.
 _TRY_LINES: dict[tuple[Field, Layer], str] = {
     ("uploaded-prior-to", OverrideLayer.GLOBAL): (
         'set packages."{selector}".uploaded-prior-to = false'

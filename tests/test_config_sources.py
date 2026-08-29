@@ -2925,17 +2925,7 @@ _MATRIX_PROJECT_TOML = (
 
 
 class TestCrossFieldProjectOptions:
-    """The cross-field PROJECT keys: conflicts, matrix.
-
-    Each reuses the single-environment parser, is gated PROJECT-only and
-    file-only, and is visible in ``nab config``.  ``conflicts`` is an array
-    that concatenates additively across the two project files and re-runs
-    its member-uniqueness check over the merged whole; ``matrix`` is a
-    nested table that is scalar last-wins.  The cross-field rules they take
-    part in (mode/matrix, default-groups-vs-conflicts,
-    marker-environment-under-universal, the build-policy host-build gate)
-    run as whole-config transforms over the merged config, not registry rows.
-    """
+    """The file-only cross-field PROJECT keys, ``conflicts`` and ``matrix``."""
 
     def test_conflicts_from_pyproject(self, tmp_path: Path) -> None:
         _project(tmp_path, _CONFLICTS_PYPROJECT)

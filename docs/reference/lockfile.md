@@ -1,24 +1,20 @@
 # Lockfiles
 
-nab is a resolver, not an installer. The artefact it produces is
-a lockfile: a file that records every pinned version, every
-artefact URL, and every digest needed to reproduce the same
-install elsewhere.
+nab resolves packages but does not install them. Its lock records the pinned
+versions, artifact locations, and digests for another tool to consume.
 
 `nab lock` writes one of three formats from the same in-memory
 result:
 
 * `--format pylock` (default): a [PEP 751] `pylock.toml`.
-* `--format requirements`: a pip-compatible `requirements.txt`,
-  sorted by name. An index pin is `name==version` with one
-  `--hash=<algo>:<digest>` line per recorded digest; a local, VCS
-  or archive pin renders as a URL line.
-* `--format requirements-without-hashes`: the same output with
-  the `--hash` lines dropped, so an index pin is a bare
-  `name==version`. Local, VCS and archive pins are unchanged, so
-  an archive pin still carries its digest in the URL fragment.
+* `--format requirements`: a pip-compatible `requirements.txt`, sorted by
+  name. Index pins carry recorded digests; local, VCS, and archive pins are
+  URL lines.
+* `--format requirements-without-hashes`: the same output without separate
+  `--hash` lines. An archive URL still carries its digest.
 
 Pass `--output -` to write to stdout instead of a file.
+See [Use a lock](../how-to/use-the-lock.md) for installation workflows.
 
 ## What is in a lock
 
@@ -28,23 +24,19 @@ Each pinned package carries:
 * one of four pin shapes: an `IndexPin` (PyPI or another simple
   index), a `LocalPin` (a directory on disk), a `VcsPin` (a
   git URL with a commit pin), or an `ArchivePin` (a `.tar.gz` URL
-  content-pinned by a required `sha256`),
-* every artefact the resolve considered at that pinned version
+  content-pinned by at least one accepted digest),
+* every artifact the resolve considered at that pinned version
   (`sdist` and the `wheels` the target can install), each with its
-  filename, URL, `sha256`, and optional size.
+  filename, URL, recorded digests, and optional size.
 
-The digests are the ones the index published, so nothing is hashed
-locally to build a lock. A resolve does fetch, but only to read
-metadata. Sibling wheels of one version can declare different
-dependencies, so where several of them fit the target, the one its
-PEP 425 tags rank most specific is the one read. It takes the
-cheapest source available: the wheel's [PEP 658] metadata sidecar
-when the index publishes one, then an HTTP range read of the remote
-wheel when no sidecar is published, otherwise the sdist's PKG-INFO
-(built, if its dependencies are dynamic and the
-[build policy](build-policy.md) allows it). A wheel served from a
-local directory is read straight off disk, with no fetch. VCS and
-archive sources are cloned or downloaded for the same reason.
+Index digests come from the listing; nab does not fetch every index artifact to re-hash it. A direct archive's digest comes from its configured URL and is verified before metadata is read.
+
+When several wheels fit the target, nab reads the one whose PEP 425 tags rank
+highest. It prefers a [PEP 658] metadata sidecar, then reads the wheel itself
+through HTTP ranges or a full fetch. With no wheel, it reads the sdist;
+dynamic metadata may require a [permitted build](build-policy.md).
+
+Local wheels are read from disk; VCS and archive sources are materialised to read their metadata.
 
 A wheel the target's PEP 425 tags reject was never a candidate, so it
 is not in the lock: a lock resolved on `linux_x86_64` carries no
@@ -52,11 +44,9 @@ is not in the lock: a lock resolved on `linux_x86_64` carries no
 
 ## PEP 751 `pylock.toml`
 
-The PEP 751 lockfile is the format for cross-tool Python
-lockfiles. It is what `nab lock --format pylock` produces, and what
-`nab lock --locked` checks against. It is an output. `nab download`
-resolves from project inputs, so hand it a `pyproject.toml`, not a
-lockfile.
+The PEP 751 lockfile is the cross-tool format produced by
+`nab lock --format pylock` and checked by `nab lock --locked`.
+`nab download` does not consume it; that command resolves project inputs again.
 
 A trimmed example, after resolving the
 [getting-started](../tutorial/getting-started.md) project:
@@ -98,7 +88,7 @@ size = 92070
   (`index`, `directory`, `vcs`, or `archive`), and for an index
   source `sdist` and `wheels`.
 * `sha256`, `sha384`, and `sha512` digests on every recorded
-  artefact. Whatever the index publishes is forwarded; nab
+  artifact. Whatever the index publishes is forwarded; nab
   requires at least one of the three so the lockfile is
   consumable by pip's hash-checking mode.
 
@@ -215,14 +205,13 @@ an install that asks for no group is installing the project, not building
 it. Only the static list is read, so whatever a backend would add from
 `get_requires_for_build_wheel` is not covered.
 
-`base-group` must be set alongside it, as above. Without a name of their own the
-project's own dependencies carry no marker, so they install under every
-selection and asking for the build group returns them too, which leaves
-no way to install the build requirements alone. With both named, an
-install that wants them together selects both groups. The name must also
-be free of `[dependency-groups]` and of `base-group` itself. The
-requirements output formats carry no markers, so there the build
-requirements render as ordinary pins.
+`base-group` is required. Without it, the project's dependencies have no
+marker and accompany every selection, including the build group. Naming both
+lets a consumer select them separately or together.
+
+`build-group` must differ from `base-group` and every declared
+`[dependency-groups]` name. Requirements output carries no group markers, so
+build requirements render as ordinary pins there.
 
 The build requirements resolve in the same version space as the
 project's own, since one install context is all a shared marker can
@@ -231,23 +220,20 @@ exclude declares the two mutually exclusive; the resolve then forks and
 each side gets its own pins under disjoint markers. See
 [Conflicting extras and groups](../explanation/conflicts.md).
 
-`nab lock --build-requirements` writes the build side to a file of its
-own instead. That is what a consumer needs when it cannot select groups
-at all, which covers the requirements output formats and today's pylock
-installers.
+`nab lock --build-requirements` writes the build side separately. Use it
+when the consumer cannot select groups, including the requirements formats
+and pip's current pylock interface.
 
 ### Portable paths
 
-A lockfile can reference content on disk. A path nab derives from a
-filesystem location is written relative to the lockfile's own directory,
-with POSIX separators: a local source or workspace member in
-`packages.directory.path`, and a wheel or sdist read from a local index or
-find-links directory in `packages.wheels.path` and `packages.sdist.path`.
-PEP 751 reads a relative path against the lockfile itself, so the lock and
-the tree it points at survive a move as long as they move together. On
-Windows a path on another drive has no relative form, and the absolute
-path is written instead. `nab lock --output -` has no lockfile to be
-relative to and writes those paths relative to the current directory.
+A filesystem path is written relative to the lock's directory with POSIX
+separators. This covers local sources and workspace members in
+`packages.directory.path`, plus local-index and find-links artifacts in
+`packages.wheels.path` or `packages.sdist.path`.
+
+PEP 751 resolves the path against the lock, so both can move together. A
+Windows path on another drive stays absolute. With `--output -`, paths are
+relative to the current directory instead.
 
 A URL declared in the configuration is written as it was declared, minus
 any embedded credentials: an archive source in `packages.archive.url`, a
@@ -257,58 +243,45 @@ carries one is usable only where that location exists.
 
 ### The environments the lock is for
 
-A resolve answers for the environments it targeted: the
-[resolve target](configuration.md), or the targets of a declared
-matrix. Every dependency whose PEP 508 marker was false on a target
-was dropped there, so the pins are not a package set another
-environment can install. The lock says so in the top-level
-`environments`, one entry per environment resolved, and a PEP 751
-consumer refuses a lock whose declared environments none of its own
-satisfies. nab refuses to emit such a lock in the first place: when the
-`environments` declaration would not cover a target the resolve ran for,
-it raises and names the uncovered interpreter.
+A resolve drops dependencies whose PEP 508 markers are false on its
+[target](configuration.md). The resulting pins therefore belong to that
+environment, or to the targets declared by a matrix.
 
-Each declaration always pins `python_version`, `sys_platform` and
-`platform_machine`, plus `implementation_name` when the target runs
-an interpreter other than CPython or the matrix models more than one.
-It also pins every other PEP 508 variable that a marker in the resolve
-consulted: a dependency, root requirement, or constraint marker on
-`platform_system` pins `platform_system`. This is deliberately narrow.
-A marker nab evaluated is a question whose answer changed the package
-set, so an installer that answers it differently must not use this
-lock. The variables below are the exceptions.
+The top-level `environments` entries record that scope. A PEP 751 consumer
+refuses a lock that does not cover its environment. nab also refuses to emit a
+lock whose declaration misses a resolved target and names the uncovered
+interpreter.
 
-`python_full_version` and `implementation_version` are never declared
-by value. A target that names a minor (a matrix target, a declared
-environment, or a `--python <minor>` target) stands for every micro
-of that minor, so pinning one micro would refuse every other real
-one. Instead the minor covers all its micros, and a consulted
-`python_full_version` marker whose boundary lies inside it splits it
-at that boundary. Each side becomes its own slice with its own
-`environments` row and pins: `pytest ; python_full_version >= "3.13.4"`
-on a 3.13 target cuts the minor into a `< "3.13.4"` slice and a
-`>= "3.13.4.dev0"` slice, and `pytest` joins only the upper one (see
-Universal mode below).
+Each declaration pins `python_version`, `sys_platform`, and
+`platform_machine`. It adds `implementation_name` for a non-CPython target or
+a matrix with several implementations.
 
-The two slice bounds meet at `3.13.4.dev0`: the lower slice ends at
-`< "3.13.4"` and the upper starts at `>= "3.13.4.dev0"`, which together
-cover the minor with no gap and no overlap. The `.dev0` on the lower
-edge is deliberate. A verbatim `< "3.13.4"` / `>= "3.13.4"` pair would
-leave the prereleases of 3.13.4 (`3.13.4rc1`) in neither slice, because
-PEP 440 keeps them out of both; snapping the lower edge to
-`>= "3.13.4.dev0"` puts them on the upper side, so a user on a
-prerelease of 3.13.4 gets the pins intended for 3.13.4.
+It also pins each PEP 508 variable consulted by a dependency, root
+requirement, or constraint marker. This prevents a consumer that answers a
+relevant marker differently from using the lock. The variables below are
+exceptions.
 
-On CPython `implementation_version` is the same release as
-`python_full_version` (it comes from `sys.implementation.version`), so
-it is read the same way: a consulted marker on it names an in-minor
-boundary and splits the minor there, and a slice whose resolve consulted
-it carries the slice bounds under that name as well. Reaching the 3.13.4
-split above through `pytest ; implementation_version >= "3.13.4"` leaves
-the lower slice with `python_full_version < "3.13.4"` and
-`implementation_version < "3.13.4"`, and the upper with the matching
-`>= "3.13.4.dev0"` pair. A slice whose resolve never read the variable
-carries the `python_full_version` bounds alone.
+`python_full_version` and `implementation_version` are not declared as one
+micro version. A target naming a minor stands for every micro in that minor,
+so a single value would reject the others.
+
+A consulted `python_full_version` boundary inside the minor splits it into
+slices. On a 3.13 target, `pytest ; python_full_version >= "3.13.4"` creates
+`< "3.13.4"` and `>= "3.13.4.dev0"` slices; only the upper one includes
+`pytest`.
+
+The bounds meet at `3.13.4.dev0` with no gap or overlap. A verbatim
+`< "3.13.4"` / `>= "3.13.4"` pair would exclude prereleases such as
+`3.13.4rc1` from both slices. Starting the upper slice at
+`3.13.4.dev0` gives those interpreters the 3.13.4 pins.
+
+On CPython, `implementation_version` matches `python_full_version` and can
+split the minor the same way. A slice that consulted it carries both sets of
+bounds; otherwise it carries only `python_full_version`.
+
+For example, `implementation_version >= "3.13.4"` gives the lower slice
+matching `< "3.13.4"` clauses and the upper slice matching
+`>= "3.13.4.dev0"` clauses for both variables.
 
 A minor no marker split reverts to a plain `python_version == "3.13"`
 row with no `python_full_version` clause: a marker whose boundary lies
@@ -322,14 +295,12 @@ real micro, and a `[tool.nab.matrix.python-patches]` pin names one
 concrete deployment micro. Both resolve at that single micro and emit
 the plain `python_version == "X.Y"` row.
 
-A consulted `python_full_version` marker, or on CPython an
-`implementation_version` one, that cannot be tiled into an interval is
-a loud error rather than a pin of the whole minor to one answer: a
-membership (`in` / `not in`), a verbatim `===`, a non-version string
-comparison, a comparison against another variable, a literal PEP 440
-refuses under the operator it is written with (`< "3.12.*"`, `~= "3"`),
-or a pre- or post-release literal strictly inside the minor on one of
-the operators below.
+A consulted full-version marker must describe intervals. nab rejects:
+
+* membership (`in` or `not in`), verbatim `===`, non-version strings, and
+  comparisons with another variable;
+* invalid PEP 440 operands such as `< "3.12.*"` or `~= "3"`;
+* the pre- and post-release boundaries listed below.
 
 A prerelease literal is an error on `<`, `>=`, `==`, `!=` and `~=`, and
 a literal that is only a post-release on `>=`, `==`, `!=` and `~=`.
@@ -338,15 +309,14 @@ Every other operator lands the boundary on a real micro:
 `< "3.12.4.post1"`, `<= "3.12.4.post1"` and `> "3.12.4.post1"` at
 3.12.5.
 
-`platform_release` and `platform_version` are never declared: they
-name one machine's kernel build, so a lock carrying the resolving
-machine's value would refuse every other machine. A non-CPython target
-drops `implementation_version` the same way. nab models it there as the
-target's Python level, while a released PyPy reports its own release
-(7.3.x), so a bound built from the modelled value would refuse the
-interpreter the lock was resolved for. Nothing splits such a target's
-minor on that axis either, so its rows carry no
-`implementation_version` clause.
+`platform_release` and `platform_version` are never declared because they
+name one machine's kernel build. Recording the resolving machine would reject
+other machines.
+
+A non-CPython target also drops `implementation_version`. nab models it as the
+Python level, while released PyPy reports its own version, so recording the
+modelled value would reject the intended interpreter. This axis does not split
+the target's minor.
 
 A marker that consults a dropped axis is reported as a warning at lock
 time, one for the kernel pair and one for `implementation_version` on a
@@ -361,33 +331,21 @@ the target's Python. It bounds what the project supports; the
 
 ### Universal mode
 
-Under `[tool.nab].mode = "universal"`, `nab lock --format pylock`
-writes a single file covering every
-`(python, platform, implementation)` target in the matrix. Packages
-whose pinned version is identical across every target appear once with
-no marker; packages that diverge appear as multiple `Package` entries
-with PEP 508 markers built from each target's `python_version`,
-`sys_platform` and `platform_machine`, plus `implementation_name` on
-the same terms as the `environments` declarations above. A slice of a
-split minor adds its `python_full_version` bounds. Each such marker is
-emitted in its shortest form equivalent over the lock's declared
-environments, and the emitted bytes are checked against the original
-over those environments before the lock is written, one declared
-environment at a time so that a matrix spanning many platforms stays
-decidable. A marker whose shortening or check runs out of budget is
-emitted unsimplified, as is one that selects nothing inside the
-declared environments.
+Under `[tool.nab].mode = "universal"`, one pylock covers every matrix target.
+A pin shared by all targets appears once without a marker. Divergent pins use
+PEP 508 markers over the target axes; a split minor also uses
+`python_full_version` bounds.
 
-`environments` carries a declaration per target, built the same way a
-single-environment lock builds its one: from the markers that target's
-resolve consulted. A target whose minor an in-minor micro boundary
-splits carries one declaration per slice, so a target can contribute
-more than one entry (see
-[Universal resolution](../explanation/universal.md)). A target's
-`packages.dependencies` edges are the union across the targets an entry
-covers.
+nab shortens each marker only after checking equivalence over every declared
+environment. It keeps the original marker if simplification or verification
+runs out of budget, or if the marker selects no declared environment.
 
-## Pip-compatible `requirements.txt`
+`environments` is built from the marker variables each target consulted. A
+minor split at a micro boundary contributes one declaration per slice.
+
+An entry's `packages.dependencies` edges are the union across every target it covers. See [Universal resolution](../explanation/universal.md).
+
+## pip-compatible `requirements.txt`
 
 `nab lock --format requirements` writes one line per package
 using pip's [hash-checking] format:
@@ -401,25 +359,16 @@ starlette==0.35.1 \
     --hash=sha256:...
 ```
 
-A package carries one `--hash` line per recorded digest, not one
-per artefact. Only `sha256`, `sha384`, and `sha512` are recorded,
-so a wheel the index publishes with an `md5` and a `sha256`
-contributes one line, and one published with a `sha256` and a
-`sha512` contributes two. The lines are sorted by algorithm then
-digest rather than grouped by artefact, so an sdist hash lands
-wherever its digest sorts and the output does not depend on the
-order the artefacts were found in. The continuation backslashes
-match what pip-compile emits.
+Each recorded digest gets one `--hash` line. nab records `sha256`, `sha384`,
+and `sha512`, then sorts by algorithm and digest rather than artifact.
 
-Local and VCS pins are rendered without hashes, mirroring pip's
-behaviour. An editable local pin becomes a `-e` line and a
-`subdirectory` a `#subdirectory=` fragment. Workspace members are
-editable by default, so they render as `-e`; a `[[tool.nab.local-sources]]`
-pin is non-editable unless its `editable` key is set. An archive pin is a
-third form, `name @ <url>#sha256=...`, carrying its hash in the
-URL fragment so the line stays hash-checkable. Any
-`subdirectory` is appended to that fragment with `&`. Local,
-VCS, and archive pins render the same with or without hashes:
+Output therefore does not depend on discovery order. Continuation backslashes match pip-compile.
+
+Local and VCS pins have no hashes. Editable local pins use `-e`; workspace
+members are editable by default, while `[[tool.nab.local-sources]]` entries
+are not unless configured. A subdirectory uses `#subdirectory=`.
+
+Archive pins put their accepted digests in the URL fragment, with any subdirectory appended by `&`. The examples below use `sha256`. Local, VCS, and archive pins render the same in both requirements formats:
 
 ```
 my-fork @ file:///abs/path/to/checkout
@@ -429,116 +378,64 @@ my-archive @ https://example.com/my-archive-1.0.tar.gz#sha256=<hex>
 mono @ https://example.com/mono-3.0.tar.gz#sha256=<hex>&subdirectory=packages/foo
 ```
 
-`pip install --require-hashes -r requirements.txt` will accept
-the output as-is when every dependency has at least one hash.
-Mixed input (some hashed, some not) is rejected by
-`--require-hashes`; add `--no-deps` and resolve the un-hashed
-entries some other way if that is the workflow you need.
+pip's [hash-checking] mode accepts the file only when every dependency is
+hashed. Local and VCS pins make the output mixed and therefore unsuitable for
+that mode. [Use a lock](../how-to/use-the-lock.md) gives the install commands.
 
 ## Reproducibility
 
-Two things have to hold for a lock to reproduce: the index has to
-give the same answer, and the resolver has to search the same
-way. They are separate settings.
+Repeatable locking needs a fixed index view and a fixed search order:
 
-`[tool.nab].uploaded-prior-to` bounds the index view.
-Distributions uploaded after that timestamp are ignored, even if
-newer files exist on the index when you run, so the lockfile is
-truly reproducible rather than "reproducible until upstream
-re-uploads".
+* `[tool.nab].uploaded-prior-to` excludes distributions uploaded after its
+  timestamp.
+* `[tool.nab].decision-order = "stable"` prevents response timing and cache
+  warmth from steering package order. See [Configuration](configuration.md)
+  for its cost.
 
-`[tool.nab].decision-order = "stable"` bounds the search. On the
-default `arrival`, nab decides packages whose listing has already
-arrived ahead of ones still in flight, so a machine with a cold
-HTTP cache can search differently, and on some inputs pin
-differently, from one with a warm cache on the same inputs and
-the same frozen index. See "Decision order" in the
-[configuration reference](configuration.md) for what it costs.
+With the index response held fixed, both settings reproduce the pin set. An
+absolute cutoff also becomes the UTC `created-at`, so identical inputs produce
+identical lock bytes. `--upgrade` replaces that timestamp with the run time.
 
-With both set, a fresh resolve produces the same pin set, and an
-absolute `uploaded-prior-to` also becomes the lockfile's
-`created-at`, written in UTC, so two locks from identical inputs
-are byte-for-byte identical. `--upgrade` is the exception: it
-stamps the run time instead.
+The cutoff does not freeze an index. A later yank changes the listing, a
+deleted file is unavailable, and nab trusts reported upload times. Files with
+no upload time are excluded, except local `file://` and find-links artifacts,
+which remain eligible.
 
-Both settings assume an index that does not move. Several things
-move it. Yanking is a property of the listing as it stands, not
-of the upload, so a file yanked after you locked changes the
-resolve and `uploaded-prior-to` does not bring it back. A deleted
-file cannot be resolved to at all.
+A resolve mixing those sources with an index is only partly time-bounded.
 
-The cutoff also trusts the upload times the index reports. An
-index that rewrites them changes what a past cutoff admits, and
-nab does not detect that. A distribution reported without an
-upload time is excluded once a cutoff is set, so an index that
-reports none serves nothing at all. Local `file://` and
-find-links artifacts carry no upload time either, and those are
-kept rather than excluded, so a resolve mixing a wheelhouse with
-an index is only partly time-bounded.
-
-A relative `P<n>D` cutoff is measured back from `created-at`
-rather than from the clock, and a re-lock reuses the `created-at`
-recorded in the pylock file it will write. A re-lock therefore
-resolves against the window the first lock used, and `--upgrade`
-is what moves that window forward. An absolute cutoff bounds the
-resolve the same way either run.
-
-A first lock, a pylock with no `created-at`, output to stdout,
-and the requirements formats have no recorded timestamp to reuse,
-so they anchor to the run time.
+A relative `P<n>D` cutoff is measured from `created-at`. Re-locking reuses the
+existing lock's timestamp; `--upgrade` moves the window. A first lock, stdout,
+requirements output, or a pylock without `created-at` anchors to the run time.
 
 ## Checking the lock in CI
 
-`nab lock --locked` re-resolves from your project inputs,
-checks that the committed `pylock.toml` already matches, and
-writes nothing. It exits non-zero if the lock would change or
-is missing, so a CI step can assert the lock is current:
+`nab lock --locked` re-resolves project inputs and compares the result with the
+committed pylock without writing. It applies to file output in
+single-environment mode. The existing pins do not seed the resolve, and
+volatile provenance is ignored.
 
-```bash
-nab lock --locked
-```
+Extras and groups are sorted in the lock. Reordering the same names, or using
+`--all-extras` or `--all-groups` for that set, does not change the arrays.
 
-The committed pins are never seeded into the resolve, so the
-check confirms the lock still reflects those inputs rather than
-that it round-trips through itself. Only a real change to the
-locked packages fails it; volatile provenance metadata is
-ignored. The lock sorts the extras and groups it records, so
-listing the same names in another order, or naming that set with
-`--all-extras` or `--all-groups`, writes the same arrays.
-`--locked` applies to a `pylock.toml` file in single-environment
-mode.
+Input mismatches that can be proved without resolving fail early. Otherwise
+the full resolve runs, so `decision-order = "arrival"` can produce a different
+answer on a colder cache.
 
-Some mismatches are provable from your inputs without resolving, so
-`--locked` can fail fast with the reason before it re-resolves; see the
-[CLI reference](cli.md).
-
-`--locked` re-resolves, so it depends on everything the resolve
-depends on. On the default `decision-order = "arrival"` the check
-can fail on a commit nobody changed, when the CI runner's HTTP
-cache is colder than the machine that wrote the lock. Set
-`decision-order = "stable"` on any project that runs it.
+Use `decision-order = "stable"` for this check. See [Use a lock](../how-to/use-the-lock.md) for the CI command and the [CLI reference](cli.md) for mismatch behavior.
 
 ## `nab download`
 
-`nab download` resolves the project again, then fetches every wheel,
-sdist, and direct-URL archive on the resulting pins into the
-`--output` directory (defaults to `wheels/`), verifying each file's
-`sha256` against the digest recorded on the pin. Local and VCS pins
-are skipped. The download is idempotent: a file whose digest already
-matches a local copy is left alone.
+`nab download` resolves project inputs again; it does not read an existing
+lock. It fetches the resulting wheels, sdists, and direct-URL archives into
+`--output` (default `wheels/`) and verifies each file against one selected
+recorded digest. A local file matching that digest is kept; local and VCS pins
+are skipped.
 
-The result is a per-resolve directory of artefacts that any
-installer can consume offline:
-
-```bash
-nab download
-pip install --no-index --find-links wheels/ -r requirements.txt
-```
-
-This pairs naturally with `--require-hashes`: hashes are baked
-into the requirements file, the artefacts on disk are verified
-against those same digests on the way down, and pip refuses
-anything else.
+The directory is an artifact set for that fresh resolve, not necessarily a
+complete offline installation set. Skipped sources still need their original
+locations, and an sdist may need build requirements not present there. See
+[Use a lock](../how-to/use-the-lock.md) for an exact one-environment offline
+workflow and the [CLI reference](cli.md) for download options.
 
 [PEP 751]: https://peps.python.org/pep-0751/
 [PEP 658]: https://peps.python.org/pep-0658/

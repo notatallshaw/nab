@@ -2,7 +2,7 @@
 
 Wires :func:`resolve_for_targets` to the writers in
 :mod:`nab_project.lockfile`, plus the per-target emission shapes a matrix
-needs (a templated file per tuple, multi-block stdout).
+needs (a templated file per target, multi-block stdout).
 
 The helpers this shares with :mod:`nab._download` live in
 :mod:`nab._run` and :mod:`nab._resolve`, and the run's printer in
@@ -187,57 +187,31 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
 ) -> None:
     """Resolve dependencies and emit a lockfile or pin list.
 
-    Formats: ``pylock`` (PEP 751), ``requirements`` (pip-style, with
-    ``--hash`` lines on index pins), ``requirements-without-hashes``
-    (the same without those lines).  ``--output`` defaults to
-    ``pylock.toml`` or ``requirements.txt``; ``--output -`` writes to
+    ``pylock`` is the default format. ``requirements`` adds ``--hash`` lines to
+    index pins; ``requirements-without-hashes`` omits those lines. Output
+    defaults to ``pylock.toml`` or ``requirements.txt``; ``--output -`` writes
     stdout.
 
-    ``--groups`` / ``--all-groups`` select PEP 735 dependency groups;
-    ``--extras`` / ``--all-extras`` select entries from
-    ``[project.optional-dependencies]``.  Selected names are folded into
-    the resolve and recorded in the lockfile.
+    Groups and extras select project requirements. ``--build-requirements``
+    instead locks the static ``[build-system].requires`` list and cannot be
+    combined with either selection. Its default output is ``pylock.build.toml``
+    or ``build-requirements.txt``.
 
-    ``--build-requirements`` locks ``[build-system].requires`` instead of
-    the project's dependencies, for the environment the project is built
-    in rather than the one it runs in.  A project that declares no
-    ``[build-system]`` is an error: the PEP 517 default backend is what
-    an installer falls back to, not something the project asked to pin.
-    Only the static list is read, so what a backend adds from
-    ``get_requires_for_build_wheel`` is not covered.  ``--output``
-    defaults to ``pylock.build.toml`` or ``build-requirements.txt``, and
-    no group or extra can be selected alongside it.
+    ``--no-emit-workspace`` omits workspace member pins from the output while
+    still using them during resolution. Use it for hashed requirements, then
+    install those members separately from pip's ``--require-hashes`` run.
 
-    Universal mode (``[tool.nab].mode = "universal"``) supports all
-    three formats.  For requirements formats, an ``--output`` template
-    containing ``{python_version}``, ``{platform_id}`` or
-    ``{selection}`` (the conflict fork a tuple belongs to) writes one
-    file per matrix tuple; a plain path is rejected when multiple
-    tuples would collide.
+    Universal requirements output needs a template containing
+    ``{python_version}``, ``{platform_id}``, or ``{selection}`` when several
+    targets would otherwise share a path. Use pylock when none of those
+    variables separates the targets.
 
-    ``--no-emit-workspace`` drops workspace member pins from the
-    emitted lockfile; the resolver still uses them locally.  Pair
-    with ``pip install --no-deps -e <member>`` when consuming the
-    lockfile via pip's PEP 751 install or ``--require-hashes``: both
-    refuse directory entries because they cannot be hashed.
+    ``--python X.Y`` targets that Python on this machine. It is the short
+    form of ``--project-environment-python`` and is not valid in universal
+    mode. ``--upgrade`` resets a relative upload cutoff to the current time.
 
-    ``--python X.Y`` resolves for that Python on this machine instead of
-    the running interpreter, like pip's ``--python-version``.  It is the
-    short form of ``--project-environment-python`` and writing both is
-    refused.  It is rejected in universal mode, where the matrix declares
-    the Python axis.
-
-    ``--project-resolution`` overrides ``[tool.nab].resolution`` for this
-    run (a PROJECT-scope override, so it is layered through the config
-    sources; see Configuration).  ``--http-backend`` is a USER option, so
-    it too is read from the config sources (``NAB_HTTP_BACKEND`` or an
-    ``nab.toml``) when the flag is not passed.  ``--upgrade`` re-anchors the
-    ``P<n>D`` cutoff to ``datetime.now(UTC)`` instead of reusing the
-    timestamp recorded in any existing lockfile.
-
-    ``--locked`` re-resolves and verifies the committed pylock is already
-    up to date, writing nothing and exiting non-zero if it would change.
-    It is for pylock output to a file, single-environment mode only.
+    ``--locked`` verifies an existing single-environment pylock without
+    writing and exits non-zero if the lock would change.
     """
     _validate_pylock_output_name(output=output, format=format)
     if locked and (format != "pylock" or is_stdout(output)):

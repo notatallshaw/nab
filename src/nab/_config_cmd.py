@@ -77,35 +77,23 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
 ) -> None:
     """Inspect the effective layered configuration.
 
-    ``nab config list`` lists every option with value/scope/origin.
-    ``nab config get <key>`` prints one effective value.  ``nab config
-    explain <key>`` prints the full shadowed source stack.
+    ``list`` shows every option with its value, scope, and origin. ``get``
+    prints one value. ``explain`` prints one option's source stack.
 
-    ``--include-rejected`` sits on the command, so every action takes it.
-    Without it, a config file that sets an unknown key or a key outside its
-    scope is a fatal config error; the flag collects that refusal instead
-    and the command runs.  An unknown or renamed ``NAB_*`` var is never
-    fatal: it is dropped with a stderr warning, and the flag only moves
-    that warning into the collected refusals.
+    Without ``--include-rejected``, a refused config file is a fatal config
+    error. An unknown or renamed ``NAB_*`` variable is never fatal: it is
+    dropped with a warning.
 
-    ``list`` prints the collected refusals in a trailing section, and
-    ``explain`` prints a ``rejected`` row only under the key a refusal
-    names, so one that names no key shows on ``list`` alone.  ``get``
-    prints the value and never a refusal.
+    With the flag, ``list`` appends refusals. ``explain`` adds a ``rejected``
+    row for its key; a refusal without a key appears only on ``list``. ``get``
+    still prints only the value.
 
-    The same per-option flags the run commands accept (the USER
-    ``--offline`` / ``--cache-dir`` / ``--http-backend`` /
-    ``--max-concurrency`` and the ``--project-*`` PROJECT overrides) layer a
-    CLI value on top, so the inspector reflects the same effective values a
-    run would see.
+    Runtime and ``--project-*`` flags layer above files, as they do for run
+    commands.
     """
-    # Validate the pyproject path the same way the run commands do: a
-    # --path that is missing, a directory, or not a regular file is a hard
-    # error, not a silently-skipped source that prints all-built-in defaults.
+    # Reject an invalid path before discovery can treat it as an absent source.
     require_pyproject_file(path)
 
-    # _cli_overrides maps each registry row's cli_param to the same-named
-    # parameter above, so a new row needs no branch here.
     cli_overrides = _cli_overrides(
         cli_resolution=project_resolution,
         cli_offline=offline,

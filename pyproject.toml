@@ -34,7 +34,7 @@ httpx = ["nab-index[httpx]==0.0.17.dev0"]
 
 [project.urls]
 Homepage = "https://github.com/notatallshaw/nab"
-Documentation = "https://nab.readthedocs.io/"
+Documentation = "https://nab.readthedocs.io/en/stable/"
 Issues = "https://github.com/notatallshaw/nab/issues"
 Source = "https://github.com/notatallshaw/nab"
 Changelog = "https://github.com/notatallshaw/nab/releases"
@@ -69,6 +69,7 @@ exclude = [
     "tests/test_env_layer.py",
     "tests/test_markerset_docs.py",
     "tests/test_package_descriptions.py",
+    "tests/test_readme_docs.py",
     "tests/test_release.py",
     "tests/test_type_check_scope.py",
     "tests/test_workspace_shape.py",

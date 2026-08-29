@@ -1,34 +1,20 @@
 # nab
 
-nab is an experimental Python packaging lock and package download tool,
-aiming to have similar resolver performance to uv, while being written
-in Python.
+nab is an experimental dependency locker for Python packages. It reads a `pyproject.toml` and writes a PEP 751 `pylock.toml` or pinned requirements; it does not install packages.
 
-nab reads a `pyproject.toml`, resolves the dependency tree, and
-writes a pinned set of versions or a PEP 751 lockfile. It does not
-install. Hand the lockfile to whatever installer you trust.
-
-## Documentation
-
-<https://nab.readthedocs.io/>
+Documentation: <https://nab.readthedocs.io/en/stable/>
 
 ## Install
 
-For package hygiene, and security reasons, the preference is to install nab itself
-as a tool, e.g.
-
-Via pipx:
-
-```bash
-pipx install nab
-```
-
-Or via uv:
+Install nab in an isolated tool environment:
 
 ```bash
 uv tool install nab
+# or
+pipx install nab
 ```
 
+Confirm the command is available with `nab --version`. nab runs on CPython 3.10 and newer.
 
 ## Quick start
 
@@ -43,120 +29,31 @@ dependencies = [
 ]
 ```
 
+Lock and install the dependencies:
+
 ```bash
 nab lock pyproject.toml
+python -m pip install -r pylock.toml
 ```
 
-Writes `pylock.toml` next to the project. For a pip-style
-requirements list instead, use
-`nab lock --format requirements-without-hashes --output -`.
+The second command needs pip 26.1 or newer. pip's `pylock.toml` support is experimental; see [Use a lock](https://nab.readthedocs.io/en/stable/how-to/use-the-lock.html) for its selection limits and a hashed-requirements alternative.
 
-# Security
+`--format requirements` writes index requirements with recorded hashes. `--format requirements-without-hashes` writes index pins without their hash lines. See [Output formats](https://nab.readthedocs.io/en/stable/reference/formats.html) before using local, VCS, archive, or multi-target inputs.
 
-nab makes some opinionated choices to be secure first
+## Libraries
 
-## Build policy
+nab publishes five component libraries for other tools:
 
-By default nab tries to extract static metadata, even from sdists,
-but sometimes that is not possible and you have to build a package
-to extract the dependency metadata. There are three build policies:
+* `nab-resolver`: a generic PubGrub resolver.
+* `nab-markersets`: a PEP 508 marker algebra.
+* `nab-provider`: Python packaging policy and resolution logic, without I/O.
+* `nab-index`: index, archive, VCS, and cache clients.
+* `nab-project`: nab's host, with resolve orchestration, workspace discovery,
+  the build path, lockfile emitter, and downloader.
 
- * never: Never builds a Python package
- * build-local (default): Builds `[[tool.nab.local-sources]]` entries
-   and workspace members when their `pyproject.toml` cannot be read
-   statically
- * build-remote: Also builds `[[tool.nab.vcs-sources]]` clones,
-   `[[tool.nab.archive-sources]]` trees, and sdists from an index. It
-   is recommended that this only be turned on via per-package override
+`nab-resolver` has stable public module paths. The other component APIs are
+experimental. See [how the distributions fit together](https://nab.readthedocs.io/en/stable/explanation/packages.html).
 
-## Indexes
+## Project status
 
-nab does not currently support sourcing the same package from
-distinct indexes. Indexes are processed in the order they are given
-to nab, and the first index that has a package is the only index
-that nab will source that package.
-
-You can override this behavior by pinning specific packages to
-specific behavior.
-
-You can also list different urls as a mirror for the same index.
-When a lockfile is written the primary url will always be used
-so that the lockfile will be stable, even if mirrors are used
-(this feature is a work in progress).
-
-## VCS policy
-
-By default nab refuses every git URL, pinned or not:
-
-```toml
-[tool.nab.vcs]
-policy = "block"
-allowed-schemes = []
-allowed-repos = []
-require-pin = true
-```
-
-Each of the first three refuses everything until you set it:
-
- * `policy`: set to `allow` to consider git URLs at all
- * `allowed-schemes`: the schemes you accept, e.g. `git+https`
- * `allowed-repos`: the repository prefixes you accept, e.g.
-   `https://github.com/myorg/`
-
-`require-pin` is on by default, so a URL has to carry a
-40-character commit hash and a floating branch or tag is
-refused.
-
-A package is then taken from a repository through a
-`[[tool.nab.vcs-sources]]` entry. A `pkg @ git+...` requirement
-under `[project].dependencies` gets the same admission checks,
-but nab cannot resolve that form yet, so use a source entry.
-
-# Standards first behavior
-
-## Pre-releases
-
-Pre-release versions are selected if there are no stable
-versions to select given the requirements, even for transitive
-dependencies. A user option to force allow or block
-pre-releases per-package is a work in progress.
-
-## Validate per-distribution dependencies
-
-By default when a distribution is chosen the dependencies from
-that distribution are used, nab does not assume two different
-distributions for the same package version will have the same
-dependencies.
-
-However, sometimes you may want the lock file to produce an
-sdist, that sdist may not have static metadata, and you don't
-want to wait for the sdist to build on every lock, there is
-a distribution policy of "sdist-install", that is the metadata
-will be taken from an appropriate wheel, but the sdist will
-be selected for the install.
-
-
-# Libraries
-
-This project includes multiple libraries that can be used by
-other tools:
-
- * `nab-resolver`: An agnostic resolver library based on PubGrub, but with
-   extensions that make it compatible with Python packaging standards
- * `nab-markersets`: The PEP 508 marker algebra, reading a marker as the set
-   of environments it selects so markers can be combined and compared
- * `nab-provider`: The Python packaging provider that drives the nab-resolver,
-   with lots of specific features and optimizations for the Python packaging
-   ecosystem. It does no I/O: everything comes through one interface a host
-   implements
- * `nab-index`: Provides APIs for talking to Python package indexes, abstracts
-   HTTP library interface so different HTTP libraries can be plugged in
- * `nab-project`: nab's own host. It implements the fetch interface over
-   nab-index and adds the resolve orchestration, workspace discovery, the
-   build path, the lockfile emitter and the downloader
-
-All 5 libraries are in experimental mode, I currently recommend pinning them,
-e.g. `nab-resolver==0.0.1`, as APIs may change at any point.
-
-Once we reach `0.1.0` we will only break API stability on each minor update,
-so you will be able to pin to `==0.1.*` or `~=0.1.0`.
+nab is under active development. See the [status summary](https://nab.readthedocs.io/en/stable/#status) for supported inputs and experimental features.

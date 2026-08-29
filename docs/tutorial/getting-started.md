@@ -1,6 +1,6 @@
 # Getting started
 
-This tutorial walks through a first resolve with nab against PyPI.
+This tutorial resolves a project against PyPI, writes a lock, and installs the locked dependencies.
 
 ## Install
 
@@ -52,23 +52,25 @@ typing-inspection==0.4.4
 `fastapi` resolves to 0.109.1 rather than its `<=0.115.2` cap because
 every later release requires a starlette that `<=0.36.0` excludes.
 
-The resolver pins one version per package for the host's marker
-environment, taking the newest release the constraints allow. That
-block came off CPython 3.12 on Linux, so another host or a later
-resolve gives different versions. Names print in their PEP 503
-canonical form, so `typing_extensions` appears as `typing-extensions`.
+The resolver pins one version per package for the host's marker environment, taking the newest release the constraints allow. This block came from CPython 3.12 on Linux, so another host or a later resolve can differ.
 
-For multi-platform / multi-Python locks see
-[universal resolution](../explanation/universal.md).
+Names use their PEP 503 canonical form, so `typing_extensions` appears as `typing-extensions`.
+
+## Install the locked dependencies
+
+pip 26.1 and newer can read the default lock:
+
+```bash
+python -m pip install -r pylock.toml
+```
+
+pip selects the current environment, the lock's default dependency groups, and no extras. Its `pylock.toml` support is experimental.
+
+See [Use a lock](../how-to/use-the-lock.md) for hashed requirements, an offline wheelhouse, and the limits of each path.
 
 ## Where to next
 
-* [Configuration](../reference/configuration.md): every key under
-  `[tool.nab]`, what it does, and what the default is.
-* [CLI](../reference/cli.md): every subcommand, exit code, and
-  environment variable, with
-  [selection](../reference/selection.md),
-  [output formats](../reference/formats.md), and
-  [resolution failures](../reference/diagnostics.md) on their own pages.
-* [Lockfile](../reference/lockfile.md): what is in `pylock.toml`, the
-  `requirements.txt --hash` shape, and what `nab download` fetches.
+* [Configuration](../reference/configuration.md): set indexes, sources, policies, and target environments.
+* [Resolution failures](../reference/diagnostics.md): read an error and its recovery hints.
+* [Universal resolution](../explanation/universal.md): lock for several Python and platform targets.
+* [CLI](../reference/cli.md): look up commands, flags, environment variables, and exit codes.

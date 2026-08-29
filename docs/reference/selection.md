@@ -46,7 +46,9 @@ installer given neither leaves it out; see
   the project is built in rather than the one it runs in. `--output`
   defaults to `pylock.build.toml` (or `build-requirements.txt` for the
   requirements formats), which keeps it clear of the project's runtime
-  lock, and `--locked` then checks that file. Nothing can be selected alongside it: `[build-system].requires`
+  lock, and `--locked` then checks that file.
+
+  Nothing can be selected alongside it: `[build-system].requires`
   is one flat list, so `--groups`, `--all-groups`, `--extras`,
   `--all-extras`, `--project-default-group`, `--project-base-group` and
   `--project-build-group` are all rejected, and `[tool.nab].default-groups`,
@@ -78,8 +80,8 @@ See [Lock a workspace](../how-to/workspaces.md).
 * `--no-emit-workspace` drops the workspace members' own `[[packages]]`
   entries from the emitted lockfile, along with the dependency edges
   and membership gates that reference them; the resolver still uses the
-  members during the resolve. Default off, and there is no flag that turns
-  it back on. Use it when the lockfile is consumed by pip's PEP 751
-  install or `--require-hashes`, which reject the directory entry a member
-  pin emits because it cannot be hashed; pair it with `pip install
-  --no-deps -e <member>`.
+  members during the resolve. It is off by default.
+
+  Use it for hashed requirements because pip's `--require-hashes` mode
+  rejects member directory pins. Install those members separately with
+  `pip install --no-deps -e <member>`. A local PEP 751 lock can retain them.

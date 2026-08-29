@@ -220,6 +220,10 @@ async def _run_downloads(
     *,
     offline: bool,
 ) -> DownloadResult:
+    """Download concurrently and return the paths written or reused.
+
+    On failure, cancel unfinished entries and close the client before re-raising.
+    """
     sem = asyncio.Semaphore(max_concurrency)
     client = AsyncSimpleClient(transport)
     written: list[Path] = []

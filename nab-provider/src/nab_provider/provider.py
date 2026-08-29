@@ -1372,41 +1372,16 @@ class Provider:
     def has_satisfying_version(
         self, package: str, version_range: RangeProtocol[Version]
     ) -> bool:
-        """Report whether a usable version exists, side-effect-free.
+        """Report whether a usable version exists without affecting later decisions.
 
-        Runs the real ``choose_version`` over ``version_range`` so look-ahead
-        rejections are honored, then rolls back the state it records: the queued
-        clauses, the force-backtrack signal, and the pending look-ahead blocks
-        are dropped, and the force-backtrack budget and no-versions reasons are
-        restored to their pre-probe values.  A failed-resolve attribution probe
-        therefore cannot alter a later decision.
+        Runs the real ``choose_version`` so look-ahead rejections count, then
+        clears its clauses, pending blocks, and force-backtrack state. The
+        probed package's no-versions reason and permanent metadata-ban evidence
+        may remain because they affect only failure diagnostics.
 
-        The one exception is ``package``'s own no-versions reason.  When the
-        un-narrowed range yields no version because a transitive conflict
-        rejected every candidate, this probe is the only pass that names the
-        blocker, so its reason is kept rather than rolled back to the generic
-        no-match the constraint-narrowed pass recorded.  The reason map only
-        labels a ``NO_VERSIONS`` clause, so keeping it cannot alter a decision.
-
-        The probe also suppresses the two look-ahead shortcuts that could
-        otherwise report a version the decided blocker rejects:
-        ``_probing_satisfiable`` skips the abort and keeps checking decisions
-        past ``_BROAD_LA_REJECT_CAP``.
-
-        The un-narrowed range spans versions the constraint clipped away, so
-        look-ahead can reach one whose metadata raises a hard error the narrowed
-        resolve never touched (a failed integrity check, a tie-ranked-wheel
-        divergence, or an advertised sidecar the index answered it will not
-        serve).  Each names a fault of that one version, so the probe catches
-        them and returns ``False`` rather than aborting; the crash still fires
-        when the version is pinned for real.
-
-        A transient transport failure is deliberately not in that tuple.  A 5xx
-        that outlived the retry budget, or a dropped connection, says nothing
-        about the version, and swallowing it would report "no satisfying
-        candidate" for a version that has one and hand back a different
-        resolution instead of failing.  The ``finally`` restores the snapshot
-        either way.
+        Candidate-specific integrity, metadata, policy, and format failures
+        count as unsatisfied. Transport failures propagate. Decision-affecting
+        state is restored either way.
         """
         saved_counts = dict(self._force_backtrack_counts)
         saved_reasons = dict(self._no_versions_reasons)
@@ -1681,23 +1656,13 @@ class Provider:
     ) -> None:
         """Record why ``choose_version`` returned ``None`` for ``package``.
 
-        Runs during the resolve, on every ask that returns no version, which
-        is ordinary backtracking and not failure.  So it stores a marker and
-        renders nothing: no listing is walked, no version parsed and no
-        sentence built until :meth:`get_no_versions_reason` is asked for one,
-        which happens once, after the resolve has already failed.
+        An empty result is ordinary during backtracking, so this stores a marker
+        and defers rendering until the resolve fails.
 
-        ``blockers`` and ``metadata`` carry the look-ahead rejection causes
-        when every candidate that fell in ``version_range`` was rejected:
-        either because of an already-decided package, a positive-range
-        constraint, a root-requirement disagreement, or because the
-        candidate's metadata could not be read under the current
-        build policy.  When supplied, the recorded reason names those
-        causes so the user does not see a bare "no version matches
-        the requirement", which would suggest the package is
-        missing from the index when in fact it is the resolver's
-        transitive constraints (or a too-strict build policy) that
-        excluded every candidate.
+        ``blockers`` and ``metadata`` record candidates rejected by look-ahead.
+        ``version_range`` lets the later renderer distinguish a filtered release
+        from a range with no match. An empty post-filter ``all_versions`` uses the
+        stored listing diagnosis.
 
         ``version_range`` is passed only when no surviving version fell
         inside it.  A version the listing filter dropped that does fall
