@@ -15,7 +15,7 @@ hatch shell
 nab --version
 ```
 
-That shell runs in the check-out's `.venv`, with all five distributions
+That shell runs in the check-out's `.venv`, with all six distributions
 installed editable plus the `tests` and `nox` dependency-groups. The
 commands below run its tools by path, so they work outside the shell too.
 
@@ -27,8 +27,8 @@ through `hatch run`.
 ## Running the tests
 
 The default suite is fast (under a minute) and covers every module
-under `nab_resolver`, `nab_provider`, `nab_project`, `nab_index`, and
-`nab`:
+under `nab_resolver`, `nab_markersets`, `nab_provider`, `nab_project`,
+`nab_index`, and `nab`:
 
 ```bash
 .venv/bin/python -m pytest                # default selection (no markers)
@@ -84,7 +84,7 @@ installed rather than fetched during the build. It is locked from
 and every path that builds installs it: the `dists` nox session, the release
 workflow and `hatch run release:build`.
 
-One lock serves all five packages, which holds only while they declare the
+One lock serves all six packages, which holds only while they declare the
 same `[build-system]`. The refresh script checks that before it writes
 anything, and checks afterwards that the locks sharing an environment agree on
 the packages they share.
@@ -112,14 +112,15 @@ to whatever still supports the floor.
 
 The `pyproject.toml` `[tool.coverage.report] fail_under = 100`
 setting requires 100 percent branch coverage on every workspace
-package: `nab_resolver`, `nab_provider`, `nab_project`, `nab_index`,
-and `nab`. The full local suite under `coverage run -m pytest` checks
-all five together; nox splits them per workspace in CI, with
-`nab_index` and `nab_provider` gated in the `project` workspace,
-whose tests are the only ones that reach every line of both. The
-`provider` workspace runs `nab-provider/tests` without `nab-index`
-installed and gates no package of its own. When code is unreachable
-from the default suite, prefer:
+package: `nab_resolver`, `nab_markersets`, `nab_provider`,
+`nab_project`, `nab_index`, and `nab`. The full local suite under
+`coverage run -m pytest` checks all six together; nox splits them
+per workspace in CI, with `nab_index` and `nab_provider` gated in
+the `project` workspace, whose tests are the only ones that reach
+every line of both. The `provider` workspace runs
+`nab-markersets/tests` and `nab-provider/tests` without `nab-index`
+installed, and gates `nab_markersets`. When code is unreachable from
+the default suite, prefer:
 
 * `# pragma: no cover` for a platform-specific or defensively
   unreachable line.

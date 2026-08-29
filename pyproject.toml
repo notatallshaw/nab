@@ -21,6 +21,7 @@ classifiers = [
 ]
 dependencies = [
     "nab-resolver==0.0.16.dev0",
+    "nab-markersets==0.0.16.dev0",
     "nab-provider==0.0.16.dev0",
     "nab-project==0.0.16.dev0",
     "nab-index==0.0.16.dev0",
@@ -140,7 +141,13 @@ dists = [
 # `nab lock` config: universal mode resolves the full matrix in one
 # pass, P7D matches the 7-day Dependabot cooldown.
 [tool.nab.workspace]
-members = ["nab-resolver", "nab-provider", "nab-project", "nab-index"]
+members = [
+    "nab-resolver",
+    "nab-markersets",
+    "nab-provider",
+    "nab-project",
+    "nab-index",
+]
 
 [tool.nab]
 mode = "universal"
@@ -159,7 +166,14 @@ platforms = [
 
 # Workspace packages skip the cooldown; bumps land immediately.
 [[tool.nab.package-rules]]
-match = ["nab", "nab-resolver", "nab-provider", "nab-project", "nab-index"]
+match = [
+    "nab",
+    "nab-resolver",
+    "nab-markersets",
+    "nab-provider",
+    "nab-project",
+    "nab-index",
+]
 uploaded-prior-to = false
 
 # https://docs.pytest.org/en/stable/reference/reference.html#confval-addopts
@@ -176,6 +190,7 @@ addopts = [
 ]
 testpaths = [
     "nab-resolver/tests",
+    "nab-markersets/tests",
     "nab-provider/tests",
     "nab-project/tests",
     "nab-index/tests",
@@ -200,10 +215,11 @@ concurrency = ["thread", "multiprocessing"]
 sigterm = true
 # Per-workspace runs import only one workspace, so coverage would warn about
 # the source packages the run doesn't touch. This applies everywhere, but the
-# full local suite imports all four, where the warning has nothing to flag.
+# full local suite imports every source package, where it has nothing to flag.
 disable_warnings = ["module-not-imported"]
 source_pkgs = [
     "nab_resolver",
+    "nab_markersets",
     "nab_provider",
     "nab_project",
     "nab_index",
@@ -241,6 +257,10 @@ exclude_also = [
 nab_resolver = [
     "nab-resolver/src/nab_resolver",
     "*/nab_resolver",
+]
+nab_markersets = [
+    "nab-markersets/src/nab_markersets",
+    "*/nab_markersets",
 ]
 nab_provider = [
     "nab-provider/src/nab_provider",
@@ -319,6 +339,12 @@ extend-exclude = ["**/_vendor/**"]
 # docs/conf.py sits outside any Python package by Sphinx convention.
 "docs/conf.py" = ["INP001"]
 
+# IntractableMarkerSet and UnserializableMarkerSet are published names, raised
+# and caught by name across nab; adding N818's Error suffix is an API change.
+# PYI034 wants Atom.__new__ to return Self, which needs typing_extensions on the
+# 3.10 floor, and this distribution declares packaging and nothing else.
+"nab-markersets/src/nab_markersets/_markersets.py" = ["N818", "PYI034"]
+
 # Subpackages defer imports to break cycles with their parent modules.
 "nab-provider/src/nab_provider/_provider/*.py" = ["PLC0415"]
 "nab-project/src/nab_project/_build/*.py" = ["PLC0415"]
@@ -367,7 +393,14 @@ convention = "pep257"
 
 # https://docs.astral.sh/ruff/settings/#lintisort
 [tool.ruff.lint.isort]
-known-first-party = ["nab", "nab_index", "nab_provider", "nab_project", "nab_resolver"]
+known-first-party = [
+    "nab",
+    "nab_index",
+    "nab_markersets",
+    "nab_provider",
+    "nab_project",
+    "nab_resolver",
+]
 
 # https://microsoft.github.io/pyright/#/configuration?id=main-pyright-settings
 [tool.pyright]
@@ -386,6 +419,7 @@ include = [
 # point it at the source trees directly so cross-package imports resolve.
 extraPaths = [
     "nab-resolver/src",
+    "nab-markersets/src",
     "nab-provider/src",
     "nab-project/src",
     "nab-index/src",

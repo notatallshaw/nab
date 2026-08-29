@@ -2,9 +2,9 @@
 
 ``packaging.markers.Marker.evaluate`` binds ``extra`` to a single string and
 cannot say that several extras are active, so this goes through
-:class:`~packaging.markersets.MarkerSet` instead.  Its own module so the
-resolve engine never imports ``packaging.markersets``;
-``tasks/check_engine_markersets.py`` enforces that.
+:class:`~nab_markersets.MarkerSet` instead.  Its own module so the resolve
+engine never imports ``nab_markersets``; ``tasks/check_engine_markersets.py``
+enforces that.
 """
 
 from __future__ import annotations
@@ -12,11 +12,13 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from packaging.markers import UndefinedComparison as ReleasedUndefinedComparison
+
+from nab_markersets import IntractableMarkerSet, MarkerSet
 from nab_provider._vendor.packaging.markers import (
     UndefinedComparison,
     UndefinedEnvironmentName,
 )
-from nab_provider._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 
@@ -50,11 +52,14 @@ class IntractableMarkerError(ValueError):
 
 
 def _unevaluable(
-    marker: Marker, exc: UndefinedComparison | UndefinedEnvironmentName
+    marker: Marker,
+    exc: ReleasedUndefinedComparison | UndefinedComparison | UndefinedEnvironmentName,
 ) -> UnevaluableMarkerError:
     """Return the error for ``marker``, named in full.
 
-    The failing clause alone does not say which dependency to edit.
+    The failing clause alone does not say which dependency to edit.  The
+    exception type spans both packaging copies: the algebra raises released
+    packaging's, a vendored ``Marker`` raises its own.
     """
     return UnevaluableMarkerError(f"marker {marker} cannot be evaluated: {exc}")
 
@@ -73,10 +78,13 @@ def marker_set(marker: Marker) -> MarkerSet:
 
     Building the set checks each clause against its operator, so a marker with
     no meaning is caught here.
+
+    ``marker`` is the vendored packaging's class and the algebra parses released
+    packaging's grammar, so it is handed over as its string.
     """
     try:
-        return MarkerSet.from_marker(marker)
-    except UndefinedComparison as exc:
+        return MarkerSet.from_marker(str(marker))
+    except ReleasedUndefinedComparison as exc:
         raise _unevaluable(marker, exc) from exc
 
 

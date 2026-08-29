@@ -25,7 +25,7 @@ installer you trust.
 * Want to know how something works: the explanations cover
   [universal resolution](explanation/universal.md),
   [conflicting extras and groups](explanation/conflicts.md), and
-  [the five distributions](explanation/packages.md).
+  [the six distributions](explanation/packages.md).
 
 ```{toctree}
 :maxdepth: 1

@@ -38,8 +38,8 @@ BUILD_LOCK = ".github/requirements/pylock.build.toml"
 #
 # nab-index and nab-provider are both gated with the project workspace:
 # nab-project is nab-index's only consumer, and full coverage of nab_provider
-# needs nab-project's tests. The provider entry gates nothing, and installs
-# only nab-provider and nab-resolver, proving a host can take the provider
+# needs nab-project's tests. The provider entry gates nab_markersets and
+# installs only what nab-provider needs, proving a host can take the provider
 # without nab-index or nab-project.
 WORKSPACES = {
     "resolver": (
@@ -48,25 +48,34 @@ WORKSPACES = {
         ["nab_resolver"],
     ),
     "provider": (
-        ["nab-resolver", "nab-provider"],
-        ["nab-provider/tests"],
-        [],
+        ["nab-resolver", "nab-markersets", "nab-provider"],
+        ["nab-markersets/tests", "nab-provider/tests"],
+        ["nab_markersets"],
     ),
     "project": (
-        ["nab-resolver", "nab-provider", "nab-index", "nab-project"],
+        ["nab-resolver", "nab-markersets", "nab-provider", "nab-index", "nab-project"],
         ["nab-provider/tests", "nab-project/tests", "nab-index/tests"],
         ["nab_provider", "nab_project", "nab_index"],
     ),
     "umbrella": (
-        ["nab-resolver", "nab-provider", "nab-index", "nab-project", "."],
+        [
+            "nab-resolver",
+            "nab-markersets",
+            "nab-provider",
+            "nab-index",
+            "nab-project",
+            ".",
+        ],
         ["tests"],
         ["nab"],
     ),
 }
 
-# nab-provider and nab-project are left out: neither is held to the strict
-# checker configs yet, and nab-provider carries the vendored packaging tree,
-# which is rebuilt from upstream and cannot be edited to satisfy a checker.
+# nab-provider, nab-project and nab-markersets are left out: none is held to
+# the strict checker configs yet. nab-provider carries the vendored packaging
+# tree, which is rebuilt from upstream and cannot be edited to satisfy a
+# checker; the marker-set engine annotates its parse-tree nodes as bare `list`
+# and `tuple`, which mypy's strict `disallow_any_generics` rejects.
 TYPED_TREES = ["nab-resolver/src", "nab-index/src", "src"]
 
 # The generated bijection goes to every checker, not to pyright alone: it
@@ -219,7 +228,7 @@ def benchmarks(session: nox.Session) -> None:
     _install(
         session,
         TESTS_LOCK,
-        ["nab-resolver", "nab-provider", "nab-index", "nab-project"],
+        ["nab-resolver", "nab-markersets", "nab-provider", "nab-index", "nab-project"],
     )
     session.run(
         "python",

@@ -23,6 +23,7 @@ else:
 
 from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.multi_index import IndexConfig
+from nab_markersets import IntractableMarkerSet, MarkerSet
 from nab_project._lockfile.builder import _common_requires_python
 from nab_project._lockfile.coverage import (
     CoverageError,
@@ -83,7 +84,6 @@ from nab_project.resolve import (
     resolve_with_coordinator,
 )
 from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 from nab_provider._vendor.packaging.pylock import Package, PackageWheel, Pylock
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name

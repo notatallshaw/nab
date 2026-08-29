@@ -26,8 +26,9 @@ if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
     from typing import Literal
 
+    from packaging.markers import Marker
+
     from ._markersets import Formula
-    from .markers import Marker
 
 # Resource caps, not semantic parameters: no answer depends on their value, so
 # neither reaches the public surface. `_MAX_CELLS` bounds one decision and
@@ -99,18 +100,20 @@ class MarkerSet:
 
     __slots__ = ("_tree",)
 
-    def __new__(cls, *args: object, **kwargs: object) -> MarkerSet:  # noqa: PYI034
-        raise TypeError(
+    def __new__(cls, *_args: object, **_kwargs: object) -> MarkerSet:  # noqa: PYI034
+        """Refuse direct construction, naming the three factories instead."""
+        msg = (
             "cannot create 'MarkerSet' instances directly; use "
             "MarkerSet.from_marker(), MarkerSet.full(), or "
             "MarkerSet.empty() instead"
         )
+        raise TypeError(msg)
 
     @classmethod
     def _wrap(cls, tree: Formula) -> MarkerSet:
-        """Internal factory; wraps a built op-tree, bypassing :meth:`__new__`."""
+        """Return a set wrapping ``tree``, bypassing the :meth:`__new__` refusal."""
         instance = object.__new__(cls)
-        instance._tree = tree
+        instance._tree = tree  # noqa: SLF001
         return instance
 
     # ---- construction
@@ -245,7 +248,7 @@ class MarkerSet:
     def equivalent_within(
         self, other: MarkerSet, within: MarkerSet, *, store: DecisionStore | None = None
     ) -> bool:
-        """Whether the sets denote the same environments on every point of ``within``.
+        """Whether the two sets denote the same environments inside ``within``.
 
         Deciding each row of ``within`` under its own pins keeps a wide
         multi-platform universe decidable, whereas complementing ``within`` as a
@@ -388,4 +391,5 @@ class MarkerSet:
         return text
 
     def __repr__(self) -> str:
+        """Return a short summary of the set, for debugging."""
         return f"<{type(self).__name__} {_markersets.describe(self._tree)!r}>"

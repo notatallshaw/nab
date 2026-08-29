@@ -245,7 +245,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     a target's environment, defaulting to
     :func:`~nab_provider.marker_holds.dependency_marker_holds`.  A host
     with its own marker machinery passes that instead and keeps
-    ``packaging.markersets`` off the engine's path.
+    ``nab_markersets`` off the engine's path.
     """
     inputs = ResolveInputs() if inputs is None else inputs
     with _source_root(cache_dir, inputs) as source_root:

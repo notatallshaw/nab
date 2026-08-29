@@ -17,19 +17,19 @@ from typing import TYPE_CHECKING
 import pytest
 from packaging.markers import Marker
 
-from nab_provider._vendor.packaging import _markersets as engine
-from nab_provider._vendor.packaging.markersets import (
+from nab_markersets import (
     _MAX_CELLS,
     _MAX_WORK,
     DecisionStore,
     IntractableMarkerSet,
     MarkerSet,
 )
+from nab_markersets import _markersets as engine
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from nab_provider._vendor.packaging._markersets import Atom, Cell
+    from nab_markersets._markersets import Atom, Cell
 
 _spec = importlib.util.spec_from_file_location(
     "simplify_corpus_fixtures",
@@ -153,6 +153,25 @@ def test_determinism_under_shuffled_input() -> None:
     assert (
         ms(shuffled).simplify(within=MarkerSet.full()).to_marker_string()
         == ms(SPAN).simplify(within=MarkerSet.full()).to_marker_string()
+    )
+
+
+def test_second_round_removes_what_the_first_round_made_removable() -> None:
+    # The greedy loop runs to a fixpoint rather than once. Its first round drops
+    # nothing and only shrinks: the third clause loses its python bound, and the
+    # other two then cover what is left of it, which is what the second round
+    # removes. A single pass leaves it in.
+    marker = ms(
+        '(os_name == "posix" and python_version < "3.12" and python_version >= "3.10")'
+        ' or (sys_platform == "win32" and python_version >= "3.10")'
+        ' or (sys_platform == "win32" and python_version < "3.12"'
+        ' and os_name == "posix")'
+    )
+    within = ms('sys_platform == "win32" or python_version >= "3.10"')
+
+    assert marker.simplify(within=within).to_marker_string() == (
+        '(os_name == "posix" and python_version < "3.12")'
+        ' or (python_version >= "3.10" and sys_platform == "win32")'
     )
 
 

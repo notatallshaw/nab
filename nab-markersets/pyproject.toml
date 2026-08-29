@@ -1,7 +1,7 @@
 [project]
-name = "nab-project"
+name = "nab-markersets"
 version = "0.0.16.dev0"
-description = "Index-backed provider, lockfile emitter, and downloader for nab"
+description = "PEP 508 marker algebra: markers as sets of environments"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -19,19 +19,12 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
+# The engine imports `packaging._parser`, `packaging._tokenizer` and
+# `packaging.markers._eval_op`, none of which packaging promises, so the range
+# stops at the major this suite has been run against. Raise the cap only after
+# running the suite on the new one.
 dependencies = [
-    "nab-markersets==0.0.16.dev0",
-    "nab-provider==0.0.16.dev0",
-    "nab-resolver==0.0.16.dev0",
-    "nab-index==0.0.16.dev0",
-    "packaging>=26.3",
-    # toml_io builds TOMLDecodeError(msg, doc, pos), a signature 2.2 added.
-    "tomli>=2.2",
-    "tomli_w>=1.2",
-    "build>=1.2",
-    "installer>=1.0",
-    "pyproject_hooks>=1.2",
-    "typing_extensions>=4.6",
+    "packaging>=26.3,<27",
 ]
 
 [project.urls]
@@ -44,8 +37,3 @@ Changelog = "https://github.com/notatallshaw/nab/releases"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-# Benchmarks are development tooling, not part of the shipped package, so the
-# sdist carries only the source and tests.
-[tool.hatch.build.targets.sdist]
-exclude = ["/benchmarks"]

@@ -25,9 +25,9 @@ from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from nab_markersets import variable_names
 from nab_provider._vendor.packaging import tags as ptags
 from nab_provider._vendor.packaging.markers import Marker, default_environment
-from nab_provider._vendor.packaging.markersets import variable_names
 from nab_provider._vendor.packaging.specifiers import (
     InvalidSpecifier,
     Specifier,
@@ -285,7 +285,7 @@ def marker_variables(marker_text: str) -> frozenset[str]:
     wrong in.
 
     Every call site passes a serialised :class:`Marker`; an input that is not
-    a valid marker raises :class:`InvalidMarker`.
+    a valid marker raises :class:`packaging.markers.InvalidMarker`.
 
     Memoised on the text, which a matrix lock asks for again on every
     target.  The keys are marker texts out of resolved metadata, so the

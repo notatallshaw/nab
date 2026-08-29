@@ -22,6 +22,9 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
+import nab_markersets
+from nab_markersets import DecisionStore, IntractableMarkerSet, MarkerSet
+from nab_markersets import _markersets as engine
 from nab_project._lockfile import disjointness, pylock
 from nab_project._lockfile.coverage import CoverageError
 from nab_project._lockfile.disjointness import validate_marker_disjointness
@@ -46,14 +49,7 @@ from nab_project.lockfile import (
     TargetLock,
     WheelArtifact,
 )
-from nab_provider._vendor.packaging import _markersets as engine
-from nab_provider._vendor.packaging import markersets
 from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.markersets import (
-    DecisionStore,
-    IntractableMarkerSet,
-    MarkerSet,
-)
 from nab_provider._vendor.packaging.pylock import Package, PackageWheel
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
@@ -64,12 +60,12 @@ from nab_provider.target import ResolveTarget, environment_declaration
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
-    from nab_provider._vendor.packaging._markersets import Atom, Cell
+    from nab_markersets._markersets import Atom, Cell
 
 _spec = importlib.util.spec_from_file_location(
     "simplify_corpus_fixtures",
     Path(__file__).parents[2]
-    / "nab-provider"
+    / "nab-markersets"
     / "tests"
     / "simplify_corpus_fixtures.py",
 )
@@ -115,7 +111,7 @@ def _row(target: ResolveTarget) -> Marker:
 def _union(markers: Sequence[Marker]) -> MarkerSet:
     return reduce(
         MarkerSet.union,
-        (MarkerSet.from_marker(m) for m in markers),
+        (MarkerSet.from_marker(str(m)) for m in markers),
         MarkerSet.empty(),
     )
 
@@ -517,10 +513,8 @@ class TestCorpusEmitterBudget:
         for fixture in corpus.FIXTURES:
             within = _union([Marker(e) for e in fixture["environments"]])
             raw = Marker(fixture["marker"])
-            operator = (
-                MarkerSet.from_marker(raw).simplify(within=within).to_marker_string()
-                or ""
-            )
+            simplified = MarkerSet.from_marker(str(raw)).simplify(within=within)
+            operator = simplified.to_marker_string() or ""
             finalized = _finalize_marker(raw, within, fixture["package"])
             emitted = str(finalized) if finalized is not None else ""
             raw_bytes += len(fixture["marker"])
@@ -580,7 +574,7 @@ class TestWideMatrixEmission:
 
     def test_row_verify_decides_where_whole_matrix_overruns(self) -> None:
         within = _union(_wide_rows())
-        raw_set = MarkerSet.from_marker(_wide_linux_marker())
+        raw_set = MarkerSet.from_marker(str(_wide_linux_marker()))
         emitted = MarkerSet.from_marker(_WIDE_SHORT)
         with pytest.raises(IntractableMarkerSet):
             (raw_set & within).equivalent(emitted & within)
@@ -631,7 +625,7 @@ class TestFreeMembershipPassthrough:
             )
         )
         with pytest.raises(IntractableMarkerSet):
-            MarkerSet.from_marker(raw).simplify(within=within)
+            MarkerSet.from_marker(str(raw)).simplify(within=within)
         result = _finalize_marker(raw, within, "torch")
         assert result is not None
         assert str(result) == str(raw)
@@ -643,9 +637,8 @@ class TestCorpusByteIdentity:
             within = _union([Marker(e) for e in fixture["environments"]])
             raw = Marker(fixture["marker"])
             finalized = _finalize_marker(raw, within, fixture["package"])
-            operator = (
-                MarkerSet.from_marker(raw).simplify(within=within).to_marker_string()
-            )
+            simplified = MarkerSet.from_marker(str(raw)).simplify(within=within)
+            operator = simplified.to_marker_string()
             shown = str(finalized) if finalized is not None else None
             assert shown == operator
             again = (
@@ -669,7 +662,7 @@ class TestWorkBudget:
         raw = _wide_linux_marker()
         within = _union(_wide_rows())
         assert str(_finalize_marker(raw, within, "foo")) != str(raw)
-        monkeypatch.setattr(markersets, "_MAX_WORK", 1)
+        monkeypatch.setattr(nab_markersets, "_MAX_WORK", 1)
         result = _finalize_marker(raw, within, "foo")
         assert result is not None
         assert str(result) == str(raw)
@@ -739,7 +732,7 @@ def _fixture_universe(rows: Sequence[str]) -> MarkerSet:
 
 
 def _row_env(row: str) -> dict[str, str]:
-    witness = MarkerSet.from_marker(Marker(row)).witness()
+    witness = MarkerSet.from_marker(row).witness()
     assert witness is not None
     return {k: v for k, v in witness.items() if isinstance(v, str)}
 
@@ -759,7 +752,7 @@ class TestEightLockRegression:
             within = _fixture_universe(lock["environments"])
             for pkg in lock["packages"]:
                 raw = Marker(pkg["raw"])
-                simplified = MarkerSet.from_marker(raw).simplify(within=within)
+                simplified = MarkerSet.from_marker(str(raw)).simplify(within=within)
                 assert simplified is not None
                 finalized = _finalize_marker(raw, within, pkg["name"])
                 shown = str(finalized) if finalized is not None else ""
@@ -777,7 +770,7 @@ class TestEightLockRegression:
         count = 0
         for pkg in lock["packages"]:
             raw = Marker(pkg["raw"])
-            simplified = MarkerSet.from_marker(raw).simplify(within=within)
+            simplified = MarkerSet.from_marker(str(raw)).simplify(within=within)
             assert simplified is not None
             finalized = _finalize_marker(raw, within, pkg["name"])
             assert str(finalized) == pkg["raw"] == pkg["golden"]
@@ -1132,8 +1125,8 @@ class TestFactoringEquivalence:
                 if str(emitted) == str(raw):
                     continue
                 seen += 1
-                assert MarkerSet.from_marker(emitted).equivalent_within(
-                    MarkerSet.from_marker(raw), within
+                assert MarkerSet.from_marker(str(emitted)).equivalent_within(
+                    MarkerSet.from_marker(str(raw)), within
                 ), (selection, str(emitted))
 
         # Counting them keeps a table that never collapses from passing.

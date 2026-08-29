@@ -6,6 +6,10 @@ resolve ran against collapse into one or more ``Package`` entries per
 name, with a marker attached when they disagree; the emit-time
 disjointness validation lives in
 :mod:`nab_project._lockfile.disjointness`.
+
+Every :class:`Marker` here is the vendored packaging's, while
+:mod:`nab_markersets` parses released packaging's grammar, so a marker is handed
+to the algebra as its string.
 """
 
 from __future__ import annotations
@@ -22,15 +26,15 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import tomli_w
 
 from nab_index.atomic import atomic_write_text
-from nab_provider._vendor.packaging.markers import (
-    MARKERS_REQUIRING_VERSION,
-    Marker,
-)
-from nab_provider._vendor.packaging.markersets import (
+from nab_markersets import (
     DecisionStore,
     IntractableMarkerSet,
     MarkerSet,
     UnserializableMarkerSet,
+)
+from nab_provider._vendor.packaging.markers import (
+    MARKERS_REQUIRING_VERSION,
+    Marker,
 )
 from nab_provider._vendor.packaging.pylock import (
     Package,
@@ -295,7 +299,7 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
     store = DecisionStore()
     # The universe and the coverage gate share these rows, so build them once.
     environment_rows = [
-        MarkerSet.from_marker(marker) for marker in lock_input.environments
+        MarkerSet.from_marker(str(marker)) for marker in lock_input.environments
     ]
     universe, env_rows = _emission_scope(lock_input, store, rows=environment_rows)
     package_records = _build_packages(
@@ -589,7 +593,7 @@ def _emission_scope(
     if not lock_input.environments:
         return MarkerSet.full(), None
     if rows is None:
-        rows = [MarkerSet.from_marker(m) for m in lock_input.environments]
+        rows = [MarkerSet.from_marker(str(m)) for m in lock_input.environments]
     try:
         uninhabited = all(row.is_empty(store=store) for row in rows)
     except IntractableMarkerSet:
@@ -636,12 +640,12 @@ def _finalize_marker(
     if raw is None:
         return None
     try:
-        source = MarkerSet.from_marker(raw)
+        source = MarkerSet.from_marker(str(raw))
         simplified = source.simplify(within=within, store=store)
         text = simplified.to_marker_string(store=store)
         rebuilt = None if text is None else _parsed_marker(text)
         emitted = (
-            MarkerSet.full() if rebuilt is None else MarkerSet.from_marker(rebuilt)
+            MarkerSet.full() if rebuilt is None else MarkerSet.from_marker(str(rebuilt))
         )
         shown = "no marker" if rebuilt is None else str(rebuilt)
         sound = source.equivalent_within(emitted, within, store=store)

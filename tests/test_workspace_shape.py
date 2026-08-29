@@ -28,6 +28,15 @@ HATCH_TOML = REPO_ROOT / "hatch.toml"
 DEPENDABOT = REPO_ROOT / ".github" / "dependabot.yml"
 TEST_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
+CLI_OUTPUT = REPO_ROOT / "src" / "nab" / "output.py"
+
+# The released `packaging` each distribution declares.
+PACKAGING_REQUIREMENTS = {
+    "nab-markersets": "packaging>=26.3,<27",
+    "nab-provider": "packaging>=26.3",
+    "nab-index": "packaging>=24.0",
+    "nab-project": "packaging>=26.3",
+}
 
 
 def _task(filename: str) -> ModuleType:
@@ -97,9 +106,60 @@ def _toml(path: Path) -> dict[str, Any]:
     return tomli.loads(path.read_text(encoding="utf-8"))
 
 
+def _imports_released_packaging(name: str) -> bool:
+    """Whether a distribution's shipped modules import released ``packaging``.
+
+    The vendored fork is a different package under a different name, so the
+    ``_vendor`` tree is skipped rather than counted as a use of this dependency.
+    """
+    for path in (RELEASED_DIRS[name] / "src").rglob("*.py"):
+        if "_vendor" in path.parts:
+            continue
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom) and node.level == 0:
+                roots = [(node.module or "").split(".")[0]]
+            elif isinstance(node, ast.Import):
+                roots = [alias.name.split(".")[0] for alias in node.names]
+            else:
+                continue
+            if "packaging" in roots:
+                return True
+    return False
+
+
+def _packaging_requirement(name: str) -> str | None:
+    """The ``packaging`` requirement a distribution declares, or None."""
+    manifest = _toml(RELEASED_DIRS[name] / "pyproject.toml")["project"]
+    for text in manifest.get("dependencies", []):
+        found = _REQUIREMENT_NAME.match(text)
+        if found is not None and found.group() == "packaging":
+            return text
+    return None
+
+
 def _nox_workspaces() -> dict[str, tuple[list[str], list[str], list[str]]]:
     """noxfile.py's workspace -> (editables, pytest paths, gated packages) table."""
     return _literal(NOXFILE, "WORKSPACES")
+
+
+def _benchmark_editables() -> list[str]:
+    """The editable targets noxfile.py's ``benchmarks`` session installs.
+
+    Its own list, outside the WORKSPACES table the other tests read.
+    """
+    session = next(
+        node
+        for node in ast.walk(ast.parse(NOXFILE.read_text(encoding="utf-8")))
+        if isinstance(node, ast.FunctionDef) and node.name == "benchmarks"
+    )
+    call = next(
+        node
+        for node in ast.walk(session)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_install"
+    )
+    return ast.literal_eval(call.args[-1])
 
 
 def _distributions(editables: list[str]) -> set[str]:
@@ -190,8 +250,7 @@ def test_nox_workspaces_install_what_they_run_and_gate() -> None:
     """Each nox workspace installs what its suites and gates need, exactly.
 
     Held one entry at a time, since a package dropped from one entry's
-    editables is still installed by another. The provider entry gates nothing,
-    so its suite is what pins its editables.
+    editables is still installed by another.
     """
     for workspace, (editables, paths, gated) in _nox_workspaces().items():
         owned = {MODULES[module] for module in gated} | _suite_owners(paths)
@@ -210,6 +269,16 @@ def test_nox_workspaces_form_an_install_chain() -> None:
     for workspace, (editables, _, _) in _nox_workspaces().items():
         assert editables[: len(installed)] == installed, workspace
         installed = editables
+
+
+def test_benchmarks_session_installs_every_member() -> None:
+    """The benchmarks session installs the workspace it collects from.
+
+    pytest imports every module under the paths it is given before the
+    ``benchmark`` marker deselects anything, so a member missing here fails
+    collection in a job no coverage gate or workspace table watches.
+    """
+    assert _distributions(_benchmark_editables()) == set(MEMBERS)
 
 
 def test_umbrella_workspace_installs_every_released_package() -> None:
@@ -328,6 +397,41 @@ def test_lock_config_covers_every_released_package() -> None:
 
     assert sorted(config["workspace"]["members"]) == MEMBERS
     assert exempt == set(PACKAGES)
+
+
+def test_released_packaging_is_declared_wherever_it_is_imported() -> None:
+    """Every distribution that imports released ``packaging`` declares it."""
+    importing = {name for name in PACKAGES if _imports_released_packaging(name)}
+
+    assert importing == set(PACKAGING_REQUIREMENTS)
+
+
+def test_declared_packaging_ranges_are_the_tested_ones() -> None:
+    """The declared ranges are the ones the suites have been run against.
+
+    nab_markersets imports ``packaging._parser``, ``packaging._tokenizer`` and
+    ``packaging.markers._eval_op``, none of which packaging promises, so its
+    range carries a ceiling the others do not need.
+    """
+    declared = {
+        name: requirement
+        for name in PACKAGES
+        if (requirement := _packaging_requirement(name)) is not None
+    }
+
+    assert declared == PACKAGING_REQUIREMENTS
+
+
+def test_cli_log_handlers_reach_every_released_package() -> None:
+    """nab's log handler is attached per package, by top-level import name.
+
+    A package missing from the tuple gets no handler, so its records fall
+    through to the root logger: unformatted, not gated by ``-v``/``-q``, and
+    outside the writer that clears the progress line.
+    """
+    loggers = _literal(CLI_OUTPUT, "_NAB_LOGGERS")
+
+    assert set(loggers) == set(MODULES)
 
 
 def test_version_and_classifier_checks_read_every_manifest() -> None:

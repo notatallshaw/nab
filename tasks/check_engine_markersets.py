@@ -1,8 +1,7 @@
-"""Check that the resolve engine does not depend on packaging's marker sets.
+"""Check that the resolve engine does not depend on nab's marker sets.
 
-``packaging.markersets`` and ``packaging._markersets`` are 2,200 lines that
-released packaging does not have, so a host vendoring nab's engine carries
-them only if the engine reaches them.
+The marker algebra is its own distribution, ``nab-markersets``, so a host
+embedding nab's engine installs it only if the engine reaches it.
 
 Two rules, both computed statically over the shipped ``src`` trees.
 
@@ -12,8 +11,8 @@ Two rules, both computed statically over the shipped ``src`` trees.
 
 ``import``
     Importing a module runs its module-level imports, so a module in the
-    engine's import closure that imports marker sets puts them in a host's
-    vendored tree even when nothing calls them. Every such module must be on
+    engine's import closure that imports marker sets makes a host install
+    the distribution even when nothing calls it. Every such module must be on
     ``EXEMPT``, and an exemption that no longer fires is an error too.
 
 Every ``Name`` load inside a definition counts as a possible global
@@ -42,15 +41,10 @@ TREES = {
     "nab": "src/nab",
 }
 
-MARKER_SET_MODULES = frozenset(
-    {
-        "nab_provider._vendor.packaging.markersets",
-        "nab_provider._vendor.packaging._markersets",
-    }
-)
+MARKER_SET_MODULES = frozenset({"nab_markersets", "nab_markersets._markersets"})
 
-# The engine entry point: what the walk reaches from here is what a host
-# vendors.
+# The engine entry point: what the walk reaches from here is what a host takes
+# with it.
 ENGINE_MODULE = "nab_project._resolve.engine"
 ENGINE_ENTRY = "_resolve_with_micro_narrowing"
 
@@ -75,7 +69,6 @@ EXEMPT = {
         "it. Reached here through target, requirements_file, "
         "_provider.metadata_resolver and _lockfile.validate."
     ),
-    "nab_provider._vendor.packaging.markersets": "The marker-set module itself.",
 }
 
 

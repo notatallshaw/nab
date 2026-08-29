@@ -4,8 +4,8 @@
 :class:`_EngineSettings` one run shares and calls in here; nothing here
 imports it back, so a host can vendor the engine without it.
 ``tasks/check_engine_markersets.py`` walks from
-:func:`_resolve_with_micro_narrowing` and keeps packaging's marker sets
-off that path.
+:func:`_resolve_with_micro_narrowing` and keeps ``nab_markersets`` off
+that path.
 """
 
 from __future__ import annotations

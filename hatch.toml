@@ -3,19 +3,31 @@
 # template, because inheriting `path` would land it here too.
 [envs.default]
 path = ".venv"
-workspace.members = ["nab-resolver", "nab-provider", "nab-project", "nab-index"]
+workspace.members = [
+    "nab-resolver",
+    "nab-markersets",
+    "nab-provider",
+    "nab-project",
+    "nab-index",
+]
 dependency-groups = ["tests", "nox"]
 # The umbrella pins its siblings to the unreleased version under development,
 # and hatch installs it before syncing the members, so the members go in first.
 # Hatch runs a pre-install command in the directory it was invoked from, so the
 # paths are anchored at `{root}` rather than left relative.
 pre-install-commands = [
-    "python -m pip install -e {root}/nab-resolver -e {root}/nab-provider -e {root}/nab-index -e {root}/nab-project",
+    "python -m pip install -e {root}/nab-resolver -e {root}/nab-markersets -e {root}/nab-provider -e {root}/nab-index -e {root}/nab-project",
 ]
 
 [envs.hatch-test]
 template = "hatch-test"
-workspace.members = ["nab-resolver", "nab-provider", "nab-project", "nab-index"]
+workspace.members = [
+    "nab-resolver",
+    "nab-markersets",
+    "nab-provider",
+    "nab-project",
+    "nab-index",
+]
 features = ["httpx"]
 extra-dependencies = [
     "hypothesis>=6.100",
@@ -25,7 +37,13 @@ extra-dependencies = [
 
 [envs.crosshair]
 template = "crosshair"
-workspace.members = ["nab-resolver", "nab-provider", "nab-project", "nab-index"]
+workspace.members = [
+    "nab-resolver",
+    "nab-markersets",
+    "nab-provider",
+    "nab-project",
+    "nab-index",
+]
 extra-dependencies = [
     "crosshair-tool>=0.0.104",
     "hypothesis-crosshair>=0.0.28",
@@ -39,7 +57,13 @@ check = "pytest -m crosshair {args}"
 
 [envs.types]
 template = "types"
-workspace.members = ["nab-resolver", "nab-provider", "nab-project", "nab-index"]
+workspace.members = [
+    "nab-resolver",
+    "nab-markersets",
+    "nab-provider",
+    "nab-project",
+    "nab-index",
+]
 dependencies = [
     "pyright>=1.1.400",
     "mypy>=1.19",

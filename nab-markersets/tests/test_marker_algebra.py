@@ -2,7 +2,8 @@
 
 Correctness against packaging is pinned by ``test_marker_algebra_differential``;
 this suite pins the ported acceptance cases and exercises the construction,
-decision, restriction, serialisation, witness, and guard surfaces.
+decision, restriction, serialisation, witness, and guard surfaces, and ends by
+pinning the private packaging names the engine imports.
 """
 
 from __future__ import annotations
@@ -13,17 +14,21 @@ import traceback
 import weakref
 
 import pytest
-
-from nab_provider._vendor.packaging import _markersets, markersets
-from nab_provider._vendor.packaging.markers import (
+from packaging._parser import Op, Variable, parse_marker
+from packaging._tokenizer import ParserSyntaxError
+from packaging.markers import (
     InvalidMarker,
     Marker,
     UndefinedEnvironmentName,
+    _eval_op,
 )
-from nab_provider._vendor.packaging.markersets import (
+
+import nab_markersets
+from nab_markersets import (
     IntractableMarkerSet,
     MarkerSet,
     UnserializableMarkerSet,
+    _markersets,
     variable_names,
 )
 from nab_provider._vendor.packaging.version import Version
@@ -340,6 +345,25 @@ def test_an_atom_leaves_the_table_with_the_last_tree_holding_it() -> None:
     gc.collect()
 
     assert probe() is None
+
+
+# ----------------------------------------------------------- module surface
+
+
+def test_all_and_dir_pin_the_public_surface() -> None:
+    # The five names spelled out, so adding a sixth is a decision taken here
+    # and in the README rather than a name that leaks through __all__.
+    assert nab_markersets.__all__ == [
+        "DecisionStore",
+        "IntractableMarkerSet",
+        "MarkerSet",
+        "UnserializableMarkerSet",
+        "variable_names",
+    ]
+
+    # __dir__ hides the budget constants and the engine submodule, so a
+    # completion in a REPL offers the supported surface and nothing else.
+    assert dir(nab_markersets) == sorted(nab_markersets.__all__)
 
 
 # ----------------------------------------------------------------- algebra
@@ -703,6 +727,15 @@ def test_restrict_extra_as_string_value() -> None:
     marker = ms('extra == "cpu"')
     assert marker.restrict({"extra": "cpu"}).is_full()
     assert marker.restrict({"extra": ""}).is_empty()
+
+
+def test_restrict_normalises_the_set_axis() -> None:
+    # A restriction value goes through the same PEP 685 normalisation as an
+    # evaluation environment, so "A_B" pins the atom for "a-b".
+    assert ms('extra == "a-b"').restrict({"extra": frozenset({"A_B"})}).is_full()
+
+    # A string is one name and not a haystack: "pu" is not the extra "cpu".
+    assert ms('extra == "pu"').restrict({"extra": "cpu"}).is_empty()
 
 
 def test_restrict_error_policy() -> None:
@@ -1092,14 +1125,14 @@ def test_repr_summarises_without_leaking_the_tree() -> None:
 
 
 def test_guard_set_powerset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(markersets, "_MAX_CELLS", 1000)
+    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 1000)
     marker = ms(" and ".join(f'extra == "pkg{i}"' for i in range(20)))
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
 def test_guard_substring_enumeration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(markersets, "_MAX_CELLS", 3)
+    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 3)
     marker = ms('sys_platform in "abcdefghij"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
@@ -1108,7 +1141,7 @@ def test_guard_substring_enumeration(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guard_substring_low_entropy(monkeypatch: pytest.MonkeyPatch) -> None:
     # A repeated-character literal has few distinct substrings but a quadratic
     # index loop; the guard bounds the loop work, so it fires here.
-    monkeypatch.setattr(markersets, "_MAX_CELLS", 100)
+    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 100)
     marker = ms('sys_platform in "' + "a" * 50 + '"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
@@ -1117,7 +1150,7 @@ def test_guard_substring_low_entropy(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guard_version_pool_epoch_elevation(monkeypatch: pytest.MonkeyPatch) -> None:
     # Mixing python_version with many distinct-epoch python_full_version atoms
     # triggers epoch elevation, whose product is bounded as it is generated.
-    monkeypatch.setattr(markersets, "_MAX_CELLS", 1000)
+    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 1000)
     epochs = " and ".join(f'python_full_version == "{e}!2.0"' for e in range(1, 16))
     marker = ms(f'python_version == "3.9" and {epochs}')
     with pytest.raises(IntractableMarkerSet):
@@ -1138,14 +1171,14 @@ def test_guard_repeated_clause_tree_walk() -> None:
 
 
 def test_guard_value_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(markersets, "_MAX_CELLS", 1)
+    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 1)
     marker = ms('python_full_version == "3.9"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
 def test_guard_cell_product(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(markersets, "_MAX_CELLS", 2)
+    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 2)
     marker = ms(
         'sys_platform == "linux" and os_name == "posix" '
         'and platform_machine == "x86_64"'
@@ -1157,7 +1190,7 @@ def test_guard_cell_product(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guard_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
     # Many distinct atoms on one axis: the point count stays under the cap but
     # points x atoms does not, so the guard fires instead of doing O(N^2) work.
-    monkeypatch.setattr(markersets, "_MAX_CELLS", 100)
+    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 100)
     marker = ms(" or ".join(f'sys_platform == "p{i}"' for i in range(60)))
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
@@ -1166,7 +1199,7 @@ def test_guard_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guard_set_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
     # A set axis clears the powerset cap (two subsets) yet its subsets x atoms
     # product does not, so the per-axis reduce guard fires.
-    monkeypatch.setattr(markersets, "_MAX_CELLS", 3)
+    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 3)
     marker = ms('extra == "a" and extra != "a"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
@@ -1175,7 +1208,7 @@ def test_guard_set_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guard_version_axis_literal_count(monkeypatch: pytest.MonkeyPatch) -> None:
     # Many distinct version literals already exceed the cap; the axis is
     # rejected up front, before the neighbour pool is materialised.
-    monkeypatch.setattr(markersets, "_MAX_CELLS", 100)
+    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 100)
     marker = ms(" or ".join(f'python_full_version == "{i}.0"' for i in range(200)))
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
@@ -1309,7 +1342,7 @@ def test_warm_version_pool_does_not_bypass_the_oversized_literal_guard() -> None
     # a disabled int-string limit outlives that limit. A decision under a limit the
     # literal overruns has to reach the guard rather than the store's copy.
     literal = "1." + "9" * 700
-    store = markersets.DecisionStore()
+    store = nab_markersets.DecisionStore()
     original = sys.get_int_max_str_digits()
 
     sys.set_int_max_str_digits(0)
@@ -1374,6 +1407,15 @@ def test_deep_nesting_construction_reports_complexity() -> None:
 
 
 # -------------------------------------------------- branch-completeness edges
+
+
+def test_atom_equality_declines_a_foreign_operand() -> None:
+    # NotImplemented, not False, so Python still tries the other operand's
+    # __eq__ and falls back to identity rather than settling for inequality.
+    atom = _markersets.Atom(
+        _markersets.AXIS_VALUE, "sys_platform", "sys_platform", "==", "linux"
+    )
+    assert atom.__eq__(object()) is NotImplemented
 
 
 def test_other_cell_survives_literal_collision() -> None:
@@ -1487,3 +1529,24 @@ def test_serialise_absorbs_constant_false_atom() -> None:
     assert text is not None
     assert marker.equivalent(ms(text))
     assert marker.equivalent(ms('os_name != "posix"'))
+
+
+# ------------------------------------------------ the private packaging reach
+
+
+def test_the_private_packaging_names_the_engine_reaches() -> None:
+    # These three have no public replacement, which is why the manifest caps
+    # packaging at the major this suite has run against. Renaming one, or
+    # reshaping the parse tree, breaks every import of nab_markersets, so raise
+    # the cap only once this passes on the new major.
+    parsed = parse_marker('sys_platform == "linux"')
+    lhs, op, rhs = parsed[0]
+    assert isinstance(lhs, Variable)
+    assert (lhs.value, op.value, rhs.value) == ("sys_platform", "==", "linux")
+
+    with pytest.raises(ParserSyntaxError):
+        parse_marker("sys_platform ==")
+
+    # Called exactly as the engine calls it, keyword and all.
+    assert _eval_op("linux", Op("=="), "linux", key="sys_platform") is True
+    assert _eval_op("linux", Op("=="), "win32", key="sys_platform") is False

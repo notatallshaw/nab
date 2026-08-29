@@ -122,7 +122,7 @@ jobs:
         run: pip install -r .github/requirements/pylock.tests.toml
 
       - name: Install workspace packages
-        run: pip install --no-deps -e nab-resolver -e nab-provider -e nab-project -e nab-index -e .
+        run: pip install --no-deps -e nab-resolver -e nab-markersets -e nab-provider -e nab-project -e nab-index -e .
 
       - name: Run property-based tests
         # CrossHair tests run in the dedicated crosshair-tests job; the
@@ -153,7 +153,7 @@ jobs:
         run: pip install -r .github/requirements/pylock.crosshair.toml
 
       - name: Install workspace packages
-        run: pip install --no-deps -e nab-resolver -e nab-provider -e nab-project -e nab-index -e .
+        run: pip install --no-deps -e nab-resolver -e nab-markersets -e nab-provider -e nab-project -e nab-index -e .
 
       - name: Run CrossHair property tests
         run: python -m pytest -m crosshair

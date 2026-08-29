@@ -395,7 +395,7 @@ def prepare_environment(
         ``"lock_file"``, and ``"requirement"`` (i.e. all other situations).
     :returns: A fresh dict on every call, which the caller may mutate.
 
-    .. versionadded:: 26.3
+    .. versionadded:: 26.4
     """
     current_environment = cast(
         "dict[str, str | AbstractSet[str]]", default_environment()
@@ -591,7 +591,7 @@ class Marker:
             is missing from the evaluation environment.
         :returns: ``True`` if the marker matches, otherwise ``False``.
 
-        .. versionadded:: 26.3
+        .. versionadded:: 26.4
         """
         return _evaluate_markers(self._markers, environment)
 

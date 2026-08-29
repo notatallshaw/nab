@@ -24,7 +24,7 @@ import itertools
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
+from nab_markersets import IntractableMarkerSet, MarkerSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 
@@ -163,10 +163,14 @@ def _distinct_environments(
 
 
 def _marker_set(marker: Marker | None) -> MarkerSet:
-    """Return the algebra set for ``marker``; the full set when absent."""
+    """Return the algebra set for ``marker``; the full set when absent.
+
+    Handed over as a string: the algebra parses released packaging's grammar and
+    ``marker`` is the vendored fork's class.
+    """
     if marker is None:
         return MarkerSet.full()
-    return MarkerSet.from_marker(marker)
+    return MarkerSet.from_marker(str(marker))
 
 
 def _canonical_exclusion_sets(

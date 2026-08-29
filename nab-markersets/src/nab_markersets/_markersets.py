@@ -1,11 +1,15 @@
 """Marker algebra engine behind :class:`~packaging.markersets.MarkerSet`.
 
-A marker parses into a normalised op-tree over typed atoms. A value atom's
-denotation is packaging's own ``_eval_op``, so a marker means here what it means
-there, and A1 lowers ``python_version`` onto the ``python_full_version`` axis.
-
-A decision partitions each axis the tree names into cells on which every atom is
-constant, then evaluates the tree over the cells of their product.
+The private engine behind :class:`~nab_markersets.MarkerSet`. Parses a
+marker string (or :class:`~packaging.markers.Marker`) into a normalised boolean
+op-tree over typed atoms, with the packaging-faithful
+``(variable, operator, literal)`` dispatch, A1 lowering of ``python_version``
+onto the ``python_full_version`` axis, set-valued extras, and opaque
+``contains`` atoms. The denotation of a value atom is delegated to packaging's
+own ``_eval_op`` so it matches packaging exactly. Decisions run an on-demand
+cell decomposition: every procedure re-partitions the referenced variables'
+domains into cells on which each atom is constant, enumerates the cell product
+under the ``max_cells`` guard, and evaluates the op-tree once per cell.
 """
 
 from __future__ import annotations
@@ -18,18 +22,18 @@ from functools import lru_cache
 from itertools import pairwise, product
 from typing import TYPE_CHECKING, NamedTuple, cast
 
-from ._parser import Op, Variable, parse_marker
-from ._tokenizer import ParserSyntaxError
-from .markers import (
+from packaging._parser import Op, Variable, parse_marker
+from packaging._tokenizer import ParserSyntaxError
+from packaging.markers import (
     InvalidMarker,
     Marker,
     UndefinedComparison,
     UndefinedEnvironmentName,
     _eval_op,
 )
-from .specifiers import InvalidSpecifier, Specifier
-from .utils import canonicalize_name
-from .version import InvalidVersion, Version
+from packaging.specifiers import InvalidSpecifier, Specifier
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping, Sequence
@@ -299,7 +303,11 @@ class Atom:
         return present if self.positive else not present
 
     def pool_entries(self) -> tuple[tuple[Version, str], ...]:
-        """Return the version-pool points this atom's literal seeds, minted once."""
+        """Return the version-pool points this atom seeds, minted lazily once.
+
+        A pure property of the literal: its version neighbours, plus the
+        neighbours of its version-parseable substrings for a membership atom.
+        """
         entries = self._pool_entries
         if entries is None:
             texts = list(_version_neighbors(self.literal))
@@ -331,11 +339,11 @@ def _holds_value(atom: Atom, text: str) -> bool:
 
 
 class BoolConst:
-    """A first-class TRUE/FALSE, produced eagerly wherever a combination collapses."""
+    """A TRUE or FALSE constant, produced eagerly wherever a combination collapses."""
 
     __slots__ = ("_key", "value")
 
-    def __init__(self, value: bool) -> None:
+    def __init__(self, *, value: bool) -> None:
         self.value = value
         self._key: tuple | None = None
 
@@ -698,9 +706,12 @@ class _Decision(NamedTuple):
 class Memo:
     """The verdicts, partitions, atom truths and version parses a decision re-reads.
 
-    A run over related trees re-decides the same tree shapes and re-partitions
-    the same axes, so all four are memoised here. A decision makes its own
-    unless the caller shares one.
+    A run over related trees decides the same tree shape more than once. Within one
+    decision, one axis is re-partitioned for overlapping atom sets, one atom re-read
+    on one point across those partitions, and the literals those partitions share
+    parsed as versions once per partition. All four are memoised here. One decision
+    makes its own unless the caller passes one to share; see
+    :class:`~nab_markersets.DecisionStore` for the sharing contract.
     """
 
     __slots__ = ("decisions", "partitions", "truths", "versions")
@@ -1612,7 +1623,12 @@ def _negate(node: Formula) -> Formula:
 
 
 def _quote(literal: str) -> str:
-    """Quote a literal, which the grammar forbids holding its own delimiter."""
+    """Spell a literal as a marker string, picking the quote the grammar allows.
+
+    A PEP 508 literal is delimited by one quote style and cannot contain that
+    style, so a literal carrying a double-quote is spelled with single quotes.
+    """
+    # The quote choice follows packaging's _parser.Value.serialize.
     if '"' not in literal:
         return f'"{literal}"'
     if "'" not in literal:
@@ -1653,7 +1669,7 @@ def serialize(node: Formula) -> str:
 
 
 def describe(node: Formula) -> str:
-    """Summarise a set for :func:`repr`, without exposing the op-tree.
+    """Summarise a set for :func:`repr`. Total, and never raises.
 
     Total over what the walks raise: a constant, a set no marker string spells,
     and a tree nested past the stack each render as a word, so every set can be
@@ -1675,7 +1691,7 @@ def describe(node: Formula) -> str:
 
 
 def _atom_key(atom: Atom) -> tuple[str, str, str, bool, bool, str, str, bool]:
-    """A total order over atoms, for a deterministic factored serialisation."""
+    """Return a total-order key for an atom, so a factored serialisation is stable."""
     return (
         atom.origin,
         atom.op,

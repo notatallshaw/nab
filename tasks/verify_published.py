@@ -1,7 +1,7 @@
 """Verify the files a release just published to PyPI.
 
 Runs after the publish job in the release workflow. For every file the release
-built (an sdist and a wheel for all five workspace packages), it confirms two
+built (an sdist and a wheel for all six workspace packages), it confirms two
 things about what PyPI now serves:
 
 * the PEP 740 attestation verifies against this repository, and

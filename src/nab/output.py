@@ -287,7 +287,14 @@ def printer() -> Printer:
 # The engine logs through ``logging.getLogger(__name__)``; these are the
 # top-level names those records live under, so one handler on each captures
 # them all without also grabbing third-party logs (urllib3, httpx).
-_NAB_LOGGERS = ("nab", "nab_provider", "nab_project", "nab_index", "nab_resolver")
+_NAB_LOGGERS = (
+    "nab",
+    "nab_markersets",
+    "nab_provider",
+    "nab_project",
+    "nab_index",
+    "nab_resolver",
+)
 
 _LEVEL_TOKENS: dict[int, tuple[str, str]] = {
     logging.WARNING: ("warning:", "yellow"),

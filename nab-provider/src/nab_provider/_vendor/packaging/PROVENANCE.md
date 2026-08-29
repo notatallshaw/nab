@@ -29,9 +29,6 @@ most one checked-in patch.
     back to the version operators when either side has no key yet.
     `BoundaryVersion` carries a class-level `_key_cache = None` so a boundary
     operand takes that fallback without a type check.
-  - `markersets.py` and `_markersets.py`: the marker-algebra module and the
-    private engine behind it, both new files, plus the `Marker.to_set`
-    accessor on `markers.py`.
   - `markers.py`: `prepare_environment` with its `__all__` entry, and the
     `Marker.evaluate_prepared` it feeds, so code evaluating many markers
     against one environment builds it once. `evaluate` is now the two of them
@@ -165,8 +162,8 @@ in it.
 ## Removal plan
 
 Vendoring ends when the patch is empty. Until then the pin moves forward and the
-patch shrinks as pieces land upstream. The marker-algebra modules are most of it
-and no upstream pull request proposes them.
+patch shrinks as pieces land upstream. The marker algebra was two thirds of it and
+is gone: it ships as `nab-markersets` against released `packaging`.
 
 Once the patch is empty, delete this directory and reinstate `packaging` as a
 normal dependency:
