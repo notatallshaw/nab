@@ -68,10 +68,39 @@ _FENCE = re.compile(
     r"^```(?P<language>\w*)\n(?P<body>.*?)^```", re.DOTALL | re.MULTILINE
 )
 _MARKDOWN_LINK = re.compile(r"\[[^]]+\]\((?P<target>[^)#]+\.md)(?:#[^)]*)?\)")
+_REFERENCE_LINK = re.compile(r"\[[^]]+\]\[(?P<label>[^]]+)\]")
+_REFERENCE_DEFINITION = re.compile(
+    r"^\[(?P<label>[^]]+)\]: (?P<target>\S+)$", re.MULTILINE
+)
+_STABLE_DOCS_ROOT = "https://nab.readthedocs.io/en/stable/"
+_STABLE_DOCS_LINK = re.compile(rf"{re.escape(_STABLE_DOCS_ROOT)}[^)\s>]*")
+_WHY_DOCS_TARGETS = {
+    f"{_STABLE_DOCS_ROOT}reference/build-policy.html",
+    f"{_STABLE_DOCS_ROOT}reference/configuration.html#archive-sources",
+    f"{_STABLE_DOCS_ROOT}reference/configuration.html#the-resolve-environment",
+    f"{_STABLE_DOCS_ROOT}reference/lockfile.html",
+    f"{_STABLE_DOCS_ROOT}reference/lockfile.html#checking-the-lock-in-ci",
+}
 
 
 def _text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def _heading_slugs(path: Path) -> set[str]:
+    """Return the URL slugs for Markdown headings in ``path``."""
+    slugs: set[str] = set()
+    fenced = False
+
+    for line in _text(path).splitlines():
+        if line.startswith("```"):
+            fenced = not fenced
+        elif not fenced and re.match(r"^#{1,6} ", line):
+            heading = line.lstrip("#").strip()
+            slug = re.sub(r"-+", "-", re.sub(r"[^\w]+", "-", heading.casefold()))
+            slugs.add(slug.strip("-"))
+
+    return slugs
 
 
 def _section(path: Path, title: str) -> str:
@@ -334,6 +363,32 @@ def test_readme_project_is_valid_toml() -> None:
         "version": "0.1.0",
         "dependencies": ["starlette<=0.36.0", "fastapi<=0.115.2"],
     }
+
+
+def test_readme_routes_each_reason_to_maintained_documentation() -> None:
+    """The value proposition links to the pages that define its contracts."""
+    definitions = dict(_REFERENCE_DEFINITION.findall(_text(README)))
+    section = _section(README, "Why nab?")
+    labels = _REFERENCE_LINK.findall(section)
+
+    assert set(labels) <= definitions.keys()
+    assert {definitions[label] for label in labels} == _WHY_DOCS_TARGETS
+
+
+def test_readme_stable_documentation_links_exist_locally() -> None:
+    """Every stable documentation URL names a page built from this tree."""
+    missing: list[str] = []
+    for url in _STABLE_DOCS_LINK.findall(_text(README)):
+        relative, _, fragment = url.removeprefix(_STABLE_DOCS_ROOT).partition("#")
+        page = (
+            INDEX
+            if not relative
+            else ROOT / "docs" / f"{relative.removesuffix('.html')}.md"
+        )
+        if not page.is_file() or (fragment and fragment not in _heading_slugs(page)):
+            missing.append(url)
+
+    assert missing == []
 
 
 @pytest.mark.parametrize("page", ENTRY_PAGES, ids=lambda path: path.name)

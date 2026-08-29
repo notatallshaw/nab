@@ -1,8 +1,26 @@
 # nab
 
-nab is an experimental dependency locker for Python packages. It reads a `pyproject.toml` and writes a PEP 751 `pylock.toml` or pinned requirements; it does not install packages.
+nab is an experimental dependency locker for Python packages. It reads a
+`pyproject.toml` and writes a PEP 751 `pylock.toml` or pinned
+requirements; it does not install packages.
 
 Documentation: <https://nab.readthedocs.io/en/stable/>
+
+## Why nab?
+
+* It uses standard Python packaging inputs and outputs: static PEP 621
+  dependency metadata, PEP 440 versions, PEP 508 requirements and
+  markers, and [cross-tool PEP 751 lockfiles][lockfiles].
+* It can [resolve for a declared Python, platform, and
+  implementation][resolve-environment]. Marker evaluation and wheel
+  compatibility use that target, and the lock records its scope.
+* It limits what resolution executes. [Remote sources are static-only by
+  default][build-policy], [direct archives][archive-sources] require a
+  verified digest, and hashed requirements can be installed with pip's
+  `--require-hashes` mode.
+* It separates resolution from installation. `nab lock` does not install
+  project dependencies. Review its output before installation, or
+  [check a single-environment `pylock.toml` in CI][check-lock].
 
 ## Install
 
@@ -14,7 +32,8 @@ uv tool install nab
 pipx install nab
 ```
 
-Confirm the command is available with `nab --version`. nab runs on CPython 3.10 and newer.
+Confirm the command is available with `nab --version`. nab runs on
+CPython 3.10 and newer.
 
 ## Quick start
 
@@ -36,9 +55,14 @@ nab lock pyproject.toml
 python -m pip install -r pylock.toml
 ```
 
-The second command needs pip 26.1 or newer. pip's `pylock.toml` support is experimental; see [Use a lock](https://nab.readthedocs.io/en/stable/how-to/use-the-lock.html) for its selection limits and a hashed-requirements alternative.
+The second command needs pip 26.1 or newer. pip's `pylock.toml` support
+is experimental; see [Lockfiles][lockfiles] for its selection limits and
+a hashed-requirements alternative.
 
-`--format requirements` writes index requirements with recorded hashes. `--format requirements-without-hashes` writes index pins without their hash lines. See [Output formats](https://nab.readthedocs.io/en/stable/reference/formats.html) before using local, VCS, archive, or multi-target inputs.
+`--format requirements` writes index requirements with recorded hashes.
+`--format requirements-without-hashes` writes index pins without their
+hash lines. See [Output formats][output-formats] before using local,
+VCS, archive, or multi-target inputs.
 
 ## Libraries
 
@@ -56,4 +80,13 @@ experimental. See [how the distributions fit together](https://nab.readthedocs.i
 
 ## Project status
 
-nab is under active development. See the [status summary](https://nab.readthedocs.io/en/stable/#status) for supported inputs and experimental features.
+nab is under active development. See the [status summary][status] for
+supported inputs and experimental features.
+
+[archive-sources]: https://nab.readthedocs.io/en/stable/reference/configuration.html#archive-sources
+[build-policy]: https://nab.readthedocs.io/en/stable/reference/build-policy.html
+[check-lock]: https://nab.readthedocs.io/en/stable/reference/lockfile.html#checking-the-lock-in-ci
+[lockfiles]: https://nab.readthedocs.io/en/stable/reference/lockfile.html
+[output-formats]: https://nab.readthedocs.io/en/stable/reference/formats.html
+[resolve-environment]: https://nab.readthedocs.io/en/stable/reference/configuration.html#the-resolve-environment
+[status]: https://nab.readthedocs.io/en/stable/#status
