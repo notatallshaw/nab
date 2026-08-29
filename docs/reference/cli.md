@@ -104,9 +104,10 @@ prints a notice naming the cutoff it dropped.
 
 ## `nab download`
 
-Resolve project inputs again, then download every wheel, sdist, and direct-URL
-archive into a local directory. This command does not read an existing lock.
-Files whose recorded digest matches are kept; local and VCS pins are skipped.
+Resolve project inputs again, then download every wheel, sdist, and
+direct-URL archive into a local directory. This command does not read an
+existing lock. Files whose recorded digest matches are kept; local and
+VCS pins are skipped.
 
 Universal mode (`[tool.nab].mode = "universal"`) re-resolves
 across the matrix and downloads the union of every target's
@@ -232,8 +233,9 @@ resolve tries the next candidate. A declared local, VCS, or archive
 source, or a workspace member, is the only candidate for its name, so
 the same refusal ends the run. See [Build policy](build-policy.md).
 
-`--no-cache --offline` neither fetches nor reads a warm cache. It works only
-when every required input is local and no build needs an installation step.
+`--no-cache --offline` neither fetches nor reads a warm cache. It works
+only when every required input is local and no build needs an
+installation step.
 
 `urllib3` is the only backend pulled in by the base install. Selecting
 another without its extra prints one of these and exits 1:

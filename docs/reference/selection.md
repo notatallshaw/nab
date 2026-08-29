@@ -84,4 +84,5 @@ See [Lock a workspace](../how-to/workspaces.md).
 
   Use it for hashed requirements because pip's `--require-hashes` mode
   rejects member directory pins. Install those members separately with
-  `pip install --no-deps -e <member>`. A local PEP 751 lock can retain them.
+  `pip install --no-deps -e <member>`. A local PEP 751 lock can retain
+  them.

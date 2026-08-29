@@ -132,9 +132,9 @@ agree across every target appear once with no marker.
 
 ### Install from the lock
 
-See [Use a lock](../how-to/use-the-lock.md) to install a selected environment,
-or [Output formats](../reference/formats.md) to write one requirements file per
-target.
+See [Use a lock](../how-to/use-the-lock.md) to install a selected
+environment, or [Output formats](../reference/formats.md) to write one
+requirements file per target.
 
 ## Inspect the per-target pins
 
@@ -171,12 +171,12 @@ A matrix names Python minors like 3.11, not exact releases, so a 3.11
 target stands for the whole minor: every micro release from 3.11.0
 upward. nab resolves it once, at a representative 3.11.0.
 
-That holds until a dependency marker changes inside the minor. For example,
-`some-backport ; python_full_version < "3.11.4"` is needed on 3.11.3 but not
-3.11.5.
+That holds until a dependency marker changes inside the minor. For
+example, `some-backport ; python_full_version < "3.11.4"` is needed on
+3.11.3 but not 3.11.5.
 
-nab splits the 3.11 target at 3.11.4 and resolves each side. Each slice gets
-its own pins and `environments` row.
+nab splits the 3.11 target at 3.11.4 and resolves each side. Each slice
+gets its own pins and `environments` row.
 
 Take a project that targets just 3.11 on one platform:
 
@@ -270,20 +270,21 @@ implementations). A PyPy target sets `platform_python_implementation =
 accepts `ppXY-pypyXY_pp73` wheel tags instead of `cpXY`. Labels use the
 `pp` interpreter prefix (`pp311-linux_x86_64`).
 
-A CPython-only matrix leaves `implementation_name` open. A matrix with PyPy,
-or with more than one implementation, writes the name into every target marker
-and `environments` entry. This keeps CPython and PyPy entries disjoint, and a
-PyPy-only lock refuses CPython.
+A CPython-only matrix leaves `implementation_name` open. A matrix with
+PyPy, or with more than one implementation, writes the name into every
+target marker and `environments` entry. This keeps CPython and PyPy
+entries disjoint, and a PyPy-only lock refuses CPython.
 
-PyPy's `implementation_version` is modelled as its Python level rather than
-its own release. A marker comparing that value with a PyPy release can
-misevaluate during resolution. The lock leaves the synthetic value out, so the
-interpreter accepts the lock, but a dependency gated on it may be missed.
+PyPy's `implementation_version` is modelled as its Python level rather
+than its own release. A marker comparing that value with a PyPy release
+can misevaluate during resolution. The lock leaves the synthetic value
+out, so the interpreter accepts the lock, but a dependency gated on it
+may be missed.
 
 ## Resolution axes
 
-The `[tool.nab.matrix]` keys drive two decisions per target: how each PEP 508
-marker evaluates and which wheels the target can install.
+The `[tool.nab.matrix]` keys drive two decisions per target: how each
+PEP 508 marker evaluates and which wheels the target can install.
 
 ### Marker variables
 
@@ -305,12 +306,13 @@ the axis or fixed default shown:
 | `platform_release` | `platforms` (`platform-release`) | `""` |
 | `platform_version` | `platforms` (`platform-version`) | `""` |
 
-`extra`, `extras`, and `dependency_groups` are not axes. `extra` is bound while
-a version's dependencies are sorted into the base package and its extras, so
-`extra == "cpu"` names the dependencies of `pkg[cpu]`.
+`extra`, `extras`, and `dependency_groups` are not axes. `extra` is
+bound while a version's dependencies are sorted into the base package
+and its extras, so `extra == "cpu"` names the dependencies of
+`pkg[cpu]`.
 
-The other two are empty during resolution. nab uses their clauses only in the
-lockfile marker that a consumer evaluates.
+The other two are empty during resolution. nab uses their clauses only
+in the lockfile marker that a consumer evaluates.
 
 ### How the axes couple
 
@@ -349,12 +351,13 @@ default and the rules it carries.
 
 ### What the axes do not cover
 
-The matrix keys and platform tag knobs cover every supported axis. Platform
-IDs and implementations are fixed enumerations, so unknown names are
-configuration errors.
+The matrix keys and platform tag knobs cover every supported axis.
+Platform IDs and implementations are fixed enumerations, so unknown
+names are configuration errors.
 
-`python` accepts a specifier over known minor versions. A range can extend
-beyond those versions; only a range matching none of them is an error.
+`python` accepts a specifier over known minor versions. A range can
+extend beyond those versions; only a range matching none of them is an
+error.
 
 `platform_release` and `platform_version` name one machine's kernel
 build. Both default to the empty string, so a marker gated on the kernel

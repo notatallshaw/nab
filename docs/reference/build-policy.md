@@ -51,8 +51,8 @@ Static metadata only, from any source:
   its `pyproject.toml` is read statically.  Same failure when the
   static read comes up empty.
 
-`never` runs no build backend unless a per-package or per-index override raises
-the policy. It still reads configured indexes and source files.
+`never` runs no build backend unless a per-package or per-index override
+raises the policy. It still reads configured indexes and source files.
 
 ## `build-local` (default)
 
@@ -81,10 +81,11 @@ sdists.  On top of `build-local`:
   built when their `PKG-INFO` deps are not PEP 643 static and the
   bundled `pyproject.toml` offers no static fallback.
 
-A backend failure surfaces as `UnsupportedSdistError`. For a PyPI sdist, the
-resolver rejects that version and tries another candidate; if none works, the
-diagnostic includes the build failures. A VCS or archive source ends the
-resolve instead because it is the only candidate for its name.
+A backend failure surfaces as `UnsupportedSdistError`. For a PyPI sdist,
+the resolver rejects that version and tries another candidate; if none
+works, the diagnostic includes the build failures. A VCS or archive
+source ends the resolve instead because it is the only candidate for its
+name.
 
 ## A source that cannot be read ends the resolve
 
@@ -116,9 +117,9 @@ per-package override rather than raising the global to `build-remote`:
 build-policy = "build-remote"
 ```
 
-The override permits a backend only for that package. If its dependencies are
-known, a `dependencies` metadata override can avoid the build instead; see
-[Configuration](configuration.md).
+The override permits a backend only for that package. If its
+dependencies are known, a `dependencies` metadata override can avoid the
+build instead; see [Configuration](configuration.md).
 
 ## Building a build requirement
 
@@ -219,12 +220,13 @@ a source build.
 
 ## A declared platform forbids host builds
 
-A PEP 517 backend runs on the host and reports the host's dependencies. That
-is wrong when resolving for another machine, so every target that moves the
-platform axis forbids host builds.
+A PEP 517 backend runs on the host and reports the host's dependencies.
+That is wrong when resolving for another machine, so every target that
+moves the platform axis forbids host builds.
 
-`build-policy` is forced to `never`; an explicit non-`never` value is a config
-error before resolution. This covers both ways to declare a machine:
+`build-policy` is forced to `never`; an explicit non-`never` value is a
+config error before resolution. This covers both ways to declare a
+machine:
 
 * `[tool.nab.environment]` with a `platform` or an `implementation`.
 * `mode = "universal"`, where every matrix target declares one.

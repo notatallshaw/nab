@@ -13,12 +13,12 @@ nab config explain resolution
 `list` shows every option, value, and winning source. Use `explain` when
 a value is surprising; it shows the sources that lost too.
 
-Project options describe the resolve. Higher sources replace whole values
-rather than merging them.
+Project options describe the resolve. Higher sources replace whole
+values rather than merging them.
 
-Runtime options such as `offline` and `cache-dir` may also come from system
-or user files and `NAB_*` variables. The Layered configuration sources
-section below gives the complete order and scope rules.
+Runtime options such as `offline` and `cache-dir` may also come from
+system or user files and `NAB_*` variables. The Layered configuration
+sources section below gives the complete order and scope rules.
 
 ## Top-level keys
 
@@ -547,12 +547,12 @@ never affects the metadata and artifacts nab caches by hash.
 
 ### Conflicts across the two surfaces
 
-Per-package and per-index overrides have equal precedence. If both set the
-same field for a candidate version, the resolve fails instead of choosing
-one. Remove one setting.
+Per-package and per-index overrides have equal precedence. If both set
+the same field for a candidate version, the resolve fails instead of
+choosing one. Remove one setting.
 
-The same package at a version *outside* the per-package range is governed
-only by the per-index entry, with no conflict.
+The same package at a version *outside* the per-package range is
+governed only by the per-index entry, with no conflict.
 
 When no override sets a field, the flat global value (then the built-in
 default) applies.
@@ -581,9 +581,10 @@ sdist to lock.
 `sdist-only` of `--no-binary :all:`, scoped per package or per index
 via an override.
 
-A wheel without a PEP 658 sidecar still resolves under any wheel-admitting
-policy. nab recovers its METADATA with an HTTP range read. If the index cannot
-serve usable ranges, nab downloads the whole wheel instead.
+A wheel without a PEP 658 sidecar still resolves under any
+wheel-admitting policy. nab recovers its METADATA with an HTTP range
+read. If the index cannot serve usable ranges, nab downloads the whole
+wheel instead.
 
 Use `sdist-install` when the lock must select an sdist, typically so an
 installer can link the package against system libraries.
@@ -591,12 +592,12 @@ installer can link the package against system libraries.
 The lockfile pins only the sdist, so `pip install --require-hashes`
 materialises that archive.
 
-For resolution, nab prefers wheel metadata and falls back to the sdist when no
-wheel exists. Dynamic sdist metadata can still require a build allowed by
-`build-policy`.
+For resolution, nab prefers wheel metadata and falls back to the sdist
+when no wheel exists. Dynamic sdist metadata can still require a build
+allowed by `build-policy`.
 
-A version with no sdist is skipped, as under `sdist-only`, and the resolver
-settles on the newest version that ships one.
+A version with no sdist is skipped, as under `sdist-only`, and the
+resolver settles on the newest version that ships one.
 
 Scope the policy to a subset of packages with a per-package override:
 
@@ -647,8 +648,8 @@ skips that version when they already contradict a root requirement or
 a version the resolve settled on elsewhere.
 
 The look-ahead runs under both settings.  It reads metadata and the
-decisions taken so far rather than arrival timing, so `stable` still gives
-one lockfile.
+decisions taken so far rather than arrival timing, so `stable` still
+gives one lockfile.
 
 A resolver that does not look ahead can pin a different version of one
 project.  Both answers can satisfy every requirement.
@@ -706,11 +707,12 @@ as empty.
 while `vcs.policy` is left at its default `block` is a contradiction and
 is rejected when the config is read, before any resolve starts.
 
-Each URL passes the same `[tool.nab.vcs]` gate as a direct-URL requirement.
-Beyond `vcs.policy = "allow"`, its scheme must be in
-`vcs.allowed-schemes`, its repository in `vcs.allowed-repos`, and it must
-pin a 40-char commit hash unless `vcs.require-pin = false`.  Both allow
-lists are empty by default, so each denies every URL until configured.
+Each URL passes the same `[tool.nab.vcs]` gate as a direct-URL
+requirement. Beyond `vcs.policy = "allow"`, its scheme must be in
+`vcs.allowed-schemes`, its repository in `vcs.allowed-repos`, and it
+must pin a 40-char commit hash unless `vcs.require-pin = false`.  Both
+allow lists are empty by default, so each denies every URL until
+configured.
 
 Reading static metadata works at any `build-policy`.  Building a clone
 whose static read comes up empty needs `build-policy = "build-remote"`;
@@ -824,9 +826,10 @@ A machine links one C library, so a target accepts one family's wheels:
 a `glibc` target takes manylinux wheels and never musllinux ones, and a
 `musl` target the reverse.
 
-Left unset, `runs-on-libc` accepts wheels of any manylinux or musllinux level
-and leaves compatibility to install time. Set it to the oldest glibc or musl
-the lock must support. Its major must be glibc `2` or musl `1`.
+Left unset, `runs-on-libc` accepts wheels of any manylinux or musllinux
+level and leaves compatibility to install time. Set it to the oldest
+glibc or musl the lock must support. Its major must be glibc `2` or musl
+`1`.
 
 `runs-on-libc = "2.28"` means the lock must run on glibc 2.28.  A wheel is
 lockable only if it runs on every target machine, so:
@@ -892,12 +895,11 @@ error.  See [Build policy](build-policy.md).
   3.13 target however precisely that target names its interpreter, and
   `!=3.13` excludes one however it is named.
 
-  A declaration that excludes the target is a config error naming the knob
-  that moves it:
-  `[tool.nab.environment] python` for a single-environment resolve,
-  `[tool.nab.matrix].python` and `[tool.nab.matrix.python-patches]` for a
-  matrix target, since neither `--python` nor `[tool.nab.environment]` is
-  allowed alongside a matrix.
+  A declaration that excludes the target is a config error naming the
+  knob that moves it: `[tool.nab.environment] python` for a
+  single-environment resolve, `[tool.nab.matrix].python` and
+  `[tool.nab.matrix.python-patches]` for a matrix target, since neither
+  `--python` nor `[tool.nab.environment]` is allowed alongside a matrix.
 * `[tool.nab.environment].python`: the Python to resolve for, defaulting
   to the host's.  A single version, not a specifier.  `--python X.Y` and
   `--project-environment-python X.Y` set it for one run.
@@ -965,14 +967,15 @@ the host's where no file declares one.
 ## CLI overrides
 
 The [CLI reference](cli.md) lists every flag. See
-[Selecting what to lock](selection.md) for groups, extras, and workspaces,
-and [Output formats](formats.md) for `--format` and `--output`.
+[Selecting what to lock](selection.md) for groups, extras, and
+workspaces, and [Output formats](formats.md) for `--format` and
+`--output`.
 
 `--project-<key>` overrides a scalar or list project option for one run.
-The matrix and environment flags replace one key in the file's table and
-leave its other keys in place. Passing `--project-constraint` twice replaces
-the file's entire `constraints` list with those two values. An override
-prints a notice and is recorded in the lockfile.
+The matrix and environment flags replace one key in the file's table,
+leaving its other keys in place. Passing `--project-constraint` twice
+replaces the file's entire `constraints` list with those two values. An
+override prints a notice and is recorded in the lockfile.
 
 `--project-dist-policy` takes a bare policy, so it replaces the whole
 `dist-policy` value and resets `trust-unverified-deps`; set the table form

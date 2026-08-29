@@ -138,10 +138,10 @@ resolve. For example `nab lock --extras cpu gpu`, or
 `nab lock --all-groups` over the `black*` groups above, resolves each
 member separately and writes every result into one lockfile.
 
-Specific and universal mode handle conflicts the same way. Two cases are
-refused rather than forked: a selection that reaches both members through
-one umbrella, and a `default-groups` that activates two members on its
-own. Both are covered below.
+Specific and universal mode handle conflicts the same way. Two cases
+are refused rather than forked: a selection that reaches both members
+through one umbrella, and a `default-groups` that activates two members
+on its own. Both are covered below.
 
 Each fork's pins carry a marker selecting that member:
 
@@ -216,18 +216,18 @@ selected (relevant under `at-most-one`, which permits selecting none).
 A base resolve names the deps that install regardless of the
 selection, which is how the writer tells the two apart.
 
-When the forks of one environment pin a base dependency at different versions,
-no single entry can serve the no-member context; the writer raises a
-`DivergentBaseDependencyError` rather than emit a lock that silently
-skips the dependency.
+When the forks of one environment pin a base dependency at different
+versions, no single entry can serve the no-member context; the writer
+raises a `DivergentBaseDependencyError` rather than emit a lock that
+silently skips the dependency.
 
-With two or more sets engaged, each entry names only the sets its package
-varies over.
+With two or more sets engaged, each entry names only the sets its
+package varies over.
 
-If one set pulls a dependency at the same version in every fork of the other
-sets, its entry has no clause for those sets. Selecting that member alone
-installs it. A dependency reached by members of two sets is selected by either
-member alone.
+If one set pulls a dependency at the same version in every fork of the
+other sets, its entry has no clause for those sets. Selecting that
+member alone installs it. A dependency reached by members of two sets
+is selected by either member alone.
 
 A package whose version does depend on the combination keeps the
 conjunction, and so does anything that requires it: an entry never

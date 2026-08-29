@@ -72,4 +72,6 @@ uv build --wheel --out-dir /tmp/nab-wheels .
 uv tool install --find-links /tmp/nab-wheels nab
 ```
 
-Once `nab --version` succeeds, [make your first lock](../tutorial/getting-started.md). To work on nab itself, see [contributing](../contributing.md).
+Once `nab --version` succeeds,
+[make your first lock](../tutorial/getting-started.md). To work on nab
+itself, see [contributing](../contributing.md).
