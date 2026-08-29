@@ -339,11 +339,15 @@ extend-exclude = ["**/_vendor/**"]
 # docs/conf.py sits outside any Python package by Sphinx convention.
 "docs/conf.py" = ["INP001"]
 
-# IntractableMarkerSet and UnserializableMarkerSet are published names, raised
-# and caught by name across nab; adding N818's Error suffix is an API change.
-# PYI034 wants Atom.__new__ to return Self, which needs typing_extensions on the
-# 3.10 floor, and this distribution declares packaging and nothing else.
-"nab-markersets/src/nab_markersets/_markersets.py" = ["N818", "PYI034"]
+# packaging names its marker exceptions for the bad condition and drops the
+# Error suffix (InvalidMarker, UndefinedComparison); these follow it, because
+# this package is written to drop into packaging.
+"nab-markersets/src/nab_markersets/errors.py" = ["N818"]
+
+# PYI034 wants __new__ to return Self, which needs typing_extensions on the 3.10
+# floor, and this distribution declares packaging and nothing else.
+"nab-markersets/src/nab_markersets/_markersets.py" = ["PYI034"]
+"nab-markersets/src/nab_markersets/markersets.py" = ["PYI034"]
 
 # Subpackages defer imports to break cycles with their parent modules.
 "nab-provider/src/nab_provider/_provider/*.py" = ["PLC0415"]
@@ -411,6 +415,7 @@ typeCheckingMode = "standard"
 include = [
     "nab-resolver/src",
     "nab-resolver/tests",
+    "nab-markersets/src",
     "nab-index/src",
     "src",
     "tests/cli_bijection.py",
@@ -428,7 +433,7 @@ extraPaths = [
 
 # https://pyrefly.org/en/docs/configuration/
 [tool.pyrefly]
-project-includes = ["nab-resolver/src", "nab-index/src", "src"]
+project-includes = ["nab-resolver/src", "nab-markersets/src", "nab-index/src", "src"]
 
 # https://mypy.readthedocs.io/en/stable/config_file.html#using-a-pyproject-toml-file
 [tool.mypy]
@@ -439,7 +444,7 @@ explicit_package_bases = true
 # Each checked tree is a package base. Without "src" the umbrella resolves
 # under two module names ("nab._version" and "src.nab._version") and mypy
 # stops before checking anything.
-mypy_path = ["nab-resolver/src", "nab-index/src", "src"]
+mypy_path = ["nab-resolver/src", "nab-markersets/src", "nab-index/src", "src"]
 enable_error_code = [
     "redundant-expr",
     "truthy-bool",

@@ -21,7 +21,7 @@ from __future__ import annotations
 from functools import reduce
 from typing import TYPE_CHECKING
 
-from nab_markersets import DecisionStore, MarkerSet, variable_names
+from nab_markersets.markersets import DecisionStore, MarkerSet, variable_names
 from nab_provider.target import UNBOUNDABLE_MARKER_VARIABLES, declared_range_marker
 
 if TYPE_CHECKING:

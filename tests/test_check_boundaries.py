@@ -102,7 +102,10 @@ def test_the_packages_that_publish_a_table_are_pinned() -> None:
 
     Emptying it turns the ``supported`` rule off for every package.
     """
-    assert check_boundaries.PUBLISHES_SUPPORTED_PATHS == ("nab_resolver",)
+    assert check_boundaries.PUBLISHES_SUPPORTED_PATHS == (
+        "nab_markersets",
+        "nab_resolver",
+    )
 
 
 def test_the_published_table_resolves_against_its_own_package() -> None:

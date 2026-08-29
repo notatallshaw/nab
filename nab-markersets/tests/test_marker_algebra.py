@@ -23,15 +23,9 @@ from packaging.markers import (
     _eval_op,
 )
 
-import nab_markersets
-from nab_markersets import (
-    IntractableMarkerSet,
-    MarkerSet,
-    UnserializableMarkerSet,
-    _markersets,
-    variable_names,
-)
-from nab_provider._vendor.packaging.version import Version
+from nab_markersets import errors, markersets
+from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
+from nab_markersets.markersets import MarkerSet, _markersets, variable_names
 
 
 def ms(text: str) -> MarkerSet:
@@ -351,19 +345,15 @@ def test_an_atom_leaves_the_table_with_the_last_tree_holding_it() -> None:
 
 
 def test_all_and_dir_pin_the_public_surface() -> None:
-    # The five names spelled out, so adding a sixth is a decision taken here
-    # and in the README rather than a name that leaks through __all__.
-    assert nab_markersets.__all__ == [
-        "DecisionStore",
-        "IntractableMarkerSet",
-        "MarkerSet",
-        "UnserializableMarkerSet",
-        "variable_names",
-    ]
+    # Spelled out, so adding a name is a decision taken here, in the package
+    # docstring's table and in the README, not a leak through __all__.
+    assert markersets.__all__ == ["DecisionStore", "MarkerSet", "variable_names"]
+    assert errors.__all__ == ["IntractableMarkerSet", "UnserializableMarkerSet"]
 
     # __dir__ hides the budget constants and the engine submodule, so a
     # completion in a REPL offers the supported surface and nothing else.
-    assert dir(nab_markersets) == sorted(nab_markersets.__all__)
+    assert dir(markersets) == sorted(markersets.__all__)
+    assert dir(errors) == sorted(errors.__all__)
 
 
 # ----------------------------------------------------------------- algebra
@@ -412,8 +402,58 @@ def test_operators_reject_foreign_operands() -> None:
     for other in ("linux", 3, None):
         assert a.__and__(other) is NotImplemented
         assert a.__or__(other) is NotImplemented
+        assert a.__sub__(other) is NotImplemented
+        assert a.__eq__(other) is NotImplemented
+        assert a != other
     with pytest.raises(TypeError):
         _ = a & "linux"  # type: ignore[operator]
+
+
+def test_difference_is_intersection_with_the_complement() -> None:
+    a = ms('python_version >= "3.9"')
+    b = ms('python_version >= "3.12"')
+
+    assert (a - b).equivalent(a & ~b)
+    assert (a - b).is_disjoint(b)
+    assert a.difference(a).is_empty()
+
+
+def test_equality_is_structural_not_semantic() -> None:
+    a = ms('sys_platform == "linux"')
+    b = ms('os_name == "posix"')
+
+    assert ms('sys_platform == "linux"') == a
+    assert hash(ms('sys_platform == "linux"')) == hash(a)
+    assert len({a, ms('sys_platform == "linux"')}) == 1
+    assert {a: "kept"}[ms('sys_platform == "linux"')] == "kept"
+
+    assert MarkerSet.full() == MarkerSet.full()
+    assert MarkerSet.full() != MarkerSet.empty()
+
+    # Two spellings of one set are unequal, which is what equivalent is for.
+    assert (a & b) != (b & a)
+    assert (a & b).equivalent(b & a)
+    assert (a | ~a) != MarkerSet.full()
+    assert (a | ~a).is_full()
+
+
+def test_contains_is_evaluate() -> None:
+    gpu = ms('extra == "gpu"')
+
+    assert {"extra": frozenset({"gpu"})} in gpu
+    assert {"extra": frozenset({"cpu"})} not in gpu
+
+
+def test_pairwise_predicates_share_a_store() -> None:
+    store = markersets.DecisionStore()
+    a = ms('python_version >= "3.9" and sys_platform == "linux"')
+    b = ms('python_version >= "3.12"')
+
+    assert not a.is_disjoint(b, store=store)
+    assert not a.is_subset(b, store=store)
+    assert not a.is_superset(b, store=store)
+    assert not a.equivalent(b, store=store)
+    assert store.decisions
 
 
 # ------------------------------------------------- leaf-shape edge cases
@@ -738,21 +778,15 @@ def test_restrict_normalises_the_set_axis() -> None:
     assert ms('extra == "pu"').restrict({"extra": "cpu"}).is_empty()
 
 
-def test_restrict_error_policy() -> None:
+def test_restrict_leaves_an_unprovided_variable_alone() -> None:
     marker = ms('python_version >= "3.9" and sys_platform == "linux"')
-    with pytest.raises(ValueError, match="no value for"):
-        marker.restrict({"python_version": "3.10"}, on_unknown_variable="error")
-    # every referenced variable provided: no error.
-    restricted = marker.restrict(
-        {"python_full_version": "3.10.0", "sys_platform": "linux"},
-        on_unknown_variable="error",
+
+    assert marker.restrict({"python_version": "3.10"}).equivalent(
+        ms('sys_platform == "linux"')
     )
-    assert restricted.is_full()
-
-
-def test_restrict_rejects_bad_policy() -> None:
-    with pytest.raises(ValueError, match="on_unknown_variable"):
-        ms('sys_platform == "linux"').restrict({}, on_unknown_variable="nonsense")
+    assert marker.restrict(
+        {"python_full_version": "3.10.0", "sys_platform": "linux"}
+    ).is_full()
 
 
 def test_restrict_constant_set() -> None:
@@ -811,12 +845,10 @@ def test_variable_names_collects_a_literal_that_names_a_variable() -> None:
     assert variable_names('"3.9" == "python_version"') == frozenset({"python_version"})
 
 
-def test_membership_literals() -> None:
+def test_set_memberships() -> None:
     marker = ms('"cpu" in extras and "gpu" not in extras and sys_platform == "linux"')
-    assert marker.membership_literals() == frozenset(
-        {("extras", "cpu"), ("extras", "gpu")}
-    )
-    assert ms('sys_platform == "linux"').membership_literals() == frozenset()
+    assert marker.set_memberships() == frozenset({("extras", "cpu"), ("extras", "gpu")})
+    assert ms('sys_platform == "linux"').set_memberships() == frozenset()
 
 
 # ---------------------------------------------------------------- witness
@@ -1058,6 +1090,14 @@ def test_many_substring_literals_on_one_axis_refuse_loudly() -> None:
 
 
 def test_unserializable_ordered_version_complement() -> None:
+    # The message quotes the clause as written: python_version lowers onto the
+    # python_full_version axis and must not surface as it.
+    with pytest.raises(
+        UnserializableMarkerSet,
+        match=r'no marker string spells the complement of python_version >= "3\.9"',
+    ):
+        ms('python_version >= "3.9"').complement().to_marker_string()
+
     with pytest.raises(UnserializableMarkerSet):
         ms('python_full_version >= "3.9"').complement().to_marker_string()
 
@@ -1084,7 +1124,10 @@ def test_unserializable_swapped_version_complement() -> None:
 
 
 def test_unserializable_twin_equality_complement() -> None:
-    with pytest.raises(UnserializableMarkerSet):
+    with pytest.raises(
+        UnserializableMarkerSet,
+        match=r'no marker string spells the complement of platform_release == "6\.6"',
+    ):
         ms('platform_release == "6.6"').complement().to_marker_string()
 
 
@@ -1104,7 +1147,7 @@ def test_repr_past_the_stack_is_total() -> None:
 
 
 def test_repr_summarises_without_leaking_the_tree() -> None:
-    # repr renders a marker-string summary, never the private op-tree: the
+    # repr renders a marker-string summary and never the private op-tree: the
     # constant sets read as words, a plain set as its marker string, and a
     # grammar-inexpressible complement as a placeholder.
     assert (
@@ -1125,14 +1168,14 @@ def test_repr_summarises_without_leaking_the_tree() -> None:
 
 
 def test_guard_set_powerset(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 1000)
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 1000)
     marker = ms(" and ".join(f'extra == "pkg{i}"' for i in range(20)))
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
 def test_guard_substring_enumeration(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 3)
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 3)
     marker = ms('sys_platform in "abcdefghij"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
@@ -1141,7 +1184,7 @@ def test_guard_substring_enumeration(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guard_substring_low_entropy(monkeypatch: pytest.MonkeyPatch) -> None:
     # A repeated-character literal has few distinct substrings but a quadratic
     # index loop; the guard bounds the loop work, so it fires here.
-    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 100)
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 100)
     marker = ms('sys_platform in "' + "a" * 50 + '"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
@@ -1150,7 +1193,7 @@ def test_guard_substring_low_entropy(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guard_version_pool_epoch_elevation(monkeypatch: pytest.MonkeyPatch) -> None:
     # Mixing python_version with many distinct-epoch python_full_version atoms
     # triggers epoch elevation, whose product is bounded as it is generated.
-    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 1000)
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 1000)
     epochs = " and ".join(f'python_full_version == "{e}!2.0"' for e in range(1, 16))
     marker = ms(f'python_version == "3.9" and {epochs}')
     with pytest.raises(IntractableMarkerSet):
@@ -1171,14 +1214,14 @@ def test_guard_repeated_clause_tree_walk() -> None:
 
 
 def test_guard_value_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 1)
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 1)
     marker = ms('python_full_version == "3.9"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
 
 
 def test_guard_cell_product(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 2)
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 2)
     marker = ms(
         'sys_platform == "linux" and os_name == "posix" '
         'and platform_machine == "x86_64"'
@@ -1190,7 +1233,7 @@ def test_guard_cell_product(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guard_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
     # Many distinct atoms on one axis: the point count stays under the cap but
     # points x atoms does not, so the guard fires instead of doing O(N^2) work.
-    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 100)
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 100)
     marker = ms(" or ".join(f'sys_platform == "p{i}"' for i in range(60)))
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
@@ -1199,7 +1242,7 @@ def test_guard_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guard_set_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
     # A set axis clears the powerset cap (two subsets) yet its subsets x atoms
     # product does not, so the per-axis reduce guard fires.
-    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 3)
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 3)
     marker = ms('extra == "a" and extra != "a"')
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
@@ -1208,7 +1251,7 @@ def test_guard_set_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_guard_version_axis_literal_count(monkeypatch: pytest.MonkeyPatch) -> None:
     # Many distinct version literals already exceed the cap; the axis is
     # rejected up front, before the neighbour pool is materialised.
-    monkeypatch.setattr(nab_markersets, "_MAX_CELLS", 100)
+    monkeypatch.setattr(markersets, "_MAX_CELLS", 100)
     marker = ms(" or ".join(f'python_full_version == "{i}.0"' for i in range(200)))
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
@@ -1342,7 +1385,7 @@ def test_warm_version_pool_does_not_bypass_the_oversized_literal_guard() -> None
     # a disabled int-string limit outlives that limit. A decision under a limit the
     # literal overruns has to reach the guard rather than the store's copy.
     literal = "1." + "9" * 700
-    store = nab_markersets.DecisionStore()
+    store = markersets.DecisionStore()
     original = sys.get_int_max_str_digits()
 
     sys.set_int_max_str_digits(0)
@@ -1449,10 +1492,10 @@ def test_version_axis_with_two_literals() -> None:
     assert not marker.is_empty()
 
 
-def test_restrict_error_missing_set_variable() -> None:
+def test_restrict_leaves_an_unprovided_set_variable_alone() -> None:
     marker = ms('"cpu" in extras')
-    with pytest.raises(ValueError, match="no value for"):
-        marker.restrict({}, on_unknown_variable="error")
+
+    assert marker.restrict({}).equivalent(marker)
 
 
 def test_restrict_plain_value_absent_is_residual() -> None:

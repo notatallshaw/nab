@@ -21,7 +21,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nab_markersets import IntractableMarkerSet
+from nab_markersets.errors import IntractableMarkerSet
 from nab_project._lockfile.coverage import CoverageError, validate_marker_coverage
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.version import Version

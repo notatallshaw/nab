@@ -22,7 +22,7 @@ import pytest
 from packaging.markers import Marker
 from packaging.version import Version
 
-from nab_markersets import MarkerSet
+from nab_markersets.markersets import MarkerSet
 
 # Version values straddle every literal the alphabets use
 # (3.9, 3.10, 3.14), including the 3.14 prerelease-carve-out witnesses, an epoch

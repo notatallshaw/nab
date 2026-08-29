@@ -23,7 +23,8 @@ else:
 
 from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.multi_index import IndexConfig
-from nab_markersets import IntractableMarkerSet, MarkerSet
+from nab_markersets.errors import IntractableMarkerSet
+from nab_markersets.markersets import MarkerSet
 from nab_project._lockfile.builder import _common_requires_python
 from nab_project._lockfile.coverage import (
     CoverageError,

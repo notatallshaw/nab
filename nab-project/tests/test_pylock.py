@@ -22,9 +22,10 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib  # type: ignore[no-redef]
 
-import nab_markersets
-from nab_markersets import DecisionStore, IntractableMarkerSet, MarkerSet
 from nab_markersets import _markersets as engine
+from nab_markersets import markersets
+from nab_markersets.errors import IntractableMarkerSet
+from nab_markersets.markersets import DecisionStore, MarkerSet
 from nab_project._lockfile import disjointness, pylock
 from nab_project._lockfile.coverage import CoverageError
 from nab_project._lockfile.disjointness import validate_marker_disjointness
@@ -662,7 +663,7 @@ class TestWorkBudget:
         raw = _wide_linux_marker()
         within = _union(_wide_rows())
         assert str(_finalize_marker(raw, within, "foo")) != str(raw)
-        monkeypatch.setattr(nab_markersets, "_MAX_WORK", 1)
+        monkeypatch.setattr(markersets, "_MAX_WORK", 1)
         result = _finalize_marker(raw, within, "foo")
         assert result is not None
         assert str(result) == str(raw)

@@ -22,7 +22,7 @@ from functools import lru_cache
 from itertools import pairwise, product
 from typing import TYPE_CHECKING, NamedTuple, cast
 
-from packaging._parser import Op, Variable, parse_marker
+from packaging._parser import Op, Value, Variable, parse_marker
 from packaging._tokenizer import ParserSyntaxError
 from packaging.markers import (
     InvalidMarker,
@@ -35,28 +35,25 @@ from packaging.specifiers import InvalidSpecifier, Specifier
 from packaging.utils import canonicalize_name
 from packaging.version import InvalidVersion, Version
 
+from .errors import IntractableMarkerSet, UnserializableMarkerSet
+
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Mapping, Sequence
+    from typing import TypeAlias
 
+    # packaging's parse tree, narrowed to what ``parse_marker`` builds. Its own
+    # ``MarkerAtom`` recurses through ``Sequence``, which admits a tuple and so
+    # blocks the isinstance narrowing the walkers below rely on.
+    MarkerOperand: TypeAlias = "Variable | Value"
+    MarkerComparison: TypeAlias = "tuple[MarkerOperand, Op, MarkerOperand]"
+    MarkerNode: TypeAlias = "MarkerComparison | str | list[MarkerNode]"
 
-class IntractableMarkerSet(ValueError):
-    """The set is too complex to decide within the budget.
-
-    Raised rather than hanging or failing obscurely, for any budget the algebra
-    runs under: a cell cap, the work meter, the interpreter's stack, and the
-    digit parse limit.
-
-    Subclasses :class:`ValueError`, as packaging's marker exceptions do.
-    """
-
-
-class UnserializableMarkerSet(ValueError):
-    """The set has no marker-string spelling.
-
-    Raised for the empty set and for complements the grammar cannot express,
-    rather than emitting a string for some other set. Subclasses
-    :class:`ValueError` to match packaging's marker exceptions.
-    """
+    # An axis is a variable's domain, named by its kind. A node key is the
+    # structural key two trees of the same shape share.
+    Axis: TypeAlias = "tuple[str, ...]"
+    NodeKey: TypeAlias = "tuple[object, ...]"
+    AtomKey: TypeAlias = "tuple[str, str, str, bool, bool, str, str, bool]"
+    ClauseKey: TypeAlias = "tuple[AtomKey, ...]"
 
 
 # Axis kinds. Atoms on one axis share a partition and are constant on each cell.
@@ -345,9 +342,9 @@ class BoolConst:
 
     def __init__(self, *, value: bool) -> None:
         self.value = value
-        self._key: tuple | None = None
+        self._key: NodeKey | None = None
 
-    def key(self) -> tuple:
+    def key(self) -> NodeKey:
         """Return this node's structural key."""
         if self._key is None:
             self._key = ("c", self.value)
@@ -361,9 +358,9 @@ class AtomLeaf:
 
     def __init__(self, atom: Atom) -> None:
         self.atom = atom
-        self._key: tuple | None = None
+        self._key: NodeKey | None = None
 
-    def key(self) -> tuple:
+    def key(self) -> NodeKey:
         """Return this node's structural key."""
         if self._key is None:
             self._key = ("a", self.atom)
@@ -377,9 +374,9 @@ class AndNode:
 
     def __init__(self, children: tuple[Formula, ...]) -> None:
         self.children = children
-        self._key: tuple | None = None
+        self._key: NodeKey | None = None
 
-    def key(self) -> tuple:
+    def key(self) -> NodeKey:
         """Return this node's structural key."""
         if self._key is None:
             self._key = ("&", tuple(child.key() for child in self.children))
@@ -393,9 +390,9 @@ class OrNode:
 
     def __init__(self, children: tuple[Formula, ...]) -> None:
         self.children = children
-        self._key: tuple | None = None
+        self._key: NodeKey | None = None
 
-    def key(self) -> tuple:
+    def key(self) -> NodeKey:
         """Return this node's structural key."""
         if self._key is None:
             self._key = ("|", tuple(child.key() for child in self.children))
@@ -409,9 +406,9 @@ class NotNode:
 
     def __init__(self, child: Formula) -> None:
         self.child = child
-        self._key: tuple | None = None
+        self._key: NodeKey | None = None
 
-    def key(self) -> tuple:
+    def key(self) -> NodeKey:
         """Return this node's structural key."""
         if self._key is None:
             self._key = ("n", self.child.key())
@@ -474,7 +471,7 @@ def make_not(node: Formula) -> Formula:
 # ------------------------------------------------------------------- construction
 
 
-def _parse_ast(source: str | Marker) -> list | None:
+def _parse_ast(source: str | Marker) -> list[MarkerNode] | None:
     """Dispatch a marker to packaging's parser, or None for an empty marker."""
     if isinstance(source, Marker):
         source = str(source)
@@ -484,7 +481,8 @@ def _parse_ast(source: str | Marker) -> list | None:
     if not source.strip():
         return None
     try:
-        return parse_marker(source)
+        # parse_marker's own alias recurses through Sequence; it builds lists.
+        return cast("list[MarkerNode]", parse_marker(source))
     except ParserSyntaxError as exc:
         # A malformed marker raises the public InvalidMarker, as packaging does,
         # not the tokenizer's internal syntax error.
@@ -511,25 +509,26 @@ def variable_names(source: str | Marker) -> frozenset[str]:
     return frozenset(names)
 
 
-def _collect_variables(node: list, names: set[str]) -> None:
+def _collect_variables(node: list[MarkerNode], names: set[str]) -> None:
     for item in node:
         if isinstance(item, str):
             continue
-        if isinstance(item, list):
+        if not isinstance(item, tuple):
             _collect_variables(item, names)
-        else:
-            lhs, _op, rhs = item
-            if isinstance(lhs, Variable):
-                names.add(lhs.value)
-            if isinstance(rhs, Variable):
-                names.add(rhs.value)
-            elif not isinstance(lhs, Variable) and rhs.value in DOMAIN_REGISTRY:
-                # packaging reads a literal-vs-literal comparison's right operand
-                # as an environment key when it names a variable.
-                names.add(rhs.value)
+            continue
+
+        lhs, _op, rhs = item
+        if isinstance(lhs, Variable):
+            names.add(lhs.value)
+        if isinstance(rhs, Variable):
+            names.add(rhs.value)
+        elif not isinstance(lhs, Variable) and rhs.value in DOMAIN_REGISTRY:
+            # packaging reads a literal-vs-literal comparison's right operand
+            # as an environment key when it names a variable.
+            names.add(rhs.value)
 
 
-def _convert(node: list) -> Formula:
+def _convert(node: list[MarkerNode]) -> Formula:
     or_groups: list[list[Formula]] = [[]]
     for item in node:
         if item == "or":
@@ -539,11 +538,12 @@ def _convert(node: list) -> Formula:
         elif isinstance(item, list):
             or_groups[-1].append(_convert(item))
         else:
-            or_groups[-1].append(_convert_atom(item))
+            # "and" and "or" are the only strings the grammar emits.
+            or_groups[-1].append(_convert_atom(cast("MarkerComparison", item)))
     return make_or(make_and(group) for group in or_groups)
 
 
-def _convert_atom(item: tuple) -> Formula:
+def _convert_atom(item: MarkerComparison) -> Formula:
     lhs, op_node, rhs = item
     op = op_node.serialize()
     if isinstance(lhs, Variable):
@@ -717,8 +717,8 @@ class Memo:
     __slots__ = ("decisions", "partitions", "truths", "versions")
 
     def __init__(self) -> None:
-        self.decisions: dict[tuple, _Decision] = {}
-        self.partitions: dict[tuple, list[Cell]] = {}
+        self.decisions: dict[tuple[NodeKey, int], _Decision] = {}
+        self.partitions: dict[tuple[Axis, tuple[Atom, ...], int], list[Cell]] = {}
         self.truths: dict[tuple[Atom, str], bool] = {}
         self.versions: dict[str, Version | None] = {}
 
@@ -1123,7 +1123,7 @@ def _reduce_cells(
         )
         raise IntractableMarkerSet(msg)
 
-    representatives: dict[tuple, object] = {}
+    representatives: dict[tuple[bool, ...], object] = {}
     for point in points:
         vector = tuple(_truth(atom, point, memo) for atom in atoms)
         representatives.setdefault(vector, point)
@@ -1175,7 +1175,7 @@ def partition_boolean_axis(
 
 
 def _partition_axis(
-    axis: tuple, atoms: Sequence[Atom], max_cells: int, memo: Memo
+    axis: Axis, atoms: Sequence[Atom], max_cells: int, memo: Memo
 ) -> list[Cell]:
     kind = axis[0]
     if kind == AXIS_VALUE:
@@ -1204,7 +1204,7 @@ def charge_work(units: int) -> None:
 
 
 def partition_axis(
-    axis: tuple, atoms: Sequence[Atom], max_cells: int, store: Memo
+    axis: Axis, atoms: Sequence[Atom], max_cells: int, store: Memo
 ) -> list[Cell]:
     """Partition one axis's domain into cells on which every atom is constant.
 
@@ -1236,7 +1236,7 @@ def as_name_set(value: object) -> frozenset[str]:
     """Normalise a set-variable value: a str is one name, PEP 685 canonical."""
     if isinstance(value, str):
         return frozenset({canonicalize_name(value)}) if value else frozenset()
-    return frozenset(canonicalize_name(name) for name in value)  # type: ignore[union-attr]
+    return frozenset(canonicalize_name(name) for name in cast("Iterable[str]", value))
 
 
 def _require(env: Mapping[str, object], key: str) -> object:
@@ -1306,15 +1306,6 @@ def membership_literals_of(node: Formula) -> frozenset[tuple[str, str]]:
         for atom in collect_atoms(node)
         if atom.kind == AXIS_SET
     )
-
-
-def unprovided_variables(node: Formula, env: Mapping[str, object]) -> set[str]:
-    """Return the referenced variables an environment supplies no value for."""
-    return {
-        atom.origin
-        for atom in collect_atoms(node)
-        if _atom_env_value(atom, env) is _MISSING
-    }
 
 
 def _atoms_by_axis(atoms: list[Atom]) -> dict[tuple[str, ...], list[Atom]]:
@@ -1444,7 +1435,7 @@ def _materialize(
         if kind == AXIS_VALUE:
             env[axis[1]] = str(piece.point)
         elif kind == AXIS_SET:
-            env[axis[1]] = frozenset(piece.point)  # type: ignore[arg-type]
+            env[axis[1]] = frozenset(cast("Iterable[str]", piece.point))
         else:
             contains.setdefault(axis[1], []).append((axis[2], bool(piece.point)))
 
@@ -1539,7 +1530,7 @@ def _complement_version(atom: Atom, op: str, var: str) -> Formula:
     # non-version, so neither complements to a single atom.
     if op in ("==", "!=") and is_pure_version(var) and not atom.swapped:
         return AtomLeaf(atom.replaced(op="!=" if op == "==" else "=="))
-    msg = f"cannot complement version atom on {var!r}"
+    msg = f"no marker string spells the complement of {_render_atom(atom)}"
     raise UnserializableMarkerSet(msg)
 
 
@@ -1669,11 +1660,10 @@ def serialize(node: Formula) -> str:
 
 
 def describe(node: Formula) -> str:
-    """Summarise a set for :func:`repr`. Total, and never raises.
+    """Summarise a set for :func:`repr`, never exposing the private op-tree.
 
-    Total over what the walks raise: a constant, a set no marker string spells,
-    and a tree nested past the stack each render as a word, so every set can be
-    printed.
+    Renders the constant sets as words and any other set as its marker string,
+    falling back to a placeholder for a complement the grammar cannot spell.
     """
     try:
         nnf = to_nnf(node)
@@ -1690,7 +1680,7 @@ def describe(node: Formula) -> str:
 # ------------------------------------------------------------------- simplify
 
 
-def _atom_key(atom: Atom) -> tuple[str, str, str, bool, bool, str, str, bool]:
+def _atom_key(atom: Atom) -> AtomKey:
     """Return a total-order key for an atom, so a factored serialisation is stable."""
     return (
         atom.origin,
@@ -1704,7 +1694,7 @@ def _atom_key(atom: Atom) -> tuple[str, str, str, bool, bool, str, str, bool]:
     )
 
 
-def _clause_key(clause: frozenset[Atom]) -> tuple:
+def _clause_key(clause: frozenset[Atom]) -> ClauseKey:
     return tuple(_atom_key(atom) for atom in sorted(clause, key=_atom_key))
 
 
@@ -1934,7 +1924,7 @@ def _drop_atoms(
     return [frozenset(clause) for clause in working]
 
 
-def _canonical(clauses: list[frozenset[Atom]]) -> tuple:
+def _canonical(clauses: list[frozenset[Atom]]) -> tuple[ClauseKey, ...]:
     return tuple(sorted(_clause_key(clause) for clause in clauses))
 
 

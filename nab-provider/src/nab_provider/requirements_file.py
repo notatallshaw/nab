@@ -256,9 +256,7 @@ def _environment_residual(marker: Marker, extra: str) -> str | bool:
     than decided against the machine running nab.
     """
     with intractable_as_error():
-        residual = marker_set(marker).restrict(
-            {"extra": frozenset({extra})}, on_unknown_variable="residual"
-        )
+        residual = marker_set(marker).restrict({"extra": frozenset({extra})})
 
         if residual.is_empty():
             return False

@@ -71,12 +71,10 @@ WORKSPACES = {
     ),
 }
 
-# nab-provider, nab-project and nab-markersets are left out: none is held to
-# the strict checker configs yet. nab-provider carries the vendored packaging
-# tree, which is rebuilt from upstream and cannot be edited to satisfy a
-# checker; the marker-set engine annotates its parse-tree nodes as bare `list`
-# and `tuple`, which mypy's strict `disallow_any_generics` rejects.
-TYPED_TREES = ["nab-resolver/src", "nab-index/src", "src"]
+# nab-provider and nab-project are left out: neither is held to the strict
+# checker configs yet, and nab-provider carries the vendored packaging tree,
+# which is rebuilt from upstream and cannot be edited to satisfy a checker.
+TYPED_TREES = ["nab-resolver/src", "nab-markersets/src", "nab-index/src", "src"]
 
 # The generated bijection goes to every checker, not to pyright alone: it
 # exists to be read by one, and a row typed wrong for its parameter is an

@@ -41,7 +41,9 @@ TREES = {
     "nab": "src/nab",
 }
 
-MARKER_SET_MODULES = frozenset({"nab_markersets", "nab_markersets._markersets"})
+MARKER_SET_MODULES = frozenset(
+    {"nab_markersets.markersets", "nab_markersets._markersets"}
+)
 
 # The engine entry point: what the walk reaches from here is what a host takes
 # with it.

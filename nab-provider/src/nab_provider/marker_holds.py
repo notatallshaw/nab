@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING
 
 from packaging.markers import UndefinedComparison as ReleasedUndefinedComparison
 
-from nab_markersets import IntractableMarkerSet, MarkerSet
+from nab_markersets.errors import IntractableMarkerSet
+from nab_markersets.markersets import MarkerSet
 from nab_provider._vendor.packaging.markers import (
     UndefinedComparison,
     UndefinedEnvironmentName,

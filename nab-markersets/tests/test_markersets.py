@@ -17,14 +17,9 @@ from typing import TYPE_CHECKING
 import pytest
 from packaging.markers import Marker
 
-from nab_markersets import (
-    _MAX_CELLS,
-    _MAX_WORK,
-    DecisionStore,
-    IntractableMarkerSet,
-    MarkerSet,
-)
 from nab_markersets import _markersets as engine
+from nab_markersets.errors import IntractableMarkerSet
+from nab_markersets.markersets import _MAX_CELLS, _MAX_WORK, DecisionStore, MarkerSet
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
