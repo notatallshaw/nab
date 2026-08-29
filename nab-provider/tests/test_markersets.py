@@ -327,7 +327,23 @@ def test_row_oracle_matches_whole_matrix(
     lf = engine.parse(left)
     rf = engine.parse(right)
     assert engine.equivalent_within_rows(lf, rf, universe, _MAX_CELLS) == (
-        engine._equivalent_within(lf, rf, universe, _MAX_CELLS)
+        whole_matrix_equivalent_within(lf, rf, universe)
+    )
+
+
+def whole_matrix_equivalent_within(
+    left: engine.Formula, right: engine.Formula, universe: engine.Formula
+) -> bool:
+    """Reference oracle for equivalent_within_rows, over the whole matrix at once.
+
+    Complements the universe in one shot rather than per row, so it agrees with
+    the shipped decision on a narrow universe and raises on a wide one.
+    """
+    store = engine.Memo()
+    return engine.is_empty(
+        engine.make_and((left, universe, engine.make_not(right))), _MAX_CELLS, store
+    ) and engine.is_empty(
+        engine.make_and((right, universe, engine.make_not(left))), _MAX_CELLS, store
     )
 
 
@@ -350,11 +366,10 @@ def _narrow_linux_span() -> str:
 def test_wide_full_span_raises_on_whole_matrix_today() -> None:
     marker = corpus.wide_curated()[0]["marker"]
     with pytest.raises(IntractableMarkerSet):
-        engine._equivalent_within(
+        whole_matrix_equivalent_within(
             engine.parse(marker),
             engine.parse(marker),
             _wide_universe()._tree,
-            _MAX_CELLS,
         )
 
 

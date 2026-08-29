@@ -1,16 +1,11 @@
-"""Marker algebra engine: reason about PEP 508 markers as sets of environments.
+"""Marker algebra engine behind :class:`~packaging.markersets.MarkerSet`.
 
-The private engine behind :class:`~packaging.markersets.MarkerSet`. Parses a
-marker string (or :class:`~packaging.markers.Marker`) into a normalised boolean
-op-tree over typed atoms, with the packaging-faithful
-``(variable, operator, literal)`` dispatch, A1 lowering of ``python_version``
-onto the ``python_full_version`` axis, set-valued extras, and ``contains``
-atoms, which join a string variable's value axis and stay opaque on a
-version-dispatch one. The denotation of a value atom is delegated to packaging's
-own ``_eval_op`` so it matches packaging exactly. Decisions run an on-demand
-cell decomposition: every procedure re-partitions the referenced variables'
-domains into cells on which each atom is constant, enumerates the cell product
-under the ``max_cells`` guard, and evaluates the op-tree once per cell.
+A marker parses into a normalised op-tree over typed atoms. A value atom's
+denotation is packaging's own ``_eval_op``, so a marker means here what it means
+there, and A1 lowers ``python_version`` onto the ``python_full_version`` axis.
+
+A decision partitions each axis the tree names into cells on which every atom is
+constant, then evaluates the tree over the cells of their product.
 """
 
 from __future__ import annotations
@@ -43,40 +38,38 @@ if TYPE_CHECKING:
 class IntractableMarkerSet(ValueError):
     """The set is too complex to decide within the budget.
 
-    Raised rather than hanging, overflowing the stack, or failing obscurely: an
-    oversized cell product past ``max_cells``, a marker nested past the
-    interpreter stack, or a version literal whose numeric component exceeds the
-    digit parse limit. Subclasses :class:`ValueError` to match packaging's
-    marker exceptions.
+    Raised rather than hanging or failing obscurely, for any budget the algebra
+    runs under: a cell cap, the work meter, the interpreter's stack, and the
+    digit parse limit.
+
+    Subclasses :class:`ValueError`, as packaging's marker exceptions do.
     """
 
 
 class UnserializableMarkerSet(ValueError):
     """The set has no marker-string spelling.
 
-    Raised, rather than emitting a wrong or masquerading string, for the empty
-    set and for complements whose structure the marker grammar cannot express.
-    Subclasses :class:`ValueError` to match packaging's marker exceptions.
+    Raised for the empty set and for complements the grammar cannot express,
+    rather than emitting a string for some other set. Subclasses
+    :class:`ValueError` to match packaging's marker exceptions.
     """
 
 
-# Axis kinds. Atoms on the same axis share one cell partition and are each
-# constant on every one of its cells.
+# Axis kinds. Atoms on one axis share a partition and are constant on each cell.
 AXIS_VALUE = "value"
 AXIS_SET = "set"
 AXIS_CONTAINS = "contains"
 
-# Domain kinds a variable is typed through.
 DOMAIN_VERSION = "version"
 DOMAIN_STRING = "string"
 DOMAIN_TWIN = "version_or_string"
 DOMAIN_SET = "set"
 
-# Every variable in packaging's marker grammar, typed to a domain. The twins
-# ``implementation_version`` and ``platform_release`` dispatch as versions yet may
-# hold an arbitrary string, so both carry a string fall-through. ``python_version``
-# and ``python_full_version`` always receive a PEP 440 value, so they stay
-# version-only; ``platform_version`` is a plain string.
+# Every variable in packaging's marker grammar, typed to a domain. The twins,
+# ``implementation_version`` and ``platform_release``, dispatch as versions yet
+# may hold an arbitrary string, so they also carry the string fall-through.
+# ``python_version`` and ``python_full_version`` always receive a PEP 440 value,
+# so they stay version-only.
 DOMAIN_REGISTRY: dict[str, str] = {
     "implementation_name": DOMAIN_STRING,
     "implementation_version": DOMAIN_TWIN,
@@ -99,13 +92,13 @@ _ORDERED_UNDEFINED = frozenset({"~=", "==="})
 
 
 def _domain(variable: str) -> str:
-    """Return the effective domain of a variable under packaging typing."""
+    """Return a variable's domain, twins collapsed onto version."""
     kind = DOMAIN_REGISTRY[variable]
     return DOMAIN_VERSION if kind == DOMAIN_TWIN else kind
 
 
 def is_version_dispatch(variable: str) -> bool:
-    """Whether a variable dispatches as a version under packaging typing."""
+    """Whether a variable dispatches as a version, twins included."""
     return _domain(variable) == DOMAIN_VERSION
 
 
@@ -121,11 +114,10 @@ def _apply_memoised(lhs: str, op: str, rhs: str, key: str, _limit: int) -> bool:
 
 
 def _apply(lhs: str, op: str, rhs: str, key: str) -> bool:
-    """Evaluate ``op`` on a pair of literals under ``key``'s domain, memoised.
+    """Evaluate ``op`` on two literals under ``key``'s domain, memoised.
 
-    The int-string limit joins the four strings in the cache key: a version key
-    parses both operands, so a literal that compares under one limit raises
-    under another.
+    The int-string limit joins the cache key: a version key parses its operands,
+    so a literal that compares under one limit raises under another.
     """
     return _apply_memoised(lhs, op, rhs, key, sys.get_int_max_str_digits())
 
@@ -167,9 +159,8 @@ _DIGIT_RUN = re.compile(r"\d+")
 def _oversized_numeric(text: str) -> bool:
     """Whether a numeric run in ``text`` overflows int-from-string parsing.
 
-    A component wider than the interpreter's int-from-string limit makes
-    packaging's ``Version`` raise a bare ``ValueError`` on parse. A zero limit
-    disables the check, so nothing overflows.
+    Such a run makes packaging's ``Version`` raise a bare ``ValueError``. A zero
+    limit disables the check, so nothing overflows.
     """
     limit = sys.get_int_max_str_digits()
     if not limit:
@@ -180,10 +171,10 @@ def _oversized_numeric(text: str) -> bool:
 # ---------------------------------------------------------------------------- atoms
 
 
-# A strong table would keep an entry for every distinct atom the process ever
-# built, so values are weak and an entry lives only while its atom does. The lock
-# stops two threads minting rival atoms for one key, which the algebra would then
-# treat as two leaves rather than one.
+# A strong table would hold every distinct atom the process ever built, so the
+# values are weak and an entry lives only while its atom does. The lock stops
+# two threads minting rival atoms for one key, which the algebra would read as
+# two leaves.
 _INTERNED: weakref.WeakValueDictionary[
     tuple[str, str, str, str, str, bool, bool, bool], Atom
 ] = weakref.WeakValueDictionary()
@@ -194,12 +185,14 @@ class Atom:
     """A normalised leaf whose ``holds`` gives its denotation on one point.
 
     Interned on its fields, so two equal atoms are one object and equality is
-    identity. The only mutation after construction is the version pool it mints
-    lazily, a pure function of those same fields, so sharing it is sound.
+    identity.
 
-    A decision re-reads the same atom on the same point across partitions of one
-    axis; that memo belongs to the operation, not here, so ``holds`` recomputes.
-    The comparison it runs is memoised in :func:`_apply`.
+    Its version pool is minted lazily and is the only mutation. That pool is a
+    pure function of the same fields, so sharing it is sound.
+
+    Truth is memoised on :class:`Memo` and never here: an atom outlives any one
+    operation, and its truth depends on the int-string limit, which
+    :func:`_apply` keys on and an interned object could not.
     """
 
     __slots__ = (
@@ -217,7 +210,7 @@ class Atom:
 
     kind: str
     variable: str  # axis variable (python_version lowers to python_full_version)
-    origin: str  # the variable as written, for env lookup and serialisation
+    origin: str  # the parser's spelling, for env lookup and serialisation
     op: str
     literal: str
     swapped: bool
@@ -276,10 +269,11 @@ class Atom:
         """Return the axis this atom partitions and is constant on.
 
         A substring test on a string variable joins that variable's value axis,
-        so both readings of the variable are decided on one point. On a
-        version-dispatch variable it keeps a boolean axis of its own, one per
-        literal, because the values that embed a literal are not enumerable
-        from the literals alone.
+        so the substring test and the value comparison decide on one point.
+
+        On a version-dispatch variable that test keeps a boolean axis of its own
+        per literal, because the values embedding a literal are not enumerable
+        from it.
         """
         if self.kind == AXIS_VALUE:
             return (AXIS_VALUE, self.variable)
@@ -305,11 +299,7 @@ class Atom:
         return present if self.positive else not present
 
     def pool_entries(self) -> tuple[tuple[Version, str], ...]:
-        """The parsed version-pool points this atom seeds, minted lazily once.
-
-        A pure property of the literal: its version neighbours, plus the
-        neighbours of its version-parseable substrings for a membership atom.
-        """
+        """Return the version-pool points this atom's literal seeds, minted once."""
         entries = self._pool_entries
         if entries is None:
             texts = list(_version_neighbors(self.literal))
@@ -336,9 +326,8 @@ def _holds_value(atom: Atom, text: str) -> bool:
 
 # --------------------------------------------------------------------- the op-tree
 
-# Every node carries a structural ``key()``: two trees with the same key have the same
-# shape and the same atoms, so a decision recorded under one tree's key can be served
-# for the other. A node mints its key on first use and keeps it.
+# Two trees with the same ``key()`` have the same shape and atoms, so a decision
+# recorded under one key serves the other. A node mints its key once and keeps it.
 
 
 class BoolConst:
@@ -428,7 +417,7 @@ FALSE = BoolConst(value=False)
 
 
 def make_and(children: Iterable[Formula]) -> Formula:
-    """Build a conjunction, folding identities and the FALSE annihilator."""
+    """Build a conjunction, folding identities and FALSE."""
     flat: list[Formula] = []
     for child in children:
         if isinstance(child, BoolConst):
@@ -447,7 +436,7 @@ def make_and(children: Iterable[Formula]) -> Formula:
 
 
 def make_or(children: Iterable[Formula]) -> Formula:
-    """Build a disjunction, folding identities and the TRUE absorber."""
+    """Build a disjunction, folding identities and TRUE."""
     flat: list[Formula] = []
     for child in children:
         if isinstance(child, BoolConst):
@@ -495,17 +484,15 @@ def _parse_ast(source: str | Marker) -> list | None:
 
 
 def parse(source: str | Marker) -> Formula:
-    """Parse a marker string or :class:`Marker` into the normalised op-tree."""
+    """Parse a marker into the normalised op-tree."""
     parsed = _parse_ast(source)
     return TRUE if parsed is None else _convert(parsed)
 
 
 def variable_names(source: str | Marker) -> frozenset[str]:
-    """Return every marker variable ``source`` names, as written.
+    """Return every marker variable ``source`` names, in the parser's spelling.
 
-    Walks the parsed marker collecting the variables its operands name, without
-    building atoms, so a marker the algebra rejects at construction still yields
-    its names. The result over-approximates semantic support.
+    Builds no atoms, so a marker the algebra rejects still yields its names.
     """
     parsed = _parse_ast(source)
     if parsed is None:
@@ -558,11 +545,9 @@ def _convert_atom(item: tuple) -> Formula:
     if isinstance(rhs, Variable):
         return _make_atom(rhs.value, op, lhs.value, swapped=True)
 
-    # Neither side is a Variable node. packaging reads the right operand as an
-    # environment key, so a quoted literal naming a known variable routes like a
-    # swapped variable atom. A right operand naming no known variable folds via
-    # the string operator table (packaging raises UndefinedEnvironmentName at
-    # evaluate; the algebra evaluates, a documented divergence).
+    # packaging reads the right operand as an environment key, so a quoted
+    # literal naming a known variable routes like a swapped atom. One naming
+    # none folds through the string table where packaging raises instead.
     if rhs.value in DOMAIN_REGISTRY:
         return _make_atom(rhs.value, op, lhs.value, swapped=True)
     return BoolConst(value=_apply(lhs.value, op, rhs.value, key=""))
@@ -576,8 +561,8 @@ def _make_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Formul
     if op in _MEMBERSHIP:
         return _make_membership_atom(variable, op, literal, swapped=swapped)
 
-    # These axes seed single-segment pool points, so a single-segment probe drives
-    # the swapped-operator validity check.
+    # A single-segment probe stands in for the environment value: ``~=`` builds
+    # no specifier from one, so a swapped ``~=`` surfaces as undefined here.
     _reject_undefined_operator(variable, op, literal, swapped=swapped, probe="0")
     if op == "===":
         msg = f"{op!r} is undefined on {variable!r} with literal {literal!r}"
@@ -589,9 +574,8 @@ def _make_python_version_atom(op: str, literal: str, *, swapped: bool) -> Formul
     if op in _MEMBERSHIP and swapped:
         return _make_membership_atom("python_version", op, literal, swapped=swapped)
     if op == "~=" and swapped:
-        # A swapped ~= makes the environment value the specifier bound, so the
-        # true region is the same-major lower-minor band the version pool never
-        # seeds; reject it, as the other version-dispatch axes do.
+        # A swapped ~= makes the environment value the specifier bound, so its
+        # true region is a same-major band with no pool point at its floor.
         msg = f"{op!r} is undefined on 'python_version' with literal {literal!r}"
         raise UndefinedComparison(msg)
 
@@ -643,11 +627,10 @@ def _make_set_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Fo
 
 
 def reject_oversized_version_literals(variable: str, literals: Sequence[str]) -> None:
-    """Raise before a numeric component past the parse limit reaches packaging.
+    """Raise before an oversized numeric component reaches packaging.
 
-    A numeric component over sys.get_int_max_str_digits() digits makes
-    packaging's Version raise a bare ValueError; convert it to the bounded
-    IntractableMarkerSet here.
+    A component past ``sys.get_int_max_str_digits()`` digits makes ``Version``
+    raise a bare ValueError; convert it to a bounded failure here.
     """
     if is_version_dispatch(variable) and any(
         _oversized_numeric(literal) for literal in literals
@@ -662,9 +645,9 @@ def reject_oversized_version_literals(variable: str, literals: Sequence[str]) ->
 def _reject_mint_overflow(literals: Sequence[str]) -> None:
     """Reserve one digit so neighbour minting cannot overflow the parse limit.
 
-    Cell decomposition mints version neighbours by incrementing one numeric
-    component, so a run at the limit width rolls to one digit past it and
-    makes packaging's Version raise a bare ValueError. Reject one digit early.
+    Minting increments a numeric component, so a run at the limit width rolls
+    one digit past it: this rejects at the limit, where
+    :func:`reject_oversized_version_literals` rejects past it.
     """
     limit = sys.get_int_max_str_digits()
     if limit and any(
@@ -699,7 +682,7 @@ def _reject_undefined_operator(
 
 
 class Cell(NamedTuple):
-    """One piece of an axis's domain: a representative point and its truth vector."""
+    """A representative point of an axis's domain and its truth vector."""
 
     point: object
     vector: tuple[bool, ...]
@@ -715,12 +698,9 @@ class _Decision(NamedTuple):
 class Memo:
     """The verdicts, partitions, atom truths and version parses a decision re-reads.
 
-    A run over related trees decides the same tree shape more than once. Within one
-    decision, one axis is re-partitioned for overlapping atom sets, one atom re-read
-    on one point across those partitions, and the literals those partitions share
-    parsed as versions once per partition. All four are memoised here. One decision
-    makes its own unless the caller passes one to share; see
-    :class:`~packaging.markersets.DecisionStore` for the sharing contract.
+    A run over related trees re-decides the same tree shapes and re-partitions
+    the same axes, so all four are memoised here. A decision makes its own
+    unless the caller shares one.
     """
 
     __slots__ = ("decisions", "partitions", "truths", "versions")
@@ -733,7 +713,11 @@ class Memo:
 
 
 def _truth(atom: Atom, point: object, memo: Memo) -> bool:
-    """Return an atom's truth on one point, memoised for the operation's span."""
+    """Return an atom's truth on one point.
+
+    A value-axis atom's is memoised for the operation's span; the others
+    short-circuit to :meth:`Atom.holds`.
+    """
     if atom.kind != AXIS_VALUE:
         return atom.holds(point)
     key = (atom, str(point))
@@ -744,15 +728,12 @@ def _truth(atom: Atom, point: object, memo: Memo) -> bool:
 
 
 def _pooled_version(text: str, memo: Memo) -> Version | None:
-    """Return ``text`` parsed as a version, or None, memoised for the operation's span.
-
-    Distinct atom subsets of one axis re-derive their candidate pools from
-    overlapping literals, so the parse is shared rather than repeated per subset.
+    """Return ``text`` parsed as a version, or None, memoised.
 
     Keyed on text alone where :func:`_apply` also keys on the int-string limit.
-    Every text pooled here is an axis literal, a substring of one, or a neighbour
-    minted from one, and the parse-limit guards bound each of those ahead of its
-    read, so a hit is never a parse the current limit forbids.
+
+    Every text pooled here is an axis literal, a substring of one, or a point
+    minted from one, and a parse-limit guard bounds each before its read.
     """
     versions = memo.versions
     if text not in versions:
@@ -792,17 +773,16 @@ def _version_neighbors(text: str) -> list[str]:
     pre_part = f"{version.pre[0]}{version.pre[1]}" if version.pre is not None else ""
     out = [base, *_equal_twins(version)]
 
-    # Bumps stay in the literal's own epoch: the release bump of 1!3.9 is 1!3.10,
-    # which outranks it, not 3.10, which sorts below and leaves the band above the
-    # literal (1!4.0, 2!0) with no representative.
+    # Bumps stay in the literal's epoch: 1!3.9 bumps to 1!3.10, not 3.10, which
+    # sorts below and leaves the band above it unrepresented.
     prefix = f"{epoch}!" if epoch else ""
     bumps = [prefix + ".".join(str(x) for x in (*release[:-1], release[-1] + 1))]
     if len(release) > 1:
         bumps.append(f"{prefix}{major}.{release[1] + 1}")
     bumps.append(f"{prefix}{major + 1}")
     if epoch:
-        # The band above a non-zero-epoch literal continues into the next epoch
-        # (2!0 outranks every 1!* release), beyond any same-epoch bump.
+        # The band above a non-zero-epoch literal runs into the next epoch,
+        # beyond any same-epoch bump.
         bumps.append(f"{epoch + 1}!0")
 
     for bump in bumps:
@@ -821,9 +801,9 @@ def _version_neighbors(text: str) -> list[str]:
 def _suffix_neighbors(version: Version, release_str: str, pre_part: str) -> list[str]:
     """Mint the points adjacent to a pre/post/dev literal.
 
-    An exclusive comparison against a suffixed literal excludes the literal's own
-    lower-precedence variants, so the adjacent point is the next or previous
-    suffix of the same release, which no release bump reaches.
+    An exclusive comparison excludes the literal's own lower-precedence
+    variants, so the adjacent point is the next or previous suffix of the same
+    release, which no release bump reaches.
     """
     out: list[str] = []
     epoch = version.epoch
@@ -846,13 +826,14 @@ def _suffix_neighbors(version: Version, release_str: str, pre_part: str) -> list
 
 
 def _equal_twins(version: Version) -> list[str]:
-    """Mint the points equal to the literal as a version but not as a string.
+    """Mint the points that separate the literal's version reading from its string reading.
 
     ``in``/``not in`` and an invalid specifier fall through to a raw string
-    test, so separating that reading from PEP 440 matching needs a point the
-    version test accepts and the string test rejects: the release, zero-padded.
-    A local-tagged literal also needs the local-stripped release, since a
-    specifier built from a public point ignores a candidate's local label.
+    test. Separating that reading from PEP 440 matching needs the release
+    zero-padded.
+
+    A local-tagged literal needs the local-stripped release too, since a
+    specifier built from a public point ignores a local label.
     """
     padded = version.__replace__(release=(*version.release, 0))
     if version.local is None:
@@ -863,14 +844,14 @@ def _equal_twins(version: Version) -> list[str]:
 def _release_between(vlow: Version, vhigh: Version) -> str:
     """Return a plain release ranking above every variant of ``vlow``.
 
-    Release ordering runs ahead of pre, post, dev and local, so ``vlow``'s
-    release extended by one outranks ``vlow`` whatever suffix it carries. There
-    is no lowest such release: another zero can always be padded in. Within one
-    epoch the padding runs to the wider of the two releases, which is the
-    deepest place ``vhigh`` can differ, so the result stays under it whenever
-    the two releases differ at all. Across an epoch boundary ``vhigh``'s release
-    does not bound the candidate, so ``vlow``'s own width is enough. The caller
-    checks the ordering either way.
+    Release ordering runs ahead of pre, post, dev and local, so extending
+    ``vlow``'s release by one outranks it whatever suffix it carries.
+
+    Padding to the wider release keeps the result under ``vhigh`` whenever the
+    two releases differ, that being the deepest place ``vhigh`` can differ.
+
+    Where the ends share a release, or across an epoch boundary, ``vhigh`` does
+    not bound it and the caller's ordering check rejects the candidate.
     """
     low = vlow.release
     width = len(low) if vlow.epoch != vhigh.epoch else max(len(low), len(vhigh.release))
@@ -882,11 +863,12 @@ def _release_between(vlow: Version, vhigh: Version) -> str:
 def _between(vlow: Version, low: str, vhigh: Version, memo: Memo) -> str | None:
     """Return a point strictly between two adjacent pool points, or None.
 
-    The plain release comes first because an exclusive ordered comparison
-    excludes its own bound's post, local, pre and dev variants, so a band whose
-    two ends share a release is the only one the suffixed candidates can fill.
-    Where the ends differ, only a version whose release differs from both is
-    admitted, and no suffix of ``vlow`` is.
+    An exclusive comparison excludes its own bound's post, local, pre and dev
+    variants. Where the two points' releases differ, only a candidate whose own
+    release differs from both lands between them, so the plain release is tried
+    first.
+
+    The suffixed candidates fill a band whose ends share a release.
     """
     for candidate in (
         _release_between(vlow, vhigh),
@@ -941,10 +923,9 @@ def _version_pool(
 def _elevate_epochs(
     base: list[str], parsed: Sequence[tuple[Version, str]], max_cells: int
 ) -> list[str]:
-    # A1 lowers python_version onto this axis, so major.minor and full ordering
-    # diverge across an epoch boundary: Version("1!3.9") truncates to "3.9" yet
-    # outranks "3.14". Each point needs an epoch-bearing twin for every band up to
-    # one epoch above the top literal, covering gap epochs no literal names.
+    # A1 lowers python_version here, so major.minor and full order diverge across
+    # an epoch boundary: 1!3.9 truncates to 3.9 yet outranks 3.14. Each point
+    # needs a twin in every epoch the pool reaches.
     epochs = {version.epoch for version, _ in parsed}
     targets = range(1, max(epochs) + 2)
 
@@ -961,8 +942,7 @@ def _elevate_epochs(
 def _membership_candidates(atom: Atom, memo: Memo) -> list[str]:
     subs = _substrings(atom.literal)
     if atom.derive_mm:
-        # A1 membership tests the major.minor of a full version, so realisable
-        # points are the substrings of the literal that are themselves versions.
+        # A1 tests the major.minor, so a realisable point is a version substring.
         return [
             s for s in subs if _pooled_version(s.removesuffix(".*"), memo) is not None
         ]
@@ -985,8 +965,7 @@ def _dedupe_candidates(
         if candidate in seen:
             continue
         # A pure Version axis holds only PEP 440 versions, so a non-version
-        # candidate is unrealisable there. The twins keep every non-version
-        # candidate, including the OTHER-cell representative.
+        # candidate is unrealisable there; the twins keep every one.
         if pure_version and _pooled_version(candidate, memo) is None:
             continue
         seen.add(candidate)
@@ -998,12 +977,7 @@ def _dedupe_candidates(
 
 
 def _other_representative(literals: Sequence[str]) -> str:
-    """Return a string equal to no literal on the axis and parsing as no version.
-
-    One character longer than the longest literal, so no literal can equal it,
-    and built from a filler that never forms a PEP 440 version so the point
-    lands in the arbitrary-string region rather than a version cell.
-    """
+    """Return a string equal to no literal on the axis and parsing as no version."""
     width = max((len(literal) for literal in literals), default=0) + 1
     return "z" * width
 
@@ -1012,8 +986,7 @@ def _unused_character(literals: Iterable[str]) -> str:
     """Return a character none of ``literals`` uses, counting up from ``!``.
 
     A marker literal can hold any character its quote style admits, so the walk
-    can run past printable ASCII; the point only has to be a string no atom on
-    the axis matches by accident, and any unused character serves.
+    can run past printable ASCII. Any unused character serves.
     """
     used = {char for literal in literals for char in literal}
     code = ord("!")
@@ -1027,12 +1000,12 @@ def _contains_candidates(
 ) -> list[str]:
     """Mint a point for each substring pattern the axis's contains atoms allow.
 
-    A separator none of ``literals`` uses joins one subset of the substring
-    literals, so every occurrence inside the point falls in one piece: it
-    embeds that subset and whatever the subset embeds, equals no literal, and
-    is a substring of none. Any string embeds what one subset does, so with the
-    literals and their substrings the axis reaches every combination its atoms
-    can realise together.
+    A separator none of ``literals`` uses joins one subset, so every occurrence
+    in the point falls in one piece.
+
+    The point then embeds that subset and what the subset embeds, equals no
+    literal, and is a substring of none. Every combination the atoms realise
+    together is some subset, so the axis reaches all of them.
     """
     names: list[str] = []
     seen: set[str] = set()
@@ -1060,10 +1033,9 @@ def _reduce_work_exceeds(
 ) -> bool:
     """Whether the axis's guaranteed reduce work already exceeds ``max_cells``.
 
-    Every distinct literal is one point, so its count times the atom count is a
-    lower bound on the ``_reduce_cells`` work. A pure-version axis keeps only
-    version-parseable literals; the twins and string fields keep every distinct
-    literal.
+    Every distinct literal is one point, so its count times the atom count
+    lower-bounds the ``_reduce_cells`` work. A pure-version axis counts only the
+    version-parseable literals.
     """
     pure = is_pure_version(variable)
     seen: set[str] = set()
@@ -1090,14 +1062,12 @@ def _value_candidates(
     candidates: list[str] = []
     raw_kind = DOMAIN_REGISTRY[variable]
 
-    # The OTHER cell (equal to no literal and not a version) exists only where the
-    # domain admits arbitrary strings: string fields and the twins.
+    # The OTHER cell exists only where the domain admits arbitrary strings.
     if raw_kind in (DOMAIN_STRING, DOMAIN_TWIN):
         candidates.append(_other_representative(literals))
     candidates.extend(literals)
 
-    # Cap the substring enumeration across the whole axis, not each literal alone,
-    # so a set of long distinct literals fails loudly first.
+    # Cap the enumeration across the axis, not per literal.
     spent = 0
     for atom in atoms:
         if atom.kind == AXIS_VALUE and atom.op in _MEMBERSHIP:
@@ -1135,8 +1105,7 @@ def _reduce_cells(
 ) -> list[Cell]:
     points = list(points)
 
-    # The truth vector costs one holds() per atom per point; guard that product so
-    # an axis carrying many atoms fails loudly.
+    # The truth vector costs one holds() per atom per point.
     if len(points) * len(atoms) > max_cells:
         msg = (
             f"axis work {len(points)}x{len(atoms)} atoms exceeds max_cells={max_cells}"
@@ -1205,10 +1174,9 @@ def _partition_axis(
     return partition_boolean_axis(atoms, max_cells, memo)
 
 
-# ``max_cells`` bounds one decision, and the greedy fixpoint issues one per
-# clause and per atom per universe row, so the meter is what bounds the run:
-# every cell enumeration charges the work it is about to do. Thread-local, and
-# unset outside a simplify so every other decision stays unmetered.
+# ``max_cells`` bounds one decision, the meter a whole simplify: every
+# enumeration charges what it is about to do. Thread-local, and unset outside a
+# simplify, so every other decision stays unmetered.
 _work_meter = threading.local()
 
 
@@ -1229,11 +1197,7 @@ def partition_axis(
 ) -> list[Cell]:
     """Partition one axis's domain into cells on which every atom is constant.
 
-    ``store`` memoises the partition for the span of one operation; its owner decides
-    that span, and this keeps no state of its own.
-
-    The atoms are keyed in order, not as a set: :class:`Cell` vectors are aligned
-    positionally with the list a partition was built for.
+    Atoms are keyed in order: a :class:`Cell` vector lines up positionally with them.
     """
     key = (axis, tuple(atoms), max_cells)
     cached = store.partitions.get(key)
@@ -1275,12 +1239,9 @@ def _require(env: Mapping[str, object], key: str) -> object:
 def evaluate_atom(atom: Atom, env: Mapping[str, object]) -> bool:
     """Evaluate one atom against a full environment (extras are sets).
 
-    A referenced variable absent from ``env`` raises
-    :class:`UndefinedEnvironmentName` on every axis, matching packaging and
-    keeping the missing-key behaviour uniform across scalars and sets. A
-    ``python_version`` atom reads ``python_full_version`` in preference to
-    ``python_version``, so an environment supplying both keys is read through
-    ``python_full_version``.
+    A missing variable raises :class:`UndefinedEnvironmentName` on every axis,
+    as packaging does. A ``python_version`` atom prefers the
+    ``python_full_version`` key when the environment supplies both.
     """
     if atom.kind == AXIS_VALUE:
         if atom.derive_mm and "python_full_version" not in env:
@@ -1317,10 +1278,9 @@ def collect_atoms(node: Formula) -> list[Atom]:
 
 
 def reject_oversized_literals(node: Formula, env: Mapping[str, object]) -> None:
-    """Raise the bounded guard for an oversized version literal or env value.
+    """Raise the bounded guard for an oversized literal or env value.
 
-    Runs before either could reach packaging's Version and raise a bare
-    ValueError.
+    Only atoms whose variable ``env`` supplies are checked.
     """
     for atom in collect_atoms(node):
         value = _atom_env_value(atom, env)
@@ -1374,7 +1334,7 @@ def _eval_cell(node: Formula, truth: Mapping[Atom, bool]) -> bool:
 
 
 class _CellSpace(NamedTuple):
-    """The axes a tree is decided over, their atoms and cells, and the work charged."""
+    """One decision's axes, their atoms and cells, and the work charged."""
 
     axes: list[tuple[str, ...]]
     atomlists: list[list[Atom]]
@@ -1383,11 +1343,7 @@ class _CellSpace(NamedTuple):
 
 
 def _cell_space(node: Formula, max_cells: int, store: Memo) -> _CellSpace:
-    """Partition each axis a tree mentions and charge the enumeration it implies.
-
-    The charged units come back with the cells, so a repeat of the same decision can
-    charge them again without enumerating.
-    """
+    """Partition each axis a tree mentions and charge the enumeration it implies."""
     atoms = collect_atoms(node)
     grouped = _atoms_by_axis(atoms)
     axes = list(grouped)
@@ -1400,9 +1356,8 @@ def _cell_space(node: Formula, max_cells: int, store: Memo) -> _CellSpace:
     if not axes:
         return _CellSpace(axes, atomlists, partitions, 0)
 
-    # The enumeration walks the whole op-tree once per cell, so guard the cell
-    # product times the leaf-occurrence count: a marker that repeats atoms inflates
-    # the walk without inflating the distinct-atom count or the cell product.
+    # Repeated atoms inflate the per-cell walk without inflating the cell
+    # product, so the guard multiplies in the leaf count.
     units = guarded_product_size(
         (*(len(part) for part in partitions), len(atoms)), max_cells
     )
@@ -1413,7 +1368,7 @@ def _cell_space(node: Formula, max_cells: int, store: Memo) -> _CellSpace:
 def _enumerate_cells(
     node: Formula, space: _CellSpace
 ) -> Iterator[dict[tuple[str, ...], Cell]]:
-    """Yield the cells of a partitioned space on which the tree holds."""
+    """Yield the cells of ``space`` on which the tree holds."""
     for combo in product(*space.partitions):
         truth: dict[Atom, bool] = {
             atom: value
@@ -1435,12 +1390,8 @@ def _decide_empty(node: Formula, max_cells: int, store: Memo) -> _Decision:
 def is_empty(node: Formula, max_cells: int, store: Memo | None = None) -> bool:
     """Whether a tree denotes the empty set.
 
-    ``store`` is the caller's memo when this decision is one of a run over related
-    trees, and a verdict it already holds for this tree shape is reused. A lone
-    decision has no repeat to serve and partitions each axis once either way.
-
-    A reused verdict is still charged the work its enumeration cost, so a shared
-    store saves time and not budget.
+    A verdict ``store`` holds is reused and charged again, so the work budget
+    does not depend on the memo.
     """
     if store is None:
         return _decide_empty(node, max_cells, Memo()).empty
@@ -1458,15 +1409,11 @@ def is_empty(node: Formula, max_cells: int, store: Memo | None = None) -> bool:
 def witness(
     node: Formula, max_cells: int, store: Memo | None = None
 ) -> dict[str, str | frozenset[str]] | None:
-    """Return a concrete environment satisfying a tree, or ``None`` if none is found.
+    """Return an environment satisfying a tree, or ``None`` when none is found.
 
-    The returned environment is verified against the tree before it is returned.
-    ``None`` is returned for the empty set. The search over ``contains`` atoms
-    is incomplete, so ``None`` may also be returned for a non-empty set when the
-    concrete-string constraints on one variable (a value atom, one or more
-    ``contains`` atoms, or a mix) have no jointly realisable cell representative.
-    ``python_version`` and ``python_full_version`` share one axis, so those
-    constraints can sit on different variables.
+    Each candidate is evaluated against the tree before it is returned, so a
+    result is never wrong; ``None`` is weaker than empty, because the search
+    reads the same cells the decisions do.
     """
     memo = Memo() if store is None else store
     for cell in _enumerate_cells(node, _cell_space(node, max_cells, memo)):
@@ -1536,7 +1483,7 @@ def _restrict_atom(leaf: AtomLeaf, env: Mapping[str, object]) -> Formula:
 
 
 def restrict_tree(node: Formula, env: Mapping[str, object]) -> Formula:
-    """Substitute the provided variables, leaving the rest as a residual."""
+    """Substitute the variables ``env`` provides, leaving the rest."""
     if isinstance(node, BoolConst):
         return node
     if isinstance(node, AtomLeaf):
@@ -1576,9 +1523,9 @@ def _builds_specifier(op: str, literal: str) -> bool:
 
 
 def _complement_version(atom: Atom, op: str, var: str) -> Formula:
-    # Excluded middle holds only for ==/!= on a pure-version axis; ordered
-    # comparisons have the prerelease hole, and the twins can hold a non-version,
-    # so neither complements to a single atom.
+    # Excluded middle holds for an unswapped ==/!= on a pure-version axis alone.
+    # An ordered comparison has the prerelease hole and a twin may hold a
+    # non-version, so neither complements to a single atom.
     if op in ("==", "!=") and is_pure_version(var) and not atom.swapped:
         return AtomLeaf(atom.replaced(op="!=" if op == "==" else "=="))
     msg = f"cannot complement version atom on {var!r}"
@@ -1588,10 +1535,9 @@ def _complement_version(atom: Atom, op: str, var: str) -> Formula:
 def _flip_string_op(atom: Atom, flipped: str) -> Formula:
     """Return ``atom`` under ``flipped``, refusing if that leaves the string table.
 
-    The atom reaches the string table only while its literal builds no specifier
-    under its own operator, and an equality specifier accepts a wildcard and a
-    local version where an ordered one does not, so the flipped atom can
-    dispatch as a version and denote something else.
+    An equality specifier accepts a wildcard and a local version where an
+    ordered one does not, so a flip can make the atom dispatch as a version and
+    denote something else.
     """
     if is_version_dispatch(atom.variable) and _builds_specifier(flipped, atom.literal):
         msg = f"no marker string spells the complement of {_render_atom(atom)}"
@@ -1602,13 +1548,15 @@ def _flip_string_op(atom: Atom, flipped: str) -> Formula:
 def _complement_string(atom: Atom, op: str) -> Formula:
     """Complement an atom packaging reads through the string operator table.
 
-    That table folds ``<`` and ``>`` to false and ``<=`` and ``>=`` to equality,
-    so no ordered comparison complements to another ordered comparison.
+    A swapped atom on a version-dispatch variable is not the table's to
+    complement, because packaging builds its specifier from the environment
+    value.
 
-    A swapped atom on a version-dispatch variable does not reach the table at
-    all: packaging builds its specifier from the environment value, so the atom
-    compares as a version wherever that value parses as one, and the table's
-    reading holds only on the rest.
+    Such an atom compares as a version wherever that value parses as one, and
+    through the table only on the rest.
+
+    The table folds ``<`` and ``>`` to false and ``<=`` and ``>=`` to equality,
+    so no ordered comparison complements to another.
     """
     if atom.swapped and is_version_dispatch(atom.variable):
         msg = f"no marker string spells the complement of {_render_atom(atom)}"
@@ -1637,9 +1585,9 @@ def _complement_leaf(atom: Atom) -> Formula:
 def to_nnf(node: Formula) -> Formula:
     """Push complements down to the leaves (negation normal form).
 
-    A leaf and a constant are already in normal form. A tree can also normalise
-    to a constant, because complementing an atom the string operator table
-    folds to false yields one.
+    A leaf and a constant are already in normal form. A tree can normalise to a
+    constant too: the string operator table folds ``<`` and ``>`` to false, so
+    complementing such an atom yields ``TRUE``.
     """
     if isinstance(node, AndNode):
         return make_and(to_nnf(child) for child in node.children)
@@ -1664,18 +1612,12 @@ def _negate(node: Formula) -> Formula:
 
 
 def _quote(literal: str) -> str:
-    """Spell a literal as a marker string, picking the quote the grammar allows.
-
-    A PEP 508 literal is delimited by one quote style and cannot contain that
-    style, so a literal carrying a double-quote is spelled with single quotes.
-    """
+    """Quote a literal, which the grammar forbids holding its own delimiter."""
     if '"' not in literal:
         return f'"{literal}"'
     if "'" not in literal:
         return f"'{literal}'"
-    # A literal carrying both quote styles has no marker spelling. Marker
-    # literals only ever arrive through the exclusive-quote grammar, so a value
-    # holding both is unreachable from any parsed input.
+    # Unreachable: a parsed literal arrives through the exclusive-quote grammar.
     msg = f"literal {literal!r} has no marker-string quoting"  # pragma: no cover
     raise UnserializableMarkerSet(msg)  # pragma: no cover
 
@@ -1711,10 +1653,11 @@ def serialize(node: Formula) -> str:
 
 
 def describe(node: Formula) -> str:
-    """A short human summary of a set, for :func:`repr`, without the op-tree.
+    """Summarise a set for :func:`repr`, without exposing the op-tree.
 
-    Total: a constant, a set no marker string spells, and a tree nested past the
-    stack each get a word, so every set can be printed.
+    Total over what the walks raise: a constant, a set no marker string spells,
+    and a tree nested past the stack each render as a word, so every set can be
+    printed.
     """
     try:
         nnf = to_nnf(node)
@@ -1724,8 +1667,7 @@ def describe(node: Formula) -> str:
     except UnserializableMarkerSet:
         return "unrepresentable"
     except RecursionError:
-        # The two walks are the only recursion under repr, which owes its
-        # caller a string rather than the depth of the tree it was handed.
+        # repr owes its caller a string, not the depth of the tree handed to it.
         return "too deeply nested"
 
 
@@ -1785,21 +1727,6 @@ def _disjunction(clauses: Iterable[frozenset[Atom]]) -> Formula:
     return make_or(_clause_formula(clause) for clause in clauses)
 
 
-def _equivalent_within(
-    left: Formula, right: Formula, universe: Formula, max_cells: int
-) -> bool:
-    """Whether two trees denote the same set on every point of ``universe``.
-
-    The whole-matrix reference oracle: it complements ``universe`` in one shot,
-    so it overruns ``max_cells`` on a wide multi-platform universe.
-    :func:`equivalent_within_rows` decides the same verdict per row instead.
-    """
-    store: Memo = Memo()
-    return is_empty(
-        make_and((left, universe, make_not(right))), max_cells, store
-    ) and is_empty(make_and((right, universe, make_not(left))), max_cells, store)
-
-
 class _Row(NamedTuple):
     """One universe row: its entailed pins and residual bound."""
 
@@ -1808,14 +1735,12 @@ class _Row(NamedTuple):
 
 
 def _row_pins(disjunct: Formula) -> dict[str, str]:
-    """The exact-string equality pins a universe row entails.
+    """Return the exact-string equality pins a universe row entails.
 
-    Only a top-level ``==`` value conjunct pins; a nested or negated atom never
-    does.  Only a :data:`DOMAIN_STRING` variable pins: on a version-dispatch
-    variable ``==`` is PEP 440 equality, so ``platform_release == "5.10"`` still
-    admits ``"5.10.0"``, and substituting the literal would answer that
-    variable's string-reading atoms at the wrong point.  Those stay in the
-    residual bound.
+    Only an unswapped top-level ``==`` on a :data:`DOMAIN_STRING` variable
+    pins: version-dispatch ``==`` is PEP 440 equality, so
+    ``platform_release == "5.10"`` still admits ``"5.10.0"``. Declining to pin
+    loses nothing, because the constraint stays in the row's residual bound.
     """
     if isinstance(disjunct, AtomLeaf):
         conjuncts: tuple[Formula, ...] = (disjunct,)
@@ -1839,11 +1764,7 @@ def _row_pins(disjunct: Formula) -> dict[str, str]:
 
 
 def _decompose_rows(universe: Formula) -> list[_Row]:
-    """Split a universe into rows: the top-level disjuncts of its NNF.
-
-    Each row keeps its entailed pins and the residual bound left after
-    restricting the disjunct by them. Purely structural, no algebra.
-    """
+    """Split a universe into rows: each top-level NNF disjunct with its pins."""
     nnf = to_nnf(universe)
     disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
     rows: list[_Row] = []
@@ -1860,11 +1781,11 @@ def _rows_equivalent(
     max_cells: int,
     store: Memo,
 ) -> bool:
-    """Whether ``left`` agrees with the per-row restriction of the constant right.
+    """Whether ``left`` agrees with ``right_by_row`` on every row.
 
-    Restricting each operand to a row's pins complements over that row's residual
-    rather than the whole-matrix product.  The rows of one universe differ on few
-    axes, so ``store`` carries each axis's partition across them.
+    ``right_by_row`` holds the right-hand tree already restricted to each row's
+    pins. Restricting to those pins complements over the row's residual rather
+    than the whole-matrix product.
     """
     for row, right in zip(rows, right_by_row, strict=True):
         left_r = restrict_tree(left, row.pins)
@@ -1882,11 +1803,7 @@ def _rows_equivalent(
 def universe_is_empty(
     universe: Formula, max_cells: int, store: Memo | None = None
 ) -> bool:
-    """Whether a universe admits no environment, decided per row.
-
-    A union is empty iff every top-level disjunct is, so each is tested alone,
-    staying on one row's product instead of the whole-matrix complement.
-    """
+    """Whether a universe admits no environment: every top-level disjunct is empty."""
     nnf = to_nnf(universe)
     disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
     shared = Memo() if store is None else store
@@ -1900,14 +1817,7 @@ def equivalent_within_rows(
     max_cells: int,
     store: Memo | None = None,
 ) -> bool:
-    """Whether two trees agree on every point of ``universe``, decided per row.
-
-    The row-restricted dual of :func:`_equivalent_within`, deciding the same
-    verdict but staying decidable on wide multi-platform universes. A universe of
-    ``TRUE`` reduces it to plain global equivalence.
-
-    ``store`` is the caller's scratch when this decision is one of a run.
-    """
+    """Whether two trees agree on every point of ``universe``, decided per row."""
     rows = _decompose_rows(universe)
     right_by_row = [restrict_tree(right, row.pins) for row in rows]
     return _rows_equivalent(
@@ -1932,11 +1842,9 @@ def _rows_within(
     max_cells: int,
     store: Memo,
 ) -> bool:
-    """Whether ``left`` stays inside the constant right on every row.
+    """One direction of :func:`_rows_equivalent`, for a caller that only widens.
 
-    One direction of :func:`_rows_equivalent`, for a caller that only
-    widens its candidate: the other direction held before the change,
-    and widening cannot lose it.
+    The other direction held before the widening, so only this one is re-decided.
     """
     for row, right in zip(rows, right_by_row, strict=True):
         left_r = restrict_tree(left, row.pins)
@@ -1954,10 +1862,9 @@ def _rows_cover(
     max_cells: int,
     store: Memo,
 ) -> bool:
-    """Whether ``left`` still reaches everything the constant right does.
+    """The other direction, for a caller that only narrows.
 
-    The other direction, for a caller that only narrows its candidate:
-    narrowing cannot start reaching further than the original did.
+    Containment held before the narrowing, so only coverage is re-decided.
     """
     for row, right in zip(rows, right_by_row, strict=True):
         left_r = restrict_tree(left, row.pins)
@@ -1977,8 +1884,8 @@ def _drop_clauses(
 ) -> list[frozenset[Atom]]:
     """Drop every clause the rest of the disjunction already covers.
 
-    Removing one only narrows the candidate, so it cannot start reaching
-    past the original and only the cover direction can break.
+    Removing one only narrows the candidate, so only the cover direction can
+    break.
     """
     kept = list(clauses)
     for clause in sorted(clauses, key=_clause_key):
@@ -1997,10 +1904,9 @@ def _drop_atoms(
 ) -> list[frozenset[Atom]]:
     """Drop every atom its clause does not need to stay within the original.
 
-    Removing one only widens that clause, so the disjunction still covers
-    the original and only the widened clause can reach past it.  Testing
-    the clause alone rather than the whole disjunction is what keeps a
-    wide universe cheap: the others are unchanged and already within.
+    Removing one only widens that clause, so only that clause can reach past
+    the original. The others are unchanged and already within, so testing the
+    widened clause alone is enough.
     """
     working = [set(clause) for clause in clauses]
     for clause in working:
@@ -2023,19 +1929,20 @@ def simplify_within(
     max_work: int,
     store: Memo | None = None,
 ) -> Formula:
-    """Return the smallest tree equivalent to ``node`` on every point of ``universe``.
+    """Return a tree equivalent to ``node`` on every point of ``universe``.
 
-    Greedy: drop each clause, then each atom, whose removal preserves
-    within-universe equivalence, to a fixpoint, then factor the atoms common to
-    every surviving clause into a leading conjunction, verifying each removal
-    per universe row so a wide multi-platform universe stays decidable. A
-    universe of ``TRUE`` reduces it to a context-free factoring, and a total
-    atom order fixes the output.
+    Greedy: expand to clauses, drop each clause and then each atom whose removal
+    preserves within-universe equivalence, to a fixpoint, then factor out what
+    every survivor shares.
 
-    ``max_cells`` bounds one decision and ``max_work`` bounds the whole run,
-    because a wide matrix runs many cheap decisions where a large membership
-    powerset runs few expensive ones. Either overrun raises
-    :class:`IntractableMarkerSet`.
+    Deciding each removal per universe row is what keeps a wide universe
+    decidable, and a total atom order fixes which of the equally good results
+    comes back.
+
+    The result is not the smallest equivalent tree. The expansion runs first, so
+    a factored input whose clauses are all needed comes back expanded.
+
+    ``max_cells`` bounds one decision and ``max_work`` meters the greedy loop.
     """
     nnf = to_nnf(node)
     clauses = _dedupe(_to_clauses(nnf, max_cells))
