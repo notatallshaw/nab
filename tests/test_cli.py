@@ -8,7 +8,7 @@ import contextlib
 import errno
 import gc
 import hashlib
-import importlib
+import importlib.metadata
 import inspect
 import io
 import json
@@ -24,7 +24,6 @@ import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager
 from datetime import datetime, timedelta, timezone
-from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -5601,27 +5600,9 @@ class TestLayeredRunKnobFlagContract:
 class TestPackageVersion:
     """Tests for nab._version.__version__ and the python -m nab entry point."""
 
-    def test_version_attribute_exposed(self) -> None:
-        """``nab._version.__version__`` resolves to the installed package version."""
-        assert isinstance(nab_version.__version__, str)
-        assert nab_version.__version__
-
-    def test_version_falls_back_when_metadata_missing(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """An uninstalled package surfaces a sentinel rather than a hard fail."""
-
-        def boom(_: str) -> str:
-            msg = "nab"
-            raise PackageNotFoundError(msg)
-
-        monkeypatch.setattr("importlib.metadata.version", boom)
-        importlib.reload(nab_version)
-        try:
-            assert nab_version.__version__ == "0.0.0+unknown"
-        finally:
-            monkeypatch.undo()
-            importlib.reload(nab_version)
+    def test_version_literal_matches_the_installed_metadata(self) -> None:
+        """The literal tracks the version the distribution declares."""
+        assert nab_version.__version__ == importlib.metadata.version("nab")
 
     def test_python_dash_m_runs_main(self) -> None:
         """``python -m nab`` invokes the CLI's main() entry point."""

@@ -39,6 +39,13 @@ PYPROJECT_PATHS = (
     *(REPO_ROOT / name / "pyproject.toml" for name in WORKSPACE_PACKAGES),
 )
 
+# Modules holding the version as a literal, so no package looks its own up at
+# import time. Each is written whole, so nothing else belongs in one.
+VERSION_LITERAL_PATHS = (
+    REPO_ROOT / "src" / "nab" / "_version.py",
+    REPO_ROOT / "nab-index" / "src" / "nab_index" / "_version.py",
+)
+
 
 def cross_pin(version: str) -> str:
     """Return the cross-pin specifier for a workspace dependency."""
@@ -80,6 +87,19 @@ def _rewrite_requirement(dependency: str, version: str) -> str:
     return f"{requirement.name}{extras}{cross_pin(version)}"
 
 
+def _version_module(version: str) -> str:
+    """Return the whole text of a ``_version.py`` holding ``version``.
+
+    The version is normalized, so the literal matches what the build backend
+    writes into the distribution's metadata.
+    """
+    return (
+        '"""The lockstep workspace version, written by ``tasks/release.py``."""\n'
+        "\n"
+        f'__version__ = "{Version(version)}"\n'
+    )
+
+
 def _dependency_arrays(project: Any) -> list[Any]:
     """Return every dependency array in a parsed ``[project]`` table."""
     arrays: list[Any] = []
@@ -91,7 +111,7 @@ def _dependency_arrays(project: Any) -> list[Any]:
 
 
 def apply_version(version: str) -> None:
-    """Write the version and rewrite workspace cross-pins in every pyproject."""
+    """Write the version everywhere it is spelled, rewriting workspace cross-pins."""
     for path in PYPROJECT_PATHS:
         document = tomlkit.parse(path.read_text(encoding="utf-8"))
         document["project"]["version"] = version
@@ -99,6 +119,9 @@ def apply_version(version: str) -> None:
             for index, dependency in enumerate(array):
                 array[index] = _rewrite_requirement(str(dependency), version)
         path.write_text(tomlkit.dumps(document), encoding="utf-8")
+
+    for path in VERSION_LITERAL_PATHS:
+        path.write_text(_version_module(version), encoding="utf-8")
 
 
 def read_current_version() -> str:
@@ -117,7 +140,8 @@ def check_release(tag: str) -> None:
     """Verify the working tree is a clean release matching ``tag``.
 
     The ``vX.Y.Z`` tag has to match every package version, that version must
-    not be a dev version, and every cross-pin has to be exactly ``==X.Y.Z``.
+    not be a dev version, every cross-pin has to be exactly ``==X.Y.Z``, and
+    every version literal has to hold it.
     """
     if not tag.startswith("v"):
         msg = f"release tag {tag!r} must start with 'v'"
@@ -146,7 +170,14 @@ def check_release(tag: str) -> None:
                         f"{specifier!r}, expected {wanted!r}"
                     )
                     raise SystemExit(msg)
-    print(f"{tag}: all packages at {version} with consistent cross-pins.")
+
+    wanted_module = _version_module(version)
+    for path in VERSION_LITERAL_PATHS:
+        if path.read_text(encoding="utf-8") != wanted_module:
+            msg = f"{path}: version literal does not hold {version!r}"
+            raise SystemExit(msg)
+
+    print(f"{tag}: all packages at {version}, cross-pins and literals agree.")
 
 
 def _plan(
