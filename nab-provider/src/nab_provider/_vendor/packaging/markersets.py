@@ -191,6 +191,15 @@ class MarkerSet:
     def is_empty(self, *, store: DecisionStore | None = None) -> bool:
         """Whether no environment satisfies this set (the marker is a contradiction).
 
+        Not exact on one construction: a substring test on a version-dispatch
+        variable (``python_version``, ``python_full_version``,
+        ``platform_release``, ``implementation_version``) is decided as its own
+        free boolean, independent of that variable's value, because the values
+        embedding a literal are not enumerable from it. So the set reads larger
+        than it is, ``True`` here is safe and ``False`` is the weak answer, and
+        every other decision procedure reduces to this one and inherits it.
+        :meth:`witness` and :meth:`evaluate` do not.
+
         ``store`` shares scratch with other decisions (:class:`DecisionStore`).
 
         :raises IntractableMarkerSet: if deciding the set exceeds the internal

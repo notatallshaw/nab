@@ -4,8 +4,9 @@ The private engine behind :class:`~packaging.markersets.MarkerSet`. Parses a
 marker string (or :class:`~packaging.markers.Marker`) into a normalised boolean
 op-tree over typed atoms, with the packaging-faithful
 ``(variable, operator, literal)`` dispatch, A1 lowering of ``python_version``
-onto the ``python_full_version`` axis, set-valued extras, and opaque
-``contains`` atoms. The denotation of a value atom is delegated to packaging's
+onto the ``python_full_version`` axis, set-valued extras, and ``contains``
+atoms, which join a string variable's value axis and stay opaque on a
+version-dispatch one. The denotation of a value atom is delegated to packaging's
 own ``_eval_op`` so it matches packaging exactly. Decisions run an on-demand
 cell decomposition: every procedure re-partitions the referenced variables'
 domains into cells on which each atom is constant, enumerates the cell product
@@ -272,22 +273,36 @@ class Atom:
         )
 
     def axis(self) -> tuple[str, ...]:
-        """Return the axis this atom partitions and is constant on."""
+        """Return the axis this atom partitions and is constant on.
+
+        A substring test on a string variable joins that variable's value axis,
+        so both readings of the variable are decided on one point. On a
+        version-dispatch variable it keeps a boolean axis of its own, one per
+        literal, because the values that embed a literal are not enumerable
+        from the literals alone.
+        """
         if self.kind == AXIS_VALUE:
             return (AXIS_VALUE, self.variable)
         if self.kind == AXIS_SET:
             return (AXIS_SET, self.variable)
+        if DOMAIN_REGISTRY[self.variable] == DOMAIN_STRING:
+            return (AXIS_VALUE, self.variable)
         # in / not in on the same (variable, literal) share one boolean axis.
         return (AXIS_CONTAINS, self.variable, self.literal)
 
     def holds(self, point: object) -> bool:
-        """Return the atom's truth on one point of its axis."""
+        """Return the atom's truth on one point of its axis.
+
+        A contains atom is handed the variable's value on a value axis and its
+        own truth on a boolean one, so it reads whichever it is given.
+        """
         if self.kind == AXIS_VALUE:
             return _holds_value(self, str(point))
         if self.kind == AXIS_SET:
             member = self.literal in point  # type: ignore[operator]
             return member if self.positive else not member
-        return bool(point) if self.positive else not bool(point)
+        present = self.literal in point if isinstance(point, str) else bool(point)
+        return present if self.positive else not present
 
     def pool_entries(self) -> tuple[tuple[Version, str], ...]:
         """The parsed version-pool points this atom seeds, minted lazily once.
@@ -845,8 +860,36 @@ def _equal_twins(version: Version) -> list[str]:
     return [version.public, str(padded)]
 
 
+def _release_between(vlow: Version, vhigh: Version) -> str:
+    """Return a plain release ranking above every variant of ``vlow``.
+
+    Release ordering runs ahead of pre, post, dev and local, so ``vlow``'s
+    release extended by one outranks ``vlow`` whatever suffix it carries. There
+    is no lowest such release: another zero can always be padded in. Within one
+    epoch the padding runs to the wider of the two releases, which is the
+    deepest place ``vhigh`` can differ, so the result stays under it whenever
+    the two releases differ at all. Across an epoch boundary ``vhigh``'s release
+    does not bound the candidate, so ``vlow``'s own width is enough. The caller
+    checks the ordering either way.
+    """
+    low = vlow.release
+    width = len(low) if vlow.epoch != vhigh.epoch else max(len(low), len(vhigh.release))
+    parts = (*low, *(0,) * (width - len(low)), 1)
+    prefix = f"{vlow.epoch}!" if vlow.epoch else ""
+    return prefix + ".".join(str(part) for part in parts)
+
+
 def _between(vlow: Version, low: str, vhigh: Version, memo: Memo) -> str | None:
+    """Return a point strictly between two adjacent pool points, or None.
+
+    The plain release comes first because an exclusive ordered comparison
+    excludes its own bound's post, local, pre and dev variants, so a band whose
+    two ends share a release is the only one the suffixed candidates can fill.
+    Where the ends differ, only a version whose release differs from both is
+    admitted, and no suffix of ``vlow`` is.
+    """
     for candidate in (
+        _release_between(vlow, vhigh),
         f"{low}.post0",
         f"{low}+m",
         f"{low}.dev1",
@@ -965,6 +1008,53 @@ def _other_representative(literals: Sequence[str]) -> str:
     return "z" * width
 
 
+def _unused_character(literals: Iterable[str]) -> str:
+    """Return a character none of ``literals`` uses, counting up from ``!``.
+
+    A marker literal can hold any character its quote style admits, so the walk
+    can run past printable ASCII; the point only has to be a string no atom on
+    the axis matches by accident, and any unused character serves.
+    """
+    used = {char for literal in literals for char in literal}
+    code = ord("!")
+    while chr(code) in used:
+        code += 1
+    return chr(code)
+
+
+def _contains_candidates(
+    atoms: Sequence[Atom], literals: Sequence[str], max_cells: int
+) -> list[str]:
+    """Mint a point for each substring pattern the axis's contains atoms allow.
+
+    A separator none of ``literals`` uses joins one subset of the substring
+    literals, so every occurrence inside the point falls in one piece: it
+    embeds that subset and whatever the subset embeds, equals no literal, and
+    is a substring of none. Any string embeds what one subset does, so with the
+    literals and their substrings the axis reaches every combination its atoms
+    can realise together.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for atom in atoms:
+        if atom.kind == AXIS_CONTAINS and atom.literal not in seen:
+            seen.add(atom.literal)
+            names.append(atom.literal)
+    if not names:
+        return []
+
+    count = len(names)
+    if (1 << count) > max_cells:
+        msg = f"substring subsets over {count} literals exceeds max_cells={max_cells}"
+        raise IntractableMarkerSet(msg)
+
+    separator = _unused_character(literals)
+    return [
+        separator + separator.join(names[i] for i in range(count) if mask & (1 << i))
+        for mask in range(1 << count)
+    ]
+
+
 def _reduce_work_exceeds(
     variable: str, literals: Sequence[str], atom_count: int, max_cells: int, memo: Memo
 ) -> bool:
@@ -1010,12 +1100,14 @@ def _value_candidates(
     # so a set of long distinct literals fails loudly first.
     spent = 0
     for atom in atoms:
-        if atom.op in _MEMBERSHIP:
+        if atom.kind == AXIS_VALUE and atom.op in _MEMBERSHIP:
             spent += _substring_cost(atom.literal)
             if spent > max_cells:
                 msg = f"substring enumeration exceeds max_cells={max_cells}"
                 raise IntractableMarkerSet(msg)
             candidates.extend(_membership_candidates(atom, memo))
+
+    candidates.extend(_contains_candidates(atoms, literals, max_cells))
 
     if is_version_dispatch(variable):
         _reject_mint_overflow(literals)
@@ -1493,16 +1585,43 @@ def _complement_version(atom: Atom, op: str, var: str) -> Formula:
     raise UnserializableMarkerSet(msg)
 
 
+def _flip_string_op(atom: Atom, flipped: str) -> Formula:
+    """Return ``atom`` under ``flipped``, refusing if that leaves the string table.
+
+    The atom reaches the string table only while its literal builds no specifier
+    under its own operator, and an equality specifier accepts a wildcard and a
+    local version where an ordered one does not, so the flipped atom can
+    dispatch as a version and denote something else.
+    """
+    if is_version_dispatch(atom.variable) and _builds_specifier(flipped, atom.literal):
+        msg = f"no marker string spells the complement of {_render_atom(atom)}"
+        raise UnserializableMarkerSet(msg)
+    return AtomLeaf(atom.replaced(op=flipped))
+
+
 def _complement_string(atom: Atom, op: str) -> Formula:
+    """Complement an atom packaging reads through the string operator table.
+
+    That table folds ``<`` and ``>`` to false and ``<=`` and ``>=`` to equality,
+    so no ordered comparison complements to another ordered comparison.
+
+    A swapped atom on a version-dispatch variable does not reach the table at
+    all: packaging builds its specifier from the environment value, so the atom
+    compares as a version wherever that value parses as one, and the table's
+    reading holds only on the rest.
+    """
+    if atom.swapped and is_version_dispatch(atom.variable):
+        msg = f"no marker string spells the complement of {_render_atom(atom)}"
+        raise UnserializableMarkerSet(msg)
     if op in ("==", ">=", "<="):
-        return AtomLeaf(atom.replaced(op="!="))
+        return _flip_string_op(atom, "!=")
     if op == "!=":
-        return AtomLeaf(atom.replaced(op="=="))
+        return _flip_string_op(atom, "==")
     if op == "in":
-        return AtomLeaf(atom.replaced(op="not in"))
+        return _flip_string_op(atom, "not in")
     if op == "not in":
-        return AtomLeaf(atom.replaced(op="in"))
-    # < and > are constant-false on a string variable, so the complement is all.
+        return _flip_string_op(atom, "in")
+    # Only < and > are left, and the table reads both as false.
     return TRUE
 
 
@@ -1516,17 +1635,19 @@ def _complement_leaf(atom: Atom) -> Formula:
 
 
 def to_nnf(node: Formula) -> Formula:
-    """Push complements down to the leaves (negation normal form)."""
-    if isinstance(node, AtomLeaf):
-        return node
+    """Push complements down to the leaves (negation normal form).
+
+    A leaf and a constant are already in normal form. A tree can also normalise
+    to a constant, because complementing an atom the string operator table
+    folds to false yields one.
+    """
     if isinstance(node, AndNode):
         return make_and(to_nnf(child) for child in node.children)
     if isinstance(node, OrNode):
         return make_or(to_nnf(child) for child in node.children)
     if isinstance(node, NotNode):
         return _negate(node.child)
-    msg = "a bare constant cannot reach to_nnf"  # pragma: no cover
-    raise RuntimeError(msg)  # pragma: no cover
+    return node
 
 
 def _negate(node: Formula) -> Formula:
@@ -1590,19 +1711,22 @@ def serialize(node: Formula) -> str:
 
 
 def describe(node: Formula) -> str:
-    """A short human summary of a set, for :func:`repr`. Total and never raises.
+    """A short human summary of a set, for :func:`repr`, without the op-tree.
 
-    Renders the constant sets as words and any other set as its marker string,
-    falling back to a placeholder for a complement the grammar cannot spell. It
-    never exposes the private op-tree and never raises, so a ``MarkerSet`` is
-    always safe to print, including inside a traceback.
+    Total: a constant, a set no marker string spells, and a tree nested past the
+    stack each get a word, so every set can be printed.
     """
-    if isinstance(node, BoolConst):
-        return "universe" if node.value else "empty"
     try:
-        return serialize(to_nnf(node))
+        nnf = to_nnf(node)
+        if isinstance(nnf, BoolConst):
+            return "universe" if nnf.value else "empty"
+        return serialize(nnf)
     except UnserializableMarkerSet:
         return "unrepresentable"
+    except RecursionError:
+        # The two walks are the only recursion under repr, which owes its
+        # caller a string rather than the depth of the tree it was handed.
+        return "too deeply nested"
 
 
 # ------------------------------------------------------------------- simplify
@@ -1720,7 +1844,7 @@ def _decompose_rows(universe: Formula) -> list[_Row]:
     Each row keeps its entailed pins and the residual bound left after
     restricting the disjunct by them. Purely structural, no algebra.
     """
-    nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
+    nnf = to_nnf(universe)
     disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
     rows: list[_Row] = []
     for disjunct in disjuncts:
@@ -1763,7 +1887,7 @@ def universe_is_empty(
     A union is empty iff every top-level disjunct is, so each is tested alone,
     staying on one row's product instead of the whole-matrix complement.
     """
-    nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
+    nnf = to_nnf(universe)
     disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
     shared = Memo() if store is None else store
     return all(is_empty(disjunct, max_cells, shared) for disjunct in disjuncts)
@@ -1913,7 +2037,7 @@ def simplify_within(
     powerset runs few expensive ones. Either overrun raises
     :class:`IntractableMarkerSet`.
     """
-    nnf = node if isinstance(node, BoolConst) else to_nnf(node)
+    nnf = to_nnf(node)
     clauses = _dedupe(_to_clauses(nnf, max_cells))
     original = _disjunction(clauses)
     rows = _decompose_rows(universe)
