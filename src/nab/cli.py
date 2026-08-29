@@ -328,29 +328,37 @@ def effective_config(
         return resolve_config(layers, env_layer, cli_layer, rejected=rejected)
 
 
-def lock_anchor(
-    path: Path, cli_overrides: Mapping[str, object] | None = None
-) -> datetime | None:
-    """Return the absolute ``uploaded-prior-to`` cutoff for ``nab lock``.
+ConfigLadder = dict[str, EffectiveValue] | SourceConfigError
+"""One read of the layered config: the effective map, or the error it raised."""
 
-    Sources the cutoff through the same registry ladder the resolve uses
-    (so a value set in the project-dir ``nab.toml`` is honoured exactly
-    like one in pyproject ``[tool.nab]``).  ``cli_overrides`` lets a
-    ``--project-uploaded-prior-to`` flag set the cutoff too, so the lock
-    anchor matches the resolve window the override produces.  An absolute
-    datetime is the lock anchor: the resolve window is already fixed, so
-    anchoring there makes ``created-at`` deterministic and two locks from
-    identical inputs produce identical bytes.  A relative ``P<n>D``
-    duration anchors to run time, so it is not reproducible and returns
-    ``None``; an unset value returns ``None`` too.  Config errors are
-    swallowed here (the full resolve parse reports them) so this
-    best-effort read never crashes.
+
+def read_config_ladder(path: Path, cli_overrides: Mapping[str, object]) -> ConfigLadder:
+    """Read the layered config once for a run and hold what came back.
+
+    A command builds one of these and threads it, so the environment is
+    read, and an unknown ``NAB_*`` var warned about, once per
+    invocation.  A category error is held rather than raised because the
+    lock anchor tolerates one and the run-settings fold exits on it.
     """
     try:
-        effective = effective_config(path, cli_overrides=cli_overrides)
-    except SourceConfigError:
+        return effective_config(path, cli_overrides=cli_overrides)
+    except SourceConfigError as exc:
+        return exc
+
+
+def lock_anchor(ladder: ConfigLadder) -> datetime | None:
+    """Return the absolute ``uploaded-prior-to`` cutoff for ``nab lock``.
+
+    An absolute datetime is the lock anchor: it already fixes the resolve
+    window, so anchoring there makes ``created-at`` deterministic and two
+    locks from identical inputs produce identical bytes.  A relative
+    ``P<n>D`` duration anchors to run time, so it is not reproducible and
+    returns ``None``; an unset value, and a ladder that failed to
+    resolve, return ``None`` too.
+    """
+    if isinstance(ladder, SourceConfigError):
         return None
-    value = effective["uploaded-prior-to"].value
+    value = ladder["uploaded-prior-to"].value
     return value if isinstance(value, datetime) else None
 
 
@@ -458,21 +466,16 @@ def project_override_arguments(cli_overrides: Mapping[str, object]) -> list[str]
     return arguments
 
 
-def _layered_run_settings(
-    path: Path, cli_overrides: Mapping[str, object]
-) -> tuple[RunSettings, Mapping[str, EffectiveValue]]:
-    """Fold the layered registry values into a subcommand's run knobs.
+def _layered_run_settings(effective: Mapping[str, EffectiveValue]) -> RunSettings:
+    """Fold the effective registry values into a subcommand's run knobs.
 
-    Returns the :class:`RunSettings` reflecting the full ladder, plus the
-    effective map so the caller can emit the reproducibility notice for a
-    CLI PROJECT override.  ``resolution`` stays ``None`` (config wins
-    downstream) when no source above the default set it, preserving the
-    contract that the resolver falls back to ``config.resolution``.
+    ``resolution`` stays ``None`` (config wins downstream) when no source
+    above the default set it, preserving the contract that the resolver
+    falls back to ``config.resolution``.
     """
-    effective = effective_config(path, cli_overrides=cli_overrides)
     res_ev = effective["resolution"]
     resolution = res_ev.value if res_ev.origin.kind is not SourceKind.DEFAULT else None
-    settings = RunSettings(
+    return RunSettings(
         resolution=resolution,
         offline=effective["offline"].value,
         cache_dir=effective["cache-dir"].value,
@@ -480,31 +483,25 @@ def _layered_run_settings(
         max_concurrency=effective["max-concurrency"].value,
         cli_project_overrides=project_cli_override_records(effective),
     )
-    return settings, effective
 
 
 def _layered_run_settings_or_exit(
-    path: Path,
-    cli_overrides: Mapping[str, object],
-    *,
-    produces_lock: bool = True,
+    ladder: ConfigLadder, *, produces_lock: bool = True
 ) -> RunSettings:
-    """Fold the layered run settings, exiting on a category error.
+    """Fold the ladder's run knobs, exiting on a category error it holds.
 
-    Wraps :func:`_layered_run_settings` with the single
-    ``SourceConfigError`` -> ``error: config error: ...`` -> ``exit(1)`` mapping
-    shared by ``nab lock`` and ``nab download``.  On success it also emits
-    the reproducibility notice when a PROJECT option was set on the CLI,
-    so a result-shaping override is never silent.  ``produces_lock`` picks
-    the wording: ``nab lock`` warns about the lock it produces while ``nab
-    download`` (which writes no lock) warns only that the resolved set
-    reflects the override.
+    The single ``SourceConfigError`` -> ``error: config error: ...`` ->
+    ``exit(1)`` mapping shared by ``nab lock`` and ``nab download`` lives
+    here.  On success it also emits the reproducibility notice when a
+    PROJECT option was set on the CLI, so a result-shaping override is
+    never silent.  ``produces_lock`` picks the wording: ``nab lock`` warns
+    about the lock it produces while ``nab download`` (which writes no
+    lock) warns only that the resolved set reflects the override.
     """
-    try:
-        settings, effective = _layered_run_settings(path, cli_overrides)
-    except SourceConfigError as exc:
-        _fail_config(exc)
-    notice = project_cli_override_notice(effective, produces_lock=produces_lock)
+    if isinstance(ladder, SourceConfigError):
+        _fail_config(ladder)
+    settings = _layered_run_settings(ladder)
+    notice = project_cli_override_notice(ladder, produces_lock=produces_lock)
     if notice is not None:
         sys.stderr.write(notice)
     return settings

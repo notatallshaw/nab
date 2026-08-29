@@ -39,7 +39,13 @@ from nab._download import download
 from nab._lock import lock
 from nab.cli import app, effective_config
 from nab_project.config import NabProjectConfig
-from nab_project.config_sources import OPTIONS, OptionSpec, Scope, SourceRoots
+from nab_project.config_sources import (
+    OPTIONS,
+    OptionSpec,
+    Scope,
+    SourceConfigError,
+    SourceRoots,
+)
 from nab_project.download import DownloadResult
 from nab_project.lockfile import (
     IndexPin,
@@ -823,6 +829,31 @@ class TestCliFlagValues:
         assert covered == set(_CLI_FLAGS)
 
 
+def _fold_run_settings(
+    path: Path,
+    *,
+    cli_offline: bool | None = None,
+    cli_cache_dir: Path | None = None,
+    cli_http_backend: str | None = None,
+    cli_max_concurrency: int | None = None,
+) -> nab_cli.RunSettings:
+    """The run knobs a subcommand folds from ``path`` under these CLI flags.
+
+    The assert reports a ladder holding a config error as itself, rather
+    than as a subscript failure inside the fold.
+    """
+    overrides = nab_cli._cli_overrides(
+        cli_resolution=None,
+        cli_offline=cli_offline,
+        cli_cache_dir=cli_cache_dir,
+        cli_http_backend=cli_http_backend,
+        cli_max_concurrency=cli_max_concurrency,
+    )
+    ladder = nab_cli.read_config_ladder(path, overrides)
+    assert not isinstance(ladder, SourceConfigError), ladder
+    return nab_cli._layered_run_settings(ladder)
+
+
 class TestEffectiveConfigBridge:
     def test_effective_config_default_roots_callable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -840,12 +871,7 @@ class TestEffectiveConfigBridge:
 
     def test_layered_run_settings_defaults_noop(self, tmp_path: Path) -> None:
         proj = _project(tmp_path)
-        settings, _effective = nab_cli._layered_run_settings(
-            proj,
-            nab_cli._cli_overrides(
-                cli_resolution=None, cli_offline=None, cli_cache_dir=None
-            ),
-        )
+        settings = _fold_run_settings(proj)
         assert settings.resolution is None
         assert settings.offline is False
         assert settings.cache_dir is None
@@ -856,21 +882,13 @@ class TestEffectiveConfigBridge:
         self, hermetic_roots: Path
     ) -> None:
         _project(hermetic_roots, 'resolution = "lowest"\n')
-        settings, _effective = nab_cli._layered_run_settings(
-            hermetic_roots / "pyproject.toml",
-            nab_cli._cli_overrides(
-                cli_resolution=None, cli_offline=None, cli_cache_dir=None
-            ),
-        )
+        settings = _fold_run_settings(hermetic_roots / "pyproject.toml")
         assert settings.resolution is ResolutionStrategy.LOWEST
 
     def test_layered_run_settings_cli_offline_set(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
-        settings, _effective = nab_cli._layered_run_settings(
-            hermetic_roots / "pyproject.toml",
-            nab_cli._cli_overrides(
-                cli_resolution=None, cli_offline=True, cli_cache_dir=None
-            ),
+        settings = _fold_run_settings(
+            hermetic_roots / "pyproject.toml", cli_offline=True
         )
         assert settings.offline is True
 
@@ -881,32 +899,23 @@ class TestEffectiveConfigBridge:
         # a lower NAB_OFFLINE=1 env value.
         _project(hermetic_roots)
         monkeypatch.setenv("NAB_OFFLINE", "1")
-        settings, _effective = nab_cli._layered_run_settings(
-            hermetic_roots / "pyproject.toml",
-            nab_cli._cli_overrides(
-                cli_resolution=None, cli_offline=False, cli_cache_dir=None
-            ),
+        settings = _fold_run_settings(
+            hermetic_roots / "pyproject.toml", cli_offline=False
         )
         assert settings.offline is False
 
     def test_cli_no_offline_beats_project_toml(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
         _write(hermetic_roots / "nab.toml", "offline = true\n")
-        settings, _effective = nab_cli._layered_run_settings(
-            hermetic_roots / "pyproject.toml",
-            nab_cli._cli_overrides(
-                cli_resolution=None, cli_offline=False, cli_cache_dir=None
-            ),
+        settings = _fold_run_settings(
+            hermetic_roots / "pyproject.toml", cli_offline=False
         )
         assert settings.offline is False
 
     def test_layered_run_settings_cli_cache_dir(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
-        settings, _effective = nab_cli._layered_run_settings(
-            hermetic_roots / "pyproject.toml",
-            nab_cli._cli_overrides(
-                cli_resolution=None, cli_offline=None, cli_cache_dir=Path("/c/cli")
-            ),
+        settings = _fold_run_settings(
+            hermetic_roots / "pyproject.toml", cli_cache_dir=Path("/c/cli")
         )
         assert settings.cache_dir == Path("/c/cli")
 
@@ -917,23 +926,14 @@ class TestEffectiveConfigBridge:
         _project(hermetic_roots)
         monkeypatch.setenv("NAB_HTTP_BACKEND", "httpx")
         monkeypatch.setenv("NAB_MAX_CONCURRENCY", "3")
-        settings, _effective = nab_cli._layered_run_settings(
-            hermetic_roots / "pyproject.toml",
-            nab_cli._cli_overrides(
-                cli_resolution=None, cli_offline=None, cli_cache_dir=None
-            ),
-        )
+        settings = _fold_run_settings(hermetic_roots / "pyproject.toml")
         assert settings.http_backend == "httpx"
         assert settings.max_concurrency == 3
-        cli_settings, _ = nab_cli._layered_run_settings(
+
+        cli_settings = _fold_run_settings(
             hermetic_roots / "pyproject.toml",
-            nab_cli._cli_overrides(
-                cli_resolution=None,
-                cli_offline=None,
-                cli_cache_dir=None,
-                cli_http_backend="urllib3",
-                cli_max_concurrency=16,
-            ),
+            cli_http_backend="urllib3",
+            cli_max_concurrency=16,
         )
         assert cli_settings.http_backend == "urllib3"
         assert cli_settings.max_concurrency == 16
@@ -1247,9 +1247,10 @@ class TestProjectCliOverrides:
         self, hermetic_roots: Path
     ) -> None:
         proj = _project(hermetic_roots)
-        anchor = nab_cli.lock_anchor(
+        ladder = nab_cli.read_config_ladder(
             proj, {"uploaded-prior-to": "2024-06-01T00:00:00Z"}
         )
+        anchor = nab_cli.lock_anchor(ladder)
         assert anchor == datetime(2024, 6, 1, tzinfo=timezone.utc)
 
     def test_relative_uploaded_prior_to_override_pins_no_anchor(
@@ -1258,17 +1259,19 @@ class TestProjectCliOverrides:
         # A P<n>D override sets the resolve window relative to the run but is
         # not a reusable absolute cutoff, so it pins no lock anchor.
         proj = _project(hermetic_roots)
-        assert nab_cli.lock_anchor(proj, {"uploaded-prior-to": "P7D"}) is None
+        ladder = nab_cli.read_config_ladder(proj, {"uploaded-prior-to": "P7D"})
+        assert nab_cli.lock_anchor(ladder) is None
 
-    def test_lock_anchor_swallows_digit_run_past_int_limit(
+    def test_lock_anchor_none_for_digit_run_past_int_limit(
         self, hermetic_roots: Path
     ) -> None:
         # A digit run past CPython's int limit raises a bare ValueError;
-        # the best-effort anchor read swallows it like any config error.
+        # the ladder read holds it like any config error, so the anchor
+        # read stays quiet.
         proj = _project(
             hermetic_roots, 'environment = { python = "3.' + "9" * 5000 + '" }\n'
         )
-        assert nab_cli.lock_anchor(proj) is None
+        assert nab_cli.lock_anchor(nab_cli.read_config_ladder(proj, {})) is None
 
 
 class TestDownloadLadder:
