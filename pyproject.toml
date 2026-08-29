@@ -67,6 +67,7 @@ exclude = [
     "tests/test_contributing_docs.py",
     "tests/test_embedding_docs.py",
     "tests/test_env_layer.py",
+    "tests/test_markerset_docs.py",
     "tests/test_package_descriptions.py",
     "tests/test_release.py",
     "tests/test_type_check_scope.py",

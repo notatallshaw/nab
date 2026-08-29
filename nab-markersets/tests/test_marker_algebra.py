@@ -249,7 +249,12 @@ def test_from_marker_accepts_marker_object() -> None:
 
 
 def test_from_marker_rejects_other_types() -> None:
-    with pytest.raises(TypeError):
+    # A vendored packaging is a real caller mistake here, and its Marker has the
+    # same class name as the released one, so the message qualifies both.
+    with pytest.raises(
+        TypeError,
+        match=r"expected str or packaging\.markers\.Marker, got builtins\.int",
+    ):
         MarkerSet.from_marker(42)  # type: ignore[arg-type]
 
 

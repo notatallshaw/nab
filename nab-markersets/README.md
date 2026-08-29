@@ -1,48 +1,64 @@
 # nab-markersets
 
-PEP 508 marker algebra: a marker read as the set of environments it
-selects, so markers can be combined and compared instead of only
-evaluated.
+A PEP 508 marker read as the set of environments it selects.
+`packaging` answers "does this marker hold here"; this answers "can
+these two ever both hold", "does one imply the other", and "is this a
+contradiction". `packaging` is its only dependency.
 
-`MarkerSet` holds the states a marker string cannot: the full set of an
-absent marker, the empty set of a contradiction, and complements the
-grammar cannot spell. Intersection, union and complement are closed and
-total. Emptiness, subset, superset, disjointness and equivalence are
-decided, not approximated, by partitioning each referenced variable's
-domain into cells on which every atom is constant and evaluating the
-marker once per cell. `to_marker_string` is the one boundary back to the
-grammar, and the one partial operation.
+```pycon
+>>> from nab_markersets.markersets import MarkerSet
+>>> old = MarkerSet.from_marker('python_version < "3.11"')
+>>> new = MarkerSet.from_marker('python_version >= "3.12"')
+>>> old.is_disjoint(new)
+True
+```
 
-Parsing and evaluation come from
-[`packaging`](https://pypi.org/project/packaging/), so a marker means
-the same thing here as it does there. It is the only dependency.
+A set also holds what a marker string cannot: the full set of an absent
+marker, the empty set of a contradiction, and complements the grammar
+cannot spell. `witness` returns a point, which is how two markers that
+look like one constraint give up the interpreter that separates them.
+
+```pycon
+>>> minor = MarkerSet.from_marker('python_version >= "3.11"')
+>>> exact = MarkerSet.from_marker('python_full_version >= "3.11.0"')
+>>> minor.equivalent(exact)
+False
+>>> (minor & ~exact).witness()["python_full_version"]
+'3.11.0.dev0'
+```
 
 ## When to use it
 
-Use `nab-markersets` when markers have to be reasoned about rather than
-just tested against one environment: whether two requirements can apply
-at once, whether one marker implies another, or what a lock's
-environment rows leave uncovered. It is what
-[`nab`](https://pypi.org/project/nab/) uses for markers.
+When markers have to be reasoned about rather than tested against one
+environment: whether two lock entries can both apply, whether a
+dependency is reachable inside your `requires-python`, or what a set of
+environment rows leaves uncovered. It is what
+[`nab`](https://pypi.org/project/nab/) uses for markers. The guide walks
+through those, and through what the decisions do not decide:
+<https://nab.readthedocs.io/en/stable/how-to/reason-about-markers.html>
 
 ## The public API
 
+The supported API is the module paths below. They will not move without
+a major version bump. Everything else in the package is internal and may
+be renamed or relocated in any release.
+
 ```text
-nab_markersets.DecisionStore
-nab_markersets.IntractableMarkerSet
-nab_markersets.MarkerSet
-nab_markersets.UnserializableMarkerSet
-nab_markersets.variable_names
+nab_markersets.errors       IntractableMarkerSet, UnserializableMarkerSet
+nab_markersets.markersets   DecisionStore, MarkerSet, variable_names
 ```
 
-A `DecisionStore` is scratch that several decisions can share: build one,
-pass it to any method that takes one, and drop it when that piece of
-work is done. Answers never depend on it. Only the object is API;
-what it holds is internal and unversioned.
+The package root binds no names, so importing `nab_markersets` pulls in
+no submodules and a caller loads only what it imports.
 
-`MarkerSet` is built through `from_marker`, `full` and `empty`; calling
-the class raises `TypeError`. That also means an instance does not
-survive `pickle`, which reaches for the constructor on load.
+Three things to know before you call it. A `MarkerSet` is built through
+`from_marker`, `full` or `empty`, so it does not survive `pickle`, which
+reaches for the constructor. `==` is structural, over the tree the set
+was built from, and `equivalent` is the semantic test. And emptiness
+enumerates representative points rather than solving, so two
+constructions read wrong in opposite directions; `MarkerSet`'s own
+docstring shows both.
 
-The API is currently under rapid experimentation, if you use it
-pin to an exact version.
+The engine reads three private `packaging` names so a marker means here
+exactly what it means there, which is why the dependency carries a
+ceiling. The API is under rapid experimentation: pin an exact version.

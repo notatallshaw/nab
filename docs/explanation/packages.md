@@ -13,6 +13,7 @@ versions and ranges, with no knowledge of Python packaging. It does not import
 environments it selects, so markers can be intersected, complemented and
 compared for emptiness, subset and equivalence. Its parser and evaluator come
 from released `packaging`, not from the fork `nab-provider` vendors.
+[Reasoning about markers](../how-to/reason-about-markers.md) works through it.
 
 `nab-provider` is the resolution logic: the provider the solver asks for
 candidates, the target and tag model, marker evaluation, extras expansion, the

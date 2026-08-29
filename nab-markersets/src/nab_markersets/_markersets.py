@@ -476,7 +476,11 @@ def _parse_ast(source: str | Marker) -> list[MarkerNode] | None:
     if isinstance(source, Marker):
         source = str(source)
     elif not isinstance(source, str):
-        msg = f"expected str or Marker, got {type(source).__name__}"
+        kind = type(source)
+        msg = (
+            "expected str or packaging.markers.Marker, got "
+            f"{kind.__module__}.{kind.__qualname__}"
+        )
         raise TypeError(msg)
     if not source.strip():
         return None
@@ -1823,7 +1827,14 @@ def equivalent_within_rows(
     max_cells: int,
     store: Memo | None = None,
 ) -> bool:
-    """Whether two trees agree on every point of ``universe``, decided per row."""
+    """Whether two trees agree on every point of ``universe``, decided per row.
+
+    Deciding each row under its pins keeps a wide multi-platform universe
+    decidable, where complementing the whole matrix at once does not. A universe
+    of ``TRUE`` reduces it to plain global equivalence.
+
+    ``store`` is the caller's scratch when this decision is one of a run.
+    """
     rows = _decompose_rows(universe)
     right_by_row = [restrict_tree(right, row.pins) for row in rows]
     return _rows_equivalent(
