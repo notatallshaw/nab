@@ -2759,15 +2759,15 @@ class TestMarkerDisjointness:
         )
 
     def test_contains_over_approximation_reports_without_witness(self) -> None:
-        # A ``contains`` atom is an opaque, over-approximating boolean.
-        # ``"ab" in v`` implies ``"a" in v``, so no realisable
-        # platform_version satisfies ``"ab" in v and "a" not in v``; the
-        # algebra cannot rule the pair out (over-approximates to
+        # A ``contains`` atom on a version-dispatch variable is an opaque,
+        # over-approximating boolean.  ``"ab" in v`` implies ``"a" in v``, so no
+        # realisable implementation_version satisfies ``"ab" in v and "a" not in
+        # v``; the algebra cannot rule the pair out (over-approximates to
         # non-disjoint) and no concrete witness exists.  The gate stays
-        # conservative and reports the pair without a point.  A declared
-        # env supplying platform_version would fold the atoms away, so
-        # this uses an env that omits it.
-        marker = "'ab' in platform_version and 'a' not in platform_version"
+        # conservative and reports the pair without a point.  A declared env
+        # supplying implementation_version would fold the atoms away, so this
+        # uses an env that omits it.
+        marker = "'ab' in implementation_version and 'a' not in implementation_version"
         with pytest.raises(DisjointnessError, match="not disjoint"):
             validate_marker_disjointness(
                 [

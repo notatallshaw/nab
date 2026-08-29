@@ -1,19 +1,12 @@
-"""The public :class:`MarkerSet`: a marker's denotation as a set of environments.
+"""A PEP 508 marker as the set of environments it selects.
 
-A :class:`MarkerSet` is the denotation of a PEP 508 marker as a set of
-environments, the marker-side counterpart of
+:class:`MarkerSet` is the marker-side counterpart of
 :class:`~packaging.ranges.VersionRange`. It holds the states a marker string
 cannot: the full set of an absent marker, the empty set of a contradiction, and
-complements the grammar cannot spell. It reconciles with the grammar at exactly
-one boundary, :meth:`~MarkerSet.to_marker_string`, which may return ``None`` or
-raise :class:`UnserializableMarkerSet`.
+complements the grammar cannot spell.
 
-Build one with :meth:`MarkerSet.from_marker`, :meth:`MarkerSet.full`, or
-:meth:`MarkerSet.empty`;
-combine with :meth:`intersection`, :meth:`union`, and :meth:`complement` (or
-``&`` / ``|`` / ``~``); and query with the decision procedures. Equality is
-identity; :meth:`equivalent` tests whether two sets denote the same
-environments, since there is no cheap canonical form to key ``==`` on.
+:meth:`~MarkerSet.to_marker_string` converts back, returning ``None`` for the
+full set and raising for the sets above that have no spelling.
 """
 
 from __future__ import annotations
@@ -36,15 +29,10 @@ if TYPE_CHECKING:
     from ._markersets import Formula
     from .markers import Marker
 
-# The cell budget every decision runs under: a resource cap, not a semantic
-# parameter, so it is private and never reaches the public surface. No result
-# depends on its value; a set too complex to decide within it raises
-# IntractableMarkerSet.
+# Resource caps, not semantic parameters: no answer depends on their value, so
+# neither reaches the public surface. `_MAX_CELLS` bounds one decision and
+# `_MAX_WORK` the greedy loop `simplify` runs over many of them.
 _MAX_CELLS = 100_000
-
-# The total cell work one `simplify` may spend. `_MAX_CELLS` bounds a single
-# decision, this bounds the greedy loop that issues them. A runaway guard rather
-# than a tuning knob: the widest marker in nab's own CI locks spends 4.1 million.
 _MAX_WORK = 100_000_000
 
 __all__ = [
@@ -65,12 +53,10 @@ _R = TypeVar("_R")
 
 
 def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
-    """Report stack exhaustion on a deeply nested tree as the resource guard.
+    """Report a tree walk's :class:`RecursionError` as :class:`IntractableMarkerSet`.
 
-    A tree walk recurses as deep as the marker nests, so a marker nested past the
-    interpreter's stack raises :class:`RecursionError`. The public methods it
-    decorates report it as :class:`IntractableMarkerSet`, the one bounded failure
-    the algebra promises on pathological input.
+    A walk recurses as deep as the marker nests, so a deeply nested marker
+    exhausts the stack rather than the cell budget.
     """
 
     @wraps(method)
@@ -85,33 +71,30 @@ def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
 
 
 DecisionStore = _markersets.Memo
-"""Scratch that several decisions can share.
+"""Scratch several decisions can share, for one piece of work.
 
-Each decision partitions the axes its atoms sit on and reads those atoms on
-the points of the resulting cells. A run over related sets also asks the same
-question of the same tree shape more than once. Two decisions over the same
-universe mostly repeat all of that, so passing one store to both keeps the
-work; passing none is correct and starts each cold.
-
-Answers do not depend on it: the emptiness verdicts, partitions and truths it
-holds are functions of their keys alone. It grows with the atoms it has read
-and the tree shapes it has decided, and holds both, so give one to the
-decisions of a single piece of work and drop it after. Not safe to share
-across threads.
+A run over related sets re-decides the same tree shapes and re-partitions the
+same axes. Passing one store to those decisions keeps that work, and passing
+none is always correct: answers never depend on it. It grows with what it has read, so drop it
+when the work is done, and do not share one across threads.
 """
 
 
 class MarkerSet:
     """A set of environments: the denotation of a PEP 508 marker. Immutable.
 
-    Instances are created only through the factories (:meth:`from_marker`,
-    :meth:`full`, or :meth:`empty`);
-    calling ``MarkerSet(...)`` raises :class:`TypeError`.
+    A caller builds one only through the factories (:meth:`from_marker`,
+    :meth:`full`, :meth:`empty`); calling ``MarkerSet(...)`` raises
+    :class:`TypeError`.
 
-    The algebra is closed under :meth:`intersection`, :meth:`union`, and
-    :meth:`complement`. It is total on the set, so those always return a
-    ``MarkerSet``; only :meth:`to_marker_string` is partial, at the marker-grammar
-    boundary. ``==`` is identity; :meth:`equivalent` is semantic equality.
+    :meth:`intersection`, :meth:`union` and :meth:`complement` always return a
+    ``MarkerSet``. :meth:`to_marker_string` can refuse at the marker-grammar
+    boundary, and :meth:`simplify` there or on an empty ``within``. ``==`` is
+    identity; :meth:`equivalent` is semantic.
+
+    :meth:`is_empty`, :meth:`is_full`, :meth:`equivalent_within`,
+    :meth:`witness`, :meth:`simplify` and :meth:`to_marker_string` take an
+    optional ``store``, which shares scratch across a run of related decisions.
     """
 
     __slots__ = ("_tree",)
@@ -137,10 +120,10 @@ class MarkerSet:
     def from_marker(cls, marker: str | Marker) -> MarkerSet:
         """Return the set of environments a marker denotes.
 
-        :raises packaging.markers.InvalidMarker: if ``marker`` is a string that is
-            not a valid PEP 508 marker.
-        :raises IntractableMarkerSet: if a version literal overruns the
-            interpreter's integer-string limit, or the marker nests past the
+        :raises packaging.markers.InvalidMarker: for a string that is not a
+            valid PEP 508 marker.
+        :raises IntractableMarkerSet: if a ``~=`` or ``===`` version literal
+            overruns the integer-string limit, or the marker nests past the
             stack.
         """
         return cls._wrap(_markersets.parse(marker))
@@ -191,18 +174,23 @@ class MarkerSet:
     def is_empty(self, *, store: DecisionStore | None = None) -> bool:
         """Whether no environment satisfies this set (the marker is a contradiction).
 
-        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
+        Not exact on one construction. A substring test on a version-dispatch
+        variable is decided as its own free boolean, because the values
+        embedding a literal are not enumerable from it.
+
+        The set then reads larger than it is, so ``True`` is safe and ``False``
+        is the weak answer. Every predicate but :meth:`witness` and
+        :meth:`evaluate` reduces to this one and inherits that gap.
 
         :raises IntractableMarkerSet: if deciding the set exceeds the internal
-            cell budget, or the marker nests past the stack.
+            cell budget, if a version literal overruns the integer-string limit,
+            or if the marker nests past the stack.
         """
         return _markersets.is_empty(self._tree, _MAX_CELLS, store)
 
     @_bounded
     def is_full(self, *, store: DecisionStore | None = None) -> bool:
-        """Whether every environment satisfies this set (the marker is a tautology).
-
-        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
+        """Whether every environment satisfies this set: ``(~self).is_empty()``.
 
         :raises IntractableMarkerSet: see :meth:`is_empty`.
         """
@@ -212,7 +200,7 @@ class MarkerSet:
     def is_disjoint(self, other: MarkerSet) -> bool:
         """Whether this set and ``other`` share no environment.
 
-        Equivalent to ``(self & other).is_empty()``.
+        ``(self & other).is_empty()``.
         """
         return _markersets.is_empty(
             _markersets.make_and((self._tree, other._tree)), _MAX_CELLS
@@ -222,7 +210,7 @@ class MarkerSet:
     def is_subset(self, other: MarkerSet) -> bool:
         """Whether every environment in this set is in ``other``.
 
-        The set-algebra reading of ``self`` implies ``other``.
+        ``(self & ~other).is_empty()``, the set reading of implication.
         """
         return _markersets.is_empty(
             _markersets.make_and((self._tree, _markersets.make_not(other._tree))),
@@ -237,9 +225,10 @@ class MarkerSet:
     def equivalent(self, other: MarkerSet) -> bool:
         """Whether the two sets denote the same environments.
 
-        The semantic equality ``==`` cannot cheaply provide, so it is a method.
+        Containment both ways. ``==`` stays identity because there is no cheap
+        canonical form to key it on.
 
-        Both containments read the same two trees, so they share one partition memo.
+        The two decisions read the same trees, so they share one memo.
         """
         store = _markersets.Memo()
         return _markersets.is_empty(
@@ -256,14 +245,11 @@ class MarkerSet:
     def equivalent_within(
         self, other: MarkerSet, within: MarkerSet, *, store: DecisionStore | None = None
     ) -> bool:
-        """Whether the two sets denote the same environments on every point of ``within``.
+        """Whether the sets denote the same environments on every point of ``within``.
 
-        The row-restricted counterpart of :meth:`equivalent`, deciding each of
-        ``within``'s rows under its pins so it stays decidable on wide
-        multi-platform universes. A universe of :meth:`full` reduces it to plain
-        :meth:`equivalent`.
-
-        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
+        Deciding each row of ``within`` under its own pins keeps a wide
+        multi-platform universe decidable, whereas complementing ``within`` as a
+        whole does not. Use :meth:`equivalent` when the universe is full.
         """
         return _markersets.equivalent_within_rows(
             self._tree, other._tree, within._tree, _MAX_CELLS, store
@@ -280,14 +266,14 @@ class MarkerSet:
     ) -> MarkerSet:
         """Substitute the provided variables, returning a residual set.
 
-        With ``on_unknown_variable="error"`` a referenced variable absent from
-        ``env`` raises :class:`ValueError`; with ``"residual"`` (the default) it
-        is left in the residual set.
+        A variable ``env`` omits stays in the result, unless
+        ``on_unknown_variable="error"`` asks for a :class:`ValueError` instead.
 
-        :raises ValueError: for an unknown ``on_unknown_variable``, or for a
-            referenced-but-unprovided variable under ``"error"``.
-        :raises IntractableMarkerSet: if a version literal or value overruns the
-            integer-string limit, or the marker nests past the stack.
+        :raises ValueError: for an unknown ``on_unknown_variable``, or for an
+            unprovided variable under ``"error"``.
+        :raises IntractableMarkerSet: if a version literal or value overruns
+            the integer-string limit on a variable ``env`` supplies, or the
+            marker nests past the stack.
         """
         if on_unknown_variable not in ("residual", "error"):
             msg = (
@@ -312,10 +298,13 @@ class MarkerSet:
 
     @_bounded
     def evaluate(self, env: Mapping[str, str | AbstractSet[str]]) -> bool:
-        """Whether a full environment is in the set (membership variables are sets).
+        """Whether a full environment is in the set (set variables take sets).
 
-        :raises packaging.markers.UndefinedEnvironmentName: if the marker
-            references a variable ``env`` does not supply.
+        Exact: no cell decomposition runs, so the gap :meth:`is_empty` carries
+        does not apply.
+
+        :raises packaging.markers.UndefinedEnvironmentName: for a variable
+            ``env`` does not supply.
         :raises IntractableMarkerSet: if a version literal or value overruns the
             integer-string limit.
         """
@@ -326,16 +315,14 @@ class MarkerSet:
     def witness(
         self, *, store: DecisionStore | None = None
     ) -> dict[str, str | frozenset[str]] | None:
-        """Return a satisfying environment, or ``None`` when none is found.
+        """Return an environment in this set, or ``None`` when none is found.
 
-        ``None`` is returned for the empty set. The search over ``contains``
-        atoms is incomplete, so ``None`` may also be returned for a non-empty set
-        when the concrete-string constraints on one variable (a value atom, one
-        or more ``contains`` atoms, or a mix) have no jointly realisable cell
-        representative. ``python_version`` and ``python_full_version`` share one
-        axis, so those constraints can sit on different variables.
+        Never wrong: the environment is checked against the set before it is
+        returned, so it does not inherit the gap :meth:`is_empty` carries.
 
-        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
+        ``None`` does not prove the set empty. The search enumerates the cells
+        :meth:`is_empty` decides on, so a set whose only environments lie
+        outside them is inhabited and still yields ``None``.
         """
         return _markersets.witness(self._tree, _MAX_CELLS, store)
 
@@ -345,19 +332,21 @@ class MarkerSet:
     def simplify(
         self, *, within: MarkerSet, store: DecisionStore | None = None
     ) -> MarkerSet:
-        """Return the smallest set equivalent to this one on every point of ``within``.
+        """Return a set that agrees with this one on every point of ``within``.
 
-        ``within`` is the universe the result must agree with this set over: pass
-        the union of a lock's declared environments for universe-aware
-        simplification, or :meth:`full` for a context-free factoring.
+        Pass the union of a lock's declared environments as ``within``, or
+        :meth:`full` for a context-free factoring.
 
-        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
+        Clauses and then atoms are dropped greedily, so the result is not the
+        smallest equivalent set, and a factored input whose clauses are all
+        needed comes back expanded.
 
         :raises ValueError: if ``within`` is the empty set, which makes every set
             vacuously equivalent.
-        :raises IntractableMarkerSet: if deciding a removal exceeds the internal
-            cell budget, if the whole run exceeds the internal work budget, or
-            if the marker nests past the stack.
+        :raises UnserializableMarkerSet: for a complement the grammar cannot
+            negate, such as ``~(python_version >= "3.9")``.
+        :raises IntractableMarkerSet: see :meth:`is_empty`, plus the work budget
+            the greedy loop runs under.
         """
         if _markersets.universe_is_empty(within._tree, _MAX_CELLS, store):
             msg = "within must not be the empty set"
@@ -372,16 +361,14 @@ class MarkerSet:
 
     @_bounded
     def to_marker_string(self, *, store: DecisionStore | None = None) -> str | None:
-        """Return a marker string that re-parses to an equivalent set, or ``None``.
+        """Return a marker string denoting this set, or ``None`` for the full set.
 
-        ``None`` means the full set (no marker needed). The empty set, and any set
-        whose complement structure the marker grammar cannot express, raise
-        :class:`UnserializableMarkerSet` rather than emit a wrong string. The
-        produced string is verified equivalent to this set before it is returned.
+        Two kinds raise rather than getting a string for some other set: the
+        empty set, and one whose complement the grammar cannot negate.
+        ``~(python_version == "3.9")`` is spellable and
+        ``~(python_version >= "3.9")`` is not.
 
-        ``store`` shares scratch with other decisions (:class:`DecisionStore`).
-        The two emptiness decisions read the same atoms, so they share one
-        partition memo whether or not one is passed.
+        What is returned is parsed back and checked equivalent first.
         """
         if store is None:
             store = _markersets.Memo()

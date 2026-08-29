@@ -8,7 +8,9 @@ Two ground-truth cross-checks against the vendored packaging:
   equivalent is checked against an exact packaging grid, and any disagreement
   where the algebra is more permissive than the grid is a failure.
 
-Both use a deterministic, CI-fast generator (a few hundred cases).
+Both use a deterministic, CI-fast generator (a few hundred cases). The census at
+the end of the file is exhaustive instead, over every two-atom marker its
+alphabet spells.
 """
 
 from __future__ import annotations
@@ -45,6 +47,8 @@ PFV_GRID = [
     "1!4.0",
     "2!0",
     "3.9.7+local",
+    "3.9.0.1",
+    "1!3.0.1",
 ]
 SYS_GRID = ["linux", "win32", "darwin"]
 MACHINE_GRID = ["x86_64", "aarch64", "arm64"]
@@ -77,6 +81,8 @@ def _grid() -> list[dict[str, str]]:
                 "platform_version": "#1 SMP",
             }
         )
+    for release in ("6", "6.0.1", "6.1", "6.1.0.4", "7", "generic"):
+        envs.append({**envs[0], "platform_release": release})
     return envs
 
 
@@ -109,6 +115,10 @@ VERSION_ATOMS = [
     'python_version > "3.14.0rc1"',
     'python_full_version > "1!3.9"',
     'python_full_version ~= "1!3.9"',
+    'python_full_version > "3.9"',
+    'python_full_version < "3.9.1"',
+    'python_full_version > "1!3"',
+    'python_full_version < "1!3.1"',
 ]
 STRING_ATOMS = [
     'sys_platform == "linux"',
@@ -116,11 +126,20 @@ STRING_ATOMS = [
     'platform_machine == "x86_64"',
     'platform_machine != "arm64"',
     'os_name == "posix"',
+    'sys_platform in "linuxwin32"',
+    '"win" in sys_platform',
+    '"posix" not in os_name',
+    '"arm" in platform_machine',
+    'os_name >= "posix"',
 ]
 TWIN_ATOMS = [
     'implementation_version == "pypy"',
     'implementation_version != "foo"',
     'implementation_version >= "3.9"',
+    'platform_release > "6"',
+    'platform_release < "6.1"',
+    'platform_release > "6.1"',
+    'platform_release <= "6.1.0.4"',
 ]
 ALPHABET = VERSION_ATOMS + STRING_ATOMS + TWIN_ATOMS
 
@@ -186,6 +205,112 @@ def test_is_empty_and_tautology_never_unsound() -> None:
             assert not any(marker.evaluate(e) for e in GRID), ("empty", text)
         if algebra.is_full():
             assert all(marker.evaluate(e) for e in GRID), ("tautology", text)
+
+
+# ------------------------------------------------------------------- census
+
+# Every two-atom marker over these, against every environment the values below
+# spell. The alphabet holds both directions of each shape the decision reads
+# through a pool: a value comparison, a substring test and an ordered band, on a
+# string variable, on both pure-version variables and on a twin.
+CENSUS_ATOMS = [
+    'os_name == "posix"',
+    'os_name != "posix"',
+    'os_name >= "posix"',
+    '"posix" in os_name',
+    '"posix" not in os_name',
+    'python_version == "3.9"',
+    'python_version >= "3.10"',
+    '"9" in python_version',
+    '"9" not in python_version',
+    'python_full_version < "3.14"',
+    'python_full_version > "3.9.7"',
+    'platform_release == "6"',
+    'platform_release > "6"',
+    'platform_release < "6.1"',
+    '"zq" in platform_release',
+    '"zq" not in platform_release',
+]
+
+# Wide enough to realise every truth vector the atoms admit together, which is
+# what makes an unsatisfied marker evidence rather than a gap in the values.
+# platform_release carries the awkward ones: 6.0.1 sits inside the open band,
+# and 6.0+zq embeds a literal while still comparing as a version.
+CENSUS_VALUES = {
+    "os_name": ["posix", "nt", "posixx", "xposix", "java"],
+    "python_version": ["3.9", "3.10", "3.11", "9.0", "3.19"],
+    "python_full_version": [
+        "3.9.0",
+        "3.9.7",
+        "3.9.8",
+        "3.10.0",
+        "3.13.9",
+        "3.14.0",
+        "9.0.0",
+    ],
+    "platform_release": [
+        "6",
+        "6.0",
+        "6.0.1",
+        "6.1",
+        "6.0+zq",
+        "6zq",
+        "zq",
+        "6.0.1+zq",
+        "7",
+        "generic",
+    ],
+}
+
+# A substring test on a version-dispatch variable is decided as its own free
+# boolean, so a marker pairing one with a value comparison reads as inhabited
+# when it is not. The gap is deliberate: no pool built from these literals mints
+# 6.0+zq, which is what makes platform_release == "6" and "zq" in
+# platform_release right.
+CENSUS_OVER_APPROXIMATE = {
+    'python_version == "3.9" and "9" not in python_version',
+    '"9" not in python_version and python_version == "3.9"',
+}
+
+
+def _census_environments() -> list[dict[str, str]]:
+    """Every combination of CENSUS_VALUES, over a fixed base for the rest."""
+    names = sorted(CENSUS_VALUES)
+    columns = [CENSUS_VALUES[name] for name in names]
+    return [
+        {**GRID[0], **dict(zip(names, values, strict=True))}
+        for values in itertools.product(*columns)
+    ]
+
+
+def test_two_atom_census_pins_soundness_and_its_one_gap() -> None:
+    """No marker decides empty while inhabited, and the gap is exactly two.
+
+    Both halves discriminate. Deciding an inhabited marker empty is the failure
+    that reaches a caller as a dropped requirement, and a widened gap costs
+    precision without announcing itself.
+    """
+    environments = _census_environments()
+    joined = [
+        f"{left}{joiner}{right}"
+        for left in CENSUS_ATOMS
+        for right in CENSUS_ATOMS
+        for joiner in (" and ", " or ")
+    ]
+
+    unsound, over_approximate = [], set()
+    for text in joined:
+        inhabited = any(Marker(text).evaluate(env) for env in environments)
+        if MarkerSet.from_marker(text).is_empty():
+            if inhabited:
+                unsound.append(text)
+        elif not inhabited:
+            over_approximate.add(text)
+
+    assert len(joined) == 512
+    assert len(environments) == 1750
+    assert unsound == []
+    assert over_approximate == CENSUS_OVER_APPROXIMATE
 
 
 # --------------------------------------------------------------------- laws
