@@ -66,6 +66,32 @@ def _make_tree(tmp_path: Path, version: str, pin: str) -> tuple[Path, Path]:
     return root, member
 
 
+def _use_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    version: str,
+    pin: str,
+    literal: str | None = None,
+) -> None:
+    """Build a workspace tree and point release.py's path constants at it.
+
+    ``literal`` is the version the tree's version module holds, defaulting to
+    the version its manifests hold.
+    """
+    root, member = _make_tree(tmp_path, version, pin)
+    module = tmp_path / "_version.py"
+    module.write_text(release._version_module(literal or version), encoding="utf-8")
+    monkeypatch.setattr(release, "PYPROJECT_PATHS", (root, member))
+    monkeypatch.setattr(release, "VERSION_LITERAL_PATHS", (module,))
+
+
+def _version_modules_on_disk() -> set[Path]:
+    """Return every ``_version.py`` under the workspace's shipped source trees."""
+    roots = [release.REPO_ROOT / "src"]
+    roots += [release.REPO_ROOT / name / "src" for name in release.WORKSPACE_PACKAGES]
+    return {path for root in roots for path in root.rglob("_version.py")}
+
+
 def test_cross_pin() -> None:
     assert release.cross_pin("0.0.3") == "==0.0.3"
 
@@ -115,11 +141,37 @@ def test_apply_version_round_trips(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root, member = _make_tree(tmp_path, "0.0.2", "0.0.2")
+    literals = (tmp_path / "one_version.py", tmp_path / "two_version.py")
     monkeypatch.setattr(release, "PYPROJECT_PATHS", (root, member))
+    monkeypatch.setattr(release, "VERSION_LITERAL_PATHS", literals)
+
     release.apply_version("0.0.3")
+
     assert release.read_current_version() == "0.0.3"
     assert '"nab-project==0.0.3"' in root.read_text(encoding="utf-8")
     assert "typing_extensions>=4.6" in member.read_text(encoding="utf-8")
+
+    written = release._version_module("0.0.3")
+    assert [path.read_text(encoding="utf-8") for path in literals] == [written] * 2
+
+
+def test_version_module_normalizes_the_version() -> None:
+    """A non-normalized release is written the way the metadata will spell it."""
+    assert release._version_module("1.0.0-rc1").endswith('__version__ = "1.0.0rc1"\n')
+
+
+def test_version_literal_paths_names_every_version_module() -> None:
+    """The constant names every version module the source trees hold."""
+    assert set(release.VERSION_LITERAL_PATHS) == _version_modules_on_disk()
+
+
+@pytest.mark.parametrize(
+    "path", release.VERSION_LITERAL_PATHS, ids=lambda p: p.parent.name
+)
+def test_version_modules_hold_what_release_would_write(path: Path) -> None:
+    """Each checked-in version module is byte for byte what a release writes."""
+    expected = release._version_module(release.read_current_version())
+    assert path.read_text(encoding="utf-8") == expected
 
 
 def test_read_current_version_rejects_drift(
@@ -135,16 +187,14 @@ def test_read_current_version_rejects_drift(
 
 
 def test_check_release_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    root, member = _make_tree(tmp_path, "0.0.3", "0.0.3")
-    monkeypatch.setattr(release, "PYPROJECT_PATHS", (root, member))
+    _use_tree(tmp_path, monkeypatch, "0.0.3", "0.0.3")
     release.check_release("v0.0.3")
 
 
 def test_check_release_rejects_missing_v(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, member = _make_tree(tmp_path, "0.0.3", "0.0.3")
-    monkeypatch.setattr(release, "PYPROJECT_PATHS", (root, member))
+    _use_tree(tmp_path, monkeypatch, "0.0.3", "0.0.3")
     with pytest.raises(SystemExit, match="must start with"):
         release.check_release("0.0.3")
 
@@ -152,8 +202,7 @@ def test_check_release_rejects_missing_v(
 def test_check_release_rejects_tag_mismatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, member = _make_tree(tmp_path, "0.0.3", "0.0.3")
-    monkeypatch.setattr(release, "PYPROJECT_PATHS", (root, member))
+    _use_tree(tmp_path, monkeypatch, "0.0.3", "0.0.3")
     with pytest.raises(SystemExit, match="does not match"):
         release.check_release("v0.0.4")
 
@@ -161,8 +210,7 @@ def test_check_release_rejects_tag_mismatch(
 def test_check_release_rejects_dev(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, member = _make_tree(tmp_path, "0.0.3.dev0", "0.0.3.dev0")
-    monkeypatch.setattr(release, "PYPROJECT_PATHS", (root, member))
+    _use_tree(tmp_path, monkeypatch, "0.0.3.dev0", "0.0.3.dev0")
     with pytest.raises(SystemExit, match="dev version"):
         release.check_release("v0.0.3.dev0")
 
@@ -170,9 +218,16 @@ def test_check_release_rejects_dev(
 def test_check_release_rejects_stale_pin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    root, member = _make_tree(tmp_path, "0.0.3", "0.0.2")
-    monkeypatch.setattr(release, "PYPROJECT_PATHS", (root, member))
+    _use_tree(tmp_path, monkeypatch, "0.0.3", "0.0.2")
     with pytest.raises(SystemExit, match="pinned"):
+        release.check_release("v0.0.3")
+
+
+def test_check_release_rejects_stale_version_literal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_tree(tmp_path, monkeypatch, "0.0.3", "0.0.3", literal="0.0.2")
+    with pytest.raises(SystemExit, match="version literal"):
         release.check_release("v0.0.3")
 
 

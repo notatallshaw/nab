@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import gzip
 import zlib
-from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 from nab_provider.errors import HttpError, UnserveableUrlError
 
+from ._version import __version__
 from .retry_limits import RETRY_STATUSES
 
 if TYPE_CHECKING:
@@ -34,16 +34,8 @@ __all__ = [
     "raise_unless_ok",
 ]
 
-
-def _user_agent() -> str:
-    """Return the ``nab-index/<version>`` name PyPI's API guidelines ask for."""
-    try:
-        return f"nab-index/{version('nab-index')}"
-    except PackageNotFoundError:
-        return "nab-index/0.0.0+unknown"
-
-
-USER_AGENT: Final[str] = _user_agent()
+# The name PyPI's API guidelines ask a client to send.
+USER_AGENT: Final[str] = f"nab-index/{__version__}"
 
 # Sent on every request unless the caller overrides an entry.
 DEFAULT_HEADERS: Final[dict[str, str]] = {
