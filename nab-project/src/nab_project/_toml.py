@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import tomli
 
 from . import toml_io
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
-def tool_nab_section(data: dict[str, Any]) -> Any:
+
+def tool_nab_section(data: Mapping[str, Any]) -> Any:
     """Return the raw ``[tool.nab]`` value from parsed TOML ``data``.
 
     Returns ``{}`` when ``[tool]`` is absent or is not a table, so callers

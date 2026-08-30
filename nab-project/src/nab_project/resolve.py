@@ -28,7 +28,7 @@ from collections import defaultdict
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -57,6 +57,7 @@ from nab_provider.target import (
 )
 from nab_resolver.errors import ResolutionError
 
+from . import pyproject_files, toml_io
 from ._resolve.engine import (
     EnvSignature,
     InstallContexts,
@@ -87,13 +88,6 @@ from .config import (
 )
 from .fetch import FetchCoordinator
 from .lockfile import LockInput, TargetLock
-from .pyproject_files import (
-    read_pyproject_build_requires,
-    read_pyproject_dependencies,
-    read_pyproject_groups,
-    read_pyproject_name,
-    read_pyproject_optional_dependencies,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -181,21 +175,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     config = with_python_override(config, python_version)
     targets = plan_targets(config)
 
-    tables = (
-        _tables_for_build_requires(path)
-        if build_requirements
-        else _ProjectTables(
-            dependencies=read_pyproject_dependencies(path),
-            groups=read_pyproject_groups(path),
-            optional=read_pyproject_optional_dependencies(path),
-            project_name=read_pyproject_name(path),
-            build_requires=(
-                read_pyproject_build_requires(path)
-                if config.build_group is not None
-                else []
-            ),
-        )
-    )
+    tables = _project_tables(path, config, build_requirements=build_requirements)
 
     # ``default-groups`` is project policy: a default install activates
     # them, so they join the CLI selection.
@@ -497,15 +477,41 @@ def _carried_by(
     return (), carried
 
 
-def _tables_for_build_requires(path: Path) -> _ProjectTables:
-    """Read ``path`` as a project whose dependencies are its build requirements.
+def _project_tables(
+    path: Path, config: NabProjectConfig, *, build_requirements: bool
+) -> _ProjectTables:
+    """Read every table the resolve needs off one parse of ``path``.
+
+    The document is not returned, so the resolve holds the tables it reads
+    rather than the whole file.
+    """
+    document = toml_io.load_path(path)
+    if build_requirements:
+        return _tables_for_build_requires(document, path)
+    return _ProjectTables(
+        dependencies=pyproject_files.project_dependencies(document),
+        groups=pyproject_files.dependency_groups(document),
+        optional=pyproject_files.project_optional_dependencies(document),
+        project_name=pyproject_files.project_name(document),
+        build_requires=(
+            pyproject_files.build_system_requires(document, path)
+            if config.build_group is not None
+            else []
+        ),
+    )
+
+
+def _tables_for_build_requires(
+    document: Mapping[str, Any], path: Path
+) -> _ProjectTables:
+    """Read ``document`` as a project whose dependencies are its build requirements.
 
     ``[build-system].requires`` is one flat list, so the group and extra
     tables are empty, and the project name with them: it is read only to
-    expand self-referencing extras.
+    expand self-referencing extras.  ``path`` names the file in the errors.
     """
     return _ProjectTables(
-        dependencies=read_pyproject_build_requires(path),
+        dependencies=pyproject_files.build_system_requires(document, path),
         groups={},
         optional={},
         project_name=None,

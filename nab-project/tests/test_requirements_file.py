@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from nab_project.pyproject_files import (
+    build_system_requires,
     read_pyproject_build_requires,
     read_pyproject_dependencies,
     read_pyproject_groups,
@@ -281,19 +282,22 @@ class TestReadPyprojectBuildRequires:
         """No [build-system] is not the PEP 517 default, it is an error."""
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text('[project]\nname = "foo"\n')
-        with pytest.raises(
-            InvalidProjectRequirementError, match=r"declares no \[build-system\]"
-        ):
+        with pytest.raises(InvalidProjectRequirementError) as excinfo:
             read_pyproject_build_requires(p)
+
+        assert str(excinfo.value).startswith(f"{p} declares no [build-system]")
 
     def test_missing_requires_key_raises(self, tmp_path: object) -> None:
         """PEP 518 makes requires mandatory once [build-system] is present."""
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text('[build-system]\nbuild-backend = "flit_core.buildapi"\n')
-        with pytest.raises(
-            InvalidProjectRequirementError, match=r"\[build-system\].requires"
-        ):
+        with pytest.raises(InvalidProjectRequirementError) as excinfo:
             read_pyproject_build_requires(p)
+
+        assert str(excinfo.value) == (
+            f"[build-system].requires is required by PEP 518 and {p}"
+            " does not declare it"
+        )
 
     def test_non_table_build_system_raises(self, tmp_path: object) -> None:
         """A [build-system] that is not a table is malformed, not absent."""
@@ -327,6 +331,14 @@ class TestReadPyprojectBuildRequires:
         p = Path(str(tmp_path)) / "missing.toml"
         with pytest.raises(FileNotFoundError):
             read_pyproject_build_requires(p)
+
+    def test_the_path_names_the_file_the_error_blames(self, tmp_path: object) -> None:
+        """``build_system_requires`` reads the document and blames the path."""
+        p = Path(str(tmp_path)) / "pyproject.toml"
+        with pytest.raises(InvalidProjectRequirementError) as excinfo:
+            build_system_requires({"project": {"name": "foo"}}, p)
+
+        assert str(excinfo.value).startswith(f"{p} declares no [build-system]")
 
 
 class TestReadPyprojectGroups:

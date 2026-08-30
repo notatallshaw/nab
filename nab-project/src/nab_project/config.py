@@ -661,8 +661,9 @@ def read_pyproject_config(
     if anchor is None:
         anchor = datetime.now(timezone.utc)
     pyproject_dir = realpath(path.parent)
-    _reject_unknown_pyproject_keys(path)
-    project_requires_python = _read_project_requires_python(path)
+    document = _read_pyproject_document(path)
+    _reject_unknown_pyproject_keys(document)
+    project_requires_python = _read_project_requires_python(document)
     # Point the pyproject root at ``pyproject_dir / path.name`` (not
     # ``realpath(path)``) so the registry's declaring directory is the
     # symlink's own directory, matching the historical local-sources base
@@ -683,7 +684,9 @@ def read_pyproject_config(
         pyproject_dir=pyproject_dir,
         project_requires_python=project_requires_python,
     )
-    _validate_configured_groups(effective["base-group"], effective["build-group"], path)
+    _validate_configured_groups(
+        effective["base-group"], effective["build-group"], document
+    )
     if discover_workspace:
         config = _apply_workspace_discovery(
             path, config, declared_in=effective["workspace"].origin.label
@@ -926,28 +929,28 @@ def _apply_workspace_discovery(
     )
 
 
-def _reject_unknown_pyproject_keys(path: Path) -> None:
-    """Reject a USER-scope or unknown key in pyproject ``[tool.nab]``.
-
-    Run before the registry merge so the resolve reports a typo'd
-    ``[tool.nab]`` key and a USER-scope key set in pyproject with the
-    established messages.  A USER-scope option (``offline``, ``cache-dir``)
-    surfaces the category error; an unknown key fails loud rather than being
-    silently dropped.  Reads the pyproject raw directly; the registry merge
-    reads the same file again, and this keeps the unknown-key error a
-    ``ConfigError`` on the pyproject surface for everything that is a known
-    key.
-    """
+def _read_pyproject_document(path: Path) -> dict[str, Any]:
+    """Parse ``path``, reporting an unreadable or malformed file as ``ConfigError``."""
     try:
-        with path.open("rb") as f:
-            data = toml_io.load(f)
+        return toml_io.load_path(path)
     except (UnicodeDecodeError, tomli.TOMLDecodeError) as exc:
         msg = f"{path} is not valid TOML: {exc}"
         raise ConfigError(msg) from exc
     except OSError as exc:
         msg = f"cannot read {path}: {exc}"
         raise ConfigError(msg) from exc
-    raw = tool_nab_section(data)
+
+
+def _reject_unknown_pyproject_keys(document: Mapping[str, Any]) -> None:
+    """Reject a USER-scope or unknown key in pyproject ``[tool.nab]``.
+
+    Run before the registry merge so the resolve reports a typo'd
+    ``[tool.nab]`` key and a USER-scope key set in pyproject with the
+    established messages.  A USER-scope option (``offline``, ``cache-dir``)
+    surfaces the category error; an unknown key fails loud rather than being
+    silently dropped.
+    """
+    raw = tool_nab_section(document)
     if not isinstance(raw, dict):
         msg = f"[tool.nab] must be a table, got {type(raw).__name__}"
         raise ConfigError(msg)
@@ -1406,11 +1409,9 @@ def _option_label(value: EffectiveValue) -> str:
     return value.spec.cli_flag
 
 
-def _declared_group_names(path: Path) -> tuple[str, ...]:
+def _declared_group_names(document: Mapping[str, Any]) -> tuple[str, ...]:
     """Return the group names the project declares in ``[dependency-groups]``."""
-    with path.open("rb") as f:
-        data = toml_io.load(f)
-    groups = data.get("dependency-groups")
+    groups = document.get("dependency-groups")
     if not isinstance(groups, dict):
         return ()
     return tuple(groups)
@@ -1438,20 +1439,22 @@ def _reject_declared_group_collision(
 
 
 def _validate_configured_groups(
-    base_group: EffectiveValue, build_group: EffectiveValue, path: Path
+    base_group: EffectiveValue,
+    build_group: EffectiveValue,
+    document: Mapping[str, Any],
 ) -> None:
     """Check ``base-group`` and ``build-group`` against each other and the file.
 
     Checked as the file is read rather than at emission, so it costs no
     resolve and holds for every output format.  ``[dependency-groups]`` is
-    read once for both, and only when ``base-group`` is set, since a
-    ``build-group`` without one has already been refused.
+    consulted only when ``base-group`` is set, since a ``build-group``
+    without one has already been refused.
     """
     _validate_build_group_has_a_base_group(build_group, base_group)
     if base_group.value is None:
         return
 
-    declared = _declared_group_names(path)
+    declared = _declared_group_names(document)
     _reject_declared_group_collision(base_group, declared)
     _validate_build_group_is_free(build_group, base_group, declared)
 
@@ -1503,18 +1506,14 @@ def _validate_build_group_is_free(
     _reject_declared_group_collision(build_group, declared)
 
 
-def _read_project_requires_python(path: Path) -> str | None:
+def _read_project_requires_python(document: Mapping[str, Any]) -> str | None:
     """Read ``[project].requires-python``, the fallback declaration source.
 
     ``[tool.nab].requires-python`` (and ``--project-requires-python``) wins
     when set; otherwise the project's own declaration is what the lock
-    records.  The file has already been parsed as TOML by
-    :func:`_reject_unknown_pyproject_keys`, so a decode error cannot reach
-    here.
+    records.
     """
-    with path.open("rb") as f:
-        data = toml_io.load(f)
-    project = data.get("project")
+    project = document.get("project")
     if not isinstance(project, dict) or "requires-python" not in project:
         return None
     return _parse_requires_python(project["requires-python"])

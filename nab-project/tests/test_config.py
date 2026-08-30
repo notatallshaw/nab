@@ -6,6 +6,7 @@ import errno
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -67,6 +68,10 @@ from nab_provider.provider import (
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget, declared_range_marker, host_environment
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from contextlib import AbstractContextManager
 
 
 def write(tmp_path: Path, body: str) -> Path:
@@ -5626,3 +5631,52 @@ class TestProjectNabTomlGateAndConflict:
         (tmp_path / "nab.toml").write_text('[environment]\nplatform = "linux_x86_64"\n')
         with pytest.raises(SourceConfigError, match="conflicting values"):
             read_pyproject_config(path, discover_workspace=False)
+
+
+class TestPyprojectParseCount:
+    """``read_pyproject_config`` reads its own tables off one parse.
+
+    Two parses of the file remain: that one, and the config layer's own read
+    of ``[tool.nab]`` through :mod:`~nab_project.config_sources`.
+    """
+
+    def test_the_key_check_and_requires_python_share_a_parse(
+        self,
+        tmp_path: Path,
+        record_parses: Callable[[], AbstractContextManager[list[str]]],
+    ) -> None:
+        """The unknown-key check and ``[project].requires-python`` read once."""
+        body = (
+            '[project]\nname = "x"\nversion = "0"\nrequires-python = ">=3.9"\n'
+            '[tool.nab]\nresolution = "lowest"\n'
+        )
+        path = tmp_path / "pyproject.toml"
+        path.write_bytes(body.encode())
+
+        with record_parses() as parsed:
+            config = read_pyproject_config(path, discover_workspace=False)
+
+        assert parsed.count(body) == 2
+        assert config.requires_python == ">=3.9"
+
+    def test_the_declared_group_check_shares_that_parse(
+        self,
+        tmp_path: Path,
+        record_parses: Callable[[], AbstractContextManager[list[str]]],
+    ) -> None:
+        """``base-group`` is checked against ``[dependency-groups]`` off it too."""
+        body = (
+            '[project]\nname = "x"\nversion = "0"\n'
+            "[dependency-groups]\ndev = []\n"
+            '[tool.nab]\nbase-group = "dev"\n'
+        )
+        path = tmp_path / "pyproject.toml"
+        path.write_bytes(body.encode())
+
+        with (
+            record_parses() as parsed,
+            pytest.raises(ConfigError, match="are the same name"),
+        ):
+            read_pyproject_config(path, discover_workspace=False)
+
+        assert parsed.count(body) == 2

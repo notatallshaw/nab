@@ -121,6 +121,31 @@ class TestParseSuccess:
     def test_load_returns_the_table(self) -> None:
         assert toml_io.load(io.BytesIO(b"count = 1\n")) == {"count": 1}
 
+    def test_load_path_returns_the_table(self, tmp_path: Path) -> None:
+        document = tmp_path / "pyproject.toml"
+        document.write_bytes(b'[project]\nname = "demo"\n')
+        assert toml_io.load_path(document) == {"project": {"name": "demo"}}
+
+
+class TestLoadPathFailures:
+    """A failed read reaches the caller unwrapped."""
+
+    def test_a_missing_file_stays_an_os_error(self, tmp_path: Path) -> None:
+        with pytest.raises(FileNotFoundError):
+            toml_io.load_path(tmp_path / "absent.toml")
+
+    def test_undecodable_bytes_stay_a_unicode_error(self, tmp_path: Path) -> None:
+        document = tmp_path / "pyproject.toml"
+        document.write_bytes(b'name = "\xe9"')
+        with pytest.raises(UnicodeDecodeError):
+            toml_io.load_path(document)
+
+    def test_a_syntax_error_stays_a_decode_error(self, tmp_path: Path) -> None:
+        document = tmp_path / "pyproject.toml"
+        document.write_bytes(b"count = [")
+        with pytest.raises(tomli.TOMLDecodeError, match="Invalid value"):
+            toml_io.load_path(document)
+
 
 class TestCensus:
     """Every shipped module parses through :mod:`nab_project.toml_io`."""
