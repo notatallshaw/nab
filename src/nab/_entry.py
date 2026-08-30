@@ -3,13 +3,9 @@
 from __future__ import annotations
 
 import gc
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from typing import NoReturn
 
 
-def console_entry() -> NoReturn:
+def console_entry() -> None:
     """Import the CLI with the cyclic collector off, then hand the process to it.
 
     The console script names this module rather than :mod:`nab.cli` so that no

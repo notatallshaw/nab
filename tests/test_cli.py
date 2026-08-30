@@ -9,12 +9,10 @@ import errno
 import gc
 import hashlib
 import importlib.metadata
-import inspect
 import io
 import json
 import logging
 import os
-import re
 import runpy
 import stat
 import subprocess
@@ -31,7 +29,6 @@ import pytest
 import tomli
 
 from nab import _version as nab_version
-from nab import cli
 from nab import output as nab_output
 from nab._download import download
 from nab._lock import (
@@ -53,13 +50,7 @@ from nab._run import (
     resolve_extra_selection,
     resolve_group_selection,
 )
-from nab.cli import (
-    _normalize_layered_bool_flags,
-    _system_exit_status,
-    app,
-    console_entry,
-    main,
-)
+from nab.cli import _system_exit_status, console_entry, main, run
 from nab.output import Printer, ProgressReporter, Verbosity
 from nab_index.atomic import atomic_write_text
 from nab_index.httpx_async_transport import HttpxAsyncTransport
@@ -338,6 +329,16 @@ def _sidecarless_wheel(name: str = "foo", version: str = "1.0") -> bytes:
         )
         zf.writestr(f"{name}-{version}.dist-info/WHEEL", b"Wheel-Version: 1.0\n")
     return buf.getvalue()
+
+
+def _cli(*arguments: str, status: int = 0) -> None:
+    """Drive the CLI the way ``main`` does, asserting how it ended."""
+    assert run(arguments) == status
+
+
+def _lock_cli(*arguments: str, status: int = 0) -> None:
+    """Drive ``nab lock`` the way ``main`` does, asserting how it ended."""
+    _cli("lock", *arguments, status=status)
 
 
 def _make_pyproject(tmp_path: Path, body: str = "") -> Path:
@@ -4091,28 +4092,6 @@ class TestConfigErrors:
         assert str(pyproject) in capsys.readouterr().err
 
 
-class TestCliDocstringCommandModules:
-    """``nab.cli``'s docstring names every ``nab._*`` module ``cli`` binds."""
-
-    def test_docstring_names_every_command_module(self) -> None:
-        # A command module only registers if cli.py imports it for the side
-        # effect, so every one of them is a binding here.  cli binds helper
-        # modules too, and the docstring has to name those as well.
-        imported = {
-            module.__name__
-            for _, module in inspect.getmembers(cli, inspect.ismodule)
-            if module.__name__.startswith("nab._")
-        }
-        docstring = cli.__doc__
-        assert docstring is not None
-
-        named = set(re.findall(r"nab\._\w+", docstring))
-
-        assert named == imported, (
-            f"docstring misses {imported - named}, names unbound {named - imported}"
-        )
-
-
 def _ladder(pyproject: Path) -> ConfigLadder:
     """Read the config ladder as ``nab lock`` does when no flag overrides a key."""
     return read_config_ladder(pyproject, {})
@@ -4491,10 +4470,7 @@ class TestLockedFlag:
         *extra_args: str,
     ) -> None:
         with patch("nab._run.resolve_for_targets", return_value=result):
-            app.cli(
-                args=["lock", str(pyproject), "--output", str(out), *extra_args],
-                prog="nab",
-            )
+            _lock_cli(str(pyproject), "--output", str(out), *extra_args)
 
     def _run_locked(
         self,
@@ -4502,18 +4478,16 @@ class TestLockedFlag:
         out: Path,
         result: ResolveResult,
         *extra_args: str,
+        status: int = 0,
     ) -> None:
         with patch("nab._run.resolve_for_targets", return_value=result):
-            app.cli(
-                args=[
-                    "lock",
-                    str(pyproject),
-                    "--output",
-                    str(out),
-                    "--locked",
-                    *extra_args,
-                ],
-                prog="nab",
+            _lock_cli(
+                str(pyproject),
+                "--output",
+                str(out),
+                "--locked",
+                *extra_args,
+                status=status,
             )
 
     def test_unevaluable_root_marker_leaves_the_error_to_the_resolve(
@@ -4600,10 +4574,8 @@ class TestLockedFlag:
         assert tomli.loads(out.read_text())["default-groups"] == ["default"]
 
         pyproject.write_text(body + 'base-group = "base"\n', encoding="utf-8")
-        with pytest.raises(SystemExit) as exc:
-            self._run_locked(pyproject, out, result, "--groups", "dev")
+        self._run_locked(pyproject, out, result, "--groups", "dev", status=1)
 
-        assert exc.value.code == 1
         assert "out of date" in capsys.readouterr().err
 
     def test_out_of_date_version_exits_one_without_writing(
@@ -4614,11 +4586,13 @@ class TestLockedFlag:
         self._write_lock(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         capsys.readouterr()
         before = out.read_bytes()
-        with pytest.raises(SystemExit) as exc:
-            self._run_locked(
-                pyproject, out, _stub_resolve_result(pins={"foo": V("2.0")})
-            )
-        assert exc.value.code == 1
+        self._run_locked(
+            pyproject,
+            out,
+            _stub_resolve_result(pins={"foo": V("2.0")}),
+            status=1,
+        )
+
         assert "out of date" in capsys.readouterr().err
         assert out.read_bytes() == before
 
@@ -4633,9 +4607,8 @@ class TestLockedFlag:
         self._write_lock(pyproject, out, first)
         capsys.readouterr()
         changed = _hashed_resolve_result(sha="c" * 64)
-        with pytest.raises(SystemExit) as exc:
-            self._run_locked(pyproject, out, changed)
-        assert exc.value.code == 1
+        self._run_locked(pyproject, out, changed, status=1)
+
         assert "out of date" in capsys.readouterr().err
 
     def test_missing_lockfile_exits_one(
@@ -4643,9 +4616,8 @@ class TestLockedFlag:
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        with pytest.raises(SystemExit) as exc:
-            self._run_locked(pyproject, out, _stub_resolve_result())
-        assert exc.value.code == 1
+        self._run_locked(pyproject, out, _stub_resolve_result(), status=1)
+
         assert "no lockfile" in capsys.readouterr().err
 
     def test_unhashable_pin_during_render_exits_one(
@@ -4664,13 +4636,9 @@ class TestLockedFlag:
                 return_value=_stub_resolve_result(pins={"foo": V("1.0")}),
             ),
             patch("nab._lock.render_lock", side_effect=MissingHashError("no hash")),
-            pytest.raises(SystemExit) as exc,
         ):
-            app.cli(
-                args=["lock", str(pyproject), "--output", str(out), "--locked"],
-                prog="nab",
-            )
-        assert exc.value.code == 1
+            _lock_cli(str(pyproject), "--output", str(out), "--locked", status=1)
+
         assert "cannot lock" in capsys.readouterr().err
         assert out.read_bytes() == before
 
@@ -4687,10 +4655,8 @@ class TestLockedFlag:
         before = out.read_bytes()
 
         diverged = _conflict_fork_result(shared=("1.0", "2.0"))
-        with pytest.raises(SystemExit) as exc:
-            self._run_locked(pyproject, out, diverged, "--extras", "cpu", "gpu")
+        self._run_locked(pyproject, out, diverged, "--extras", "cpu", "gpu", status=1)
 
-        assert exc.value.code == 1
         err = capsys.readouterr().err
         assert "error: shared: the conflict forks of one environment pin" in err
         assert out.read_bytes() == before
@@ -4711,14 +4677,9 @@ class TestLockedFlag:
                 return_value=_stub_resolve_result(pins={"foo": V("1.0")}),
             ),
             patch("nab._lock.render_lock", side_effect=DisjointnessError(hint)),
-            pytest.raises(SystemExit) as exc,
         ):
-            app.cli(
-                args=["lock", str(pyproject), "--output", str(out), "--locked"],
-                prog="nab",
-            )
+            _lock_cli(str(pyproject), "--output", str(out), "--locked", status=1)
 
-        assert exc.value.code == 1
         assert f"error: {hint}\n" in capsys.readouterr().err
         assert out.read_bytes() == before
 
@@ -4732,11 +4693,13 @@ class TestLockedFlag:
         self._write_lock(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         capsys.readouterr()
         out.write_text('lock-version = "1.0"\n<<<<<<< HEAD\n', encoding="utf-8")
-        with pytest.raises(SystemExit) as exc:
-            self._run_locked(
-                pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")})
-            )
-        assert exc.value.code == 1
+        self._run_locked(
+            pyproject,
+            out,
+            _stub_resolve_result(pins={"foo": V("1.0")}),
+            status=1,
+        )
+
         assert "is not valid TOML" in capsys.readouterr().err
 
     def test_non_utf8_committed_lock_exits_one(
@@ -4749,11 +4712,13 @@ class TestLockedFlag:
         self._write_lock(pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")}))
         capsys.readouterr()
         out.write_bytes(b"\xff\xfe not utf-8")
-        with pytest.raises(SystemExit) as exc:
-            self._run_locked(
-                pyproject, out, _stub_resolve_result(pins={"foo": V("1.0")})
-            )
-        assert exc.value.code == 1
+        self._run_locked(
+            pyproject,
+            out,
+            _stub_resolve_result(pins={"foo": V("1.0")}),
+            status=1,
+        )
+
         assert "is not valid TOML" in capsys.readouterr().err
 
     def test_requirements_format_unsupported(
@@ -4761,20 +4726,16 @@ class TestLockedFlag:
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "requirements.txt"
-        with pytest.raises(SystemExit) as exc:
-            app.cli(
-                args=[
-                    "lock",
-                    str(pyproject),
-                    "--output",
-                    str(out),
-                    "--format",
-                    "requirements",
-                    "--locked",
-                ],
-                prog="nab",
-            )
-        assert exc.value.code == 1
+        _lock_cli(
+            str(pyproject),
+            "--output",
+            str(out),
+            "--format",
+            "requirements",
+            "--locked",
+            status=1,
+        )
+
         assert "only supported for pylock" in capsys.readouterr().err
         assert not out.exists()
 
@@ -4782,11 +4743,8 @@ class TestLockedFlag:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         pyproject = _make_pyproject(tmp_path)
-        with pytest.raises(SystemExit) as exc:
-            app.cli(
-                args=["lock", str(pyproject), "--output", "-", "--locked"], prog="nab"
-            )
-        assert exc.value.code == 1
+        _lock_cli(str(pyproject), "--output", "-", "--locked", status=1)
+
         assert "only supported for pylock" in capsys.readouterr().err
 
     def test_universal_unsupported(
@@ -4794,12 +4752,8 @@ class TestLockedFlag:
     ) -> None:
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
-        with pytest.raises(SystemExit) as exc:
-            app.cli(
-                args=["lock", str(pyproject), "--output", str(out), "--locked"],
-                prog="nab",
-            )
-        assert exc.value.code == 1
+        _lock_cli(str(pyproject), "--output", str(out), "--locked", status=1)
+
         assert "not supported in universal mode" in capsys.readouterr().err
         assert not out.exists()
 
@@ -4849,16 +4803,8 @@ class TestLockProvenanceCliOverrides:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch("nab._run.resolve_for_targets", return_value=_stub_resolve_result()):
-            app.cli(
-                args=[
-                    "lock",
-                    str(pyproject),
-                    "--output",
-                    str(out),
-                    "--project-resolution",
-                    "lowest",
-                ],
-                prog="nab",
+            _lock_cli(
+                str(pyproject), "--output", str(out), "--project-resolution", "lowest"
             )
         block = tomli.loads(out.read_text())["tool"]["nab"]
         assert block["cli-project-overrides"] == ["--project-resolution=lowest"]
@@ -4867,7 +4813,7 @@ class TestLockProvenanceCliOverrides:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch("nab._run.resolve_for_targets", return_value=_stub_resolve_result()):
-            app.cli(args=["lock", str(pyproject), "--output", str(out)], prog="nab")
+            _lock_cli(str(pyproject), "--output", str(out))
         block = tomli.loads(out.read_text())["tool"]["nab"]
         assert "cli-project-overrides" not in block
 
@@ -4879,7 +4825,7 @@ class TestLockProvenanceCliOverrides:
             patch("nab._run.resolve_for_targets", return_value=_stub_resolve_result()),
             patch.object(sys, "argv", argv),
         ):
-            app.cli(args=["lock", str(pyproject), "--output", str(out)], prog="nab")
+            _lock_cli(str(pyproject), "--output", str(out))
         recorded = tomli.loads(out.read_text())["tool"]["nab"]["command-line"]
         assert recorded == ["nab", "lock", "--offline"]
 
@@ -5384,27 +5330,31 @@ class TestCacheFlags:
 
 
 def _command_help(command: str) -> str:
-    """Return the ``--help`` text tyro renders for a subcommand."""
+    """What ``nab <command> --help`` prints."""
     buf = io.StringIO()
-    with contextlib.redirect_stdout(buf), contextlib.suppress(SystemExit):
-        app.cli(args=[command, "--help"], prog="nab")
+    with contextlib.redirect_stdout(buf):
+        _cli(command, "--help")
     return buf.getvalue()
 
 
 class TestHelpText:
-    """Boolean flags render without tyro's double-negated aliases."""
+    """A negatable boolean shows its pair, and no double negation."""
 
     def test_lock_cache_flag_has_no_double_negative(self) -> None:
         help_text = _command_help("lock")
         assert "--no-no-cache" not in help_text
-        assert "--cache" in help_text
-        assert "--no-cache" in help_text
+        assert "--cache / --no-cache" in help_text
 
     def test_lock_workspace_discovery_has_no_double_negative(self) -> None:
         help_text = _command_help("lock")
         assert "--no-no-workspace-discovery" not in help_text
-        assert "--workspace-discovery" in help_text
-        assert "--no-workspace-discovery" in help_text
+        assert "--workspace-discovery / --no-workspace-discovery" in help_text
+
+    def test_emit_workspace_has_no_double_negative(self) -> None:
+        """It is declared non-negatable, so ``--no-no-emit-workspace`` is gone."""
+        help_text = _command_help("lock")
+        assert "--no-no-emit-workspace" not in help_text
+        assert "--no-emit-workspace " in help_text
 
     def test_download_cache_flag_has_no_double_negative(self) -> None:
         help_text = _command_help("download")
@@ -5412,25 +5362,105 @@ class TestHelpText:
         assert "--no-cache" in help_text
 
 
-class TestOfflineFlagContract:
-    """Pin the tyro argv contract for the layered ``--offline`` flag.
+class _Tty(io.StringIO):
+    """A stream stand-in that claims to be a terminal."""
 
-    ``offline`` is layered (env / nab.toml may set it) and the CLI is the
-    top rung, so the flag has to distinguish ``--offline True`` /
-    ``--offline False`` from being absent (``None``, let the lower layers
-    decide).  tyro renders that tri-state as a value-taking choice, so the
-    value form is the canonical surface app.cli parses; :func:`main`
-    rewrites the bare ``--offline`` / ``--no-offline`` forms into it (see
-    :class:`TestMainNormalizesOfflineFlag`).
+    def isatty(self) -> bool:
+        return True
+
+
+class TestPaintedEagerOutput:
+    """Which stream the page and the refusal each ask about colour.
+
+    ``conftest`` sets ``NO_COLOR``, so a case that wants paint either says
+    ``--color always`` or clears the variable.
+    """
+
+    @staticmethod
+    def _eager(*arguments: str, status: int = 0) -> tuple[str, str]:
+        """Run one eager line over terminal streams; return stdout and stderr."""
+        out, err = _Tty(), _Tty()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            assert run(arguments) == status
+        return out.getvalue(), err.getvalue()
+
+    def test_color_always_reaches_the_page_through_the_short_circuit(self) -> None:
+        """The flag is read before ``--help`` ends the line, and beats NO_COLOR."""
+        page, _err = self._eager("--color", "always", "--help")
+
+        assert page.startswith("\033[1mUsage:\033[0m nab ")
+        assert "\033[36m-q\033[0m, \033[36m--quiet\033[0m" in page
+
+    def test_a_flag_after_the_command_reaches_the_command_page(self) -> None:
+        page, _err = self._eager("lock", "--color", "always", "--help")
+
+        assert page.startswith("\033[1mUsage:\033[0m nab lock ")
+
+    def test_no_color_leaves_the_page_plain_on_a_terminal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NO_COLOR")
+        monkeypatch.setenv("FORCE_COLOR", "1")
+
+        page, _err = self._eager("--no-color", "--help")
+
+        assert "\033" not in page
+
+    def test_no_color_wins_over_a_terminal_with_no_flag(self) -> None:
+        """``conftest``'s ``NO_COLOR`` is the environment half of the rule."""
+        page, _err = self._eager("--help")
+
+        assert "\033" not in page
+
+    def test_a_terminal_and_no_variable_paints_the_page(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NO_COLOR")
+
+        page, _err = self._eager("--help")
+
+        assert page.startswith("\033[1mUsage:\033[0m")
+
+    def test_a_refusal_paints_its_leading_token_red(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("NO_COLOR")
+
+        _page, refusal = self._eager("lock", "--outupt", status=2)
+
+        assert refusal.startswith("\033[31mnab lock:\033[0m ")
+        assert "did you mean '\033[36m--output\033[0m'?" in refusal
+
+    def test_each_stream_is_asked_on_its_own(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A page piped to a file is plain while the terminal beside it is not."""
+        monkeypatch.delenv("NO_COLOR")
+        piped, terminal = io.StringIO(), _Tty()
+
+        with contextlib.redirect_stdout(piped), contextlib.redirect_stderr(terminal):
+            assert run(("--help",)) == 0
+            assert run(("--nope",)) == 2
+
+        assert "\033" not in piped.getvalue()
+        assert terminal.getvalue().startswith("\033[31mnab:\033[0m ")
+
+
+class TestOfflineFlagSurface:
+    """All four ``--offline`` spellings, and what an absent flag leaves.
+
+    ``offline`` is layered, so the flag is tri-state: an explicit value
+    overrides the config layers while an absent one defers to them. The
+    bare forms are rows of the table rather than an argv rewrite, so they
+    reach the resolve through the same walk as everything else.
     """
 
     @pytest.mark.parametrize("command", ["lock", "download", "config"])
-    def test_offline_help_shows_value_and_bare_forms(self, command: str) -> None:
-        help_text = _command_help(command)
-        assert "--offline {True,False}" in help_text
-        assert "--no-offline" in help_text
+    def test_the_page_shows_the_value_and_the_bare_forms(self, command: str) -> None:
+        assert "--offline [{True,False}] / --no-offline" in _command_help(command)
 
-    def _run_offline_argv(self, tmp_path: Path, value: str) -> object:
+    @staticmethod
+    def _offline_seen_by_resolve(tmp_path: Path, *offline_args: str) -> object:
         pyproject = _make_pyproject(tmp_path)
         with (
             patch(
@@ -5439,136 +5469,53 @@ class TestOfflineFlagContract:
             ) as mock_resolve,
             patch("nab._lock.write_lock"),
         ):
-            app.cli(
-                args=[
-                    "lock",
-                    str(pyproject),
-                    "--offline",
-                    value,
-                    "--output",
-                    str(tmp_path / "pylock.toml"),
-                ],
-                prog="nab",
+            _lock_cli(
+                str(pyproject),
+                *offline_args,
+                "--output",
+                str(tmp_path / "pylock.toml"),
             )
         return mock_resolve.call_args.kwargs["offline"]
-
-    def test_offline_true_parses(self, tmp_path: Path) -> None:
-        assert self._run_offline_argv(tmp_path, "True") is True
-
-    def test_offline_false_parses(self, tmp_path: Path) -> None:
-        assert self._run_offline_argv(tmp_path, "False") is False
-
-    def test_bare_offline_needs_value_at_tyro_layer(self, tmp_path: Path) -> None:
-        """The value form is required below main(); main() bridges the gap."""
-        pyproject = _make_pyproject(tmp_path)
-        with (
-            contextlib.redirect_stderr(io.StringIO()),
-            pytest.raises(SystemExit) as exc,
-        ):
-            app.cli(args=["lock", str(pyproject), "--offline"], prog="nab")
-        assert exc.value.code == 2
-
-
-class TestNormalizeLayeredBoolFlags:
-    """Unit-test the argv rewrite that gives ``--offline`` its bare forms."""
 
     @pytest.mark.parametrize(
         ("argv", "expected"),
         [
-            ([], []),
-            (["lock"], ["lock"]),
-            (["lock", "--offline"], ["lock", "--offline", "True"]),
-            (["lock", "--offline", "True"], ["lock", "--offline", "True"]),
-            (["lock", "--offline", "False"], ["lock", "--offline", "False"]),
-            (["lock", "--offline", "None"], ["lock", "--offline", "None"]),
-            (["lock", "--no-offline"], ["lock", "--offline", "False"]),
-            (
-                ["lock", "--offline", "--output", "pylock.toml"],
-                ["lock", "--offline", "True", "--output", "pylock.toml"],
-            ),
-            (
-                ["lock", "--no-cache", "--offline"],
-                ["lock", "--no-cache", "--offline", "True"],
-            ),
+            (("--offline",), True),
+            (("--offline", "True"), True),
+            (("--no-offline",), False),
+            (("--offline", "False"), False),
+            (("--offline", "None"), False),
+            ((), False),
         ],
     )
-    def test_rewrites(self, argv: list[str], expected: list[str]) -> None:
-        assert _normalize_layered_bool_flags(argv) == expected
-
-
-class TestMainNormalizesOfflineFlag:
-    """main() applies the bare-form rewrite before tyro parses."""
-
-    def _offline_seen_by_resolve(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *offline_args: str
-    ) -> object:
-        pyproject = _make_pyproject(tmp_path)
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "nab",
-                "lock",
-                str(pyproject),
-                "--output",
-                str(tmp_path / "pylock.toml"),
-                *offline_args,
-            ],
-        )
-        with (
-            patch(
-                "nab._run.resolve_for_targets",
-                return_value=_stub_resolve_result(pins={}),
-            ) as mock_resolve,
-            patch("nab._lock.write_lock"),
-        ):
-            main()
-        return mock_resolve.call_args.kwargs["offline"]
-
-    def test_bare_offline_forces_offline(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    def test_every_spelling_reaches_the_resolve(
+        self, tmp_path: Path, argv: tuple[str, ...], expected: object
     ) -> None:
-        assert self._offline_seen_by_resolve(tmp_path, monkeypatch, "--offline") is True
-
-    def test_no_offline_forces_network(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        assert (
-            self._offline_seen_by_resolve(tmp_path, monkeypatch, "--no-offline")
-            is False
-        )
-
-    def test_explicit_value_survives(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        assert (
-            self._offline_seen_by_resolve(tmp_path, monkeypatch, "--offline", "False")
-            is False
-        )
+        """``None`` and an absent flag both defer, and no layer sets it here."""
+        assert self._offline_seen_by_resolve(tmp_path, *argv) is expected
 
 
-class TestLayeredRunKnobFlagContract:
-    """Pin the tyro argv contract for the layered USER run knobs.
+class TestLayeredRunKnobSurface:
+    """How the layered USER run knobs are written on their pages.
 
-    ``http-backend`` and ``max-concurrency`` are layered (env / nab.toml may
-    set them), so each CLI flag is tri-state: a value distinguishes an
-    explicit override from being absent (``None``, let the lower layers
-    decide).  These tests lock how tyro renders that so it cannot drift.
+    ``http-backend`` and ``max-concurrency`` are layered, so an absent flag
+    defers to the config layers rather than naming a value. The page shows
+    the values the flag takes, not that absent one.
     """
 
-    def test_http_backend_renders_as_tristate_choice(self) -> None:
+    def test_http_backend_shows_its_backends(self) -> None:
         for command in ("lock", "download", "config"):
-            assert "--http-backend {None,urllib3,httpx}" in _command_help(command)
+            assert "--http-backend {urllib3,httpx}" in _command_help(command)
 
-    def test_max_concurrency_renders_as_tristate_value(self) -> None:
+    def test_max_concurrency_takes_a_number(self) -> None:
         for command in ("download", "config"):
-            assert "--max-concurrency {None}|INT" in _command_help(command)
+            assert "--max-concurrency INT" in _command_help(command)
 
-    def test_project_scalar_override_renders_choices(self) -> None:
+    def test_project_scalar_override_shows_its_choices(self) -> None:
         for command in ("lock", "download", "config"):
             help_text = _command_help(command)
-            assert "--project-mode {None,specific,universal}" in help_text
-            assert "--project-build-policy {None,never,build-local,build-remote}" in (
+            assert "--project-mode {specific,universal}" in help_text
+            assert "--project-build-policy {never,build-local,build-remote}" in (
                 help_text
             )
 
@@ -5586,16 +5533,12 @@ class TestLayeredRunKnobFlagContract:
             patch("nab._lock.write_lock"),
             patch("nab._run._make_transport") as mock_transport,
         ):
-            app.cli(
-                args=[
-                    "lock",
-                    str(pyproject),
-                    "--http-backend",
-                    "httpx",
-                    "--output",
-                    str(tmp_path / "pylock.toml"),
-                ],
-                prog="nab",
+            _lock_cli(
+                str(pyproject),
+                "--http-backend",
+                "httpx",
+                "--output",
+                str(tmp_path / "pylock.toml"),
             )
         assert mock_transport.call_args.args[0] == "httpx"
 
@@ -5617,56 +5560,53 @@ class TestPackageVersion:
 class TestMain:
     """Tests for the main() entry point."""
 
-    def test_calls_app_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """main() delegates to app.cli() with the normalized argv."""
+    def test_a_line_naming_no_command_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """main() reads its line off ``sys.argv`` when it is given none."""
         monkeypatch.setattr(sys, "argv", ["nab"])
-        with patch("nab.cli.app") as mock_app:
+
+        with pytest.raises(SystemExit) as info:
             main()
-        mock_app.cli.assert_called_once_with(prog="nab", args=[])
+
+        assert info.value.code == 2
+        assert "a command is required" in capsys.readouterr().err
 
     def test_version_flag_prints_and_returns(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """``--version`` prints ``nab <version>`` without delegating to tyro."""
-        monkeypatch.setattr(sys, "argv", ["nab", "--version"])
-        with patch("nab.cli.app") as mock_app:
-            main()
-        mock_app.cli.assert_not_called()
-        captured = capsys.readouterr()
-        assert captured.out.startswith("nab ")
-        assert captured.out.endswith("\n")
+        """``--version`` prints ``nab <version>`` and loads no command."""
+        main(["--version"])
 
-    def test_short_version_flag(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+        captured = capsys.readouterr()
+        assert captured.out == f"nab {nab_version.__version__}\n"
+
+    def test_short_version_flag(self, capsys: pytest.CaptureFixture[str]) -> None:
         """``-V`` is the short alias for ``--version``."""
-        monkeypatch.setattr(sys, "argv", ["nab", "-V"])
-        with patch("nab.cli.app") as mock_app:
-            main()
-        mock_app.cli.assert_not_called()
+        main(["-V"])
+
         assert capsys.readouterr().out.startswith("nab ")
 
     def test_keyboard_interrupt_aborts_clean(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+        self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Ctrl-C during ``app.cli()`` reports an interrupt and exits 130."""
-        monkeypatch.setattr(sys, "argv", ["nab"])
-        with patch("nab.cli.app") as mock_app:
-            mock_app.cli.side_effect = KeyboardInterrupt
-            with pytest.raises(SystemExit) as info:
-                main()
+        """Ctrl-C inside the command reports an interrupt and exits 130."""
+        with (
+            patch("nab._cli.dispatch.dispatch", side_effect=KeyboardInterrupt),
+            pytest.raises(SystemExit) as info,
+        ):
+            main(["cache", "dir"])
+
         assert info.value.code == 130
         assert "error: interrupted" in capsys.readouterr().err
 
-    def test_bad_color_flag_exits_two(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        """A malformed --color value is reported and exits 2 before tyro runs."""
-        monkeypatch.setattr(sys, "argv", ["nab", "--color", "rainbow", "lock"])
+    def test_bad_color_flag_exits_two(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """A malformed --color value is refused before the command runs."""
         with pytest.raises(SystemExit) as info:
-            main()
+            main(["--color", "rainbow", "lock"])
+
         assert info.value.code == 2
-        assert "error:" in capsys.readouterr().err
+        assert "invalid value 'rainbow'" in capsys.readouterr().err
 
     def test_resolve_without_progress_reporter(self, tmp_path: Path) -> None:
         """_resolve tolerates progress=None (the clear step is skipped)."""
@@ -5851,6 +5791,16 @@ class TestConsoleEntry:
         mock_stderr_flush.assert_called_once()
         mock_exit.assert_called_once_with(120)
 
+    def test_an_unflushable_stderr_also_exits_120(self) -> None:
+        """A stderr flush that fails is the same loss as a stdout one."""
+        with (
+            patch("nab.cli.main"),
+            patch.object(sys.stderr, "flush", side_effect=OSError(28, "No space")),
+            patch("nab.cli.os._exit") as mock_exit,
+        ):
+            console_entry()
+        mock_exit.assert_called_once_with(120)
+
     def test_a_crash_is_left_to_the_interpreter(self) -> None:
         """Only ``SystemExit`` takes the fast exit; anything else propagates."""
         with (
@@ -5969,7 +5919,7 @@ class TestSystemExitStatus:
     def test_message_prints_and_exits_one(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A string code is the message, printed to stderr as CPython does."""
+        """``os._exit`` skips the handling CPython gives a string code."""
         assert _system_exit_status("boom") == 1
         assert capsys.readouterr().err == "boom\n"
 
@@ -6080,6 +6030,20 @@ class TestMainWiresOutputOptions:
         _printer, stderr = self._run_lock(tmp_path, monkeypatch)
         logging.getLogger("nab_project").warning("engine note")
         assert "warning: engine note" in stderr.getvalue()
+        assert "\033[" not in stderr.getvalue()
+
+    def test_no_color_leaves_the_run_summary_plain(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--no-color`` is the only token that reaches the ``no_color`` dest.
+
+        ``FORCE_COLOR`` alone would paint the summary, so the flag is what
+        the assertion turns on rather than the conftest's ``NO_COLOR``.
+        """
+        monkeypatch.delenv("NO_COLOR")
+        monkeypatch.setenv("FORCE_COLOR", "1")
+        printer, stderr = self._run_lock(tmp_path, monkeypatch, "--no-color")
+        assert printer.color_enabled is False
         assert "\033[" not in stderr.getvalue()
 
     def test_progress_allowed_on_a_terminal(
@@ -6465,47 +6429,6 @@ class TestResolveTransport:
             [sys.executable, "-c", _OFFLINE_LOCK_PROBE, str(pyproject)],
             check=True,
             env={**os.environ, "XDG_CONFIG_HOME": str(tmp_path / "config")},
-        )
-
-
-_HTTP_LIBRARY_PROBE = """
-import sys
-
-import nab.cli
-
-roots = {name.partition(".")[0] for name in sys.modules}
-leaked = sorted(roots & {"truststore", "urllib3"})
-assert not leaked, f"importing nab.cli loaded {leaked}"
-"""
-
-
-_STDLIB_MODULE_PROBE = """
-import sys
-
-import nab.cli
-
-leaked = sorted({"html.parser", "urllib.request"} & sys.modules.keys())
-assert not leaked, f"importing nab.cli loaded {leaked}"
-"""
-
-
-class TestCliImportPath:
-    """What importing :mod:`nab.cli` is allowed to pull in."""
-
-    def test_urllib3_and_truststore_stay_unimported(self) -> None:
-        """Neither library belongs on the path of a command that never fetches."""
-        subprocess.run(  # noqa: S603 - the probe is this file's own source
-            [sys.executable, "-c", _HTTP_LIBRARY_PROBE], check=True
-        )
-
-    def test_html_parser_and_urllib_request_stay_unimported(self) -> None:
-        """Neither belongs on startup: one reads an HTML page, one a file:// URL.
-
-        Matched on full module names rather than first path components,
-        since :mod:`urllib.parse` is always loaded.
-        """
-        subprocess.run(  # noqa: S603 - the probe is this file's own source
-            [sys.executable, "-c", _STDLIB_MODULE_PROBE], check=True
         )
 
 

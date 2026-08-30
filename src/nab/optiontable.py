@@ -108,7 +108,7 @@ class Root(Table, on=GLOBAL, docs="reference/cli.md"):
     )
 
     color = Value[ColorChoice](
-        help="when to colour stderr",
+        help="when to colour nab's output",
     )
 
     no_color = Switch(

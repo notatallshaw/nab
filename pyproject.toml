@@ -24,7 +24,6 @@ dependencies = [
     "nab-provider==0.0.16.dev0",
     "nab-project==0.0.16.dev0",
     "nab-index==0.0.16.dev0",
-    "tyro>=1.0",
     "typing_extensions>=4.6",
 ]
 
@@ -123,7 +122,6 @@ docs = [
 release = [
     "packaging>=24.0",
     "tomlkit>=0.13",
-    "tyro>=1.0",
     "build>=1.2",
     "twine>=6.1",
     "pypi-attestations>=0.0.21",

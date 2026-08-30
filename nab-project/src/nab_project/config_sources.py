@@ -19,10 +19,9 @@ Everything else is derived by iterating :data:`OPTIONS`:
 * :func:`render_list` / :func:`render_get` / :func:`render_explain`
   back ``nab config``.
 
-Adding an option is one new row in :data:`OPTIONS` plus, for the
-CLI, one tyro flag.  A conformance test asserts the tyro surface matches
-the registry so the one place the CLI surface is not registry-derived
-(tyro reads flags from a function signature) cannot silently drift.
+Adding an option is one new row in :data:`OPTIONS` plus, for the CLI, one
+row in ``nab.optiondefs``.  A conformance test holds the two together, so
+a flag and the key it sets cannot drift apart.
 """
 
 from __future__ import annotations
@@ -243,11 +242,11 @@ class OptionSpec(ValueType):
     may set it.  ``parse`` turns a raw TOML/string value into the typed
     value (and raises :class:`SourceConfigError` on a bad value).
     ``env_var`` is the ``NAB_*`` name or ``None`` (not env-settable).
-    ``cli_flag`` is the tyro flag spelling the conformance test checks,
-    or ``None`` for a file-only row (a structured PROJECT table with no
-    bare CLI flag, e.g. ``vcs``/``workspace``/``environment``);
-    ``cli_param`` is the tyro function-parameter name backing the flag,
-    also ``None`` for a file-only row.  ``type_label`` is shown by
+    ``cli_flag`` is the flag spelling the conformance test checks, or
+    ``None`` for a file-only row (a structured PROJECT table with no bare
+    CLI flag, e.g. ``vcs``/``workspace``/``environment``); ``cli_param``
+    is the command parameter backing the flag, also ``None`` for a
+    file-only row.  ``type_label`` is shown by
     ``nab config``.
     """
 
@@ -1862,8 +1861,8 @@ def build_cli_layer(values: Mapping[str, Any]) -> Layer:
     parsed: dict[str, Any] = {}
     for key, value in values.items():
         spec = _BY_KEY[key]
-        # A repeatable flag arrives as a tuple from tyro's append action; the
-        # parse hooks expect a TOML list, so normalise it here.
+        # A repeatable flag arrives as a tuple; the parse hooks expect a
+        # TOML list, so normalise it here.
         raw = list(value) if isinstance(value, tuple) else value
         parsed[key] = spec.parse(raw, f"cli:{spec.cli_flag}")
     return Layer(Origin(SourceKind.CLI, "cli"), parsed)

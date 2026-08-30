@@ -1,14 +1,16 @@
-"""Entry point for the nab command.
+"""Entry point for the nab command: read the line, run it, write the result.
 
-Holds the tyro :class:`SubcommandApp` registration, the flag types the
-command signatures annotate with, and the global flags :func:`main`
-handles before any subcommand runs: the version line, the output flags,
-and the standard streams.
+:func:`run` is the whole CLI. It hands ``argv`` to the walk over
+:mod:`nab._cli.spec`, which answers with a page, a refusal or a command to
+dispatch into, and it returns the status the process should end with. The
+page, the refusal and a command's parting message all leave through
+:func:`run`'s one write per stream, so output that cannot be written is a
+status rather than a traceback.
 
-The subcommands live in :mod:`nab._lock`, :mod:`nab._download`,
-:mod:`nab._config_cmd`, and :mod:`nab._cache_cmd`; this module imports
-them so their ``@app.command`` decorators run before :func:`main` runs
-the CLI.
+Nothing on this path imports a command module, ``pathlib`` or ``typing``.
+The four modules :func:`_load` reaches are loaded only by the line that
+needs them, and the command module itself is
+:mod:`nab._cli.dispatch`'s to import.
 """
 
 from __future__ import annotations
@@ -16,147 +18,159 @@ from __future__ import annotations
 import io
 import os
 import sys
-from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, NoReturn
+import types  # noqa: TC003 - the block TC003 asks for is a runtime import typing
 
-import tyro
-from typing_extensions import override
-from tyro.extras import SubcommandApp
-
+from nab._cli import spec
+from nab._cli.parse import Parsed, UsageError, parse
 from nab._version import __version__
 
-from . import env
-from .output import OutputOptionError, begin, parse_output_options
-
-if TYPE_CHECKING:
-    from typing import TextIO
-
 __all__ = [
+    "console_entry",
     "main",
+    "run",
 ]
 
-
-# A pyproject.toml positional that may also be omitted to default to ./pyproject.toml.
-PathArg = Annotated[Path, tyro.conf.Positional]
-
-# --offline is layered (an nab.toml or NAB_OFFLINE may set it), so it stays
-# tri-state: an explicit value overrides the lower layers while an absent flag
-# defers to them.  tyro renders that as a value-taking choice; main() also
-# accepts the bare --offline / --no-offline forms (_normalize_layered_bool_flags).
-OfflineFlag = Annotated[
-    bool | None,
-    tyro.conf.arg(
-        metavar="{True,False}",
-        help="never hit the network; bare --offline / --no-offline also work",
-    ),
-]
+# What the pages and the messages call the program.
+_PROG = "nab"
 
 # Conventional KeyboardInterrupt exit code: 128 + SIGINT(2).
 _SIGINT_EXIT_CODE = 130
 
-# The status CPython exits with when it cannot flush the standard streams.
+# The status CPython exits with when it cannot flush the standard streams,
+# and the status this module reports when a write it owns is refused.
 _FLUSH_FAILED_EXIT_CODE = 120
 
-app = SubcommandApp()
+# What a line the walk refused exits with.
+_USAGE_STATUS = 2
 
-# Layered boolean flags (currently just --offline) are tri-state, which tyro
-# renders as a value-taking --flag {True,False} rather than a --flag / --no-flag
-# pair.  main() rewrites the bare forms into that value form before tyro parses.
-_LAYERED_BOOL_FLAGS = frozenset({"offline"})
+_INTERRUPTED = "error: interrupted\n"
 
-# The tokens that count as a value already spelled out after the flag.
-_BOOL_FLAG_VALUES = frozenset({"True", "False", "None"})
+# What ``--color`` says when the line named neither it nor ``--no-color``.
+_AUTO = "auto"
 
 
-def _normalize_layered_bool_flags(argv: list[str]) -> list[str]:
-    """Rewrite bare ``--offline`` / ``--no-offline`` into tyro's value form.
+def _load(name: str) -> types.ModuleType:
+    """Import one module the entry path defers, and return it.
 
-    A layered boolean then reads like ``--cache`` / ``--no-cache`` at the
-    CLI: ``--offline`` becomes ``--offline True`` and ``--no-offline`` becomes
-    ``--offline False``.  An absent flag is left alone and still defers to the
-    config layers, and an explicit ``--offline True`` / ``--offline False`` is
-    passed through unchanged.
+    Help, a refusal and dispatch each reach their module through here, so
+    a line that asks for none of them pays for none of them. Callers
+    annotate what they take back, because a module attribute has no type
+    of its own.
     """
-    normalized: list[str] = []
-    i = 0
-    while i < len(argv):
-        token = argv[i]
-
-        # --offline [value]: keep an explicit True/False/None, else it is bare.
-        if token.startswith("--") and token[2:] in _LAYERED_BOOL_FLAGS:
-            following = argv[i + 1] if i + 1 < len(argv) else None
-            if following is not None and following in _BOOL_FLAG_VALUES:
-                normalized += [token, following]
-                i += 2
-            else:
-                normalized += [token, "True"]
-                i += 1
-
-        # --no-offline is shorthand for --offline False.
-        elif token.startswith("--no-") and token[5:] in _LAYERED_BOOL_FLAGS:
-            normalized += [f"--{token[5:]}", "False"]
-            i += 1
-
-        # Any other token (subcommand, path, unrelated flag) passes through.
-        else:
-            normalized.append(token)
-            i += 1
-
-    return normalized
+    __import__(name)
+    return sys.modules[name]
 
 
-# Side-effect imports: each module's @app.command decorators register the
-# subcommand.  Placed at the bottom so ``app`` and the flag types above bind
-# before the command modules import them back, and bound as modules because a
-# name import here would raise when the package is entered through one of them.
-from . import _cache_cmd as _cache_module  # noqa: E402, F401 - side-effect
-from . import _config_cmd as _config_module  # noqa: E402, F401 - side-effect
-from . import _download as _download_module  # noqa: E402, F401 - side-effect
-from . import _lock as _lock_module  # noqa: E402, F401 - side-effect
+def run(argv: tuple[str, ...]) -> int:
+    """Run one command line and report the status it ends with.
+
+    Both writes a run makes are here, one per stream. A stream that
+    refuses one replaces the status with 120, which is what makes a page
+    redirected to a full disk an exit code rather than a traceback.
+    """
+    status, out, err = _outcome(argv)
+
+    try:
+        if out:
+            sys.stdout.write(out)
+        if err:
+            sys.stderr.write(err)
+    except OSError:
+        return _FLUSH_FAILED_EXIT_CODE
+
+    return status
 
 
-def main() -> None:
-    """Run the CLI, exiting 120 when output went to a stream closed at startup."""
+def _outcome(argv: tuple[str, ...]) -> tuple[int, str, str]:
+    """Read the line and act on it: a status, stdout text, and stderr text."""
+    try:
+        parsed = parse(argv, spec.ROOT, spec.COMMANDS, _PROG)
+    except UsageError as error:
+        refusal: str = _load("nab._cli.diagnose").diagnose(
+            error, color=_painting(sys.stderr, _AUTO)
+        )
+        return _USAGE_STATUS, "", refusal
+
+    if parsed.eager == "version":
+        return 0, f"{_PROG} {__version__}\n", ""
+
+    if parsed.eager == "help":
+        page: str = _load("nab._cli.render").page(
+            parsed.command,
+            spec.ROOT,
+            spec.COMMANDS,
+            spec.HELP,
+            spec.DISPATCH,
+            _PROG,
+            color=_painting(sys.stdout, _color_choice(parsed.options)),
+        )
+        return 0, page, ""
+
+    return _dispatch(parsed)
+
+
+def _color_choice(options: dict[str, object]) -> str:
+    """Read ``--color`` off a short-circuited line, ``--no-color`` behind it.
+
+    A value names a choice while the flag only refuses one, so ``--color``
+    wins whichever came first, as it does for the run's own printer.  An
+    eager page ends the line before conversion runs, so a token no choice
+    names arrives here as typed and paints by the automatic rule.
+    """
+    choice = options.get("color")
+    if isinstance(choice, str):
+        return choice
+    return "never" if options.get("no_color") else _AUTO
+
+
+def _painting(stream: object, choice: str) -> bool:
+    """Whether to paint ``stream``, by the rule the run's printer also uses.
+
+    Each stream is asked separately, because the page goes to stdout and a
+    refusal to stderr, so ``nab --help | less`` is plain while the refusal
+    beside it on a terminal is not.
+    """
+    isatty = getattr(stream, "isatty", None)
+    tty = isatty is not None and bool(isatty())
+    return bool(_load("nab.env").color_enabled(choice, isatty=tty))
+
+
+def _dispatch(parsed: Parsed) -> tuple[int, str, str]:
+    """Run the command the line named, reporting Ctrl-C as an interrupt."""
+    try:
+        outcome: tuple[int, str] = _load("nab._cli.dispatch").dispatch(
+            parsed, spec.DISPATCH, spec.PATH_DESTS
+        )
+    except KeyboardInterrupt:
+        return _SIGINT_EXIT_CODE, "", _INTERRUPTED
+
+    status, message = outcome
+    return status, "", f"{message}\n" if message else ""
+
+
+def main(argv: list[str] | None = None) -> None:
+    """Run the CLI over ``argv``, defaulting to the process's own.
+
+    Raises :class:`SystemExit` with the status the run produced, and
+    returns normally on success, so a caller that owns the process can
+    still do its own teardown.
+    """
     _replace_closed_std_streams()
 
-    try:
-        _run_cli()
-    except SystemExit:
-        if _output_was_dropped():
-            raise SystemExit(_FLUSH_FAILED_EXIT_CODE) from None
-        raise
-
+    status = run(tuple(sys.argv[1:] if argv is None else argv))
     if _output_was_dropped():
-        raise SystemExit(_FLUSH_FAILED_EXIT_CODE)
+        status = _FLUSH_FAILED_EXIT_CODE
 
-
-def _run_cli() -> None:
-    """Parse the global flags and run the requested subcommand."""
-    # Tyro's SubcommandApp does not surface global flags, so ``--version`` and
-    # the output flags (-v/-q, --color, --no-progress) are parsed before
-    # ``app.cli()`` sees the sub-command.
-    argv = sys.argv[1:]
-    if argv and argv[0] in {"--version", "-V"}:
-        sys.stdout.write(f"nab {__version__}\n")
-        return
-
-    try:
-        options, rest = parse_output_options(argv, env.current())
-    except OutputOptionError as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        sys.exit(2)
-
-    run_printer = begin(options)
-
-    try:
-        app.cli(prog="nab", args=_normalize_layered_bool_flags(rest))
-    except KeyboardInterrupt:
-        run_printer.error("interrupted")
-        sys.exit(_SIGINT_EXIT_CODE)
+    if status:
+        raise SystemExit(status)
 
 
 def _system_exit_status(code: object) -> int:
-    """Map a ``SystemExit`` code to the status the interpreter would exit with."""
+    """Map a ``SystemExit`` code to the status the interpreter would exit with.
+
+    ``os._exit`` skips the interpreter's own handling of the exception, so
+    a code that is not an integer is read here the way CPython reads it.
+    """
     if code is None:
         return 0
     if isinstance(code, int):
@@ -169,46 +183,32 @@ class _ClosedStream(io.StringIO):
     """Stands in for a standard stream CPython left unset.
 
     ``sys.stdout`` and ``sys.stderr`` are ``None`` when their descriptor was
-    closed before the process started. Text written here goes nowhere, and
-    ``dropped`` records that a write reached it.
+    closed before the process started. Text written here reaches no
+    descriptor; the subclass exists so a buffer nab installed can be told
+    apart from one a caller redirected the stream to.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
-        self.dropped = False
-
-    @override
-    def write(self, text: str, /) -> int:
-        self.dropped = True
-        return len(text)
+    __slots__ = ()
 
 
 def _replace_closed_std_streams() -> None:
     """Give each standard stream CPython left unset something to write to."""
-    # typeshed types these as never None, so widen before testing.
-    stdout: TextIO | None = sys.stdout
-    stderr: TextIO | None = sys.stderr
-    if stdout is None:
+    if sys.stdout is None:
         sys.stdout = _ClosedStream()
-    if stderr is None:
+    if sys.stderr is None:
         sys.stderr = _ClosedStream()
 
 
 def _output_was_dropped() -> bool:
-    """Report whether the run wrote to a stream that could not take it."""
+    """Report whether the run wrote to a stream that could not take it.
+
+    A write advances the buffer's position, so a stream still at zero took
+    nothing and lost nothing.
+    """
     return any(
-        isinstance(stream, _ClosedStream) and stream.dropped
+        isinstance(stream, _ClosedStream) and stream.tell() > 0
         for stream in (sys.stdout, sys.stderr)
     )
-
-
-def _flush_stream(stream: TextIO) -> bool:
-    """Flush one stream, reporting whether its buffered output landed."""
-    try:
-        stream.flush()
-    except OSError:
-        return False
-    return True
 
 
 def _flush_std_streams() -> bool:
@@ -217,12 +217,22 @@ def _flush_std_streams() -> bool:
     stderr is flushed even when stdout fails, so a command that could not
     write its result still gets its error out.
     """
-    out_flushed = _flush_stream(sys.stdout)
-    err_flushed = _flush_stream(sys.stderr)
-    return out_flushed and err_flushed
+    flushed = True
+
+    try:
+        sys.stdout.flush()
+    except OSError:
+        flushed = False
+
+    try:
+        sys.stderr.flush()
+    except OSError:
+        flushed = False
+
+    return flushed
 
 
-def console_entry() -> NoReturn:
+def console_entry() -> None:
     """Run the CLI, then end the process without freeing the resolve graph.
 
     Only the installed ``nab`` command takes this path, because it owns its

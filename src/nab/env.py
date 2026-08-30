@@ -9,15 +9,16 @@ process owns that environment.
 ``HOME`` belongs to the list but is not named in the code: the cache and
 config fallbacks reach it through ``Path.home()``, which reads it on
 POSIX and ``USERPROFILE`` on Windows.
+
+The colour decision puts this module on the ``--help`` and refusal paths,
+so it imports no :mod:`typing`: the ``TYPE_CHECKING`` block that would hold
+the annotation import is itself an ``import typing``.
 """
 
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from collections.abc import Mapping  # noqa: TC003 - that block imports typing
 
 NO_COLOR = "NO_COLOR"
 FORCE_COLOR = "FORCE_COLOR"
