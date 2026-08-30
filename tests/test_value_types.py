@@ -1,6 +1,6 @@
 """The hand-written value types of the ``[tool.nab]`` surface.
 
-They subclass :class:`nab_project._value.ValueType` rather than applying
+They subclass :class:`nab_project.value.ValueType` rather than applying
 ``@dataclass(slots=True)``, so field order, equality, hashing, repr and the
 defaults are pinned here instead of left to the decorator.
 """
@@ -15,17 +15,8 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from nab_project import config, config_sources, conflicts, inputs, values
-from nab_project._value import ValueType
-from nab_project.config import (
-    ConflictFork,
-    ConflictKind,
-    ConflictMember,
-    ConflictPolicy,
-    ConflictSet,
-    MatrixConfig,
-)
-from nab_project.config_sources import (
+from nab.config import hooks, inspect, layers, model, registry, values
+from nab.config.registry import (
     EffectiveValue,
     Layer,
     OptionSpec,
@@ -35,7 +26,17 @@ from nab_project.config_sources import (
     SourceKind,
     SourceRoots,
 )
+from nab.config.values import MatrixConfig
+from nab_project import conflicts, inputs
+from nab_project.conflicts import (
+    ConflictFork,
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSet,
+)
 from nab_project.inputs import ResolveInputs
+from nab_project.value import ValueType
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.policy import (
@@ -339,7 +340,16 @@ def test_the_cases_cover_every_value_type() -> None:
     """A subclass these modules name and ``CASES`` omits would go unchecked."""
     declared = {
         obj
-        for module in (config, config_sources, conflicts, inputs, values)
+        for module in (
+            hooks,
+            inspect,
+            layers,
+            model,
+            registry,
+            values,
+            conflicts,
+            inputs,
+        )
         for obj in vars(module).values()
         if isinstance(obj, type) and issubclass(obj, ValueType) and obj is not ValueType
     }

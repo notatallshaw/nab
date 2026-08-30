@@ -49,6 +49,8 @@ from nab._resolve import (
 )
 from nab._run import ConfigLadder, _default_cache_dir, read_config_ladder
 from nab.cli import _system_exit_status, console_entry, main, run
+from nab.config.model import read_pyproject_config
+from nab.config.registry import SourceRoots
 from nab.output import Printer, ProgressReporter, Verbosity
 from nab_index.atomic import atomic_write_text
 from nab_index.httpx_async_transport import HttpxAsyncTransport
@@ -56,8 +58,6 @@ from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project._testing.coordinator_fake import make_coordinator
-from nab_project.config import ConfigError, read_pyproject_config
-from nab_project.config_sources import SourceRoots
 from nab_project.download import DownloadError, DownloadResult
 from nab_project.fetch import FetchCoordinator
 from nab_project.lockfile import (
@@ -78,6 +78,7 @@ from nab_project.resolve import ResolveResult, TargetResult, env_signature
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.errors import ConfigError
 from nab_provider.provider import (
     InvalidUploadTimeError,
     MissingExtraError,
@@ -902,7 +903,7 @@ class TestLockCommandSpecific:
     ) -> None:
         """A URL that requirements syntax would split is rejected at config load."""
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         pyproject, source_url = _make_archive_source_project(
@@ -933,7 +934,7 @@ class TestLockCommandSpecific:
     ) -> None:
         """A percent-encoded local archive resolves to a parseable requirement."""
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         pyproject, source_url = _make_archive_source_project(
@@ -1459,7 +1460,7 @@ class TestLockCommandSpecific:
         advertising a ``core-metadata`` sha256 the sidecar bytes do not match.
         """
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         pyproject = _make_pyproject(tmp_path)
@@ -1509,7 +1510,7 @@ class TestLockCommandSpecific:
         carrier of that digest.
         """
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
 
@@ -1571,7 +1572,7 @@ class TestLockCommandSpecific:
         steps down to the whole body and checks it against that digest.
         """
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         pyproject = _make_pyproject(tmp_path)
@@ -1617,7 +1618,7 @@ class TestLockCommandSpecific:
         is an sdist published with a sha256 the served archive does not match.
         """
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         pyproject = _make_pyproject(tmp_path)
@@ -2019,7 +2020,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         with patch(
@@ -2040,7 +2041,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         with patch(
@@ -2063,7 +2064,7 @@ class TestLockCommandSpecific:
         (tmp_path / "nab.toml").write_text('resolution = "lowest"\n')
         out = tmp_path / "pylock.toml"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         with (
@@ -2094,7 +2095,7 @@ class TestLockCommandSpecific:
         user.write_text("offline = \n")
         out = tmp_path / "pylock.toml"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(user_toml=user, project_dir=p.parent, pyproject=p),
         )
         with (
@@ -2119,7 +2120,7 @@ class TestLockCommandSpecific:
         user.write_text("typoo = 1\n")
         out = tmp_path / "pylock.toml"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(user_toml=user, project_dir=p.parent, pyproject=p),
         )
         with (
@@ -2224,7 +2225,7 @@ class TestPythonFlag:
         run the flag retargets onto 3.14.
         """
         env = {**host_environment(), "python_full_version": "3.12.11"}
-        monkeypatch.setattr("nab_project.config.host_environment", lambda: env)
+        monkeypatch.setattr("nab.config.model.host_environment", lambda: env)
 
         pyproject = _make_pyproject(
             tmp_path,
@@ -4326,7 +4327,7 @@ class TestDetermineLockAnchor:
                 pyproject=p.resolve(),
             )
 
-        monkeypatch.setattr("nab._run._config_search_roots", fake_roots)
+        monkeypatch.setattr("nab._run.config_search_roots", fake_roots)
         anchor = _determine_lock_anchor(
             _ladder(pyproject), output=target, format="pylock", upgrade=False
         )
@@ -6641,7 +6642,7 @@ class TestDownloadCommand:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "vendor"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         monkeypatch.setenv("NAB_MAX_CONCURRENCY", "2")
@@ -6748,7 +6749,7 @@ class TestDownloadCommand:
         out = tmp_path / "vendor"
         download_result = DownloadResult(written=(out / "x.whl",), skipped=())
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         with (

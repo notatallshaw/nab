@@ -16,7 +16,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP
 from nab_provider.errors import ConfigError
 
-from ._value import ValueType
+from .value import ValueType
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

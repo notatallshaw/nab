@@ -14,6 +14,31 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
+from nab_project import toml_io
+from nab_project.build_policy import enforce_build_policy_for_targets
+from nab_project.conflicts import (
+    MIN_ENGAGED_MEMBERS,
+    ConflictFork,
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSelectionError,
+    ConflictSet,
+    conflict_exclusion_groups,
+    conflict_forks,
+    conflict_member_groups,
+    validate_conflict_exclusions,
+    validate_conflict_minimums,
+)
+from nab_project.inputs import ResolveInputs
+from nab_project.paths import realpath
+from nab_project.workspace import (
+    WorkspaceConfig,
+    discover_workspace_root,
+    merge_workspace_local_sources,
+    read_workspace_members,
+    workspace_local_sources,
+)
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
@@ -32,7 +57,7 @@ from nab_provider.policy import (
     ResolveMode,
     VcsSource,
 )
-from nab_provider.records import IndexConfig
+from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
 from nab_provider.target import (
     PLATFORM_MARKERS,
     ResolveTarget,
@@ -43,38 +68,21 @@ from nab_provider.target import (
 )
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy
 
-from . import toml_io
-from ._toml import tool_nab_section
-from .build_policy import enforce_build_policy_for_targets
-from .config_sources import (
+from .hooks import resolve_anchor
+from .layers import (
+    build_cli_layer,
+    discover_layers,
+    read_env_layer,
+    reject_user_keys_in_pyproject,
+    resolve_config,
+    tool_nab_section,
+)
+from .registry import (
     EffectiveValue,
     SourceKind,
     SourceRoots,
-    build_cli_layer,
-    discover_layers,
     pyproject_registry_keys,
-    read_env_layer,
-    reject_user_keys_in_pyproject,
-    resolve_anchor,
-    resolve_config,
 )
-from .conflicts import (
-    MIN_ENGAGED_MEMBERS,
-    ConflictFork,
-    ConflictKind,
-    ConflictMember,
-    ConflictPolicy,
-    ConflictSelectionError,
-    ConflictSet,
-    conflict_exclusion_groups,
-    conflict_forks,
-    conflict_member_groups,
-    validate_conflict_exclusions,
-    validate_conflict_minimums,
-)
-from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
-from .inputs import ResolveInputs
-from .paths import realpath
 from .values import (
     ENVIRONMENT_KEYS,
     MatrixConfig,
@@ -83,13 +91,6 @@ from .values import (
     matrix_from_config,
     parse_requires_python,
     validate_environment_values,
-)
-from .workspace import (
-    WorkspaceConfig,
-    discover_workspace_root,
-    merge_workspace_local_sources,
-    read_workspace_members,
-    workspace_local_sources,
 )
 
 if TYPE_CHECKING:
@@ -242,7 +243,7 @@ def read_pyproject_config(
 
     The ``[tool.nab]``-config portion is sourced from the registry merged
     ladder (pyproject ``[tool.nab]`` plus a project-dir ``nab.toml``,
-    merged by :func:`config_sources.resolve_config` with its per-key merge,
+    merged by :func:`nab.config.layers.resolve_config` with its per-key merge,
     cross-file conflict check, and category gate), so a project-dir
     ``nab.toml`` value configures the resolve exactly as the inspector
     reports it.  The

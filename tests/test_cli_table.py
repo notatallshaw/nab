@@ -14,10 +14,10 @@ from typing import Any
 import pytest
 
 from nab import optiondefs
+from nab.config.registry import SourceKind
 from nab.optiondefs import COMMANDS, GLOBAL, UNSET, Kind, Opt, Scope, VType
 from nab.optionrows import rows
 from nab.optiontable import ALL, TABLES
-from nab_project.config_sources import SourceKind
 from nab_provider import policy
 
 # The declared rows, paired with the ``Opt`` each lowers to: ``table_rows``

@@ -4,46 +4,52 @@ from __future__ import annotations
 
 import errno
 import re
+from dataclasses import fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from nab.config.hooks import SourceConfigError
+from nab.config.inspect import render_explain, render_get
+from nab.config.layers import (
+    build_cli_layer,
+    discover_layers,
+    read_env_layer,
+    resolve_config,
+)
+from nab.config.model import (
+    EnvironmentConfig,
+    NabProjectConfig,
+    _check_requires_python_admits_target,
+    _option_label,
+    plan_targets,
+    read_pyproject_config,
+    with_python_override,
+)
+from nab.config.registry import (
+    OPTIONS,
+    EffectiveValue,
+    Origin,
+    SourceKind,
+    SourceRoots,
+)
+from nab.config.values import (
+    _MATRIX_KEYS,
+    _PEP508_MARKER_VARIABLES,
+    MatrixConfig,
+)
 from nab_index.multi_index import IndexConfig
-from nab_project.config import (
-    ConfigError,
+from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
     ConflictPolicy,
     ConflictSelectionError,
     ConflictSet,
-    EnvironmentConfig,
-    MatrixConfig,
-    NabProjectConfig,
-    ResolveMode,
-    _check_requires_python_admits_target,
-    _option_label,
     conflict_exclusion_groups,
     conflict_forks,
-    plan_targets,
-    read_pyproject_config,
     validate_conflict_minimums,
-    with_python_override,
-)
-from nab_project.config_sources import (
-    OPTIONS,
-    EffectiveValue,
-    Origin,
-    SourceConfigError,
-    SourceKind,
-    SourceRoots,
-    build_cli_layer,
-    discover_layers,
-    read_env_layer,
-    render_explain,
-    render_get,
-    resolve_config,
 )
 from nab_project.fetch import (
     DEFAULT_INDEX_NAME,
@@ -52,14 +58,14 @@ from nab_project.fetch import (
     index_cache_floors,
     index_routes,
 )
-from nab_project.values import (
-    _MATRIX_KEYS,
-    _PEP508_MARKER_VARIABLES,
-)
+from nab_project.inputs import ResolveInputs
 from nab_project.workspace import WorkspaceConfig
 from nab_provider._vendor.packaging.markers import Marker, default_environment
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.errors import ConfigError
+from nab_provider.overrides import IndexOverride
+from nab_provider.policy import ArchiveSource, ResolveMode
 from nab_provider.provider import (
     BuildPolicy,
     DecisionOrder,
@@ -73,6 +79,7 @@ from nab_provider.provider import (
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget, declared_range_marker, host_environment
+from nab_provider.testing import pkg_override
 
 
 def write(tmp_path: Path, body: str) -> Path:
@@ -84,11 +91,11 @@ def write(tmp_path: Path, body: str) -> Path:
 
 
 DOCS_CONFIGURATION = (
-    Path(__file__).resolve().parents[2] / "docs" / "reference" / "configuration.md"
+    Path(__file__).resolve().parents[1] / "docs" / "reference" / "configuration.md"
 )
 
 DOCS_CONFLICTS = (
-    Path(__file__).resolve().parents[2] / "docs" / "explanation" / "conflicts.md"
+    Path(__file__).resolve().parents[1] / "docs" / "explanation" / "conflicts.md"
 )
 
 
@@ -1880,7 +1887,7 @@ _FREE_THREADED_NO_PYTHON = (
 def _host_python(monkeypatch: pytest.MonkeyPatch, full_version: str) -> None:
     """Report ``full_version`` as the running interpreter to the planner."""
     env = {**host_environment(), "python_full_version": full_version}
-    monkeypatch.setattr("nab_project.config.host_environment", lambda: env)
+    monkeypatch.setattr("nab.config.model.host_environment", lambda: env)
 
 
 class TestEnvironment:
@@ -2343,7 +2350,7 @@ class TestMarkerEnvironmentDeprecation:
             'python_version = "3.12"\n'
             'python_full_version = "3.12.4"\n',
         )
-        with caplog.at_level("WARNING", logger="nab_project.config"):
+        with caplog.at_level("WARNING", logger="nab.config.model"):
             config = read_pyproject_config(path)
         assert config.environment == EnvironmentConfig(python="3.12.4")
         assert any("deprecated" in rec.message for rec in caplog.records)
@@ -2395,7 +2402,7 @@ class TestMarkerEnvironmentDeprecation:
             read_pyproject_config(path)
 
     def test_half_a_platform_is_an_error(self, tmp_path: Path) -> None:
-        """``sys_platform`` alone used to keep the host's machine."""
+        """Half a platform names no platform, so it cannot be mapped."""
         path = write(
             tmp_path,
             '[tool.nab.marker-environment]\nsys_platform = "linux"\n',
@@ -5218,7 +5225,7 @@ class TestWorkspaceDiscoveryIntegration:
             "[tool.nab]\n"
             'build-policy = "never"\n',
         )
-        with caplog.at_level("INFO", logger="nab_project.config"):
+        with caplog.at_level("INFO", logger="nab.config.model"):
             config = read_pyproject_config(member)
         assert config.build_policy is BuildPolicy.NEVER
         assert not [
@@ -5678,3 +5685,94 @@ class TestProjectNabTomlGateAndConflict:
         (tmp_path / "nab.toml").write_text('[environment]\nplatform = "linux_x86_64"\n')
         with pytest.raises(SourceConfigError, match="conflicting values"):
             read_pyproject_config(path, discover_workspace=False)
+
+
+_SEAM_CUTOFF = datetime(2026, 5, 1, tzinfo=timezone.utc)
+
+
+# What stays with the host: how it chose the targets to resolve for, and
+# where it read the settings from.
+_STAYS_IN_NAB = frozenset(
+    {
+        "environment",
+        "matrix",
+        "mode",
+        "requires_python_source",
+        "workspace",
+        "workspace_member_names",
+    }
+)
+
+
+def _config_off_every_slot_default(tmp_path: Path) -> NabProjectConfig:
+    """A project config with every seam slot set away from its default.
+
+    A slot left at its default would make the checks below vacuous: a value
+    that failed to cross would read back as the one it was meant to carry.
+    """
+    return NabProjectConfig(
+        archive_sources=(
+            ArchiveSource("blob", "https://example.invalid/b-1.0.tar.gz"),
+        ),
+        base_group="project",
+        build_group="build",
+        build_policy=BuildPolicy.BUILD_REMOTE,
+        build_requires_depth=1,
+        conflicts=(ConflictSet(members=(ConflictMember(ConflictKind.EXTRA, "cpu"),)),),
+        constraints=("setuptools<70",),
+        decision_order=DecisionOrder.STABLE,
+        default_groups=("dev",),
+        dist_policy=DistPolicy.SDIST_ONLY,
+        index_overrides={
+            "internal": IndexOverride(
+                uploaded_prior_to=_SEAM_CUTOFF, build_policy=BuildPolicy.BUILD_REMOTE
+            )
+        },
+        indexes=(IndexConfig("internal", "https://example.invalid/simple/"),),
+        local_sources=(LocalSource("plugin", str(tmp_path / "plugin")),),
+        package_overrides=(
+            pkg_override(
+                "hatchling",
+                uploaded_prior_to=_SEAM_CUTOFF,
+                build_policy=BuildPolicy.BUILD_REMOTE,
+            ),
+        ),
+        requires_python=">=3.11",
+        resolution=ResolutionStrategy.LOWEST,
+        trust_unverified_sdist_deps=True,
+        uploaded_prior_to=_SEAM_CUTOFF,
+        vcs=VcsConfig(policy=VcsPolicy.ALLOW),
+        vcs_sources=(VcsSource("tool", "git+https://example.invalid/tool.git@v1"),),
+    )
+
+
+class TestSeamPartition:
+    """What crosses into nab-project, and what the host keeps."""
+
+    def test_every_config_field_crosses_the_seam_or_stays_in_nab(self) -> None:
+        """A new ``[tool.nab]`` setting is either a slot or named as the host's."""
+        names = {f.name for f in fields(NabProjectConfig)}
+
+        assert names == set(ResolveInputs.__slots__) | _STAYS_IN_NAB
+
+    def test_the_projection_carries_every_slot(self, tmp_path: Path) -> None:
+        """Every slot arrives holding what the project declared.
+
+        The name sets can agree while a value never crosses.
+        """
+        config = _config_off_every_slot_default(tmp_path)
+
+        inputs = config.resolve_inputs()
+
+        assert {name: getattr(inputs, name) for name in ResolveInputs.__slots__} == {
+            name: getattr(config, name) for name in ResolveInputs.__slots__
+        }
+
+    def test_a_bare_instance_takes_the_configs_defaults(self) -> None:
+        """What a project declaring no ``[tool.nab]`` resolves under."""
+        bare = ResolveInputs()
+        default = NabProjectConfig()
+
+        assert {name: getattr(bare, name) for name in ResolveInputs.__slots__} == {
+            name: getattr(default, name) for name in ResolveInputs.__slots__
+        }

@@ -27,9 +27,9 @@ from nab._cli import spec as cli_spec
 from nab._cli.parse import parse
 from nab._lock import lock
 from nab.cli import run
+from nab.config.registry import OPTIONS
 from nab.optiontable import ALL
 from nab.output import ColorChoice, Verbosity
-from nab_project.config_sources import OPTIONS
 from nab_project.lockfile import (
     ArchivePin,
     IndexPin,

@@ -24,6 +24,7 @@ dependencies = [
     "nab-provider==0.0.16.dev0",
     "nab-project==0.0.16.dev0",
     "nab-index==0.0.16.dev0",
+    "tomli>=2.2",
     "typing_extensions>=4.6",
 ]
 
@@ -61,6 +62,7 @@ exclude = [
     "tests/test_classifiers.py",
     "tests/test_cli_docs.py",
     "tests/test_cli_generated.py",
+    "tests/test_config.py",
     "tests/test_contributing_docs.py",
     "tests/test_embedding_docs.py",
     "tests/test_env_layer.py",
@@ -92,8 +94,9 @@ types = [
     {include-group = "tests"},
     "mypy>=1.19",
     "pyright>=1.1.400",
-    # Earlier versions report the `ty: ignore` in nab-resolver as unused.
-    "ty>=0.0.66",
+    # Earlier versions report the `ty: ignore` in nab-resolver as unused, and
+    # 0.0.66 gives a dict narrowed by isinstance the key type Never.
+    "ty>=0.0.70",
     "pyrefly>=0.50",
     "typing_extensions>=4.10",
     "zuban>=0.6",

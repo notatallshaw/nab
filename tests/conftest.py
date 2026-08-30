@@ -17,8 +17,8 @@ from unittest.mock import patch
 import pytest
 
 from nab import _run
+from nab.config.registry import SourceRoots
 from nab.output import reset_run
-from nab_project.config_sources import SourceRoots
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -82,7 +82,7 @@ def hermetic_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             project_dir=project_dir,
         )
 
-    monkeypatch.setattr(_run, "_config_search_roots", fake_roots)
+    monkeypatch.setattr(_run, "config_search_roots", fake_roots)
     monkeypatch.delenv("NAB_OFFLINE", raising=False)
     monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
     monkeypatch.delenv("NAB_RESOLUTION", raising=False)

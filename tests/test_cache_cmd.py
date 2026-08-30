@@ -10,6 +10,7 @@ import pytest
 
 from nab import _run as nab_run
 from nab.cli import run
+from nab.config.registry import SourceRoots
 from nab_index.cache import (
     CACHE_VERSION_SDIST,
     CACHE_VERSION_SIMPLE,
@@ -17,7 +18,6 @@ from nab_index.cache import (
     OnDiskCache,
 )
 from nab_index.parsed_listing import encode as _encode_parsed
-from nab_project.config_sources import SourceRoots
 
 # Derived so a bucket-version bump does not need every path updated.
 SIMPLE_BUCKET = f"simple-{CACHE_VERSION_SIMPLE}"
@@ -51,7 +51,7 @@ def config_anchors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[Path
         anchors.append(pyproject)
         return roots
 
-    monkeypatch.setattr(nab_run, "_config_search_roots", _roots)
+    monkeypatch.setattr(nab_run, "config_search_roots", _roots)
     monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
     return anchors
 

@@ -14,6 +14,7 @@ from nab_provider.vcs_admission import (
     VcsPolicy,
     admit_vcs_url,
     has_full_commit_sha,
+    known_vcs_schemes,
     split_vcs_scheme,
 )
 from nab_provider.vcs_request import VcsRequest
@@ -29,6 +30,23 @@ def _allow_https() -> VcsConfig:
         allowed_schemes=frozenset({"git+https"}),
         allowed_repos=("https://",),
     )
+
+
+class TestKnownVcsSchemes:
+    """The scheme allowlist a host validates ``vcs.allowed-schemes`` against."""
+
+    def test_names_every_scheme_admission_accepts(self) -> None:
+        """nab clones git only, so every entry is a ``git+`` scheme."""
+        schemes = known_vcs_schemes()
+
+        assert "git+https" in schemes
+        assert all(scheme.startswith("git+") for scheme in schemes)
+
+    def test_a_scheme_it_omits_is_refused(self) -> None:
+        """The set is the same one ``split_vcs_scheme`` recognises."""
+        assert "hg+https" not in known_vcs_schemes()
+        url = "hg+https://example.com/repo"
+        assert split_vcs_scheme(url) == (None, url)
 
 
 class TestSplitVcsScheme:

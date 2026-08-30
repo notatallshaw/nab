@@ -16,9 +16,9 @@ import sys
 from pathlib import Path
 
 from nab_index.cache import OnDiskCache, is_recognized_bucket
-from nab_project.config_sources import SourceConfigError
 
 from ._run import _default_cache_dir, _fail_config, effective_config
+from .config.hooks import SourceConfigError
 from .output import printer
 
 

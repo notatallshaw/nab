@@ -1,4 +1,4 @@
-"""Tests for the layered config registry (:mod:`nab_project.config_sources`).
+"""Tests for the layered config registry (:mod:`nab.config.registry`).
 
 The registry drives the toml loader, env reader, merge, category gate,
 and the ``nab config`` renderers.  These tests exercise the full
@@ -20,41 +20,43 @@ from unittest.mock import patch
 
 import pytest
 
-from nab_index.multi_index import IndexConfig
-from nab_project.config import (
-    ConflictKind,
-    ConflictMember,
-    ConflictPolicy,
-    ConflictSet,
-    MatrixConfig,
+from nab.config.hooks import SourceConfigError, inspector_anchor
+from nab.config.inspect import (
+    orphan_rejections,
+    project_cli_override_notice,
+    project_cli_override_records,
+    render_explain,
+    render_get,
+    render_list,
 )
-from nab_project.config_sources import (
+from nab.config.layers import (
+    _load_toml_layer,
+    build_cli_layer,
+    discover_layers,
+    read_env_layer,
+    reject_user_keys_in_pyproject,
+    resolve_config,
+)
+from nab.config.registry import (
     OPTIONS,
     EffectiveValue,
     Layer,
     Origin,
     RejectedLayer,
     Scope,
-    SourceConfigError,
     SourceKind,
     SourceRoots,
-    _load_toml_layer,
-    build_cli_layer,
     build_cli_overrides,
-    discover_layers,
-    inspector_anchor,
-    orphan_rejections,
-    project_cli_override_notice,
-    project_cli_override_records,
     pyproject_registry_keys,
-    read_env_layer,
-    reject_user_keys_in_pyproject,
-    render_explain,
-    render_get,
-    render_list,
-    resolve_config,
 )
-from nab_project.values import _INDEX_KEYS
+from nab.config.values import _INDEX_KEYS, MatrixConfig
+from nab_index.multi_index import IndexConfig
+from nab_project.conflicts import (
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSet,
+)
 from nab_project.workspace import WorkspaceConfig
 from nab_provider.provider import (
     ArchiveSource,
@@ -768,9 +770,8 @@ class TestRenderers:
     def test_render_list_surfaces_known_key_gate_rejection(
         self, tmp_path: Path
     ) -> None:
-        # A PROJECT key set in a user nab.toml attaches to its option, so it
-        # is reachable from explain; render_list also lists it (it was
-        # previously shown only by explain, not by list).
+        # A PROJECT key set in a user nab.toml attaches to its option, so
+        # both explain and list can name it.
         _project(tmp_path)
         user_toml = tmp_path / "user.toml"
         user_toml.write_text('resolution = "lowest"\n', encoding="utf-8")

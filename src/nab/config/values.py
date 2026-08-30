@@ -1,8 +1,8 @@
 """Parse the values ``[tool.nab]`` keys carry.
 
-Shared by the whole-file parse in :mod:`nab_project.config` and the per-layer
-registry in :mod:`nab_project.config_sources`, so both reject a bad value with
-the same wording.
+Shared by the whole-file parse in :mod:`nab.config.model` and the per-layer
+rows in :mod:`nab.config.hooks`, so both reject a bad value with the same
+wording.
 """
 
 from __future__ import annotations
@@ -16,6 +16,15 @@ from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 from urllib.parse import urlsplit
 
 from nab_index.local_index import is_file_url
+from nab_project.conflicts import (
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSet,
+)
+from nab_project.paths import resolve_path
+from nab_project.value import ValueType
+from nab_project.workspace import WorkspaceConfig
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider._vendor.packaging.version import Version
@@ -43,11 +52,6 @@ from nab_provider.tags import (
 )
 from nab_provider.target import PLATFORM_MARKERS, Matrix
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
-
-from ._value import ValueType
-from .conflicts import ConflictKind, ConflictMember, ConflictPolicy, ConflictSet
-from .paths import resolve_path
-from .workspace import WorkspaceConfig
 
 if TYPE_CHECKING:
     import enum

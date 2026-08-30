@@ -4,7 +4,7 @@ Read-only v1.  ``list`` shows every effective option with its value,
 scope and origin; ``get`` prints one effective value; ``explain`` prints
 the full shadowed stack for one key, the winner marked with a ``>``
 gutter.  All three are derived from the registry in
-:mod:`nab_project.config_sources`; this module only discovers the
+:mod:`nab.config.registry`; this module only discovers the
 layers and prints what the renderers return.  There is no set/unset/edit:
 v1 never writes config.
 """
@@ -13,21 +13,20 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-
-from nab_project.config_sources import (
-    RejectedLayer,
-    SourceConfigError,
-    project_cli_override_notice,
-    render_explain,
-    render_get,
-    render_list,
-)
+from typing import TYPE_CHECKING
 
 from ._run import (
     _cli_overrides,
     _fail_config,
     effective_config,
     require_pyproject_file,
+)
+from .config.hooks import SourceConfigError
+from .config.inspect import (
+    project_cli_override_notice,
+    render_explain,
+    render_get,
+    render_list,
 )
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
@@ -38,6 +37,9 @@ from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runti
     ResolutionFlag,
 )
 from .output import printer
+
+if TYPE_CHECKING:
+    from .config.registry import RejectedLayer
 
 
 def config_command(  # noqa: PLR0913 - one keyword per flag is the public surface

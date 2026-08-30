@@ -36,13 +36,8 @@ from nab._download import download
 from nab._lock import lock
 from nab._run import effective_config
 from nab.cli import run
-from nab_project.config_sources import (
-    OPTIONS,
-    OptionSpec,
-    Scope,
-    SourceConfigError,
-    SourceRoots,
-)
+from nab.config.hooks import SourceConfigError
+from nab.config.registry import OPTIONS, OptionSpec, Scope, SourceRoots
 from nab_project.download import DownloadResult
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
@@ -205,7 +200,7 @@ def test_config_search_roots_uses_symlink_dir_not_target(tmp_path: Path) -> None
         link.symlink_to(real / "pyproject.toml")
     except (OSError, NotImplementedError):
         pytest.skip("symlinks not supported on this platform")
-    roots = nab_run._config_search_roots(link)
+    roots = nab_run.config_search_roots(link)
     assert roots.project_dir == link_dir.resolve()
     assert roots.pyproject == link_dir.resolve() / "pyproject.toml"
 
@@ -776,7 +771,7 @@ class TestRegistryConformance:
 
     def test_conformance_catches_a_deliberate_mismatch(self) -> None:
         """Prove the gate is real: a registry flag with no CLI param fails."""
-        from nab_project.config_sources import _parse_bool
+        from nab.config.hooks import parse_bool
 
         bogus = OptionSpec(
             key="made-up",
@@ -786,7 +781,7 @@ class TestRegistryConformance:
             env_var=None,
             cli_flag="--made-up",
             cli_param="made_up",
-            parse=_parse_bool,
+            parse=parse_bool,
             render=str,
         )
         patched = (*OPTIONS, bogus)
@@ -864,7 +859,7 @@ class TestEffectiveConfigBridge:
     def test_effective_config_default_roots_callable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Exercise the real _config_search_roots (no monkeypatch) but with a
+        # Exercise the real config_search_roots (no monkeypatch) but with a
         # project that has no nab.toml, so only defaults/pyproject apply.
         proj = _project(tmp_path)
         monkeypatch.delenv("NAB_OFFLINE", raising=False)
@@ -950,7 +945,7 @@ def test_default_config_search_roots_xdg(
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     pyproject = tmp_path / "pyproject.toml"
-    roots = nab_run._config_search_roots(pyproject)
+    roots = nab_run.config_search_roots(pyproject)
     assert roots.user_toml == tmp_path / "xdg" / "nab" / "nab.toml"
     assert roots.system_toml == Path("/etc/nab/nab.toml")
     assert roots.project_dir == tmp_path.resolve()
@@ -961,7 +956,7 @@ def test_config_search_roots_threads_custom_pyproject_name(tmp_path: Path) -> No
     # A non-default pyproject name is threaded through so the registry's
     # pyproject layer reads the file the user actually pointed at.
     custom = tmp_path / "app.toml"
-    roots = nab_run._config_search_roots(custom)
+    roots = nab_run.config_search_roots(custom)
     assert roots.pyproject == custom.resolve()
     assert roots.project_dir == tmp_path.resolve()
 
@@ -971,7 +966,7 @@ def test_default_config_search_roots_no_xdg(
 ) -> None:
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(nab_run.Path, "home", lambda: tmp_path)
-    roots = nab_run._config_search_roots(tmp_path / "pyproject.toml")
+    roots = nab_run.config_search_roots(tmp_path / "pyproject.toml")
     assert roots.user_toml == tmp_path / ".config" / "nab" / "nab.toml"
 
 
@@ -1034,7 +1029,7 @@ class TestNoOpLock:
         usr_root = tmp_path / "usr" / "nab.toml"
         monkeypatch.setattr(
             nab_run,
-            "_config_search_roots",
+            "config_search_roots",
             lambda pyproject: SourceRoots(
                 system_toml=sys_root,
                 user_toml=usr_root,

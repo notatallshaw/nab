@@ -42,11 +42,6 @@ from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project import _build_remote
 from nab_project._resolve.engine import _raise_for_source_python
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_project.config import (
-    IndexOverride,
-    OverrideConflictError,
-    PackageOverride,
-)
 from nab_project.fetch import (
     DEFAULT_INDEX_URL,
     FetchCoordinator,
@@ -73,8 +68,10 @@ from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.tags import Tag
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
+from nab_provider.errors import OverrideConflictError
 from nab_provider.marker_holds import UnevaluableMarkerError, dependency_marker_holds
 from nab_provider.metadata import WheelMetadata
+from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.provider import (
     BuildPolicy,
     DistPolicy,

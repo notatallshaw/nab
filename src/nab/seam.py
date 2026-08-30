@@ -2,20 +2,22 @@
 
 nab-project resolves against a list of targets and a
 :class:`~nab_project.inputs.ResolveInputs`; these two calls are where the host
-turns its :class:`~nab_project.config.NabProjectConfig` into them.
+turns its :class:`~nab.config.model.NabProjectConfig` into them.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nab_project.config import plan_targets
 from nab_project.resolve import inputs_for_build_requirements
 
+from .config.model import plan_targets
+
 if TYPE_CHECKING:
-    from nab_project.config import NabProjectConfig
     from nab_project.inputs import ResolveInputs
     from nab_provider.target import ResolveTarget
+
+    from .config.model import NabProjectConfig
 
 __all__ = ["resolve_inputs", "resolve_targets"]
 

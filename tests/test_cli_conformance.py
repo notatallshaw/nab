@@ -20,9 +20,9 @@ import pytest
 
 from nab._cli import spec as cli_spec
 from nab._cli.parse import UsageError, parse
+from nab.config.registry import OPTIONS, SourceKind
 from nab.optiondefs import COMMANDS, UNSET, Kind, Opt, Scope, VType
 from nab.optiontable import ALL
-from nab_project.config_sources import OPTIONS, SourceKind
 
 _TESTS = Path(__file__).resolve().parent
 _FLAG_SPELLINGS = _TESTS / "data" / "lockfile_flag_spellings.txt"

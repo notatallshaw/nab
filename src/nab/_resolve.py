@@ -18,13 +18,6 @@ from typing import TYPE_CHECKING
 import tomli
 
 from nab.seam import resolve_inputs, resolve_targets
-from nab_project.config import (
-    ConfigError,
-    NabProjectConfig,
-    ResolveMode,
-    read_pyproject_config,
-    with_python_override,
-)
 from nab_project.lockfile import MissingHashError, MissingSdistError
 from nab_project.pyproject_files import (
     read_pyproject_groups,
@@ -58,6 +51,13 @@ from nab_provider.target import (
 from nab_resolver.errors import ResolutionError
 
 from ._run import require_pyproject_file
+from .config.model import (
+    ConfigError,
+    NabProjectConfig,
+    ResolveMode,
+    read_pyproject_config,
+    with_python_override,
+)
 from .output import Verbosity, printer
 
 if TYPE_CHECKING:
