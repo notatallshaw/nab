@@ -28,8 +28,6 @@ from nab_project.config import (
     _option_label,
     conflict_exclusion_groups,
     conflict_forks,
-    index_cache_floors_from_config,
-    index_routes_from_config,
     plan_targets,
     read_pyproject_config,
     validate_conflict_minimums,
@@ -49,7 +47,13 @@ from nab_project.config_sources import (
     render_get,
     resolve_config,
 )
-from nab_project.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
+from nab_project.fetch import (
+    DEFAULT_INDEX_NAME,
+    DEFAULT_INDEX_URL,
+    IndexRoute,
+    index_cache_floors,
+    index_routes,
+)
 from nab_project.workspace import WorkspaceConfig
 from nab_provider._vendor.packaging.markers import Marker, default_environment
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
@@ -3274,7 +3278,7 @@ class TestPackageSugar:
             '[tool.nab.packages.acme-core]\nindex = "internal"\n',
         )
         config = read_pyproject_config(path, discover_workspace=False)
-        assert index_routes_from_config(config) == [
+        assert index_routes(config) == [
             IndexRoute(name="acme-core", index="internal"),
         ]
 
@@ -3461,7 +3465,7 @@ class TestPackageSugar:
     def test_non_routing_entry_skipped_in_routes(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab.packages.foo]\ndist-policy = "sdist-only"\n')
         config = read_pyproject_config(path, discover_workspace=False)
-        assert index_routes_from_config(config) == []
+        assert index_routes(config) == []
 
     def test_uppercase_name_and_specifier_in_one_key(self, tmp_path: Path) -> None:
         # The key is Requirement()-parsed before only its .name is
@@ -3547,7 +3551,7 @@ class TestPackageRules:
             'index = "internal"\n',
         )
         config = read_pyproject_config(path, discover_workspace=False)
-        assert index_routes_from_config(config) == [
+        assert index_routes(config) == [
             IndexRoute(name="acme-core", index="internal"),
             IndexRoute(name="acme-utils", index="internal"),
         ]
@@ -4278,7 +4282,7 @@ class TestIndexCacheFloorsProjection:
             + '[tool.nab.index.pypi]\ndist-policy = "wheel-only"\n',
         )
         config = read_pyproject_config(path, discover_workspace=False)
-        assert index_cache_floors_from_config(config) == {"internal": 120}
+        assert index_cache_floors(config) == {"internal": 120}
 
     def test_empty_when_none_set(self, tmp_path: Path) -> None:
         path = write(
@@ -4286,7 +4290,7 @@ class TestIndexCacheFloorsProjection:
             self._two_indexes() + '[tool.nab.index.pypi]\ndist-policy = "wheel-only"\n',
         )
         config = read_pyproject_config(path, discover_workspace=False)
-        assert index_cache_floors_from_config(config) == {}
+        assert index_cache_floors(config) == {}
 
 
 class TestMatrixReferenceDocs:

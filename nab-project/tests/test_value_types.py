@@ -398,3 +398,13 @@ def test_a_conflict_member_deduplicates_by_canonical_identity() -> None:
 
     assert same in {member}
     assert other_kind not in {member}
+
+
+def test_a_conflict_set_renders_its_policy_and_members() -> None:
+    """The form an error message and ``nab config list`` both print."""
+    members = (
+        ConflictMember(ConflictKind.EXTRA, "cpu"),
+        ConflictMember(ConflictKind.EXTRA, "gpu"),
+    )
+
+    assert str(ConflictSet(members)) == "at-most-one (extra 'cpu', extra 'gpu')"

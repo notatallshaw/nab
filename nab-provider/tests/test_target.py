@@ -32,6 +32,7 @@ from nab_provider.target import (
     NonIntervalMarkerError,
     ResolveTarget,
     apply_python_axis_overlay,
+    check_free_threaded,
     declared_environment,
     declared_range_marker,
     environment_declaration,
@@ -1760,3 +1761,32 @@ class TestReleaseIntervals:
     def test_parts_below_one_is_rejected(self, parts: int) -> None:
         with pytest.raises(ValueError, match="parts must be at least 1"):
             SpecifierSet(">=3.11.4").to_range().release_intervals(parts)
+
+
+class TestCheckFreeThreaded:
+    """A free-threaded platform needs a CPython build that has one."""
+
+    def test_a_foreign_implementation_raises(self) -> None:
+        with pytest.raises(ValueError, match="needs CPython, not \\['pypy'\\]"):
+            check_free_threaded(
+                platforms=[PlatformSpec("linux_x86_64", free_threaded=True)],
+                implementations=["cpython", "pypy"],
+                python_versions=["3.13"],
+            )
+
+    def test_a_python_below_the_abi_floor_raises(self) -> None:
+        """The ``cpXYt`` ABI ships from 3.13, so no older build satisfies it."""
+        with pytest.raises(ValueError, match="CPython 3.13 or newer"):
+            check_free_threaded(
+                platforms=[PlatformSpec("linux_x86_64", free_threaded=True)],
+                implementations=["cpython"],
+                python_versions=["3.12", "3.13"],
+            )
+
+    def test_cpython_at_the_floor_passes(self) -> None:
+        """CPython 3.13 and newer have the build, so the check returns."""
+        check_free_threaded(
+            platforms=[PlatformSpec("linux_x86_64", free_threaded=True)],
+            implementations=["cpython"],
+            python_versions=["3.13", "3.14"],
+        )

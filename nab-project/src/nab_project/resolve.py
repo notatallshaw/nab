@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.pep508 import parse_requirement
 from nab_provider.provider import ListingFilterCache
@@ -69,23 +70,21 @@ from ._resolve.engine import (
     env_signature,
 )
 from .config import (
-    ConfigError,
+    NabProjectConfig,
+    plan_targets,
+    read_pyproject_config,
+    with_python_override,
+)
+from .conflicts import (
     ConflictFork,
     ConflictKind,
     ConflictSelectionError,
     ConflictSet,
-    NabProjectConfig,
-    configured_group_names,
     conflict_forks,
-    index_cache_floors_from_config,
-    index_routes_from_config,
-    plan_targets,
-    read_pyproject_config,
     validate_conflict_exclusions,
     validate_conflict_minimums,
-    with_python_override,
 )
-from .fetch import FetchCoordinator
+from .fetch import FetchCoordinator, index_cache_floors, index_routes
 from .inputs import ResolveInputs
 from .lockfile import LockInput, TargetLock
 from .pyproject_files import (
@@ -225,8 +224,8 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
         indexes=list(config.indexes),
         cache_dir=cache_dir,
         offline=offline,
-        index_routes=index_routes_from_config(config),
-        index_cache_floors=index_cache_floors_from_config(config),
+        index_routes=index_routes(config),
+        index_cache_floors=index_cache_floors(config),
         on_fetch=progress.on_fetch if progress is not None else None,
         build_config=_resolve_inputs(config),
     ) as coordinator:
@@ -539,6 +538,13 @@ def config_for_build_requirements(config: NabProjectConfig) -> NabProjectConfig:
     )
 
 
+def _configured_group_names(config: NabProjectConfig) -> tuple[str, ...]:
+    """Return the group names active by configuration rather than by selection."""
+    return tuple(
+        name for name in (config.base_group, config.build_group) if name is not None
+    )
+
+
 def _plan_forks(
     path: Path,
     tables: _ProjectTables,
@@ -558,7 +564,7 @@ def _plan_forks(
     The second element is the no-member requirement list, needed only when
     the plan forked; see :func:`resolve_with_coordinator`.
     """
-    configured = configured_group_names(config)
+    configured = _configured_group_names(config)
     project_context, selector_contexts = _configured_contexts(config, tables)
     if config.conflicts:
         _validate_conflict_members_exist(

@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from nab_index.multi_index import IndexConfig
+    from nab_project.config import NabProjectConfig
     from nab_provider.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
@@ -60,10 +61,10 @@ from benchmark_host import (
 )
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_project.config import NabProjectConfig, index_routes_from_config
 from nab_project.fetch import (
     FetchCoordinator,
     IndexRoute,
+    index_routes,
 )
 from nab_provider._vendor.packaging.markers import default_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -1343,7 +1344,7 @@ def resolve_scenario(
         HttpxAsyncTransport(),
         indexes=list(config.indexes),
         cache_dir=CACHE_DIR,
-        index_routes=index_routes_from_config(config),
+        index_routes=index_routes(config),
     ) as coordinator:
         provider = build_benchmark_provider(
             coordinator,

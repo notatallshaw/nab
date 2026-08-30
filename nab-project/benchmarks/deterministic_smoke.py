@@ -40,7 +40,8 @@ else:
 
 from nab_index.multi_index import IndexConfig
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_project.config import NabProjectConfig, enforce_build_policy_for_targets
+from nab_project.build_policy import enforce_build_policy_for_targets
+from nab_project.config import NabProjectConfig
 from nab_project.fetch import FetchCoordinator
 from nab_project.lockfile import LOCK_VERSION, build_pylock
 from nab_project.resolve import (

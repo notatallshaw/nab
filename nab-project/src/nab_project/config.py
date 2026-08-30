@@ -7,7 +7,6 @@ table-valued keys stay file-only.  This module owns the project side.
 
 from __future__ import annotations
 
-import enum
 import itertools
 import logging
 import re
@@ -19,14 +18,13 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from urllib.parse import urlsplit
 
 import tomli
-from typing_extensions import override
 
 from nab_index.local_index import is_file_url
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.archive import ArchiveRequest, ArchiveRequestError
-from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP
+from nab_provider.errors import ConfigError
 from nab_provider.errors import (
     OverrideConflictError as OverrideConflictError,  # noqa: PLC0414  (public re-export)
 )
@@ -67,8 +65,8 @@ from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 from . import toml_io
 from ._toml import tool_nab_section
 from ._value import ValueType
+from .build_policy import enforce_build_policy_for_targets
 from .config_sources import (
-    ConfigError,
     EffectiveValue,
     SourceKind,
     SourceRoots,
@@ -80,7 +78,21 @@ from .config_sources import (
     resolve_anchor,
     resolve_config,
 )
-from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
+from .conflicts import (
+    MIN_ENGAGED_MEMBERS,
+    ConflictFork,
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSelectionError,
+    ConflictSet,
+    conflict_exclusion_groups,
+    conflict_forks,
+    conflict_member_groups,
+    validate_conflict_exclusions,
+    validate_conflict_minimums,
+)
+from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
 from .paths import realpath, resolve_path
 from .workspace import (
     WorkspaceConfig,
@@ -91,8 +103,8 @@ from .workspace import (
 )
 
 if TYPE_CHECKING:
+    import enum
     from collections.abc import Iterator, Mapping, Sequence
-    from collections.abc import Set as AbstractSet
     from pathlib import Path
 
     from nab_provider._vendor.packaging.requirements import Requirement
@@ -112,13 +124,9 @@ __all__ = [
     "OverrideConflictError",
     "PackageOverride",
     "ResolveMode",
-    "configured_group_names",
     "conflict_exclusion_groups",
     "conflict_forks",
     "conflict_member_groups",
-    "enforce_build_policy_for_targets",
-    "index_cache_floors_from_config",
-    "index_routes_from_config",
     "matrix_from_config",
     "plan_targets",
     "read_pyproject_config",
@@ -211,246 +219,6 @@ class EnvironmentConfig:
     implementation: str | None = None
 
 
-class ConflictPolicy(enum.Enum):
-    """How exclusive the members of a :class:`ConflictSet` are.
-
-    Mirrors Gentoo's ``REQUIRED_USE`` group operators.  ``AT_MOST_ONE``
-    (``??``) is the default for a bare uv-style set: the members are
-    mutually exclusive but selecting none is fine, which suits opt-in
-    extras.  ``EXACTLY_ONE`` (``^^``) additionally requires one to be
-    chosen.  ``AT_LEAST_ONE`` (``||``) only forbids the empty
-    selection; it is rarely useful for extras and is included for
-    completeness.
-    """
-
-    AT_MOST_ONE = "at-most-one"
-    EXACTLY_ONE = "exactly-one"
-    AT_LEAST_ONE = "at-least-one"
-
-
-class ConflictKind(enum.Enum):
-    """Whether a :class:`ConflictMember` names an extra or a group."""
-
-    EXTRA = KIND_EXTRA
-    GROUP = KIND_GROUP
-
-
-class ConflictMember(ValueType):
-    """One side of a conflict: a named extra or dependency group.
-
-    ``name`` is stored canonicalised (PEP 685 for extras, PEP 735 for
-    groups) so a selection compares equal regardless of how the user
-    spelled it.  An extra and a group sharing a name are distinct
-    members, matching uv's package-qualified model.
-    """
-
-    __slots__ = __match_args__ = ("kind", "name")
-
-    kind: ConflictKind
-    name: str
-
-    def __init__(self, kind: ConflictKind, name: str) -> None:
-        """Record an extra or group ``name`` the caller has canonicalised."""
-        self.kind = kind
-        self.name = name
-
-    @override
-    def __str__(self) -> str:
-        """Render as ``extra 'cpu'`` / ``group 'black22'`` for messages."""
-        return f"{self.kind.value} {self.name!r}"
-
-
-class ConflictSet(ValueType):
-    """A set of mutually-exclusive members with an exclusivity policy."""
-
-    __slots__ = __match_args__ = ("members", "policy")
-
-    members: tuple[ConflictMember, ...]
-    policy: ConflictPolicy
-
-    def __init__(
-        self,
-        members: tuple[ConflictMember, ...],
-        policy: ConflictPolicy = ConflictPolicy.AT_MOST_ONE,
-    ) -> None:
-        """Record the members ``policy`` makes exclusive."""
-        self.members = members
-        self.policy = policy
-
-    @override
-    def __str__(self) -> str:
-        """Render as ``at-most-one (extra 'cpu', extra 'gpu')`` for messages."""
-        joined = ", ".join(str(m) for m in self.members)
-        return f"{self.policy.value} ({joined})"
-
-
-def conflict_exclusion_groups(
-    conflicts: Sequence[ConflictSet],
-) -> tuple[frozenset[tuple[str, str]], ...]:
-    """Project conflict sets to the neutral exclusion form the lockfile uses.
-
-    The disjointness validator consumes a sequence of member sets, of
-    which at most one member may be active in any install context.
-    Only :attr:`ConflictPolicy.AT_MOST_ONE` and
-    :attr:`ConflictPolicy.EXACTLY_ONE` forbid co-selection, so only
-    those contribute; :attr:`ConflictPolicy.AT_LEAST_ONE` constrains the
-    empty selection, not co-selection, and is omitted.  Each member
-    becomes a ``(kind, canonical_name)`` pair.
-    """
-    return tuple(
-        frozenset((m.kind.value, m.name) for m in cs.members)
-        for cs in conflicts
-        if cs.policy is not ConflictPolicy.AT_LEAST_ONE
-    )
-
-
-def conflict_member_groups(
-    conflicts: Sequence[ConflictSet],
-) -> tuple[frozenset[tuple[str, str]], ...]:
-    """Project every conflict set (any policy) to ``(kind, name)`` member sets.
-
-    Distinct from :func:`conflict_exclusion_groups`, which drops
-    :attr:`ConflictPolicy.AT_LEAST_ONE` because that policy permits
-    co-selection.  The disjointness validator uses this projection to
-    tell already-declared collisions from undeclared ones when shaping
-    the hint.
-    """
-    return tuple(
-        frozenset((m.kind.value, m.name) for m in cs.members) for cs in conflicts
-    )
-
-
-class ConflictFork(ValueType):
-    """One fork of a conflict-driven universal resolve.
-
-    ``selection`` is the active conflicting members as ``(kind, name)``
-    pairs.  ``active_extras`` and ``active_groups`` are the selections
-    this fork resolves with, the non-conflicting ones plus its own chosen
-    members, and hold only names the project declares.  A name
-    ``[tool.nab]`` configures is on ``active_configured`` instead.  An
-    unforked resolve is a single fork with an empty ``selection``.
-    """
-
-    __slots__ = __match_args__ = (
-        "selection",
-        "active_extras",
-        "active_groups",
-        "active_configured",
-    )
-
-    selection: tuple[tuple[str, str], ...]
-    active_extras: tuple[str, ...]
-    active_groups: tuple[str, ...]
-    active_configured: tuple[str, ...]
-    """The configured group names (``base-group``, ``build-group``) this
-    fork carries.  Their requirements come from a pyproject table rather
-    than from ``[dependency-groups]``."""
-
-    def __init__(
-        self,
-        selection: tuple[tuple[str, str], ...],
-        active_extras: tuple[str, ...],
-        active_groups: tuple[str, ...],
-        active_configured: tuple[str, ...] = (),
-    ) -> None:
-        """Record one fork of a conflict-driven resolve."""
-        self.selection = selection
-        self.active_extras = active_extras
-        self.active_groups = active_groups
-        self.active_configured = active_configured
-
-
-# Two active selections engage the set's exclusivity, forcing a fork.
-# Distinct from ``_MIN_CONFLICT_MEMBERS`` (a structural check on the
-# declaration), which happens to be the same number for unrelated reasons.
-_MIN_ENGAGED_MEMBERS = 2
-
-
-def conflict_forks(
-    selected_extras: Sequence[str],
-    selected_groups: Sequence[str],
-    conflicts: Sequence[ConflictSet],
-    configured_groups: Sequence[str] = (),
-) -> list[ConflictFork]:
-    """Split a selection into one fork per mutually-exclusive combination.
-
-    A conflict set is *engaged* when the selection activates two or more
-    of its members under an exclusivity policy (at-most-one or
-    exactly-one); only an engaged set forces a fork.  Each engaged set
-    contributes one chosen member per fork, and the forks are the
-    cartesian product across engaged sets.  Members of engaged sets are
-    dropped from the shared base; non-conflicting selections stay active
-    in every fork.  With no engaged set the result is a single unforked
-    fork carrying the whole selection.
-
-    A declared group is active when the selection names it.  A
-    ``configured_groups`` name is active whenever it is set, since the
-    context it names is part of every resolve rather than something a run
-    asks for, so a set naming one engages on every run.  Those names come
-    back on :attr:`ConflictFork.active_configured` rather than
-    ``active_groups``, which stays what the ``[dependency-groups]`` loader
-    can resolve.
-
-    Names compare and emit canonicalised; the extra and group loaders
-    normalise on lookup, so a canonical active set resolves the same
-    requirements the user's spelling would.
-    """
-    base_extras = [canonicalize_name(e) for e in selected_extras]
-    base_groups = [canonicalize_name(g) for g in selected_groups]
-    configured = list(dict.fromkeys(canonicalize_name(g) for g in configured_groups))
-    configured_set = set(configured)
-    extra_set = set(base_extras)
-    group_set = set(base_groups) | configured_set
-
-    # Collect the engaged sets (2+ selected members) and the members to
-    # drop from the shared base; each engaged set becomes a fork axis.
-    engaged: list[list[ConflictMember]] = []
-    drop_extras: set[str] = set()
-    drop_groups: set[str] = set()
-    for conflict_set in conflicts:
-        if conflict_set.policy is ConflictPolicy.AT_LEAST_ONE:
-            continue
-        members = [
-            m for m in conflict_set.members if _member_active(m, extra_set, group_set)
-        ]
-        if len(members) < _MIN_ENGAGED_MEMBERS:
-            continue
-        engaged.append(members)
-        for member in members:
-            target = drop_extras if member.kind is ConflictKind.EXTRA else drop_groups
-            target.add(member.name)
-
-    if not engaged:
-        return [
-            ConflictFork(
-                selection=(),
-                active_extras=tuple(base_extras),
-                active_groups=tuple(base_groups),
-                active_configured=tuple(configured),
-            )
-        ]
-
-    # One fork per choice of a single member from each engaged set.
-    rest_extras = [e for e in base_extras if e not in drop_extras]
-    rest_groups = [g for g in base_groups if g not in drop_groups]
-    rest_configured = [g for g in configured if g not in drop_groups]
-    forks: list[ConflictFork] = []
-    for combo in itertools.product(*engaged):
-        chosen_extras = [m.name for m in combo if m.kind is ConflictKind.EXTRA]
-        chosen = [m.name for m in combo if m.kind is ConflictKind.GROUP]
-        chosen_groups = [g for g in chosen if g not in configured_set]
-        chosen_configured = [g for g in chosen if g in configured_set]
-        forks.append(
-            ConflictFork(
-                selection=tuple(sorted((m.kind.value, m.name) for m in combo)),
-                active_extras=tuple(rest_extras + chosen_extras),
-                active_groups=tuple(rest_groups + chosen_groups),
-                active_configured=tuple(rest_configured + chosen_configured),
-            )
-        )
-    return forks
-
-
 @dataclass(frozen=True, slots=True)
 class NabProjectConfig:
     """Everything ``[tool.nab]`` says about how to resolve this project."""
@@ -494,7 +262,7 @@ class NabProjectConfig:
     # order.  Version-scoped: a policy field applies only to candidate
     # versions inside its requirement's range.  Routing entries (those
     # that set ``index``) are also projected into coordinator routes by
-    # ``index_routes_from_config``.
+    # ``nab_project.fetch.index_routes``.
     package_overrides: tuple[PackageOverride, ...] = ()
     # Per-index overrides from ``[tool.nab.index.<name>]``, keyed by
     # declared index name.  Each applies to every package served from
@@ -505,109 +273,6 @@ class NabProjectConfig:
     # ``local_sources``, which also carries explicit
     # ``[[tool.nab.local-sources]]`` entries.
     workspace_member_names: frozenset[str] = field(default_factory=frozenset)
-
-
-def configured_group_names(config: NabProjectConfig) -> tuple[str, ...]:
-    """Return the group names active by configuration rather than by selection.
-
-    ``base-group`` names the project's own dependencies and ``build-group``
-    its build requirements; neither is ever in a run's selection, so every
-    caller that has to treat them as active asks here rather than naming
-    the two fields itself.
-    """
-    return tuple(
-        name for name in (config.base_group, config.build_group) if name is not None
-    )
-
-
-class ConflictSelectionError(ConfigError):
-    """A requested extra/group selection violates a declared conflict.
-
-    Raised when one resolve cannot serve the selection: a project
-    resolving for a single environment cannot install two
-    mutually-exclusive members at once.  A declared matrix forks the
-    resolve instead of raising, and only raises when one fork still
-    reaches two members (through an umbrella extra, say).
-    """
-
-
-def _member_active(
-    member: ConflictMember,
-    active_extras: AbstractSet[str],
-    active_groups: AbstractSet[str],
-) -> bool:
-    """Return True when ``member`` is in the selected extras/groups."""
-    if member.kind is ConflictKind.EXTRA:
-        return member.name in active_extras
-    return member.name in active_groups
-
-
-def validate_conflict_minimums(
-    conflicts: Sequence[ConflictSet],
-    selected_extras: Sequence[str],
-    selected_groups: Sequence[str],
-) -> None:
-    """Raise when a require-one set has no active member.
-
-    Enforces only the "must select one" policies: an exactly-one set
-    and an at-least-one set each require at least one active member.
-    Names compare under canonicalisation.  Universal mode calls this to
-    apply the minimums without the co-selection rejection, which it
-    handles by forking instead.
-    """
-    active_extras = {canonicalize_name(e) for e in selected_extras}
-    active_groups = {canonicalize_name(g) for g in selected_groups}
-    for conflict_set in conflicts:
-        any_active = any(
-            _member_active(m, active_extras, active_groups)
-            for m in conflict_set.members
-        )
-        if any_active:
-            continue
-        if conflict_set.policy is ConflictPolicy.AT_MOST_ONE:
-            continue
-        members = ", ".join(str(m) for m in conflict_set.members)
-        quantifier = (
-            "exactly one"
-            if conflict_set.policy is ConflictPolicy.EXACTLY_ONE
-            else "at least one"
-        )
-        msg = (
-            f"{quantifier} of {members} must be selected: declared"
-            f" {conflict_set.policy.value} in [tool.nab].conflicts"
-        )
-        raise ConflictSelectionError(msg)
-
-
-def validate_conflict_exclusions(
-    conflicts: Sequence[ConflictSet],
-    selected_extras: Sequence[str],
-    selected_groups: Sequence[str],
-) -> None:
-    """Raise when a selection co-activates two members of an exclusive set.
-
-    An at-most-one or exactly-one set cannot have two active members at
-    once.  Names compare under canonicalisation.  Universal mode applies
-    this per fork, against the self-reference- and include-expanded
-    active set, to catch members an umbrella selection reaches only
-    transitively (one fork cannot serve two of them disjointly).
-    """
-    active_extras = {canonicalize_name(e) for e in selected_extras}
-    active_groups = {canonicalize_name(g) for g in selected_groups}
-    exclusive = {ConflictPolicy.AT_MOST_ONE, ConflictPolicy.EXACTLY_ONE}
-    for conflict_set in conflicts:
-        active = [
-            m
-            for m in conflict_set.members
-            if _member_active(m, active_extras, active_groups)
-        ]
-        if len(active) > 1 and conflict_set.policy in exclusive:
-            chosen = ", ".join(str(m) for m in active)
-            msg = (
-                f"{chosen} cannot be selected together: declared mutually"
-                f" exclusive ({conflict_set.policy.value}) in [tool.nab].conflicts"
-            )
-            raise ConflictSelectionError(msg)
 
 
 def read_pyproject_config(
@@ -1085,96 +750,6 @@ def matrix_from_config(matrix: MatrixConfig) -> Matrix:
     )
 
 
-def _forbids_host_builds(targets: Sequence[ResolveTarget]) -> bool:
-    """Whether any target impersonates a machine other than the host's.
-
-    A declared target (a matrix tuple, or an environment naming a platform
-    or implementation) carries a :class:`PlatformSpec`; the host and a
-    host-python retarget do not.
-    """
-    return any(target.platform_spec is not None for target in targets)
-
-
-def enforce_build_policy_for_targets(
-    *,
-    targets: Sequence[ResolveTarget],
-    build_policy: BuildPolicy,
-    build_policy_set: bool,
-    package_overrides: Sequence[PackageOverride],
-    index_overrides: Mapping[str, IndexOverride],
-) -> BuildPolicy:
-    """Return the build policy the planned targets permit, or raise.
-
-    A PEP 517 backend only ever runs on the host interpreter, so what a
-    build reports is the host's metadata.  Two tiers follow:
-
-    * A target that moves the platform axis (a matrix, or an environment
-      naming a ``platform`` or ``implementation``) forbids host builds:
-      ``build-policy`` is forced to ``never`` and an explicit non-``never``
-      value, global or in any override, is an error.  This matches pip,
-      which requires ``--only-binary=:all:`` under ``--platform``.
-    * A python-axis-only retarget on the host machine warns and permits:
-      the machine is still the host, so a build can run at all, and
-      refusing every one of them would take the default case with it.  A
-      deliberate deviation from pip.  Set ``build-policy = "never"`` to
-      forbid it.
-
-    The host target permits, so the default case builds freely.
-    """
-    if _forbids_host_builds(targets):
-        offending = _explicit_host_builds(
-            build_policy_set=build_policy_set,
-            build_policy=build_policy,
-            package_overrides=package_overrides,
-            index_overrides=index_overrides,
-        )
-        if offending:
-            msg = (
-                "a declared target cannot build on the host, so build-policy"
-                f" must be 'never'; got {', '.join(offending)}.  A PEP 517"
-                " backend runs on the host and reports the host's metadata,"
-                " not the target's.  Remove the setting (it defaults to"
-                " 'never' for a declared target) or set it to 'never'."
-            )
-            raise ConfigError(msg)
-        return BuildPolicy.NEVER
-    if not all(target.host_faithful for target in targets):
-        _logger.warning(
-            "the resolve targets Python %s but a build would run on the host"
-            " interpreter and report its metadata; set build-policy = 'never'"
-            " to forbid builds",
-            targets[0].python_full_version,
-        )
-    return build_policy
-
-
-def _explicit_host_builds(
-    *,
-    build_policy_set: bool,
-    build_policy: BuildPolicy,
-    package_overrides: Sequence[PackageOverride],
-    index_overrides: Mapping[str, IndexOverride],
-) -> list[str]:
-    """Name every surface that explicitly asks for a non-``never`` build.
-
-    An unset global is not offending: ``build-policy`` defaults to
-    ``never`` for a target that forbids host builds rather than failing a
-    project that never mentioned it.
-    """
-    offending: list[str] = []
-    if build_policy_set and build_policy is not BuildPolicy.NEVER:
-        offending.append(f"build-policy = {build_policy.value!r}")
-    for pkg in package_overrides:
-        bp = pkg.build_policy
-        if bp is not None and bp is not BuildPolicy.NEVER:
-            offending.append(f"packages.{pkg.requirement} build-policy = {bp.value!r}")
-    for name, index_override in index_overrides.items():
-        bp = index_override.build_policy
-        if bp is not None and bp is not BuildPolicy.NEVER:
-            offending.append(f"index.{name} build-policy = {bp.value!r}")
-    return offending
-
-
 def with_python_override(
     config: NabProjectConfig, python: str | None
 ) -> NabProjectConfig:
@@ -1518,31 +1093,6 @@ def _read_project_requires_python(path: Path) -> str | None:
     if not isinstance(project, dict) or "requires-python" not in project:
         return None
     return _parse_requires_python(project["requires-python"])
-
-
-def index_routes_from_config(config: NabProjectConfig) -> list[IndexRoute]:
-    """Project the routing package overrides into coordinator :class:`IndexRoute`s.
-
-    Each per-package override that sets ``index`` contributes one route,
-    keyed by its bare package name.  A routing entry always uses a
-    bare-name requirement (parse-time guarantee), and the parse-time
-    non-overlap check forbids two routes for one package, so the resulting
-    route map has at most one entry per name.
-    """
-    return [
-        IndexRoute(name=override.name, index=override.index)
-        for override in config.package_overrides
-        if override.index is not None
-    ]
-
-
-def index_cache_floors_from_config(config: NabProjectConfig) -> dict[str, int]:
-    """Project per-index cache-freshness floors, keyed by index name."""
-    return {
-        name: override.assume_fresh_seconds
-        for name, override in config.index_overrides.items()
-        if override.assume_fresh_seconds is not None
-    }
 
 
 def _parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime:
@@ -2945,7 +2495,7 @@ def _parse_workspace(value: object) -> WorkspaceConfig | None:
 
 
 # A declared conflict set must list at least this many members to mean
-# anything.  Distinct from ``_MIN_ENGAGED_MEMBERS`` (a runtime engagement
+# anything.  Distinct from ``MIN_ENGAGED_MEMBERS`` (a runtime engagement
 # threshold), which happens to be the same number for unrelated reasons.
 _MIN_CONFLICT_MEMBERS = 2
 _CONFLICT_POLICY_VALUES = {p.value: p for p in ConflictPolicy}
@@ -3012,7 +2562,7 @@ def _validate_default_groups_against_conflicts(
             for kind, name in group
             if kind == ConflictKind.GROUP.value and name in active
         )
-        if len(co_active) < _MIN_ENGAGED_MEMBERS:
+        if len(co_active) < MIN_ENGAGED_MEMBERS:
             continue
 
         if configured in co_active:
