@@ -101,7 +101,9 @@ _DOWNLOAD_PROJECT_ARGV: tuple[tuple[str, str], ...] = (
     ("--project-default-group", "dev"),
     ("--project-base-group", "main-deps"),
     ("--project-build-group", "build-reqs"),
-    ("--project-requires-python", ">=3.11"),
+    # >=3.10, not >=3.11: the host plans the targets now, so a floor above
+    # the running interpreter fails the run before the assertions.
+    ("--project-requires-python", ">=3.10"),
     ("--project-uploaded-prior-to", "2024-06-01T00:00:00Z"),
     ("--project-dist-policy", "sdist-only"),
     ("--project-build-policy", "never"),
@@ -1404,7 +1406,7 @@ class TestDownloadCliOverrides:
         assert inputs.base_group == "main-deps"
         assert inputs.build_group == "build-reqs"
 
-        assert inputs.requires_python == ">=3.11"
+        assert inputs.requires_python == ">=3.10"
         assert inputs.uploaded_prior_to == datetime(2024, 6, 1, tzinfo=timezone.utc)
 
         assert inputs.dist_policy is DistPolicy.SDIST_ONLY
