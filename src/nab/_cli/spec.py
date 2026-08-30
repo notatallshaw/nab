@@ -22,7 +22,7 @@ instead.
 HELP: tuple[str, ...] = (
     "raise verbosity; -v adds INFO records, -vv adds DEBUG",
     "lower verbosity; -q drops the summary and notes, -qq keeps errors alone",
-    "when to colour stderr",
+    "when to colour nab's output",
     "shorthand for --color never",
     "suppress the live progress line",
     "print the version and exit",

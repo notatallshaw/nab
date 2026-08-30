@@ -155,12 +155,11 @@ def resolve_group_selection(
 ) -> tuple[str, ...]:
     """Return the canonical, deduplicated group selection for this run.
 
-    ``groups`` is the user-supplied list (already split by tyro on
-    commas).  ``all_groups`` overrides it: when set, every group
-    defined in the project's ``[dependency-groups]`` table is
-    selected.  An ``--all-groups`` paired with a non-empty
-    ``--groups`` list raises a clean error rather than silently
-    preferring one over the other.
+    ``groups`` is the list the line gave.  ``all_groups`` overrides it:
+    when set, every group defined in the project's ``[dependency-groups]``
+    table is selected.  An ``--all-groups`` paired with a non-empty
+    ``--groups`` list raises a clean error rather than silently preferring
+    one over the other.
     """
     if all_groups and groups:
         printer().error("--all-groups and --groups are mutually exclusive")

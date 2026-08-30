@@ -5,8 +5,8 @@ siblings name every parameter, and nothing in the language ties the two
 together.  These cases do, along with four that hold a whole table: the
 verbs a command body offers, the ``--project-*`` spellings a committed
 lockfile carries, the keys the live registry carries beside them, and the
-seven root rows, whose readers are the output scanner and the entry point
-rather than any command signature.
+seven root rows, whose reader is the generated parser rather than any
+command signature.
 """
 
 from __future__ import annotations
@@ -18,9 +18,10 @@ from typing import Any, get_args, get_type_hints
 
 import pytest
 
+from nab._cli import spec as cli_spec
+from nab._cli.parse import UsageError, parse
 from nab.optiondefs import COMMANDS, UNSET, Kind, Opt, Scope, VType
 from nab.optiontable import ALL
-from nab.output import OutputOptionError, options_from_flags, parse_output_options
 from nab_project.config_sources import OPTIONS, SourceKind
 
 _TESTS = Path(__file__).resolve().parent
@@ -122,22 +123,23 @@ class TestSignatureConformance:
             assert get_args(literal) == row.choices, row.dest
 
 
-class TestRootRowsAgainstTheirReaders:
-    """The seven root rows against the two pieces of code that read them.
+class TestRootRowsAgainstTheirReader:
+    """The seven root rows against the parser that reads them.
 
-    ``parse_output_options`` returns the tokens it did not consume, so a
-    root flag it does not know comes back in that list.  The two eager rows
-    belong to the entry point instead, which reads them before the scanner
-    runs and hands the rest on.
+    A root flag is read on either side of the command name and lands in
+    ``Parsed.options``.  The two eager rows end the line where they stand,
+    so a command never runs and the entry point answers them instead.
     """
 
     @staticmethod
-    def _rest(argv: list[str]) -> list[str]:
-        """The tokens the output scanner passed on to the subcommand parser."""
-        _options, rest = parse_output_options(argv, {})
-        return rest
+    def _options(*written: str) -> dict[str, object]:
+        """The root options a line carries, read through the shipped tables."""
+        argv = (*written, "cache", "dir")
+        return parse(argv, cli_spec.ROOT, cli_spec.COMMANDS, "nab").options
 
-    def test_the_output_scanner_consumes_every_root_flag_it_owns(self) -> None:
+    def test_writing_a_root_flag_reaches_the_reader(self) -> None:
+        bare = self._options()
+
         for row in _ROOT_ROWS:
             if row.kind is Kind.EAGER:
                 continue
@@ -146,38 +148,37 @@ class TestRootRowsAgainstTheirReaders:
             if row.vtype is VType.CHOICE:
                 written.append(row.choices[0])
 
-            assert self._rest(written) == [], row.name
+            assert self._options(*written)[row.dest] != bare[row.dest], row.name
             if row.short:
-                assert self._rest([f"-{row.short}"]) == [], row.name
+                assert self._options(f"-{row.short}")[row.dest] != bare[row.dest]
 
-    def test_the_eager_rows_are_left_for_the_entry_point(self) -> None:
+    def test_the_eager_rows_end_the_line_where_they_stand(self) -> None:
         """``--version`` and ``--help`` are answered before a command runs."""
         eager = [row for row in _ROOT_ROWS if row.kind is Kind.EAGER]
 
         assert [row.name for row in eager] == ["version", "help"]
         for row in eager:
-            assert self._rest([row.cli_flag]) == [row.cli_flag], row.name
+            parsed = parse((row.cli_flag,), cli_spec.ROOT, cli_spec.COMMANDS, "nab")
+            assert parsed.eager == row.name
 
     def test_the_declared_defaults_are_what_an_empty_command_line_means(self) -> None:
         """A default is what the reader receives when the flag is absent."""
         declared = {
-            row.dest: row.default for row in _ROOT_ROWS if row.kind is not Kind.EAGER
+            row.dest: (None if row.default is UNSET else row.default)
+            for row in _ROOT_ROWS
         }
 
-        assert (
-            options_from_flags(**declared, environ={})
-            == parse_output_options([], {})[0]
-        )
+        assert self._options() == declared
 
     def test_the_colour_row_offers_its_reader_tokens_and_no_none(self) -> None:
         """``nullable`` would mean the literal token ``None`` is accepted."""
         row = next(row for row in _ROOT_ROWS if row.vtype is VType.CHOICE)
 
         for token in row.choices:
-            assert self._rest(["--color", token]) == [], token
+            assert self._options("--color", token)[row.dest] == token
 
-        with pytest.raises(OutputOptionError):
-            self._rest(["--color", "None"])
+        with pytest.raises(UsageError):
+            self._options("--color", "None")
 
         assert not row.nullable
 

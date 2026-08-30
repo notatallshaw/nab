@@ -46,7 +46,6 @@ __all__ = [
     "install_log_handler",
     "logging_level_for",
     "options_from_flags",
-    "parse_output_options",
     "printer",
     "reset_log_handlers",
     "reset_run",
@@ -498,72 +497,6 @@ def _color_choice(value: str) -> ColorChoice:
     except ValueError:
         msg = f"--color {value!r} is not one of auto, always, never"
         raise OutputOptionError(msg) from None
-
-
-def _repeated_short(arg: str, letter: str) -> bool:
-    """Whether ``arg`` is a short flag of one repeated ``letter`` (``-vv``)."""
-    return (
-        arg.startswith("-")
-        and not arg.startswith("--")
-        and bool(arg[1:])
-        and set(arg[1:]) == {letter}
-    )
-
-
-def parse_output_options(  # noqa: C901 - a small flag scanner; each flag is one branch
-    argv: list[str], env: Mapping[str, str]
-) -> tuple[OutputOptions, list[str]]:
-    """Split the global output flags out of ``argv``, returning the rest.
-
-    Handles repeatable ``-v`` / ``-vv`` / ``-q`` / ``-qq`` (and the long
-    ``--verbose`` / ``--quiet``), ``--color auto|always|never`` (or
-    ``--color=...``), ``--no-color``, and ``--no-progress``.  Flags win over
-    ``NAB_VERBOSITY``; the remaining tokens are handed to the subcommand
-    parser untouched.  Raises :class:`OutputOptionError` on a bad value.
-    """
-    verbose = quiet = 0
-    color: str | None = None
-    no_color = False
-    progress = True
-    rest: list[str] = []
-    i = 0
-    while i < len(argv):
-        arg = argv[i]
-        if _repeated_short(arg, "v"):
-            verbose += len(arg) - 1
-        elif _repeated_short(arg, "q"):
-            quiet += len(arg) - 1
-        elif arg == "--verbose":
-            verbose += 1
-        elif arg == "--quiet":
-            quiet += 1
-        elif arg == "--no-color":
-            no_color = True
-        elif arg == "--no-progress":
-            progress = False
-        elif arg == "--color":
-            i += 1
-            if i >= len(argv):
-                msg = "--color needs a value: auto, always, or never"
-                raise OutputOptionError(msg)
-            # Checked as it is read, so a bad value is an error even when a
-            # later --color would have won the last-wins reduction.
-            color = _color_choice(argv[i]).value
-        elif arg.startswith("--color="):
-            color = _color_choice(arg.split("=", 1)[1]).value
-        else:
-            rest.append(arg)
-        i += 1
-
-    options = options_from_flags(
-        verbose=verbose,
-        quiet=quiet,
-        color=color,
-        no_color=no_color,
-        no_progress=not progress,
-        environ=env,
-    )
-    return options, rest
 
 
 def options_from_flags(

@@ -23,10 +23,12 @@ from pathlib import Path
 
 import pytest
 
+from nab._cli import spec as cli_spec
+from nab._cli.parse import parse
 from nab._lock import lock
-from nab.cli import app
+from nab.cli import run
 from nab.optiontable import ALL
-from nab.output import ColorChoice, Verbosity, parse_output_options
+from nab.output import ColorChoice, Verbosity
 from nab_project.config_sources import OPTIONS
 from nab_project.lockfile import (
     ArchivePin,
@@ -54,6 +56,15 @@ _CONFLICTS_DOC = _DOCS / "explanation" / "conflicts.md"
 _README = Path(__file__).resolve().parents[1] / "README.md"
 
 _SUBCOMMANDS = ("lock", "download", "config", "cache")
+
+# The shortest line each subcommand accepts, so a case that only wants to
+# prove a global flag parses does not have to invent one per command.
+_SUBCOMMAND_LINES = {
+    "lock": (),
+    "download": (),
+    "config": ("list",),
+    "cache": ("dir",),
+}
 
 # The flag counts lock and download carry.  The other two commands have no
 # documented flag list, so nothing here derives theirs.
@@ -91,10 +102,10 @@ def _project(directory: Path) -> Path:
     )
 
 
-def _run_config(args: list[str]) -> str:
+def _run_config(args: list[str], *, status: int = 0) -> str:
     buf = io.StringIO()
     with redirect_stdout(buf):
-        app.cli(args=["config", *args], prog="nab")
+        assert run(("config", *args)) == status
     return buf.getvalue()
 
 
@@ -383,19 +394,22 @@ class TestCliReferenceDocumentsOutputPolicy:
     def test_output_control_scope_covers_every_subcommand(self) -> None:
         """The scope paragraph must name every subcommand the flags reach.
 
-        ``main`` extracts a global ``-q`` before dispatch, so the enumeration
-        must include ``cache``.
+        ``-q`` is a root row, which every command's line may also carry, so
+        the enumeration must include ``cache``.
         """
-        for sub in _SUBCOMMANDS:
-            _opts, rest = parse_output_options(["-q", sub], {})
-            assert rest == [sub], f"global -q not extracted before {sub!r}"
+        for sub, verbs in _SUBCOMMAND_LINES.items():
+            line = ("-q", sub, *verbs)
+            parsed = parse(line, cli_spec.ROOT, cli_spec.COMMANDS, "nab")
+
+            assert parsed.command == sub
+            assert parsed.options["quiet"] == 1
 
         scope = next(
             para
             for para in _reference_section(_CLI_REFERENCE, "## Output control").split(
                 "\n\n"
             )
-            if "before the subcommand" in para
+            if "They work with" in para
         )
         for sub in _SUBCOMMANDS:
             assert f"`{sub}`" in scope, (
@@ -558,17 +572,14 @@ class TestCliReferenceDocumentsIncludeRejected:
         path = str(hermetic_roots / "pyproject.toml")
 
         out, err = io.StringIO(), io.StringIO()
-        with (
-            redirect_stdout(out),
-            redirect_stderr(err),
-            pytest.raises(SystemExit) as exc,
-        ):
-            app.cli(args=["config", "list", "--path", path], prog="nab")
+        with redirect_stdout(out), redirect_stderr(err):
+            status = run(("config", "list", "--path", path))
 
+        assert status == 1
         assert out.getvalue() == ""
         assert "config error" in err.getvalue()
         assert "resolutionn" in _run_config(["list", _FLAG, "--path", path])
-        assert f"exits {exc.value.code}" in _reference_section(
+        assert f"exits {status}" in _reference_section(
             _CLI_REFERENCE, "## `nab config`"
         )
 

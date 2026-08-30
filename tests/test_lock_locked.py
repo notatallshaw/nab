@@ -19,7 +19,7 @@ import pytest
 import tomli
 
 from nab._lock import _join_command, _join_for_cmd, _quote_for_cmd
-from nab.cli import app
+from nab.cli import run
 from nab_project.lockfile import (
     IndexPin,
     SdistArtifact,
@@ -78,9 +78,14 @@ def _write_pyproject(tmp_path: Path, body: str) -> Path:
     return pyproject
 
 
+def _lock_cli(*arguments: str, status: int = 0) -> None:
+    """Drive ``nab lock`` the way ``main`` does, asserting how it ended."""
+    assert run(("lock", *arguments)) == status
+
+
 def _write_lock(pyproject: Path, out: Path, result: ResolveResult, *extra: str) -> None:
     with patch("nab._run.resolve_for_targets", return_value=result):
-        app.cli(args=["lock", str(pyproject), "--output", str(out), *extra], prog="nab")
+        _lock_cli(str(pyproject), "--output", str(out), *extra)
 
 
 def _locked_mock(result: ResolveResult | None = None) -> MagicMock:
@@ -89,33 +94,33 @@ def _locked_mock(result: ResolveResult | None = None) -> MagicMock:
     )
 
 
-def _run_locked(pyproject: Path, out: Path, mock: MagicMock, *extra: str) -> None:
+def _run_locked(
+    pyproject: Path, out: Path, mock: MagicMock, *extra: str, status: int = 0
+) -> None:
     with patch("nab._run.resolve_for_targets", mock):
-        app.cli(
-            args=["lock", str(pyproject), "--output", str(out), "--locked", *extra],
-            prog="nab",
+        _lock_cli(
+            str(pyproject), "--output", str(out), "--locked", *extra, status=status
         )
 
 
-def _run_locked_unmocked(pyproject: Path, out: Path, *extra: str) -> None:
+def _run_locked_unmocked(
+    pyproject: Path, out: Path, *extra: str, status: int = 0
+) -> None:
     """Drive ``--locked`` against the real resolve, to pin what it reports.
 
     Runs offline with the cache off: these cases fail while reading the
     project, before the resolve would reach an index.
     """
-    app.cli(
-        args=[
-            "lock",
-            str(pyproject),
-            "--output",
-            str(out),
-            "--locked",
-            "--offline",
-            "True",
-            "--no-cache",
-            *extra,
-        ],
-        prog="nab",
+    _lock_cli(
+        str(pyproject),
+        "--output",
+        str(out),
+        "--locked",
+        "--offline",
+        "True",
+        "--no-cache",
+        *extra,
+        status=status,
     )
 
 
@@ -142,10 +147,7 @@ def test_tightened_direct_specifier_fires_without_resolving(
     pyproject.write_text('[project]\ndependencies = ["foo>=2.0"]\n', encoding="utf-8")
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     err = capsys.readouterr().err
     assert "[project].dependencies requires foo>=2.0 but the lock pins foo 1.5" in err
     assert "is out of date" in err
@@ -169,10 +171,7 @@ def test_tightened_build_requirement_fires_without_resolving(
     )
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock, "--build-requirements")
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, "--build-requirements", status=1)
     err = capsys.readouterr().err
     assert "[build-system].requires requires foo>=2.0 but the lock pins foo 1.5" in err
     remedy = _remedy(str(pyproject), "--output", str(out), "--build-requirements")
@@ -191,13 +190,8 @@ def test_locked_build_lock_defaults_to_the_build_lock_path(
         '[build-system]\nrequires = ["foo"]\n',
     )
 
-    with pytest.raises(SystemExit) as exc:
-        app.cli(
-            args=["lock", str(pyproject), "--locked", "--build-requirements"],
-            prog="nab",
-        )
+    _lock_cli(str(pyproject), "--locked", "--build-requirements", status=1)
 
-    assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "no lockfile at pylock.build.toml" in err
     assert f"run `{_remedy(str(pyproject), '--build-requirements')}` first" in err
@@ -223,10 +217,7 @@ def test_locked_build_lock_checks_its_own_default_file(
     capsys.readouterr()
 
     with patch("nab._run.resolve_for_targets", _locked_mock(_result({"foo": "1.0"}))):
-        app.cli(
-            args=["lock", str(pyproject), "--locked", "--build-requirements"],
-            prog="nab",
-        )
+        _lock_cli(str(pyproject), "--locked", "--build-requirements")
 
     assert "Lockfile pylock.build.toml is up to date." in capsys.readouterr().err
 
@@ -272,10 +263,7 @@ def test_a_tightened_build_requirement_fires_with_a_build_group(
     )
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     err = capsys.readouterr().err
     assert "[build-system].requires requires foo>=2.0 but the lock pins foo 1.5" in err
     mock.assert_not_called()
@@ -301,10 +289,7 @@ def test_a_renamed_build_group_is_out_of_date(
     )
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert "does not name 'builder' for the build requirements" in (
         capsys.readouterr().err
     )
@@ -324,10 +309,7 @@ def test_tightened_constraint_fires_without_resolving(
     )
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert (
         "the constraint foo<3 is violated by the pinned foo 3.1"
         in capsys.readouterr().err
@@ -352,10 +334,7 @@ def test_added_declared_default_group_fires_without_resolving(
     )
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     err = capsys.readouterr().err
     assert "built with default-groups {} but this run selects {test}" in err
     assert "is out of date" in err
@@ -384,10 +363,7 @@ def test_constraint_not_splitting_the_minor_fires_without_resolving(
     )
 
     mock = _locked_mock(_result({"foo": "1.5"}))
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert (
         "the constraint foo<1.0 is violated by the pinned foo 1.5"
         in capsys.readouterr().err
@@ -411,10 +387,7 @@ def test_changed_requires_python_fires_without_resolving(
     )
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert (
         "the lockfile requires-python >=3.8 does not match this run's >=3.9"
         in capsys.readouterr().err
@@ -438,10 +411,7 @@ def test_selected_extra_specifier_fires_without_resolving(
     capsys.readouterr()
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock, "--extras", "dev")
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, "--extras", "dev", status=1)
     assert "the 'dev' extra requires bar>=2 but the lock pins bar 1.0" in (
         capsys.readouterr().err
     )
@@ -462,10 +432,7 @@ def test_selected_group_specifier_fires_without_resolving(
     capsys.readouterr()
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock, "--groups", "test")
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, "--groups", "test", status=1)
     assert "the 'test' dependency group requires bar>=2 but the lock pins bar 1.0" in (
         capsys.readouterr().err
     )
@@ -482,10 +449,7 @@ def test_missing_direct_requirement_fires_without_resolving(
     pyproject.write_text('[project]\ndependencies = ["foo", "bar"]\n', encoding="utf-8")
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert (
         "[project].dependencies requires bar and its marker applies here, but the"
         " lock has no bar pin" in capsys.readouterr().err
@@ -507,10 +471,7 @@ def test_python_flag_activates_a_marker_and_fires_without_resolving(
     capsys.readouterr()
 
     mock = _locked_mock(_result({}))
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock, "--python", "3.9")
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, "--python", "3.9", status=1)
     assert (
         "[project].dependencies requires foo and its marker applies here, but the"
         " lock has no foo pin" in capsys.readouterr().err
@@ -620,10 +581,7 @@ def test_non_sticky_stale_falls_through_out_of_date(
     capsys.readouterr()
 
     mock = _locked_mock(_result({"foo": "2.0"}))
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert "out of date" in capsys.readouterr().err
     mock.assert_called_once()
 
@@ -646,10 +604,7 @@ def test_a_deeply_nested_extra_table_falls_through_out_of_date(
         handle.write(f"\n[{deep}]\nx = 1\n")
 
     mock = _locked_mock(_result({"foo": "1.0"}))
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     err = capsys.readouterr().err
     remedy = _remedy(str(pyproject), "--output", str(out))
     assert f"is out of date; re-run `{remedy}` to update it" in err
@@ -670,10 +625,7 @@ def test_a_stale_build_lock_names_the_build_command(
     capsys.readouterr()
 
     mock = _locked_mock(_result({"foo": "2.0"}))
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock, "--build-requirements")
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, "--build-requirements", status=1)
     err = capsys.readouterr().err
     remedy = _remedy(str(pyproject), "--output", str(out), "--build-requirements")
     assert f"is out of date; re-run `{remedy}` to update it" in err
@@ -851,10 +803,7 @@ def test_conflict_fork_duplicate_pins_fall_through(
     )
 
     mock = _locked_mock(_result({"foo": "1.5"}))
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock, "--extras", "old", "new")
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, "--extras", "old", "new", status=1)
     err = capsys.readouterr().err
     assert "the lock pins foo" not in err
     mock.assert_called_once()
@@ -883,10 +832,7 @@ def test_micro_gated_constraint_falls_through(
     )
 
     mock = _locked_mock(_result({"foo": "1.5"}))
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert "the constraint foo<1.0" not in capsys.readouterr().err
     mock.assert_called_once()
 
@@ -907,10 +853,7 @@ def test_undeclared_group_reports_the_group_error(
     _write_lock(pyproject, out, _result({"foo": "1.0"}))
     capsys.readouterr()
 
-    with pytest.raises(SystemExit) as exc:
-        _run_locked_unmocked(pyproject, out, "--groups", "dev")
-
-    assert exc.value.code == 1
+    _run_locked_unmocked(pyproject, out, "--groups", "dev", status=1)
     err = capsys.readouterr().err
     assert "Dependency group 'dev' not found" in err
     assert "is out of date" not in err
@@ -933,10 +876,7 @@ def test_undeclared_default_group_reports_the_group_error(
         f'{body}[tool.nab]\ndefault-groups = ["dev"]\n', encoding="utf-8"
     )
 
-    with pytest.raises(SystemExit) as exc:
-        _run_locked_unmocked(pyproject, out)
-
-    assert exc.value.code == 1
+    _run_locked_unmocked(pyproject, out, status=1)
     err = capsys.readouterr().err
     assert "Dependency group 'dev' not found" in err
     assert "is out of date" not in err
@@ -956,10 +896,7 @@ def test_undeclared_project_default_group_reports_the_group_error(
     _write_lock(pyproject, out, _result({"foo": "1.0"}))
     capsys.readouterr()
 
-    with pytest.raises(SystemExit) as exc:
-        _run_locked_unmocked(pyproject, out, "--project-default-group", "dev")
-
-    assert exc.value.code == 1
+    _run_locked_unmocked(pyproject, out, "--project-default-group", "dev", status=1)
     err = capsys.readouterr().err
     assert "Dependency group 'dev' not found" in err
     assert "is out of date" not in err
@@ -979,10 +916,7 @@ def test_undeclared_extra_reports_the_extra_error(
     _write_lock(pyproject, out, _result({"foo": "1.0"}))
     capsys.readouterr()
 
-    with pytest.raises(SystemExit) as exc:
-        _run_locked_unmocked(pyproject, out, "--extras", "typo")
-
-    assert exc.value.code == 1
+    _run_locked_unmocked(pyproject, out, "--extras", "typo", status=1)
     err = capsys.readouterr().err
     assert (
         "extra 'typo' is not declared in [project.optional-dependencies];"
@@ -1001,10 +935,7 @@ def test_missing_build_system_reports_the_project_error(
     )
     out = tmp_path / "pylock.build.toml"
 
-    with pytest.raises(SystemExit) as exc:
-        _run_locked_unmocked(pyproject, out, "--build-requirements")
-
-    assert exc.value.code == 1
+    _run_locked_unmocked(pyproject, out, "--build-requirements", status=1)
     err = capsys.readouterr().err
     assert "declares no [build-system]" in err
     assert "run `nab lock" not in err
@@ -1027,10 +958,7 @@ def test_unreadable_requirement_with_changed_envelope_reports_the_parse_error(
         encoding="utf-8",
     )
 
-    with pytest.raises(SystemExit) as exc:
-        _run_locked_unmocked(pyproject, out)
-
-    assert exc.value.code == 1
+    _run_locked_unmocked(pyproject, out, status=1)
     err = capsys.readouterr().err
     assert "[project].dependencies" in err
     assert "is out of date" not in err
@@ -1058,10 +986,7 @@ def test_intractable_requirement_marker_reports_the_marker_error(
         encoding="utf-8",
     )
 
-    with pytest.raises(SystemExit) as exc:
-        _run_locked_unmocked(pyproject, out)
-
-    assert exc.value.code == 1
+    _run_locked_unmocked(pyproject, out, status=1)
     err = capsys.readouterr().err
     assert "cannot lock: version literal" in err
     assert "is out of date" not in err
@@ -1090,10 +1015,7 @@ def test_intractable_self_ref_marker_reports_the_marker_error(
         encoding="utf-8",
     )
 
-    with pytest.raises(SystemExit) as exc:
-        _run_locked_unmocked(pyproject, out, "--extras", "all")
-
-    assert exc.value.code == 1
+    _run_locked_unmocked(pyproject, out, "--extras", "all", status=1)
     err = capsys.readouterr().err
     assert "cannot lock: version literal" in err
     assert "is out of date" not in err
@@ -1114,10 +1036,7 @@ def test_invalid_python_value_reports_the_flag_error(
     pyproject.write_text(body.replace(">=3.8", ">=3.9"), encoding="utf-8")
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock, "--python", "3.x")
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, "--python", "3.x", status=1)
     err = capsys.readouterr().err
     assert "error: --python must be a version like '3.12' or '3.12.4', got '3.x'" in err
     assert "is out of date" not in err
@@ -1133,10 +1052,7 @@ def test_invalid_python_value_is_reported_before_a_missing_lock(
     out = tmp_path / "pylock.toml"
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock, "--python", "3.x")
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, "--python", "3.x", status=1)
     err = capsys.readouterr().err
     assert "error: --python must be a version like" in err
     assert "no lockfile" not in err
@@ -1156,10 +1072,7 @@ def test_python_outside_requires_python_reports_the_declaration_error(
     pyproject.write_text(body.replace(">=3.8", ">=3.9"), encoding="utf-8")
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock, "--python", "3.7")
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, "--python", "3.7", status=1)
     err = capsys.readouterr().err
     assert "requires-python = '>=3.9' excludes the resolve target Python 3.7" in err
     assert "is out of date" not in err
@@ -1177,10 +1090,7 @@ def test_missing_lock_precondition(
     out = tmp_path / "pylock.toml"
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert "no lockfile" in capsys.readouterr().err
     mock.assert_not_called()
 
@@ -1193,10 +1103,7 @@ def test_invalid_toml_precondition(
     out.write_text('lock-version = "1.0"\n<<<<<<< HEAD\n', encoding="utf-8")
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert "is not valid TOML" in capsys.readouterr().err
     mock.assert_not_called()
 
@@ -1212,10 +1119,7 @@ def test_oversized_integer_precondition(
     )
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert "is not valid TOML" in capsys.readouterr().err
     mock.assert_not_called()
 
@@ -1228,10 +1132,7 @@ def test_non_pep751_precondition(
     out.write_text('title = "not a pylock"\n', encoding="utf-8")
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert "not a valid PEP 751 lockfile" in capsys.readouterr().err
     mock.assert_not_called()
 
@@ -1255,10 +1156,7 @@ def test_oversized_requires_python_precondition(
     )
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     err = capsys.readouterr().err
     assert "not a valid PEP 751 lockfile" in err
     assert "requires-python" in err
@@ -1274,10 +1172,7 @@ def test_unreadable_lock_precondition(
     out.mkdir()
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, status=1)
     assert "cannot read lockfile" in capsys.readouterr().err
     mock.assert_not_called()
 
@@ -1294,10 +1189,9 @@ def test_unsearchable_parent_precondition(
     capsys.readouterr()
 
     mock = _locked_mock()
-    with deny_access(out), pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
+    with deny_access(out):
+        _run_locked(pyproject, out, mock, status=1)
 
-    assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "no lockfile" not in err
     assert "cannot read lockfile" in err
@@ -1323,10 +1217,7 @@ def test_remedy_keeps_the_extras_selection(
     pyproject.write_text(body + 'gpu = ["foo>=2.0"]\n', encoding="utf-8")
 
     mock = _locked_mock()
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock, "--extras", "gpu")
-
-    assert exc.value.code == 1
+    _run_locked(pyproject, out, mock, "--extras", "gpu", status=1)
     err = capsys.readouterr().err
     assert "the 'gpu' extra requires foo>=2.0 but the lock pins foo 1.5" in err
     remedy = _remedy(str(pyproject), "--output", str(out), "--extras", "gpu")
@@ -1342,10 +1233,8 @@ def test_remedy_names_a_custom_output_path(
     _write_pyproject(tmp_path, '[project]\nname = "proj"\ndependencies = []\n')
     out = Path("locks/pylock.toml")
 
-    with pytest.raises(SystemExit) as exc:
-        app.cli(args=["lock", "--output", str(out), "--locked"], prog="nab")
+    _lock_cli("--output", str(out), "--locked", status=1)
 
-    assert exc.value.code == 1
     err = capsys.readouterr().err
     remedy = _remedy("--output", str(out))
     assert f"no lockfile at {out} to check; run `{remedy}` first." in err
@@ -1356,9 +1245,9 @@ def test_remedy_carries_every_run_shaping_flag(
 ) -> None:
     """Anything that decides what the lock holds belongs in the remedy.
 
-    Driving the CLI with the same arguments the remedy renders proves tyro
-    still accepts them, multi-value ``--groups``/``--extras`` included: a
-    parse failure would exit 2 with a usage error instead of the remedy.
+    Driving the CLI with the same arguments the remedy renders proves the
+    walk still accepts them, multi-value ``--groups``/``--extras``
+    included: a parse failure would exit 2 instead of naming the remedy.
     """
     monkeypatch.chdir(tmp_path)
     pyproject = _write_pyproject(
@@ -1387,10 +1276,8 @@ def test_remedy_carries_every_run_shaping_flag(
         "--upgrade",
     ]
 
-    with pytest.raises(SystemExit) as exc:
-        app.cli(args=["lock", *refresh, "--locked"], prog="nab")
+    _lock_cli(*refresh, "--locked", status=1)
 
-    assert exc.value.code == 1
     err = capsys.readouterr().err
     assert f"no lockfile at {out} to check; run `{_remedy(*refresh)}` first." in err
 
@@ -1402,10 +1289,8 @@ def test_remedy_for_a_default_run_stays_bare(
     monkeypatch.chdir(tmp_path)
     _write_pyproject(tmp_path, '[project]\nname = "proj"\ndependencies = []\n')
 
-    with pytest.raises(SystemExit) as exc:
-        app.cli(args=["lock", "--locked"], prog="nab")
+    _lock_cli("--locked", status=1)
 
-    assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "no lockfile at pylock.toml to check; run `nab lock` first." in err
 
@@ -1427,15 +1312,19 @@ def test_following_the_remedy_makes_the_check_pass(
     capsys.readouterr()
     refresh = [str(pyproject), "--output", str(out), "--extras", "gpu"]
 
-    with pytest.raises(SystemExit):
-        _run_locked(
-            pyproject, out, _locked_mock(_result({"foo": "2.0"})), "--extras", "gpu"
-        )
+    _run_locked(
+        pyproject,
+        out,
+        _locked_mock(_result({"foo": "2.0"})),
+        "--extras",
+        "gpu",
+        status=1,
+    )
 
     assert f"re-run `{_remedy(*refresh)}` to update it" in capsys.readouterr().err
 
     with patch("nab._run.resolve_for_targets", _locked_mock(_result({"foo": "2.0"}))):
-        app.cli(args=["lock", *refresh], prog="nab")
+        _lock_cli(*refresh)
     capsys.readouterr()
 
     _run_locked(

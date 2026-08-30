@@ -16,13 +16,12 @@ from __future__ import annotations
 import subprocess
 import sys
 
-_PROBE = """
-import sys
-
-import nab.cli
-
-banned = [name for name in ("nab.optiondefs", "nab.optiontable", "nab.optionrows")
-          if name in sys.modules]
+_REPORT = """
+banned = [
+    name
+    for name in ("nab.optiondefs", "nab.optiontable", "nab.optionrows")
+    if name in sys.modules
+]
 print(" ".join(banned) if banned else "clean")
 print("nab.flagtypes" in sys.modules)
 """
@@ -36,14 +35,19 @@ def _probe(source: str) -> list[str]:
     return finished.stdout.split()
 
 
+def _after_importing(module: str) -> list[str]:
+    """Whether ``module`` reached the declaration, and whether it reached the leaf."""
+    return _probe(f"import sys\nimport {module}\n{_REPORT}")
+
+
 def test_a_command_invocation_imports_neither_the_model_nor_the_table() -> None:
-    """Only ``tasks/gen_bijection.py`` and the tests build the 56 rows."""
-    assert _probe(_PROBE)[0] == "clean"
+    """Only the generators and the tests build the 56 rows."""
+    assert _after_importing("nab.cli")[0] == "clean"
 
 
 def test_the_command_signatures_reach_their_aliases_through_a_leaf() -> None:
-    """``nab.flagtypes`` imports ``typing`` and nothing of nab's."""
-    assert _probe(_PROBE)[1] == "True"
+    """A command module needs the aliases, and still builds no row."""
+    assert _after_importing("nab._lock") == ["clean", "True"]
 
 
 def test_the_alias_leaf_pulls_in_nothing_of_nabs() -> None:
