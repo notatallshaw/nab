@@ -1,7 +1,7 @@
 """Flow tests for the fast-fail tier in ``nab lock --locked``.
 
 Each case drives the real CLI against a committed pylock on disk.  Most mock
-``nab.cli.resolve_for_targets``, so whether the resolver was called shows
+``nab._run.resolve_for_targets``, so whether the resolver was called shows
 whether the tier fired: a disqualifier never calls it, a fall-through does.
 The invalid-invocation cases keep the real resolve, to pin the error it
 reports when the tier defers.
@@ -79,7 +79,7 @@ def _write_pyproject(tmp_path: Path, body: str) -> Path:
 
 
 def _write_lock(pyproject: Path, out: Path, result: ResolveResult, *extra: str) -> None:
-    with patch("nab.cli.resolve_for_targets", return_value=result):
+    with patch("nab._run.resolve_for_targets", return_value=result):
         app.cli(args=["lock", str(pyproject), "--output", str(out), *extra], prog="nab")
 
 
@@ -90,7 +90,7 @@ def _locked_mock(result: ResolveResult | None = None) -> MagicMock:
 
 
 def _run_locked(pyproject: Path, out: Path, mock: MagicMock, *extra: str) -> None:
-    with patch("nab.cli.resolve_for_targets", mock):
+    with patch("nab._run.resolve_for_targets", mock):
         app.cli(
             args=["lock", str(pyproject), "--output", str(out), "--locked", *extra],
             prog="nab",
@@ -222,7 +222,7 @@ def test_locked_build_lock_checks_its_own_default_file(
     )
     capsys.readouterr()
 
-    with patch("nab.cli.resolve_for_targets", _locked_mock(_result({"foo": "1.0"}))):
+    with patch("nab._run.resolve_for_targets", _locked_mock(_result({"foo": "1.0"}))):
         app.cli(
             args=["lock", str(pyproject), "--locked", "--build-requirements"],
             prog="nab",
@@ -1434,7 +1434,7 @@ def test_following_the_remedy_makes_the_check_pass(
 
     assert f"re-run `{_remedy(*refresh)}` to update it" in capsys.readouterr().err
 
-    with patch("nab.cli.resolve_for_targets", _locked_mock(_result({"foo": "2.0"}))):
+    with patch("nab._run.resolve_for_targets", _locked_mock(_result({"foo": "2.0"}))):
         app.cli(args=["lock", *refresh], prog="nab")
     capsys.readouterr()
 

@@ -26,7 +26,12 @@ from nab_project.config_sources import (
     render_list,
 )
 
-from . import _run
+from ._run import (
+    _cli_overrides,
+    _fail_config,
+    effective_config,
+    require_pyproject_file,
+)
 from .cli import (
     BuildPolicyFlag,
     DecisionOrderFlag,
@@ -35,12 +40,9 @@ from .cli import (
     ModeFlag,
     OfflineFlag,
     ResolutionFlag,
-    _cli_overrides,
-    _fail_config,
     app,
-    effective_config,
-    printer,
 )
+from .output import printer
 
 ActionArg = Annotated[str, tyro.conf.Positional]
 KeyArg = Annotated[str, tyro.conf.Positional]
@@ -101,7 +103,7 @@ def config_command(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag
     # Validate the pyproject path the same way the run commands do: a
     # --path that is missing, a directory, or not a regular file is a hard
     # error, not a silently-skipped source that prints all-built-in defaults.
-    _run.require_pyproject_file(path)
+    require_pyproject_file(path)
 
     cli_overrides = _cli_overrides(
         cli_resolution=project_resolution,

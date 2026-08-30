@@ -33,11 +33,12 @@ from unittest.mock import patch
 import pytest
 
 import nab._config_cmd as config_cmd
-from nab import cli as nab_cli
+from nab import _run as nab_run
 from nab._config_cmd import config_command
 from nab._download import download
 from nab._lock import lock
-from nab.cli import app, effective_config
+from nab._run import effective_config
+from nab.cli import app
 from nab_project.config import NabProjectConfig
 from nab_project.config_sources import (
     OPTIONS,
@@ -201,7 +202,7 @@ def test_config_search_roots_uses_symlink_dir_not_target(tmp_path: Path) -> None
         link.symlink_to(real / "pyproject.toml")
     except (OSError, NotImplementedError):
         pytest.skip("symlinks not supported on this platform")
-    roots = nab_cli._config_search_roots(link)
+    roots = nab_run._config_search_roots(link)
     assert roots.project_dir == link_dir.resolve()
     assert roots.pyproject == link_dir.resolve() / "pyproject.toml"
 
@@ -836,22 +837,22 @@ def _fold_run_settings(
     cli_cache_dir: Path | None = None,
     cli_http_backend: str | None = None,
     cli_max_concurrency: int | None = None,
-) -> nab_cli.RunSettings:
+) -> nab_run.RunSettings:
     """The run knobs a subcommand folds from ``path`` under these CLI flags.
 
     The assert reports a ladder holding a config error as itself, rather
     than as a subscript failure inside the fold.
     """
-    overrides = nab_cli._cli_overrides(
+    overrides = nab_run._cli_overrides(
         cli_resolution=None,
         cli_offline=cli_offline,
         cli_cache_dir=cli_cache_dir,
         cli_http_backend=cli_http_backend,
         cli_max_concurrency=cli_max_concurrency,
     )
-    ladder = nab_cli.read_config_ladder(path, overrides)
+    ladder = nab_run.read_config_ladder(path, overrides)
     assert not isinstance(ladder, SourceConfigError), ladder
-    return nab_cli._layered_run_settings(ladder)
+    return nab_run._layered_run_settings(ladder)
 
 
 class TestEffectiveConfigBridge:
@@ -944,7 +945,7 @@ def test_default_config_search_roots_xdg(
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     pyproject = tmp_path / "pyproject.toml"
-    roots = nab_cli._config_search_roots(pyproject)
+    roots = nab_run._config_search_roots(pyproject)
     assert roots.user_toml == tmp_path / "xdg" / "nab" / "nab.toml"
     assert roots.system_toml == Path("/etc/nab/nab.toml")
     assert roots.project_dir == tmp_path.resolve()
@@ -955,7 +956,7 @@ def test_config_search_roots_threads_custom_pyproject_name(tmp_path: Path) -> No
     # A non-default pyproject name is threaded through so the registry's
     # pyproject layer reads the file the user actually pointed at.
     custom = tmp_path / "app.toml"
-    roots = nab_cli._config_search_roots(custom)
+    roots = nab_run._config_search_roots(custom)
     assert roots.pyproject == custom.resolve()
     assert roots.project_dir == tmp_path.resolve()
 
@@ -964,8 +965,8 @@ def test_default_config_search_roots_no_xdg(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-    monkeypatch.setattr(nab_cli.Path, "home", lambda: tmp_path)
-    roots = nab_cli._config_search_roots(tmp_path / "pyproject.toml")
+    monkeypatch.setattr(nab_run.Path, "home", lambda: tmp_path)
+    roots = nab_run._config_search_roots(tmp_path / "pyproject.toml")
     assert roots.user_toml == tmp_path / ".config" / "nab" / "nab.toml"
 
 
@@ -1006,7 +1007,7 @@ class TestNoOpLock:
 
     def _lock_bytes(self, proj: Path, out: Path) -> bytes:
         with patch(
-            "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
+            "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(proj, output=out, cache=False)
         # The config layer must not perturb the resolve knobs at defaults.
@@ -1027,7 +1028,7 @@ class TestNoOpLock:
         sys_root = tmp_path / "sys" / "nab.toml"
         usr_root = tmp_path / "usr" / "nab.toml"
         monkeypatch.setattr(
-            nab_cli,
+            nab_run,
             "_config_search_roots",
             lambda pyproject: SourceRoots(
                 system_toml=sys_root,
@@ -1059,7 +1060,7 @@ class TestProjectCliOverrides:
     ) -> tuple[NabProjectConfig, Path]:
         with (
             patch(
-                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
+                "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab._lock.write_lock"),
         ):
@@ -1182,7 +1183,7 @@ class TestProjectCliOverrides:
         out = hermetic_roots / "pylock.toml"
         with (
             patch(
-                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
+                "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab._lock.write_lock"),
         ):
@@ -1224,7 +1225,7 @@ class TestProjectCliOverrides:
         proj = _project(hermetic_roots)
         out = hermetic_roots / "pylock.toml"
         with patch(
-            "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
+            "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             app.cli(
                 args=[
@@ -1247,10 +1248,10 @@ class TestProjectCliOverrides:
         self, hermetic_roots: Path
     ) -> None:
         proj = _project(hermetic_roots)
-        ladder = nab_cli.read_config_ladder(
+        ladder = nab_run.read_config_ladder(
             proj, {"uploaded-prior-to": "2024-06-01T00:00:00Z"}
         )
-        anchor = nab_cli.lock_anchor(ladder)
+        anchor = nab_run.lock_anchor(ladder)
         assert anchor == datetime(2024, 6, 1, tzinfo=timezone.utc)
 
     def test_relative_uploaded_prior_to_override_pins_no_anchor(
@@ -1259,8 +1260,8 @@ class TestProjectCliOverrides:
         # A P<n>D override sets the resolve window relative to the run but is
         # not a reusable absolute cutoff, so it pins no lock anchor.
         proj = _project(hermetic_roots)
-        ladder = nab_cli.read_config_ladder(proj, {"uploaded-prior-to": "P7D"})
-        assert nab_cli.lock_anchor(ladder) is None
+        ladder = nab_run.read_config_ladder(proj, {"uploaded-prior-to": "P7D"})
+        assert nab_run.lock_anchor(ladder) is None
 
     def test_lock_anchor_none_for_digit_run_past_int_limit(
         self, hermetic_roots: Path
@@ -1271,7 +1272,7 @@ class TestProjectCliOverrides:
         proj = _project(
             hermetic_roots, 'environment = { python = "3.' + "9" * 5000 + '" }\n'
         )
-        assert nab_cli.lock_anchor(nab_cli.read_config_ladder(proj, {})) is None
+        assert nab_run.lock_anchor(nab_run.read_config_ladder(proj, {})) is None
 
 
 class TestDownloadLadder:
@@ -1283,7 +1284,7 @@ class TestDownloadLadder:
         download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
-                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
+                "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab._download.download_lock", return_value=download_result),
         ):
@@ -1343,7 +1344,7 @@ class TestDownloadCliOverrides:
         download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
-                "nab.cli.resolve_for_targets", return_value=_stub_resolve_result()
+                "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab._download.download_lock", return_value=download_result),
         ):

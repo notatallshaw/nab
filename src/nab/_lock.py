@@ -4,10 +4,9 @@ Wires :func:`resolve_for_targets` to the writers in
 :mod:`nab_project.lockfile`, plus the per-target emission shapes a matrix
 needs (a templated file per tuple, multi-block stdout).
 
-The helpers this shares with :mod:`nab._download` live in :mod:`nab.cli`
-(config loading, the printer, transport selection, the resolve step) and
-:mod:`nab._run` (the project-path guard, the group and extra selection);
-everything else is imported from the module that defines it.
+The helpers this shares with :mod:`nab._download` live in
+:mod:`nab._run`, and the run's printer in :mod:`nab.output`; everything
+else is imported from the module that defines it.
 """
 
 from __future__ import annotations
@@ -79,8 +78,25 @@ from nab_provider.requirements_file import (
 )
 from nab_provider.target import IntractableMarkerError, UnevaluableMarkerError
 
-from . import _run
-from . import cli as _cli
+from ._run import (
+    ConfigLadder,
+    _cli_overrides,
+    _layered_run_settings_or_exit,
+    _load_config,
+    _make_resolve_transport,
+    _project_cli_overrides_or_exit,
+    _python_override_or_exit,
+    _reject_python_override_in_universal,
+    _resolve,
+    _resolve_effective_cache_dir,
+    is_stdout,
+    lock_anchor,
+    project_config_overrides,
+    project_override_arguments,
+    read_config_ladder,
+    resolve_extra_selection,
+    resolve_group_selection,
+)
 from .cli import (
     BuildPolicyFlag,
     DecisionOrderFlag,
@@ -93,17 +109,17 @@ from .cli import (
     ResolutionFlag,
     app,
 )
-from .output import ProgressReporter
+from .output import ProgressReporter, printer
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from nab_provider.target import ResolveTarget
 
-    from .cli import ConfigLadder
-
 
 _DEFAULT_PROJECT_PATH = Path("pyproject.toml")
+
+TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}", "{selection}")
 
 
 def _emit_or_exit(emit: Callable[[], None]) -> None:
@@ -115,7 +131,7 @@ def _emit_or_exit(emit: Callable[[], None]) -> None:
     try:
         emit()
     except (OSError, UnicodeEncodeError) as e:
-        _cli.printer().error(f"cannot write output: {e}")
+        printer().error(f"cannot write output: {e}")
         sys.exit(1)
 
 
@@ -216,8 +232,8 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     It is for pylock output to a file, single-environment mode only.
     """
     _validate_pylock_output_name(output=output, format=format)
-    if locked and (format != "pylock" or _cli.is_stdout(output)):
-        _cli.printer().error("--locked is only supported for pylock output to a file.")
+    if locked and (format != "pylock" or is_stdout(output)):
+        printer().error("--locked is only supported for pylock output to a file.")
         sys.exit(1)
     if build_requirements:
         _refuse_group_selection_with_build_requirements(
@@ -229,7 +245,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
             base_group=project_base_group,
             build_group=project_build_group,
         )
-    overrides = _cli._cli_overrides(  # noqa: SLF001
+    overrides = _cli_overrides(
         cli_resolution=project_resolution,
         cli_offline=offline,
         cli_cache_dir=cache_dir,
@@ -246,9 +262,9 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         cli_base_group=project_base_group,
         cli_build_group=project_build_group,
     )
-    project_overrides = _cli.project_config_overrides(overrides)
-    _cli._project_cli_overrides_or_exit(project_overrides)  # noqa: SLF001
-    ladder = _cli.read_config_ladder(path, overrides)
+    project_overrides = project_config_overrides(overrides)
+    _project_cli_overrides_or_exit(project_overrides)
+    ladder = read_config_ladder(path, overrides)
     anchor = _determine_lock_anchor(
         ladder,
         output=output,
@@ -256,7 +272,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         build_requirements=build_requirements,
         upgrade=upgrade,
     )
-    config = _cli._load_config(  # noqa: SLF001
+    config = _load_config(
         path,
         discover_workspace=workspace_discovery,
         anchor=anchor,
@@ -265,23 +281,21 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     if build_requirements:
         config = config_for_build_requirements(config)
     if locked and config.mode is ResolveMode.UNIVERSAL:
-        _cli.printer().error("--locked is not supported in universal mode.")
+        printer().error("--locked is not supported in universal mode.")
         sys.exit(1)
-    _cli._reject_python_override_in_universal(config, python)  # noqa: SLF001
-    settings = _cli._layered_run_settings_or_exit(ladder)  # noqa: SLF001
-    effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
-        settings.cache_dir, cache=cache
-    )
+    _reject_python_override_in_universal(config, python)
+    settings = _layered_run_settings_or_exit(ladder)
+    effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
     provenance = _build_provenance(
         path,
         config=config,
         anchor=anchor,
         cli_project_overrides=settings.cli_project_overrides,
     )
-    selected_groups = _run.resolve_group_selection(
+    selected_groups = resolve_group_selection(
         path, groups=groups, all_groups=all_groups
     )
-    selected_extras = _run.resolve_extra_selection(
+    selected_extras = resolve_extra_selection(
         path, extras=extras, all_extras=all_extras
     )
 
@@ -290,7 +304,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     )
 
     if config.mode is ResolveMode.UNIVERSAL:
-        _cli.printer().warning(
+        printer().warning(
             "the multi-target ('universal') lockfile format is"
             " experimental and may change without notice"
         )
@@ -312,10 +326,8 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     if locked:
         _fast_fail_locked(run, config=config, workspace_to_drop=workspace_to_drop)
 
-    transport = _cli._make_resolve_transport(  # noqa: SLF001
-        settings.http_backend, offline=settings.offline
-    )
-    result = _cli._resolve(  # noqa: SLF001
+    transport = _make_resolve_transport(settings.http_backend, offline=settings.offline)
+    result = _resolve(
         path,
         config=config,
         cache_dir=effective_cache_dir,
@@ -327,7 +339,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         extras=selected_extras,
         build_requirements=build_requirements,
         resolution_strategy=settings.resolution,
-        progress=ProgressReporter(_cli.printer()),
+        progress=ProgressReporter(printer()),
     )
 
     lock_input = drop_workspace_pins(
@@ -385,6 +397,12 @@ def _packages_only(text: str) -> dict[str, Any]:
     return data
 
 
+_DEFAULT_OUTPUT: dict[str, str] = {
+    "pylock": "pylock.toml",
+    "requirements": "requirements.txt",
+    "requirements-without-hashes": "requirements.txt",
+}
+
 _BUILD_DEFAULT_OUTPUT: dict[str, str] = {
     "pylock": "pylock.build.toml",
     "requirements": "build-requirements.txt",
@@ -403,7 +421,7 @@ def _default_output_path(
     overwrite the project's runtime lock.  ``pylock.build.toml`` is the
     PEP 751 ``pylock.<name>.toml`` spelling.
     """
-    names = _BUILD_DEFAULT_OUTPUT if build_requirements else _cli._DEFAULT_OUTPUT  # noqa: SLF001
+    names = _BUILD_DEFAULT_OUTPUT if build_requirements else _DEFAULT_OUTPUT
     return Path(names[format])
 
 
@@ -437,7 +455,7 @@ def _refuse_group_selection_with_build_requirements(
     )
     if not any(named):
         return
-    _cli.printer().error(
+    printer().error(
         "--build-requirements locks [build-system].requires, which has no"
         " groups or extras to select."
     )
@@ -524,7 +542,7 @@ class _LockRun:
         if self.no_emit_workspace:
             arguments.append("--no-emit-workspace")
 
-        arguments += _cli.project_override_arguments(self.cli_overrides)
+        arguments += project_override_arguments(self.cli_overrides)
         if self.upgrade:
             arguments.append("--upgrade")
         return arguments
@@ -553,7 +571,7 @@ def _fast_fail_locked(
     error: reporting a stale lock instead would point at a refresh command
     carrying the same rejected value.
     """
-    retargeted = _cli._python_override_or_exit(config, run.python)  # noqa: SLF001
+    retargeted = _python_override_or_exit(config, run.python)
 
     target = _locked_target_path(run)
     refresh = run.refresh_command()
@@ -582,7 +600,7 @@ def _fast_fail_locked(
 
     # A stat that failed is not an absent lock.
     if path_state(target) is PathState.ABSENT:
-        _cli.printer().error(
+        printer().error(
             f"--locked: no lockfile at {target} to check; run `{refresh}` first."
         )
         sys.exit(1)
@@ -604,23 +622,23 @@ def _fast_fail_locked(
             exclude=workspace_to_drop,
         )
     except OSError as e:
-        _cli.printer().error(f"--locked: cannot read lockfile {target}: {e}.")
+        printer().error(f"--locked: cannot read lockfile {target}: {e}.")
         sys.exit(1)
     except LockfileSyntaxError as e:
-        _cli.printer().error(
+        printer().error(
             f"--locked: lockfile {target} is not valid TOML: {e};"
             f" re-run `{refresh}` to regenerate it."
         )
         sys.exit(1)
     except InvalidLockfileError as e:
-        _cli.printer().error(
+        printer().error(
             f"--locked: lockfile {target} is not a valid PEP 751 lockfile: {e};"
             f" re-run `{refresh}` to regenerate it."
         )
         sys.exit(1)
     if disqualification is None:
         return
-    _cli.printer().error(
+    printer().error(
         f"--locked: lockfile {target} is out of date: {disqualification.reason};"
         f" re-run `{refresh}` to update it."
     )
@@ -722,9 +740,9 @@ def _check_locked(lock_input: LockInput, *, run: _LockRun) -> None:
     new_text = _render_or_exit(lambda: render_lock(lock_input, lock_dir=target.parent))
     committed = _packages_only(target.read_text(encoding="utf-8"))
     if _packages_only(new_text) == committed:
-        _cli.printer().done(f"Lockfile {target} is up to date.")
+        printer().done(f"Lockfile {target} is up to date.")
         return
-    _cli.printer().error(
+    printer().error(
         f"--locked: lockfile {target} is out of date;"
         f" re-run `{run.refresh_command()}` to update it."
     )
@@ -735,7 +753,7 @@ def _emit_pylock(
     lock_input: LockInput, *, output: Path | None, default_output: Path
 ) -> None:
     """Write the PEP 751 lock to a file, or print it."""
-    if _cli.is_stdout(output):
+    if is_stdout(output):
         _print_lock(_write_lock_or_exit(lock_input, target=None))
         return
 
@@ -745,7 +763,7 @@ def _emit_pylock(
     # Pass the target so wheel/sdist/directory paths are written relative
     # to the lockfile's own directory, not the cwd.
     _write_lock_or_exit(lock_input, target=target)
-    _cli.printer().done(f"Wrote {target} ({summarize_lock(lock_input, prior)})")
+    printer().done(f"Wrote {target} ({summarize_lock(lock_input, prior)})")
 
 
 def _write_lock_or_exit(lock_input: LockInput, *, target: Path | None) -> str:
@@ -758,10 +776,10 @@ def _render_or_exit(render: Callable[[], str]) -> str:
     try:
         return render()
     except (MissingHashError, LockValidationError, IntractableMarkerError) as e:
-        _cli.printer().error(f"cannot lock: {e}")
+        printer().error(f"cannot lock: {e}")
         sys.exit(1)
     except (DisjointnessError, DivergentBaseDependencyError) as e:
-        _cli.printer().error(str(e))
+        printer().error(str(e))
         sys.exit(1)
 
 
@@ -806,12 +824,12 @@ def _and_list(names: Sequence[str]) -> str:
 def _check_output_template(output: Path, template: str) -> None:
     """Reject an --output template that ``str.format`` cannot render.
 
-    Only the bare :data:`~nab.cli.TUPLE_TEMPLATE_VARS` fields are
+    Only the bare :data:`TUPLE_TEMPLATE_VARS` fields are
     accepted. An unbalanced brace, an unknown field name, or a field
     carrying a format spec (``{platform_id:d}``) or conversion
     (``{python_version!r}``) is rejected here.
     """
-    allowed_vars = _cli.TUPLE_TEMPLATE_VARS
+    allowed_vars = TUPLE_TEMPLATE_VARS
     allowed = {
         name
         for v in allowed_vars
@@ -825,12 +843,12 @@ def _check_output_template(output: Path, template: str) -> None:
             if name is not None
         ]
     except ValueError as e:
-        _cli.printer().error(f"--output {output} is not a valid template: {e}")
+        printer().error(f"--output {output} is not a valid template: {e}")
         sys.exit(1)
     supported = _and_list(allowed_vars)
     unknown = sorted(f"{{{name}}}" for name, _, _ in fields if name not in allowed)
     if unknown:
-        _cli.printer().error(
+        printer().error(
             f"--output {output} has unknown template placeholder(s)"
             f" {', '.join(unknown)}; only {supported} are supported."
         )
@@ -839,7 +857,7 @@ def _check_output_template(output: Path, template: str) -> None:
         {f"{{{name}}}" for name, spec, conversion in fields if spec or conversion}
     )
     if decorated:
-        _cli.printer().error(
+        printer().error(
             f"--output {output} is not a valid template:"
             f" {', '.join(decorated)} may not carry a format spec or conversion;"
             f" only bare {supported} are supported."
@@ -865,7 +883,7 @@ def _emit_requirements(
       file to fall back to: there is no one file to write.
     * ``output`` is unset and the lock covers one target: write
       ``default_output``.
-    * ``output`` names a :data:`~nab.cli.TUPLE_TEMPLATE_VARS` variable:
+    * ``output`` names a :data:`TUPLE_TEMPLATE_VARS` variable:
       write one file per target, substituting the target's values into
       the template.  This is the constraints-per-Python-version shape
       (e.g. ``constraints-{python_version}.txt``), and
@@ -881,20 +899,20 @@ def _emit_requirements(
     """
     with_hashes = format == "requirements"
     multi_target = len(lock_input.targets) > 1
-    if _cli.is_stdout(output) or (output is None and multi_target):
+    if is_stdout(output) or (output is None and multi_target):
         text, _ = _render_requirements_or_exit(lock_input, with_hashes)
         _print_lock(text)
         return
 
     target = output if output is not None else default_output
     template = str(target)
-    if not any(var in template for var in _cli.TUPLE_TEMPLATE_VARS):
+    if not any(var in template for var in TUPLE_TEMPLATE_VARS):
         if multi_target:
             _refuse_untemplated(lock_input, target)
         _, count = _render_requirements_or_exit(
             lock_input, with_hashes, output_path=target
         )
-        _cli.printer().done(f"Wrote {target} ({count} packages)")
+        printer().done(f"Wrote {target} ({count} packages)")
         return
 
     _check_output_template(target, template)
@@ -923,7 +941,7 @@ def _refuse_untemplated(lock_input: LockInput, output: Path) -> NoReturn:
     count = len(targets)
     separating = _separating_vars(targets)
     if not separating:
-        _cli.printer().error(
+        printer().error(
             f"the resolve produced {count} tuples and no --output template"
             f" variable tells them apart, so {output} cannot hold them."
             "  Emit pylock output instead."
@@ -931,7 +949,7 @@ def _refuse_untemplated(lock_input: LockInput, output: Path) -> NoReturn:
         sys.exit(1)
     placeholders = _and_list([f"{{{name}}}" for name in separating])
     example = "constraints" + "".join(f"-{{{name}}}" for name in separating) + ".txt"
-    _cli.printer().error(
+    printer().error(
         f"the resolve produced {count} tuples but --output {output} has no"
         f" template variable to disambiguate.  Use {placeholders} in the path,"
         f" e.g.:\n  --output '{example}'"
@@ -964,13 +982,13 @@ def _refuse_collision(
         f" both map to {path!r};"
     )
     if not missing:
-        _cli.printer().error(
+        printer().error(
             f"{head} no --output template variable tells them apart."
             "  Emit pylock output instead."
         )
         sys.exit(1)
     placeholders = _and_list([f"{{{name}}}" for name in missing])
-    _cli.printer().error(
+    printer().error(
         f"{head} --output {output} is missing a template variable to"
         f" disambiguate.  Add {placeholders} to the path."
     )
@@ -1034,7 +1052,7 @@ def _write_requirements_files(rendered: list[_RenderedFile]) -> None:
 
     for tmp, item in staged:
         tmp.replace(item.path)
-        _cli.printer().done(
+        printer().done(
             f"Wrote {item.path} ({item.pin_count} packages, tuple {item.label})"
         )
 
@@ -1096,7 +1114,7 @@ def _render_requirements_or_exit(
                 lock_input, output_path=output_path
             )
     except MissingHashError as e:
-        _cli.printer().error(f"cannot lock: {e}")
+        printer().error(f"cannot lock: {e}")
         sys.exit(1)
     return text, sum(len(lock.pins) for lock in lock_input.targets.values())
 
@@ -1160,10 +1178,10 @@ def _reused_lock_anchor(
     anchor ``--upgrade`` actually drops.  Stdout, the requirements formats,
     and a first lock have nothing to reuse.
     """
-    absolute = _cli.lock_anchor(ladder)
+    absolute = lock_anchor(ladder)
     if absolute is not None:
         return absolute, None
-    if _cli.is_stdout(output) or format != "pylock":
+    if is_stdout(output) or format != "pylock":
         return None, None
     target = _default_output_path(format, build_requirements=build_requirements)
     return None, read_lockfile_anchor(output if output is not None else target)
@@ -1195,7 +1213,7 @@ def _determine_lock_anchor(
     if upgrade:
         fresh = datetime.now(timezone.utc)
         if prior is not None:
-            _cli.printer().note(
+            printer().note(
                 "--upgrade re-anchored the resolve window to"
                 f" {fresh.isoformat()}, dropping the cutoff {prior.isoformat()}"
                 " recorded in the existing lockfile."
@@ -1218,12 +1236,12 @@ def _validate_pylock_output_name(
     name) and a bad name both exit 1, the latter with a suggested
     correction.
     """
-    if format != "pylock" or output is None or _cli.is_stdout(output):
+    if format != "pylock" or output is None or is_stdout(output):
         return
     if is_valid_pylock_path(output):
         return
     if not output.name:
-        _cli.printer().error(
+        printer().error(
             f"--output {str(output)!r} names a directory, not a file; the"
             " pylock output must be a file named 'pylock.toml' or"
             " 'pylock.<name>.toml'."
@@ -1233,7 +1251,7 @@ def _validate_pylock_output_name(
     # dotted form can produce, such as '.' from a bare '-'.
     dotted = output.name.replace("-", ".")
     suggestion = dotted if is_valid_pylock_path(Path(dotted)) else "pylock.toml"
-    _cli.printer().error(
+    printer().error(
         f"output file name {output.name!r} must match 'pylock.toml'"
         " or 'pylock.<name>.toml' per PEP 751 (note the dot separator,"
         f" not a hyphen).  Try {suggestion!r}."
