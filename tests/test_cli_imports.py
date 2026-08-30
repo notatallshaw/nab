@@ -9,14 +9,22 @@ a line, so it needs no package of nab's own, no HTTP library and none of
 the heavier stdlib modules the rest of nab uses.  ``nab._cli.dispatch``,
 ``nab._cli.render``, ``nab._cli.diagnose`` and ``nab.env`` are the
 sanctioned exemptions, and each is loaded only by a line that asked for it.
+
+The last case bans what a command holds after it has dispatched: a line
+that only reads settings loads nothing a resolve needs.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # The distributions a resolve needs and the two HTTP libraries a fetch
 # needs.  None of them belongs on a line that has not dispatched yet.
@@ -89,13 +97,64 @@ sys.stderr.write(" ".join(sorted(set(sys.modules) - before)))
 """
 
 
-def _run(probe: str, *arguments: str) -> str:
-    """Run one probe in a fresh interpreter and hand back what it wrote."""
+# Runs one command line and prints which of the modules named in its first
+# argument the process still holds.  A name is matched against a module and
+# against its root package, so one list can ban a whole distribution and a
+# single module of another.
+_HELD_PROBE = """
+import io
+import sys
+from contextlib import redirect_stderr, redirect_stdout
+
+import nab.cli
+
+banned = set(sys.argv[1].split(","))
+out, err = io.StringIO(), io.StringIO()
+with redirect_stdout(out), redirect_stderr(err):
+    status = nab.cli.run(tuple(sys.argv[2:]))
+
+assert status == 0, (status, out.getvalue(), err.getvalue())
+held = set(sys.modules) | {name.partition(".")[0] for name in sys.modules}
+sys.stderr.write(" ".join(sorted(held & banned)))
+"""
+
+# What a command that only reads settings must not end up holding: the
+# solver, the provider and project halves a resolve goes through, and
+# the writer that emits a lockfile.
+_RESOLVE_STACK = (
+    "nab_resolver",
+    "nab_project.lockfile",
+    "nab_project.resolve",
+    "nab_provider.provider",
+    "nab_provider.requirements_file",
+    "tomli_w",
+)
+
+_PROJECT = '[project]\nname = "probe"\nversion = "0.1"\ndependencies = []\n'
+
+
+def _run(probe: str, *arguments: str, cwd: Path | None = None) -> str:
+    """Run one probe in a fresh interpreter and hand back what it wrote.
+
+    A ``cwd`` is also given its own XDG roots, so a probe that reads the
+    config ladder sees that directory and no file of the real user's.
+    Every ``NAB_*`` variable is dropped, because a bad one is a config
+    error and would exit the probe before it printed anything.
+    """
+    environment = {
+        name: value for name, value in os.environ.items() if not name.startswith("NAB_")
+    }
+    if cwd is not None:
+        environment["XDG_CONFIG_HOME"] = str(cwd / "config")
+        environment["XDG_CACHE_HOME"] = str(cwd / "cache")
+
     finished = subprocess.run(  # noqa: S603 - the probe is this file's own source
         [sys.executable, "-c", probe, *arguments],
         capture_output=True,
         text=True,
         check=False,
+        cwd=cwd,
+        env=environment,
     )
 
     assert finished.returncode == 0, finished.stderr
@@ -160,3 +219,17 @@ def test_a_page_or_a_version_adds_only_what_writes_it(
     that set: probes A and B are what pin the size.
     """
     assert set(_run(_ADDED_PROBE, "0", *line).split()) <= expected
+
+
+@pytest.mark.parametrize("line", [("cache", "dir"), ("config", "list")])
+def test_a_settings_command_loads_no_resolve_stack(
+    line: tuple[str, ...], tmp_path: Path
+) -> None:
+    """Probe E: neither command that only reads settings holds any of these.
+
+    Both run through the shared helpers in :mod:`nab._run`, which is why
+    the resolve half of those helpers lives in :mod:`nab._resolve`.
+    """
+    (tmp_path / "pyproject.toml").write_text(_PROJECT, encoding="utf-8")
+
+    assert _run(_HELD_PROBE, ",".join(_RESOLVE_STACK), *line, cwd=tmp_path) == ""

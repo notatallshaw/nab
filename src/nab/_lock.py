@@ -5,8 +5,9 @@ Wires :func:`resolve_for_targets` to the writers in
 needs (a templated file per tuple, multi-block stdout).
 
 The helpers this shares with :mod:`nab._download` live in
-:mod:`nab._run`, and the run's printer in :mod:`nab.output`; everything
-else is imported from the module that defines it.
+:mod:`nab._run` and :mod:`nab._resolve`, and the run's printer in
+:mod:`nab.output`; everything else is imported from the module that
+defines it.
 """
 
 from __future__ import annotations
@@ -76,24 +77,25 @@ from nab_provider.requirements_file import (
 )
 from nab_provider.target import IntractableMarkerError, UnevaluableMarkerError
 
+from ._resolve import (
+    _load_config,
+    _make_resolve_transport,
+    _python_override_or_exit,
+    _reject_python_override_in_universal,
+    _resolve,
+    resolve_extra_selection,
+    resolve_group_selection,
+)
 from ._run import (
     ConfigLadder,
     _cli_overrides,
     _layered_run_settings_or_exit,
-    _load_config,
-    _make_resolve_transport,
     _project_cli_overrides_or_exit,
-    _python_override_or_exit,
-    _reject_python_override_in_universal,
-    _resolve,
     _resolve_effective_cache_dir,
-    is_stdout,
     lock_anchor,
     project_config_overrides,
     project_override_arguments,
     read_config_ladder,
-    resolve_extra_selection,
-    resolve_group_selection,
 )
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
@@ -115,6 +117,10 @@ if TYPE_CHECKING:
 _DEFAULT_PROJECT_PATH = Path("pyproject.toml")
 
 TUPLE_TEMPLATE_VARS = ("{python_version}", "{platform_id}", "{selection}")
+
+
+def is_stdout(output: Path | None) -> bool:
+    return output is not None and str(output) == "-"
 
 
 def _emit_or_exit(emit: Callable[[], None]) -> None:
