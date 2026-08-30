@@ -721,6 +721,22 @@ class TestDiscoverAndMissing:
         assert layers[0].values["resolution"] is ResolutionStrategy.LOWEST
 
 
+class TestCliLayerPreconditions:
+    """``build_cli_layer`` only ever carries rows a command line can set."""
+
+    def test_file_only_key_is_refused(self) -> None:
+        spec = next(s for s in OPTIONS if s.key == "vcs")
+        assert spec.commands == ()
+
+        with pytest.raises(ValueError, match="takes no command line"):
+            build_cli_layer({"vcs": {"policy": "allow"}})
+
+    def test_cli_settable_key_is_parsed(self) -> None:
+        layer = build_cli_layer({"resolution": "lowest"})
+
+        assert layer.values["resolution"] is ResolutionStrategy.LOWEST
+
+
 class TestRenderers:
     def test_render_list(self, tmp_path: Path) -> None:
         _project(tmp_path, 'resolution = "lowest"\n')
@@ -818,6 +834,19 @@ class TestRenderers:
         assert lines[0].startswith("resolution (project,")
         assert any(line.startswith(">") and "winner" in line for line in lines)
         assert any("shadowed" in line for line in lines)
+
+    def test_every_row_explains_with_its_own_help_and_page(
+        self, tmp_path: Path
+    ) -> None:
+        """The help and page lines come off the row asked for, not a constant."""
+        _project(tmp_path)
+        eff = _resolve(SourceRoots(project_dir=tmp_path))
+
+        for row in OPTIONS:
+            help_line, docs_line = render_explain(eff, row.key).splitlines()[1:3]
+
+            assert help_line == f"  {row.help}", row.key
+            assert docs_line == f"  see docs/{row.docs}", row.key
 
     def test_render_explain_default_only(self, tmp_path: Path) -> None:
         _project(tmp_path)

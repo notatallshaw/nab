@@ -141,10 +141,12 @@ actions:
 * `nab config list` prints every option with its value, scope, and
   the source it came from.
 * `nab config get <key>` prints one effective value.
-* `nab config explain <key>` prints the full source stack for one key.
-  The winning row carries a `>` gutter and the status `winner`, and
-  every source it beats is `shadowed`. A shadowed source contributes
-  nothing to the value, whatever the key's type.
+* `nab config explain <key>` prints a header naming the key, its scope
+  and its type, then the option's own help line and the page in `docs/`
+  that documents it, then the full source stack. The winning row carries
+  a `>` gutter and the status `winner`, and every source it beats is
+  `shadowed`. A shadowed source contributes nothing to the value,
+  whatever the key's type.
 
 `--include-rejected` is a flag on `nab config` itself, so every action
 takes it. Without it, a config file that sets an unknown key or a key

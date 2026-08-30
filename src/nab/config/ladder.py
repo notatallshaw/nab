@@ -19,10 +19,10 @@ readers is for.
 
 The renderers close the loop.  ``list`` prints every row with the value that
 won and where it came from, ``get`` prints one row's value alone, and
-``explain`` prints one row's whole stack with the winner marked.  All three
-read what :func:`resolve_config` returns, so what is printed is what the run
-would use, and a rejected source reaches them only as a
-:class:`RejectedLayer`.
+``explain`` prints one row's help, the page documenting it and its whole
+stack, with the winner marked.  All three read what :func:`resolve_config`
+returns, so what is printed is what the run would use, and a rejected source
+reaches them only as a :class:`RejectedLayer`.
 """
 
 from __future__ import annotations
@@ -63,6 +63,7 @@ __all__ = [
     "build_cli_overrides",
     "config_search_roots",
     "discover_layers",
+    "docs_path",
     "orphan_rejections",
     "project_cli_override_notice",
     "project_cli_override_records",
@@ -712,10 +713,18 @@ def build_cli_layer(values: Mapping[str, Any]) -> Layer:
     unset flag is omitted, so it does not shadow lower layers).  Each
     value is normalised through its registry row so the effective value
     carries the typed form regardless of how the flag was spelled.
+
+    A row that declares no command (``commands`` is empty) is set from a
+    file alone, so a value for one is the caller's mistake and raises
+    ``ValueError`` rather than the user-facing ``SourceConfigError``.
     """
     parsed: dict[str, Any] = {}
     for key, value in values.items():
         spec = BY_KEY[key]
+        if not spec.commands:
+            msg = f"{key} takes no command line, so no CLI layer can set it"
+            raise ValueError(msg)
+
         # A repeatable flag arrives as a tuple; the parse hooks expect a
         # TOML list, so normalise it here.
         raw = list(value) if isinstance(value, tuple) else value
@@ -799,15 +808,21 @@ def render_explain(
     *,
     include_rejected: bool = False,
 ) -> str:
-    """Render the full shadowed stack for ``key``.
+    """Render the row's help, its documentation page and its shadowed stack.
 
-    The highest source is the ``winner`` and carries a ``>`` gutter;
-    every source it beats is ``shadowed``.  With ``include_rejected`` the
+    The header names the key, its scope and its type; under it come the
+    row's own help line and the page that documents it.  The highest
+    source is the ``winner`` and carries a ``>`` gutter; every source it
+    beats is ``shadowed``.  With ``include_rejected`` the
     category-rejected sources (a source that tried to set ``key`` but was
     not allowed) are listed too, labelled ``rejected``.
     """
     ev = _require_key(effective, key)
-    lines = [f"{key} ({ev.spec.scope_name}, {_type_label(ev.spec)})"]
+    lines = [
+        f"{key} ({ev.spec.scope_name}, {_type_label(ev.spec)})",
+        f"  {ev.spec.help}",
+        f"  see {docs_path(ev.spec)}",
+    ]
     winner_index = len(ev.stack) - 1
     for i, (origin, value) in enumerate(ev.stack):
         gutter = ">" if i == winner_index else " "
@@ -824,6 +839,15 @@ def render_explain(
             for rej in ev.rejected
         )
     return "\n".join(lines) + "\n"
+
+
+def docs_path(row: Opt) -> str:
+    """Return the page ``row`` names, as a path from the repository root.
+
+    Shared with the generator's page check, so the string ``explain``
+    prints and the string that gets checked cannot differ.
+    """
+    return f"docs/{row.docs}"
 
 
 def _type_label(row: Opt) -> str:

@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 from nab import optiondefs
+from nab.config.ladder import docs_path
 from nab.optiondefs import COMMANDS, UNSET, Kind, Opt
 from nab.optiontable import ALL
 
@@ -143,11 +144,14 @@ def _flag_table() -> str:
 
 
 def _check_pages() -> None:
-    """Check that every row names a documentation page that exists."""
+    """Check that every row names a documentation page that exists.
+
+    The path checked is the one ``nab config explain`` prints.
+    """
     for row in ALL:
-        page = _DOCS / row.docs
-        if not page.is_file():
-            msg = f"{row.name} names {row.docs}, which is not a documentation page"
+        printed = docs_path(row)
+        if not (_ROOT / printed).is_file():
+            msg = f"{row.name} names {printed}, which is not a documentation page"
             raise SystemExit(msg)
 
 
