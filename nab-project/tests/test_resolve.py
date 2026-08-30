@@ -49,6 +49,7 @@ from nab_project.resolve import (
     _group_requirements,
     _group_requirements_by_group,
     _ProjectTables,
+    _resolve_inputs,
     build_lock_input,
     build_resolver_inputs,
     config_for_build_requirements,
@@ -6427,7 +6428,7 @@ class TestBuildConfigPlumbing:
     def test_dynamic_local_source_builds_under_the_project_config(
         self, tmp_path: Path
     ) -> None:
-        """``resolve_for_targets`` hands its config to the coordinator it opens."""
+        """``resolve_for_targets`` hands its own settings to the build."""
         pyproject = self._project(tmp_path)
         config = read_pyproject_config(pyproject)
         built = WheelMetadata(name="dyn", version=Version("7.0"))
@@ -6445,7 +6446,7 @@ class TestBuildConfigPlumbing:
         assert result.success
         assert _pins(result) == {"dyn": Version("7.0")}
 
-        assert runner.call_args.kwargs["config"] is config
+        assert runner.call_args.kwargs["config"] == _resolve_inputs(config)
 
 
 class TestTrustUnverifiedSdistDeps:
