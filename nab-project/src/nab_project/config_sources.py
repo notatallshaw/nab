@@ -34,7 +34,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import tomli
 
@@ -295,8 +295,6 @@ class OptionSpec(ValueType):
     env_var: str | None
     cli_flag: str | None
     cli_param: str | None
-    parse: Callable[[Any, str], Any]
-    render: Callable[[Any], str]
 
     def __init__(  # noqa: PLR0913, PLR0917 - the type's own fields, in its own order
         self,
@@ -318,8 +316,11 @@ class OptionSpec(ValueType):
         self.env_var = env_var
         self.cli_flag = cli_flag
         self.cli_param = cli_param
-        self.parse = parse
-        self.render = render
+
+        # Annotated here, not in the field block: zuban reads a class-level
+        # ``Callable`` as a method and drops the first argument at every call.
+        self.parse: Callable[[Any, str], Any] = parse
+        self.render: Callable[[Any], str] = render
 
     def allowed_in_toml(self, kind: SourceKind) -> bool:
         """Whether a TOML source of ``kind`` may set this option.
@@ -413,7 +414,10 @@ def _parse_max_concurrency(value: Any, where: str) -> int:
     return result
 
 
-def _delegate(call: Callable[[], Any]) -> Any:
+_ParsedT = TypeVar("_ParsedT")
+
+
+def _delegate(call: Callable[[], _ParsedT]) -> _ParsedT:
     """Run a :mod:`nab_project.values` parser, re-typing its error for the registry.
 
     The rows reuse those parsers so a value and its validation wording match

@@ -2693,6 +2693,40 @@ class TestIndexSerialization:
             read_pyproject_config(path)
         assert "index 'local'" in str(caught.value)
 
+    def test_message_names_the_entry_it_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "remote"\n'
+            'url = "https://a/simple/"\n'
+            "[[tool.nab.indexes]]\n"
+            'name = "local"\n'
+            'url = "file:///x"\n'
+            'serialization = "html"\n',
+        )
+        with pytest.raises(
+            ConfigError, match=r"indexes\[1\]\.serialization is not settable"
+        ):
+            read_pyproject_config(path)
+
+    def test_unknown_value_message_names_the_entry_it_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        path = write(
+            tmp_path,
+            "[[tool.nab.indexes]]\n"
+            'name = "remote"\n'
+            'url = "https://a/simple/"\n'
+            "[[tool.nab.indexes]]\n"
+            'name = "other"\n'
+            'url = "https://b/simple/"\n'
+            'serialization = "xml"\n',
+        )
+        with pytest.raises(
+            ConfigError, match=r"indexes\[1\]\.serialization must be one of"
+        ):
+            read_pyproject_config(path)
+
     def test_rejected_on_a_file_index_even_when_default(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
@@ -3089,6 +3123,18 @@ class TestArchiveSources:
             'url = "https://ex.com/foo-1.0.tar.gz"\n',
         )
         with pytest.raises(ConfigError, match="has no hash"):
+            read_pyproject_config(path)
+
+    def test_message_names_the_entry_it_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            f'[[tool.nab.archive-sources]]\nname = "ok"\nurl = "{self._URL}"\n'
+            '[[tool.nab.archive-sources]]\nname = "x"\n'
+            'url = "https://ex.com/foo-1.0.tar.gz"\n',
+        )
+        with pytest.raises(
+            ConfigError, match=r"archive-sources\[1\] url .* has no hash"
+        ):
             read_pyproject_config(path)
 
     def test_empty_digest_rejected(self, tmp_path: Path) -> None:

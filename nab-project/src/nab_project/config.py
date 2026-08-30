@@ -1097,7 +1097,14 @@ def _reject_duplicate_source_names(
     time like every other config error.
     """
     seen: dict[str, str] = {}
-    for source in (*local_sources, *vcs_sources, *archive_sources):
+    # The base the three share declares no ``name``, so the joined tuple
+    # needs its element type spelled out.
+    sources: tuple[LocalSource | VcsSource | ArchiveSource, ...] = (
+        *local_sources,
+        *vcs_sources,
+        *archive_sources,
+    )
+    for source in sources:
         canonical = canonicalize_name(source.name)
         if canonical in seen:
             msg = (

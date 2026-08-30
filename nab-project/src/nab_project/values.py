@@ -12,7 +12,7 @@ import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 from urllib.parse import urlsplit
 
 from nab_index.local_index import is_file_url
@@ -376,20 +376,27 @@ def _parse_bool(key: str, value: object, *, default: bool) -> bool:
     return value
 
 
+# The bound is a string so ``enum`` can stay a typing-only import.
+_EnumT = TypeVar("_EnumT", bound="enum.Enum")
+
+
 def parse_enum(
     key: str,
     value: object,
-    enum_cls: type[enum.Enum],
-    default: enum.Enum,
-) -> Any:
+    enum_cls: type[_EnumT],
+    default: _EnumT,
+) -> _EnumT:
     """Read ``key`` as one of ``enum_cls``'s values, or ``default`` when unset."""
     if value is None:
         return default
     if not isinstance(value, str):
         msg = f"{key} must be a string, got {type(value).__name__}"
         raise ConfigError(msg)
+
     try:
-        return enum_cls(value)
+        # Spelled through ``__call__`` because zuban reads ``enum_cls(value)``
+        # as the functional ``Enum("Name", ...)`` API and asks for a literal.
+        return enum_cls.__call__(value)
     except ValueError as exc:
         valid = sorted(m.value for m in enum_cls)
         msg = f"{key} must be one of {valid!r}, got {value!r}"
@@ -518,10 +525,11 @@ _NAME_URL_KEYS = frozenset({"name", "url"})
 class _NameUrlTable(NamedTuple):
     """One checked entry of a ``name``/``url`` array of tables.
 
-    ``table`` is the raw entry, for a caller that reads further keys.
+    ``table`` is the raw entry, for a caller that reads further keys.  The
+    ordinal is ``position`` because ``index`` would shadow ``tuple.index``.
     """
 
-    index: int
+    position: int
     name: str
     url: str
     table: dict[str, Any]
@@ -559,7 +567,7 @@ def _iter_name_url_tables(
             msg = f"{label}[{i}] name and url must be strings"
             raise ConfigError(msg)
 
-        yield _NameUrlTable(index=i, name=name, url=url, table=entry)
+        yield _NameUrlTable(position=i, name=name, url=url, table=entry)
 
 
 _INDEX_KEYS = frozenset({"name", "url", "serialization"})
@@ -571,7 +579,7 @@ def parse_indexes(value: object) -> tuple[IndexConfig, ...]:
     for entry in _iter_name_url_tables("indexes", value, keys=_INDEX_KEYS):
         if "serialization" in entry.table and is_file_url(entry.url):
             msg = (
-                f"indexes[{entry.index}].serialization is not settable on a"
+                f"indexes[{entry.position}].serialization is not settable on a"
                 " file:// index: a local index is read from disk with no"
                 " Accept negotiation, so the pin would do nothing."
                 f"  Drop it from index {entry.name!r}."
@@ -579,7 +587,7 @@ def parse_indexes(value: object) -> tuple[IndexConfig, ...]:
             raise ConfigError(msg)
 
         serialization = parse_enum(
-            f"indexes[{entry.index}].serialization",
+            f"indexes[{entry.position}].serialization",
             entry.table.get("serialization"),
             SimpleSerialization,
             SimpleSerialization.NEGOTIATE,
@@ -1350,7 +1358,7 @@ def parse_archive_sources(value: object) -> tuple[ArchiveSource, ...]:
     """Read ``archive-sources``, one name and url per table, each url validated."""
     out: list[ArchiveSource] = []
     for entry in _iter_name_url_tables("archive-sources", value):
-        _validate_archive_url(entry.index, entry.url)
+        _validate_archive_url(entry.position, entry.url)
         out.append(ArchiveSource(name=entry.name, url=entry.url))
     return tuple(out)
 
