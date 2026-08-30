@@ -70,8 +70,8 @@ from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget, declared_range_marker, host_environment
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from contextlib import AbstractContextManager
+    from collections.abc import Callable
 
 
 def write(tmp_path: Path, body: str) -> Path:
@@ -5642,8 +5642,8 @@ class TestPyprojectParseCount:
 
     def test_the_key_check_and_requires_python_share_a_parse(
         self,
-        tmp_path: Path,
         record_parses: Callable[[], AbstractContextManager[list[str]]],
+        tmp_path: Path,
     ) -> None:
         """The unknown-key check and ``[project].requires-python`` read once."""
         body = (
@@ -5661,8 +5661,8 @@ class TestPyprojectParseCount:
 
     def test_the_declared_group_check_shares_that_parse(
         self,
-        tmp_path: Path,
         record_parses: Callable[[], AbstractContextManager[list[str]]],
+        tmp_path: Path,
     ) -> None:
         """``base-group`` is checked against ``[dependency-groups]`` off it too."""
         body = (

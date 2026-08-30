@@ -16,8 +16,9 @@ The property suite under ``nab-*/tests/property*/`` uses explicit
 decorators so its example budget is independent of the profile.
 
 ``cap_writes``, ``deny_access``, ``oversized_integer``,
-``over_nested_marker`` and ``refuse_over_nested`` are here rather than in
-one suite's conftest because each is used by more than one suite.
+``over_nested_marker``, ``refuse_over_nested`` and ``record_parses`` are here
+rather than in one suite's conftest because the five workspace suites are all
+packages named ``tests``, so only the umbrella suite can carry one.
 """
 
 from __future__ import annotations
@@ -129,6 +130,23 @@ def _refuse_over_nested(payload: bytes) -> Iterator[None]:
 
 
 @contextmanager
+def _record_parses() -> Iterator[list[str]]:
+    # nab-resolver and nab-provider run against this conftest without nab-project
+    # installed, so the import cannot sit at module scope.
+    from nab_project import toml_io  # noqa: PLC0415
+
+    parsed: list[str] = []
+    real_loads = toml_io.loads
+
+    def recording_loads(text: str) -> dict[str, Any]:
+        parsed.append(text)
+        return real_loads(text)
+
+    with patch.object(toml_io, "loads", recording_loads):
+        yield parsed
+
+
+@contextmanager
 def _deny_access(target: Path) -> Iterator[None]:
     real_os_stat, real_path_stat, real_open = os.stat, Path.stat, Path.open
     denied = os.fspath(target)
@@ -168,6 +186,18 @@ def refuse_over_nested() -> Callable[[bytes], AbstractContextManager[None]]:
     decodes cleanly on the next machine.
     """
     return _refuse_over_nested
+
+
+@pytest.fixture
+def record_parses() -> Callable[[], AbstractContextManager[list[str]]]:
+    """Record the text of every TOML document parsed inside the block.
+
+    The hook sits on ``toml_io.loads``, the funnel every nab parse reaches, so a
+    caller that opens a file and parses it some other way is recorded too.
+    Counting one file's own text in the result keeps the other files a command
+    reads out of the tally.
+    """
+    return _record_parses
 
 
 @pytest.fixture

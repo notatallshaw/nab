@@ -82,8 +82,8 @@ from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from contextlib import AbstractContextManager
+    from collections.abc import Callable
 
 V = Version
 
@@ -6534,8 +6534,8 @@ class TestPyprojectParsedOnce:
 
     def test_a_specific_resolve_parses_the_pyproject_once(
         self,
-        tmp_path: Path,
         record_parses: Callable[[], AbstractContextManager[list[str]]],
+        tmp_path: Path,
     ) -> None:
         """Dependencies, groups, extras, name and build requires share a parse."""
         body = (
@@ -6560,8 +6560,8 @@ class TestPyprojectParsedOnce:
 
     def test_a_build_requirements_resolve_parses_the_pyproject_once(
         self,
-        tmp_path: Path,
         record_parses: Callable[[], AbstractContextManager[list[str]]],
+        tmp_path: Path,
     ) -> None:
         """The build-requirements path reads its one table off that parse too."""
         body = (
