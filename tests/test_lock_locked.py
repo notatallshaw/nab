@@ -1,7 +1,7 @@
 """Flow tests for the fast-fail tier in ``nab lock --locked``.
 
 Each case drives the real CLI against a committed pylock on disk.  Most mock
-``nab._run.resolve_for_targets``, so whether the resolver was called shows
+``nab._resolve.resolve_for_targets``, so whether the resolver was called shows
 whether the tier fired: a disqualifier never calls it, a fall-through does.
 The invalid-invocation cases keep the real resolve, to pin the error it
 reports when the tier defers.
@@ -84,7 +84,7 @@ def _lock_cli(*arguments: str, status: int = 0) -> None:
 
 
 def _write_lock(pyproject: Path, out: Path, result: ResolveResult, *extra: str) -> None:
-    with patch("nab._run.resolve_for_targets", return_value=result):
+    with patch("nab._resolve.resolve_for_targets", return_value=result):
         _lock_cli(str(pyproject), "--output", str(out), *extra)
 
 
@@ -97,7 +97,7 @@ def _locked_mock(result: ResolveResult | None = None) -> MagicMock:
 def _run_locked(
     pyproject: Path, out: Path, mock: MagicMock, *extra: str, status: int = 0
 ) -> None:
-    with patch("nab._run.resolve_for_targets", mock):
+    with patch("nab._resolve.resolve_for_targets", mock):
         _lock_cli(
             str(pyproject), "--output", str(out), "--locked", *extra, status=status
         )
@@ -216,7 +216,9 @@ def test_locked_build_lock_checks_its_own_default_file(
     )
     capsys.readouterr()
 
-    with patch("nab._run.resolve_for_targets", _locked_mock(_result({"foo": "1.0"}))):
+    with patch(
+        "nab._resolve.resolve_for_targets", _locked_mock(_result({"foo": "1.0"}))
+    ):
         _lock_cli(str(pyproject), "--locked", "--build-requirements")
 
     assert "Lockfile pylock.build.toml is up to date." in capsys.readouterr().err
@@ -1323,7 +1325,9 @@ def test_following_the_remedy_makes_the_check_pass(
 
     assert f"re-run `{_remedy(*refresh)}` to update it" in capsys.readouterr().err
 
-    with patch("nab._run.resolve_for_targets", _locked_mock(_result({"foo": "2.0"}))):
+    with patch(
+        "nab._resolve.resolve_for_targets", _locked_mock(_result({"foo": "2.0"}))
+    ):
         _lock_cli(*refresh)
     capsys.readouterr()
 

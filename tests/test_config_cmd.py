@@ -1011,7 +1011,7 @@ class TestNoOpLock:
 
     def _lock_bytes(self, proj: Path, out: Path) -> bytes:
         with patch(
-            "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
+            "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(proj, output=out, cache=False)
         # The config layer must not perturb the resolve knobs at defaults.
@@ -1064,7 +1064,7 @@ class TestProjectCliOverrides:
     ) -> tuple[NabProjectConfig, Path]:
         with (
             patch(
-                "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
+                "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab._lock.write_lock"),
         ):
@@ -1193,7 +1193,7 @@ class TestProjectCliOverrides:
         out = hermetic_roots / "pylock.toml"
         with (
             patch(
-                "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
+                "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab._lock.write_lock"),
         ):
@@ -1232,7 +1232,7 @@ class TestProjectCliOverrides:
         proj = _project(hermetic_roots)
         out = hermetic_roots / "pylock.toml"
         with patch(
-            "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
+            "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             _cli(
                 "lock",
@@ -1288,7 +1288,7 @@ class TestDownloadLadder:
         download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
-                "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
+                "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab._download.download_lock", return_value=download_result),
         ):
@@ -1348,7 +1348,7 @@ class TestDownloadCliOverrides:
         download_result = DownloadResult(written=(), skipped=())
         with (
             patch(
-                "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
+                "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
             ) as mock_resolve,
             patch("nab._download.download_lock", return_value=download_result),
         ):

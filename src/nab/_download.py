@@ -5,9 +5,9 @@ archive into a local directory: the union of every target's
 artefacts, deduplicated by URL, which for a declared matrix
 pre-populates a directory for offline deployment across platforms.
 
-The helpers this shares with :mod:`nab._lock` live in :mod:`nab._run`,
-and the run's printer in :mod:`nab.output`; everything else is imported
-from the module that defines it.
+The helpers this shares with :mod:`nab._lock` live in :mod:`nab._run`
+and :mod:`nab._resolve`, and the run's printer in :mod:`nab.output`;
+everything else is imported from the module that defines it.
 """
 
 from __future__ import annotations
@@ -18,19 +18,21 @@ from pathlib import Path
 from nab_project.download import DownloadError, download_lock
 from nab_project.resolve import build_lock_input
 
+from ._resolve import (
+    _load_config,
+    _make_transport,
+    _reject_python_override_in_universal,
+    _resolve,
+    resolve_extra_selection,
+    resolve_group_selection,
+)
 from ._run import (
     _cli_overrides,
     _layered_run_settings_or_exit,
-    _load_config,
-    _make_transport,
     _project_cli_overrides_or_exit,
-    _reject_python_override_in_universal,
-    _resolve,
     _resolve_effective_cache_dir,
     project_config_overrides,
     read_config_ladder,
-    resolve_extra_selection,
-    resolve_group_selection,
 )
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
