@@ -1,12 +1,10 @@
-"""Tests for the ``nab config`` subcommand and the tyro conformance gate.
+"""Tests for the ``nab config`` subcommand and its registry conformance gate.
 
 The config command is the read-only inspector over the layered registry.
-These tests drive it through tyro's ``app.cli`` (so the real flag surface
-is exercised) with injected search roots, and assert the tyro CLI surface
-matches the registry one-for-one (the conformance test that guards the
-one place the CLI surface is not registry-derived: tyro deriving flags
-from a function signature).  One class reads the rendered ``config`` help
-back and checks it against what each refused source really does.
+These tests drive it through :func:`nab.cli.run` (so the real flag surface
+is exercised) with injected search roots, and assert the CLI surface
+matches the registry one-for-one: a flag the registry declares and the
+command signature does not carry is what the gate catches.
 They also pin the ``--resolution`` -> ``--project-resolution`` rename, the
 lock-ladder config-error exit, a byte-identical no-op lock at defaults, and
 every override flag reaching the config that ``nab lock`` and ``nab download``
@@ -24,7 +22,6 @@ from contextlib import (
     AbstractContextManager,
     redirect_stderr,
     redirect_stdout,
-    suppress,
 )
 from datetime import datetime, timezone
 from pathlib import Path
@@ -38,7 +35,7 @@ from nab._config_cmd import config_command
 from nab._download import download
 from nab._lock import lock
 from nab._run import effective_config
-from nab.cli import app
+from nab.cli import run
 from nab_project.config import NabProjectConfig
 from nab_project.config_sources import (
     OPTIONS,
@@ -164,29 +161,34 @@ def _stub_resolve_result() -> ResolveResult:
     )
 
 
-def _run_config(args: list[str]) -> str:
+def _cli(*arguments: str, status: int = 0) -> None:
+    """Drive the CLI the way ``main`` does, asserting how it ended."""
+    assert run(arguments) == status
+
+
+def _run_config(args: list[str], *, status: int = 0) -> str:
     buf = io.StringIO()
     with redirect_stdout(buf):
-        app.cli(args=["config", *args], prog="nab")
+        _cli("config", *args, status=status)
     return buf.getvalue()
 
 
 def _config_help() -> str:
     """What ``nab config --help`` prints."""
     buf = io.StringIO()
-    with redirect_stdout(buf), suppress(SystemExit):
-        app.cli(args=["config", "--help"], prog="nab")
+    with redirect_stdout(buf):
+        _cli("config", "--help")
     return buf.getvalue()
 
 
-def _help_sentences(needle: str) -> list[str]:
-    """The help's sentences naming ``needle``, with tyro's wrapping undone.
+def _doc_sentences(needle: str) -> list[str]:
+    """The sentences of ``config_command``'s docstring that name ``needle``.
 
-    tyro renders ``config_command``'s docstring above the flag listing, so
-    the prose is everything before that listing.
+    Only its first line reaches ``nab config --help``, so the rest is what
+    a maintainer reads, and these cases are what keep it true.
     """
-    prose = _config_help().partition("positional arguments")[0]
-    return [s for s in re.split(r"(?<=\.)\s+", " ".join(prose.split())) if needle in s]
+    prose = " ".join((config_command.__doc__ or "").split())
+    return [s for s in re.split(r"(?<=\.)\s+", prose) if needle in s]
 
 
 def test_config_search_roots_uses_symlink_dir_not_target(tmp_path: Path) -> None:
@@ -303,8 +305,8 @@ class TestConfigGet:
 
     def test_get_requires_key(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
-        with pytest.raises(SystemExit):
-            _run_config(["get", "--path", str(hermetic_roots / "pyproject.toml")])
+
+        _run_config(["get", "--path", str(hermetic_roots / "pyproject.toml")], status=1)
 
     def test_get_unknown_key_exits(
         self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
@@ -334,8 +336,10 @@ class TestConfigExplain:
 
     def test_explain_requires_key(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
-        with pytest.raises(SystemExit):
-            _run_config(["explain", "--path", str(hermetic_roots / "pyproject.toml")])
+
+        _run_config(
+            ["explain", "--path", str(hermetic_roots / "pyproject.toml")], status=1
+        )
 
     def test_explain_include_rejected(
         self, hermetic_roots: Path, tmp_path: Path
@@ -430,9 +434,11 @@ class TestConfigExplain:
         # reject, rather than silently accepting it.
         _project(hermetic_roots, 'resolutionn = "lowest"\n')
         err = io.StringIO()
-        with redirect_stderr(err), pytest.raises(SystemExit) as exc:
-            _run_config(["list", "--path", str(hermetic_roots / "pyproject.toml")])
-        assert exc.value.code == 1
+        with redirect_stderr(err):
+            _run_config(
+                ["list", "--path", str(hermetic_roots / "pyproject.toml")], status=1
+            )
+
         assert "not a valid nab setting" in err.getvalue()
 
     def test_explain_unknown_key_exits(
@@ -472,18 +478,16 @@ class TestConfigHelpRefusalSeverity:
 
         # The same typo in a nab.toml exits instead.
         _write(hermetic_roots / "nab.toml", "ofline = true\n")
-        with pytest.raises(SystemExit) as exc:
-            _run_config(["list", "--path", path])
+        _run_config(["list", "--path", path], status=1)
 
-        assert exc.value.code == 1
         assert "not a valid nab setting" in capsys.readouterr().err
 
-        # The help says which of the two is fatal.
-        [fatal] = _help_sentences("fatal config error")
+        # The command's own documentation says which of the two is fatal.
+        [fatal] = _doc_sentences("fatal config error")
         assert "config file" in fatal
         assert "NAB_" not in fatal
 
-        [env] = _help_sentences("``NAB_*``")
+        [env] = _doc_sentences("``NAB_*``")
         assert "never fatal" in env
         assert "warning" in env
 
@@ -505,7 +509,7 @@ class TestConfigHelpRefusalSeverity:
         assert "NAB_RESOLUTION" in named
         assert "NAB_OFLINE" not in unnamed
 
-        [row] = _help_sentences("``rejected`` row")
+        [row] = _doc_sentences("``rejected`` row")
         assert "only" in row
         assert "``list``" in row
 
@@ -698,13 +702,13 @@ class TestConfigProjectFileConflict:
         assert "conflicting values" in capsys.readouterr().err
 
 
-class TestTyroConformance:
-    """The tyro CLI surface must match the registry one-for-one.
+class TestRegistryConformance:
+    """The CLI surface must match the registry one-for-one.
 
-    tyro derives flags from the ``config`` function signature, which the
-    registry cannot generate.  This test pins them together: every
-    registry CLI flag must appear in the rendered ``config`` help and the
-    backing parameter names must match the rows.
+    The walk reads a generated table and the command bodies read their
+    parameters, and nothing ties either to the registry.  These cases do:
+    every registry CLI flag must appear in the rendered ``config`` page,
+    and the backing parameter names must match the rows.
     """
 
     def test_every_registry_flag_present_in_help(self) -> None:
@@ -728,12 +732,12 @@ class TestTyroConformance:
 
     def test_param_types_match_registry(self) -> None:
         sig = inspect.signature(config_command)
-        # offline carries the shared OfflineFlag alias, like lock/download, so
-        # the layered tri-state flag presents identically across subcommands.
-        assert "OfflineFlag" in str(sig.parameters["offline"].annotation)
+        # offline is the layered tri-state, spelled the same way here as on
+        # lock and download so the flag presents identically across them.
+        assert "bool | None" in str(sig.parameters["offline"].annotation)
         assert "Path" in str(sig.parameters["cache_dir"].annotation)
         # project_resolution carries the same constrained ResolutionFlag
-        # type as lock/download, so tyro rejects a bad choice identically
+        # type as lock/download, so a bad choice is refused identically
         # across subcommands.
         assert "ResolutionFlag" in str(sig.parameters["project_resolution"].annotation)
 
@@ -746,8 +750,8 @@ class TestTyroConformance:
 
     def test_lock_help_has_project_resolution_flag(self) -> None:
         buf = io.StringIO()
-        with redirect_stdout(buf), suppress(SystemExit):
-            app.cli(args=["lock", "--help"], prog="nab")
+        with redirect_stdout(buf):
+            _cli("lock", "--help")
         help_text = buf.getvalue()
         assert "--project-resolution" in help_text
 
@@ -1064,10 +1068,7 @@ class TestProjectCliOverrides:
             ) as mock_resolve,
             patch("nab._lock.write_lock"),
         ):
-            app.cli(
-                args=["lock", str(proj), "--no-cache", "--output", str(out), *extra],
-                prog="nab",
-            )
+            _cli("lock", str(proj), "--no-cache", "--output", str(out), *extra)
         call = mock_resolve.call_args
         return call.kwargs["config"], call.args[0]
 
@@ -1144,10 +1145,19 @@ class TestProjectCliOverrides:
         # The other direction of the same flag: with no [tool.nab.matrix]
         # declared there are no targets, so universal mode is refused.
         proj = _project(hermetic_roots)
-        with pytest.raises(SystemExit):
-            self._lock_config(
-                proj, hermetic_roots / "pylock.toml", ["--project-mode", "universal"]
-            )
+        out = hermetic_roots / "pylock.toml"
+
+        _cli(
+            "lock",
+            str(proj),
+            "--no-cache",
+            "--output",
+            str(out),
+            "--project-mode",
+            "universal",
+            status=1,
+        )
+
         err = capsys.readouterr().err
         assert "--project-mode universal needs a matrix table" in err
         assert "a top-level [matrix] table to the project's nab.toml" in err
@@ -1187,19 +1197,16 @@ class TestProjectCliOverrides:
             ) as mock_resolve,
             patch("nab._lock.write_lock"),
         ):
-            app.cli(
-                args=[
-                    "lock",
-                    "--project-constraint",
-                    "a<1",
-                    str(proj),
-                    "--project-constraint",
-                    "b<2",
-                    "--no-cache",
-                    "--output",
-                    str(out),
-                ],
-                prog="nab",
+            _cli(
+                "lock",
+                "--project-constraint",
+                "a<1",
+                str(proj),
+                "--project-constraint",
+                "b<2",
+                "--no-cache",
+                "--output",
+                str(out),
             )
         call = mock_resolve.call_args
         assert call.args[0] == proj
@@ -1227,17 +1234,14 @@ class TestProjectCliOverrides:
         with patch(
             "nab._run.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
-            app.cli(
-                args=[
-                    "lock",
-                    str(proj),
-                    "--no-cache",
-                    "--output",
-                    str(out),
-                    "--project-uploaded-prior-to",
-                    "2024-06-01T00:00:00Z",
-                ],
-                prog="nab",
+            _cli(
+                "lock",
+                str(proj),
+                "--no-cache",
+                "--output",
+                str(out),
+                "--project-uploaded-prior-to",
+                "2024-06-01T00:00:00Z",
             )
         expected = datetime(2024, 6, 1, tzinfo=timezone.utc)
         assert mock_resolve.call_args.kwargs["config"].uploaded_prior_to == expected
@@ -1348,16 +1352,7 @@ class TestDownloadCliOverrides:
             ) as mock_resolve,
             patch("nab._download.download_lock", return_value=download_result),
         ):
-            app.cli(
-                args=[
-                    "download",
-                    str(proj),
-                    "--output",
-                    str(proj.parent / "out"),
-                    *extra,
-                ],
-                prog="nab",
-            )
+            _cli("download", str(proj), "--output", str(proj.parent / "out"), *extra)
         return mock_resolve.call_args.kwargs
 
     def _config(self, proj: Path, extra: list[str]) -> NabProjectConfig:

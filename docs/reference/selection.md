@@ -78,8 +78,8 @@ See [Lock a workspace](../how-to/workspaces.md).
 * `--no-emit-workspace` drops the workspace members' own `[[packages]]`
   entries from the emitted lockfile, along with the dependency edges
   and membership gates that reference them; the resolver still uses the
-  members during the resolve. Default off (`--no-no-emit-workspace`). Use it
-  when the lockfile is consumed by pip's PEP 751 install or
-  `--require-hashes`, which reject the directory entry a member pin
-  emits because it cannot be hashed; pair it with `pip install
+  members during the resolve. Default off, and there is no flag that turns
+  it back on. Use it when the lockfile is consumed by pip's PEP 751
+  install or `--require-hashes`, which reject the directory entry a member
+  pin emits because it cannot be hashed; pair it with `pip install
   --no-deps -e <member>`.
