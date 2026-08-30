@@ -3,18 +3,22 @@
 :class:`Opt` is one option, and everything nab derives from a row hangs off
 it: an option's flag, command parameter and ``NAB_*`` variable come from its
 name and its scope rather than being written down, so the three cannot drift
-apart.  :mod:`nab.optiontable` is where the rows themselves are declared,
-and :mod:`nab.optionlower` builds each ``Opt`` from one.
+apart.  A row a configuration source can set also names the hooks that
+parse and render its value, and :data:`nab.config.registry.OPTIONS` is
+those rows.  :mod:`nab.optiontable` is where the rows themselves are
+declared, and :mod:`nab.optionlower` builds each ``Opt`` from one.
 
 ``Opt`` judges each row as it builds one, and :func:`validate` judges a
 whole table at once.  Most mistakes raise as the row is built and the
-message is the whole rule; these four are worth knowing before writing one:
+message is the whole rule; these five are worth knowing before writing one:
 
 - a PROJECT row's flag is ``--project-`` and its name, so a name that
   writes the prefix itself derives it twice;
 - a repeatable row's flag is its name with the final ``s`` dropped, so the
   name has to be plural;
 - a ``NAB_*`` variable belongs to a keyed USER row and to no other;
+- a keyed row names the hooks the ladder reads a source with and prints
+  the winner with, so it declares both;
 - every row names a line of help and a page under ``docs/``, and
   ``tests/test_cli_docs.py`` holds the page to one that exists.
 """
@@ -29,7 +33,7 @@ from typing_extensions import override
 from .optionrows import Scope
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from typing_extensions import Protocol
 
@@ -94,6 +98,13 @@ class _Unset:
 
 UNSET = _Unset()
 
+
+def _no_hook(*_arguments: Any) -> Any:
+    """Stand in for the parse and render a keyless row does not declare."""
+    msg = "a row with no configuration key carries no parse or render hook"
+    raise TypeError(msg)
+
+
 # The commands marker for a root row: one that every command's table carries.
 _ROOT = "*"
 GLOBAL: tuple[str, ...] = (_ROOT,)
@@ -127,7 +138,9 @@ class Opt:
     function receives when the option is absent; ``rdefault`` is rung 0
     of the configuration ladder, and only a layered row carries it.
     ``sample`` is a token a reader can copy, for a value whose vtype
-    names no token set of its own.
+    names no token set of its own.  ``parse`` and ``render`` are the hooks
+    the ladder reads a source with and prints the winner with, and a
+    layered row carries those too.
     """
 
     __slots__ = (
@@ -142,7 +155,9 @@ class Opt:
         "name",
         "negatable",
         "nullable",
+        "parse",
         "rdefault",
+        "render",
         "required",
         "sample",
         "scope",
@@ -185,6 +200,8 @@ class Opt:
         default: Any = UNSET,
         rdefault: Any = UNSET,
         required: bool = False,
+        parse: Callable[[Any, str], Any] | None = None,
+        render: Callable[[Any], str] | None = None,
         type_label: str = "",
         deprecated: bool = False,
         sample: str = "",
@@ -205,6 +222,12 @@ class Opt:
         self.default = default
         self.rdefault = rdefault
         self.required = required
+
+        # Annotated here, not in the field block: zuban reads a class-level
+        # ``Callable`` as a method and drops the first argument at every call.
+        self.parse: Callable[[Any, str], Any] = _no_hook if parse is None else parse
+        self.render: Callable[[Any], str] = _no_hook if render is None else render
+
         self.type_label = type_label
         self.deprecated = deprecated
         self.sample = sample
@@ -223,6 +246,14 @@ class Opt:
     def key(self) -> str | None:
         """The configuration key, or ``None`` on a row no source can set."""
         return self.name if self.scope is not None else None
+
+    @property
+    def scope_name(self) -> str:
+        """The scope word a report prints, for a row a source can set."""
+        if self.scope is None:
+            msg = f"{self.name} is not a layered row, so it has no scope word"
+            raise TypeError(msg)
+        return self.scope.value
 
     @property
     def is_global(self) -> bool:
@@ -297,6 +328,10 @@ class Opt:
 
         if self.env and self.scope is not Scope.USER:
             msg = f"{self.name} is not a USER key, so it takes no NAB_ name"
+            raise ValueError(msg)
+
+        if self.key is not None and (self.parse is _no_hook or self.render is _no_hook):
+            msg = f"{self.name} is layered, so it needs a parse and a render hook"
             raise ValueError(msg)
 
         if not self.help:

@@ -1820,7 +1820,7 @@ class TestArrayOfTablesSources:
     def test_indexes_render(self) -> None:
         spec = next(s for s in OPTIONS if s.key == "indexes")
         assert spec.render(()) == "<none>"
-        rendered = spec.render(spec.default)
+        rendered = spec.render(spec.rdefault)
         assert rendered == "pypi=https://pypi.org/simple/"
 
     def test_indexes_render_shows_a_pin(self) -> None:

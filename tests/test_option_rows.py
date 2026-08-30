@@ -37,6 +37,21 @@ from nab.optionrows import (
 from nab.optiontypes import enum_label, shape, type_argument
 
 
+def _parse(value: object, _where: str) -> object:
+    """Read a source's value; no case here looks at what a hook returns."""
+    return value
+
+
+def _render(value: object) -> str:
+    """Print a winning value; the printing half of the pair above."""
+    return str(value)
+
+
+def _layer(*, rdefault: object, **fields: str) -> Layer:
+    """A ladder half carrying the hooks every keyed row has to declare."""
+    return Layer(rdefault=rdefault, parse=_parse, render=_render, **fields)
+
+
 class Strategy(enum.Enum):
     """Three tokens, as a shipped policy enum spells them."""
 
@@ -70,7 +85,7 @@ class TestWhatTheTableFillsIn:
         class Fixture(Table, on=GLOBAL, scope=Scope.USER, docs="reference/cli.md"):
             """One row that writes none of the three."""
 
-            offline = Tri(key=Layer(rdefault=False), env=True, help="stay offline")
+            offline = Tri(key=_layer(rdefault=False), env=True, help="stay offline")
 
         row = _only(Fixture)
         assert (row.on, row.scope, row.docs) == (GLOBAL, Scope.USER, "reference/cli.md")
@@ -90,7 +105,7 @@ class TestWhatTheTableFillsIn:
         class Fixture(Table, on=GLOBAL, scope=Scope.PROJECT, docs="reference/cli.md"):
             """A file-only key inside a table that names commands."""
 
-            matrix = Key(Layer(rdefault=None, label="table(python)"), help="the axes")
+            matrix = Key(_layer(rdefault=None, label="table(python)"), help="the axes")
 
         assert _only(Fixture).on == ()
 
@@ -159,7 +174,7 @@ class TestWhatEachKindLowersTo:
             """A repeatable layered row, whose label wraps its inner type."""
 
             constraints = Many[Requirement](
-                key=Layer(rdefault=(), sample="attrs<24"), help="bound a package"
+                key=_layer(rdefault=(), sample="attrs<24"), help="bound a package"
             )
 
         assert table_rows(Fixture)[0].type_label == "list(requirement)"
@@ -185,7 +200,7 @@ class TestWhatIsRefusedAsTheTableIsBuilt:
             """A layered choice row starting on a token its flag will not take."""
 
             resolution = Value[StrategyFlag](
-                key=Layer(rdefault="arrival"), help="which version to prefer"
+                key=_layer(rdefault="arrival"), help="which version to prefer"
             )
 
         assert "resolution starts at 'arrival'" in _refused(Fixture)
@@ -195,7 +210,7 @@ class TestWhatIsRefusedAsTheTableIsBuilt:
             """A layered choice row whose rung 0 is no token at all."""
 
             resolution = Value[StrategyFlag | None](
-                key=Layer(rdefault=None), help="which version to prefer"
+                key=_layer(rdefault=None), help="which version to prefer"
             )
 
         assert table_rows(Fixture)[0].rdefault is None

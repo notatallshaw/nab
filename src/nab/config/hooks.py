@@ -79,16 +79,21 @@ __all__ = [
     "parse_vcs_sources",
     "parse_workspace",
     "render_archive_sources",
+    "render_bool",
+    "render_cache_dir",
     "render_conflicts",
     "render_dist_policy",
+    "render_enum_value",
     "render_environment",
     "render_index_list",
     "render_index_overrides",
     "render_local_sources",
     "render_marker_environment",
     "render_matrix",
+    "render_optional_text",
     "render_package_overrides",
     "render_string_tuple",
+    "render_text",
     "render_uploaded_prior_to",
     "render_vcs",
     "render_vcs_sources",
@@ -250,7 +255,7 @@ def parse_resolution(value: Any, where: str) -> ResolutionStrategy:
     )
 
 
-HTTP_BACKENDS = ("httpx", "urllib3")
+HTTP_BACKENDS = ("urllib3", "httpx")
 
 
 def parse_http_backend(value: Any, where: str) -> str:
@@ -712,3 +717,28 @@ def render_dist_policy(value: Any) -> str:
     # returns; show the trust flag only when it diverges from the default.
     policy, trust = value
     return f"{policy.value} (trust-unverified-deps)" if trust else policy.value
+
+
+def render_enum_value(value: Any) -> str:
+    """Render an enum-valued row as the spelling its members carry."""
+    return str(value.value)
+
+
+def render_text(value: Any) -> str:
+    """Render a scalar row's value as plain text."""
+    return str(value)
+
+
+def render_optional_text(value: Any) -> str:
+    """Render a scalar row's value, or ``<none>`` where it is unset."""
+    return "<none>" if value is None else str(value)
+
+
+def render_bool(value: Any) -> str:
+    """Render a boolean row the way TOML spells one."""
+    return "true" if value else "false"
+
+
+def render_cache_dir(value: Any) -> str:
+    """Render the cache root, or ``<computed>`` where nab derives it."""
+    return "<computed>" if value is None else str(value)

@@ -33,7 +33,7 @@ from .registry import (
     PRECEDENCE,
     EffectiveValue,
     Layer,
-    OptionSpec,
+    Opt,
     Origin,
     RejectedLayer,
     Scope,
@@ -143,13 +143,13 @@ def _load_toml_layer(
     return Layer(origin, values)
 
 
-def _gate_reason(spec: OptionSpec, kind: SourceKind) -> str:
+def _gate_reason(spec: Opt, kind: SourceKind) -> str:
     if kind is SourceKind.PYPROJECT:
         where = "pyproject [tool.nab] (project-scope only)"
     else:
         where = f"a {scope_label(kind)} nab.toml"
     return (
-        f"{spec.key!r} is a {spec.scope.value}-scope option and cannot be set"
+        f"{spec.name!r} is a {spec.scope_name}-scope option and cannot be set"
         f" in {where}"
     )
 
@@ -203,7 +203,7 @@ def read_env_layer(
         if spec.env_var not in environ:
             continue
         where = f"env:{spec.env_var}"
-        values[spec.key] = spec.parse(environ[spec.env_var], where)
+        values[spec.name] = spec.parse(environ[spec.env_var], where)
     return Layer(Origin(SourceKind.ENV, "env"), values)
 
 
@@ -246,12 +246,12 @@ def _warn_unknown_env(
         _logger.warning("%s", msg)
 
 
-def _renamed_env_names() -> dict[str, OptionSpec]:
-    """Map every PROJECT row's would-be ``NAB_<KEY>`` name to its spec."""
-    names: dict[str, OptionSpec] = {}
+def _renamed_env_names() -> dict[str, Opt]:
+    """Map every PROJECT row's would-be ``NAB_<KEY>`` name to its row."""
+    names: dict[str, Opt] = {}
     for spec in OPTIONS:
         if spec.scope is Scope.PROJECT:
-            env_name = "NAB_" + spec.key.upper().replace("-", "_")
+            env_name = "NAB_" + spec.name.upper().replace("-", "_")
             names[env_name] = spec
     return names
 
@@ -278,14 +278,14 @@ def _warn_renamed_env(
                 else f", or override per-run with {spec.cli_flag}"
             )
             msg = (
-                f"{env_name} was ignored: {spec.key!r} is a"
-                f" {spec.scope.value}-scope option and is not env-settable."
-                f"  Set it in pyproject [tool.nab].{spec.key} or a project-dir"
+                f"{env_name} was ignored: {spec.name!r} is a"
+                f" {spec.scope_name}-scope option and is not env-settable."
+                f"  Set it in pyproject [tool.nab].{spec.name} or a project-dir"
                 f" nab.toml{override}."
             )
             if rejections is not None:
                 rejections.append(
-                    RejectedLayer(Origin(SourceKind.ENV, env_name), spec.key, msg)
+                    RejectedLayer(Origin(SourceKind.ENV, env_name), spec.name, msg)
                 )
                 continue
             _logger.warning("%s", msg)
@@ -394,12 +394,12 @@ def resolve_config(
     out: dict[str, EffectiveValue] = {}
     for spec in OPTIONS:
         stack = _stack_for(spec, all_layers)
-        rejected_for_key = tuple(r for r in rejected if r.key == spec.key)
+        rejected_for_key = tuple(r for r in rejected if r.key == spec.name)
         if stack:
             origin, value = stack[-1]
         else:
-            origin, value = Origin(SourceKind.DEFAULT, "builtin-default"), spec.default
-        out[spec.key] = EffectiveValue(
+            origin, value = Origin(SourceKind.DEFAULT, "builtin-default"), spec.rdefault
+        out[spec.name] = EffectiveValue(
             spec=spec,
             value=value,
             origin=origin,
@@ -409,9 +409,7 @@ def resolve_config(
     return out
 
 
-def _stack_for(
-    spec: OptionSpec, all_layers: Iterable[Layer]
-) -> list[tuple[Origin, Any]]:
+def _stack_for(spec: Opt, all_layers: Iterable[Layer]) -> list[tuple[Origin, Any]]:
     """Bindings for one option across layers, sorted low -> high.
 
     Sorted by source precedence; the pyproject/project-dir tie is broken
@@ -420,9 +418,9 @@ def _stack_for(
     values pass.
     """
     found = [
-        (layer.origin, layer.values[spec.key])
+        (layer.origin, layer.values[spec.name])
         for layer in all_layers
-        if spec.key in layer.values
+        if spec.name in layer.values
     ]
     # Sort by precedence; break the pyproject/project-dir rank-3 tie so
     # the project-dir nab.toml (False < True) sorts last and wins.
@@ -437,7 +435,7 @@ def _stack_for(
 
 
 def _check_project_file_conflict(
-    spec: OptionSpec, found: Sequence[tuple[Origin, Any]]
+    spec: Opt, found: Sequence[tuple[Origin, Any]]
 ) -> None:
     """Reject one key set differently in pyproject and the project nab.toml.
 
@@ -458,7 +456,7 @@ def _check_project_file_conflict(
     if pyproject_value == project_value:
         return
     msg = (
-        f"config {spec.key!r} is set to conflicting values in pyproject"
+        f"config {spec.name!r} is set to conflicting values in pyproject"
         f" [tool.nab] ({spec.render(pyproject_value)!r}) and project-dir"
         f" nab.toml ({spec.render(project_value)!r}).  Both files sit at the"
         " same precedence level; set the key in only one, or set them to the"

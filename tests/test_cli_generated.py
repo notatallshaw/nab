@@ -29,6 +29,7 @@ from nab import optiondefs
 from nab._cli import parse as parse_module
 from nab._cli import spec
 from nab._cli.parse import Row, build
+from nab.config import hooks
 from nab.optiontable import ALL
 
 if TYPE_CHECKING:
@@ -185,6 +186,8 @@ def _probe(
         kind=kind,
         commands=("lock",),
         default=False,
+        parse=hooks.parse_bool,
+        render=hooks.render_bool,
         help="a row written by a test",
         docs=docs,
     )

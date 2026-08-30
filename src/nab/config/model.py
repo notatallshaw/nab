@@ -784,9 +784,9 @@ def _option_label(value: EffectiveValue) -> str:
     value to label by its config key.
     """
     if value.origin.kind is not SourceKind.CLI:
-        return value.spec.key
+        return value.spec.name
     if value.spec.cli_flag is None:
-        msg = f"Bug: {value.spec.key!r} has no CLI flag but carries a CLI origin"
+        msg = f"Bug: {value.spec.name!r} has no CLI flag but carries a CLI origin"
         raise RuntimeError(msg)
     return value.spec.cli_flag
 

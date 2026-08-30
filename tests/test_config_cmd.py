@@ -36,8 +36,9 @@ from nab._download import download
 from nab._lock import lock
 from nab._run import effective_config
 from nab.cli import run
-from nab.config.hooks import SourceConfigError
-from nab.config.registry import OPTIONS, OptionSpec, Scope, SourceRoots
+from nab.config.hooks import SourceConfigError, parse_bool, render_bool
+from nab.config.registry import OPTIONS, Scope, SourceRoots
+from nab.optiondefs import Kind, Opt, VType
 from nab_project.download import DownloadResult
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
@@ -283,6 +284,26 @@ class TestConfigGet:
             "build-reqs\n"
         )
 
+    def test_get_base_group_renders_the_unset_marker(
+        self, hermetic_roots: Path
+    ) -> None:
+        """An unset ``base-group`` prints the marker, not a bare ``None``."""
+        _project(hermetic_roots)
+        path = str(hermetic_roots / "pyproject.toml")
+
+        assert _run_config(["get", "base-group", "--path", path]) == "<none>\n"
+
+    def test_get_package_rules_renders_each_match(self, hermetic_roots: Path) -> None:
+        """``package-rules`` prints the requirement each override matches on."""
+        _project(
+            hermetic_roots,
+            '\n[[tool.nab.package-rules]]\nmatch = ["attrs"]\n'
+            'dist-policy = "wheel-only"\n',
+        )
+        path = str(hermetic_roots / "pyproject.toml")
+
+        assert _run_config(["get", "package-rules", "--path", path]) == "attrs\n"
+
     def test_get_reads_new_user_env_vars(
         self, hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -326,9 +347,27 @@ class TestConfigExplain:
                 "highest",
             ]
         )
-        assert out.splitlines()[0].startswith("resolution (project,")
+        assert out.splitlines()[0] == (
+            "resolution (project, enum(highest|lowest|lowest-direct))"
+        )
         assert any(line.startswith(">") for line in out.splitlines())
         assert "shadowed" in out
+
+    def test_explain_marks_a_deprecated_key(self, hermetic_roots: Path) -> None:
+        """The header appends the row's own ``deprecated`` field."""
+        _project(hermetic_roots)
+        out = _run_config(
+            [
+                "explain",
+                "marker-environment",
+                "--path",
+                str(hermetic_roots / "pyproject.toml"),
+            ]
+        )
+
+        assert out.splitlines()[0] == (
+            "marker-environment (project, table(marker-var=str) [deprecated])"
+        )
 
     def test_explain_requires_key(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
@@ -771,18 +810,19 @@ class TestRegistryConformance:
 
     def test_conformance_catches_a_deliberate_mismatch(self) -> None:
         """Prove the gate is real: a registry flag with no CLI param fails."""
-        from nab.config.hooks import parse_bool
-
-        bogus = OptionSpec(
-            key="made-up",
+        bogus = Opt(
+            "made-up",
             scope=Scope.USER,
-            type_label="bool",
-            default=False,
-            env_var=None,
-            cli_flag="--made-up",
-            cli_param="made_up",
+            kind=Kind.VALUE,
+            vtype=VType.BOOL,
+            commands=("config",),
+            default=None,
+            rdefault=False,
             parse=parse_bool,
-            render=str,
+            render=render_bool,
+            type_label="bool",
+            help="a row no command signature takes",
+            docs="reference/cli.md",
         )
         patched = (*OPTIONS, bogus)
         sig = inspect.signature(config_command)

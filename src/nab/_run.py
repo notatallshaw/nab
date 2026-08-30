@@ -250,9 +250,9 @@ def project_config_overrides(
     :func:`config.read_pyproject_config`.
     """
     project_keys = {
-        spec.key
+        spec.name
         for spec in OPTIONS
-        if spec.scope is Scope.PROJECT and spec.key != "resolution"
+        if spec.scope is Scope.PROJECT and spec.name != "resolution"
     }
     return {key: value for key, value in cli_overrides.items() if key in project_keys}
 
@@ -269,7 +269,7 @@ def project_override_arguments(cli_overrides: Mapping[str, object]) -> list[str]
         flag = spec.cli_flag
         if spec.scope is not Scope.PROJECT or flag is None:
             continue
-        value = cli_overrides.get(spec.key)
+        value = cli_overrides.get(spec.name)
         if value is None:
             continue
         items = value if isinstance(value, tuple) else (value,)
@@ -347,10 +347,10 @@ def _project_cli_overrides_or_exit(project_overrides: Mapping[str, object]) -> N
     and point at a table the project may not have.
     """
     for spec in OPTIONS:
-        if spec.key not in project_overrides:
+        if spec.name not in project_overrides:
             continue
         try:
-            build_cli_layer({spec.key: project_overrides[spec.key]})
+            build_cli_layer({spec.name: project_overrides[spec.name]})
         except SourceConfigError as exc:
             printer().error(f"{spec.cli_flag}: {exc}")
             sys.exit(1)

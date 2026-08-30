@@ -20,7 +20,7 @@ from .registry import BY_KEY, OPTIONS, Scope, SourceKind
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
-    from .registry import EffectiveValue, RejectedLayer
+    from .registry import EffectiveValue, Opt, RejectedLayer
 
 __all__ = [
     "orphan_rejections",
@@ -33,7 +33,7 @@ __all__ = [
 
 
 def _ordered(effective: Mapping[str, EffectiveValue]) -> list[EffectiveValue]:
-    return [effective[spec.key] for spec in OPTIONS]
+    return [effective[spec.name] for spec in OPTIONS]
 
 
 # Column widths for the ``nab config list`` table, shared by the header
@@ -81,7 +81,7 @@ def render_list(
     for ev in _ordered(effective):
         rendered = ev.spec.render(ev.value)
         lines.append(
-            f"{ev.spec.key:<{_LIST_KEY_W}} {rendered:<{_LIST_VALUE_W}}"
+            f"{ev.spec.name:<{_LIST_KEY_W}} {rendered:<{_LIST_VALUE_W}}"
             f" {ev.origin.scope:<{_LIST_SCOPE_W}} {ev.origin.label}"
         )
     rejected = tuple(rejected)
@@ -116,7 +116,7 @@ def render_explain(
     not allowed) are listed too, labelled ``rejected``.
     """
     ev = _require_key(effective, key)
-    lines = [f"{key} ({ev.spec.scope.value}, {ev.spec.type_label})"]
+    lines = [f"{key} ({ev.spec.scope_name}, {_type_label(ev.spec)})"]
     winner_index = len(ev.stack) - 1
     for i, (origin, value) in enumerate(ev.stack):
         gutter = ">" if i == winner_index else " "
@@ -133,6 +133,11 @@ def render_explain(
             for rej in ev.rejected
         )
     return "\n".join(lines) + "\n"
+
+
+def _type_label(row: Opt) -> str:
+    """Name ``row``'s type for the explain header, marking a deprecated key."""
+    return row.type_label + (" [deprecated]" if row.deprecated else "")
 
 
 def _require_key(effective: Mapping[str, EffectiveValue], key: str) -> EffectiveValue:
@@ -159,7 +164,7 @@ def project_cli_override_records(
     for spec in OPTIONS:
         if spec.scope is not Scope.PROJECT:
             continue
-        ev = effective[spec.key]
+        ev = effective[spec.name]
         if ev.origin.kind is not SourceKind.CLI or spec.cli_flag is None:
             continue
         records.append((spec.cli_flag, spec.render(ev.value)))

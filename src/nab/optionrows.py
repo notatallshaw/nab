@@ -34,6 +34,9 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from typing_extensions import override
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 T = TypeVar("T")
 
 # The marker for a field the row does not write.  It is typed Any so an
@@ -52,17 +55,29 @@ class Scope(enum.Enum):
 class Layer:
     """The configuration ladder's half of a row.
 
-    ``rdefault`` is rung 0, the value every source is layered on top of.
-    ``sample`` is a token a reader can copy, for a value whose type names
-    no token set of its own, and ``label`` overrides the printed type where
-    the type parameter cannot spell it.
+    ``rdefault`` is rung 0, the value every source is layered on top of,
+    and ``parse`` and ``render`` are the hooks the ladder reads a source
+    with and prints the winner with.  ``sample`` is a token a reader can
+    copy, for a value whose type names no token set of its own, and
+    ``label`` overrides the printed type where the type parameter cannot
+    spell it.
     """
 
-    __slots__ = ("label", "rdefault", "sample")
+    __slots__ = ("label", "parse", "rdefault", "render", "sample")
 
-    def __init__(self, *, rdefault: Any, label: str = "", sample: str = "") -> None:
+    def __init__(
+        self,
+        *,
+        rdefault: Any,
+        parse: Callable[[Any, str], Any],
+        render: Callable[[Any], str],
+        label: str = "",
+        sample: str = "",
+    ) -> None:
         """Record the ladder half of one row."""
         self.rdefault = rdefault
+        self.parse = parse
+        self.render = render
         self.label = label
         self.sample = sample
 

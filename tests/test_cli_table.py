@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from nab import optiondefs
+from nab.config import hooks
 from nab.config.registry import SourceKind
 from nab.optiondefs import COMMANDS, GLOBAL, UNSET, Kind, Opt, Scope, VType
 from nab.optionrows import rows
@@ -36,6 +37,8 @@ def _row(name: str, **fields: Any) -> Opt:
         "kind": Kind.FLAG,
         "commands": ("lock",),
         "default": False,
+        "parse": hooks.parse_bool,
+        "render": hooks.render_bool,
         "help": "what it does",
         "docs": "reference/cli.md",
     }
@@ -102,6 +105,14 @@ class TestTheDeclaredTable:
         assert all(row.help for row in ALL)
         assert all(row.docs.endswith(".md") for row in ALL)
         assert not any("#" in row.docs for row in ALL)
+
+    def test_a_row_holds_its_fields_in_slots_alone(self) -> None:
+        """A field is a slot, so a misspelled one is an error, not a new field."""
+        row = _row("upgrade")
+
+        assert not hasattr(row, "__dict__")
+        with pytest.raises(AttributeError):
+            row.unknown = 1  # type: ignore[attr-defined]
 
     def test_a_boolean_flag_is_negatable_unless_it_is_already_a_negation(self) -> None:
         """``--no-no-emit-workspace`` is the spelling this drops.
@@ -213,6 +224,8 @@ class TestDerivedSpellings:
             "matrix",
             scope=Scope.PROJECT,
             rdefault=None,
+            parse=hooks.parse_matrix,
+            render=hooks.render_matrix,
             help="the axes",
             docs="reference/cli.md",
         )
@@ -223,6 +236,13 @@ class TestDerivedSpellings:
 
     def test_a_command_local_row_carries_no_config_key(self) -> None:
         assert _row("format").key is None
+
+    def test_only_a_layered_row_has_a_scope_word(self) -> None:
+        """``nab config explain`` prints it, and it explains layered rows."""
+        assert _row("offline", scope=Scope.USER).scope_name == "user"
+
+        with pytest.raises(TypeError, match="format is not a layered row"):
+            _ = _row("format").scope_name
 
     def test_the_environment_name_is_the_key_shouted(self) -> None:
         row = _row(
@@ -319,6 +339,23 @@ class TestPerRowRules:
         assert _construction_error("format", env=True) == (
             "format is not a USER key, so it takes no NAB_ name"
         )
+
+    def test_refuses_a_layered_row_with_no_parse_hook(self) -> None:
+        assert _construction_error("offline", scope=Scope.USER, parse=None) == (
+            "offline is layered, so it needs a parse and a render hook"
+        )
+
+    def test_refuses_a_layered_row_with_no_render_hook(self) -> None:
+        assert _construction_error("offline", scope=Scope.USER, render=None) == (
+            "offline is layered, so it needs a parse and a render hook"
+        )
+
+    def test_a_row_with_no_key_carries_a_hook_that_refuses_to_run(self) -> None:
+        """The keyless rows keep their stand-in hook, and it never parses."""
+        row = _row("format", parse=None, render=None)
+
+        with pytest.raises(TypeError, match="carries no parse or render hook"):
+            row.parse("x", "nowhere")
 
     def test_refuses_a_row_with_no_help(self) -> None:
         assert _construction_error("upgrade", help="") == "upgrade declares no help"

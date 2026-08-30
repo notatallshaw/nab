@@ -4,9 +4,9 @@
 siblings name every parameter, and nothing in the language ties the two
 together.  These cases do, along with four that hold a whole table: the
 verbs a command body offers, the ``--project-*`` spellings a committed
-lockfile carries, the keys the live registry carries beside them, and the
-seven root rows, whose reader is the generated parser rather than any
-command signature.
+lockfile carries, the parse hook every configuration key's flag hands its
+walked value to, and the seven root rows, whose reader is the generated
+parser rather than any command signature.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ import pytest
 
 from nab._cli import spec as cli_spec
 from nab._cli.parse import UsageError, parse
-from nab.config.registry import OPTIONS, SourceKind
+from nab.config.layers import build_cli_layer
 from nab.optiondefs import COMMANDS, UNSET, Kind, Opt, Scope, VType
 from nab.optiontable import ALL
 
@@ -241,50 +241,44 @@ class TestLockfileFlagStability:
         assert by_key["constraints"].kind is Kind.APPEND
 
 
-class TestParallelRegistry:
-    """The declaration and the live registry describe the same 29 keys.
+# The sixteen rows a configuration source and a flag both reach, so every
+# one of them has a spelling to drive and a hook to hand the result to.
+_SETTABLE = [row for row in ALL if row.key and row.cli_flag]
 
-    A key the declaration gains and the registry lacks parses, binds, and
-    is then read by nobody.
+_BOOL_TOKENS = ("True", "False")
+
+
+def _tokens(row: Opt) -> tuple[str, ...]:
+    """Every token ``row``'s flag accepts, or the one token it documents."""
+    if row.vtype is VType.CHOICE:
+        return row.choices
+    if row.vtype is VType.BOOL:
+        return _BOOL_TOKENS
+    return (row.sample,)
+
+
+def _walked(row: Opt, token: str) -> object:
+    """What the walk stores for ``row`` when its flag is given ``token``."""
+    line = (row.commands[0], row.cli_flag, token)
+    return parse(line, cli_spec.ROOT, cli_spec.COMMANDS, "nab").values[row.dest]
+
+
+class TestHooksReadWhatTheWalkStores:
+    """The sixteen flagged keys reach their hook in a shape it takes.
+
+    The token goes through the real walk and the real CLI layer, so a row
+    whose flag converts to one type while its hook expects another fails
+    here.  ``build-requires-depth`` is the one that would: its hook takes
+    the integer the walk built and refuses the raw token.
     """
 
-    def test_the_keys_are_equal_and_in_the_same_order(self) -> None:
-        """Order counts: it is the order ``nab config list`` prints."""
-        assert [row.key for row in ALL if row.key] == [spec.key for spec in OPTIONS]
+    @pytest.mark.parametrize("row", _SETTABLE, ids=lambda row: row.name)
+    def test_every_token_the_flag_accepts_survives_the_hook(self, row: Opt) -> None:
+        for token in _tokens(row):
+            value = _walked(row, token)
 
-    @pytest.mark.parametrize("spec", OPTIONS, ids=lambda spec: spec.key)
-    def test_every_derived_spelling_matches_the_registry(self, spec: Any) -> None:
-        row = next(row for row in ALL if row.key == spec.key)
+            build_cli_layer({row.name: value})
 
-        assert row.cli_flag == spec.cli_flag
-        assert row.cli_param == spec.cli_param
-        assert row.env_var == spec.env_var
-        assert row.scope.value == spec.scope.value
-
-    @pytest.mark.parametrize("spec", OPTIONS, ids=lambda spec: spec.key)
-    def test_every_rung_zero_matches_the_registry(self, spec: Any) -> None:
-        """``rdefault`` is the value row 0 of the ladder falls back to.
-
-        The type is compared too, because ``()`` equals ``[]`` and
-        ``False`` equals ``0``.
-        """
-        row = next(row for row in ALL if row.key == spec.key)
-
-        assert row.rdefault == spec.default
-        assert type(row.rdefault) is type(spec.default)
-
-    @pytest.mark.parametrize("spec", OPTIONS, ids=lambda spec: spec.key)
-    def test_every_category_gate_matches_the_registry(self, spec: Any) -> None:
-        """The gate matches a source by value, so a renamed one shows here."""
-        row = next(row for row in ALL if row.key == spec.key)
-
-        for kind in SourceKind:
-            assert row.allowed_in_toml(kind) == spec.allowed_in_toml(kind), kind
-
-    @pytest.mark.parametrize("spec", OPTIONS, ids=lambda spec: spec.key)
-    def test_every_type_label_matches_the_registry(self, spec: Any) -> None:
-        """The deprecated marker is a field here and part of the string there."""
-        row = next(row for row in ALL if row.key == spec.key)
-        label = row.type_label + (" [deprecated]" if row.deprecated else "")
-
-        assert label == spec.type_label
+    def test_the_settable_keys_are_the_sixteen_flagged_rows(self) -> None:
+        """A derivation that emptied would leave the case above with no rows."""
+        assert len(_SETTABLE) == 16
