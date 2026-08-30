@@ -61,6 +61,7 @@ exclude = [
     "tests/test_cli_bijection.py",
     "tests/test_classifiers.py",
     "tests/test_cli_docs.py",
+    "tests/test_cli_generated.py",
     "tests/test_contributing_docs.py",
     "tests/test_embedding_docs.py",
     "tests/test_env_layer.py",

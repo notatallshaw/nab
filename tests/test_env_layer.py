@@ -26,11 +26,13 @@ _SOURCE_TREES = {
     "nab_resolver": _ROOT / "nab-resolver" / "src" / "nab_resolver",
 }
 
-# nab decides what it does from one module.  The nab-index and nab-project
-# reads build the environment a subprocess is handed, which the package
-# spawning it owns rather than the CLI.
+# nab decides what it does from one module, and the help renderer reads
+# COLUMNS, which is a width rather than a decision and which must not pull
+# nab/env.py onto the --help path.  The nab-index and nab-project reads
+# build the environment a subprocess is handed, which the package spawning
+# it owns rather than the CLI.
 _ENVIRONMENT_READERS = {
-    "nab": {"nab/env.py"},
+    "nab": {"nab/env.py", "nab/_cli/render.py"},
     "nab_index": {"nab_index/vcs.py"},
     "nab_project": {"nab_project/_build/env.py"},
     "nab_provider": set[str](),
