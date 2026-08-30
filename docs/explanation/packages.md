@@ -94,8 +94,8 @@ project path; the provider has none.
 
 `nab-provider` carries nab's fork of `packaging` at
 `nab_provider._vendor.packaging`, and `nab-project` reaches into it rather than
-carrying its own copy: `nab_project.config` builds `Version`, `Requirement` and
-`VersionRange` objects the provider consumes, and two copies would be two
-distinct classes that `isinstance` and dict keying disagree about.
+carrying its own copy: it builds `Version`, `Requirement` and `VersionRange`
+objects the provider consumes, and two copies would be two distinct classes
+that `isinstance` and dict keying disagree about.
 `tasks/check_boundaries.py` forbids every other reach into another package's
 `_vendor`, and lists this one in `VENDOR_ALLOWANCES`.

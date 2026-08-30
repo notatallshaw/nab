@@ -22,11 +22,8 @@ from __future__ import annotations
 import pytest
 from hypothesis import given
 
-from nab_project.config import (
-    ConfigError,
-    PackageOverride,
-    _check_package_override_overlap,
-)
+from nab_project.config import ConfigError, PackageOverride
+from nab_project.values import check_package_override_overlap
 
 from .strategies import PROPERTY_SETTINGS, package_overrides
 
@@ -57,7 +54,7 @@ def _conflicts(left: PackageOverride, right: PackageOverride) -> bool:
 def _raises(left: PackageOverride, right: PackageOverride) -> bool:
     """Whether the parse-time non-overlap check rejects the pair."""
     try:
-        _check_package_override_overlap((left, right))
+        check_package_override_overlap((left, right))
     except ConfigError:
         return True
     return False

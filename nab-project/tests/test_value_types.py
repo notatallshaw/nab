@@ -1,10 +1,11 @@
-"""The hand-written value types in config and config_sources.
+"""The hand-written value types of the ``[tool.nab]`` config surface.
 
-:mod:`nab_project.config` and :mod:`nab_project.config_sources` write
-their value types against :class:`nab_project._value.ValueType` rather
-than applying ``@dataclass(slots=True)``.  Field order, equality,
-hashing, repr and the defaults are what the rest of nab reads off them,
-so each one is pinned here instead of being left to the decorator.
+:mod:`nab_project.config`, :mod:`nab_project.config_sources` and
+:mod:`nab_project.values` write their value types against
+:class:`nab_project._value.ValueType` rather than applying
+``@dataclass(slots=True)``.  Field order, equality, hashing, repr and the
+defaults are what the rest of nab reads off them, so each one is pinned
+here instead of being left to the decorator.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from nab_project import config, config_sources
+from nab_project import config, config_sources, values
 from nab_project._value import ValueType
 from nab_project.config import (
     ConflictFork,
@@ -264,7 +265,7 @@ def test_the_cases_cover_every_value_type() -> None:
     """A subclass added later and left out of ``CASES`` would go unchecked."""
     declared = {
         obj
-        for module in (config, config_sources)
+        for module in (config, config_sources, values)
         for obj in vars(module).values()
         if isinstance(obj, type) and issubclass(obj, ValueType) and obj is not ValueType
     }

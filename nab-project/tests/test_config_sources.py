@@ -22,7 +22,6 @@ import pytest
 
 from nab_index.multi_index import IndexConfig
 from nab_project.config import (
-    _INDEX_KEYS,
     ConflictKind,
     ConflictMember,
     ConflictPolicy,
@@ -55,6 +54,7 @@ from nab_project.config_sources import (
     render_list,
     resolve_config,
 )
+from nab_project.values import _INDEX_KEYS
 from nab_project.workspace import WorkspaceConfig
 from nab_provider.provider import (
     ArchiveSource,

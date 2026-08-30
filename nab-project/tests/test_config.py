@@ -12,8 +12,6 @@ import pytest
 
 from nab_index.multi_index import IndexConfig
 from nab_project.config import (
-    _MATRIX_KEYS,
-    _PEP508_MARKER_VARIABLES,
     ConfigError,
     ConflictKind,
     ConflictMember,
@@ -53,6 +51,10 @@ from nab_project.fetch import (
     IndexRoute,
     index_cache_floors,
     index_routes,
+)
+from nab_project.values import (
+    _MATRIX_KEYS,
+    _PEP508_MARKER_VARIABLES,
 )
 from nab_project.workspace import WorkspaceConfig
 from nab_provider._vendor.packaging.markers import Marker, default_environment
