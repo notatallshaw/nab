@@ -82,8 +82,8 @@ from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 if TYPE_CHECKING:
-    from contextlib import AbstractContextManager
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
 
 V = Version
 

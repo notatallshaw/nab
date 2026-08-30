@@ -70,8 +70,8 @@ from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget, declared_range_marker, host_environment
 
 if TYPE_CHECKING:
-    from contextlib import AbstractContextManager
     from collections.abc import Callable
+    from contextlib import AbstractContextManager
 
 
 def write(tmp_path: Path, body: str) -> Path:
