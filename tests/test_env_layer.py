@@ -11,6 +11,7 @@ import pytest
 
 from nab import env
 from nab.cli import main
+from nab.config.ladder import OPTIONS, RejectedLayer, read_env_layer
 
 _PROJECT = '[project]\nname = "probe"\nversion = "0.1"\ndependencies = []\n'
 
@@ -26,11 +27,10 @@ _SOURCE_TREES = {
     "nab_resolver": _ROOT / "nab-resolver" / "src" / "nab_resolver",
 }
 
-# nab decides what it does from one module, and the help renderer reads
-# COLUMNS, which is a width rather than a decision and which must not pull
-# nab/env.py onto the --help path.  The nab-index and nab-project reads
-# build the environment a subprocess is handed, which the package spawning
-# it owns rather than the CLI.
+# nab decides what it does from one module; the help renderer reads COLUMNS,
+# a width rather than a decision, and must not pull nab/env.py onto the
+# --help path.  The other two build a subprocess's environment, which the
+# package spawning it owns.
 _ENVIRONMENT_READERS = {
     "nab": {"nab/env.py", "nab/_cli/render.py"},
     "nab_index": {"nab_index/vcs.py"},
@@ -200,3 +200,50 @@ def test_cache_and_config_roots_are_the_raw_values() -> None:
 
 def test_output_owned_names_the_two_output_variables() -> None:
     assert sorted(env.OUTPUT_OWNED) == ["NAB_NO_PROGRESS", "NAB_VERBOSITY"]
+
+
+def _rejections(environ: dict[str, str]) -> list[RejectedLayer]:
+    """What the env layer refuses out of ``environ``, in place of warning."""
+    collected: list[RejectedLayer] = []
+    read_env_layer(environ, rejections=collected)
+    return collected
+
+
+def test_the_unknown_name_message_names_every_variable_nab_honours() -> None:
+    """The message set is every ``NAB_*`` name that takes effect.
+
+    The four keyed rows that declare an env var plus the two the output
+    layer owns, which the layer skips but nab still reads.  The text is
+    pinned whole because it is the list a user reads to find the name they
+    meant.
+    """
+    [rejected] = _rejections({"NAB_OFLINE": "1"})
+
+    assert rejected.reason == (
+        "NAB_OFLINE is not a recognized nab setting and was ignored; the known"
+        " NAB_* variables are NAB_CACHE_DIR, NAB_HTTP_BACKEND,"
+        " NAB_MAX_CONCURRENCY, NAB_NO_PROGRESS, NAB_OFFLINE, NAB_VERBOSITY."
+    )
+
+
+def test_the_output_variables_are_skipped_in_silence() -> None:
+    """The skip set is read off :mod:`nab.env`, not handed in by the caller.
+
+    Both names are written out rather than taken from ``OUTPUT_OWNED``, so
+    dropping one from that set fails here instead of shrinking the case.
+    """
+    assert _rejections({env.NAB_VERBOSITY: "debug", env.NAB_NO_PROGRESS: "1"}) == []
+
+
+def test_the_skip_set_names_nothing_the_registry_declares() -> None:
+    """The two sets are disjoint, so no variable is both skipped and offered.
+
+    A ``NAB_VERBOSITY`` row in the registry would put it in ``nab config
+    list`` and make the skip silently shadow it.
+    """
+    would_be = {"NAB_" + spec.name.upper().replace("-", "_") for spec in OPTIONS}
+
+    assert env.OUTPUT_OWNED.isdisjoint(would_be)
+    assert env.OUTPUT_OWNED.isdisjoint(
+        {spec.env_var for spec in OPTIONS if spec.env_var is not None}
+    )

@@ -418,26 +418,27 @@ def _read_raw_table(path: Path, kind: SourceKind) -> Mapping[str, Any]:
 
 
 def read_env_layer(
-    environ: Mapping[str, str],
+    environ: Mapping[str, str] | None = None,
     *,
-    reserved_env: Iterable[str] = (),
     rejections: list[RejectedLayer] | None = None,
 ) -> Layer:
     """Read ``NAB_*`` for every registry row that declares an env var.
 
-    PROJECT options never declare an env var, so the env layer carries
-    USER options only.  A ``NAB_<KEY>`` naming a PROJECT option (e.g.
-    ``NAB_RESOLUTION``) draws a warning from :func:`_warn_renamed_env`;
-    any other unknown ``NAB_*`` name (e.g. a typo) one from
-    :func:`_warn_unknown_env`.  Neither is applied, and neither is fatal.
-    ``reserved_env`` names the ``NAB_*`` vars other layers own (nab's
-    output layer consumes ``NAB_VERBOSITY`` and ``NAB_NO_PROGRESS``), so
-    the guard skips them silently.  When ``rejections`` is supplied
-    (``nab config --include-rejected``) those env casualties are recorded
-    there instead of warned, mirroring the TOML loader.
+    ``environ`` defaults to the process environment through
+    :func:`nab.env.current`.  PROJECT options never declare an env var, so
+    the env layer carries USER options only.  A ``NAB_<KEY>`` naming a
+    PROJECT option (e.g. ``NAB_RESOLUTION``) draws a warning from
+    :func:`_warn_renamed_env`; any other unknown ``NAB_*`` name (e.g. a
+    typo) one from :func:`_warn_unknown_env`.  Neither is applied, and
+    neither is fatal.  The two names the output layer owns
+    (:data:`nab.env.OUTPUT_OWNED`) are skipped silently and bind nothing.
+    When ``rejections`` is supplied (``nab config --include-rejected``)
+    those env casualties are recorded there instead of warned, mirroring
+    the TOML loader.
     """
+    environ = env.current(environ)
     _warn_renamed_env(environ, rejections=rejections)
-    _warn_unknown_env(environ, reserved_env=reserved_env, rejections=rejections)
+    _warn_unknown_env(environ, rejections=rejections)
     values: dict[str, Any] = {}
     for spec in OPTIONS:
         if spec.env_var is None:
@@ -451,7 +452,6 @@ def read_env_layer(
 def _warn_unknown_env(
     environ: Mapping[str, str],
     *,
-    reserved_env: Iterable[str] = (),
     rejections: list[RejectedLayer] | None = None,
 ) -> None:
     """Warn about any ``NAB_*`` var that is neither a known nor renamed name.
@@ -460,26 +460,26 @@ def _warn_unknown_env(
     (e.g. ``NAB_OFLINE``) is ignored with a warning naming the variable,
     never applied and never fatal.  Renamed PROJECT names are left for
     :func:`_warn_renamed_env`, which gives the more specific
-    not-env-settable message.  ``reserved_env`` names ``NAB_*`` vars owned
-    by other layers (the output layer's ``NAB_VERBOSITY`` and
-    ``NAB_NO_PROGRESS``); those are skipped silently.  When ``rejections``
-    is supplied the var is recorded there instead of warned.
+    not-env-settable message.  The names the output layer owns
+    (:data:`nab.env.OUTPUT_OWNED`) set no registry row, so they are skipped
+    here, but the message still offers them: a user who mistyped
+    ``NAB_VERBOSITY`` is reaching for a variable nab honours.  When
+    ``rejections`` is supplied the var is recorded there instead of warned.
     """
     known = {spec.env_var for spec in OPTIONS if spec.env_var is not None}
     renamed = set(_renamed_env_names())
-    reserved = set(reserved_env)
+    honoured = ", ".join(sorted(known | env.OUTPUT_OWNED))
     for name in environ:
         if (
             not name.startswith("NAB_")
             or name in known
             or name in renamed
-            or name in reserved
+            or name in env.OUTPUT_OWNED
         ):
             continue
-        valid = sorted(known)
         msg = (
             f"{name} is not a recognized nab setting and was ignored; the"
-            f" known NAB_* variables are {valid!r}."
+            f" known NAB_* variables are {honoured}."
         )
         if rejections is not None:
             rejections.append(RejectedLayer(Origin(SourceKind.ENV, name), name, msg))

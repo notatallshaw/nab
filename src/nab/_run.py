@@ -40,7 +40,7 @@ from .config.ladder import (
     resolve_config,
 )
 from .config.values import SourceConfigError
-from .output import OUTPUT_ENV_VARS, printer
+from .output import printer
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -128,9 +128,7 @@ def effective_config(
     # values (the resolve path uses its lockfile anchor instead).
     with inspector_anchor():
         layers = discover_layers(roots, rejections=sink, read_pyproject=read_pyproject)
-        env_layer = read_env_layer(
-            env.current(), reserved_env=OUTPUT_ENV_VARS, rejections=sink
-        )
+        env_layer = read_env_layer(rejections=sink)
         cli_layer = build_cli_layer(cli_overrides or {})
         if rejected_out is not None:
             rejected_out.extend(rejected)
