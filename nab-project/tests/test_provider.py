@@ -44,7 +44,6 @@ from nab_project._resolve.engine import _raise_for_source_python
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.config import (
     IndexOverride,
-    NabProjectConfig,
     OverrideConflictError,
     PackageOverride,
 )
@@ -53,6 +52,7 @@ from nab_project.fetch import (
     FetchCoordinator,
     IndexRoute,
 )
+from nab_project.inputs import ResolveInputs
 from nab_project.resolve import build_resolver_inputs, resolve_with_coordinator
 from nab_provider._provider import build_remote, metadata_resolver
 from nab_provider._provider import listing as listing_mod
@@ -4277,9 +4277,7 @@ class TestLocalSources:
         (tmp_path / "pyproject.toml").write_bytes(
             b'[project]\nname = "foo"\nversion = "1.0"\ndescription = "\xe9"\n'
         )
-        coordinator = make_coordinator(
-            [], package="foo", build_config=NabProjectConfig()
-        )
+        coordinator = make_coordinator([], package="foo", build_config=ResolveInputs())
         provider = Provider(
             coordinator,
             local_sources=[LocalSource("foo", str(tmp_path))],
@@ -4517,7 +4515,7 @@ class TestLocalSources:
 
         monkeypatch.setattr("nab_project.resolve.resolve_for_targets", _boom)
         coordinator = make_coordinator(
-            [], package="foo", build_config=NabProjectConfig(), offline=True
+            [], package="foo", build_config=ResolveInputs(), offline=True
         )
         provider = Provider(
             coordinator,
@@ -11217,7 +11215,7 @@ class TestBuildRemoteFailureModes:
         with_sdist: bool,
         overrides: tuple[PackageOverride, ...] = (),
         target: ResolveTarget = _PY312,
-        build_config: NabProjectConfig | None = None,
+        build_config: ResolveInputs | None = None,
         sdist_archive: bytes | None = None,
         sdist_archive_error: BaseException | None = None,
         offline: bool = False,
@@ -11367,7 +11365,7 @@ class TestBuildRemoteFailureModes:
 
         provider = self._provider(
             with_sdist=True,
-            build_config=NabProjectConfig(),
+            build_config=ResolveInputs(),
             sdist_archive=_DYNAMIC_SDIST_TARGZ,
             offline=True,
         )
@@ -12614,7 +12612,7 @@ class TestSiblingMetadataDivergence:
                 coordinator,
                 [_LINUX311],
                 [Requirement("pkg")],
-                config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+                inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
             )
 
     def test_resolve_aborts_not_downgrades_past_divergent(self) -> None:
@@ -12645,7 +12643,7 @@ class TestSiblingMetadataDivergence:
                 coordinator,
                 [_LINUX311],
                 [Requirement("pkg")],
-                config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+                inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
             )
 
 
@@ -12804,7 +12802,7 @@ class TestNoTagAxisPythonNarrowing:
             coordinator,
             [_overlay_target()],
             [Requirement("pkg")],
-            config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
         )
         assert result.success
         assert result.target_results[0].pins == {"pkg": self._V}

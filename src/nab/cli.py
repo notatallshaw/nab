@@ -29,6 +29,7 @@ from typing_extensions import override
 from tyro.extras import SubcommandApp
 
 from nab._version import __version__
+from nab.seam import resolve_inputs, resolve_targets
 from nab_project import toml_io
 from nab_project.config import (
     ConfigError,
@@ -690,11 +691,13 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     config = _python_override_or_exit(config, python)
     try:
         try:
+            targets = resolve_targets(config)
             with _collector_paused():
                 result = resolve_for_targets(
                     path,
                     transport,
-                    config=config,
+                    targets=targets,
+                    inputs=resolve_inputs(config),
                     cache_dir=cache_dir,
                     offline=offline,
                     groups=groups,

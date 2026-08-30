@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from nab_index.local_index import is_file_url
 from nab_index.multi_index import IndexConfig
-from nab_project.config import NabProjectConfig, PackageOverride
+from nab_project.config import PackageOverride
 from nab_project.fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexRoute
+from nab_project.inputs import ResolveInputs
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
@@ -33,7 +34,7 @@ if TYPE_CHECKING:
 
 
 DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS = (
-    NabProjectConfig().trust_unverified_sdist_deps
+    ResolveInputs().trust_unverified_sdist_deps
 )
 DEFAULT_INDEXES: tuple[IndexConfig, ...] = (
     IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
@@ -667,9 +668,9 @@ def build_benchmark_config(
     build_policy_overrides: Mapping[str, BuildPolicy] | None = None,
     resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST,
     vcs: VcsConfig | None = None,
-) -> NabProjectConfig:
-    """Build the project config represented by one benchmark scenario."""
-    return NabProjectConfig(
+) -> ResolveInputs:
+    """Build the settings one benchmark scenario resolves under."""
+    return ResolveInputs(
         uploaded_prior_to=uploaded_prior_to,
         dist_policy=DistPolicy.WHEEL_OR_SDIST,
         build_policy=BuildPolicy.NEVER,
@@ -736,11 +737,11 @@ def build_benchmark_resolver_inputs(
 def build_benchmark_provider(
     coordinator: FetchCoordinator,
     *,
-    config: NabProjectConfig,
+    config: ResolveInputs,
     target: ResolveTarget,
     inputs: _BenchmarkResolveInputs,
 ) -> Provider:
-    """Build a provider from a benchmark project config and its roots."""
+    """Build a provider from a benchmark scenario's settings and roots."""
     return Provider(
         coordinator,
         target=target,

@@ -18,6 +18,7 @@ from typing import Annotated
 
 import tyro
 
+from nab.seam import resolve_inputs
 from nab_project.download import DownloadError, download_lock
 from nab_project.resolve import build_lock_input
 
@@ -142,7 +143,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     )
     lock_input = build_lock_input(
         result,
-        config=config,
+        inputs=resolve_inputs(config),
         extras=selected_extras,
         dependency_groups=selected_groups,
     )
