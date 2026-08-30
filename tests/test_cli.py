@@ -40,9 +40,8 @@ from nab._lock import (
     _emit_or_exit,
     _emit_pylock,
     lock,
-    resolve_extra_selection,
-    resolve_group_selection,
 )
+from nab._run import resolve_extra_selection, resolve_group_selection
 from nab.cli import (
     _DEFAULT_OUTPUT,
     ConfigLadder,
@@ -4089,11 +4088,12 @@ class TestConfigErrors:
 
 
 class TestCliDocstringCommandModules:
-    """``nab.cli``'s docstring names every module that registers a subcommand."""
+    """``nab.cli``'s docstring names every ``nab._*`` module ``cli`` binds."""
 
     def test_docstring_names_every_command_module(self) -> None:
         # A command module only registers if cli.py imports it for the side
-        # effect, so cli's own module bindings are the registration set.
+        # effect, so every one of them is a binding here.  cli binds helper
+        # modules too, and the docstring has to name those as well.
         imported = {
             module.__name__
             for _, module in inspect.getmembers(cli, inspect.ismodule)
@@ -4105,8 +4105,7 @@ class TestCliDocstringCommandModules:
         named = set(re.findall(r"nab\._\w+", docstring))
 
         assert named == imported, (
-            f"docstring misses {imported - named}, "
-            f"names unregistered {named - imported}"
+            f"docstring misses {imported - named}, names unbound {named - imported}"
         )
 
 
@@ -5050,7 +5049,7 @@ class TestGroupAndExtraSelection:
         pyproject = _make_pyproject(tmp_path)
         denied = PermissionError(errno.EACCES, "Permission denied", str(pyproject))
         with (
-            patch("nab._lock.read_pyproject_groups", side_effect=denied),
+            patch("nab._run.read_pyproject_groups", side_effect=denied),
             pytest.raises(SystemExit, match="1"),
         ):
             resolve_group_selection(pyproject, groups=(), all_groups=True)
@@ -5065,7 +5064,7 @@ class TestGroupAndExtraSelection:
         pyproject = _make_pyproject(tmp_path)
         denied = PermissionError(errno.EACCES, "Permission denied", str(pyproject))
         with (
-            patch("nab._lock.read_pyproject_optional_dependencies", side_effect=denied),
+            patch("nab._run.read_pyproject_optional_dependencies", side_effect=denied),
             pytest.raises(SystemExit, match="1"),
         ):
             resolve_extra_selection(pyproject, extras=(), all_extras=True)
@@ -6504,6 +6503,36 @@ class TestCliImportPath:
         subprocess.run(  # noqa: S603 - the probe is this file's own source
             [sys.executable, "-c", _STDLIB_MODULE_PROBE], check=True
         )
+
+
+_PACKAGE_ENTRY_STATEMENTS = (
+    "import nab.cli",
+    "import nab._run",
+    "import nab._config_cmd",
+    "from nab._lock import lock",
+    "from nab._download import download",
+)
+
+
+class TestPackageEntryStatements:
+    """Each of these imports works in an interpreter holding no nab module."""
+
+    @pytest.mark.parametrize("statement", _PACKAGE_ENTRY_STATEMENTS)
+    def test_entry_statement_runs_in_a_fresh_interpreter(self, statement: str) -> None:
+        """A name import across the ``cli`` to ``_run`` cycle raises on some.
+
+        Nothing else in the suite can see that: ``conftest`` imports
+        ``nab.cli`` before any test runs, so no test enters the package by
+        another route.
+        """
+        probe = subprocess.run(  # noqa: S603 - the probe is this file's own source
+            [sys.executable, "-c", statement],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert probe.returncode == 0, probe.stderr
 
 
 class TestDownloadCommand:

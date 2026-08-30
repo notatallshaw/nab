@@ -4,6 +4,8 @@ Holds the tyro :class:`SubcommandApp` registration plus the helpers the
 command modules share: config loading and cache-directory defaults,
 plus the HTTP transport selection and resolver-error-to-exit-code
 translation that only :mod:`nab._lock` and :mod:`nab._download` use.
+The project-path guard and the group and extra selection live in
+:mod:`nab._run`.
 
 The subcommands live in :mod:`nab._lock`, :mod:`nab._download`,
 :mod:`nab._config_cmd`, and :mod:`nab._cache_cmd`; this module imports
@@ -55,7 +57,7 @@ from nab_project.config_sources import (
     resolve_config,
 )
 from nab_project.lockfile import MissingHashError, MissingSdistError
-from nab_project.paths import PathState, path_state, realpath
+from nab_project.paths import realpath
 from nab_project.resolve import resolve_for_targets
 from nab_project.workspace import WorkspaceDiscoveryError
 from nab_provider.errors import (
@@ -83,6 +85,7 @@ from nab_provider.target import (
 )
 from nab_resolver.errors import ResolutionError
 
+from . import _run
 from .output import (
     OUTPUT_ENV_VARS,
     OutputOptionError,
@@ -527,37 +530,6 @@ def _is_pylock(path: Path) -> bool:
     return "lock-version" in data and "project" not in data
 
 
-def require_pyproject_file(path: Path) -> None:
-    """Exit 1 if ``path`` is not a readable pyproject file.
-
-    Shared by every command that takes a project path, so the rejection
-    wording lives in one place.  A ``--path`` that is missing, a
-    directory, or not a regular file is a hard error, not a
-    silently-skipped source.  A path whose stat fails passes: the config
-    read reports it, naming the errno.
-    """
-    state = path_state(path)
-
-    if state is PathState.DIRECTORY:
-        printer().error(f"{path} is a directory")
-        sys.exit(1)
-
-    if state is PathState.OTHER:
-        printer().error(f"{path} exists but is not a regular file")
-        sys.exit(1)
-
-    if state is PathState.ABSENT:
-        printer().error(f"{path} not found")
-        sys.exit(1)
-
-    if _is_pylock(path):
-        printer().error(
-            f"{path} is a PEP 751 lockfile, not a pyproject.  nab resolves"
-            " from project inputs, so pass the pyproject.toml instead."
-        )
-        sys.exit(1)
-
-
 def _project_cli_overrides_or_exit(project_overrides: Mapping[str, object]) -> None:
     """Exit 1 when a ``--project-*`` override has a bad value, naming the flag.
 
@@ -583,7 +555,7 @@ def _load_config(
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, object] | None = None,
 ) -> NabProjectConfig:
-    require_pyproject_file(path)
+    _run.require_pyproject_file(path)
 
     try:
         return read_pyproject_config(

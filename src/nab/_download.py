@@ -5,8 +5,9 @@ archive into a local directory: the union of every target's
 artefacts, deduplicated by URL, which for a declared matrix
 pre-populates a directory for offline deployment across platforms.
 
-The helpers this shares with :mod:`nab._lock` (config loading, the
-printer, transport selection, the resolve step) live in :mod:`nab.cli`;
+The helpers this shares with :mod:`nab._lock` live in :mod:`nab.cli`
+(config loading, the printer, transport selection, the resolve step) and
+:mod:`nab._run` (the project-path guard, the group and extra selection);
 everything else is imported from the module that defines it.
 """
 
@@ -21,8 +22,8 @@ import tyro
 from nab_project.download import DownloadError, download_lock
 from nab_project.resolve import build_lock_input
 
+from . import _run
 from . import cli as _cli
-from ._lock import resolve_extra_selection, resolve_group_selection
 from .cli import (
     BuildPolicyFlag,
     DecisionOrderFlag,
@@ -86,10 +87,10 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     system/user/project ``nab.toml`` is read for ``nab download`` as for
     ``nab lock``.
     """
-    selected_groups = resolve_group_selection(
+    selected_groups = _run.resolve_group_selection(
         path, groups=groups, all_groups=all_groups
     )
-    selected_extras = resolve_extra_selection(
+    selected_extras = _run.resolve_extra_selection(
         path, extras=extras, all_extras=all_extras
     )
 

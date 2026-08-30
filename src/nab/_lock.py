@@ -4,8 +4,9 @@ Wires :func:`resolve_for_targets` to the writers in
 :mod:`nab_project.lockfile`, plus the per-target emission shapes a matrix
 needs (a templated file per tuple, multi-block stdout).
 
-The helpers this shares with :mod:`nab._download` (config loading, the
-printer, transport selection, the resolve step) live in :mod:`nab.cli`;
+The helpers this shares with :mod:`nab._download` live in :mod:`nab.cli`
+(config loading, the printer, transport selection, the resolve step) and
+:mod:`nab._run` (the project-path guard, the group and extra selection);
 everything else is imported from the module that defines it.
 """
 
@@ -24,7 +25,6 @@ from pathlib import Path
 from string import Formatter
 from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, NoReturn
 
-import tomli
 import tyro
 
 from nab._version import __version__
@@ -79,6 +79,7 @@ from nab_provider.requirements_file import (
 )
 from nab_provider.target import IntractableMarkerError, UnevaluableMarkerError
 
+from . import _run
 from . import cli as _cli
 from .cli import (
     BuildPolicyFlag,
@@ -277,10 +278,10 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         anchor=anchor,
         cli_project_overrides=settings.cli_project_overrides,
     )
-    selected_groups = resolve_group_selection(
+    selected_groups = _run.resolve_group_selection(
         path, groups=groups, all_groups=all_groups
     )
-    selected_extras = resolve_extra_selection(
+    selected_extras = _run.resolve_extra_selection(
         path, extras=extras, all_extras=all_extras
     )
 
@@ -1098,73 +1099,6 @@ def _render_requirements_or_exit(
         _cli.printer().error(f"cannot lock: {e}")
         sys.exit(1)
     return text, sum(len(lock.pins) for lock in lock_input.targets.values())
-
-
-def _read_selection_table_or_exit(
-    path: Path,
-    reader: Callable[[Path], Mapping[str, object]],
-) -> Mapping[str, object]:
-    """Read the table a selection flag expands over, exiting 1 on a bad file.
-
-    ``nab download`` selects groups and extras before it loads the config, so
-    this read can be the first to touch the pyproject and runs the path guards
-    itself rather than relying on the config load having run.
-    """
-    _cli.require_pyproject_file(path)
-
-    try:
-        return reader(path)
-    except OSError as e:
-        _cli.printer().error(f"cannot read {path}: {e}")
-        sys.exit(1)
-    except (UnicodeDecodeError, tomli.TOMLDecodeError) as e:
-        _cli.printer().error(f"{path} is not valid TOML: {e}")
-        sys.exit(1)
-    except TypeError as e:
-        _cli.printer().error(f"in {path}: {e}")
-        sys.exit(1)
-
-
-def resolve_group_selection(
-    path: Path,
-    *,
-    groups: tuple[str, ...],
-    all_groups: bool,
-) -> tuple[str, ...]:
-    """Return the canonical, deduplicated group selection for this run.
-
-    ``groups`` is the user-supplied list (already split by tyro on
-    commas).  ``all_groups`` overrides it: when set, every group
-    defined in the project's ``[dependency-groups]`` table is
-    selected.  An ``--all-groups`` paired with a non-empty
-    ``--groups`` list raises a clean error rather than silently
-    preferring one over the other.
-    """
-    if all_groups and groups:
-        _cli.printer().error("--all-groups and --groups are mutually exclusive")
-        sys.exit(1)
-    if not (all_groups or groups):
-        return ()
-
-    defined = _read_selection_table_or_exit(path, read_pyproject_groups)
-    return tuple(defined.keys()) if all_groups else tuple(dict.fromkeys(groups))
-
-
-def resolve_extra_selection(
-    path: Path,
-    *,
-    extras: tuple[str, ...],
-    all_extras: bool,
-) -> tuple[str, ...]:
-    """Return the canonical, deduplicated extras selection for this run."""
-    if all_extras and extras:
-        _cli.printer().error("--all-extras and --extras are mutually exclusive")
-        sys.exit(1)
-    if not (all_extras or extras):
-        return ()
-
-    defined = _read_selection_table_or_exit(path, read_pyproject_optional_dependencies)
-    return tuple(defined.keys()) if all_extras else tuple(dict.fromkeys(extras))
 
 
 def _build_provenance(
