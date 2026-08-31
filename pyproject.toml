@@ -24,7 +24,6 @@ dependencies = [
     "nab-provider==0.0.16.dev0",
     "nab-project==0.0.16.dev0",
     "nab-index==0.0.16.dev0",
-    "tyro>=1.0",
     "typing_extensions>=4.6",
 ]
 
@@ -58,10 +57,13 @@ only-include = ["src/nab", "tests", "conftest.py"]
 exclude = [
     "tests/test_build_dists.py",
     "tests/test_check_boundaries.py",
+    "tests/test_cli_bijection.py",
     "tests/test_classifiers.py",
     "tests/test_cli_docs.py",
+    "tests/test_cli_generated.py",
     "tests/test_contributing_docs.py",
     "tests/test_embedding_docs.py",
+    "tests/test_env_layer.py",
     "tests/test_release.py",
     "tests/test_type_check_scope.py",
     "tests/test_workspace_shape.py",
@@ -120,7 +122,6 @@ docs = [
 release = [
     "packaging>=24.0",
     "tomlkit>=0.13",
-    "tyro>=1.0",
     "build>=1.2",
     "twine>=6.1",
     "pypi-attestations>=0.0.21",
@@ -347,11 +348,14 @@ known-first-party = ["nab", "nab_index", "nab_provider", "nab_project", "nab_res
 [tool.pyright]
 pythonVersion = "3.10"
 typeCheckingMode = "standard"
+# tests/cli_bijection.py is generated and never run, so a checker reading it
+# is the whole of what it is for.
 include = [
     "nab-resolver/src",
     "nab-resolver/tests",
     "nab-index/src",
     "src",
+    "tests/cli_bijection.py",
 ]
 # Editable installs hide the workspace packages from pyright's auto-detection;
 # point it at the source trees directly so cross-package imports resolve.

@@ -8,23 +8,52 @@ import sys
 
 import pytest
 
+from nab import env
 from nab.output import (
     ColorChoice,
     OutputOptionError,
+    OutputOptions,
     Printer,
     ProgressReporter,
     Verbosity,
     _isatty,
+    begin,
     install_log_handler,
     logging_level_for,
-    parse_output_options,
+    options_from_flags,
+    printer,
     reset_log_handlers,
+    reset_run,
     should_color,
     verbosity_from_counts,
 )
 
 RED = "\033[31m"
 RESET = "\033[0m"
+
+
+def _options(
+    *,
+    verbose: int = 0,
+    quiet: int = 0,
+    color: str | None = None,
+    no_color: bool = False,
+    no_progress: bool = False,
+    environ: dict[str, str] | None = None,
+) -> OutputOptions:
+    """The knobs one command line's global flags fold into.
+
+    The walk reduces every occurrence before dispatch calls this, so the
+    cases here pass the reduced values rather than an argv.
+    """
+    return options_from_flags(
+        verbose=verbose,
+        quiet=quiet,
+        color=color,
+        no_color=no_color,
+        no_progress=no_progress,
+        environ={} if environ is None else environ,
+    )
 
 
 class _TTY(io.StringIO):
@@ -105,6 +134,91 @@ def test_should_color_term_dumb_disables() -> None:
 def test_should_color_auto_follows_tty() -> None:
     assert should_color(ColorChoice.AUTO, _TTY(tty=True), {}) is True
     assert should_color(ColorChoice.AUTO, _TTY(tty=False), {}) is False
+
+
+_COLOR_TABLE = [
+    ("always", False, {"NO_COLOR": "1"}, True),
+    ("never", True, {}, False),
+    ("auto", True, {"NO_COLOR": "1"}, False),
+    ("auto", True, {"NO_COLOR": ""}, True),
+    ("auto", False, {"FORCE_COLOR": "1"}, True),
+    ("auto", False, {"FORCE_COLOR": ""}, False),
+    ("auto", True, {"NO_COLOR": "1", "FORCE_COLOR": "1"}, False),
+    ("auto", True, {"TERM": "dumb"}, False),
+    ("auto", True, {"FORCE_COLOR": "1", "TERM": "dumb"}, True),
+    ("auto", True, {}, True),
+    ("auto", False, {}, False),
+]
+
+
+@pytest.mark.parametrize(("choice", "isatty", "environ", "expected"), _COLOR_TABLE)
+def test_color_enabled_table(
+    choice: str, isatty: bool, environ: dict[str, str], expected: bool
+) -> None:
+    """The colour rule, one row per way a value can decide it."""
+    assert env.color_enabled(choice, isatty=isatty, environ=environ) is expected
+
+
+@pytest.mark.parametrize(("choice", "isatty", "environ", "expected"), _COLOR_TABLE)
+def test_should_color_agrees_with_color_enabled(
+    choice: str, isatty: bool, environ: dict[str, str], expected: bool
+) -> None:
+    """The wrapper adds the printer's types and nothing else.
+
+    Two implementations of one rule is the failure this pairing exists to
+    catch, since ``should_color`` is what every printer goes through.
+    """
+    assert should_color(ColorChoice(choice), _TTY(tty=isatty), environ) is expected
+
+
+@pytest.mark.parametrize("choice", [ColorChoice.ALWAYS, ColorChoice.NEVER])
+def test_should_color_never_asks_a_stream_it_does_not_need(
+    choice: ColorChoice,
+) -> None:
+    """``always`` and ``never`` answer without touching the stream.
+
+    A closed stream still has an ``isatty`` to call, and calling it
+    raises, so the guard has to be the choice rather than the attribute.
+    """
+    closed = io.StringIO()
+    closed.close()
+
+    assert should_color(choice, closed, {}) is (choice is ColorChoice.ALWAYS)
+
+
+def test_color_enabled_reads_the_process_environment_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert env.color_enabled("auto", isatty=True) is False
+
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    assert env.color_enabled("auto", isatty=False) is True
+
+
+@pytest.mark.parametrize(
+    ("color", "no_color", "expected"),
+    [
+        ("always", True, ColorChoice.ALWAYS),
+        ("never", True, ColorChoice.NEVER),
+        ("auto", True, ColorChoice.AUTO),
+        (None, True, ColorChoice.NEVER),
+        (None, False, ColorChoice.AUTO),
+    ],
+)
+def test_color_flag_precedence(
+    color: str | None, no_color: bool, expected: ColorChoice
+) -> None:
+    """``--color`` beats ``--no-color``, which the walk cannot decide.
+
+    Both flags reduce to a value before they reach here, so the order they
+    were written in is the walk's business and the precedence is this
+    function's.
+    """
+    options = _options(color=color, no_color=no_color)
+
+    assert options.color is expected
 
 
 @pytest.mark.parametrize(
@@ -220,78 +334,55 @@ def test_defaults_use_process_streams() -> None:
     assert printer._err is sys.stderr
 
 
-def test_parse_counts_and_passthrough() -> None:
-    opts, rest = parse_output_options(["lock", "-vv", "pyproject.toml"], {})
-    assert opts.verbosity is Verbosity.DEBUG
-    assert rest == ["lock", "pyproject.toml"]
+def test_counts_fold_into_a_verbosity() -> None:
+    assert _options(verbose=2).verbosity is Verbosity.DEBUG
+    assert _options(quiet=2).verbosity is Verbosity.SILENT
 
 
-def test_parse_quiet_counts() -> None:
-    opts, rest = parse_output_options(["-q", "-q", "lock"], {})
-    assert opts.verbosity is Verbosity.SILENT
-    assert rest == ["lock"]
+def test_a_cancelled_pair_is_normal() -> None:
+    assert _options(verbose=1, quiet=1).verbosity is Verbosity.NORMAL
 
 
-def test_parse_long_verbose_quiet() -> None:
-    opts, _rest = parse_output_options(["--verbose", "--quiet", "lock"], {})
-    assert opts.verbosity is Verbosity.NORMAL
+def test_color_value_wins_over_the_shorthand() -> None:
+    assert _options(color="always").color is ColorChoice.ALWAYS
+    assert _options(no_color=True).color is ColorChoice.NEVER
 
 
-def test_parse_color_value_form() -> None:
-    opts, rest = parse_output_options(["--color", "always", "lock"], {})
-    assert opts.color is ColorChoice.ALWAYS
-    assert rest == ["lock"]
+def test_progress_is_on_unless_the_flag_says_otherwise() -> None:
+    assert _options().progress is True
+    assert _options(no_progress=True).progress is False
 
 
-def test_parse_color_equals_form() -> None:
-    opts, _rest = parse_output_options(["--color=never", "lock"], {})
-    assert opts.color is ColorChoice.NEVER
+def test_default_color_is_auto() -> None:
+    assert _options().color is ColorChoice.AUTO
 
 
-def test_parse_no_color() -> None:
-    opts, _rest = parse_output_options(["--no-color", "lock"], {})
-    assert opts.color is ColorChoice.NEVER
-
-
-def test_parse_no_progress() -> None:
-    opts, _rest = parse_output_options(["--no-progress", "lock"], {})
-    assert opts.progress is False
-
-
-def test_parse_default_color_is_auto() -> None:
-    opts, _rest = parse_output_options(["lock"], {})
-    assert opts.color is ColorChoice.AUTO
-
-
-def test_parse_color_missing_value() -> None:
-    with pytest.raises(OutputOptionError, match="needs a value"):
-        parse_output_options(["--color"], {})
-
-
-def test_parse_color_bad_value() -> None:
+def test_a_color_value_outside_the_set_is_refused() -> None:
+    """The walk pins ``--color``'s choices, and this is the second gate."""
     with pytest.raises(OutputOptionError, match="auto, always, never"):
-        parse_output_options(["--color", "rainbow"], {})
+        _options(color="rainbow")
 
 
-def test_parse_verbosity_from_env() -> None:
-    opts, _rest = parse_output_options(["lock"], {"NAB_VERBOSITY": "debug"})
-    assert opts.verbosity is Verbosity.DEBUG
+def test_verbosity_comes_from_the_environment_when_no_flag_was_touched() -> None:
+    assert _options(environ={"NAB_VERBOSITY": "debug"}).verbosity is Verbosity.DEBUG
 
 
 def test_flags_beat_env_verbosity() -> None:
-    opts, _rest = parse_output_options(["-q", "lock"], {"NAB_VERBOSITY": "debug"})
-    assert opts.verbosity is Verbosity.QUIET
+    options = _options(quiet=1, environ={"NAB_VERBOSITY": "debug"})
+
+    assert options.verbosity is Verbosity.QUIET
 
 
-def test_parse_bad_env_verbosity() -> None:
+def test_a_touched_counter_beats_env_verbosity_even_when_it_cancels() -> None:
+    """``-v -q`` is NORMAL, not DEBUG: the test is touched, not non-zero."""
+    options = _options(verbose=1, quiet=1, environ={"NAB_VERBOSITY": "debug"})
+
+    assert options.verbosity is Verbosity.NORMAL
+
+
+def test_bad_env_verbosity() -> None:
     with pytest.raises(OutputOptionError, match="NAB_VERBOSITY"):
-        parse_output_options(["lock"], {"NAB_VERBOSITY": "loud"})
-
-
-def test_short_dash_v_not_confused_with_capital() -> None:
-    opts, rest = parse_output_options(["-V", "lock"], {})
-    assert opts.verbosity is Verbosity.NORMAL
-    assert rest == ["-V", "lock"]
+        _options(environ={"NAB_VERBOSITY": "loud"})
 
 
 def _emit_record(name: str, level: int, message: str) -> None:
@@ -361,10 +452,61 @@ def test_log_handler_untokened_level_is_bare() -> None:
 
 
 def test_reset_log_handlers_detaches() -> None:
-    printer, stream = _handler_printer()
-    install_log_handler(printer)
+    handler_printer, stream = _handler_printer()
+    install_log_handler(handler_printer)
     reset_log_handlers()
     _emit_record("nab_project.demo", logging.WARNING, "after reset")
+    assert stream.getvalue() == ""
+
+
+def _begin_run(*, quiet: int = 0) -> Printer:
+    """Start a run's output the way the CLI does, with colour off."""
+    return begin(
+        options_from_flags(
+            verbose=0,
+            quiet=quiet,
+            color="never",
+            no_color=False,
+            no_progress=True,
+            environ={},
+        )
+    )
+
+
+def test_begin_installs_the_run_printer() -> None:
+    started = _begin_run(quiet=1)
+
+    assert printer() is started
+    assert started.verbosity is Verbosity.QUIET
+
+
+def test_begin_routes_log_records_through_the_run_printer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A record logged mid-run reads as a printer line.
+
+    ``logging.lastResort`` would write the bare message, so the token is
+    what says the handler is installed.
+    """
+    _begin_run()
+    _emit_record("nab_project.demo", logging.WARNING, "mid-run")
+
+    assert capsys.readouterr().err == "warning: mid-run\n"
+
+
+def test_reset_run_drops_the_run_printer() -> None:
+    started = _begin_run(quiet=1)
+    reset_run()
+
+    assert printer() is not started
+
+
+def test_reset_run_detaches_the_log_handler() -> None:
+    handler_printer, stream = _handler_printer()
+    install_log_handler(handler_printer)
+    reset_run()
+    _emit_record("nab_project.demo", logging.WARNING, "after reset")
+
     assert stream.getvalue() == ""
 
 

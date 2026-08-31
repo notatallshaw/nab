@@ -69,14 +69,19 @@ WORKSPACES = {
 # which is rebuilt from upstream and cannot be edited to satisfy a checker.
 TYPED_TREES = ["nab-resolver/src", "nab-index/src", "src"]
 
+# The generated bijection goes to every checker, not to pyright alone: it
+# exists to be read by one, and a row typed wrong for its parameter is an
+# error in whichever reads it first.
+CHECKED = [*TYPED_TREES, "tests/cli_bijection.py"]
+
 # checker -> command; pyright reads its targets from [tool.pyright] in
-# pyproject.toml, the rest take the trees on the command line.
+# pyproject.toml, the rest take them on the command line.
 TYPE_CHECKERS = {
-    "mypy": ["mypy", *TYPED_TREES],
+    "mypy": ["mypy", *CHECKED],
     "pyright": ["pyright"],
-    "ty": ["ty", "check", *TYPED_TREES],
-    "pyrefly": ["pyrefly", "check", *TYPED_TREES],
-    "zuban": ["zuban", "check", *TYPED_TREES],
+    "ty": ["ty", "check", *CHECKED],
+    "pyrefly": ["pyrefly", "check", *CHECKED],
+    "zuban": ["zuban", "check", *CHECKED],
 }
 
 
@@ -230,7 +235,7 @@ def benchmarks(session: nox.Session) -> None:
 @nox.session
 @nox.parametrize("checker", list(TYPE_CHECKERS))
 def types(session: nox.Session, checker: str) -> None:
-    """Run one checker over its own scope: ``TYPED_TREES``, or pyright's include."""
+    """Run one checker over its own scope: :data:`CHECKED`, or pyright's include."""
     # The umbrella entry installs every distribution, so every import resolves.
     editables, _, _ = WORKSPACES["umbrella"]
     _install(session, TYPES_LOCK, editables)

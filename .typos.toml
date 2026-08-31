@@ -6,3 +6,10 @@ mis = "mis"
 ba = "ba"
 Sur = "Sur"
 Pn = "Pn"
+
+# The parser's rule matrix pins the message a misspelled flag or command
+# draws, so these four spell what a user typed by mistake.
+cach = "cach"
+lok = "lok"
+outupt = "outupt"
+projct = "projct"

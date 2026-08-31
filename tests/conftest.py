@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
-from nab import cli
-from nab.output import reset_log_handlers
+from nab import _run
+from nab.output import reset_run
 from nab_project.config_sources import SourceRoots
 
 if TYPE_CHECKING:
@@ -33,19 +33,19 @@ def _reset_nab_output(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     * CI sets ``FORCE_COLOR=1`` so its tool logs are coloured, which would
       otherwise make nab wrap its message tokens in ANSI and break the plain
-      output the assertions expect.  ``NO_COLOR`` wins over ``FORCE_COLOR`` in
-      :func:`~nab.output.should_color`, so it forces nab's colour off here
-      regardless of the ambient environment; the colour behaviour itself is
-      covered by unit tests that set the choice explicitly.
-    * ``nab.cli.main`` sets a module-level printer (bound to the run's streams)
-      and installs a logging handler on the nab loggers; without the reset a
-      test that runs ``main`` would leak the printer (whose captured stream is
-      closed once the test ends) and the handler into later tests.
+      output the assertions expect.  Both variables are cleared rather than
+      relying on ``NO_COLOR`` winning: a case that wants the isatty decision
+      clears ``NO_COLOR``, and an ambient ``FORCE_COLOR`` left behind would
+      paint whatever it looked at.
+    * ``nab.output.begin`` sets a module-level printer (bound to the run's
+      streams) and installs a logging handler on the nab loggers; without the
+      reset a test that runs ``main`` would leak the printer (whose captured
+      stream is closed once the test ends) and the handler into later tests.
     """
     monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
     yield
-    cli._printer = None
-    reset_log_handlers()
+    reset_run()
 
 
 @pytest.fixture
@@ -82,7 +82,7 @@ def hermetic_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             project_dir=project_dir,
         )
 
-    monkeypatch.setattr(cli, "_config_search_roots", fake_roots)
+    monkeypatch.setattr(_run, "_config_search_roots", fake_roots)
     monkeypatch.delenv("NAB_OFFLINE", raising=False)
     monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
     monkeypatch.delenv("NAB_RESOLUTION", raising=False)

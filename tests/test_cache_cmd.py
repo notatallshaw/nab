@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from nab import cli as nab_cli
-from nab.cli import app
+from nab import _run as nab_run
+from nab.cli import run
 from nab_index.cache import (
     CACHE_VERSION_SDIST,
     CACHE_VERSION_SIMPLE,
@@ -51,7 +51,7 @@ def config_anchors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[Path
         anchors.append(pyproject)
         return roots
 
-    monkeypatch.setattr(nab_cli, "_config_search_roots", _roots)
+    monkeypatch.setattr(nab_run, "_config_search_roots", _roots)
     monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
     return anchors
 
@@ -70,8 +70,9 @@ def _symlink_or_skip(
         pytest.skip("symlinks not supported on this platform")
 
 
-def _run_cache(args: list[str]) -> None:
-    app.cli(args=["cache", *args], prog="nab")
+def _run_cache(args: list[str], *, status: int = 0) -> None:
+    """Drive ``nab cache`` the way ``main`` does, asserting how it ended."""
+    assert run(("cache", *args)) == status
 
 
 def _populate(root: Path) -> OnDiskCache:
@@ -105,7 +106,7 @@ class TestCacheDir:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
-        monkeypatch.setattr(nab_cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(nab_run.Path, "home", lambda: tmp_path)
         _run_cache(["dir"])
         captured = capsys.readouterr()
         assert captured.out == f"{tmp_path / '.cache' / 'nab'}\n"
@@ -213,18 +214,18 @@ class TestLayeredCacheDir:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         _write_toml(tmp_path / _USER_TOML, "cache-dir = 5\n")
-        with pytest.raises(SystemExit) as exc:
-            _run_cache(["dir"])
-        assert exc.value.code == 1
+
+        _run_cache(["dir"], status=1)
+
         assert "config error" in capsys.readouterr().err
 
     def test_nul_layer_value_exits_one(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         _write_toml(tmp_path / _PROJECT_TOML, 'cache-dir = "/c/\\u0000x"\n')
-        with pytest.raises(SystemExit) as exc:
-            _run_cache(["verify"])
-        assert exc.value.code == 1
+
+        _run_cache(["verify"], status=1)
+
         assert "is not a usable filesystem path" in capsys.readouterr().err
 
     def test_discovery_anchored_at_working_dir(
@@ -333,9 +334,8 @@ class TestCacheVerify:
     def test_refuses_file_root(self, tmp_path: Path) -> None:
         target = tmp_path / "file"
         target.write_text("x")
-        with pytest.raises(SystemExit) as exc:
-            _run_cache(["verify", "--cache-dir", str(target)])
-        assert exc.value.code == 1
+
+        _run_cache(["verify", "--cache-dir", str(target)], status=1)
 
     def test_refuses_non_cache_dir(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -343,9 +343,9 @@ class TestCacheVerify:
         root = tmp_path / "home"
         root.mkdir()
         (root / "important.txt").write_text("data")
-        with pytest.raises(SystemExit) as exc:
-            _run_cache(["verify", "--cache-dir", str(root)])
-        assert exc.value.code == 1
+
+        _run_cache(["verify", "--cache-dir", str(root)], status=1)
+
         assert "important.txt" in {p.name for p in root.iterdir()}
         assert "cache" in capsys.readouterr().err
 
@@ -370,9 +370,9 @@ class TestCacheClear:
         root = tmp_path / "home"
         root.mkdir()
         (root / "important.txt").write_text("data")
-        with pytest.raises(SystemExit) as exc:
-            _run_cache(["clear", "--cache-dir", str(root)])
-        assert exc.value.code == 1
+
+        _run_cache(["clear", "--cache-dir", str(root)], status=1)
+
         assert (root / "important.txt").read_text() == "data"
 
     def test_does_not_follow_symlink_out(self, tmp_path: Path) -> None:
@@ -415,9 +415,9 @@ class TestCacheClear:
         root = tmp_path / "home"
         root.mkdir()
         (root / "metadata-notes.txt").write_text("data")
-        with pytest.raises(SystemExit) as exc:
-            _run_cache(["clear", "--cache-dir", str(root)])
-        assert exc.value.code == 1
+
+        _run_cache(["clear", "--cache-dir", str(root)], status=1)
+
         assert (root / "metadata-notes.txt").read_text() == "data"
 
 
@@ -460,7 +460,7 @@ class TestCacheUnknownAction:
     def test_unknown_action_exits_one(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        with pytest.raises(SystemExit) as exc:
-            _run_cache(["frobnicate", "--cache-dir", str(tmp_path)])
-        assert exc.value.code == 1
+
+        _run_cache(["frobnicate", "--cache-dir", str(tmp_path)], status=1)
+
         assert "unknown cache action" in capsys.readouterr().err

@@ -5,8 +5,8 @@ archive into a local directory: the union of every target's
 artefacts, deduplicated by URL, which for a declared matrix
 pre-populates a directory for offline deployment across platforms.
 
-The helpers this shares with :mod:`nab._lock` (config loading, the
-printer, transport selection, the resolve step) live in :mod:`nab.cli`;
+The helpers this shares with :mod:`nab._lock` live in :mod:`nab._run`
+and :mod:`nab._resolve`, and the run's printer in :mod:`nab.output`;
 everything else is imported from the module that defines it.
 """
 
@@ -14,39 +14,46 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Annotated
-
-import tyro
 
 from nab.seam import resolve_inputs
 from nab_project.download import DownloadError, download_lock
 from nab_project.resolve import build_lock_input
 
-from . import cli as _cli
-from ._lock import resolve_extra_selection, resolve_group_selection
-from .cli import (
+from ._resolve import (
+    _load_config,
+    _make_transport,
+    _reject_python_override_in_universal,
+    _resolve,
+    resolve_extra_selection,
+    resolve_group_selection,
+)
+from ._run import (
+    _cli_overrides,
+    _layered_run_settings_or_exit,
+    _project_cli_overrides_or_exit,
+    _resolve_effective_cache_dir,
+    project_config_overrides,
+    read_config_ladder,
+)
+from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
     DecisionOrderFlag,
     DistPolicyFlag,
     HttpBackend,
     ModeFlag,
-    OfflineFlag,
-    PathArg,
     ResolutionFlag,
-    app,
 )
-from .output import ProgressReporter
+from .output import ProgressReporter, printer
 
 
-@app.command
-def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config object would hide the user-facing surface
-    path: PathArg = Path("pyproject.toml"),
+def download(  # noqa: PLR0913 - one keyword per flag is the public surface
+    path: Path = Path("pyproject.toml"),
     *,
     output: Path = Path("wheels"),
     http_backend: HttpBackend | None = None,
     cache_dir: Path | None = None,
     cache: bool = True,
-    offline: OfflineFlag = None,
+    offline: bool | None = None,
     python: str | None = None,
     max_concurrency: int | None = None,
     workspace_discovery: bool = True,
@@ -62,8 +69,8 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     project_build_policy: BuildPolicyFlag | None = None,
     project_build_requires_depth: int | None = None,
     project_decision_order: DecisionOrderFlag | None = None,
-    project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
-    project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
+    project_constraint: tuple[str, ...] = (),
+    project_default_group: tuple[str, ...] = (),
     project_base_group: str | None = None,
     project_build_group: str | None = None,
 ) -> None:
@@ -94,7 +101,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
         path, extras=extras, all_extras=all_extras
     )
 
-    overrides = _cli._cli_overrides(  # noqa: SLF001
+    overrides = _cli_overrides(
         cli_resolution=project_resolution,
         cli_offline=offline,
         cli_cache_dir=cache_dir,
@@ -112,23 +119,19 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
         cli_base_group=project_base_group,
         cli_build_group=project_build_group,
     )
-    project_overrides = _cli.project_config_overrides(overrides)
-    _cli._project_cli_overrides_or_exit(project_overrides)  # noqa: SLF001
-    config = _cli._load_config(  # noqa: SLF001
+    project_overrides = project_config_overrides(overrides)
+    _project_cli_overrides_or_exit(project_overrides)
+    config = _load_config(
         path,
         discover_workspace=workspace_discovery,
         cli_overrides=project_overrides,
     )
-    ladder = _cli.read_config_ladder(path, overrides)
-    settings = _cli._layered_run_settings_or_exit(  # noqa: SLF001
-        ladder, produces_lock=False
-    )
-    effective_cache_dir = _cli._resolve_effective_cache_dir(  # noqa: SLF001
-        settings.cache_dir, cache=cache
-    )
-    _cli._reject_python_override_in_universal(config, python)  # noqa: SLF001
-    transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
-    result = _cli._resolve(  # noqa: SLF001
+    ladder = read_config_ladder(path, overrides)
+    settings = _layered_run_settings_or_exit(ladder, produces_lock=False)
+    effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
+    _reject_python_override_in_universal(config, python)
+    transport = _make_transport(settings.http_backend)
+    result = _resolve(
         path,
         config=config,
         cache_dir=effective_cache_dir,
@@ -139,7 +142,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
         groups=selected_groups,
         extras=selected_extras,
         resolution_strategy=settings.resolution,
-        progress=ProgressReporter(_cli.printer()),
+        progress=ProgressReporter(printer()),
     )
     lock_input = build_lock_input(
         result,
@@ -148,7 +151,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
         dependency_groups=selected_groups,
     )
 
-    download_transport = _cli._make_transport(settings.http_backend)  # noqa: SLF001
+    download_transport = _make_transport(settings.http_backend)
     try:
         outcome = download_lock(
             lock_input,
@@ -158,13 +161,13 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
             offline=settings.offline,
         )
     except DownloadError as e:
-        _cli.printer().error(f"download failed: {e}")
+        printer().error(f"download failed: {e}")
         sys.exit(1)
     except OSError as e:
-        _cli.printer().error(f"cannot write to output directory {output}: {e}")
+        printer().error(f"cannot write to output directory {output}: {e}")
         sys.exit(1)
 
-    _cli.printer().done(
+    printer().done(
         f"Downloaded {len(outcome.written)} files,"
         f" {len(outcome.skipped)} already present, into {output}"
     )

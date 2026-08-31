@@ -466,30 +466,6 @@ size = 214297
 sha256 = "da78fa6fc7dafe4212839173133ee85afcf42c5cd5f3e47fa7c1c210453b445e"
 
 [[packages]]
-name = "docstring-parser"
-version = "0.18.0"
-requires-python = ">=3.8"
-index = "https://pypi.org/simple/"
-
-[packages.sdist]
-name = "docstring_parser-0.18.0.tar.gz"
-upload-time = 2026-04-14 04:09:19.867229+00:00
-url = "https://files.pythonhosted.org/packages/e0/4d/f332313098c1de1b2d2ff91cf2674415cc7cddab2ca1b01ae29774bd5fdf/docstring_parser-0.18.0.tar.gz"
-size = 29341
-
-[packages.sdist.hashes]
-sha256 = "292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015"
-
-[[packages.wheels]]
-name = "docstring_parser-0.18.0-py3-none-any.whl"
-upload-time = 2026-04-14 04:09:18.638975+00:00
-url = "https://files.pythonhosted.org/packages/a7/5f/ed01f9a3cdffbd5a008556fc7b2a08ddb1cc6ace7effa7340604b1d16699/docstring_parser-0.18.0-py3-none-any.whl"
-size = 22484
-
-[packages.wheels.hashes]
-sha256 = "b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b"
-
-[[packages]]
 name = "exceptiongroup"
 version = "1.3.1"
 marker = "\"types\" in dependency_groups and python_version == \"3.10\""
@@ -2373,33 +2349,6 @@ size = 12893338
 sha256 = "e3a457f3312c078f24c47d0da6e4f73de34d0a77ed2de22571c066c80b2fd5e7"
 
 [[packages]]
-name = "typeguard"
-version = "4.6.0"
-requires-python = ">=3.10"
-dependencies = [
-    { name = "typing-extensions" },
-]
-index = "https://pypi.org/simple/"
-
-[packages.sdist]
-name = "typeguard-4.6.0.tar.gz"
-upload-time = 2026-07-26 08:40:23.207527+00:00
-url = "https://files.pythonhosted.org/packages/b4/de/4420db493fa8fc0856d5e5c1b159c63a323d2de2317babe36b01568928e8/typeguard-4.6.0.tar.gz"
-size = 82330
-
-[packages.sdist.hashes]
-sha256 = "e7414f09111317de3e335de92cd397c5c0ca00b1cc1676de12e1d444a79b3f21"
-
-[[packages.wheels]]
-name = "typeguard-4.6.0-py3-none-any.whl"
-upload-time = 2026-07-26 08:40:21.868121+00:00
-url = "https://files.pythonhosted.org/packages/8f/eb/461d5f167b6f5c7d97696f397c82f82e3480e003fce3f0a1cd1dd26e2eb2/typeguard-4.6.0-py3-none-any.whl"
-size = 36884
-
-[packages.wheels.hashes]
-sha256 = "79878165bb86f2cf5d41d159a0ff1792a796cf496882d2fe1b1c6c7049b9cdd7"
-
-[[packages]]
 name = "typing-extensions"
 version = "4.16.0"
 requires-python = ">=3.9"
@@ -2422,35 +2371,6 @@ size = 45571
 
 [packages.wheels.hashes]
 sha256 = "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
-
-[[packages]]
-name = "tyro"
-version = "1.0.15"
-requires-python = ">=3.8"
-dependencies = [
-    { name = "docstring-parser" },
-    { name = "typeguard" },
-    { name = "typing-extensions" },
-]
-index = "https://pypi.org/simple/"
-
-[packages.sdist]
-name = "tyro-1.0.15.tar.gz"
-upload-time = 2026-06-20 08:48:28.364151+00:00
-url = "https://files.pythonhosted.org/packages/12/78/a5749a6c1ee9abc2999e294f339f8f72476d1a60bb95fc0e86156aafed3b/tyro-1.0.15.tar.gz"
-size = 593822
-
-[packages.sdist.hashes]
-sha256 = "3f1d60887723eecb9c489f195d11f079c4a1f33df74b723552ad31ec57c667bb"
-
-[[packages.wheels]]
-name = "tyro-1.0.15-py3-none-any.whl"
-upload-time = 2026-06-20 08:48:27.104712+00:00
-url = "https://files.pythonhosted.org/packages/5d/28/d607636187cf6c18eb72efb5d65c1d1b9e451db03d84676f835dd488fdbd/tyro-1.0.15-py3-none-any.whl"
-size = 215045
-
-[packages.wheels.hashes]
-sha256 = "982da1d566005f1b2a6b56f6be6c6929c96f0e5fab9d61bc6097573ddfaf8d13"
 
 [[packages]]
 name = "urllib3"
@@ -2554,7 +2474,7 @@ size = 10724603
 sha256 = "c401b88742e8a501c68f4ec605d7ebc6a63401653c15f0173a76febe161bd53e"
 
 [tool.nab]
-nab-version = "0.0.14.dev0"
+nab-version = "0.0.16.dev0"
 created-at = 2026-08-12 13:49:21.463348+00:00
 command-line = [
     "nab",
@@ -2566,7 +2486,6 @@ command-line = [
     "--no-emit-workspace",
     "--output",
     ".github/requirements/pylock.types.toml",
-    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "universal"

@@ -13,9 +13,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Annotated
-
-import tyro
 
 from nab_project.config_sources import (
     RejectedLayer,
@@ -26,34 +23,30 @@ from nab_project.config_sources import (
     render_list,
 )
 
-from .cli import (
+from ._run import (
+    _cli_overrides,
+    _fail_config,
+    effective_config,
+    require_pyproject_file,
+)
+from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
     DecisionOrderFlag,
     DistPolicyFlag,
     HttpBackend,
     ModeFlag,
-    OfflineFlag,
     ResolutionFlag,
-    _cli_overrides,
-    _fail_config,
-    app,
-    effective_config,
-    printer,
-    require_pyproject_file,
 )
-
-ActionArg = Annotated[str, tyro.conf.Positional]
-KeyArg = Annotated[str, tyro.conf.Positional]
+from .output import printer
 
 
-@app.command(name="config")
-def config_command(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag
-    action: ActionArg,
-    key: KeyArg = "",
+def config_command(  # noqa: PLR0913 - one keyword per flag is the public surface
+    action: str,
+    key: str = "",
     *,
     path: Path = Path("pyproject.toml"),
     project_resolution: ResolutionFlag | None = None,
-    offline: OfflineFlag = None,
+    offline: bool | None = None,
     cache_dir: Path | None = None,
     http_backend: HttpBackend | None = None,
     max_concurrency: int | None = None,
@@ -64,8 +57,8 @@ def config_command(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag
     project_build_policy: BuildPolicyFlag | None = None,
     project_build_requires_depth: int | None = None,
     project_decision_order: DecisionOrderFlag | None = None,
-    project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
-    project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
+    project_constraint: tuple[str, ...] = (),
+    project_default_group: tuple[str, ...] = (),
     project_base_group: str | None = None,
     project_build_group: str | None = None,
     include_rejected: bool = False,
@@ -94,15 +87,13 @@ def config_command(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag
     CLI value on top, so the inspector reflects the same effective values a
     run would see.
     """
-    # Registry-derived: the shared _cli_overrides helper maps each row's
-    # cli_param to the same-named local, so the override dict comes from
-    # iterating OPTIONS in one place, not from an if per option.  A new row
-    # needs only its tyro param above.
     # Validate the pyproject path the same way the run commands do: a
     # --path that is missing, a directory, or not a regular file is a hard
     # error, not a silently-skipped source that prints all-built-in defaults.
     require_pyproject_file(path)
 
+    # _cli_overrides maps each registry row's cli_param to the same-named
+    # parameter above, so a new row needs no branch here.
     cli_overrides = _cli_overrides(
         cli_resolution=project_resolution,
         cli_offline=offline,
