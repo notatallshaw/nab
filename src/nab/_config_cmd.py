@@ -32,15 +32,14 @@ from ._run import (
     effective_config,
     require_pyproject_file,
 )
-from .cli import (
+from .cli import OfflineFlag, app
+from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
     DecisionOrderFlag,
     DistPolicyFlag,
     HttpBackend,
     ModeFlag,
-    OfflineFlag,
     ResolutionFlag,
-    app,
 )
 from .output import printer
 
