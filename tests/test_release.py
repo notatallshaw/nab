@@ -133,7 +133,7 @@ def test_rewrite_requirement_updates_workspace_pins() -> None:
 
 
 def test_rewrite_requirement_leaves_third_party_alone() -> None:
-    assert release._rewrite_requirement("tyro>=1.0", "0.0.3") == "tyro>=1.0"
+    assert release._rewrite_requirement("tomli>=2.0", "0.0.3") == "tomli>=2.0"
     assert release._rewrite_requirement("packaging>=24.0", "0.0.3") == "packaging>=24.0"
 
 

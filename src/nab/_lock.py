@@ -22,9 +22,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from string import Formatter
-from typing import TYPE_CHECKING, Annotated, Any, NamedTuple, NoReturn
-
-import tyro
+from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 from nab._version import __version__
 from nab_project import toml_io
@@ -97,7 +95,6 @@ from ._run import (
     resolve_extra_selection,
     resolve_group_selection,
 )
-from .cli import OfflineFlag, PathArg, app
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
     DecisionOrderFlag,
@@ -144,16 +141,15 @@ def _print_lock(text: str) -> None:
     sys.stdout.write(text)
 
 
-@app.command
-def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config object would hide the user-facing surface
-    path: PathArg = _DEFAULT_PROJECT_PATH,
+def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
+    path: Path = _DEFAULT_PROJECT_PATH,
     *,
     output: Path | None = None,
     format: LockFormat = "pylock",  # noqa: A002 - shadows builtin by convention
     http_backend: HttpBackend | None = None,
     cache_dir: Path | None = None,
     cache: bool = True,
-    offline: OfflineFlag = None,
+    offline: bool | None = None,
     python: str | None = None,
     groups: tuple[str, ...] = (),
     all_groups: bool = False,
@@ -170,8 +166,8 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     project_build_policy: BuildPolicyFlag | None = None,
     project_build_requires_depth: int | None = None,
     project_decision_order: DecisionOrderFlag | None = None,
-    project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
-    project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
+    project_constraint: tuple[str, ...] = (),
+    project_default_group: tuple[str, ...] = (),
     project_base_group: str | None = None,
     project_build_group: str | None = None,
     upgrade: bool = False,

@@ -4,11 +4,11 @@ Each case is named for the rule it pins.  The rules are set out in
 ``work/analysis/nab-cli-rethink/kb/research-parser-algorithms.md``, one
 case per row of its matrix.
 
-Every case here asserts what :func:`parse`, :func:`diagnose` and
-:func:`page` return, never a process status and never a captured stream.
-Four rules state their outcome as a status or a stream alone, so they
-belong to the row that owns ``main()``; pass-through operands have no
-case at all, because no command declares any.
+Most cases assert what :func:`parse`, :func:`diagnose` and :func:`page`
+return.  The last section drives the same lines through
+:func:`nab.cli.run`, which is the only way to state a rule whose outcome
+is a status or a stream.  Pass-through operands have no case at all,
+because no command declares any.
 
 Most cases run against the fixture table below, which is the option table
 the matrix is written against.  It carries what nab's own table cannot
@@ -19,6 +19,9 @@ say so.
 
 from __future__ import annotations
 
+import errno
+import io
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -31,6 +34,7 @@ from nab._cli.diagnose import diagnose, suggest
 from nab._cli.dispatch import dispatch
 from nab._cli.parse import Parsed, UsageError, build, parse
 from nab._cli.render import page, terminal_width, wrap
+from nab.cli import run
 
 _HELP = ("what it does", "what the other one does")
 
@@ -928,12 +932,21 @@ class TestTheShippedTable:
 
         assert "'--project-resolution'" in diagnose(caught.value)
 
-    def test_a_half_typed_negation_is_offered_the_negation(self) -> None:
-        """The cap of two, not a filter, is what keeps a suggestion short."""
+    def test_a_half_typed_negation_is_offered_the_negation_first(self) -> None:
+        """A ``no-`` typo admits the negations, or the answer is the opposite."""
         with pytest.raises(UsageError) as caught:
             _shipped(["lock", "--no-cach"])
 
         assert "did you mean one of '--no-cache', '--cache'?" in diagnose(caught.value)
+
+    def test_a_positive_typo_is_never_offered_the_negation_of_what_it_meant(
+        self,
+    ) -> None:
+        """The filter does this, not the cap: only one spelling resembles it."""
+        with pytest.raises(UsageError) as caught:
+            _shipped(["lock", "--upgrad"])
+
+        assert "did you mean '--upgrade'?" in diagnose(caught.value)
 
     def test_a_half_typed_option_is_offered_two_spellings_at_most(self) -> None:
         with pytest.raises(UsageError) as caught:
@@ -948,7 +961,15 @@ class TestTheShippedTable:
         assert parsed.values["groups"] == ("dev", "docs")
         assert parsed.values["upgrade"] is True
 
-    def test_an_attached_star_value_is_one_word(self) -> None:
+    def test_an_attached_star_value_still_swallows_the_words_after_it(self) -> None:
+        """Both spellings take the same words, so a line cannot change meaning."""
+        attached = _shipped(["lock", "--groups=dev", "docs"])
+
+        assert attached.values["groups"] == ("dev", "docs")
+        assert attached.values["path"] == "pyproject.toml"
+        assert attached.values == _shipped(["lock", "--groups", "dev", "docs"]).values
+
+    def test_an_attached_star_value_alone_is_one_word(self) -> None:
         assert _shipped(["lock", "--groups=dev"]).values["groups"] == ("dev",)
 
     def test_every_command_binds_its_own_defaults(self) -> None:
@@ -1168,7 +1189,7 @@ class TestPaintedRefusals:
 
         assert text.endswith("\nTry 'nab lock --help' for more information.\n")
 
-    def test_painting_a_refusal_changes_nothing_but_the_escapes(self) -> None:
+    def test_painting_changes_nothing_but_the_escapes(self) -> None:
         error = _refused(["lock", "--outupt"])
 
         assert _stripped(diagnose(error, color=True)) == diagnose(error)
@@ -1347,6 +1368,155 @@ class TestDispatch:
 
 _TABLE_RULES = frozenset(case[0] for case in _PARSES + _DISPATCHES + _REFUSALS)
 
+# --- the process level: the same lines, driven through run() ---
+
+# The three refusal cases nab's own table cannot drive.  It declares no
+# short option that takes a value, and ``--max-concurrency`` belongs to
+# ``download`` rather than to ``lock``, so the last two are re-driven
+# where the flag really is.
+_FIXTURE_ONLY = (
+    ["lock", "-o", "--verbose"],
+    ["lock", "--max-concurrency", "x"],
+    ["lock", "--max-concurrency", "-3.5"],
+)
+
+_REFUSED_LINES: tuple[tuple[str, list[str], str], ...] = (
+    *(case for case in _REFUSALS if case[1] not in _FIXTURE_ONLY),
+    (
+        "numeric-option-refuses-a-non-number",
+        ["download", "--max-concurrency", "x"],
+        "expected an integer",
+    ),
+    (
+        "numeric-option-refuses-a-non-number",
+        ["download", "--max-concurrency", "-3.5"],
+        "expected an integer",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("rule", "argv", "expected"), _REFUSED_LINES, ids=_ids(_REFUSED_LINES)
+)
+def test_a_refused_line_writes_to_stderr_alone_and_exits_two(
+    rule: str, argv: list[str], expected: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One status and one stream, for every refusal there is."""
+    status = run(tuple(argv))
+
+    captured = capsys.readouterr()
+    assert status == 2, rule
+    assert captured.out == "", rule
+    assert expected in captured.err, rule
+    assert captured.err.endswith("for more information.\n"), rule
+
+
+def test_a_page_goes_to_stdout_and_leaves_stderr_empty(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """the-page-goes-only-to-stdout: help is the requested output, so it is not a diagnostic."""
+    status = run(("--help",))
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert captured.out.startswith("Usage: nab ")
+    assert captured.err == ""
+
+
+def test_a_version_line_goes_to_stdout_and_exits_zero(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    status = run(("--version",))
+
+    captured = capsys.readouterr()
+    assert status == 0
+    assert captured.out.startswith("nab ")
+    assert captured.err == ""
+
+
+def test_a_message_dispatch_returns_leaves_through_the_one_stderr_write(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of refusals-go-only-to-stderr: a command refused before it ran still writes once.
+
+    ``dispatch`` hands the text back rather than writing it, so this is
+    what proves the text reaches a stream at all, newline included.
+    """
+    monkeypatch.setenv("NAB_VERBOSITY", "loud")
+
+    status = run(("cache", "dir"))
+
+    captured = capsys.readouterr()
+    assert status == 2
+    assert captured.out == ""
+    assert captured.err == (
+        "error: NAB_VERBOSITY='loud' is not one of "
+        "silent, quiet, normal, verbose, debug\n"
+    )
+
+
+class _RefusingStream(io.StringIO):
+    """A stream that refuses every write, the way a full disk does."""
+
+    def write(self, text: str, /) -> int:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+
+@pytest.mark.parametrize(
+    ("line", "stream"), [(("--version",), "stdout"), (("--nope",), "stderr")]
+)
+def test_a_refused_write_replaces_the_status_it_would_have_returned(
+    line: tuple[str, ...], stream: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The same rule at the level ``run`` decides it, rather than at exit."""
+    monkeypatch.setattr(sys, stream, _RefusingStream())
+
+    assert run(line) == 120
+
+
+# The console entry, which is the shape that owns its process: it flushes
+# both streams itself and leaves through ``os._exit``, so a stream that
+# refused the write never reaches the interpreter's own flush at shutdown.
+_CONSOLE = "from nab._entry import console_entry; console_entry()"
+
+_FULL = Path("/dev/full")
+
+
+@pytest.mark.skipif(
+    not _FULL.exists(), reason="needs a stream that refuses every write"
+)
+@pytest.mark.parametrize(
+    ("line", "stream"),
+    [
+        (["--help"], "stdout"),
+        (["--version"], "stdout"),
+        (["--nope"], "stderr"),
+    ],
+    ids=["help", "version", "usage-error"],
+)
+def test_output_that_cannot_be_written_exits_120_without_a_traceback(
+    line: list[str], stream: str, tmp_path: Path
+) -> None:
+    """help-survives-a-closed-stdout: a full disk replaces the status the run would have returned.
+
+    Both stdout pages fit the 8,192-byte buffer, so the write lands and
+    the flush at the end of ``console_entry`` is what fails; stderr is
+    unbuffered, so the usage error is the case whose write raises.
+    """
+    kept = tmp_path / "kept.txt"
+    with _FULL.open("w") as full, kept.open("w") as elsewhere:
+        finished = subprocess.run(  # noqa: S603 - the probe is this file's own source
+            [sys.executable, "-c", _CONSOLE, *line],
+            stdout=full if stream == "stdout" else elsewhere,
+            stderr=full if stream == "stderr" else subprocess.PIPE,
+            check=False,
+        )
+
+    assert finished.returncode == 120
+    if stream == "stdout":
+        assert finished.stderr == b""
+
+
 # The rules whose case is a test of its own rather than a row of a table.
 _CASE_RULES = frozenset(
     {
@@ -1369,13 +1539,6 @@ _CASE_RULES = frozenset(
         "suggestions-get-their-own-line",
         "a-refusal-has-no-side-effects",
         "refusals-escape-undecodable-tokens",
-    }
-)
-
-# The rules whose only outcome is a process status or a stream, which is
-# the half that arrives with main().
-_DEFERRED = frozenset(
-    {
         "refusals-go-only-to-stderr",
         "one-exit-code-per-outcome",
         "the-page-goes-only-to-stdout",
@@ -1481,11 +1644,10 @@ _ALL_RULES = frozenset(
 )
 
 
-def test_every_rule_is_pinned_deferred_or_dropped_on_purpose() -> None:
-    """No parse-level rule goes missing without saying which it is."""
-    accounted = _TABLE_RULES | _CASE_RULES | _DEFERRED | _DROPPED
+def test_every_rule_is_pinned_or_dropped_on_purpose() -> None:
+    """No rule of the matrix goes missing without saying which it is."""
+    accounted = _TABLE_RULES | _CASE_RULES | _DROPPED
 
     assert not _ALL_RULES - accounted
     assert not accounted - _ALL_RULES
-    assert not _TABLE_RULES & _DEFERRED
     assert not _TABLE_RULES & _DROPPED

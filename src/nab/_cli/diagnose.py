@@ -22,8 +22,8 @@ __all__ = ["diagnose", "suggest"]
 _MATCHES = 3
 _CUTOFF = 0.6
 
-# What a message offers, at most.  At three, a half-typed --cache answers
-# with --cache-dir, --cache and --no-cache, and the third is noise.
+# What a message offers, at most.  At three, --all-xtras answers with
+# --all-extras, --extras and --all-groups, and the third is noise.
 _SUGGESTIONS = 2
 
 # Red opens a refusal, as it does for :meth:`nab.output.Printer.error`, and

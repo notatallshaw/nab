@@ -6,9 +6,8 @@ Help is wrapped rather than truncated, at the terminal's width, by a
 greedy wrapper here rather than by :mod:`textwrap`, which the design's
 import rule keeps off this path along with the :mod:`re` it pulls in.
 
-Colour is handed in as a flag rather than decided here, so the only
-environment a page reads is the width and :mod:`nab.env` stays off the
-``--help`` path.
+Colour is handed in as a flag rather than decided here, so the width is
+the only environment this module reads.
 """
 
 from __future__ import annotations

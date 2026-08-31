@@ -14,9 +14,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Annotated
-
-import tyro
 
 from nab_project.download import DownloadError, download_lock
 from nab_project.resolve import build_lock_input
@@ -35,7 +32,6 @@ from ._run import (
     resolve_extra_selection,
     resolve_group_selection,
 )
-from .cli import OfflineFlag, PathArg, app
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
     DecisionOrderFlag,
@@ -47,15 +43,14 @@ from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runti
 from .output import ProgressReporter, printer
 
 
-@app.command
-def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config object would hide the user-facing surface
-    path: PathArg = Path("pyproject.toml"),
+def download(  # noqa: PLR0913 - one keyword per flag is the public surface
+    path: Path = Path("pyproject.toml"),
     *,
     output: Path = Path("wheels"),
     http_backend: HttpBackend | None = None,
     cache_dir: Path | None = None,
     cache: bool = True,
-    offline: OfflineFlag = None,
+    offline: bool | None = None,
     python: str | None = None,
     max_concurrency: int | None = None,
     workspace_discovery: bool = True,
@@ -71,8 +66,8 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     project_build_policy: BuildPolicyFlag | None = None,
     project_build_requires_depth: int | None = None,
     project_decision_order: DecisionOrderFlag | None = None,
-    project_constraint: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
-    project_default_group: Annotated[tuple[str, ...], tyro.conf.UseAppendAction] = (),
+    project_constraint: tuple[str, ...] = (),
+    project_default_group: tuple[str, ...] = (),
     project_base_group: str | None = None,
     project_build_group: str | None = None,
 ) -> None:

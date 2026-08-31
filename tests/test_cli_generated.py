@@ -1,8 +1,10 @@
-"""The generated table, against the declaration it was generated from.
+"""The generated files, against the declaration they were generated from.
 
-``src/nab/_cli/spec.py`` is written by ``tasks/gen_cli.py`` and committed,
-because the sdist ships ``src/nab`` while ``tasks/`` and ``docs/`` stay
-out of it: an installed nab has no generator to run and no page to check.
+``src/nab/_cli/spec.py`` and the global-flag block of
+``docs/reference/cli.md`` are written by ``tasks/gen_cli.py`` and
+committed, because the sdist ships ``src/nab`` while ``tasks/`` and
+``docs/`` stay out of it: an installed nab has no generator to run and no
+page to check.
 
 ``--check`` alone only proves that the file agrees with the generator, so
 it passes on a generator that maps the declaration wrongly.  The cases
@@ -35,6 +37,7 @@ if TYPE_CHECKING:
 _ROOT = Path(__file__).resolve().parents[1]
 _GENERATOR = _ROOT / "tasks" / "gen_cli.py"
 _SPEC = _ROOT / "src" / "nab" / "_cli" / "spec.py"
+_REFERENCE = _ROOT / "docs" / "reference" / "cli.md"
 
 # The kinds that store a constant rather than reading a value, restated
 # here so the comparison does not borrow the generator's own answer.
@@ -68,7 +71,7 @@ _LITERAL_NODES = frozenset(
 _ROW_FIELDS = 10
 
 
-def test_the_generated_module_is_current() -> None:
+def test_the_generated_files_are_current() -> None:
     """A declaration edit that never reached the generator fails here."""
     finished = subprocess.run(  # noqa: S603 - the interpreter running this suite
         [sys.executable, str(_GENERATOR), "--check"],
@@ -92,6 +95,36 @@ def test_the_generated_module_is_literals_alone() -> None:
     assert found <= _LITERAL_NODES, sorted(
         node.__name__ for node in found - _LITERAL_NODES
     )
+
+
+def test_the_reference_page_lists_every_global_flag() -> None:
+    """The block restates the seven root rows, and nothing else."""
+    block = _REFERENCE.read_text(encoding="utf-8").partition("<!-- generated")[2]
+    rows = block.partition("<!-- /generated")[0].splitlines()[3:]
+
+    listed = [row.split("|")[1].strip() for row in rows if row.startswith("|")]
+    helps = [row.split("|")[2].strip() for row in rows if row.startswith("|")]
+    declared = [row for row in ALL if row.is_global]
+
+    assert listed == [
+        f"`-{row.short}`, `{row.cli_flag}`" if row.short else f"`{row.cli_flag}`"
+        for row in declared
+    ]
+    assert helps == [row.help for row in declared]
+
+
+def test_the_generator_refuses_a_page_that_lost_its_markers(
+    generator: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A page edited past its markers is a refusal, not a silent no-op."""
+    page = tmp_path / "cli.md"
+    page.write_text("# CLI\n", encoding="utf-8")
+    monkeypatch.setattr(generator, "_REFERENCE", page)
+
+    with pytest.raises(SystemExit) as caught:
+        generator._reference_text()
+
+    assert "markers" in str(caught.value)
 
 
 def test_the_generator_refuses_to_run_with_neither_flag() -> None:

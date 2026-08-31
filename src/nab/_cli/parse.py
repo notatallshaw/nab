@@ -51,9 +51,11 @@ class UsageError(Exception):
 
     ``token`` is the word the user typed and ``candidates`` the spellings
     it might have meant, both empty on an error no suggestion can help.
+    ``root_options`` holds the root flags read before the refusal, so a
+    refusal honours ``--color`` the way an eager page does.
     """
 
-    __slots__ = ("candidates", "message", "prog", "token")
+    __slots__ = ("candidates", "message", "prog", "root_options", "token")
 
     def __init__(
         self,
@@ -68,6 +70,7 @@ class UsageError(Exception):
         self.message = message
         self.token = token
         self.candidates = candidates
+        self.root_options: dict[str, object] = {}
 
 
 class Row:
@@ -133,7 +136,9 @@ class Parsed:
 
     ``eager`` names the option that short-circuited the line (``help`` or
     ``version``) and is empty on a line that parsed through.  ``values``
-    holds the command's own parameters and ``options`` the root ones.
+    holds the command's own parameters and ``options`` the root ones; on a
+    short-circuited line ``values`` is empty and ``options`` holds only the
+    root flags the line had reached, unconverted.
     """
 
     __slots__ = ("command", "eager", "options", "prog", "values")
@@ -191,13 +196,32 @@ def parse(
 ) -> Parsed:
     """Walk ``argv`` once and return what it means.
 
+    A refusal carries the root flags read before it, so ``--color`` reaches
+    a message the walk never finished reading the line for.
+    """
+    seen: dict[str, list[_Hit]] = {}
+    try:
+        return _walk(argv, root, commands, prog, seen)
+    except UsageError as error:
+        error.root_options = _root_options(seen)
+        raise
+
+
+def _walk(
+    argv: tuple[str, ...],
+    root: tuple[Spec, ...],
+    commands: dict[str, tuple[Spec, ...]],
+    prog: str,
+    seen: dict[str, list[_Hit]],
+) -> Parsed:
+    """Walk ``argv`` once and return what it means.
+
     The first operand at the root level is the command name, so a word that
     names no command is an unknown-command error rather than an operand.
     Raises :class:`UsageError` on the first thing it cannot read.
     """
     root_table = build(root, root=True)
     table = build(())
-    seen: dict[str, list[_Hit]] = {}
     operands: list[str] = []
     command = ""
     prog_path = prog
@@ -236,17 +260,44 @@ def parse(
                 unnamed_commands,
             )
             if eager:
-                return Parsed(command, {}, {}, prog_path, eager)
+                return _short_circuit(command, seen, prog_path, eager)
         elif _is_option(word):
             index, eager = _short(
                 word, argv, index, (table, root_table), seen, prog_path
             )
             if eager:
-                return Parsed(command, {}, {}, prog_path, eager)
+                return _short_circuit(command, seen, prog_path, eager)
         else:
             operands.append(word)
 
     return _finish(command, table, root_table, seen, operands, prog_path, commands)
+
+
+def _reduce(hits: list[_Hit]) -> object:
+    """Fold every occurrence of one dest into the single value it stands for."""
+    row = hits[-1][0]
+    if row.kind == "count":
+        return len(hits)
+    if row.kind == "append":
+        return tuple(hit[1] for hit in hits)
+    return hits[-1][1]
+
+
+def _short_circuit(
+    command: str, seen: dict[str, list[_Hit]], prog: str, eager: str
+) -> Parsed:
+    """End the line on an eager option, carrying the root flags it had read.
+
+    Conversion has not run, so these are the tokens as typed; ``--color`` is
+    the one an eager page reads, and it decides nothing a bad token could
+    break.
+    """
+    return Parsed(command, {}, _root_options(seen), prog, eager)
+
+
+def _root_options(seen: dict[str, list[_Hit]]) -> dict[str, object]:
+    """Return the root flags read so far, as typed, before conversion runs."""
+    return {dest: _reduce(hits) for dest, hits in seen.items() if hits[-1][0].root}
 
 
 def _is_option(word: str) -> bool:
@@ -303,12 +354,12 @@ def _long(
         _store(seen, row, row.const)
         return index, ""
 
-    if sep:
-        _store(seen, row, (attached,) if row.kind == "star" else attached)
+    if sep and row.kind != "star":
+        _store(seen, row, attached)
+    elif row.kind == "star":
+        index = _star_value(row, argv, index, seen, (attached,) if sep else ())
     elif row.kind == "tri":
         index = _tri_value(row, argv, index, seen)
-    elif row.kind == "star":
-        index = _star_value(row, argv, index, seen)
     else:
         index = _separated(row, argv, index, name, seen, prog)
 
@@ -403,10 +454,19 @@ def _tri_value(
 
 
 def _star_value(
-    row: Row, argv: tuple[str, ...], index: int, seen: dict[str, list[_Hit]]
+    row: Row,
+    argv: tuple[str, ...],
+    index: int,
+    seen: dict[str, list[_Hit]],
+    attached: tuple[str, ...],
 ) -> int:
-    """Take every following token up to the next option-shaped one."""
-    taken: list[str] = []
+    """Take ``attached``, then every following token up to the next option-shaped one.
+
+    The attached and separated spellings take the same words, so
+    ``--groups=dev docs`` and ``--groups dev docs`` select the same two
+    groups.
+    """
+    taken = list(attached)
     while index < len(argv) and not _is_option(argv[index]):
         taken.append(argv[index])
         index += 1
@@ -440,12 +500,7 @@ def _finish(
 
     for dest, hits in seen.items():
         row = hits[-1][0]
-        if row.kind == "count":
-            value: object = len(hits)
-        elif row.kind == "append":
-            value = tuple(hit[1] for hit in hits)
-        else:
-            value = hits[-1][1]
+        value = _reduce(hits)
 
         if row.root:
             options[dest] = value
@@ -574,15 +629,27 @@ def _quote(token: str) -> str:
 
 
 def _option_names(
-    tables: _Tables, unnamed_commands: tuple[str, ...]
+    tables: _Tables, unnamed_commands: tuple[str, ...], *, negations: bool
 ) -> tuple[str, ...]:
     """Collect the spellings a suggestion may offer, in declaration order.
+
+    ``negations`` admits the generated ``--no-`` rows.  They are withheld
+    from a positive typo, where a negation resembles the row it negates
+    closely enough to fill the second slot every time, so ``--upgrad``
+    would answer ``--upgrade`` and ``--no-upgrade``.  A typo spelled
+    ``no-`` needs them, or the one spelling offered means the opposite of
+    what was typed.
 
     Until a command has been named its name is a candidate too,
     so ``nab --lock`` offers ``lock``.
     """
     inner, outer = tables
-    names = [row.long for table in (inner, outer) for row in table.rows if row.long]
+    names = [
+        row.long
+        for table in (inner, outer)
+        for row in table.rows
+        if row.long and (negations or row.kind != "neg")
+    ]
     names.extend(unnamed_commands)
     return tuple(names)
 
@@ -592,7 +659,8 @@ def _unknown_option(
 ) -> UsageError:
     """Refuse a long spelling no table declares."""
     message = f"unrecognized option {_quote(name)}"
-    candidates = _option_names(tables, unnamed_commands)
+    negations = name.lstrip("-").replace("_", "-").startswith("no-")
+    candidates = _option_names(tables, unnamed_commands, negations=negations)
     return UsageError(prog, message, token=name, candidates=candidates)
 
 

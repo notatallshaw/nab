@@ -14,23 +14,16 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Annotated
-
-import tyro
 
 from nab_index.cache import OnDiskCache, is_recognized_bucket
 from nab_project.config_sources import SourceConfigError
 
 from ._run import _default_cache_dir, _fail_config, effective_config
-from .cli import app
 from .output import printer
 
-ActionArg = Annotated[str, tyro.conf.Positional]
 
-
-@app.command(name="cache")
 def cache_command(
-    action: ActionArg,
+    action: str,
     *,
     cache_dir: Path | None = None,
 ) -> None:
