@@ -14,9 +14,10 @@ from typing import TYPE_CHECKING, Any
 import tomli
 
 if TYPE_CHECKING:
+    from pathlib import Path
     from typing import BinaryIO
 
-__all__ = ["load", "loads"]
+__all__ = ["load", "load_path", "loads"]
 
 
 def loads(text: str) -> dict[str, Any]:
@@ -38,3 +39,14 @@ def load(f: BinaryIO) -> dict[str, Any]:
     :class:`UnicodeDecodeError`.
     """
     return loads(f.read().decode())
+
+
+def load_path(path: Path) -> dict[str, Any]:
+    """Parse the TOML document in the file at ``path``.
+
+    Failures reach the caller unwrapped: :class:`OSError` for an unreadable
+    file, :class:`UnicodeDecodeError` for bytes that are not UTF-8, and
+    :class:`~tomli.TOMLDecodeError` for a document that will not parse.
+    """
+    with path.open("rb") as f:
+        return load(f)

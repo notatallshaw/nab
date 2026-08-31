@@ -6,7 +6,7 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
-from typing import ClassVar, NoReturn
+from typing import TYPE_CHECKING, ClassVar, NoReturn
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -80,6 +80,10 @@ from nab_provider.target import ResolveTarget
 from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from contextlib import AbstractContextManager
 
 V = Version
 
@@ -6523,3 +6527,58 @@ class TestTrustUnverifiedSdistDeps:
             "foo==1.0 sdist has dynamic dependencies and no static"
             " pyproject.toml fallback" in detail
         )
+
+
+class TestPyprojectParsedOnce:
+    """Every table a resolve reads comes off one parse of the file."""
+
+    def test_a_specific_resolve_parses_the_pyproject_once(
+        self,
+        record_parses: Callable[[], AbstractContextManager[list[str]]],
+        tmp_path: Path,
+    ) -> None:
+        """Dependencies, groups, extras, name and build requires share a parse."""
+        body = (
+            '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
+            "[project.optional-dependencies]\n"
+            "cpu = []\n"
+            "[dependency-groups]\n"
+            "dev = []\n"
+            "[build-system]\n"
+            'requires = []\nbuild-backend = "hatchling.build"\n'
+            "[tool.nab]\n"
+            'base-group = "runtime"\nbuild-group = "build"\n'
+        )
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_bytes(body.encode())
+        config = read_pyproject_config(pyproject, discover_workspace=False)
+
+        with record_parses() as parsed:
+            _resolved(pyproject, config=config)
+
+        assert parsed.count(body) == 1
+
+    def test_a_build_requirements_resolve_parses_the_pyproject_once(
+        self,
+        record_parses: Callable[[], AbstractContextManager[list[str]]],
+        tmp_path: Path,
+    ) -> None:
+        """The build-requirements path reads its one table off that parse too."""
+        body = (
+            '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
+            "[build-system]\n"
+            'requires = []\nbuild-backend = "hatchling.build"\n'
+        )
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_bytes(body.encode())
+        config = read_pyproject_config(pyproject, discover_workspace=False)
+
+        with record_parses() as parsed:
+            resolve_for_targets(
+                pyproject,
+                _FAKE_TRANSPORT,  # type: ignore[arg-type]
+                config=config,
+                build_requirements=True,
+            ).raise_for_failure()
+
+        assert parsed.count(body) == 1

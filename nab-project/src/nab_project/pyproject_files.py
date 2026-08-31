@@ -2,11 +2,17 @@
 
 These readers parse TOML, so they sit here rather than beside the pure
 requirement algebra in :mod:`nab_provider.requirements_file`.
+
+Every table has a reader named for it, taking an already-parsed document
+(``build_system_requires`` also takes the path, which names the file in its
+errors), and a ``read_pyproject_*`` wrapper that parses the file for it.  A
+caller reading several tables of one file parses it once and passes the
+document to each, since a wrapper per table parses the file per table.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
@@ -24,6 +30,11 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.requirements import Requirement
 
 __all__ = [
+    "build_system_requires",
+    "dependency_groups",
+    "project_dependencies",
+    "project_name",
+    "project_optional_dependencies",
     "read_pyproject_build_requires",
     "read_pyproject_dependencies",
     "read_pyproject_groups",
@@ -32,24 +43,22 @@ __all__ = [
 ]
 
 
-def _load_project_table(path: Path) -> Mapping[str, object]:
-    """Load a pyproject.toml and return its ``[project]`` table.
+def _project_table(document: Mapping[str, Any]) -> Mapping[str, object]:
+    """Return the ``[project]`` table of an already-parsed pyproject.
 
     An absent ``[project]`` reads as an empty mapping (a workspace-root
     pyproject without its own distribution).  One that is not a table raises
     :class:`InvalidProjectTableError`.
     """
-    with path.open("rb") as f:
-        data = toml_io.load(f)
-    project = data.get("project", {})
+    project = document.get("project", {})
     if not isinstance(project, dict):
         msg = f"[project] must be a table, got {type(project).__name__}"
         raise InvalidProjectTableError(msg)
     return project
 
 
-def read_pyproject_dependencies(path: Path) -> list[Requirement]:
-    """Read [project].dependencies from a pyproject.toml file.
+def project_dependencies(document: Mapping[str, Any]) -> list[Requirement]:
+    """Read [project].dependencies from a parsed pyproject.
 
     PEP 621 makes the key optional, so an absent ``dependencies`` reads as an
     empty list.  A missing ``[project]`` raises :class:`KeyError` and one that
@@ -57,9 +66,7 @@ def read_pyproject_dependencies(path: Path) -> list[Requirement]:
     string raises :class:`InvalidProjectRequirementError`, as does a dynamic
     ``dependencies``.
     """
-    with path.open("rb") as f:
-        data = toml_io.load(f)
-    project = data["project"]
+    project = document["project"]
     if not isinstance(project, dict):
         msg = f"[project] must be a table, got {type(project).__name__}"
         raise InvalidProjectTableError(msg)
@@ -78,30 +85,27 @@ def read_pyproject_dependencies(path: Path) -> list[Requirement]:
     return parse_requirements(dep_strings, source)
 
 
-def read_pyproject_build_requires(path: Path) -> list[Requirement]:
-    """Read [build-system].requires from a pyproject.toml file (PEP 518).
+def build_system_requires(document: Mapping[str, Any], path: Path) -> list[Requirement]:
+    """Read [build-system].requires from a parsed pyproject (PEP 518).
 
-    There is no fallback to the PEP 517 default backend: pinning an implied
-    ``setuptools`` would lock a build requirement the project never asked for.
-    An absent ``[build-system]`` and a table without the mandatory ``requires``
-    key both raise :class:`InvalidProjectRequirementError`; a
-    ``[build-system]`` that is not a table raises
-    :class:`InvalidProjectTableError`.
+    ``path`` names the file in the errors.  There is no fallback to the PEP
+    517 default backend: pinning an implied ``setuptools`` would lock a build
+    requirement the project never asked for.  An absent ``[build-system]`` and
+    a table without the mandatory ``requires`` key both raise
+    :class:`InvalidProjectRequirementError`; a ``[build-system]`` that is not
+    a table raises :class:`InvalidProjectTableError`.
 
     Only the static list is read; what ``get_requires_for_build_wheel`` adds is
     known only once the backend runs.
     """
-    with path.open("rb") as f:
-        data = toml_io.load(f)
-
-    if "build-system" not in data:
+    if "build-system" not in document:
         msg = (
             f"{path} declares no [build-system], so it has no build"
             " requirements to lock"
         )
         raise InvalidProjectRequirementError(msg)
 
-    table = data["build-system"]
+    table = document["build-system"]
     if not isinstance(table, dict):
         msg = f"[build-system] must be a table, got {type(table).__name__}"
         raise InvalidProjectTableError(msg)
@@ -114,25 +118,25 @@ def read_pyproject_build_requires(path: Path) -> list[Requirement]:
     return parse_requirements(require_string_list(table["requires"], source), source)
 
 
-def read_pyproject_name(path: Path) -> str | None:
-    """Read [project].name from a pyproject.toml file.
+def project_name(document: Mapping[str, Any]) -> str | None:
+    """Read [project].name from a parsed pyproject.
 
     ``None`` when the file has no ``[project]`` table or no ``name`` key (a
     workspace-root pyproject without its own distribution).
     """
-    name = _load_project_table(path).get("name")
+    name = _project_table(document).get("name")
     return name if isinstance(name, str) else None
 
 
-def read_pyproject_optional_dependencies(
-    path: Path,
+def project_optional_dependencies(
+    document: Mapping[str, Any],
 ) -> Mapping[str, Sequence[str]]:
-    """Read [project.optional-dependencies] from a pyproject.toml file.
+    """Read [project.optional-dependencies] from a parsed pyproject.
 
     The requirement strings come back unparsed; an absent table reads as an
     empty dict.
     """
-    raw = _load_project_table(path).get("optional-dependencies", {})
+    raw = _project_table(document).get("optional-dependencies", {})
     if not isinstance(raw, dict):
         msg = (
             f"[project.optional-dependencies] must be a table, got {type(raw).__name__}"
@@ -141,19 +145,46 @@ def read_pyproject_optional_dependencies(
     return raw
 
 
-def read_pyproject_groups(
-    path: Path,
+def dependency_groups(
+    document: Mapping[str, Any],
 ) -> Mapping[str, Sequence[str | Mapping[str, str]]]:
-    """Read [dependency-groups] from a pyproject.toml file (PEP 735).
+    """Read [dependency-groups] from a parsed pyproject (PEP 735).
 
     The group table comes back unparsed, so an entry is either a requirement
     string or an include record (``{"include-group": "other-group"}``).  An
     absent table reads as an empty dict.
     """
-    with path.open("rb") as f:
-        data = toml_io.load(f)
-    raw = data.get("dependency-groups", {})
+    raw = document.get("dependency-groups", {})
     if not isinstance(raw, dict):
         msg = f"[dependency-groups] must be a table, got {type(raw).__name__}"
         raise InvalidProjectTableError(msg)
     return raw
+
+
+def read_pyproject_dependencies(path: Path) -> list[Requirement]:
+    """Parse ``path`` and read [project].dependencies from it."""
+    return project_dependencies(toml_io.load_path(path))
+
+
+def read_pyproject_build_requires(path: Path) -> list[Requirement]:
+    """Parse ``path`` and read [build-system].requires from it."""
+    return build_system_requires(toml_io.load_path(path), path)
+
+
+def read_pyproject_name(path: Path) -> str | None:
+    """Parse ``path`` and read [project].name from it."""
+    return project_name(toml_io.load_path(path))
+
+
+def read_pyproject_optional_dependencies(
+    path: Path,
+) -> Mapping[str, Sequence[str]]:
+    """Parse ``path`` and read [project.optional-dependencies] from it."""
+    return project_optional_dependencies(toml_io.load_path(path))
+
+
+def read_pyproject_groups(
+    path: Path,
+) -> Mapping[str, Sequence[str | Mapping[str, str]]]:
+    """Parse ``path`` and read [dependency-groups] from it."""
+    return dependency_groups(toml_io.load_path(path))
