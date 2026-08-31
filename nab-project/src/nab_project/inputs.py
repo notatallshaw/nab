@@ -17,7 +17,7 @@ from nab_provider.policy import (
 from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
 from nab_provider.vcs_admission import VcsConfig
 
-from ._value import ValueType
+from .value import ValueType
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

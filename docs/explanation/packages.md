@@ -21,11 +21,14 @@ cache, the lazy-wheel range reader, the archive and VCS fetchers, and the local
 `file://` index.
 
 `nab-project` is nab's own host: it implements `FetchPort` over `nab-index` in
-`nab_project.fetch.FetchCoordinator`, and adds the `[tool.nab]` config ladder,
-workspace discovery, the PEP 517 build path, the lockfile writer, the
-downloader and the resolve orchestration.
+`nab_project.fetch.FetchCoordinator`, and adds workspace discovery, the PEP 517
+build path, the lockfile writer, the downloader and the resolve orchestration.
+It resolves against a list of targets and a `nab_project.inputs.ResolveInputs`,
+both of which its host supplies.
 
-`nab` is the CLI.
+`nab` is the CLI, and it owns the `[tool.nab]` config ladder in `nab.config`:
+reading the option a project declares, and turning it into the targets and
+inputs nab-project resolves under.
 
 ## How they depend on each other
 
@@ -93,9 +96,9 @@ project path; the provider has none.
 ## Where the vendored packaging fork lives
 
 `nab-provider` carries nab's fork of `packaging` at
-`nab_provider._vendor.packaging`, and `nab-project` reaches into it rather than
-carrying its own copy: it builds `Version`, `Requirement` and `VersionRange`
-objects the provider consumes, and two copies would be two distinct classes
-that `isinstance` and dict keying disagree about.
+`nab_provider._vendor.packaging`, and `nab-project` and `nab.config` reach into
+it rather than carrying their own copy: both build `Version`, `Requirement` and
+`VersionRange` objects the provider consumes, and two copies would be two
+distinct classes that `isinstance` and dict keying disagree about.
 `tasks/check_boundaries.py` forbids every other reach into another package's
-`_vendor`, and lists this one in `VENDOR_ALLOWANCES`.
+`_vendor`, and lists these two in `VENDOR_ALLOWANCES`.

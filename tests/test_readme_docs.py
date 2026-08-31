@@ -12,10 +12,10 @@ from pathlib import Path
 import pytest
 import tomli
 
+from nab.config.ladder import OPTIONS
 from nab_project import _sources as sources
 from nab_project import build_backend
 from nab_project._testing.coordinator_fake import make_coordinator
-from nab_project.config_sources import OPTIONS
 from nab_project.workspace import read_workspace_members
 from nab_provider._provider import build_remote, metadata_resolver
 from nab_provider._vendor.packaging.version import Version

@@ -14,14 +14,28 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
+from nab_project import toml_io
+from nab_project.build_policy import enforce_build_policy_for_targets
+from nab_project.conflicts import (
+    MIN_ENGAGED_MEMBERS,
+    ConflictKind,
+    ConflictPolicy,
+    ConflictSet,
+    conflict_exclusion_groups,
+)
+from nab_project.inputs import ResolveInputs
+from nab_project.paths import realpath
+from nab_project.workspace import (
+    WorkspaceConfig,
+    discover_workspace_root,
+    merge_workspace_local_sources,
+    read_workspace_members,
+    workspace_local_sources,
+)
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import ConfigError
-from nab_provider.errors import (
-    OverrideConflictError as OverrideConflictError,  # noqa: PLC0414  (public re-export)
-)
-from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.policy import (
     ArchiveSource,
     BuildPolicy,
@@ -32,7 +46,7 @@ from nab_provider.policy import (
     ResolveMode,
     VcsSource,
 )
-from nab_provider.records import IndexConfig
+from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
 from nab_provider.target import (
     PLATFORM_MARKERS,
     ResolveTarget,
@@ -43,10 +57,8 @@ from nab_provider.target import (
 )
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy
 
-from . import toml_io
-from ._toml import tool_nab_section
-from .build_policy import enforce_build_policy_for_targets
-from .config_sources import (
+from .hooks import resolve_anchor
+from .ladder import (
     EffectiveValue,
     SourceKind,
     SourceRoots,
@@ -55,26 +67,9 @@ from .config_sources import (
     pyproject_registry_keys,
     read_env_layer,
     reject_user_keys_in_pyproject,
-    resolve_anchor,
     resolve_config,
+    tool_nab_section,
 )
-from .conflicts import (
-    MIN_ENGAGED_MEMBERS,
-    ConflictFork,
-    ConflictKind,
-    ConflictMember,
-    ConflictPolicy,
-    ConflictSelectionError,
-    ConflictSet,
-    conflict_exclusion_groups,
-    conflict_forks,
-    conflict_member_groups,
-    validate_conflict_exclusions,
-    validate_conflict_minimums,
-)
-from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
-from .inputs import ResolveInputs
-from .paths import realpath
 from .values import (
     ENVIRONMENT_KEYS,
     MatrixConfig,
@@ -84,44 +79,22 @@ from .values import (
     parse_requires_python,
     validate_environment_values,
 )
-from .workspace import (
-    WorkspaceConfig,
-    discover_workspace_root,
-    merge_workspace_local_sources,
-    read_workspace_members,
-    workspace_local_sources,
-)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
+    from nab_provider.overrides import IndexOverride, PackageOverride
     from nab_provider.tags import PlatformSpec
 
 
 __all__ = [
     "ConfigError",
-    "ConflictFork",
-    "ConflictKind",
-    "ConflictMember",
-    "ConflictPolicy",
-    "ConflictSelectionError",
-    "ConflictSet",
     "EnvironmentConfig",
-    "IndexOverride",
-    "MatrixConfig",
     "NabProjectConfig",
-    "OverrideConflictError",
-    "PackageOverride",
     "ResolveMode",
-    "conflict_exclusion_groups",
-    "conflict_forks",
-    "conflict_member_groups",
-    "matrix_from_config",
     "plan_targets",
     "read_pyproject_config",
-    "validate_conflict_exclusions",
-    "validate_conflict_minimums",
     "with_python_override",
 ]
 
@@ -242,7 +215,7 @@ def read_pyproject_config(
 
     The ``[tool.nab]``-config portion is sourced from the registry merged
     ladder (pyproject ``[tool.nab]`` plus a project-dir ``nab.toml``,
-    merged by :func:`config_sources.resolve_config` with its per-key merge,
+    merged by :func:`nab.config.ladder.resolve_config` with its per-key merge,
     cross-file conflict check, and category gate), so a project-dir
     ``nab.toml`` value configures the resolve exactly as the inspector
     reports it.  The
@@ -271,14 +244,14 @@ def read_pyproject_config(
     project_requires_python = _read_project_requires_python(document)
     # Point the pyproject root at ``pyproject_dir / path.name`` (not
     # ``realpath(path)``) so the registry's declaring directory is the
-    # symlink's own directory, matching the historical local-sources base
-    # and the project-dir nab.toml lookup.  ``open`` still follows the
-    # symlink, so the same file is read.
+    # symlink's own directory, which is what a relative local-source path
+    # and the project-dir nab.toml lookup resolve against.  ``open`` still
+    # follows the symlink, so the same file is read.
     roots = SourceRoots(project_dir=pyproject_dir, pyproject=pyproject_dir / path.name)
     # Bind the lock anchor so the registry resolves ``P<n>D`` durations
-    # (top-level and override-body) against it, exactly as the old direct
-    # parse did.  System/user nab.toml and env/CLI carry no PROJECT key, so
-    # they are excluded here: this is the file-only project config.
+    # (top-level and override-body) against it.  System/user nab.toml and
+    # env/CLI carry no PROJECT key, so they are excluded here: this is the
+    # file-only project config.
     with resolve_anchor(anchor):
         layers = discover_layers(roots)
         cli_layer = build_cli_layer(cli_overrides or {})
@@ -786,9 +759,9 @@ def _option_label(value: EffectiveValue) -> str:
     value to label by its config key.
     """
     if value.origin.kind is not SourceKind.CLI:
-        return value.spec.key
+        return value.spec.name
     if value.spec.cli_flag is None:
-        msg = f"Bug: {value.spec.key!r} has no CLI flag but carries a CLI origin"
+        msg = f"Bug: {value.spec.name!r} has no CLI flag but carries a CLI origin"
         raise RuntimeError(msg)
     return value.spec.cli_flag
 
@@ -900,7 +873,7 @@ def _read_project_requires_python(document: Mapping[str, Any]) -> str | None:
     project = document.get("project")
     if not isinstance(project, dict) or "requires-python" not in project:
         return None
-    return parse_requires_python(project["requires-python"])
+    return parse_requires_python(project["requires-python"], _PROJECT_REQUIRES_PYTHON)
 
 
 # The deprecated marker-environment keys, per environment axis, in the
@@ -1096,7 +1069,14 @@ def _reject_duplicate_source_names(
     time like every other config error.
     """
     seen: dict[str, str] = {}
-    for source in (*local_sources, *vcs_sources, *archive_sources):
+    # The three types share only SlottedValue, which declares no name, so the
+    # joined tuple needs the element type spelling out.
+    declared: tuple[LocalSource | VcsSource | ArchiveSource, ...] = (
+        *local_sources,
+        *vcs_sources,
+        *archive_sources,
+    )
+    for source in declared:
         canonical = canonicalize_name(source.name)
         if canonical in seen:
             msg = (

@@ -56,6 +56,8 @@ def lower(row: Row) -> Opt:
     if layer is not None:
         fields.update(
             rdefault=layer.rdefault,
+            parse=layer.parse,
+            render=layer.render,
             sample=layer.sample,
             type_label=layer.label or _label(row, read),
         )

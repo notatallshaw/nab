@@ -26,11 +26,11 @@ Four rules:
 ``vendored``
     ``_vendor`` is stricter still: it is off limits to every other package
     and must not be re-exported to make it reachable. ``VENDOR_ALLOWANCES``
-    holds the one exception, nab-project naming
-    ``nab_provider._vendor.packaging``: nab-project builds ``Version``,
+    holds the exceptions, nab-project and ``nab.config`` naming
+    ``nab_provider._vendor.packaging``: both build ``Version``,
     ``Requirement`` and ``VersionRange`` objects the provider consumes, and a
     second copy of the fork is a second set of classes that ``isinstance`` and
-    dict keying disagree about. It goes away once the fork's changes land
+    dict keying disagree about. They go away once the fork's changes land
     upstream.
 
 Only the ``src`` trees are walked, since tests are not shipped and may reach
@@ -76,7 +76,10 @@ REMEDY = (
 
 # (importing package, exact vendored prefix it may name); see ``vendored`` above.
 VENDOR_ALLOWANCES: frozenset[tuple[str, str]] = frozenset(
-    {("nab_project", "nab_provider._vendor.packaging")}
+    {
+        ("nab", "nab_provider._vendor.packaging"),
+        ("nab_project", "nab_provider._vendor.packaging"),
+    }
 )
 
 # Packages whose docstring publishes a supported-path table. Listed so a table

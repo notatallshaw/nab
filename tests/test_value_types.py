@@ -1,6 +1,6 @@
 """The hand-written value types of the ``[tool.nab]`` surface.
 
-They subclass :class:`nab_project._value.ValueType` rather than applying
+They subclass :class:`nab_project.value.ValueType` rather than applying
 ``@dataclass(slots=True)``, so field order, equality, hashing, repr and the
 defaults are pinned here instead of left to the decorator.
 """
@@ -15,27 +15,27 @@ from typing import Any, NamedTuple
 
 import pytest
 
-from nab_project import config, config_sources, conflicts, inputs, values
-from nab_project._value import ValueType
-from nab_project.config import (
+from nab.config import hooks, ladder, model, values
+from nab.config.ladder import (
+    EffectiveValue,
+    Layer,
+    Origin,
+    RejectedLayer,
+    SourceKind,
+    SourceRoots,
+)
+from nab.config.values import MatrixConfig
+from nab.optiondefs import Kind, Opt, Scope, VType
+from nab_project import conflicts, inputs
+from nab_project.conflicts import (
     ConflictFork,
     ConflictKind,
     ConflictMember,
     ConflictPolicy,
     ConflictSet,
-    MatrixConfig,
-)
-from nab_project.config_sources import (
-    EffectiveValue,
-    Layer,
-    OptionSpec,
-    Origin,
-    RejectedLayer,
-    Scope,
-    SourceKind,
-    SourceRoots,
 )
 from nab_project.inputs import ResolveInputs
+from nab_project.value import ValueType
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.policy import (
@@ -60,6 +60,25 @@ def _render(value: Any) -> str:
     return str(value)
 
 
+def _option(name: str) -> Opt:
+    """A layered row, the kind :data:`nab.config.ladder.OPTIONS` holds."""
+    return Opt(
+        name,
+        scope=Scope.PROJECT,
+        kind=Kind.VALUE,
+        vtype=VType.CHOICE,
+        choices=("specific", "universal"),
+        commands=("lock",),
+        default=None,
+        rdefault="specific",
+        parse=_parse,
+        render=_render,
+        type_label="enum(specific|universal)",
+        help="which resolve the project wants",
+        docs="reference/configuration.md",
+    )
+
+
 def _round_trip_pickle(instance: Any) -> Any:
     """A pickled and restored copy of ``instance``."""
     return pickle.loads(pickle.dumps(instance))  # noqa: S301
@@ -74,17 +93,7 @@ PACKAGE_OVERRIDE = PackageOverride(
 
 ORIGIN = Origin(SourceKind.PYPROJECT, "/p/pyproject.toml")
 OTHER_ORIGIN = Origin(SourceKind.USER_TOML, "/u/nab.toml")
-SPEC = OptionSpec(
-    key="mode",
-    scope=Scope.PROJECT,
-    type_label="enum(specific|universal)",
-    default="specific",
-    env_var="NAB_MODE",
-    cli_flag="--project-mode",
-    cli_param="project_mode",
-    parse=_parse,
-    render=_render,
-)
+SPEC = _option("mode")
 
 
 class Case(NamedTuple):
@@ -162,31 +171,6 @@ CASES = [
         },
     ),
     Case(
-        OptionSpec,
-        {
-            "key": "mode",
-            "scope": Scope.PROJECT,
-            "type_label": "enum(specific|universal)",
-            "default": "specific",
-            "env_var": "NAB_MODE",
-            "cli_flag": "--project-mode",
-            "cli_param": "project_mode",
-            "parse": _parse,
-            "render": _render,
-        },
-        {
-            "key": "resolution",
-            "scope": Scope.USER,
-            "type_label": "str",
-            "default": "universal",
-            "env_var": None,
-            "cli_flag": None,
-            "cli_param": None,
-            "parse": _render,
-            "render": _parse,
-        },
-    ),
-    Case(
         Origin,
         {"kind": SourceKind.PYPROJECT, "label": "/p/pyproject.toml"},
         {"kind": SourceKind.USER_TOML, "label": "/u/nab.toml"},
@@ -212,17 +196,7 @@ CASES = [
             "rejected": (RejectedLayer(ORIGIN, "mode", "unknown"),),
         },
         {
-            "spec": OptionSpec(
-                key="resolution",
-                scope=Scope.USER,
-                type_label="str",
-                default="highest",
-                env_var=None,
-                cli_flag=None,
-                cli_param=None,
-                parse=_parse,
-                render=_render,
-            ),
+            "spec": _option("resolution"),
             "value": "universal",
             "origin": OTHER_ORIGIN,
             "stack": (),
@@ -339,7 +313,7 @@ def test_the_cases_cover_every_value_type() -> None:
     """A subclass these modules name and ``CASES`` omits would go unchecked."""
     declared = {
         obj
-        for module in (config, config_sources, conflicts, inputs, values)
+        for module in (hooks, ladder, model, values, conflicts, inputs)
         for obj in vars(module).values()
         if isinstance(obj, type) and issubclass(obj, ValueType) and obj is not ValueType
     }
@@ -441,6 +415,23 @@ def test_an_undeclared_name_cannot_be_set(case: Case) -> None:
         case.build().unknown = 1  # type: ignore[attr-defined]
 
 
+def _comparable(instance: ValueType) -> object:
+    """``instance``, or a field map when it holds a declaration row.
+
+    ``EffectiveValue`` holds an :class:`~nab.optiondefs.Opt`, which carries no
+    equality of its own, so a copied one compares equal to nothing.  Reading
+    its slots out compares the row a copy produced field by field; every other
+    case compares with :meth:`~nab_project.value.ValueType.__eq__`.
+    """
+    if not isinstance(instance, EffectiveValue):
+        return instance
+    fields: dict[str, Any] = {
+        name: getattr(instance, name) for name in instance.__match_args__
+    }
+    fields["spec"] = {name: getattr(instance.spec, name) for name in Opt.__slots__}
+    return fields
+
+
 @BY_ID
 def test_copying_and_unpickling_restore_every_field(case: Case) -> None:
     """All three rebuild an instance from its slots, with no state hook of its own."""
@@ -454,7 +445,7 @@ def test_copying_and_unpickling_restore_every_field(case: Case) -> None:
     for other in restored:
         assert other is not instance
         assert type(other) is case.cls
-        assert other == instance
+        assert _comparable(other) == _comparable(instance)
 
 
 @pytest.mark.parametrize(

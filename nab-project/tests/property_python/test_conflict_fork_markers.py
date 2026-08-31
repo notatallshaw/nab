@@ -35,7 +35,7 @@ if sys.version_info >= (3, 11):
 else:  # pragma: no cover - 3.10 fallback
     import tomli as tomllib  # type: ignore[no-redef]
 
-from nab_project.config import (
+from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
     ConflictPolicy,

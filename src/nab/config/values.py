@@ -1,8 +1,9 @@
 """Parse the values ``[tool.nab]`` keys carry.
 
-Shared by the whole-file parse in :mod:`nab_project.config` and the per-layer
-registry in :mod:`nab_project.config_sources`, so both reject a bad value with
-the same wording.
+A parser takes the raw TOML, env or CLI value and the ``where`` its source
+names it by, so one wording serves every rung of the ladder: a bad
+``max-concurrency`` is refused in the same words whether ``nab.toml``,
+``NAB_MAX_CONCURRENCY`` or ``--max-concurrency`` set it, each naming itself.
 """
 
 from __future__ import annotations
@@ -11,11 +12,21 @@ import itertools
 import re
 from collections import defaultdict
 from datetime import datetime, timedelta
+from pathlib import Path
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 from urllib.parse import urlsplit
 
 from nab_index.local_index import is_file_url
+from nab_project.conflicts import (
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSet,
+)
+from nab_project.paths import is_usable_path_name, resolve_path
+from nab_project.value import ValueType
+from nab_project.workspace import WorkspaceConfig
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider._vendor.packaging.version import Version
@@ -27,8 +38,11 @@ from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import (
     ArchiveSource,
     BuildPolicy,
+    DecisionOrder,
     DistPolicy,
     LocalSource,
+    ResolutionStrategy,
+    ResolveMode,
     VcsSource,
 )
 from nab_provider.records import IndexConfig
@@ -44,15 +58,9 @@ from nab_provider.tags import (
 from nab_provider.target import PLATFORM_MARKERS, Matrix
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 
-from ._value import ValueType
-from .conflicts import ConflictKind, ConflictMember, ConflictPolicy, ConflictSet
-from .paths import resolve_path
-from .workspace import WorkspaceConfig
-
 if TYPE_CHECKING:
     import enum
     from collections.abc import Iterator, Mapping, Sequence
-    from pathlib import Path
 
     from nab_provider._vendor.packaging.requirements import Requirement
 
@@ -61,15 +69,19 @@ __all__ = [
     "DURATION_PATTERN",
     "ENVIRONMENT_KEYS",
     "MatrixConfig",
+    "SourceConfigError",
     "check_package_override_overlap",
     "environment_platform_spec",
     "matrix_from_config",
     "parse_archive_sources",
     "parse_base_group",
     "parse_build_group",
+    "parse_build_policy",
     "parse_conflicts",
     "parse_constraints",
-    "parse_dist_policy_global",
+    "parse_decision_order",
+    "parse_default_groups",
+    "parse_dist_policy",
     "parse_enum",
     "parse_environment",
     "parse_index_overrides",
@@ -77,9 +89,11 @@ __all__ = [
     "parse_local_sources",
     "parse_marker_environment",
     "parse_matrix",
+    "parse_mode",
     "parse_package_rules",
     "parse_packages_sugar",
     "parse_requires_python",
+    "parse_resolution",
     "parse_string_list",
     "parse_uploaded_prior_to",
     "parse_vcs",
@@ -87,6 +101,18 @@ __all__ = [
     "parse_workspace",
     "validate_environment_values",
 ]
+
+
+class SourceConfigError(ConfigError):
+    """A configuration source set a value nab refused.
+
+    Raised for a value's own grammar by the parsers here, and by the ladder
+    for the category gate over them (a project-scope option in a user
+    ``nab.toml``, a user-scope option in ``pyproject.toml`` ``[tool.nab]``).
+    A subclass of :class:`ConfigError`, so a caller catching the broad config
+    error catches these too, while ``except SourceConfigError`` still narrows
+    to what a source declared.
+    """
 
 
 DURATION_PATTERN = re.compile(r"^P(\d+)D$")
@@ -159,16 +185,16 @@ def matrix_from_config(matrix: MatrixConfig) -> Matrix:
     )
 
 
-def parse_string_list(key: str, value: object) -> tuple[str, ...]:
-    """Read ``key`` as an array of strings, naming the index of a non-string."""
+def parse_string_list(value: object, where: str) -> tuple[str, ...]:
+    """Read ``value`` as an array of strings, naming the index of a non-string."""
     if not isinstance(value, list):
-        msg = f"{key} must be a list of strings, got {type(value).__name__}"
-        raise ConfigError(msg)
+        msg = f"{where} must be a list of strings, got {type(value).__name__}"
+        raise SourceConfigError(msg)
     out: list[str] = []
     for i, item in enumerate(value):
         if not isinstance(item, str):
-            msg = f"{key}[{i}] must be a string, got {type(item).__name__}"
-            raise ConfigError(msg)
+            msg = f"{where}[{i}] must be a string, got {type(item).__name__}"
+            raise SourceConfigError(msg)
         out.append(item)
     return tuple(out)
 
@@ -186,74 +212,79 @@ def _require_constraint(key: str, item: str) -> None:
         req.specifier.to_range()
     except ValueError as exc:
         msg = f"{key} is not a valid requirement: {exc}"
-        raise ConfigError(msg) from exc
+        raise SourceConfigError(msg) from exc
 
     if req.extras:
         msg = f"{key} cannot have extras: {item}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
 
     if req.url is not None:
         msg = f"{key} cannot be a direct reference (URL): {item}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
 
 
-def parse_constraints(value: object) -> tuple[str, ...]:
+def parse_constraints(value: object, where: str) -> tuple[str, ...]:
     """Read ``constraints`` as PEP 508 strings, rejecting a direct reference."""
-    items = parse_string_list("constraints", value)
+    items = parse_string_list(value, where)
     for i, item in enumerate(items):
-        _require_constraint(f"constraints[{i}]", item)
+        _require_constraint(f"{where}[{i}]", item)
     return items
 
 
-def _reject_duplicates(key: str, items: tuple[str, ...]) -> None:
+def parse_default_groups(value: object, where: str) -> tuple[str, ...]:
+    """Read ``default-groups`` as the group names a run selects by default."""
+    return parse_string_list(value, where)
+
+
+def _reject_duplicates(where: str, items: tuple[str, ...]) -> None:
     seen: set[str] = set()
     for item in items:
         if item in seen:
-            msg = f"{key} has duplicate entry: {item!r}"
-            raise ConfigError(msg)
+            msg = f"{where} has duplicate entry: {item!r}"
+            raise SourceConfigError(msg)
         seen.add(item)
 
 
-def _parse_string_value(key: str, value: object) -> str:
+def _parse_string_value(where: str, value: object) -> str:
     if not isinstance(value, str):
-        msg = f"{key} must be a string, got {type(value).__name__}"
-        raise ConfigError(msg)
+        msg = f"{where} must be a string, got {type(value).__name__}"
+        raise SourceConfigError(msg)
     return value
 
 
-def parse_base_group(value: object) -> str | None:
+def parse_base_group(value: object, where: str) -> str | None:
     """Parse ``[tool.nab].base-group`` as a PEP 735 group name.
 
     Names the group a lock gives the project's own dependencies, so an
     installer can ask for one group without them.  Unset leaves them
     unconditional.
     """
-    raw = _parse_string_value("base-group", value)
+    raw = _parse_string_value(where, value)
     try:
         canonical = canonicalize_name(raw, validate=True)
     except InvalidName as e:
-        msg = f"base-group {raw!r} is not a valid group name: {e}"
-        raise ConfigError(msg) from e
+        msg = f"{where} {raw!r} is not a valid group name: {e}"
+        raise SourceConfigError(msg) from e
     return str(canonical)
 
 
-def parse_build_group(value: object) -> str | None:
+def parse_build_group(value: object, where: str) -> str | None:
     """Parse ``[tool.nab].build-group`` as a PEP 735 group name.
 
     Names the group a lock gives ``[build-system].requires``, so one lock
     can describe the environment the project is built in as well as the
     one it runs in.  Unset, a lock says nothing about how it is built.
     """
-    raw = _parse_string_value("build-group", value)
+    raw = _parse_string_value(where, value)
     try:
         canonical = canonicalize_name(raw, validate=True)
     except InvalidName as e:
-        msg = f"build-group {raw!r} is not a valid group name: {e}"
-        raise ConfigError(msg) from e
+        msg = f"{where} {raw!r} is not a valid group name: {e}"
+        raise SourceConfigError(msg) from e
     return str(canonical)
 
 
-def parse_requires_python(value: object) -> str | None:
+def parse_requires_python(value: object, where: str) -> str | None:
     """Parse ``[tool.nab].requires-python`` as a PEP 440 specifier.
 
     A declaration, not a target: it is recorded as the lock's top-level
@@ -265,20 +296,20 @@ def parse_requires_python(value: object) -> str | None:
     versions like ``"3.13"``; those are not valid specifiers and must be
     written ``"==3.13"`` or ``">=3.13"``.
     """
-    raw = _parse_string_value("requires-python", value)
+    raw = _parse_string_value(where, value)
     try:
         # a specifier defers parsing its versions; to_range() forces it
         SpecifierSet(raw).to_range()
     except ValueError as exc:
         msg = (
-            f"requires-python must be a PEP 440 specifier, got {raw!r}."
+            f"{where} must be a PEP 440 specifier, got {raw!r}."
             "  Did you mean ==X.Y or >=X.Y?"
         )
-        raise ConfigError(msg) from exc
+        raise SourceConfigError(msg) from exc
     return raw
 
 
-def parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime:
+def parse_uploaded_prior_to(value: object, where: str, *, anchor: datetime) -> datetime:
     """Parse ``uploaded-prior-to`` (ISO datetime, TOML datetime, or ``P<n>D``).
 
     Naive datetimes are rejected so lockfiles read identically across
@@ -289,20 +320,20 @@ def parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime:
     if isinstance(value, datetime):
         if value.tzinfo is None:
             msg = (
-                "uploaded-prior-to TOML datetime must have an explicit"
+                f"{where} TOML datetime must have an explicit"
                 " timezone offset (e.g. ``Z`` or ``+00:00``); got"
                 f" {value!r}"
             )
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
         return value
 
     if not isinstance(value, str):
         msg = (
-            "uploaded-prior-to must be a TOML offset-date-time, an ISO"
+            f"{where} must be a TOML offset-date-time, an ISO"
             " 8601 datetime string with timezone, or a 'PnD' duration;"
             f" got {type(value).__name__}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
 
     duration_match = DURATION_PATTERN.match(value)
     if duration_match is not None:
@@ -310,32 +341,32 @@ def parse_uploaded_prior_to(value: object, *, anchor: datetime) -> datetime:
         try:
             return anchor - timedelta(days=int(duration_match.group(1)))
         except (OverflowError, ValueError):
-            msg = f"uploaded-prior-to duration is too large: {value!r}"
-            raise ConfigError(msg) from None
+            msg = f"{where} duration is too large: {value!r}"
+            raise SourceConfigError(msg) from None
     try:
         dt = parse_iso_datetime(value)
     except ValueError as exc:
         msg = (
-            "uploaded-prior-to must be an ISO 8601 datetime with"
+            f"{where} must be an ISO 8601 datetime with"
             " timezone (e.g. '2026-05-01T00:00:00Z') or a 'PnD'"
             f" duration (e.g. 'P4D'); got {value!r}"
         )
-        raise ConfigError(msg) from exc
+        raise SourceConfigError(msg) from exc
     if dt.tzinfo is None:
         msg = (
-            "uploaded-prior-to ISO datetime must include an explicit"
+            f"{where} ISO datetime must include an explicit"
             " timezone offset (e.g. 'Z' or '+00:00'); got"
             f" {value!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     return dt
 
 
 _DIST_POLICY_TABLE_KEYS = frozenset({"policy", "trust-unverified-deps"})
 
 
-def parse_dist_policy_global(value: object) -> tuple[DistPolicy, bool]:
-    """Parse the global ``dist-policy``: an enum string or a policy table.
+def parse_dist_policy(value: object, where: str) -> tuple[DistPolicy, bool]:
+    """Parse ``dist-policy``: an enum string or a policy table.
 
     The table form ``{ policy = "...", trust-unverified-deps = bool }``
     folds the sdist-trust flag into the dist body.  Returns
@@ -343,24 +374,24 @@ def parse_dist_policy_global(value: object) -> tuple[DistPolicy, bool]:
     """
     if not isinstance(value, dict):
         return (
-            parse_enum("dist-policy", value, DistPolicy, DistPolicy.WHEEL_OR_SDIST),
+            parse_enum(value, where, DistPolicy, DistPolicy.WHEEL_OR_SDIST),
             False,
         )
     unknown = sorted(set(value) - _DIST_POLICY_TABLE_KEYS)
     if unknown:
         msg = (
-            f"dist-policy table has unknown key(s) {unknown!r};"
+            f"{where} table has unknown key(s) {unknown!r};"
             f" expected {sorted(_DIST_POLICY_TABLE_KEYS)!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     if "policy" not in value:
-        msg = "dist-policy table must set 'policy'"
-        raise ConfigError(msg)
+        msg = f"{where} table must set 'policy'"
+        raise SourceConfigError(msg)
     policy = parse_enum(
-        "dist-policy.policy", value["policy"], DistPolicy, DistPolicy.WHEEL_OR_SDIST
+        value["policy"], f"{where}.policy", DistPolicy, DistPolicy.WHEEL_OR_SDIST
     )
     trust = _parse_bool(
-        "dist-policy.trust-unverified-deps",
+        f"{where}.trust-unverified-deps",
         value.get("trust-unverified-deps"),
         default=False,
     )
@@ -372,58 +403,174 @@ def _parse_bool(key: str, value: object, *, default: bool) -> bool:
         return default
     if not isinstance(value, bool):
         msg = f"{key} must be a boolean, got {type(value).__name__}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     return value
 
 
+# The bound is a string so ``enum`` can stay a typing-only import.
+_EnumT = TypeVar("_EnumT", bound="enum.Enum")
+
+
 def parse_enum(
-    key: str,
     value: object,
-    enum_cls: type[enum.Enum],
-    default: enum.Enum,
-) -> Any:
-    """Read ``key`` as one of ``enum_cls``'s values, or ``default`` when unset."""
+    where: str,
+    enum_cls: type[_EnumT],
+    default: _EnumT,
+) -> _EnumT:
+    """Read ``value`` as one of ``enum_cls``'s values, or ``default`` when unset."""
     if value is None:
         return default
     if not isinstance(value, str):
-        msg = f"{key} must be a string, got {type(value).__name__}"
-        raise ConfigError(msg)
+        msg = f"{where} must be a string, got {type(value).__name__}"
+        raise SourceConfigError(msg)
+
     try:
-        return enum_cls(value)
+        # Spelled through ``__call__`` because zuban reads ``enum_cls(value)``
+        # as the functional ``Enum("Name", ...)`` API and asks for a literal.
+        return enum_cls.__call__(value)
     except ValueError as exc:
         valid = sorted(m.value for m in enum_cls)
-        msg = f"{key} must be one of {valid!r}, got {value!r}"
-        raise ConfigError(msg) from exc
+        msg = f"{where} must be one of {valid!r}, got {value!r}"
+        raise SourceConfigError(msg) from exc
 
 
-def parse_marker_environment(value: object) -> dict[str, str]:
+def parse_bool(value: object, where: str) -> bool:
+    """Parse a TOML/env boolean.
+
+    Accepts a real bool (TOML) or one of ``1/0/true/false`` (env,
+    case-insensitive).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true"}:
+            return True
+        if lowered in {"0", "false"}:
+            return False
+        msg = f"{where} must be one of 1/0/true/false, got {value!r}"
+        raise SourceConfigError(msg)
+    msg = f"{where} must be a boolean, got {type(value).__name__}"
+    raise SourceConfigError(msg)
+
+
+def parse_path(value: object, where: str) -> Path:
+    """Return the ``cache-dir`` row's value as a path."""
+    # A CLI layer already supplies a Path; TOML/env supply a string.
+    if isinstance(value, Path):
+        return value
+    if not isinstance(value, str):
+        msg = f"{where} must be a string path, got {type(value).__name__}"
+        raise SourceConfigError(msg)
+    if not value.strip():
+        # An empty NAB_CACHE_DIR would resolve Path("") to the cwd; reject
+        # it instead.
+        msg = f"{where} must be a non-empty path"
+        raise SourceConfigError(msg)
+    if not is_usable_path_name(value):
+        msg = f"{where} {value!r} is not a usable filesystem path"
+        raise SourceConfigError(msg)
+    return Path(value)
+
+
+HTTP_BACKENDS = ("urllib3", "httpx")
+
+
+def parse_http_backend(value: object, where: str) -> str:
+    """Return the ``http-backend`` row's backend name."""
+    if not isinstance(value, str):
+        msg = f"{where} must be a string, got {type(value).__name__}"
+        raise SourceConfigError(msg)
+    lowered = value.strip()
+    if lowered not in HTTP_BACKENDS:
+        msg = f"{where} must be one of {list(HTTP_BACKENDS)!r}, got {value!r}"
+        raise SourceConfigError(msg)
+    return lowered
+
+
+def parse_max_concurrency(value: object, where: str) -> int:
+    """Return the ``max-concurrency`` row's positive count."""
+    # TOML supplies an int; env/CLI supply a string.  bool is an int
+    # subclass, so reject it explicitly rather than read True as 1.
+    if isinstance(value, bool):
+        msg = f"{where} must be an integer, got {type(value).__name__}"
+        raise SourceConfigError(msg)
+    if isinstance(value, int):
+        result = value
+    elif isinstance(value, str):
+        try:
+            result = int(value)
+        except ValueError as exc:
+            msg = f"{where} must be an integer, got {value!r}"
+            raise SourceConfigError(msg) from exc
+    else:
+        msg = f"{where} must be an integer, got {type(value).__name__}"
+        raise SourceConfigError(msg)
+    if result < 1:
+        msg = f"{where} must be at least 1, got {result}"
+        raise SourceConfigError(msg)
+    return result
+
+
+def parse_build_requires_depth(value: object, where: str) -> int:
+    """Read ``build-requires-depth``: how deep a build environment may nest."""
+    # bool is an int subclass, so reject it rather than read True as 1.
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        msg = (
+            f"{where} must be a non-negative integer number of nested build"
+            f" environments, got {value!r}"
+        )
+        raise SourceConfigError(msg)
+    return value
+
+
+def parse_mode(value: object, where: str) -> ResolveMode:
+    """Read ``mode``: resolve for one environment, or across a matrix."""
+    return parse_enum(value, where, ResolveMode, ResolveMode.SPECIFIC)
+
+
+def parse_resolution(value: object, where: str) -> ResolutionStrategy:
+    """Read ``resolution``: which end of a range a candidate is taken from."""
+    return parse_enum(value, where, ResolutionStrategy, ResolutionStrategy.HIGHEST)
+
+
+def parse_build_policy(value: object, where: str) -> BuildPolicy:
+    """Read ``build-policy``: when nab may build an sdist.
+
+    The plain last-wins value only.  The host-build gate that forces never
+    for a declared target runs over the merged config, not here.
+    """
+    return parse_enum(value, where, BuildPolicy, BuildPolicy.BUILD_LOCAL)
+
+
+def parse_decision_order(value: object, where: str) -> DecisionOrder:
+    """Read ``decision-order``: the order the resolver decides packages in."""
+    return parse_enum(value, where, DecisionOrder, DecisionOrder.ARRIVAL)
+
+
+def parse_marker_environment(value: object, where: str) -> dict[str, str]:
     """Read ``marker-environment``, a table of PEP 508 marker variables to strings."""
     if not isinstance(value, dict):
-        msg = (
-            "marker-environment must be a table of string -> string,"
-            f" got {type(value).__name__}"
-        )
-        raise ConfigError(msg)
+        msg = f"{where} must be a table of string -> string, got {type(value).__name__}"
+        raise SourceConfigError(msg)
     out: dict[str, str] = {}
     for k, v in value.items():
         if not isinstance(k, str) or not isinstance(v, str):
-            msg = (
-                f"marker-environment entries must be string -> string, got {k!r}: {v!r}"
-            )
-            raise ConfigError(msg)
+            msg = f"{where} entries must be string -> string, got {k!r}: {v!r}"
+            raise SourceConfigError(msg)
         if k not in _PEP508_MARKER_VARIABLES:
             valid = sorted(_PEP508_MARKER_VARIABLES)
             msg = (
-                f"unknown marker-environment variable {k!r}; expected a PEP 508"
+                f"{where} has unknown variable {k!r}; expected a PEP 508"
                 f" marker variable, one of {valid!r}"
             )
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
         if k in _VERSION_MARKER_VARIABLES:
             try:
                 Version(v)
             except ValueError as exc:
-                msg = f"marker-environment.{k} must be a PEP 440 version, got {v!r}"
-                raise ConfigError(msg) from exc
+                msg = f"{where}.{k} must be a PEP 440 version, got {v!r}"
+                raise SourceConfigError(msg) from exc
         out[k] = v
     return out
 
@@ -431,7 +578,7 @@ def parse_marker_environment(value: object) -> dict[str, str]:
 ENVIRONMENT_KEYS = frozenset({"python", "platform", "implementation"})
 
 
-def parse_environment(value: object) -> dict[str, Any]:
+def parse_environment(value: object, where: str) -> dict[str, Any]:
     """Parse ``[tool.nab.environment]``: the one environment to resolve for.
 
     Kept as the raw table so the registry merges it sub-key by sub-key
@@ -440,19 +587,17 @@ def parse_environment(value: object) -> dict[str, Any]:
     of the wheel-tag knobs, so a dict value passes through here.
     """
     if not isinstance(value, dict):
-        msg = f"[tool.nab.environment] must be a table, got {type(value).__name__}"
-        raise ConfigError(msg)
+        msg = f"{where} must be a table, got {type(value).__name__}"
+        raise SourceConfigError(msg)
     unknown = sorted(set(value) - ENVIRONMENT_KEYS)
     if unknown:
         msg = (
-            f"unknown [tool.nab.environment] keys: {unknown!r};"
+            f"{where} has unknown keys: {unknown!r};"
             f" expected {sorted(ENVIRONMENT_KEYS)!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     out: dict[str, Any] = {
-        key: item
-        if key == "platform"
-        else _parse_string_value(f"environment.{key}", item)
+        key: item if key == "platform" else _parse_string_value(f"{where}.{key}", item)
         for key, item in value.items()
     }
     validate_environment_values(out)
@@ -472,7 +617,7 @@ def environment_platform_spec(value: object) -> PlatformSpec:
     if isinstance(value, dict):
         return _parse_platform_table(where, cast("dict[str, Any]", value))
     msg = f"{where} must be a platform id or a table, got {type(value).__name__}"
-    raise ConfigError(msg)
+    raise SourceConfigError(msg)
 
 
 def validate_environment_values(environment: Mapping[str, Any]) -> None:
@@ -491,7 +636,7 @@ def validate_environment_values(environment: Mapping[str, Any]) -> None:
                 "environment.python must be a version like '3.12' or"
                 f" '3.12.4', got {python!r}"
             )
-            raise ConfigError(msg) from exc
+            raise SourceConfigError(msg) from exc
     platform = environment.get("platform")
     if platform is not None:
         platform_id = environment_platform_spec(platform).platform_id
@@ -501,7 +646,7 @@ def validate_environment_values(environment: Mapping[str, Any]) -> None:
                 f"unknown environment.platform {platform_id!r};"
                 f" expected one of {valid!r}"
             )
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
     implementation = environment.get("implementation")
     if implementation is not None and implementation not in _KNOWN_IMPLEMENTATIONS:
         valid = list(_KNOWN_IMPLEMENTATIONS)
@@ -509,7 +654,7 @@ def validate_environment_values(environment: Mapping[str, Any]) -> None:
             f"unknown environment.implementation {implementation!r};"
             f" expected one of {valid!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
 
 
 _NAME_URL_KEYS = frozenset({"name", "url"})
@@ -518,69 +663,72 @@ _NAME_URL_KEYS = frozenset({"name", "url"})
 class _NameUrlTable(NamedTuple):
     """One checked entry of a ``name``/``url`` array of tables.
 
-    ``table`` is the raw entry, for a caller that reads further keys.
+    ``table`` is the raw entry, for a caller that reads further keys.  The
+    ordinal is ``position`` because ``index`` would shadow ``tuple.index``.
     """
 
-    index: int
+    position: int
     name: str
     url: str
     table: dict[str, Any]
 
 
 def _iter_name_url_tables(
-    label: str, value: object, *, keys: frozenset[str] = _NAME_URL_KEYS
+    where: str, value: object, *, keys: frozenset[str] = _NAME_URL_KEYS
 ) -> Iterator[_NameUrlTable]:
     """Yield each entry of a ``name``/``url`` array of tables, rejecting bad ones.
 
     Lazy, so a caller's own check on an entry runs before the next is checked.
     """
     if not isinstance(value, list):
-        msg = f"{label} must be an array of tables, got {type(value).__name__}"
-        raise ConfigError(msg)
+        msg = f"{where} must be an array of tables, got {type(value).__name__}"
+        raise SourceConfigError(msg)
 
     for i, entry in enumerate(value):
         if not isinstance(entry, dict):
-            msg = f"{label}[{i}] must be a table, got {type(entry).__name__}"
-            raise ConfigError(msg)
+            msg = f"{where}[{i}] must be a table, got {type(entry).__name__}"
+            raise SourceConfigError(msg)
 
         unknown = sorted(set(entry) - keys)
         if unknown:
-            msg = f"unknown {label}[{i}] keys: {unknown!r}; expected {sorted(keys)!r}"
-            raise ConfigError(msg)
+            msg = (
+                f"{where}[{i}] has unknown keys: {unknown!r}; expected {sorted(keys)!r}"
+            )
+            raise SourceConfigError(msg)
 
         try:
             name = entry["name"]
             url = entry["url"]
         except KeyError as missing:
-            msg = f"{label}[{i}] missing required key {missing!s}"
-            raise ConfigError(msg) from None
+            msg = f"{where}[{i}] missing required key {missing!s}"
+            raise SourceConfigError(msg) from None
 
         if not isinstance(name, str) or not isinstance(url, str):
-            msg = f"{label}[{i}] name and url must be strings"
-            raise ConfigError(msg)
+            msg = f"{where}[{i}] name and url must be strings"
+            raise SourceConfigError(msg)
 
-        yield _NameUrlTable(index=i, name=name, url=url, table=entry)
+        yield _NameUrlTable(position=i, name=name, url=url, table=entry)
 
 
 _INDEX_KEYS = frozenset({"name", "url", "serialization"})
 
 
-def parse_indexes(value: object) -> tuple[IndexConfig, ...]:
+def parse_indexes(value: object, where: str) -> tuple[IndexConfig, ...]:
     """Read one file's ``indexes`` array of tables, names checked for uniqueness."""
     out: list[IndexConfig] = []
-    for entry in _iter_name_url_tables("indexes", value, keys=_INDEX_KEYS):
+    for entry in _iter_name_url_tables(where, value, keys=_INDEX_KEYS):
         if "serialization" in entry.table and is_file_url(entry.url):
             msg = (
-                f"indexes[{entry.index}].serialization is not settable on a"
+                f"{where}[{entry.position}].serialization is not settable on a"
                 " file:// index: a local index is read from disk with no"
                 " Accept negotiation, so the pin would do nothing."
                 f"  Drop it from index {entry.name!r}."
             )
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
 
         serialization = parse_enum(
-            f"indexes[{entry.index}].serialization",
             entry.table.get("serialization"),
+            f"{where}[{entry.position}].serialization",
             SimpleSerialization,
             SimpleSerialization.NEGOTIATE,
         )
@@ -589,8 +737,8 @@ def parse_indexes(value: object) -> tuple[IndexConfig, ...]:
         )
 
     if not out:
-        msg = "indexes must contain at least one entry when present"
-        raise ConfigError(msg)
+        msg = f"{where} must contain at least one entry when present"
+        raise SourceConfigError(msg)
 
     _check_index_name_uniqueness(out)
     return tuple(out)
@@ -602,7 +750,7 @@ def _check_index_name_uniqueness(indexes: Sequence[IndexConfig]) -> None:
     for index in indexes:
         if index.name in seen:
             msg = f"duplicate index name: {index.name!r}"
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
         seen.add(index.name)
 
 
@@ -646,6 +794,7 @@ _PACKAGE_POLICY_FIELDS = (
 
 def parse_packages_sugar(
     value: object,
+    where: str,
     *,
     anchor: datetime,
 ) -> list[PackageOverride]:
@@ -658,37 +807,36 @@ def parse_packages_sugar(
     """
     if isinstance(value, list):
         msg = (
-            "[tool.nab.packages] is the name-keyed table form"
-            " ([tool.nab.packages.<name>]); for one body across several"
-            " requirements use [[tool.nab.package-rules]] with match = [...]"
+            f"{where} is the name-keyed table form ([tool.nab.packages.<name>]);"
+            " for one body across several requirements use"
+            " [[tool.nab.package-rules]] with match = [...]"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     if not isinstance(value, dict):
         msg = (
-            "[tool.nab.packages] must be a table keyed by package name, got"
-            f" {type(value).__name__}"
+            f"{where} must be a table keyed by package name, got {type(value).__name__}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     out: list[PackageOverride] = []
     for key, body in value.items():
-        where = f"packages.{key!r}"
-        requirement = _requirement_from_selector(key, where)
+        entry = f"{where}.{key!r}"
+        requirement = _requirement_from_selector(key, entry)
         if not isinstance(body, dict):
-            msg = f"{where} must be a table, got {type(body).__name__}"
-            raise ConfigError(msg)
-        _reject_deferred(body, where)
+            msg = f"{entry} must be a table, got {type(body).__name__}"
+            raise SourceConfigError(msg)
+        _reject_deferred(body, entry)
         unknown = sorted(set(body) - _PACKAGE_OVERRIDE_BODY_KEYS)
         if unknown:
             msg = (
-                f"{where}: unknown override key(s) {unknown!r}; expected body"
+                f"{entry}: unknown override key(s) {unknown!r}; expected body"
                 f" keys {sorted(_PACKAGE_OVERRIDE_BODY_KEYS)!r}"
             )
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
         out.extend(
             _build_package_overrides(
                 (requirement,),
                 body,
-                where,
+                entry,
                 anchor=anchor,
                 name_keyed=True,
             )
@@ -698,6 +846,7 @@ def parse_packages_sugar(
 
 def parse_package_rules(
     value: object,
+    where: str,
     *,
     anchor: datetime,
 ) -> list[PackageOverride]:
@@ -710,27 +859,28 @@ def parse_package_rules(
     """
     if not isinstance(value, list):
         msg = (
-            "[tool.nab.package-rules] must be an array of tables"
-            " ([[tool.nab.package-rules]]); for per-package policy keyed by"
-            f" name use [tool.nab.packages.<name>].  Got {type(value).__name__}"
+            f"{where} must be an array of tables ([[tool.nab.package-rules]]);"
+            " for per-package policy keyed by name use"
+            f" [tool.nab.packages.<name>].  Got {type(value).__name__}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     out: list[PackageOverride] = []
     for i, entry in enumerate(value):
-        out.extend(_parse_package_rule_entry(entry, i, anchor=anchor))
+        out.extend(_parse_package_rule_entry(entry, where, i, anchor=anchor))
     return out
 
 
 def _parse_package_rule_entry(
     entry: object,
+    label: str,
     index: int,
     *,
     anchor: datetime,
 ) -> list[PackageOverride]:
-    where = f"package-rules[{index}]"
+    where = f"{label}[{index}]"
     if not isinstance(entry, dict):
         msg = f"{where} must be a table, got {type(entry).__name__}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     _reject_deferred(entry, where)
     unknown = sorted(set(entry) - _PACKAGE_RULE_KEYS)
     if unknown:
@@ -738,14 +888,14 @@ def _parse_package_rule_entry(
             f"{where}: unknown override key(s) {unknown!r}; expected 'match'"
             f" and body keys {sorted(_PACKAGE_OVERRIDE_BODY_KEYS)!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     requirements = _parse_match(entry.get("match"), where)
     if not requirements:
         msg = (
             f"{where} must carry a 'match' selector listing at least one"
             " PEP 508 requirement"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     body = {key: val for key, val in entry.items() if key != "match"}
     return _build_package_overrides(requirements, body, where, anchor=anchor)
 
@@ -762,8 +912,8 @@ def _build_package_overrides(
     dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
     build_policy = (
         parse_enum(
-            f"{where}.build-policy",
             body["build-policy"],
+            f"{where}.build-policy",
             BuildPolicy,
             BuildPolicy.NEVER,
         )
@@ -798,7 +948,7 @@ def _build_package_overrides(
             f"{where} sets no policy; an entry must set at least one of"
             f" {sorted(_PACKAGE_OVERRIDE_BODY_KEYS)!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     if route is not None:
         for requirement in requirements:
             if str(requirement.specifier):
@@ -808,7 +958,7 @@ def _build_package_overrides(
                     " listing before any version is known, but"
                     f" {str(requirement)!r} is version-scoped"
                 )
-                raise ConfigError(msg)
+                raise SourceConfigError(msg)
 
     return [
         PackageOverride(
@@ -843,14 +993,14 @@ def _requirement_from_selector(raw: str, where: str) -> Requirement:
         requirement.specifier.to_range()
     except ValueError as exc:
         msg = f"{where} entry {raw!r} is not a valid PEP 508 requirement"
-        raise ConfigError(msg) from exc
+        raise SourceConfigError(msg) from exc
     if requirement.extras or requirement.marker is not None or requirement.url:
         msg = (
             f"{where} entry {raw!r} may carry only a name and an optional"
             " version specifier; extras, markers, and URLs are not supported"
             " on the override surface"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     return requirement
 
 
@@ -880,7 +1030,7 @@ def check_package_override_overlap(
                         f" {str(right.requirement)!r}.  Per-package overrides for"
                         " one field must cover disjoint version ranges."
                     )
-                    raise ConfigError(msg)
+                    raise SourceConfigError(msg)
 
 
 def _override_sets(override: PackageOverride, attr: str) -> bool:
@@ -914,11 +1064,12 @@ def _reject_deferred(
                 "; set metadata as the flat body keys 'dependencies',"
                 " 'requires-python', and 'provides-extra' instead"
             )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
 
 
 def parse_index_overrides(
     value: object,
+    where: str,
     *,
     anchor: datetime,
 ) -> dict[str, IndexOverride]:
@@ -930,16 +1081,12 @@ def parse_index_overrides(
     scope); the override applies to every package served from that index.
     """
     if not isinstance(value, dict):
-        msg = (
-            "[tool.nab.index] must be a table keyed by index name, got"
-            f" {type(value).__name__}"
-        )
-        raise ConfigError(msg)
-    out: dict[str, IndexOverride] = {}
-    for name, body in value.items():
-        where = f"index.{name}"
-        out[name] = _parse_index_override_body(body, where, anchor=anchor)
-    return out
+        msg = f"{where} must be a table keyed by index name, got {type(value).__name__}"
+        raise SourceConfigError(msg)
+    return {
+        name: _parse_index_override_body(body, f"{where}.{name}", anchor=anchor)
+        for name, body in value.items()
+    }
 
 
 def _parse_index_override_body(
@@ -947,7 +1094,7 @@ def _parse_index_override_body(
 ) -> IndexOverride:
     if not isinstance(body, dict):
         msg = f"{where} must be a table, got {type(body).__name__}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     _reject_deferred(body, where, flat_metadata_advice=False)
     unknown = sorted(set(body) - _INDEX_OVERRIDE_KEYS)
     if unknown:
@@ -956,12 +1103,12 @@ def _parse_index_override_body(
             f" {sorted(_INDEX_OVERRIDE_KEYS)!r} (per-index overrides carry no"
             " routing and no version scope)"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     dist_policy, dist_trust = _parse_override_dist(body.get("dist-policy"), where)
     build_policy = (
         parse_enum(
-            f"{where}.build-policy",
             body["build-policy"],
+            f"{where}.build-policy",
             BuildPolicy,
             BuildPolicy.NEVER,
         )
@@ -990,7 +1137,7 @@ def _parse_index_override_body(
             f"{where} sets no policy; an entry must set at least one of"
             f" {sorted(_INDEX_OVERRIDE_KEYS)!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     return IndexOverride(
         dist_policy=dist_policy,
         dist_trust_unverified_deps=dist_trust,
@@ -1010,7 +1157,7 @@ def _parse_match(value: object, where: str) -> tuple[Requirement, ...]:
     """
     if value is None:
         return ()
-    names = parse_string_list(f"{where}.match", value)
+    names = parse_string_list(value, f"{where}.match")
     return tuple(_requirement_from_selector(raw, f"{where}.match") for raw in names)
 
 
@@ -1027,7 +1174,7 @@ def _parse_override_dist(
     if isinstance(value, str):
         return (
             parse_enum(
-                f"{where}.dist-policy", value, DistPolicy, DistPolicy.WHEEL_OR_SDIST
+                value, f"{where}.dist-policy", DistPolicy, DistPolicy.WHEEL_OR_SDIST
             ),
             None,
         )
@@ -1036,27 +1183,27 @@ def _parse_override_dist(
             f"{where}.dist-policy must be a policy string or a table"
             f" {{ policy, trust-unverified-deps }}, got {type(value).__name__}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     unknown = sorted(set(value) - _DIST_POLICY_TABLE_KEYS)
     if unknown:
         msg = (
             f"{where}.dist-policy has unknown key(s) {unknown!r};"
             f" expected {sorted(_DIST_POLICY_TABLE_KEYS)!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     if "policy" not in value:
         msg = f"{where}.dist-policy table must set 'policy'"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     policy = parse_enum(
-        f"{where}.dist-policy.policy",
         value["policy"],
+        f"{where}.dist-policy.policy",
         DistPolicy,
         DistPolicy.WHEEL_OR_SDIST,
     )
     trust = value.get("trust-unverified-deps")
     if trust is not None and not isinstance(trust, bool):
         msg = f"{where}.dist-policy.trust-unverified-deps must be a boolean"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     return (policy, trust)
 
 
@@ -1074,12 +1221,8 @@ def _parse_override_uploaded_prior_to(
             " ``false`` to disable the cutoff or a datetime / 'PnD' duration"
             " to set a window"
         )
-        raise ConfigError(msg)
-    try:
-        cutoff = parse_uploaded_prior_to(value, anchor=anchor)
-    except ConfigError as exc:
-        msg = f"{where}.uploaded-prior-to: {exc}"
-        raise ConfigError(msg) from exc
+        raise SourceConfigError(msg)
+    cutoff = parse_uploaded_prior_to(value, f"{where}.uploaded-prior-to", anchor=anchor)
     return (cutoff, False)
 
 
@@ -1092,7 +1235,7 @@ def _parse_index_assume_fresh(value: object, where: str) -> int | None:
             f"{where}.assume-fresh-seconds must be a positive integer number of"
             f" seconds, got {value!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     return value
 
 
@@ -1106,11 +1249,7 @@ def _parse_override_requires_python(value: object, where: str) -> str | None:
     if value is None:
         return None
 
-    try:
-        return parse_requires_python(value)
-    except ConfigError as exc:
-        msg = f"{where}.{exc}"
-        raise ConfigError(msg) from exc
+    return parse_requires_python(value, f"{where}.requires-python")
 
 
 def _parse_override_dependencies(
@@ -1134,7 +1273,7 @@ def _parse_override_dependencies(
             f"{where}.dependencies must be a list of PEP 508 requirement"
             f" strings, got {type(value).__name__}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
 
     out: list[Requirement] = []
     for i, item in enumerate(value):
@@ -1142,7 +1281,7 @@ def _parse_override_dependencies(
             msg = (
                 f"{where}.dependencies[{i}] must be a string, got {type(item).__name__}"
             )
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
         try:
             requirement = parse_requirement(item)
             # a specifier defers parsing its versions; to_range() forces it
@@ -1152,7 +1291,7 @@ def _parse_override_dependencies(
                 f"{where}.dependencies[{i}] is not a valid PEP 508"
                 f" requirement: {item!r}"
             )
-            raise ConfigError(msg) from exc
+            raise SourceConfigError(msg) from exc
         out.append(requirement)
     return tuple(out)
 
@@ -1173,7 +1312,7 @@ def _parse_override_provides_extra(value: object, where: str) -> tuple[str, ...]
             f"{where}.provides-extra must be a list of extra names, got"
             f" {type(value).__name__}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
 
     out: list[str] = []
     for i, item in enumerate(value):
@@ -1182,7 +1321,7 @@ def _parse_override_provides_extra(value: object, where: str) -> tuple[str, ...]
                 f"{where}.provides-extra[{i}] must be a string, got"
                 f" {type(item).__name__}"
             )
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
         out.append(canonicalize_name(item))
     return tuple(out)
 
@@ -1201,55 +1340,61 @@ def _parse_override_index(entry: dict[str, Any], where: str) -> str | None:
     route = entry.get("index")
     if route is not None and not isinstance(route, str):
         msg = f"{where}.index must be a string, got {type(route).__name__}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     if "strict" not in entry:
         return route
     if route is None:
         msg = f"{where}.strict is only meaningful alongside an 'index' route"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     strict = entry["strict"]
     if not isinstance(strict, bool):
         msg = f"{where}.strict must be a boolean, got {type(strict).__name__}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     if not strict:
         msg = (
             f"{where}.strict = false (fallthrough routing) is not supported in"
             " this release; the index route is always a strict pin"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     return route
 
 
-def parse_vcs(value: object) -> VcsConfig:
+def parse_vcs(value: object, where: str) -> VcsConfig:
     """Read ``[tool.nab.vcs]`` into the policy VCS sources are admitted under."""
     if not isinstance(value, dict):
-        msg = f"[tool.nab.vcs] must be a table, got {type(value).__name__}"
-        raise ConfigError(msg)
+        msg = f"{where} must be a table, got {type(value).__name__}"
+        raise SourceConfigError(msg)
     allowed = sorted({"policy", "allowed-schemes", "allowed-repos", "require-pin"})
     unknown = sorted(set(value) - set(allowed))
     if unknown:
-        msg = f"unknown [tool.nab.vcs] keys: {unknown!r}; expected {allowed!r}"
-        raise ConfigError(msg)
-    policy = parse_enum("vcs.policy", value.get("policy"), VcsPolicy, VcsPolicy.BLOCK)
+        msg = f"{where} has unknown keys: {unknown!r}; expected {allowed!r}"
+        raise SourceConfigError(msg)
+    policy = parse_enum(
+        value.get("policy"), f"{where}.policy", VcsPolicy, VcsPolicy.BLOCK
+    )
     allowed_schemes = parse_string_list(
-        "vcs.allowed-schemes", value.get("allowed-schemes", [])
+        value.get("allowed-schemes", []), f"{where}.allowed-schemes"
     )
     unknown_schemes = sorted(set(allowed_schemes) - known_vcs_schemes())
     if unknown_schemes:
         msg = (
-            f"unknown vcs.allowed-schemes: {unknown_schemes!r}; nab recognises"
+            f"{where}.allowed-schemes has unknown entries: {unknown_schemes!r};"
+            " nab recognises"
             f" {sorted(known_vcs_schemes())!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     allowed_repos = parse_string_list(
-        "vcs.allowed-repos", value.get("allowed-repos", [])
+        value.get("allowed-repos", []), f"{where}.allowed-repos"
     )
     for repo in allowed_repos:
         _validate_allowed_repo(repo)
     require_pin_raw = value.get("require-pin", True)
     if not isinstance(require_pin_raw, bool):
-        msg = f"vcs.require-pin must be a boolean, got {type(require_pin_raw).__name__}"
-        raise ConfigError(msg)
+        msg = (
+            f"{where}.require-pin must be a boolean,"
+            f" got {type(require_pin_raw).__name__}"
+        )
+        raise SourceConfigError(msg)
     return VcsConfig(
         policy=policy,
         allowed_schemes=frozenset(allowed_schemes),
@@ -1268,54 +1413,54 @@ def _validate_allowed_repo(repo: str) -> None:
         urlsplit(repo)
     except ValueError as exc:
         msg = f"vcs.allowed-repos entry {repo!r} does not parse: {exc}"
-        raise ConfigError(msg) from exc
+        raise SourceConfigError(msg) from exc
 
 
 _LOCAL_SOURCE_KEYS = frozenset({"name", "path", "editable", "subdirectory"})
 
 
-def _parse_local_source(entry: object, i: int, *, pyproject_dir: Path) -> LocalSource:
+def _parse_local_source(
+    entry: object, where: str, i: int, *, pyproject_dir: Path
+) -> LocalSource:
     if not isinstance(entry, dict):
-        msg = f"local-sources[{i}] must be a table, got {type(entry).__name__}"
-        raise ConfigError(msg)
+        msg = f"{where}[{i}] must be a table, got {type(entry).__name__}"
+        raise SourceConfigError(msg)
 
     unknown = sorted(set(entry) - _LOCAL_SOURCE_KEYS)
     if unknown:
         msg = (
-            f"unknown local-sources[{i}] keys: {unknown!r};"
+            f"{where}[{i}] has unknown keys: {unknown!r};"
             f" expected {sorted(_LOCAL_SOURCE_KEYS)!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
 
     try:
         name = entry["name"]
         path_value = entry["path"]
     except KeyError as missing:
-        msg = f"local-sources[{i}] missing required key {missing!s}"
-        raise ConfigError(msg) from None
+        msg = f"{where}[{i}] missing required key {missing!s}"
+        raise SourceConfigError(msg) from None
     if not isinstance(name, str) or not isinstance(path_value, str):
-        msg = f"local-sources[{i}] name and path must be strings"
-        raise ConfigError(msg)
+        msg = f"{where}[{i}] name and path must be strings"
+        raise SourceConfigError(msg)
 
     editable = entry.get("editable", False)
     if not isinstance(editable, bool):
-        msg = f"local-sources[{i}] editable must be a boolean"
-        raise ConfigError(msg)
+        msg = f"{where}[{i}] editable must be a boolean"
+        raise SourceConfigError(msg)
 
     subdirectory = entry.get("subdirectory")
     if subdirectory is not None and not isinstance(subdirectory, str):
-        msg = f"local-sources[{i}] subdirectory must be a string"
-        raise ConfigError(msg)
+        msg = f"{where}[{i}] subdirectory must be a string"
+        raise SourceConfigError(msg)
     if subdirectory is not None and subdirectory_escapes(subdirectory):
-        msg = (
-            f"local-sources[{i}] subdirectory {subdirectory!r} escapes the source tree"
-        )
-        raise ConfigError(msg)
+        msg = f"{where}[{i}] subdirectory {subdirectory!r} escapes the source tree"
+        raise SourceConfigError(msg)
 
     resolved = resolve_path(pyproject_dir, path_value)
     if resolved is None:
-        msg = f"local-sources[{i}] path {path_value!r} is not a usable filesystem path"
-        raise ConfigError(msg)
+        msg = f"{where}[{i}] path {path_value!r} is not a usable filesystem path"
+        raise SourceConfigError(msg)
 
     return LocalSource(
         name=name,
@@ -1326,36 +1471,36 @@ def _parse_local_source(entry: object, i: int, *, pyproject_dir: Path) -> LocalS
 
 
 def parse_local_sources(
-    value: object, *, pyproject_dir: Path
+    value: object, where: str, *, pyproject_dir: Path
 ) -> tuple[LocalSource, ...]:
     """Read ``local-sources``, resolving each path against ``pyproject_dir``."""
     if not isinstance(value, list):
-        msg = f"local-sources must be an array of tables, got {type(value).__name__}"
-        raise ConfigError(msg)
+        msg = f"{where} must be an array of tables, got {type(value).__name__}"
+        raise SourceConfigError(msg)
     return tuple(
-        _parse_local_source(entry, i, pyproject_dir=pyproject_dir)
+        _parse_local_source(entry, where, i, pyproject_dir=pyproject_dir)
         for i, entry in enumerate(value)
     )
 
 
-def parse_vcs_sources(value: object) -> tuple[VcsSource, ...]:
+def parse_vcs_sources(value: object, where: str) -> tuple[VcsSource, ...]:
     """Read ``vcs-sources``, one name and url per table."""
     return tuple(
         VcsSource(name=entry.name, url=entry.url)
-        for entry in _iter_name_url_tables("vcs-sources", value)
+        for entry in _iter_name_url_tables(where, value)
     )
 
 
-def parse_archive_sources(value: object) -> tuple[ArchiveSource, ...]:
+def parse_archive_sources(value: object, where: str) -> tuple[ArchiveSource, ...]:
     """Read ``archive-sources``, one name and url per table, each url validated."""
     out: list[ArchiveSource] = []
-    for entry in _iter_name_url_tables("archive-sources", value):
-        _validate_archive_url(entry.index, entry.url)
+    for entry in _iter_name_url_tables(where, value):
+        _validate_archive_url(where, entry.position, entry.url)
         out.append(ArchiveSource(name=entry.name, url=entry.url))
     return tuple(out)
 
 
-def _validate_archive_url(index: int, url: str) -> None:
+def _validate_archive_url(where: str, index: int, url: str) -> None:
     """Reject an archive URL that is malformed, has no hash, or is not a .tar.gz.
 
     PEP 751 ``packages.archive.hashes`` is required, so nab requires the
@@ -1368,63 +1513,60 @@ def _validate_archive_url(index: int, url: str) -> None:
     try:
         request = ArchiveRequest.parse(url)
     except ArchiveRequestError as exc:
-        msg = f"archive-sources[{index}] url: {exc}"
-        raise ConfigError(msg) from exc
+        msg = f"{where}[{index}] url: {exc}"
+        raise SourceConfigError(msg) from exc
 
     if not request.has_usable_hash:
         msg = (
-            f"archive-sources[{index}] url {url!r} has no hash; add a"
+            f"{where}[{index}] url {url!r} has no hash; add a"
             " '#sha256=<hex>' fragment (PEP 751 requires an archive hash)"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
 
     try:
         path = urlsplit(request.url).path
     except ValueError as exc:
-        msg = f"archive-sources[{index}] url {url!r} does not parse: {exc}"
-        raise ConfigError(msg) from exc
+        msg = f"{where}[{index}] url {url!r} does not parse: {exc}"
+        raise SourceConfigError(msg) from exc
 
     if not path.endswith(".tar.gz"):
         msg = (
-            f"archive-sources[{index}] url {url!r} is not a .tar.gz archive;"
+            f"{where}[{index}] url {url!r} is not a .tar.gz archive;"
             " only .tar.gz source archives are supported"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
 
 
-def _parse_python_patches(value: object) -> dict[str, str] | None:
+def _parse_python_patches(value: object, where: str) -> dict[str, str] | None:
     if value is None:
         return None
+    label = f"{where}.python-patches"
     if not isinstance(value, dict):
         msg = (
-            "matrix.python-patches must be a table of"
-            " minor -> full version, got"
+            f"{label} must be a table of minor -> full version, got"
             f" {type(value).__name__}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     out: dict[str, str] = {}
     for k, v in value.items():
         if not isinstance(k, str) or not isinstance(v, str):
-            msg = (
-                "matrix.python-patches entries must be"
-                f" string -> string, got {k!r}: {v!r}"
-            )
-            raise ConfigError(msg)
+            msg = f"{label} entries must be string -> string, got {k!r}: {v!r}"
+            raise SourceConfigError(msg)
         try:
             minor = Version(k)
             full = Version(v)
         except ValueError as exc:
-            msg = f"matrix.python-patches expects version strings, got {k!r}: {v!r}"
-            raise ConfigError(msg) from exc
+            msg = f"{label} expects version strings, got {k!r}: {v!r}"
+            raise SourceConfigError(msg) from exc
 
         if full.release[:2] != minor.release[:2]:
-            msg = f"matrix.python-patches value {v!r} is not a patch release of {k!r}"
-            raise ConfigError(msg)
+            msg = f"{label} value {v!r} is not a patch release of {k!r}"
+            raise SourceConfigError(msg)
         out[k] = v
     return out
 
 
-def parse_workspace(value: object) -> WorkspaceConfig | None:
+def parse_workspace(value: object, where: str) -> WorkspaceConfig | None:
     """Parse the optional ``[tool.nab.workspace]`` table.
 
     Schema today is a single ``members`` field listing literal paths.
@@ -1434,17 +1576,14 @@ def parse_workspace(value: object) -> WorkspaceConfig | None:
     the ``s``) fail loud at config-parse time.
     """
     if not isinstance(value, dict):
-        msg = f"[tool.nab.workspace] must be a table, got {type(value).__name__}"
-        raise ConfigError(msg)
+        msg = f"{where} must be a table, got {type(value).__name__}"
+        raise SourceConfigError(msg)
     allowed = {"members"}
     unknown = sorted(set(value) - allowed)
     if unknown:
-        msg = (
-            f"unknown [tool.nab.workspace] keys: {unknown!r};"
-            f" expected {sorted(allowed)!r}"
-        )
-        raise ConfigError(msg)
-    members = parse_string_list("workspace.members", value.get("members", []))
+        msg = f"{where} has unknown keys: {unknown!r}; expected {sorted(allowed)!r}"
+        raise SourceConfigError(msg)
+    members = parse_string_list(value.get("members", []), f"{where}.members")
     return WorkspaceConfig(members=members)
 
 
@@ -1456,7 +1595,7 @@ _CONFLICT_POLICY_VALUES = {p.value: p for p in ConflictPolicy}
 _CONFLICT_SET_KEYS = frozenset({"members", "policy"})
 
 
-def parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
+def parse_conflicts(value: object, where: str) -> tuple[ConflictSet, ...]:
     """Parse the optional ``[tool.nab].conflicts`` array.
 
     Each item is either a bare array of members (uv-compatible; the
@@ -1467,9 +1606,9 @@ def parse_conflicts(value: object) -> tuple[ConflictSet, ...]:
     ``{ group = "NAME" }``.
     """
     if not isinstance(value, list):
-        msg = f"conflicts must be an array of conflict sets, got {type(value).__name__}"
-        raise ConfigError(msg)
-    sets = tuple(_parse_conflict_set(item, i) for i, item in enumerate(value))
+        msg = f"{where} must be an array of conflict sets, got {type(value).__name__}"
+        raise SourceConfigError(msg)
+    sets = tuple(_parse_conflict_set(item, where, i) for i, item in enumerate(value))
     _check_conflict_member_uniqueness(sets)
     return sets
 
@@ -1484,12 +1623,12 @@ def _check_conflict_member_uniqueness(sets: Sequence[ConflictSet]) -> None:
                     f"conflicts declares {member} in more than one set;"
                     " a member may belong to at most one conflict set"
                 )
-                raise ConfigError(msg)
+                raise SourceConfigError(msg)
             seen.add(member)
 
 
-def _parse_conflict_set(item: object, index: int) -> ConflictSet:
-    where = f"conflicts[{index}]"
+def _parse_conflict_set(item: object, label: str, index: int) -> ConflictSet:
+    where = f"{label}[{index}]"
     if isinstance(item, list):
         return ConflictSet(
             members=_parse_conflict_members(item, where),
@@ -1504,10 +1643,10 @@ def _parse_conflict_set(item: object, index: int) -> ConflictSet:
                 f" table {{ members = [...], policy = '...' }} with policy one of"
                 f" {valid!r}, or a bare array of members"
             )
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
         if "members" not in item:
             msg = f"{where}: a conflict-set table must set 'members'"
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
         policy = _parse_conflict_policy(item.get("policy"), where)
         return ConflictSet(
             members=_parse_conflict_members(item["members"], f"{where}.members"),
@@ -1517,20 +1656,20 @@ def _parse_conflict_set(item: object, index: int) -> ConflictSet:
         f"{where} must be an array of members or a conflict-set table, got"
         f" {type(item).__name__}"
     )
-    raise ConfigError(msg)
+    raise SourceConfigError(msg)
 
 
 def _parse_conflict_policy(value: object, where: str) -> ConflictPolicy:
     """Parse the ``policy`` value of a conflict-set table; default at-most-one."""
     return parse_enum(
-        f"{where}.policy", value, ConflictPolicy, ConflictPolicy.AT_MOST_ONE
+        value, f"{where}.policy", ConflictPolicy, ConflictPolicy.AT_MOST_ONE
     )
 
 
 def _parse_conflict_members(value: object, where: str) -> tuple[ConflictMember, ...]:
     if not isinstance(value, list):
         msg = f"{where} must be an array of members, got {type(value).__name__}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     members = tuple(
         _parse_conflict_member(item, f"{where}[{i}]") for i, item in enumerate(value)
     )
@@ -1539,10 +1678,10 @@ def _parse_conflict_members(value: object, where: str) -> tuple[ConflictMember, 
             f"{where} must list at least {_MIN_CONFLICT_MEMBERS} members to be"
             f" a conflict; got {len(members)}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     if len(set(members)) != len(members):
         msg = f"{where} lists a member more than once"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     return members
 
 
@@ -1552,21 +1691,21 @@ def _parse_conflict_member(item: object, where: str) -> ConflictMember:
             f"{where} must be a table {{ extra = ... }} or {{ group = ... }},"
             f" got {type(item).__name__}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     kinds = {k.value for k in ConflictKind}
     unknown = sorted(set(item) - kinds)
     if unknown:
         msg = f"{where}: unknown member key(s) {unknown!r}; expected {sorted(kinds)!r}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     present = sorted(set(item) & kinds)
     if len(present) != 1:
         msg = f"{where} must name exactly one of {sorted(kinds)!r}, got {present!r}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     kind = ConflictKind(present[0])
     name = item[present[0]]
     if not isinstance(name, str) or not name:
         msg = f"{where}.{kind.value} must be a non-empty string, got {name!r}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     try:
         canonical = canonicalize_name(name, validate=True)
     except InvalidName:
@@ -1575,7 +1714,7 @@ def _parse_conflict_member(item: object, where: str) -> ConflictMember:
             f"{where}.{kind.value} is not a valid extra/group name: {name!r}"
             f" (canonicalises to {canonical!r})"
         )
-        raise ConfigError(msg) from None
+        raise SourceConfigError(msg) from None
     return ConflictMember(kind=kind, name=canonical)
 
 
@@ -1592,13 +1731,13 @@ def _validate_matrix_python(spec: str) -> None:
         specifier_set = SpecifierSet(spec)
     except InvalidSpecifier as exc:
         msg = f"matrix.python must be a PEP 440 specifier, got {spec!r}"
-        raise ConfigError(msg) from exc
+        raise SourceConfigError(msg) from exc
     for clause in specifier_set:
         try:
             version = Version(clause.version.removesuffix(".*"))
         except ValueError as exc:
             msg = f"matrix.python clause {clause} is not a valid version"
-            raise ConfigError(msg) from exc
+            raise SourceConfigError(msg) from exc
 
         # Reject pre/post/dev/local qualifiers and patch-level release tuples.
         finer = (
@@ -1614,7 +1753,7 @@ def _validate_matrix_python(spec: str) -> None:
                 f"{clause} is finer than major.minor. Put patch versions in "
                 "[tool.nab.matrix.python-patches]."
             )
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
 
 
 _PLATFORM_TABLE_KEYS = frozenset(
@@ -1637,7 +1776,7 @@ _PLATFORM_KNOB_OWNER: Mapping[str, frozenset[str]] = MappingProxyType(
 )
 
 
-def _parse_matrix_platforms(value: object) -> tuple[PlatformSpec, ...]:
+def _parse_matrix_platforms(value: object, label: str) -> tuple[PlatformSpec, ...]:
     """Parse ``matrix.platforms``: bare ids, tables, or a mix of both.
 
     A bare id takes the platform's default tag knobs; the table form declares
@@ -1646,18 +1785,18 @@ def _parse_matrix_platforms(value: object) -> tuple[PlatformSpec, ...]:
     so everything downstream reads one shape.
     """
     if not isinstance(value, list):
-        msg = f"matrix.platforms must be a list, got {type(value).__name__}"
-        raise ConfigError(msg)
+        msg = f"{label}.platforms must be a list, got {type(value).__name__}"
+        raise SourceConfigError(msg)
     platforms: list[PlatformSpec] = []
     for i, item in enumerate(value):
-        where = f"matrix.platforms[{i}]"
+        where = f"{label}.platforms[{i}]"
         if isinstance(item, str):
             platforms.append(_platform_spec(where, platform_id=item))
         elif isinstance(item, dict):
             platforms.append(_parse_platform_table(where, item))
         else:
             msg = f"{where} must be a platform id or a table, got {type(item).__name__}"
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
     return tuple(platforms)
 
 
@@ -1667,7 +1806,7 @@ def _platform_spec(where: str, **knobs: Any) -> PlatformSpec:
         return PlatformSpec(**knobs)
     except ValueError as exc:
         msg = f"invalid {where}: {exc}"
-        raise ConfigError(msg) from exc
+        raise SourceConfigError(msg) from exc
 
 
 def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
@@ -1675,13 +1814,13 @@ def _parse_platform_table(where: str, value: dict[str, Any]) -> PlatformSpec:
     unknown = sorted(set(value) - _PLATFORM_TABLE_KEYS)
     if unknown:
         msg = (
-            f"unknown {where} keys: {unknown!r};"
+            f"{where} has unknown keys: {unknown!r};"
             f" expected {sorted(_PLATFORM_TABLE_KEYS)!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     if "id" not in value:
         msg = f"{where} missing required key 'id'"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
 
     platform_id = _parse_string_value(f"{where}.id", value["id"])
     _reject_foreign_knobs(where, value, platform_id)
@@ -1729,7 +1868,7 @@ def _reject_foreign_knobs(where: str, value: dict[str, Any], platform_id: str) -
                 f"{where} declares {foreign!r}, which only a {owner} platform"
                 f" reads, but its id is {platform_id!r}"
             )
-            raise ConfigError(msg)
+            raise SourceConfigError(msg)
 
 
 def _parse_libc(key: str, value: object) -> Libc:
@@ -1739,7 +1878,7 @@ def _parse_libc(key: str, value: object) -> Libc:
     text = _parse_string_value(key, value)
     if text not in LIBC_MAJOR:
         msg = f"{key} must be one of {sorted(LIBC_MAJOR)!r}, got {text!r}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     return cast("Libc", text)
 
 
@@ -1752,14 +1891,14 @@ def _parse_major_minor(key: str, value: object) -> tuple[int, int] | None:
         version = Version(text)
     except ValueError as exc:
         msg = f"{key} must be a 'major.minor' version, got {text!r}"
-        raise ConfigError(msg) from exc
+        raise SourceConfigError(msg) from exc
     release = version.release
     two_part = len(release) == _MINOR_RELEASE_PARTS
     # str() renders the normalized version, so an epoch or a pre/post/dev/local
     # qualifier shows up as a mismatch here.
     if not two_part or str(version) != f"{release[0]}.{release[1]}":
         msg = f"{key} must be exactly 'major.minor', got {text!r}"
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     return (release[0], release[1])
 
 
@@ -1774,44 +1913,43 @@ _MATRIX_KEYS = frozenset(
 )
 
 
-def parse_matrix(value: object) -> MatrixConfig:
+def parse_matrix(value: object, where: str) -> MatrixConfig:
     """Read ``[tool.nab.matrix]`` into its five axes."""
     if not isinstance(value, dict):
-        msg = f"[tool.nab.matrix] must be a table, got {type(value).__name__}"
-        raise ConfigError(msg)
+        msg = f"{where} must be a table, got {type(value).__name__}"
+        raise SourceConfigError(msg)
     unknown = sorted(set(value) - _MATRIX_KEYS)
     if unknown:
         msg = (
-            f"unknown [tool.nab.matrix] keys: {unknown!r};"
-            f" expected {sorted(_MATRIX_KEYS)!r}"
+            f"{where} has unknown keys: {unknown!r}; expected {sorted(_MATRIX_KEYS)!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     try:
         python = value["python"]
         platforms_raw = value["platforms"]
     except KeyError as missing:
-        msg = f"[tool.nab.matrix] missing required key {missing!s}"
-        raise ConfigError(msg) from None
+        msg = f"{where} missing required key {missing!s}"
+        raise SourceConfigError(msg) from None
     if not isinstance(python, str):
-        msg = "matrix.python must be a string PEP 440 specifier"
-        raise ConfigError(msg)
+        msg = f"{where}.python must be a string PEP 440 specifier"
+        raise SourceConfigError(msg)
     _validate_matrix_python(python)
-    platforms = _parse_matrix_platforms(platforms_raw)
+    platforms = _parse_matrix_platforms(platforms_raw, where)
     if not platforms:
-        msg = "matrix.platforms must list at least one platform id"
-        raise ConfigError(msg)
+        msg = f"{where}.platforms must list at least one platform id"
+        raise SourceConfigError(msg)
     # One target per platform id.  A lockfile entry is selected by a PEP 508
     # marker, which has no libc or free-threading variable, so two targets
     # sharing an id would render the same marker.
-    _reject_duplicates("matrix.platforms", tuple(p.platform_id for p in platforms))
+    _reject_duplicates(f"{where}.platforms", tuple(p.platform_id for p in platforms))
     python_order = _parse_string_value(
-        "matrix.python-order", value.get("python-order", "asc")
+        f"{where}.python-order", value.get("python-order", "asc")
     )
     if python_order not in {"asc", "desc"}:
-        msg = f"matrix.python-order must be 'asc' or 'desc', got {python_order!r}"
-        raise ConfigError(msg)
-    patches = _parse_python_patches(value.get("python-patches"))
-    implementations = _parse_implementations(value.get("implementations"))
+        msg = f"{where}.python-order must be 'asc' or 'desc', got {python_order!r}"
+        raise SourceConfigError(msg)
+    patches = _parse_python_patches(value.get("python-patches"), where)
+    implementations = _parse_implementations(value.get("implementations"), where)
     config = MatrixConfig(
         python=python,
         platforms=platforms,
@@ -1819,36 +1957,37 @@ def parse_matrix(value: object) -> MatrixConfig:
         python_patches=patches,
         implementations=implementations,
     )
-    _validate_matrix_axes(config)
+    _validate_matrix_axes(config, where)
     return config
 
 
-def _validate_matrix_axes(config: MatrixConfig) -> None:
+def _validate_matrix_axes(config: MatrixConfig, where: str) -> None:
     """Expand the matrix eagerly to catch bad axes at parse time."""
     matrix = matrix_from_config(config)
     try:
         matrix.expand()
     except ValueError as exc:
-        msg = f"invalid [tool.nab.matrix]: {exc}"
-        raise ConfigError(msg) from exc
+        msg = f"{where} is invalid: {exc}"
+        raise SourceConfigError(msg) from exc
 
 
 _KNOWN_IMPLEMENTATIONS = ("cpython", "pypy")
 
 
-def _parse_implementations(value: object) -> tuple[str, ...]:
+def _parse_implementations(value: object, where: str) -> tuple[str, ...]:
     if value is None:
         return ("cpython",)
-    impls = parse_string_list("matrix.implementations", value)
+    label = f"{where}.implementations"
+    impls = parse_string_list(value, label)
     if not impls:
-        msg = "matrix.implementations must list at least one implementation"
-        raise ConfigError(msg)
-    _reject_duplicates("matrix.implementations", impls)
+        msg = f"{label} must list at least one implementation"
+        raise SourceConfigError(msg)
+    _reject_duplicates(label, impls)
     unknown = sorted(set(impls) - set(_KNOWN_IMPLEMENTATIONS))
     if unknown:
         msg = (
-            f"unknown matrix.implementations: {unknown!r}; "
+            f"{label} has unknown entries: {unknown!r}; "
             f"expected {list(_KNOWN_IMPLEMENTATIONS)!r}"
         )
-        raise ConfigError(msg)
+        raise SourceConfigError(msg)
     return impls

@@ -1,7 +1,7 @@
 """The per-package and per-index override records.
 
 The config layer parses them and the provider applies them, so neither may own
-them; :mod:`nab_project.config` re-exports both.
+them; they live here.
 """
 
 from __future__ import annotations

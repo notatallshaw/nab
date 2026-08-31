@@ -34,6 +34,9 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from typing_extensions import override
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 T = TypeVar("T")
 C = TypeVar("C")
 
@@ -53,18 +56,36 @@ class Scope(enum.Enum):
 class Layer(Generic[C]):
     """The configuration ladder's half of a row, in the value's own type.
 
-    ``C`` is what rung 0 holds, so a row whose ``rdefault`` is not the type
-    it declares is a checker error rather than a wrong report at run time.
-    ``sample`` is a token the row accepts, written down for a value whose
-    type names no token set of its own, and ``label`` overrides the printed
-    type where the type parameter cannot spell it.
+    ``C`` is what a source parses to and what rung 0 holds, so a ``parse``
+    hook that cannot produce ``rdefault`` is a checker error rather than a
+    wrong report at run time.  Nothing reads the parameter back, unlike a
+    row's own, so the subscript hands the class straight back and builds no
+    alias.  ``parse`` and ``render`` are the hooks the ladder reads a source
+    with and prints the winner with.  ``sample`` is a token the row accepts,
+    written down for a value whose type names no token set of its own, and
+    ``label`` overrides the printed type where the type parameter cannot
+    spell it.
     """
 
-    __slots__ = ("label", "rdefault", "sample")
+    __slots__ = ("label", "parse", "rdefault", "render", "sample")
 
-    def __init__(self, *, rdefault: C, label: str = "", sample: str = "") -> None:
+    def __class_getitem__(cls, item: object) -> type[Layer[Any]]:
+        """Hand the class back: the parameter is the checker's alone."""
+        return cls
+
+    def __init__(
+        self,
+        *,
+        rdefault: C,
+        parse: Callable[[Any, str], C],
+        render: Callable[[C], str],
+        label: str = "",
+        sample: str = "",
+    ) -> None:
         """Record the ladder half of one row."""
         self.rdefault = rdefault
+        self.parse = parse
+        self.render = render
         self.label = label
         self.sample = sample
 

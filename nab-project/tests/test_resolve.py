@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, NoReturn
 from unittest.mock import MagicMock, patch
@@ -23,15 +24,12 @@ from nab_project._resolve.engine import (
     _walk_no_versions_packages,
 )
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_project.config import (
-    ConfigError,
+from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
+    ConflictPolicy,
     ConflictSelectionError,
     ConflictSet,
-    plan_targets,
-    read_pyproject_config,
-    with_python_override,
 )
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import LockInput, PinShape, build_pylock
@@ -61,22 +59,27 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.diagnostics import Diagnostic
+from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.metadata import WheelMetadata
+from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.provider import (
     BuildPolicy,
+    DistPolicy,
     LocalSource,
     Provider,
     ResolutionStrategy,
     UnsupportedVcsError,
     VcsConfig,
 )
+from nab_provider.records import IndexConfig
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     expand_extra_requirements,
 )
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
+from nab_provider.vcs_admission import VcsPolicy
 from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -92,6 +95,13 @@ _FAKE_TRANSPORT = MagicMock(spec=AsyncHttpTransport, name="FakeTransport")
 
 _FORTY = "0123456789abcdef0123456789abcdef01234567"
 
+# The one repo prefix and scheme the VCS tests admit.
+_GITHUB_HTTPS = VcsConfig(
+    policy=VcsPolicy.ALLOW,
+    allowed_schemes=frozenset({"git+https"}),
+    allowed_repos=("https://github.com/",),
+)
+
 
 def _resolved(
     path: Path,
@@ -102,27 +112,59 @@ def _resolved(
 ) -> ResolveResult:
     """Resolve and surface a failed target's error.
 
-    nab-project takes the targets and the settings from its caller, so
-    whichever of the two is not passed is planned off ``path`` the way a
-    host does.  ``python_version`` retargets that plan the way ``--python``
-    does, and has nothing to retarget once both are passed.
+    nab-project takes its targets and its settings from the caller, so a
+    test that names neither resolves the running interpreter under a
+    project that configures nothing.  ``python_version`` moves that one
+    target the way ``--python`` does, and has nothing to move once the
+    caller passed targets of its own.
 
     The engine records a target that did not resolve rather than raising,
     so a caller resolving for one environment re-raises it; that is what
     every test below asserts against.
     """
-    planned = {"targets", "inputs"} - kwargs.keys()
-    if planned:
-        config = with_python_override(read_pyproject_config(path), python_version)
-        kwargs.setdefault("targets", plan_targets(config))
-        kwargs.setdefault("inputs", config.resolve_inputs())
+    if "targets" not in kwargs:
+        kwargs["targets"] = (
+            ResolveTarget.for_host()
+            if python_version is None
+            else ResolveTarget.for_host_python(python_version),
+        )
     elif python_version is not None:
-        msg = "python_version retargets a planned target; both were passed"
+        msg = "python_version retargets a target the caller chose; both were passed"
         raise TypeError(msg)
 
     result = resolve_for_targets(path, transport, **kwargs)  # type: ignore[arg-type]
     result.raise_for_failure()
     return result
+
+
+def _extras_conflict(
+    *names: str, policy: ConflictPolicy = ConflictPolicy.AT_MOST_ONE
+) -> ConflictSet:
+    """A conflict set over ``names`` as extras, under ``policy``."""
+    return ConflictSet(
+        tuple(ConflictMember(ConflictKind.EXTRA, name) for name in names), policy
+    )
+
+
+def _groups_conflict(
+    *names: str, policy: ConflictPolicy = ConflictPolicy.AT_MOST_ONE
+) -> ConflictSet:
+    """A conflict set over ``names`` as dependency groups, under ``policy``."""
+    return ConflictSet(
+        tuple(ConflictMember(ConflictKind.GROUP, name) for name in names), policy
+    )
+
+
+def _index_route(name: str, index: str) -> PackageOverride:
+    """A ``[tool.nab.packages.<name>] index`` entry, over the full range."""
+    requirement = Requirement(name)
+    return PackageOverride(
+        requirement=requirement,
+        name=name,
+        version_range=requirement.specifier.to_range(),
+        index=index,
+        name_keyed=True,
+    )
 
 
 def _target(environment: dict[str, str]) -> ResolveTarget:
@@ -238,6 +280,7 @@ class TestSpecificModeConflictValidation:
             _FAKE_TRANSPORT,
             extras=("cpu", "gpu"),
             python_version="3.12.0",
+            inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
         )
         forks = mock_engine.call_args.kwargs["forks"]
         assert {f.selection for f in forks} == {
@@ -271,7 +314,11 @@ class TestSpecificModeConflictValidation:
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
             result = _resolved(
-                pyproject, _FAKE_TRANSPORT, extras=("cpu",), python_version="3.12.0"
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("cpu",),
+                python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
             )
         # The selected extra's pin reached the Provider as a root
         # requirement; the unselected extra's contradictory pin did not.
@@ -297,7 +344,11 @@ class TestSpecificModeConflictValidation:
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
             result = _resolved(
-                pyproject, _FAKE_TRANSPORT, extras=("cpu",), python_version="3.12.0"
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("cpu",),
+                python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
             )
         assert _pins(result) == {"foo": V("1.0")}
 
@@ -313,6 +364,7 @@ class TestSpecificModeConflictValidation:
                 _FAKE_TRANSPORT,
                 groups=("docs",),
                 python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
             )
 
     def test_direct_co_selection_forks_and_locks(self, tmp_path: Path) -> None:
@@ -336,7 +388,11 @@ class TestSpecificModeConflictValidation:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             result = _resolved(
-                path, _FAKE_TRANSPORT, extras=("cpu", "gpu"), python_version="3.12.0"
+                path,
+                _FAKE_TRANSPORT,
+                extras=("cpu", "gpu"),
+                python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
             )
         label_for = {v: label for v, label in result.merged_pins()["numpy"]}
         assert set(label_for) == {"2.0.0", "2.1.2"}
@@ -345,7 +401,7 @@ class TestSpecificModeConflictValidation:
         # Both forks land in the lock under their own selection.
         lock_input = build_lock_input(
             result,
-            inputs=read_pyproject_config(path).resolve_inputs(),
+            inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
             extras=("cpu", "gpu"),
         )
         assert len(lock_input.targets) == 2
@@ -368,6 +424,7 @@ class TestSpecificModeConflictValidation:
                 _FAKE_TRANSPORT,
                 extras=("cpu",),
                 python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpuu"),)),
             )
 
     def test_unknown_group_member_raises(self, tmp_path: Path) -> None:
@@ -386,6 +443,7 @@ class TestSpecificModeConflictValidation:
                 _FAKE_TRANSPORT,
                 groups=("a",),
                 python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_groups_conflict("a", "missing"),)),
             )
 
     def test_umbrella_extra_co_selecting_conflict_raises(self, tmp_path: Path) -> None:
@@ -407,6 +465,7 @@ class TestSpecificModeConflictValidation:
                 _FAKE_TRANSPORT,
                 extras=("all",),
                 python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
             )
 
     def test_umbrella_group_co_selecting_conflict_raises(self, tmp_path: Path) -> None:
@@ -429,6 +488,7 @@ class TestSpecificModeConflictValidation:
                 _FAKE_TRANSPORT,
                 groups=("all-tools",),
                 python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_groups_conflict("b22", "b23"),)),
             )
 
     def test_umbrella_extra_transitively_co_selecting_conflict_raises(
@@ -456,6 +516,7 @@ class TestSpecificModeConflictValidation:
                 _FAKE_TRANSPORT,
                 extras=("all",),
                 python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
             )
 
     def test_umbrella_group_transitively_co_selecting_conflict_raises(
@@ -483,6 +544,7 @@ class TestSpecificModeConflictValidation:
                 _FAKE_TRANSPORT,
                 groups=("all-tools",),
                 python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_groups_conflict("b22", "b23"),)),
             )
 
     def test_umbrella_extra_reaching_one_member_resolves(self, tmp_path: Path) -> None:
@@ -514,6 +576,7 @@ class TestSpecificModeConflictValidation:
                 _FAKE_TRANSPORT,
                 extras=("accel",),
                 python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
             )
         # Reaching here means the conflict check did not raise; cpu's dep
         # is pulled in through the self-reference.
@@ -557,6 +620,7 @@ class TestSpecificModeConflictValidation:
                 _FAKE_TRANSPORT,
                 extras=("all",),
                 python_version="3.12.0",
+                inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
             )
         # Only gpu's self-reference marker holds on 3.12, so gpu's pin is
         # the one that reaches the resolver and cpu's is excluded.
@@ -583,7 +647,18 @@ class TestSpecificModeConflictValidation:
             "]\n"
         )
         with pytest.raises(ConflictSelectionError, match="exactly one"):
-            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                inputs=ResolveInputs(
+                    conflicts=(
+                        _extras_conflict(
+                            "cpu", "gpu", policy=ConflictPolicy.EXACTLY_ONE
+                        ),
+                    )
+                ),
+            )
 
     def test_specific_mode_at_least_one_with_no_member_raises(
         self, tmp_path: Path
@@ -603,7 +678,18 @@ class TestSpecificModeConflictValidation:
             "]\n"
         )
         with pytest.raises(ConflictSelectionError, match="at least one"):
-            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                inputs=ResolveInputs(
+                    conflicts=(
+                        _extras_conflict(
+                            "cpu", "gpu", policy=ConflictPolicy.AT_LEAST_ONE
+                        ),
+                    )
+                ),
+            )
 
     def test_specific_mode_exactly_one_with_one_member_resolves(
         self, tmp_path: Path
@@ -633,7 +719,17 @@ class TestSpecificModeConflictValidation:
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
             result = _resolved(
-                pyproject, _FAKE_TRANSPORT, extras=("cpu",), python_version="3.12.0"
+                pyproject,
+                _FAKE_TRANSPORT,
+                extras=("cpu",),
+                python_version="3.12.0",
+                inputs=ResolveInputs(
+                    conflicts=(
+                        _extras_conflict(
+                            "cpu", "gpu", policy=ConflictPolicy.EXACTLY_ONE
+                        ),
+                    )
+                ),
             )
         assert _pins(result) == {"foo": V("1.0")}
 
@@ -664,7 +760,17 @@ class TestSpecificModeConflictValidation:
             mock_provider.choose_version.return_value = V("1.0")
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
-            result = _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            result = _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                inputs=ResolveInputs(
+                    conflicts=(
+                        _groups_conflict("a", "b", policy=ConflictPolicy.EXACTLY_ONE),
+                    ),
+                    default_groups=("a",),
+                ),
+            )
         assert _pins(result) == {"foo": V("1.0")}
 
     def test_default_groups_deps_are_loaded(self, tmp_path: Path) -> None:
@@ -689,7 +795,12 @@ class TestSpecificModeConflictValidation:
             mock_provider.choose_version.return_value = V("2.0")
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
-            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                inputs=ResolveInputs(default_groups=("dev",)),
+            )
         root_reqs = mock_provider_cls.call_args.kwargs["root_requirements"]
         assert "bar" in root_reqs
 
@@ -715,6 +826,9 @@ class TestSpecificModeConflictValidation:
             _FAKE_TRANSPORT,
             groups=("b",),
             python_version="3.12.0",
+            inputs=ResolveInputs(
+                conflicts=(_groups_conflict("a", "b"),), default_groups=("a",)
+            ),
         )
         forks = mock_engine.call_args.kwargs["forks"]
         assert {f.selection for f in forks} == {
@@ -798,6 +912,9 @@ class TestResolvePyproject:
                 pyproject,
                 _FAKE_TRANSPORT,
                 python_version="3.12.0",
+                inputs=ResolveInputs(
+                    indexes=(IndexConfig("private", "https://custom.index/simple/"),)
+                ),
             )
 
         call_kwargs = mock_coord_cls.call_args
@@ -833,7 +950,18 @@ class TestResolvePyproject:
             mock_provider.get_dependencies.return_value = {}
             mock_provider.prioritize.return_value = 1
 
-            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                inputs=ResolveInputs(
+                    indexes=(
+                        IndexConfig("pypi", "https://pypi.org/simple/"),
+                        IndexConfig("private", "https://private.example.com/simple/"),
+                    ),
+                    package_overrides=(_index_route("baz", "private"),),
+                ),
+            )
 
         routes = mock_coord_cls.call_args.kwargs["index_routes"]
         assert [(r.name, r.index) for r in routes] == [("baz", "private")]
@@ -913,7 +1041,12 @@ class TestResolvePyproject:
         mock_resolver = mock_resolver_cls.return_value
         mock_resolver.resolve.return_value = {"foo": V("2.0")}
 
-        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            python_version="3.12.0",
+            inputs=ResolveInputs(constraints=("bar<2.0", "skip===custom")),
+        )
 
         call_kwargs = mock_resolver.resolve.call_args
         assert "constraints" in call_kwargs.kwargs
@@ -980,7 +1113,18 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {"foo": V("1.0")}
 
-        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            targets=(
+                ResolveTarget.for_declared(
+                    python_version="3.12",
+                    spec=PlatformSpec("linux_x86_64"),
+                    python_full_version="3.12.0",
+                ),
+            ),
+        )
 
         requirements = _root_ranges(mock_resolver_cls.return_value)
         assert "foo" in requirements
@@ -1021,7 +1165,12 @@ class TestResolvePyproject:
             "legacy": V("1.0"),
         }
 
-        _resolved(pyproject, _FAKE_TRANSPORT)
+        _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            python_version="3.8",
+        )
 
         requirements = _root_ranges(mock_resolver_cls.return_value)
         assert "foo" in requirements
@@ -1055,7 +1204,18 @@ class TestResolvePyproject:
             "linux-only": V("1.0"),
         }
 
-        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            targets=(
+                ResolveTarget.for_declared(
+                    python_version="3.12",
+                    spec=PlatformSpec("linux_x86_64"),
+                    python_full_version="3.12.0",
+                ),
+            ),
+        )
 
         requirements = _root_ranges(mock_resolver_cls.return_value)
         assert "linux-only" in requirements
@@ -1086,17 +1246,6 @@ class TestResolvePyproject:
         requirements = _root_ranges(mock_resolver_cls.return_value)
         assert "newer" not in requirements
 
-    def test_unparseable_python_version_raises(self, tmp_path: Path) -> None:
-        """Garbled ``python_version`` arg raises instead of silently
-        resolving against the host interpreter.
-        """
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            '[project]\ndependencies = ["foo"]\n',
-        )
-        with pytest.raises(ConfigError, match="'not-a-version'"):
-            _resolved(pyproject, _FAKE_TRANSPORT, python_version="not-a-version")
-
     @patch("nab_project._resolve.engine.build_target_lock")
     @patch("nab_project._resolve.engine.Resolver")
     @patch("nab_project._resolve.engine.Provider")
@@ -1124,23 +1273,15 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {}
 
-        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.4")
+        _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            python_version="3.12.4",
+            inputs=ResolveInputs(requires_python=">=3.10"),
+        )
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target.python_full_version == "3.12.4"
-
-    def test_python_version_arg_outside_requires_python_raises(
-        self, tmp_path: Path
-    ) -> None:
-        """A retarget the declaration excludes fails loud, not silently."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            '[project]\ndependencies = ["foo"]\n'
-            "[tool.nab]\n"
-            'requires-python = ">=3.11"\n',
-        )
-        with pytest.raises(ConfigError, match="excludes the resolve target"):
-            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.9")
 
     @patch("nab_project._resolve.engine.build_target_lock")
     @patch("nab_project._resolve.engine.Resolver")
@@ -1197,7 +1338,12 @@ class TestResolvePyproject:
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {}
 
-        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+        _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            python_version="3.12.0",
+            inputs=ResolveInputs(resolution=ResolutionStrategy.LOWEST_DIRECT),
+        )
 
         kwargs = mock_provider_cls.call_args.kwargs
         assert kwargs["resolution_strategy"] is ResolutionStrategy.LOWEST_DIRECT
@@ -1230,6 +1376,7 @@ class TestResolvePyproject:
             _FAKE_TRANSPORT,
             python_version="3.12.0",
             resolution_strategy=ResolutionStrategy.HIGHEST,
+            inputs=ResolveInputs(resolution=ResolutionStrategy.LOWEST),
         )
 
         kwargs = mock_provider_cls.call_args.kwargs
@@ -1312,12 +1459,16 @@ class TestResolvePyproject:
         mock_resolver_cls.return_value.resolve.return_value = {}
 
         result = _resolved(
-            pyproject, _FAKE_TRANSPORT, python_version="3.12.0", groups=("test",)
+            pyproject,
+            _FAKE_TRANSPORT,
+            python_version="3.12.0",
+            groups=("test",),
+            inputs=ResolveInputs(default_groups=("dev",)),
         )
 
         lock_input = build_lock_input(
             result,
-            inputs=read_pyproject_config(pyproject).resolve_inputs(),
+            inputs=ResolveInputs(default_groups=("dev",)),
             dependency_groups=("test",),
         )
         assert lock_input.dependency_groups == ("test",)
@@ -1350,7 +1501,7 @@ class TestResolvePyproject:
 
         lock_input = build_lock_input(
             result,
-            inputs=read_pyproject_config(pyproject).resolve_inputs(),
+            inputs=ResolveInputs(),
             dependency_groups=("test",),
         )
         assert lock_input.default_groups == ()
@@ -1373,7 +1524,17 @@ class TestResolveUniversalPyproject:
             'python = ">=3.11,<3.13"\n'
             'platforms = ["linux_x86_64", "macos_arm64"]\n',
         )
-        result = _resolved(pyproject)
+        result = _resolved(
+            pyproject,
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            targets=Matrix(
+                python=">=3.11,<3.13",
+                platforms=(
+                    PlatformSpec("linux_x86_64"),
+                    PlatformSpec("macos_arm64"),
+                ),
+            ).expand(),
+        )
 
         assert result is mock_engine.return_value
         targets = mock_engine.call_args.args[1]
@@ -1405,7 +1566,15 @@ class TestResolveUniversalPyproject:
             'platforms = ["linux_x86_64"]\n'
             'python-patches = { "3.11" = "3.11.4" }\n',
         )
-        _resolved(pyproject)
+        _resolved(
+            pyproject,
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            targets=Matrix(
+                python=">=3.11,<3.13",
+                platforms=(PlatformSpec("linux_x86_64"),),
+                python_patches={"3.11": "3.11.4"},
+            ).expand(),
+        )
         targets = mock_engine.call_args.args[1]
         assert [t.python_full_version for t in targets] == ["3.11.4", "3.12.0"]
 
@@ -1448,7 +1617,17 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject, extras=["cpu", "gpu"])
+        _resolved(
+            pyproject,
+            extras=["cpu", "gpu"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(_extras_conflict("cpu", "gpu"),),
+            ),
+            targets=Matrix(
+                python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         forks = mock_engine.call_args.kwargs["forks"]
         assert {f.selection for f in forks} == {
             (("extra", "cpu"),),
@@ -1488,7 +1667,17 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject, extras=["cpu", "gpu", "docs"])
+        _resolved(
+            pyproject,
+            extras=["cpu", "gpu", "docs"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(_extras_conflict("cpu", "gpu"),),
+            ),
+            targets=Matrix(
+                python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         forks = mock_engine.call_args.kwargs["forks"]
         cpu = next(f for f in forks if f.selection == (("extra", "cpu"),))
         assert cpu.contexts is not None
@@ -1521,7 +1710,20 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="exactly one"),
         ):
-            _resolved(pyproject)
+            _resolved(
+                pyproject,
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(
+                        _extras_conflict(
+                            "cpu", "gpu", policy=ConflictPolicy.EXACTLY_ONE
+                        ),
+                    ),
+                ),
+                targets=Matrix(
+                    python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
     def test_at_least_one_with_no_member_raises(self, tmp_path: Path) -> None:
@@ -1544,7 +1746,20 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="at least one"),
         ):
-            _resolved(pyproject)
+            _resolved(
+                pyproject,
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(
+                        _extras_conflict(
+                            "cpu", "gpu", policy=ConflictPolicy.AT_LEAST_ONE
+                        ),
+                    ),
+                ),
+                targets=Matrix(
+                    python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -1565,7 +1780,16 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject)
+        _resolved(
+            pyproject,
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(_extras_conflict("cpu", "gpu"),),
+            ),
+            targets=Matrix(
+                python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         (fork,) = mock_engine.call_args.kwargs["forks"]
         assert fork.selection == ()
 
@@ -1588,7 +1812,19 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject, extras=["cpu", "gpu"])
+        _resolved(
+            pyproject,
+            extras=["cpu", "gpu"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(
+                    _extras_conflict("cpu", "gpu", policy=ConflictPolicy.EXACTLY_ONE),
+                ),
+            ),
+            targets=Matrix(
+                python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         forks = mock_engine.call_args.kwargs["forks"]
         assert len(forks) == 2
 
@@ -1616,7 +1852,25 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="exactly one"),
         ):
-            _resolved(pyproject, extras=["all"])
+            _resolved(
+                pyproject,
+                extras=["all"],
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(
+                        _extras_conflict(
+                            "cpu", "gpu", policy=ConflictPolicy.EXACTLY_ONE
+                        ),
+                    ),
+                ),
+                targets=Matrix(
+                    python="==3.11",
+                    platforms=(
+                        PlatformSpec("linux_x86_64"),
+                        PlatformSpec("windows_amd64"),
+                    ),
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -1640,7 +1894,23 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64", "windows_amd64"]\n'
         )
-        _resolved(pyproject, extras=["all"])
+        _resolved(
+            pyproject,
+            extras=["all"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(
+                    _extras_conflict("cpu", "gpu", policy=ConflictPolicy.EXACTLY_ONE),
+                ),
+            ),
+            targets=Matrix(
+                python="==3.11",
+                platforms=(
+                    PlatformSpec("linux_x86_64"),
+                    PlatformSpec("windows_amd64"),
+                ),
+            ).expand(),
+        )
         mock_engine.assert_called_once()
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -1671,7 +1941,18 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject, extras=["cpu", "gpu"], groups=["dev", "lint"])
+        _resolved(
+            pyproject,
+            extras=["cpu", "gpu"],
+            groups=["dev", "lint"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(_extras_conflict("cpu", "gpu"),),
+            ),
+            targets=Matrix(
+                python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         assert _scanned_groups(mock_check) == [("dev", "lint")]
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -1700,7 +1981,17 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject, groups=["dev", "cpu", "gpu"])
+        _resolved(
+            pyproject,
+            groups=["dev", "cpu", "gpu"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(_groups_conflict("cpu", "gpu"),),
+            ),
+            targets=Matrix(
+                python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         assert _scanned_groups(mock_check) == [("dev", "cpu"), ("dev", "gpu")]
 
     def test_conflict_in_a_later_fork_raises(self, tmp_path: Path) -> None:
@@ -1723,7 +2014,17 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ResolutionError) as info,
         ):
-            _resolved(pyproject, groups=["dev", "cpu", "gpu"])
+            _resolved(
+                pyproject,
+                groups=["dev", "cpu", "gpu"],
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(_groups_conflict("cpu", "gpu"),),
+                ),
+                targets=Matrix(
+                    python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
         assert str(info.value) == (
@@ -1755,7 +2056,20 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ResolutionError) as info,
         ):
-            _resolved(pyproject, groups=["cpu", "gpu", "test", "docs"])
+            _resolved(
+                pyproject,
+                groups=["cpu", "gpu", "test", "docs"],
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(
+                        _groups_conflict("cpu", "gpu"),
+                        _groups_conflict("test", "docs"),
+                    ),
+                ),
+                targets=Matrix(
+                    python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
         assert str(info.value) == (
@@ -1783,7 +2097,17 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="cannot be selected together"),
         ):
-            _resolved(pyproject, extras=["all"])
+            _resolved(
+                pyproject,
+                extras=["all"],
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(_extras_conflict("cpu", "gpu"),),
+                ),
+                targets=Matrix(
+                    python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
     def test_umbrella_group_co_selecting_conflict_raises(self, tmp_path: Path) -> None:
@@ -1807,7 +2131,17 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="cannot be selected together"),
         ):
-            _resolved(pyproject, groups=["all-tools"])
+            _resolved(
+                pyproject,
+                groups=["all-tools"],
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(_groups_conflict("b22", "b23"),),
+                ),
+                targets=Matrix(
+                    python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
     def test_universal_umbrella_extra_transitively_co_selects_conflict_raises(
@@ -1835,7 +2169,17 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="cannot be selected together"),
         ):
-            _resolved(pyproject, extras=["all"])
+            _resolved(
+                pyproject,
+                extras=["all"],
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(_extras_conflict("cpu", "gpu"),),
+                ),
+                targets=Matrix(
+                    python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -1865,7 +2209,17 @@ class TestResolveUniversalPyproject:
             'python = ">=3.9,<3.13"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject, extras=["all"])
+        _resolved(
+            pyproject,
+            extras=["all"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(_extras_conflict("cpu", "gpu"),),
+            ),
+            targets=Matrix(
+                python=">=3.9,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         mock_engine.assert_called_once()
 
     def test_umbrella_extra_co_selecting_on_one_tuple_raises(
@@ -1898,7 +2252,17 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="cannot be selected together"),
         ):
-            _resolved(pyproject, extras=["all"])
+            _resolved(
+                pyproject,
+                extras=["all"],
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(_extras_conflict("cpu", "gpu"),),
+                ),
+                targets=Matrix(
+                    python=">=3.9,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
     def test_umbrella_extra_co_selecting_above_a_micro_boundary_raises(
@@ -1932,7 +2296,17 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="cannot be selected together"),
         ):
-            _resolved(pyproject, extras=["all"])
+            _resolved(
+                pyproject,
+                extras=["all"],
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(_extras_conflict("cpu", "gpu"),),
+                ),
+                targets=Matrix(
+                    python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
     def test_require_one_member_lost_above_a_micro_boundary_raises(
@@ -1959,7 +2333,21 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="exactly one"),
         ):
-            _resolved(pyproject, extras=["all"])
+            _resolved(
+                pyproject,
+                extras=["all"],
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(
+                        _extras_conflict(
+                            "cpu", "gpu", policy=ConflictPolicy.EXACTLY_ONE
+                        ),
+                    ),
+                ),
+                targets=Matrix(
+                    python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -1988,7 +2376,17 @@ class TestResolveUniversalPyproject:
             'python = "==3.10"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject, extras=["all"])
+        _resolved(
+            pyproject,
+            extras=["all"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(_extras_conflict("cpu", "gpu"),),
+            ),
+            targets=Matrix(
+                python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         mock_engine.assert_called_once()
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -2018,7 +2416,17 @@ class TestResolveUniversalPyproject:
             'python = "==3.10"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject, extras=["all"])
+        _resolved(
+            pyproject,
+            extras=["all"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(_extras_conflict("cpu", "gpu"),),
+            ),
+            targets=Matrix(
+                python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         mock_engine.assert_called_once()
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -2046,7 +2454,17 @@ class TestResolveUniversalPyproject:
             'python = "==3.10"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject, extras=["all"])
+        _resolved(
+            pyproject,
+            extras=["all"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(_extras_conflict("cpu", "gpu"),),
+            ),
+            targets=Matrix(
+                python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         mock_engine.assert_called_once()
 
     def test_untileable_self_ref_marker_keeps_the_other_boundaries(
@@ -2080,7 +2498,17 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConflictSelectionError, match="cannot be selected together"),
         ):
-            _resolved(pyproject, extras=["all"])
+            _resolved(
+                pyproject,
+                extras=["all"],
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(_extras_conflict("cpu", "gpu"),),
+                ),
+                targets=Matrix(
+                    python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -2102,7 +2530,17 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject, extras=["accel"])
+        _resolved(
+            pyproject,
+            extras=["accel"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(_extras_conflict("cpu", "gpu"),),
+            ),
+            targets=Matrix(
+                python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         (fork,) = mock_engine.call_args.kwargs["forks"]
         assert fork.selection == ()
         rendered = [str(r) for r in fork.requirements]
@@ -2127,7 +2565,16 @@ class TestResolveUniversalPyproject:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ConfigError, match="gpuu"),
         ):
-            _resolved(pyproject)
+            _resolved(
+                pyproject,
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    conflicts=(_extras_conflict("cpu", "gpuu"),),
+                ),
+                targets=Matrix(
+                    python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -2152,7 +2599,19 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject)
+        _resolved(
+            pyproject,
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(
+                    _groups_conflict("a", "b", policy=ConflictPolicy.EXACTLY_ONE),
+                ),
+                default_groups=("a",),
+            ),
+            targets=Matrix(
+                python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         (fork,) = mock_engine.call_args.kwargs["forks"]
         assert "foo==1.0" in [str(r) for r in fork.requirements]
 
@@ -2176,7 +2635,18 @@ class TestResolveUniversalPyproject:
             'python = "==3.11"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        _resolved(pyproject, groups=["b23"])
+        _resolved(
+            pyproject,
+            groups=["b23"],
+            inputs=ResolveInputs(
+                build_policy=BuildPolicy.NEVER,
+                conflicts=(_groups_conflict("b22", "b23"),),
+                default_groups=("b22",),
+            ),
+            targets=Matrix(
+                python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         forks = mock_engine.call_args.kwargs["forks"]
         assert len(forks) == 2
         selections = {f.selection for f in forks}
@@ -2217,6 +2687,7 @@ class TestResolvePyprojectVcs:
                 pyproject,
                 _FAKE_TRANSPORT,
                 python_version="3.12.0",
+                inputs=ResolveInputs(vcs=_GITHUB_HTTPS),
             )
 
     def test_refused_dependency_closes_the_transport(
@@ -2241,22 +2712,6 @@ class TestResolvePyprojectVcs:
 
         assert fetch_errors == []
         assert _FAKE_TRANSPORT.aclose.await_count > closes_before
-
-    def test_vcs_constraint_refused_at_config_load(self, tmp_path: Path) -> None:
-        """An admitting VCS policy does not matter: config load refuses it first."""
-        pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(
-            "[project]\ndependencies = []\n"
-            "[tool.nab]\nconstraints = "
-            f'["foo @ git+https://github.com/foo/bar.git@{_FORTY}"]\n'
-            "[tool.nab.vcs]\n"
-            'policy = "allow"\n'
-            'allowed-schemes = ["git+https"]\n'
-            'allowed-repos = ["https://github.com/"]\n',
-        )
-
-        with pytest.raises(ConfigError, match="cannot be a direct reference"):
-            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
 
 class TestResolvePyprojectLockShape:
@@ -2315,7 +2770,14 @@ class TestResolvePyprojectLockShape:
         ):
             mock_coord_cls.return_value.__enter__ = lambda s: s
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                inputs=ResolveInputs(
+                    indexes=(IndexConfig("private", "https://custom.index/simple/"),)
+                ),
+            )
         passed = mock_coord_cls.call_args.kwargs["indexes"]
         assert tuple(ix.url for ix in passed) == ("https://custom.index/simple/",)
 
@@ -2375,14 +2837,14 @@ class TestSpecificModeTargetPlan:
         )
         self._mock_resolve(mock_coord_cls, mock_resolver_cls)
 
-        result = _resolved(pyproject, _FAKE_TRANSPORT)
+        result = _resolved(
+            pyproject, _FAKE_TRANSPORT, inputs=ResolveInputs(requires_python=">=3.9")
+        )
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target == ResolveTarget.for_host()
         assert (
-            build_lock_input(
-                result, inputs=read_pyproject_config(pyproject).resolve_inputs()
-            )
+            build_lock_input(result, inputs=ResolveInputs(requires_python=">=3.9"))
         ).requires_python == ">=3.9"
 
     @patch("nab_project._resolve.engine.build_target_lock")
@@ -2406,7 +2868,7 @@ class TestSpecificModeTargetPlan:
         )
         self._mock_resolve(mock_coord_cls, mock_resolver_cls)
 
-        _resolved(pyproject, _FAKE_TRANSPORT)
+        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.10.5")
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target.python_full_version == "3.10.5"
@@ -2434,7 +2896,16 @@ class TestSpecificModeTargetPlan:
         )
         self._mock_resolve(mock_coord_cls, mock_resolver_cls)
 
-        _resolved(pyproject, _FAKE_TRANSPORT)
+        _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            targets=(
+                ResolveTarget.for_declared(
+                    python_version="3.11", spec=PlatformSpec("windows_amd64")
+                ),
+            ),
+        )
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target.platform_id == "windows_amd64"
@@ -2466,7 +2937,18 @@ class TestSpecificModeTargetPlan:
         )
         self._mock_resolve(mock_coord_cls, mock_resolver_cls)
 
-        _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.4")
+        _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            targets=(
+                ResolveTarget.for_declared(
+                    python_version="3.12",
+                    spec=PlatformSpec("linux_aarch64"),
+                    python_full_version="3.12.4",
+                ),
+            ),
+        )
 
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target.python_full_version == "3.12.4"
@@ -2906,16 +3388,13 @@ class TestBuildConstraints:
         assert "Root requirement" not in message
 
     def test_dropped_constraint_warning_omits_pkg_extra(
-        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """pkg[extra] is the one spelling the constraint parser refuses."""
         message = self._drop_warning(caplog)
 
         assert "pkg[extra]" not in message
         assert "A constraint cannot carry extras" in message
-
-        with pytest.raises(ConfigError, match="cannot have extras"):
-            read_pyproject_config(_constraints_pyproject(tmp_path, '"foo[fast]<2.0"'))
 
     def test_dropped_group_constraint_warning_omits_the_extras_rule(
         self, caplog: pytest.LogCaptureFixture
@@ -2927,7 +3406,7 @@ class TestBuildConstraints:
         assert "Drop the membership test from the marker and keep the rest." in message
 
     def test_dropped_constraint_repair_still_bounds_the_package(
-        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """The repair the warning asks for parses and still bounds foo."""
         message = self._drop_warning(caplog)
@@ -2935,15 +3414,13 @@ class TestBuildConstraints:
             "so drop the membership test from the marker and keep the rest."
         )
 
-        inputs = read_pyproject_config(
-            _constraints_pyproject(tmp_path, '"foo<2.0"')
-        ).resolve_inputs()
+        inputs = ResolveInputs(constraints=("foo<2.0",))
         out = _build_constraints(inputs, environment={})
         assert V("1.0") in out["foo"]
         assert V("5.0") not in out["foo"]
 
     def test_repaired_compound_marker_keeps_its_environment_test(
-        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+        self, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Keeping the rest of the marker leaves foo unbound on other interpreters.
 
@@ -2961,9 +3438,7 @@ class TestBuildConstraints:
             "so drop the membership test from the marker and keep the rest."
         )
 
-        inputs = read_pyproject_config(
-            _constraints_pyproject(tmp_path, "\"foo<2.0 ; python_version < '3.10'\"")
-        ).resolve_inputs()
+        inputs = ResolveInputs(constraints=("foo<2.0 ; python_version < '3.10'",))
         out = _build_constraints(inputs, environment=on_39)
         assert V("1.0") in out["foo"]
         assert V("5.0") not in out["foo"]
@@ -3752,7 +4227,12 @@ class TestAugmentResolutionError:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             with pytest.raises(ResolutionError) as info:
-                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+                _resolved(
+                    pyproject,
+                    _FAKE_TRANSPORT,
+                    python_version="3.12.0",
+                    inputs=ResolveInputs(constraints=("foo<2.0",)),
+                )
 
         diagnostics = _diagnostics(info.value)
         assert "<VersionRange" not in diagnostics
@@ -3944,7 +4424,14 @@ class TestAugmentResolutionError:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             with pytest.raises(ResolutionError) as info:
-                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+                _resolved(
+                    pyproject,
+                    _FAKE_TRANSPORT,
+                    python_version="3.12.0",
+                    inputs=ResolveInputs(
+                        uploaded_prior_to=datetime(2026, 1, 10, tzinfo=timezone.utc)
+                    ),
+                )
 
         diagnostics = _diagnostics(info.value)
         assert (
@@ -4048,7 +4535,14 @@ class TestAugmentResolutionError:
         with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            result = _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            result = _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                inputs=ResolveInputs(
+                    uploaded_prior_to=datetime(2026, 5, 1, tzinfo=timezone.utc)
+                ),
+            )
 
         assert _pins(result) == {"foo": Version("1.0")}
         assert walks == []
@@ -4228,7 +4722,12 @@ class TestConflictingRootRequirements:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             with pytest.raises(ResolutionError, match="conflicting constraints"):
-                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+                _resolved(
+                    pyproject,
+                    _FAKE_TRANSPORT,
+                    python_version="3.12.0",
+                    inputs=ResolveInputs(constraints=("foo<1.0", "foo>2.0")),
+                )
 
 
 def _tuple_for_python(python_version: str) -> ResolveTarget:
@@ -4382,7 +4881,14 @@ class TestResolveUniversalPyprojectGroupConflict:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ResolutionError) as info,
         ):
-            _resolved(pyproject, groups=["a", "b"])
+            _resolved(
+                pyproject,
+                groups=["a", "b"],
+                inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+                targets=Matrix(
+                    python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
         message = str(info.value)
         assert "Dependency groups" in message
@@ -4410,7 +4916,14 @@ class TestResolveUniversalPyprojectGroupConflict:
             patch("nab_project.resolve.resolve_with_coordinator") as mock_universal,
             pytest.raises(ResolutionError) as info,
         ):
-            _resolved(pyproject, groups=["a", "b"])
+            _resolved(
+                pyproject,
+                groups=["a", "b"],
+                inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+                targets=Matrix(
+                    python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
         mock_universal.assert_not_called()
         message = str(info.value)
         assert "py311-linux_x86_64" in message
@@ -4435,7 +4948,14 @@ class TestResolveUniversalPyprojectGroupConflict:
         )
         sentinel = MagicMock()
         mock_universal.return_value = sentinel
-        result = _resolved(pyproject, groups=["a", "b"])
+        result = _resolved(
+            pyproject,
+            groups=["a", "b"],
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            targets=Matrix(
+                python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         assert result is sentinel
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -4456,7 +4976,14 @@ class TestResolveUniversalPyprojectGroupConflict:
         )
         sentinel = MagicMock()
         mock_universal.return_value = sentinel
-        result = _resolved(pyproject, groups=["a"])
+        result = _resolved(
+            pyproject,
+            groups=["a"],
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            targets=Matrix(
+                python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         assert result is sentinel
 
     @patch("nab_project.resolve.resolve_with_coordinator")
@@ -4475,7 +5002,13 @@ class TestResolveUniversalPyprojectGroupConflict:
         )
         sentinel = MagicMock()
         mock_universal.return_value = sentinel
-        result = _resolved(pyproject)
+        result = _resolved(
+            pyproject,
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            targets=Matrix(
+                python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
         assert result is sentinel
 
 
@@ -4552,7 +5085,14 @@ class TestLocalVcsRequiresPython:
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             with pytest.raises(ResolutionError, match="foo 1.0 requires Python"):
-                _resolved(root, _FAKE_TRANSPORT, python_version="3.10.0")
+                _resolved(
+                    root,
+                    _FAKE_TRANSPORT,
+                    python_version="3.10.0",
+                    inputs=ResolveInputs(
+                        local_sources=(LocalSource("foo", str(tmp_path / "foo")),)
+                    ),
+                )
 
     def test_resolve_pyproject_declared_target_satisfies_local(
         self, tmp_path: Path
@@ -4584,7 +5124,15 @@ class TestLocalVcsRequiresPython:
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            result = _resolved(root, _FAKE_TRANSPORT)
+            result = _resolved(
+                root,
+                _FAKE_TRANSPORT,
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    local_sources=(LocalSource("foo", str(tmp_path / "foo")),),
+                ),
+                python_version="3.12.1",
+            )
         assert _pins(result)["foo"] == V("1.0")
 
     def test_resolve_pyproject_declared_target_satisfies_index(
@@ -4619,7 +5167,12 @@ class TestLocalVcsRequiresPython:
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            result = _resolved(root, _FAKE_TRANSPORT)
+            result = _resolved(
+                root,
+                _FAKE_TRANSPORT,
+                inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+                python_version="3.12.1",
+            )
         assert _pins(result)["foo"] == V("1.0")
 
     def test_resolve_index_metadata_requires_python_rejects_omitted_listing(
@@ -4709,6 +5262,7 @@ class TestLocalSourceExtrasMarkers:
         coordinator: FakeFetchPort,
         python_version: str,
     ) -> ResolveResult:
+        """Resolve the root project with each member tree as a local source."""
         (tmp_path / "pyproject.toml").write_text(root_body, encoding="utf-8")
         for name, body in members.items():
             member = tmp_path / name
@@ -4724,6 +5278,11 @@ class TestLocalSourceExtrasMarkers:
                 tmp_path / "pyproject.toml",
                 _FAKE_TRANSPORT,
                 python_version=python_version,
+                inputs=ResolveInputs(
+                    local_sources=tuple(
+                        LocalSource(name, str(tmp_path / name)) for name in members
+                    )
+                ),
             )
 
     _ROOT_FOO_GPU = (
@@ -4827,6 +5386,15 @@ _PY312_ENV: dict[str, str] = {
 }
 
 
+_LINUX_312 = ResolveTarget.for_declared(
+    python_version="3.12", spec=PlatformSpec("linux_x86_64")
+)
+
+_PYPY_312 = ResolveTarget.for_declared(
+    python_version="3.12", spec=PlatformSpec("linux_x86_64"), implementation="pypy"
+)
+
+
 class TestLockDeclaresItsEnvironment:
     """A single-environment lock declares the environment it was resolved
     for.  Every dependency whose marker was False here was dropped, so an
@@ -4834,17 +5402,25 @@ class TestLockDeclaresItsEnvironment:
     different package set: PEP 751 ``environments`` refuses it.
     """
 
+    _INPUTS: ClassVar[ResolveInputs] = ResolveInputs(build_policy=BuildPolicy.NEVER)
+
     @staticmethod
-    def _resolve(tmp_path: Path, body: str, coordinator: FakeFetchPort) -> LockInput:
+    def _resolve(
+        tmp_path: Path,
+        body: str,
+        coordinator: FakeFetchPort,
+        *,
+        inputs: ResolveInputs = _INPUTS,
+        target: ResolveTarget = _LINUX_312,
+    ) -> LockInput:
+        """Resolve ``body`` for one declared target and build its lock input."""
         path = tmp_path / "pyproject.toml"
         path.write_text(body, encoding="utf-8")
         with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            result = _resolved(path, _FAKE_TRANSPORT)
-        return build_lock_input(
-            result, inputs=read_pyproject_config(path).resolve_inputs()
-        )
+            result = _resolved(path, _FAKE_TRANSPORT, targets=(target,), inputs=inputs)
+        return build_lock_input(result, inputs=inputs)
 
     _PYPROJECT = (
         '[project]\nname = "proj"\ndependencies = ["foo"]\n'
@@ -4902,7 +5478,14 @@ class TestLockDeclaresItsEnvironment:
             '[tool.nab]\nbuild-policy = "never"\n'
             "constraints = [\"foo<9; implementation_name == 'cpython'\"]\n",
         )
-        lock_input = self._resolve(tmp_path, body, self._coordinator())
+        lock_input = self._resolve(
+            tmp_path,
+            body,
+            self._coordinator(),
+            inputs=self._INPUTS.replace(
+                constraints=("foo<9; implementation_name == 'cpython'",)
+            ),
+        )
         (environment,) = lock_input.environments
         assert 'implementation_name == "cpython"' in str(environment)
 
@@ -4937,6 +5520,7 @@ class TestLockDeclaresItsEnvironment:
                 self._coordinator(
                     'Requires-Dist: bar ; implementation_version >= "7.3"\n'
                 ),
+                target=_PYPY_312,
             )
         (environment,) = lock_input.environments
         assert "implementation_version" not in str(environment)
@@ -4966,6 +5550,7 @@ class TestLockDeclaresItsEnvironment:
                 tmp_path,
                 body,
                 self._coordinator('Requires-Dist: bar ; sys_platform == "win32"\n'),
+                target=_PYPY_312,
             )
         (environment,) = lock_input.environments
         assert 'sys_platform == "linux"' in str(environment)
@@ -5094,7 +5679,16 @@ class TestExtraAndGroupMembershipMarkers:
         groups: tuple[str, ...] = (),
         root: str | None = None,
         members: dict[str, str] | None = None,
+        sources: tuple[str, ...] = tuple(_MEMBERS),
+        inputs: ResolveInputs | None = None,
+        targets: tuple[ResolveTarget, ...] | None = None,
     ) -> Pylock:
+        """Resolve the root project and emit its lock.
+
+        ``sources`` names the member trees the root declares as local
+        sources; the rest of the project's settings arrive as ``inputs``,
+        the way a host hands them over.
+        """
         (tmp_path / "pyproject.toml").write_text(
             root if root is not None else TestExtraAndGroupMembershipMarkers._ROOT,
             encoding="utf-8",
@@ -5108,17 +5702,22 @@ class TestExtraAndGroupMembershipMarkers:
             member = tmp_path / name
             member.mkdir()
             (member / "pyproject.toml").write_text(body, encoding="utf-8")
+        inputs = (ResolveInputs() if inputs is None else inputs).replace(
+            local_sources=tuple(
+                LocalSource(name, str(tmp_path / name)) for name in sources
+            )
+        )
         with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: make_coordinator([])
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             path = tmp_path / "pyproject.toml"
-            inputs = read_pyproject_config(path).resolve_inputs()
             result = _resolved(
                 path,
                 _FAKE_TRANSPORT,
                 inputs=inputs,
                 extras=extras,
                 groups=groups,
+                targets=(ResolveTarget.for_host(),) if targets is None else targets,
             )
         pylock = build_pylock(
             build_lock_input(
@@ -5169,7 +5768,11 @@ class TestExtraAndGroupMembershipMarkers:
         them, so an install that wants both asks for both.
         """
         pylock = self._lock(
-            tmp_path, extras=("cli",), groups=("dev",), root=self._ROOT + _BASE_GROUP
+            tmp_path,
+            extras=("cli",),
+            groups=("dev",),
+            root=self._ROOT + _BASE_GROUP,
+            inputs=ResolveInputs(base_group="default"),
         )
 
         assert _pylock_markers(pylock) == {
@@ -5194,7 +5797,12 @@ class TestExtraAndGroupMembershipMarkers:
         installs it even though the project's own dependencies are out.
         """
         root = self._ROOT.replace('dev = ["mydev"]', 'dev = ["mydev", "core"]')
-        pylock = self._lock(tmp_path, groups=("dev",), root=root + _BASE_GROUP)
+        pylock = self._lock(
+            tmp_path,
+            groups=("dev",),
+            root=root + _BASE_GROUP,
+            inputs=ResolveInputs(base_group="default"),
+        )
 
         assert _pylock_markers(pylock)["core"] == (
             '"default" in dependency_groups or "dev" in dependency_groups'
@@ -5219,7 +5827,9 @@ class TestExtraAndGroupMembershipMarkers:
         (``dependency_groups=[]``) drops it.
         """
         root = self._ROOT + '[tool.nab]\ndefault-groups = ["dev"]\n'
-        pylock = self._lock(tmp_path, root=root)
+        pylock = self._lock(
+            tmp_path, root=root, inputs=ResolveInputs(default_groups=("dev",))
+        )
 
         assert pylock.default_groups == ("dev",)
         assert _pylock_selected(pylock) == {"core", "mydev"}
@@ -5234,7 +5844,11 @@ class TestExtraAndGroupMembershipMarkers:
         name goes back in by being declared there.
         """
         root = self._ROOT + '[tool.nab]\ndefault-groups = ["dev"]\n'
-        replaced = self._lock(tmp_path, root=root + 'base-group = "base"\n')
+        replaced = self._lock(
+            tmp_path,
+            root=root + 'base-group = "base"\n',
+            inputs=ResolveInputs(base_group="base", default_groups=("dev",)),
+        )
 
         assert replaced.default_groups == ("dev",)
         assert _pylock_selected(replaced) == {"mydev"}
@@ -5244,7 +5858,11 @@ class TestExtraAndGroupMembershipMarkers:
     ) -> None:
         """It is not a declared group, but ``default-groups`` accepts it."""
         root = self._ROOT + '[tool.nab]\ndefault-groups = ["dev", "base"]\n'
-        pylock = self._lock(tmp_path, root=root + 'base-group = "base"\n')
+        pylock = self._lock(
+            tmp_path,
+            root=root + 'base-group = "base"\n',
+            inputs=ResolveInputs(base_group="base", default_groups=("dev", "base")),
+        )
 
         assert pylock.default_groups == ("base", "dev")
         assert _pylock_selected(pylock) == {"core", "mydev"}
@@ -5256,16 +5874,12 @@ class TestExtraAndGroupMembershipMarkers:
         being silently accepted there would make the flag a no-op.
         """
         with pytest.raises(LookupError, match="'default' not found"):
-            self._lock(tmp_path, groups=("default",), root=self._ROOT + _BASE_GROUP)
-
-    def test_a_declared_group_of_that_name_refuses(self, tmp_path: Path) -> None:
-        """One marker cannot mean both the project's own and a declared group."""
-        root = self._ROOT.replace(
-            '[dependency-groups]\ndev = ["mydev"]',
-            '[dependency-groups]\nDefault = ["mydev"]',
-        )
-        with pytest.raises(ConfigError, match=r"^base-group 'default' and"):
-            self._lock(tmp_path, groups=("default",), root=root + _BASE_GROUP)
+            self._lock(
+                tmp_path,
+                groups=("default",),
+                root=self._ROOT + _BASE_GROUP,
+                inputs=ResolveInputs(base_group="default"),
+            )
 
     def test_a_name_merely_resembling_it_is_allowed(self, tmp_path: Path) -> None:
         """``de_fault`` normalises to ``de-fault``, which collides with nothing."""
@@ -5273,7 +5887,12 @@ class TestExtraAndGroupMembershipMarkers:
             '[dependency-groups]\ndev = ["mydev"]',
             '[dependency-groups]\nde_fault = ["mydev"]',
         )
-        pylock = self._lock(tmp_path, groups=("de_fault",), root=root + _BASE_GROUP)
+        pylock = self._lock(
+            tmp_path,
+            groups=("de_fault",),
+            root=root + _BASE_GROUP,
+            inputs=ResolveInputs(base_group="default"),
+        )
 
         assert pylock.dependency_groups == ("de-fault", "default")
         assert _pylock_selected(pylock, dependency_groups=["de-fault"]) == {"mydev"}
@@ -5296,7 +5915,11 @@ class TestExtraAndGroupMembershipMarkers:
         dependencies, so an installer reading two locks of the same
         project does not get two answers to the same request.
         """
-        pylock = self._lock(tmp_path, root=self._ROOT + _BASE_GROUP)
+        pylock = self._lock(
+            tmp_path,
+            root=self._ROOT + _BASE_GROUP,
+            inputs=ResolveInputs(base_group="default"),
+        )
 
         assert _pylock_markers(pylock) == {"core": '"default" in dependency_groups'}
         assert _pylock_selected(pylock) == {"core"}
@@ -5312,7 +5935,12 @@ class TestExtraAndGroupMembershipMarkers:
             'dependencies = ["core"]', 'dynamic = ["dependencies"]'
         )
         with pytest.raises(InvalidProjectRequirementError, match="declared dynamic"):
-            self._lock(tmp_path, groups=("dev",), root=root + _BASE_GROUP)
+            self._lock(
+                tmp_path,
+                groups=("dev",),
+                root=root + _BASE_GROUP,
+                inputs=ResolveInputs(base_group="default"),
+            )
 
     def test_no_selection_leaves_every_package_unmarked(self, tmp_path: Path) -> None:
         pylock = self._lock(tmp_path)
@@ -5362,7 +5990,15 @@ class TestExtraAndGroupMembershipMarkers:
             '[tool.nab.matrix]\npython = ">=3.11,<3.13"\n'
             'platforms = ["linux_x86_64"]\n'
         )
-        pylock = self._lock(tmp_path, extras=("cli",), root=root)
+        pylock = self._lock(
+            tmp_path,
+            extras=("cli",),
+            root=root,
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            targets=Matrix(
+                python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+        )
 
         assert _pylock_markers(pylock) == {
             "core": None,
@@ -5413,6 +6049,8 @@ class TestConflictMemberMembershipMarkers:
             extras=("cpu", "gpu", "docs"),
             root=self._ROOT,
             members=self._MEMBERS,
+            sources=self._NAMES,
+            inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
         )
 
     def test_shared_package_names_both_selections_that_reach_it(
@@ -5539,13 +6177,25 @@ class TestIndexCacheFloorOnAWarmResolve:
         pyproject.write_text(text, encoding="utf-8")
         return pyproject
 
-    @staticmethod
-    def _resolve_pins(pyproject: Path, cache_dir: Path) -> dict[str, Version]:
+    @classmethod
+    def _resolve_pins(
+        cls, pyproject: Path, cache_dir: Path, *, floor: bool
+    ) -> dict[str, Version]:
         """The pins of a resolve whose coordinator reads and writes ``cache_dir``."""
+        overrides = (
+            {"internal": IndexOverride(assume_fresh_seconds=3600)} if floor else {}
+        )
         transport = HttpxAsyncTransport()
         try:
             result = _resolved(
-                pyproject, transport, cache_dir=cache_dir, python_version="3.12.0"
+                pyproject,
+                transport,
+                cache_dir=cache_dir,
+                python_version="3.12.0",
+                inputs=ResolveInputs(
+                    indexes=(IndexConfig("internal", cls._INDEX),),
+                    index_overrides=overrides,
+                ),
             )
         finally:
             asyncio.run(transport.aclose())
@@ -5573,17 +6223,21 @@ class TestIndexCacheFloorOnAWarmResolve:
         plain_cache = tmp_path / "cache-plain"
 
         # Warm both caches on the 1.0 listing.
-        assert self._resolve_pins(floored, floored_cache) == {"foo": V("1.0")}
-        assert self._resolve_pins(plain, plain_cache) == {"foo": V("1.0")}
+        assert self._resolve_pins(floored, floored_cache, floor=True) == {
+            "foo": V("1.0")
+        }
+        assert self._resolve_pins(plain, plain_cache, floor=False) == {"foo": V("1.0")}
         warm_requests = listing.call_count
 
         # foo 2.0 is published, inside the floored index's window.
         listing.mock(return_value=self._listing("1.0", "2.0"))
 
-        assert self._resolve_pins(floored, floored_cache) == {"foo": V("1.0")}
+        assert self._resolve_pins(floored, floored_cache, floor=True) == {
+            "foo": V("1.0")
+        }
         assert listing.call_count == warm_requests
 
-        assert self._resolve_pins(plain, plain_cache) == {"foo": V("2.0")}
+        assert self._resolve_pins(plain, plain_cache, floor=False) == {"foo": V("2.0")}
         assert listing.call_count == warm_requests + 1
 
 
@@ -5775,7 +6429,14 @@ class TestBuildRequirementsResolve:
         resolve_for_targets(
             pyproject,
             _FAKE_TRANSPORT,
-            targets=plan_targets(read_pyproject_config(pyproject)),
+            targets=(
+                ResolveTarget.for_declared(
+                    python_version="3.11", spec=PlatformSpec("linux_x86_64")
+                ),
+                ResolveTarget.for_declared(
+                    python_version="3.12", spec=PlatformSpec("linux_x86_64")
+                ),
+            ),
             build_requirements=True,
         )
 
@@ -5877,7 +6538,9 @@ class TestBuildGroup:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(self._PYPROJECT + _BOTH_GROUPS)
 
-        result = self._mocked_resolve(pyproject)
+        result = self._mocked_resolve(
+            pyproject, inputs=ResolveInputs(base_group="main", build_group="build")
+        )
 
         assert _pins(result) == {"runtime-only": V("2.0"), "hatchling": V("2.0")}
 
@@ -5903,7 +6566,10 @@ class TestBuildGroup:
         with pytest.raises(
             InvalidProjectRequirementError, match=r"declares no \[build-system\]"
         ):
-            self._mocked_resolve(pyproject)
+            self._mocked_resolve(
+                pyproject,
+                inputs=ResolveInputs(base_group="main", build_group="build"),
+            )
 
     def test_a_build_requirements_lock_drops_the_group(self, tmp_path: Path) -> None:
         """Its roots already are the build requirements, so nothing gates them.
@@ -5914,7 +6580,7 @@ class TestBuildGroup:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(self._PYPROJECT + _BOTH_GROUPS)
         inputs = inputs_for_build_requirements(
-            read_pyproject_config(pyproject).resolve_inputs()
+            ResolveInputs(base_group="main", build_group="build")
         )
 
         result = self._mocked_resolve(pyproject, build_requirements=True)
@@ -5948,6 +6614,11 @@ class TestBuildGroup:
                 _FAKE_TRANSPORT,
                 groups=("cpu", "gpu"),
                 python_version="3.12.0",
+                inputs=ResolveInputs(
+                    base_group="main",
+                    build_group="build",
+                    conflicts=(_groups_conflict("cpu", "gpu"),),
+                ),
             )
 
         forks = mock_engine.call_args.kwargs["forks"]
@@ -5975,7 +6646,18 @@ class TestBuildGroup:
         with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda coordinator: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            _resolved(pyproject, _FAKE_TRANSPORT)
+            _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                inputs=ResolveInputs(
+                    base_group="main",
+                    build_group="build",
+                    build_policy=BuildPolicy.NEVER,
+                ),
+                targets=Matrix(
+                    python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+                ).expand(),
+            )
 
         targets = mock_engine.call_args.args[1]
         assert [t.label for t in targets] == [
@@ -6014,6 +6696,8 @@ class TestBuildGroupMarkers:
             groups=groups,
             root=self._ROOT + tool,
             members=self._MEMBERS,
+            sources=tuple(self._MEMBERS),
+            inputs=ResolveInputs(base_group="main", build_group="build"),
         )
 
     def test_each_side_gates_on_its_own_name(self, tmp_path: Path) -> None:
@@ -6073,8 +6757,14 @@ class TestConfiguredGroupConflicts:
 
     _CONFLICT = 'conflicts = [[{ group = "main" }, { group = "build" }]]\n'
 
+    _INPUTS: ClassVar[ResolveInputs] = ResolveInputs(
+        base_group="main", build_group="build"
+    )
+
     @staticmethod
-    def _planned(pyproject: Path, **kwargs: object) -> MagicMock:
+    def _planned(
+        pyproject: Path, *, inputs: ResolveInputs = _INPUTS, **kwargs: object
+    ) -> MagicMock:
         """Resolve far enough to capture the fork plan, without an index."""
         with (
             patch("nab_project.resolve.resolve_with_coordinator") as mock_engine,
@@ -6086,19 +6776,31 @@ class TestConfiguredGroupConflicts:
                 pyproject,
                 _FAKE_TRANSPORT,
                 targets=(ResolveTarget.for_host_python("3.12.0"),),
-                inputs=read_pyproject_config(pyproject).resolve_inputs(),
+                inputs=inputs,
                 **kwargs,
             )
         return mock_engine
 
-    def _forks(self, tmp_path: Path, tool: str, **kwargs: object) -> list[ResolveFork]:
+    def _forks(
+        self,
+        tmp_path: Path,
+        tool: str,
+        *,
+        conflicts: tuple[ConflictSet, ...] = (),
+        **kwargs: object,
+    ) -> list[ResolveFork]:
+        """The forks the root project plans under ``conflicts``."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(self._ROOT + tool)
-        return self._planned(pyproject, **kwargs).call_args.kwargs["forks"]
+        return self._planned(
+            pyproject, inputs=self._INPUTS.replace(conflicts=conflicts), **kwargs
+        ).call_args.kwargs["forks"]
 
     def test_the_two_sides_resolve_separately(self, tmp_path: Path) -> None:
         """Each fork carries one context, so neither constrains the other."""
-        forks = self._forks(tmp_path, self._CONFLICT)
+        forks = self._forks(
+            tmp_path, self._CONFLICT, conflicts=(_groups_conflict("main", "build"),)
+        )
 
         assert [f.selection for f in forks] == [
             (("group", "main"),),
@@ -6112,7 +6814,9 @@ class TestConfiguredGroupConflicts:
 
     def test_each_fork_claims_only_the_context_it_walked(self, tmp_path: Path) -> None:
         """A fork that never resolved the build requirements has no gate for them."""
-        main_fork, build_fork = self._forks(tmp_path, self._CONFLICT)
+        main_fork, build_fork = self._forks(
+            tmp_path, self._CONFLICT, conflicts=(_groups_conflict("main", "build"),)
+        )
 
         assert [str(r) for r in main_fork.contexts.project] == [
             "packaging<24",
@@ -6132,7 +6836,10 @@ class TestConfiguredGroupConflicts:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(self._ROOT + self._CONFLICT)
 
-        engine = self._planned(pyproject)
+        engine = self._planned(
+            pyproject,
+            inputs=self._INPUTS.replace(conflicts=(_groups_conflict("main", "build"),)),
+        )
 
         assert engine.call_args.kwargs["base_requirements"] == []
 
@@ -6157,6 +6864,7 @@ class TestConfiguredGroupConflicts:
         forks = self._forks(
             tmp_path,
             'conflicts = [[{ group = "build" }, { group = "dev" }]]\n',
+            conflicts=(_groups_conflict("build", "dev"),),
             groups=("dev",),
         )
 
@@ -6177,6 +6885,7 @@ class TestConfiguredGroupConflicts:
         forks = self._forks(
             tmp_path,
             'conflicts = [[{ group = "build" }, { group = "dev" }]]\n',
+            conflicts=(_groups_conflict("build", "dev"),),
             groups=("dev",),
         )
 
@@ -6189,6 +6898,7 @@ class TestConfiguredGroupConflicts:
             tmp_path,
             'conflicts = [[{ group = "main" }, { group = "build" },'
             ' { group = "dev" }]]\n',
+            conflicts=(_groups_conflict("main", "build", "dev"),),
             groups=("dev",),
         )
 
@@ -6210,7 +6920,16 @@ class TestConfiguredGroupConflicts:
             ' policy = "exactly-one" }]\n'
         )
 
-        forks = self._planned(pyproject).call_args.kwargs["forks"]
+        forks = self._planned(
+            pyproject,
+            inputs=self._INPUTS.replace(
+                conflicts=(
+                    _groups_conflict(
+                        "main", "build", policy=ConflictPolicy.EXACTLY_ONE
+                    ),
+                )
+            ),
+        ).call_args.kwargs["forks"]
 
         assert [f.selection for f in forks] == [
             (("group", "main"),),
@@ -6238,7 +6957,14 @@ class TestConfiguredGroupConflicts:
         )
 
         with pytest.raises(ConflictSelectionError, match="cannot be selected together"):
-            self._planned(pyproject, groups=("all",))
+            self._planned(
+                pyproject,
+                groups=("all",),
+                inputs=ResolveInputs(
+                    base_group="main",
+                    conflicts=(_groups_conflict("main", "dev"),),
+                ),
+            )
 
     def test_a_near_miss_for_a_configured_name_still_raises(
         self, tmp_path: Path
@@ -6251,7 +6977,13 @@ class TestConfiguredGroupConflicts:
         )
 
         with pytest.raises(ConfigError, match="build-tools"):
-            self._planned(pyproject, groups=("dev",))
+            self._planned(
+                pyproject,
+                groups=("dev",),
+                inputs=self._INPUTS.replace(
+                    conflicts=(_groups_conflict("build-tools", "dev"),)
+                ),
+            )
 
     def test_an_unset_configured_name_is_not_known(self, tmp_path: Path) -> None:
         """``build`` names nothing when build-group is unset."""
@@ -6265,7 +6997,11 @@ class TestConfiguredGroupConflicts:
         )
 
         with pytest.raises(ConfigError, match="group 'build'"):
-            self._planned(pyproject, groups=("dev",))
+            self._planned(
+                pyproject,
+                groups=("dev",),
+                inputs=ResolveInputs(conflicts=(_groups_conflict("build", "dev"),)),
+            )
 
 
 class TestConfiguredGroupConflictMarkers:
@@ -6291,7 +7027,15 @@ class TestConfiguredGroupConflictMarkers:
 
     def _lock(self, tmp_path: Path) -> Pylock:
         return TestExtraAndGroupMembershipMarkers._lock(
-            tmp_path, root=self._ROOT, members=self._MEMBERS
+            tmp_path,
+            root=self._ROOT,
+            members=self._MEMBERS,
+            sources=tuple(self._MEMBERS),
+            inputs=ResolveInputs(
+                base_group="main",
+                build_group="build",
+                conflicts=(_groups_conflict("main", "build"),),
+            ),
         )
 
     def test_each_side_gates_on_its_own_name_and_negates_the_other(
@@ -6354,10 +7098,10 @@ class TestConfiguredGroupConflictDivergentPins:
             hashes=(("sha256", "a" * 64),),
         )
 
-    def _resolved_lock(self, tmp_path: Path, tool: str) -> Pylock:
+    def _resolved_lock(self, tmp_path: Path) -> Pylock:
         """Resolve against an index carrying both versions, and emit the lock."""
         pyproject = tmp_path / "pyproject.toml"
-        pyproject.write_text(self._ROOT + tool)
+        pyproject.write_text(self._ROOT + self._CONFLICT)
         coordinator = make_coordinator(
             [self._wheel("23.2"), self._wheel("24.2")],
             package="packaging",
@@ -6366,7 +7110,11 @@ class TestConfiguredGroupConflictDivergentPins:
         with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            inputs = read_pyproject_config(pyproject).resolve_inputs()
+            inputs = ResolveInputs(
+                base_group="main",
+                build_group="build",
+                conflicts=(_groups_conflict("main", "build"),),
+            )
             result = _resolved(pyproject, _FAKE_TRANSPORT, inputs=inputs)
         pylock = build_pylock(
             build_lock_input(result, inputs=inputs), lock_dir=tmp_path
@@ -6390,11 +7138,15 @@ class TestConfiguredGroupConflictDivergentPins:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             with pytest.raises(ResolutionError):
-                _resolved(pyproject, _FAKE_TRANSPORT)
+                _resolved(
+                    pyproject,
+                    _FAKE_TRANSPORT,
+                    inputs=ResolveInputs(base_group="main", build_group="build"),
+                )
 
     def test_the_conflict_gives_each_side_its_own_pin(self, tmp_path: Path) -> None:
         """Two entries for one name, disjoint on the group clause."""
-        pylock = self._resolved_lock(tmp_path, self._CONFLICT)
+        pylock = self._resolved_lock(tmp_path)
 
         entries = sorted(
             (str(pkg.version), str(pkg.marker))
@@ -6411,7 +7163,7 @@ class TestConfiguredGroupConflictDivergentPins:
 
     def test_an_installer_gets_the_right_one(self, tmp_path: Path) -> None:
         """The two sides never install together, which is what was declared."""
-        pylock = self._resolved_lock(tmp_path, self._CONFLICT)
+        pylock = self._resolved_lock(tmp_path)
 
         def versions(**kwargs: list[str]) -> set[str]:
             return {str(pkg.version) for pkg, _ in pylock.select(**kwargs)}
@@ -6466,7 +7218,9 @@ class TestBuildConfigPlumbing:
     ) -> None:
         """``resolve_for_targets`` hands its own settings to the build."""
         pyproject = self._project(tmp_path)
-        inputs = read_pyproject_config(pyproject).resolve_inputs()
+        inputs = ResolveInputs(
+            local_sources=(LocalSource("dyn", str(tmp_path / "dyn")),)
+        )
         built = WheelMetadata(name="dyn", version=Version("7.0"))
 
         with patch(
@@ -6534,7 +7288,15 @@ class TestTrustUnverifiedSdistDeps:
         with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            return _resolved(pyproject, _FAKE_TRANSPORT)
+            return _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                inputs=ResolveInputs(
+                    build_policy=BuildPolicy.NEVER,
+                    dist_policy=DistPolicy.WHEEL_OR_SDIST,
+                    trust_unverified_sdist_deps=trust,
+                ),
+            )
 
     def test_trusting_the_pkg_info_reads_its_requires_dist(
         self, tmp_path: Path
@@ -6585,13 +7347,10 @@ class TestPyprojectParsedOnce:
         )
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_bytes(body.encode())
-        config = read_pyproject_config(pyproject, discover_workspace=False)
-
         with record_parses() as parsed:
             _resolved(
                 pyproject,
-                targets=plan_targets(config),
-                inputs=config.resolve_inputs(),
+                inputs=ResolveInputs(base_group="runtime", build_group="build"),
             )
 
         assert parsed.count(body) == 1
@@ -6609,14 +7368,12 @@ class TestPyprojectParsedOnce:
         )
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_bytes(body.encode())
-        config = read_pyproject_config(pyproject, discover_workspace=False)
-
         with record_parses() as parsed:
             resolve_for_targets(
                 pyproject,
                 _FAKE_TRANSPORT,  # type: ignore[arg-type]
-                targets=plan_targets(config),
-                inputs=config.resolve_inputs(),
+                targets=(ResolveTarget.for_host(),),
+                inputs=ResolveInputs(),
                 build_requirements=True,
             ).raise_for_failure()
 
