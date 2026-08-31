@@ -33,16 +33,17 @@ def _reset_nab_output(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
     * CI sets ``FORCE_COLOR=1`` so its tool logs are coloured, which would
       otherwise make nab wrap its message tokens in ANSI and break the plain
-      output the assertions expect.  ``NO_COLOR`` wins over ``FORCE_COLOR`` in
-      :func:`~nab.output.should_color`, so it forces nab's colour off here
-      regardless of the ambient environment; the colour behaviour itself is
-      covered by unit tests that set the choice explicitly.
+      output the assertions expect.  Both variables are cleared rather than
+      relying on ``NO_COLOR`` winning: a case that wants the isatty decision
+      clears ``NO_COLOR``, and an ambient ``FORCE_COLOR`` left behind would
+      paint whatever it looked at.
     * ``nab.output.begin`` sets a module-level printer (bound to the run's
       streams) and installs a logging handler on the nab loggers; without the
       reset a test that runs ``main`` would leak the printer (whose captured
       stream is closed once the test ends) and the handler into later tests.
     """
     monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
     yield
     reset_run()
 
