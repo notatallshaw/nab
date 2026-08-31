@@ -446,7 +446,7 @@ def test_canary_prepares_inputs_and_summarizes_repeated_runs(
             SimpleSerialization.HTML,
         ),
     )
-    assert module.index_routes_from_config(config) == [IndexRoute("demo", "private")]
+    assert module.index_routes(config) == [IndexRoute("demo", "private")]
 
     assert len(config.package_overrides) == 1
     assert config.package_overrides[0].build_policy is module.BuildPolicy.BUILD_REMOTE
