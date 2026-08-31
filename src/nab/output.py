@@ -146,9 +146,10 @@ class Printer:
     """The single output seam: stream routing, level gating, and colour.
 
     ``data`` is the stdout channel and always prints, even under ``--quiet``,
-    because it is the output the user ran the command to get.  ``error`` /
-    ``warning`` / ``note`` / ``done`` write to stderr, gated on the verbosity
-    level, with only the leading token coloured.
+    because it is the output the user ran the command to get.  ``error``,
+    ``warning``, ``note`` and ``done`` write to stderr, gated on the verbosity
+    level, with only the leading token coloured; ``stderr_line`` takes the
+    same gate without a token, for text that brings its own.
     """
 
     def __init__(
@@ -181,11 +182,6 @@ class Printer:
         self._err_lock = threading.Lock()
         self._progress_drawn = False
 
-    @property
-    def stderr(self) -> IO[str]:
-        """The stderr stream this printer writes diagnostics and progress to."""
-        return self._err
-
     def _paint(self, token: str, name: str) -> str:
         """Wrap ``token`` in the ``name`` SGR code when colour is on."""
         if not self.color_enabled:
@@ -199,7 +195,12 @@ class Printer:
         self.stderr_write(f"{self._paint(token, color)} {message}\n")
 
     def data(self, text: str) -> None:
-        """Write requested output to stdout verbatim (the pipeable channel)."""
+        """Write requested output to stdout verbatim (the pipeable channel).
+
+        Wipes a live progress line first, since both streams can share a
+        terminal and the artefact would otherwise print on top of it.
+        """
+        self.clear_progress()
         self._out.write(text)
 
     def error(self, message: str) -> None:
@@ -228,8 +229,9 @@ class Printer:
     def stderr_line(self, message: str) -> None:
         """Write a raw normal-level line to stderr with no token or colour.
 
-        For multi-line diagnostics a command builds itself (the per-tuple
-        matrix report), where the leading-token shape does not fit.
+        For text that carries its own prefix, such as the reproducibility
+        notice ``nab lock`` and ``nab config`` emit, where a second leading
+        token would read as ``note: notice:``.
         """
         if self.verbosity >= Verbosity.NORMAL:
             self.stderr_write(message)
@@ -254,12 +256,19 @@ class Printer:
             self._progress_drawn = True
 
     def clear_progress(self) -> None:
-        """Wipe the progress line so the next stderr write starts clean."""
+        """Wipe the progress line so the next write starts on a clean line."""
         with self._err_lock:
             if self._progress_drawn:
                 self._err.write(_CLEAR_LINE)
                 self._err.flush()
                 self._progress_drawn = False
+
+    def flush_stderr(self) -> None:
+        """Flush stderr for a caller writing through :meth:`stderr_write`.
+
+        The stream stays private, so nothing can write around the printer.
+        """
+        self._err.flush()
 
 
 _printer: Printer | None = None
@@ -297,7 +306,7 @@ class _PrinterStream:
         self._printer.stderr_write(text)
 
     def flush(self) -> None:
-        self._printer.stderr.flush()
+        self._printer.flush_stderr()
 
 
 class _NabLogHandler(logging.StreamHandler):  # type: ignore[type-arg]

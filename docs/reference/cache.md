@@ -90,11 +90,12 @@ formats nab cannot read.
 
 ## Verifying and clearing
 
-`nab cache verify` walks the record buckets read-only and reports any
-entry that will not parse, including a parsed blob that is not decodable.
-It checks structure only, not freshness: a stale-but-valid parsed blob is
-not corrupt, since the digest binding retires it at read time. Clones and
-extracted archives hold no nab records, so `verify` skips them.
+`nab cache verify` walks the record buckets read-only and lists on stdout
+every entry that will not parse, including a parsed blob that is not
+decodable, exiting 1 when the listing is not empty. It checks structure
+only, not freshness: a stale-but-valid parsed blob is not corrupt, since
+the digest binding retires it at read time. Clones and extracted archives
+hold no nab records, so `verify` skips them.
 
 `nab cache clear` removes every bucket, clones and archives included,
 returning the cache to cold. `verify` and `clear` both refuse a root that

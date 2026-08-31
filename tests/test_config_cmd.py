@@ -749,6 +749,33 @@ class TestConfigErrors:
         assert "reflect that override" in captured.err
         assert "--project-resolution -> lowest" in captured.err
 
+    def test_quiet_drops_the_notice_and_keeps_the_value(
+        self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``-q`` silences the notice; the value asked for still prints.
+
+        The value is the artefact and carries no level.  The notice is a
+        normal-level line about the run, so the two part company here.
+        """
+        _project(hermetic_roots)
+        cache_dir = Path("/c/cli")
+        _cli(
+            "config",
+            "get",
+            "cache-dir",
+            "--path",
+            str(hermetic_roots / "pyproject.toml"),
+            "--project-resolution",
+            "lowest",
+            "--cache-dir",
+            str(cache_dir),
+            "-q",
+        )
+        captured = capsys.readouterr()
+
+        assert captured.out == f"{cache_dir}\n"
+        assert "--project-resolution -> lowest" not in captured.err
+
 
 class TestConfigProjectFileConflict:
     """The cross-file conflict surfaced through the config command."""

@@ -623,6 +623,30 @@ def test_printer_message_wipes_live_progress_line() -> None:
     assert err.getvalue().endswith("\r\033[Kwarning: metadata cannot be parsed\n")
 
 
+def test_stdout_data_wipes_live_progress_line() -> None:
+    """The artefact shares a terminal with the progress line it must not land on.
+
+    ``nab lock --output -`` paints progress on stderr while the lock goes
+    to stdout, so ``data`` wipes the line the way a stderr message does.
+    """
+    out = io.StringIO()
+    err = _TTY(tty=True)
+    printer = Printer(
+        stdout=out,
+        stderr=err,
+        verbosity=Verbosity.NORMAL,
+        color=ColorChoice.NEVER,
+        env={},
+    )
+    reporter = ProgressReporter(printer, clock=lambda: 0.0)
+    reporter.on_fetch()
+
+    printer.data('lock-version = "1.0"\n')
+
+    assert err.getvalue().endswith("\r\033[K")
+    assert out.getvalue() == 'lock-version = "1.0"\n'
+
+
 def test_log_record_wipes_live_progress_line() -> None:
     printer, err = _live_progress_printer()
     reporter = ProgressReporter(printer, clock=lambda: 0.0)

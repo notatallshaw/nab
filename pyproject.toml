@@ -263,8 +263,27 @@ nab = [
 target-version = "py310"
 extend-exclude = ["**/_vendor/**"]
 
+# https://docs.astral.sh/ruff/settings/#lintflake8-tidy-importsbanned-api
+# stdout carries the artefact a command was asked for and stderr carries the
+# run, both decided by nab.output.Printer, so a write straight to a process
+# stream is outside the policy: it cannot be quieted, it is never coloured,
+# and it can land on top of the progress line.  T201 bans print for the same
+# reason.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"sys.stdout".msg = "write through nab.output.Printer"
+"sys.stderr".msg = "write through nab.output.Printer"
+"sys.__stdout__".msg = "write through nab.output.Printer"
+"sys.__stderr__".msg = "write through nab.output.Printer"
+
 # https://docs.astral.sh/ruff/settings/#lint_per-file-ignores
 [tool.ruff.lint.per-file-ignores]
+
+# The entry point owns the run's one write per stream and the printer owns
+# every other; nothing else names a stream.  Tests read the streams back,
+# and the scripts outside the packages have no printer to write through.
+"src/nab/cli.py" = ["TID251"]
+"src/nab/output.py" = ["TID251"]
+"**/tests/**" = ["TID251"]
 
 # Benchmarks intentionally print, lack docstrings, run subprocesses, and
 # carry many scenario knobs.
@@ -280,6 +299,7 @@ extend-exclude = ["**/_vendor/**"]
     "PLR2004",  # Magic value in comparison (benchmark thresholds)
     "SLF001",   # Private member access (sibling scripts share helpers)
     "N818",     # Exception name not Error-suffixed (private signal types)
+    "TID251",   # scripts write their own output
 ]
 
 # Release tooling prints, shells out to git, and lives outside any package.
@@ -289,6 +309,7 @@ extend-exclude = ["**/_vendor/**"]
     "S607",     # subprocess with partial executable path (git)
     "INP001",   # implicit namespace package (scripts live outside packages)
     "PLC2801",  # direct __replace__ call (copy.replace is 3.13+, we support 3.10)
+    "TID251",   # scripts write their own output
 ]
 
 # Tests use their own per-directory ruff.toml that extends this config.

@@ -99,6 +99,22 @@ class TestCacheDir:
         assert captured.out == f"{tmp_path / 'xc' / 'nab'}\n"
         assert captured.err == ""
 
+    def test_the_path_survives_quiet(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """stdout is the artefact, so ``-qq`` does not suppress it.
+
+        The path is the whole point of the verb; quieting it would leave
+        ``$(nab cache dir -qq)`` empty.
+        """
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xc"))
+        _run_cache(["dir", "-qq"])
+
+        assert capsys.readouterr().out == f"{tmp_path / 'xc' / 'nab'}\n"
+
     def test_default_falls_back_to_home(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -193,8 +209,8 @@ class TestLayeredCacheDir:
         policy_path = root / SIMPLE_BUCKET / "pypi" / "foo.policy"
         policy_path.write_bytes(b"not json")
         monkeypatch.setenv("NAB_CACHE_DIR", str(root))
-        _run_cache(["verify"])
-        assert str(policy_path) in capsys.readouterr().err
+        _run_cache(["verify"], status=1)
+        assert str(policy_path) in capsys.readouterr().out
 
     def test_clear_empties_layered_root(
         self,
@@ -276,10 +292,29 @@ class TestCacheVerify:
         _populate(root)
         policy_path = root / SIMPLE_BUCKET / "pypi" / "foo.policy"
         policy_path.write_bytes(b"not json")
-        _run_cache(["verify", "--cache-dir", str(root)])
-        err = capsys.readouterr().err
-        assert str(policy_path) in err
-        assert "decodable" in err
+        _run_cache(["verify", "--cache-dir", str(root)], status=1)
+        captured = capsys.readouterr()
+
+        assert str(policy_path) in captured.out
+        assert "decodable" in captured.out
+        assert captured.err == ""
+
+    def test_the_listing_survives_quiet_and_the_status_reports_it(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The listing is the artefact, so ``-qq`` keeps it.
+
+        A script redirecting stdout still gets the report, and reads the
+        status rather than the stream to learn the cache is not clean.
+        """
+        root = tmp_path / "cache"
+        _populate(root)
+        parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
+        parsed_path.write_bytes(b"not json data")
+
+        _run_cache(["verify", "-qq", "--cache-dir", str(root)], status=1)
+
+        assert str(parsed_path) in capsys.readouterr().out
 
     def test_silent_on_clean_cache(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -298,10 +333,11 @@ class TestCacheVerify:
         _populate(root)
         parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
         parsed_path.write_bytes(b"not json data")
-        _run_cache(["verify", "--cache-dir", str(root)])
-        err = capsys.readouterr().err
-        assert str(parsed_path) in err
-        assert "not valid JSON" in err
+        _run_cache(["verify", "--cache-dir", str(root)], status=1)
+        out = capsys.readouterr().out
+
+        assert str(parsed_path) in out
+        assert "not valid JSON" in out
 
     def test_reports_over_nested_parsed_entry(
         self,
@@ -314,10 +350,11 @@ class TestCacheVerify:
         parsed_path = root / "simple-parsed-v0" / "pypi" / "foo.parsed"
         parsed_path.write_bytes(_OVER_NESTED)
         with refuse_over_nested(_OVER_NESTED):
-            _run_cache(["verify", "--cache-dir", str(root)])
-        err = capsys.readouterr().err
-        assert str(parsed_path) in err
-        assert "nested too deeply to decode" in err
+            _run_cache(["verify", "--cache-dir", str(root)], status=1)
+        out = capsys.readouterr().out
+
+        assert str(parsed_path) in out
+        assert "nested too deeply to decode" in out
 
     def test_does_not_read_through_symlinked_bucket(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -329,7 +366,8 @@ class TestCacheVerify:
         root.mkdir()
         _symlink_or_skip(root / SIMPLE_BUCKET, outside, target_is_directory=True)
         _run_cache(["verify", "--cache-dir", str(root)])
-        assert capsys.readouterr().err == ""
+
+        assert capsys.readouterr().out == ""
 
     def test_refuses_file_root(self, tmp_path: Path) -> None:
         target = tmp_path / "file"

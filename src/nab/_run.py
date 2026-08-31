@@ -310,7 +310,7 @@ def _layered_run_settings_or_exit(
     settings = _layered_run_settings(ladder)
     notice = project_cli_override_notice(ladder, produces_lock=produces_lock)
     if notice is not None:
-        sys.stderr.write(notice)
+        printer().stderr_line(notice)
     return settings
 
 

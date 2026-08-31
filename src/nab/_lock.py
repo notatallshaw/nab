@@ -145,7 +145,7 @@ def _print_lock(text: str) -> None:
     failing.
     """
     text.encode("utf-8")
-    sys.stdout.write(text)
+    printer().data(text)
 
 
 def lock(  # noqa: PLR0913 - one keyword per flag is the public surface

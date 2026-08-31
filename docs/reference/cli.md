@@ -67,9 +67,9 @@ repeatable `--project-constraint` and `--project-default-group`. Every one
 of them replaces the file value outright; repeating `--project-constraint`
 builds up that run's whole constraint list rather than adding to the
 declared one. Each changes what the run writes, so passing one prints a
-reproducibility notice on stderr and records the override in the
-lockfile's `[tool.nab]` block, since the lock no longer derives from the
-committed files alone.
+reproducibility notice on stderr, which `-q` drops, and records the
+override in the lockfile's `[tool.nab]` block, since the lock no longer
+derives from the committed files alone.
 
 ### Checking and refreshing a lock
 
@@ -188,9 +188,10 @@ directory uses: `cache-dir` is read off the config source ladder, so a
 
 * `nab cache dir` prints the resolved cache root to stdout, whether or
   not it exists yet.
-* `nab cache verify` walks the cached index records read-only and
-  reports any corrupt entry by path and reason. Cloned repositories and
-  extracted archives hold upstream files, so they are not parsed.
+* `nab cache verify` walks the cached index records read-only and lists
+  any corrupt entry on stdout by path and reason, exiting 1 when it found
+  one. Cloned repositories and extracted archives hold upstream files, so
+  they are not parsed.
 * `nab cache clear` removes every bucket under the root, including the
   cloned repositories and extracted archives, returning the cache to
   cold.
