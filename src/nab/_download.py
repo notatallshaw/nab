@@ -145,7 +145,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     )
     lock_input = build_lock_input(
         result,
-        config=config,
+        inputs=config.resolve_inputs(),
         extras=selected_extras,
         dependency_groups=selected_groups,
     )

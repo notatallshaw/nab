@@ -73,6 +73,7 @@ from .conflicts import (
     validate_conflict_minimums,
 )
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
+from .inputs import ResolveInputs
 from .paths import realpath
 from .values import (
     ENVIRONMENT_KEYS,
@@ -206,6 +207,12 @@ class NabProjectConfig:
     # ``local_sources``, which also carries explicit
     # ``[[tool.nab.local-sources]]`` entries.
     workspace_member_names: frozenset[str] = field(default_factory=frozenset)
+
+    def resolve_inputs(self) -> ResolveInputs:
+        """Return the settings nab-project resolves this project under."""
+        return ResolveInputs(
+            **{name: getattr(self, name) for name in ResolveInputs.__match_args__}
+        )
 
 
 def read_pyproject_config(
@@ -678,11 +685,10 @@ def with_python_override(
 ) -> NabProjectConfig:
     """Return ``config`` with its resolve target moved onto ``python``.
 
-    The ``--python`` flag (and the ``python_version`` argument of
-    :func:`~nab_project.resolve.resolve_for_targets`) retargets the python
-    axis for one run, leaving any declared platform in place.  The
-    build-policy guard runs again over the new plan, so a runtime retarget
-    is held to the same rule as a declared one.  ``None`` is a no-op.
+    The ``--python`` flag retargets the python axis for one run, leaving
+    any declared platform in place.  The build-policy guard runs again over
+    the new plan, so a runtime retarget is held to the same rule as a
+    declared one.  ``None`` is a no-op.
 
     A matrix already declares the python axis for every target it names, so
     retargeting one of them would resolve for a python the matrix does not

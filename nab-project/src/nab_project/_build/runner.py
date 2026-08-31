@@ -60,7 +60,7 @@ from .errors import BuildBackendError
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ..config import NabProjectConfig
+    from ..inputs import ResolveInputs
 
 __all__ = [
     "BuildBackendError",
@@ -78,7 +78,7 @@ _DEFAULT_REQUIRES = ("setuptools >= 40.8.0",)
 def run_build_backend(
     source_dir: Path,
     *,
-    config: NabProjectConfig,
+    config: ResolveInputs,
     offline: bool = False,
     chain: BuildChain = (),
 ) -> WheelMetadata:
@@ -122,7 +122,7 @@ def build_wheel_for_install(
     source_dir: Path,
     *,
     output_dir: Path,
-    config: NabProjectConfig,
+    config: ResolveInputs,
     offline: bool = False,
     chain: BuildChain = (),
 ) -> Path:
@@ -172,7 +172,7 @@ def _prepared_project(
     source_dir: Path,
     data: dict,
     *,
-    config: NabProjectConfig,
+    config: ResolveInputs,
     offline: bool,
     chain: BuildChain,
 ) -> Iterator[tuple[build.ProjectBuilder, str]]:

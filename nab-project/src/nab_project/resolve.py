@@ -1,12 +1,11 @@
 """Resolve a project's dependencies for the environments it targets.
 
-:func:`~nab_project.config.plan_targets` hands back one
-:class:`~nab_provider.target.ResolveTarget` per environment, whether
-``[tool.nab.matrix]`` declares many or a bare project declares none (the
-host is the target).  Each gets a single-environment resolve against a
-shared :class:`~nab_project.fetch.FetchCoordinator`, so a package's
-listing is read once across them, a version's wheel metadata once per
-wheel they pick, and an sdist's ``PKG-INFO`` once for the version.
+The host hands in one :class:`~nab_provider.target.ResolveTarget` per
+environment, whether it read a matrix declaring many or a bare project
+declaring none.  Each gets a single-environment resolve against a shared
+:class:`~nab_project.fetch.FetchCoordinator`, so a package's listing is
+read once across them, a version's wheel metadata once per wheel they
+pick, and an sdist's ``PKG-INFO`` once for the version.
 
 A declared conflict, matrix or not, is where a resolve produces more than
 one result for an environment.  Directly co-selecting two members of an
@@ -26,7 +25,7 @@ import logging
 import tempfile
 from collections import defaultdict
 from contextlib import contextmanager, suppress
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -70,12 +69,6 @@ from ._resolve.engine import (
     _resolve_with_micro_narrowing,
     env_signature,
 )
-from .config import (
-    NabProjectConfig,
-    plan_targets,
-    read_pyproject_config,
-    with_python_override,
-)
 from .conflicts import (
     ConflictFork,
     ConflictKind,
@@ -107,7 +100,7 @@ __all__ = [
     "TargetResult",
     "active_group_names",
     "build_lock_input",
-    "config_for_build_requirements",
+    "inputs_for_build_requirements",
     "resolve_for_targets",
     "resolve_with_coordinator",
 ]
@@ -129,39 +122,30 @@ class _ConfiguredContext:
     requirements: tuple[Requirement, ...]
 
 
-def _resolve_inputs(config: NabProjectConfig) -> ResolveInputs:
-    """Copy the settings nab-project resolves with off ``config``."""
-    return ResolveInputs(
-        **{name: getattr(config, name) for name in ResolveInputs.__match_args__}
-    )
-
-
 def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     path: Path,
     transport: AsyncHttpTransport,
     *,
-    config: NabProjectConfig | None = None,
+    targets: Sequence[ResolveTarget],
+    inputs: ResolveInputs | None = None,
     cache_dir: Path | None = None,
     offline: bool = False,
-    python_version: str | None = None,
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     build_requirements: bool = False,
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressSink | None = None,
 ) -> ResolveResult:
-    """Resolve the project at ``path`` for every environment it targets.
+    """Resolve the project at ``path`` for each of ``targets``.
 
-    ``config`` defaults to :func:`read_pyproject_config(path)`.
-    ``transport`` is the caller's, so the HTTP library choice stays outside
-    nab-project.  ``cache_dir`` and ``offline`` are runtime overrides from
-    the CLI; ``python_version`` applies
-    :func:`~nab_project.config.with_python_override`, moving the target
-    onto that Python.
+    ``targets`` are the environments the host chose to resolve for and
+    ``inputs`` the settings it read out of the project.  ``transport`` is
+    the caller's, so the HTTP library choice stays outside nab-project;
+    ``cache_dir`` and ``offline`` are runtime overrides from the CLI.
 
     ``groups`` and ``extras`` name PEP 735 groups and
     ``[project.optional-dependencies]`` keys to fold in;
-    ``resolution_strategy`` overrides ``config.resolution`` when set.
+    ``resolution_strategy`` overrides ``inputs.resolution`` when set.
 
     ``build_requirements`` resolves ``[build-system].requires`` instead of
     the project's dependencies; neither ``groups`` nor ``extras`` mean
@@ -172,28 +156,27 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     the first.  Everything else (an unreadable pyproject, a conflicting
     selection, an unsupported source) raises.
     """
-    if config is None:
-        config = read_pyproject_config(path)
+    inputs = ResolveInputs() if inputs is None else inputs
     if build_requirements:
         if groups or extras:
             msg = "a build-requirements resolve has no groups or extras to select"
             raise ValueError(msg)
-        config = config_for_build_requirements(config)
-    config = with_python_override(config, python_version)
-    targets = plan_targets(config)
+        inputs = inputs_for_build_requirements(inputs)
 
-    tables = _project_tables(path, config, build_requirements=build_requirements)
+    tables = _project_tables(
+        path, build_group=inputs.build_group, build_requirements=build_requirements
+    )
 
     # ``default-groups`` is project policy: a default install activates
     # them, so they join the CLI selection.
     effective_groups = active_group_names(
-        groups, config.default_groups, config.base_group
+        groups, inputs.default_groups, inputs.base_group
     )
 
     forks, base_requirements = _plan_forks(
         path,
         tables,
-        config,
+        inputs,
         targets,
         extras=tuple(extras),
         groups=effective_groups,
@@ -201,18 +184,18 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
 
     with FetchCoordinator(
         transport,
-        indexes=list(config.indexes),
+        indexes=list(inputs.indexes),
         cache_dir=cache_dir,
         offline=offline,
-        index_routes=index_routes(config),
-        index_cache_floors=index_cache_floors(config),
+        index_routes=index_routes(inputs),
+        index_cache_floors=index_cache_floors(inputs),
         on_fetch=progress.on_fetch if progress is not None else None,
-        build_config=_resolve_inputs(config),
+        build_config=inputs,
     ) as coordinator:
         return resolve_with_coordinator(
             coordinator,
             targets,
-            config=config,
+            inputs=inputs,
             cache_dir=cache_dir,
             forks=forks,
             base_requirements=base_requirements,
@@ -226,7 +209,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     targets: Sequence[ResolveTarget],
     requirements: Sequence[Requirement] = (),
     *,
-    config: NabProjectConfig | None = None,
+    inputs: ResolveInputs | None = None,
     cache_dir: Path | None = None,
     forks: Sequence[ResolveFork] | None = None,
     base_requirements: Sequence[Requirement] | None = None,
@@ -257,7 +240,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     with its own marker machinery passes that instead and keeps
     ``packaging.markersets`` off the engine's path.
     """
-    inputs = _resolve_inputs(config) if config is not None else ResolveInputs()
+    inputs = ResolveInputs() if inputs is None else inputs
     with _source_root(cache_dir, inputs) as source_root:
         settings = _EngineSettings(
             coordinator=coordinator,
@@ -337,7 +320,7 @@ def active_group_names(
 def build_lock_input(
     result: ResolveResult,
     *,
-    config: NabProjectConfig | None = None,
+    inputs: ResolveInputs | None = None,
     extras: Sequence[str] = (),
     dependency_groups: Sequence[str] = (),
     created_by: str = "nab",
@@ -351,9 +334,9 @@ def build_lock_input(
 
     ``extras`` and ``dependency_groups`` are this run's selection;
     ``default-groups``, the conflicts and ``base-group`` are project
-    policy and come from ``config``.
+    policy and come from ``inputs``.
     """
-    effective = config if config is not None else NabProjectConfig()
+    inputs = ResolveInputs() if inputs is None else inputs
     targets: dict[str, TargetLock] = {}
     consulted: dict[EnvSignature, set[Marker]] = {}
     declaring: list[ResolveTarget] = []
@@ -375,14 +358,14 @@ def build_lock_input(
         targets=targets,
         env_base_names=dict(result.env_base_names),
         environments=_declared_environments(declaring, consulted),
-        requires_python=effective.requires_python,
+        requires_python=inputs.requires_python,
         created_by=created_by,
         extras=tuple(extras),
         dependency_groups=tuple(dependency_groups),
-        default_groups=effective.default_groups,
-        conflicts=effective.conflicts,
-        base_group=effective.base_group,
-        build_group=effective.build_group,
+        default_groups=inputs.default_groups,
+        conflicts=inputs.conflicts,
+        base_group=inputs.base_group,
+        build_group=inputs.build_group,
     )
 
 
@@ -452,17 +435,17 @@ class _ProjectTables:
 
 
 def _configured_contexts(
-    config: NabProjectConfig, tables: _ProjectTables
+    inputs: ResolveInputs, tables: _ProjectTables
 ) -> tuple[_ConfiguredContext, tuple[_ConfiguredContext, ...]]:
     """Split the configured install contexts into the project's and the rest.
 
     The project's own dependencies are always a context, named or not.  The
     build requirements are one only when ``build-group`` names them.
     """
-    project = _ConfiguredContext(config.base_group, tuple(tables.dependencies))
+    project = _ConfiguredContext(inputs.base_group, tuple(tables.dependencies))
     selectors = (
-        (_ConfiguredContext(config.build_group, tuple(tables.build_requires)),)
-        if config.build_group is not None
+        (_ConfiguredContext(inputs.build_group, tuple(tables.build_requires)),)
+        if inputs.build_group is not None
         else ()
     )
     return project, selectors
@@ -485,7 +468,7 @@ def _carried_by(
 
 
 def _project_tables(
-    path: Path, config: NabProjectConfig, *, build_requirements: bool
+    path: Path, *, build_group: str | None, build_requirements: bool
 ) -> _ProjectTables:
     """Read every table the resolve needs off one parse of ``path``.
 
@@ -502,7 +485,7 @@ def _project_tables(
         project_name=pyproject_files.project_name(document),
         build_requires=(
             pyproject_files.build_system_requires(document, path)
-            if config.build_group is not None
+            if build_group is not None
             else []
         ),
     )
@@ -525,18 +508,14 @@ def _tables_for_build_requires(
     )
 
 
-def config_for_build_requirements(config: NabProjectConfig) -> NabProjectConfig:
-    """Return ``config`` with the settings a build-requirements lock cannot use.
+def inputs_for_build_requirements(inputs: ResolveInputs) -> ResolveInputs:
+    """Return ``inputs`` with the settings a build-requirements lock cannot use.
 
-    ``default-groups`` and the conflicts over groups and extras describe a
-    selection ``[build-system].requires`` does not have, and ``base-group``
-    names project dependencies a build lock holds none of.  Left in they
-    fail the run: :func:`_tables_for_build_requires` supplies no group or
-    extra table to resolve them against.  ``build-group`` goes too: its
-    roots already are the build requirements.
+    ``default-groups``, ``base-group`` and the conflicts over groups and
+    extras describe a selection ``[build-system].requires`` does not have,
+    and ``build-group``'s roots already are the build requirements.
     """
-    return replace(
-        config,
+    return inputs.replace(
         conflicts=(),
         default_groups=(),
         base_group=None,
@@ -544,17 +523,17 @@ def config_for_build_requirements(config: NabProjectConfig) -> NabProjectConfig:
     )
 
 
-def _configured_group_names(config: NabProjectConfig) -> tuple[str, ...]:
+def _configured_group_names(inputs: ResolveInputs) -> tuple[str, ...]:
     """Return the group names active by configuration rather than by selection."""
     return tuple(
-        name for name in (config.base_group, config.build_group) if name is not None
+        name for name in (inputs.base_group, inputs.build_group) if name is not None
     )
 
 
 def _plan_forks(
     path: Path,
     tables: _ProjectTables,
-    config: NabProjectConfig,
+    inputs: ResolveInputs,
     targets: Sequence[ResolveTarget],
     *,
     extras: tuple[str, ...],
@@ -570,29 +549,29 @@ def _plan_forks(
     The second element is the no-member requirement list, needed only when
     the plan forked; see :func:`resolve_with_coordinator`.
     """
-    configured = _configured_group_names(config)
-    project_context, selector_contexts = _configured_contexts(config, tables)
-    if config.conflicts:
+    configured = _configured_group_names(inputs)
+    project_context, selector_contexts = _configured_contexts(inputs, tables)
+    if inputs.conflicts:
         _validate_conflict_members_exist(
-            config.conflicts, tables.optional, tables.groups, configured
+            inputs.conflicts, tables.optional, tables.groups, configured
         )
         _check_conflict_minimums(
-            config.conflicts,
+            inputs.conflicts,
             tables,
             extras,
             [*expand_group_includes(tables.groups, groups), *configured],
             targets,
         )
 
-    plan = conflict_forks(extras, groups, config.conflicts, configured)
+    plan = conflict_forks(extras, groups, inputs.conflicts, configured)
     forks: list[ResolveFork] = []
     # Forks of an extra-based conflict share a group selection, so the
     # group-pair scan runs once per distinct one.
     scanned_group_selections: set[tuple[str, ...]] = set()
     for fork in plan:
-        if config.conflicts:
+        if inputs.conflicts:
             _check_conflict_exclusions(
-                config.conflicts,
+                inputs.conflicts,
                 tables,
                 fork.active_extras,
                 (*fork.active_groups, *fork.active_configured),
@@ -623,7 +602,7 @@ def _plan_forks(
                     selectors=_selector_requirements(
                         path, tables, fork, contexts=carried
                     ),
-                    name_project=config.base_group is not None,
+                    name_project=inputs.base_group is not None,
                 ),
             )
         )
@@ -784,7 +763,7 @@ def _validate_conflict_members_exist(
 
     A member naming an undeclared extra or group can never match, so
     the conflict would be silently inert.  Names compare canonicalised,
-    as the config stores them.
+    as ``conflicts`` stores them.
     """
     known_extras = {canonicalize_name(name) for name in optional}
     known_groups = {canonicalize_name(name) for name in groups} | {
