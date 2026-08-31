@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 import tomli
 
+from nab.seam import resolve_inputs, resolve_targets
 from nab_project.config import (
     ConfigError,
     NabProjectConfig,
@@ -29,7 +30,6 @@ from nab_project.pyproject_files import (
     read_pyproject_groups,
     read_pyproject_optional_dependencies,
 )
-from nab.seam import resolve_inputs, resolve_targets
 from nab_project.resolve import resolve_for_targets
 from nab_project.workspace import WorkspaceDiscoveryError
 from nab_provider.errors import (

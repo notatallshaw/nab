@@ -755,10 +755,8 @@ def test_requires_python_excludes_host_reports_the_declaration_not_staleness(
     capsys.readouterr()
 
     mock = _locked_mock(_result({"foo": "1.0"}))
-    with pytest.raises(SystemExit) as exc:
-        _run_locked(pyproject, out, mock)
+    _run_locked(pyproject, out, mock, status=1)
 
-    assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "excludes the resolve target" in err
     assert "out of date" not in err
