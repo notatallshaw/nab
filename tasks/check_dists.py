@@ -159,8 +159,8 @@ def _check_version(command: list[str], version: str) -> None:
 def install_wheels(dist_root: Path, scratch: Path) -> None:
     """Install every wheel together, then import each package and run the CLI.
 
-    ``python -m nab`` and the console script enter through different
-    functions, so both are run.
+    ``[project.scripts]`` and ``src/nab/__main__.py`` name the entry
+    independently of each other, so both are run.
     """
     wheels = [str(_wheel(dist_root, package)) for package in PACKAGES]
     version = _wheel_version(_wheel(dist_root, "nab"))

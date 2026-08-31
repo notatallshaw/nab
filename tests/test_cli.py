@@ -5604,11 +5604,37 @@ class TestPackageVersion:
         """The literal tracks the version the distribution declares."""
         assert nab_version.__version__ == importlib.metadata.version("nab")
 
-    def test_python_dash_m_runs_main(self) -> None:
-        """``python -m nab`` invokes the CLI's main() entry point."""
-        with patch("nab.cli.main") as mock_main:
+    @pytest.mark.usefixtures("restored_gc_state", "stubbed_gc_freeze")
+    def test_python_dash_m_runs_console_entry(self) -> None:
+        """``python -m nab`` ends in ``os._exit``, not by returning from main().
+
+        ``os._exit`` is patched because the real call would end the test
+        session from inside runpy.
+        """
+        with (
+            patch("nab.cli.main") as mock_main,
+            patch("nab.cli.os._exit") as mock_exit,
+        ):
             runpy.run_module("nab", run_name="__main__")
+
         mock_main.assert_called_once()
+        mock_exit.assert_called_once_with(0)
+
+    def test_python_dash_m_takes_the_collector_off_entry(self) -> None:
+        """``python -m nab`` calls :mod:`nab._entry`'s entry, not the CLI's.
+
+        Both end in the same CLI call, so the swap is invisible to any test
+        that only checks what the command did. Only :mod:`nab._entry` builds
+        the CLI's import graph with the collector off.
+        """
+        with (
+            patch("nab._entry.console_entry") as mock_entry,
+            patch("nab.cli.console_entry") as mock_cli_entry,
+        ):
+            runpy.run_module("nab", run_name="__main__")
+
+        mock_entry.assert_called_once_with()
+        assert mock_cli_entry.call_count == 0
 
 
 class TestMain:
@@ -5800,7 +5826,7 @@ class TestMain:
 
 
 class TestConsoleEntry:
-    """Tests for the installed ``nab`` command's entry point.
+    """Tests for ``console_entry``, which both entry paths reach.
 
     ``os._exit`` ends the process outright, so every test here patches it.
     """
@@ -5864,7 +5890,7 @@ class TestClosedStandardStreams:
 
     CPython leaves the matching ``sys`` attribute as ``None`` when the
     descriptor is closed before the process starts. ``os._exit`` ends the
-    process outright, so the tests that go through ``console_entry`` patch it.
+    process outright, so every test here patches it.
     """
 
     def test_closed_stdout_exits_120(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -5924,32 +5950,35 @@ class TestClosedStandardStreams:
             console_entry()
         mock_exit.assert_called_once_with(120)
 
+    @pytest.mark.usefixtures("restored_gc_state", "stubbed_gc_freeze")
     def test_python_dash_m_exits_120(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """``python -m nab`` exits 120 rather than returning normally."""
         monkeypatch.setattr(sys, "argv", ["nab", "--version"])
         monkeypatch.setattr(sys, "stdout", None)
-        with pytest.raises(SystemExit) as excinfo:
+        with patch("nab.cli.os._exit") as mock_exit:
             runpy.run_module("nab", run_name="__main__")
-        assert excinfo.value.code == 120
+        mock_exit.assert_called_once_with(120)
 
+    @pytest.mark.usefixtures("restored_gc_state", "stubbed_gc_freeze")
     def test_python_dash_m_reports_a_loss_over_the_command_status(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A failing command whose error had nowhere to go exits 120, not 2."""
         monkeypatch.setattr(sys, "argv", ["nab", "--color", "rainbow", "lock"])
         monkeypatch.setattr(sys, "stderr", None)
-        with pytest.raises(SystemExit) as excinfo:
+        with patch("nab.cli.os._exit") as mock_exit:
             runpy.run_module("nab", run_name="__main__")
-        assert excinfo.value.code == 120
+        mock_exit.assert_called_once_with(120)
 
+    @pytest.mark.usefixtures("restored_gc_state", "stubbed_gc_freeze")
     def test_python_dash_m_with_open_streams_keeps_its_status(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A run that loses no output keeps its own exit status."""
         monkeypatch.setattr(sys, "argv", ["nab", "--color", "rainbow", "lock"])
-        with pytest.raises(SystemExit) as excinfo:
+        with patch("nab.cli.os._exit") as mock_exit:
             runpy.run_module("nab", run_name="__main__")
-        assert excinfo.value.code == 2
+        mock_exit.assert_called_once_with(2)
 
 
 class TestSystemExitStatus:

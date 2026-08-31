@@ -640,17 +640,16 @@ def _python_override_or_exit(
 def _collector_paused() -> Iterator[None]:
     """Disable the cyclic collector for the duration of the resolve.
 
-    Only the CLI sets a collector policy, since it owns its process; the
-    library entry points leave it alone. Exit enables the collector rather
-    than restoring the state it found.
+    Exit enables the collector and unfreezes rather than restoring what it
+    found, so every caller of :func:`_resolve` is left in that state and not
+    the one it came in with.
 
     Everything the resolve allocated is in generation 0 by then, so the
     collections that follow the enable walk the whole resolve graph. Freezing
     empties every generation into the permanent one and unfreezing returns the
     permanent generation to generation 2, which takes the graph out of
-    generation 0 and leaves those collections less to walk. Unfreezing also
-    returns anything frozen before the resolve; the CLI owns its process.
-    PyPy has no ``gc.freeze``.
+    generation 0 and leaves those collections less to walk. PyPy has no
+    ``gc.freeze``.
     """
     gc.disable()
     try:
@@ -988,10 +987,10 @@ def _flush_std_streams() -> bool:
 def console_entry() -> NoReturn:
     """Run the CLI, then end the process without freeing the resolve graph.
 
-    Only the installed ``nab`` command takes this path, because it owns its
-    process; :func:`main` returns normally for every other caller. No
-    ``atexit`` hook and no finalizer runs after this, so a command has to
-    finish any work it cannot lose before :func:`main` returns.
+    Both ``nab`` and ``python -m nab`` end here; :func:`main` returns
+    normally for every other caller. No ``atexit`` hook and no finalizer runs
+    after this, so a command has to finish any work it cannot lose before
+    :func:`main` returns.
     """
     status = 0
     try:

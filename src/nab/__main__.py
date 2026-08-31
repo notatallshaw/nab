@@ -1,6 +1,6 @@
 """Allow ``python -m nab ...`` to drive the CLI."""
 
-from .cli import main
+from ._entry import console_entry
 
 if __name__ == "__main__":
-    main()
+    console_entry()
