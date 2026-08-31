@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from nab_project._build.env import _inner_resolve_config, _without_build_permission
+from nab_project._build.env import _inner_resolve_inputs, _without_build_permission
 from nab_project.config import (
     ConflictKind,
     ConflictMember,
@@ -19,7 +19,6 @@ from nab_project.config import (
     NabProjectConfig,
 )
 from nab_project.inputs import ResolveInputs
-from nab_project.resolve import _resolve_inputs
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import (
     ArchiveSource,
@@ -131,7 +130,7 @@ def _config_off_every_slot_default(tmp_path: Path) -> NabProjectConfig:
 
 def _inputs_off_every_default(tmp_path: Path) -> ResolveInputs:
     """The same settings, across the seam."""
-    return _resolve_inputs(_config_off_every_slot_default(tmp_path))
+    return _config_off_every_slot_default(tmp_path).resolve_inputs()
 
 
 class TestSeamPartition:
@@ -150,7 +149,7 @@ class TestSeamPartition:
         """
         config = _config_off_every_slot_default(tmp_path)
 
-        inputs = _resolve_inputs(config)
+        inputs = config.resolve_inputs()
 
         assert {name: getattr(inputs, name) for name in ResolveInputs.__slots__} == {
             name: getattr(config, name) for name in ResolveInputs.__slots__
@@ -171,7 +170,7 @@ class TestSeamPartition:
         """A forwarded setting arrives, less any build permission it granted."""
         outer = _inputs_off_every_default(tmp_path)
 
-        inner = _inner_resolve_config(outer)
+        inner = _inner_resolve_inputs(outer)
 
         expected = {name: getattr(outer, name) for name in _INNER_FORWARDS}
         expected["package_overrides"] = tuple(
@@ -188,7 +187,7 @@ class TestSeamPartition:
         """A pinned setting holds its fixed value whatever the outer one was."""
         outer = _inputs_off_every_default(tmp_path)
 
-        inner = _inner_resolve_config(outer)
+        inner = _inner_resolve_inputs(outer)
 
         assert {name: getattr(inner, name) for name in _INNER_PINS} == _INNER_PINNED
 
@@ -203,11 +202,10 @@ class TestSeamPartition:
         )
         assert not at_default
 
-        inner = _inner_resolve_config(outer)
+        inner = _inner_resolve_inputs(outer)
 
-        default = NabProjectConfig()
         assert {name: getattr(inner, name) for name in _INNER_DROPS} == {
-            name: getattr(default, name) for name in _INNER_DROPS
+            name: getattr(bare, name) for name in _INNER_DROPS
         }
 
 

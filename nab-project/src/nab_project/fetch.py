@@ -143,9 +143,6 @@ def index_routes(inputs: ResolveInputs) -> list[IndexRoute]:
     bare-name requirement (parse-time guarantee), and the parse-time
     non-overlap check forbids two routes for one package, so the resulting
     route map has at most one entry per name.
-
-    Only ``package_overrides`` is read, so a ``NabProjectConfig`` satisfies
-    the parameter as well.
     """
     return [
         IndexRoute(name=override.name, index=override.index)
@@ -155,11 +152,7 @@ def index_routes(inputs: ResolveInputs) -> list[IndexRoute]:
 
 
 def index_cache_floors(inputs: ResolveInputs) -> dict[str, int]:
-    """Project per-index cache-freshness floors, keyed by index name.
-
-    Only ``index_overrides`` is read, so a ``NabProjectConfig`` satisfies
-    the parameter as well.
-    """
+    """Project per-index cache-freshness floors, keyed by index name."""
     return {
         name: override.assume_fresh_seconds
         for name, override in inputs.index_overrides.items()

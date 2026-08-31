@@ -11,7 +11,7 @@ import threading
 from typing import TYPE_CHECKING, NamedTuple
 
 from nab_project._testing.coordinator_fake import make_coordinator
-from nab_project.config import NabProjectConfig
+from nab_project.inputs import ResolveInputs
 from nab_project.resolve import resolve_with_coordinator
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.provider import BuildPolicy, DecisionOrder
@@ -122,7 +122,7 @@ def _engine_counters(decision_order: DecisionOrder) -> _Counters:
         _fetching_coordinator(pending, metadata_by_url=dict(sidecars)),
         Matrix(python="==3.11", platforms=(PlatformSpec("linux_x86_64"),)).expand(),
         [Requirement("alpha"), Requirement("beta")],
-        config=NabProjectConfig(
+        inputs=ResolveInputs(
             build_policy=BuildPolicy.NEVER, decision_order=decision_order
         ),
     )

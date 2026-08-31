@@ -22,8 +22,8 @@ import pytest
 from nab_index.client import WheelHashMismatchError
 from nab_index.lazy_wheel import RangeOutcome
 from nab_index.transport import HttpError
-from nab_project.config import NabProjectConfig
 from nab_project.fetch import FetchCoordinator
+from nab_project.inputs import ResolveInputs
 from nab_project.resolve import ResolveResult, resolve_with_coordinator
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
@@ -176,7 +176,7 @@ class FakeRangeTransport:
 _TARGET = ResolveTarget.for_declared(
     python_version="3.11", spec=PlatformSpec("linux_x86_64")
 )
-_NO_BUILD = NabProjectConfig(build_policy=BuildPolicy.NEVER)
+_NO_BUILD = ResolveInputs(build_policy=BuildPolicy.NEVER)
 
 
 def _resolve(coordinator: FetchCoordinator) -> ResolveResult:
@@ -184,7 +184,7 @@ def _resolve(coordinator: FetchCoordinator) -> ResolveResult:
         coordinator,
         [_TARGET],
         [Requirement("widget")],
-        config=_NO_BUILD,
+        inputs=_NO_BUILD,
     )
     result.raise_for_failure()
     return result

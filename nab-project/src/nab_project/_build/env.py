@@ -51,10 +51,11 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import MissingExtraError
 from nab_provider.policy import BuildPolicy, DistPolicy
 from nab_provider.requirements_file import InvalidProjectRequirementError
+from nab_provider.target import ResolveTarget
 from nab_provider.vcs_admission import UnsupportedVcsError
 
-from ..config import NabProjectConfig
 from ..download import DownloadError, download_lock
+from ..inputs import ResolveInputs
 from ..lockfile import IndexPin, strip_userinfo
 from .errors import BuildBackendError
 
@@ -70,7 +71,6 @@ if TYPE_CHECKING:
     from nab_provider.overrides import IndexOverride, PackageOverride
     from nab_provider.tags import TagSet
 
-    from ..inputs import ResolveInputs
     from ..lockfile import LockInput, PinShape, SdistArtifact, TargetLock
 
     _OverrideT = TypeVar("_OverrideT", PackageOverride, IndexOverride)
@@ -418,8 +418,8 @@ class NabBuildEnv:
         The inner resolve runs against a synthetic pyproject so it
         can reuse :func:`nab_project.resolve.resolve_for_targets` and
         :func:`nab_project.download.download_lock` end-to-end.  No
-        local sources / workspace / marker overlay; build deps
-        come from the configured indexes only.
+        local sources and no marker overlay; build deps come from the
+        configured indexes only.
 
         It admits wheels and sdists, like any resolve, so the version
         it settles on is the one the requirement asked for rather than
@@ -452,7 +452,7 @@ class NabBuildEnv:
         synthetic = synthetic_dir / "pyproject.toml"
         synthetic.write_text(_render_synthetic_pyproject(requires), encoding="utf-8")
 
-        inner_config = _inner_resolve_config(self._config)
+        inner_inputs = _inner_resolve_inputs(self._config)
 
         # download_lock closes its transport, and ``install`` may call
         # this again for ``get_requires_for_build_wheel`` follow-ups;
@@ -462,7 +462,8 @@ class NabBuildEnv:
             result = resolve_for_targets(
                 synthetic,
                 transport,
-                config=inner_config,
+                targets=(ResolveTarget.for_host(),),
+                inputs=inner_inputs,
             )
             # The build env resolves for the host alone, so its one
             # target's failure is the whole resolve's.
@@ -481,7 +482,7 @@ class NabBuildEnv:
             raise BuildEnvError(msg) from exc
 
         lock_input, to_build = self._plan_install(
-            build_lock_input(result, config=inner_config)
+            build_lock_input(result, inputs=inner_inputs)
         )
 
         try:
@@ -741,19 +742,16 @@ def _without_build_permission(override: _OverrideT) -> _OverrideT:
     return replace(override, build_policy=None)
 
 
-def _inner_resolve_config(inputs: ResolveInputs) -> NabProjectConfig:
-    """Return the config the build-requires resolve runs under.
+def _inner_resolve_inputs(inputs: ResolveInputs) -> ResolveInputs:
+    """Return the settings the build-requires resolve runs under.
 
     Only the fields named here cross into it: build deps come from the
     configured indexes alone, so the outer run's own requirements and
     sources stay out.  The cutoff and the decision order cross because
     this resolve picks the backend that writes the metadata the outer
     resolve reads, and a lock reproduces only if this search does too.
-
-    It is a ``NabProjectConfig`` because the inner resolve enters
-    through ``resolve_for_targets``, which plans its own targets.
     """
-    return NabProjectConfig(
+    return ResolveInputs(
         indexes=inputs.indexes,
         package_overrides=tuple(
             _without_build_permission(override) for override in inputs.package_overrides

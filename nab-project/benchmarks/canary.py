@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
-    from nab_project.config import NabProjectConfig
+    from nab_project.inputs import ResolveInputs
     from nab_provider.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
@@ -103,7 +103,7 @@ class PreparedCanaryExecution(NamedTuple):
 
     requirements: dict[str, VersionRange]
     constraints: dict[str, VersionRange] | None
-    config: NabProjectConfig
+    config: ResolveInputs
     target: ResolveTarget
     host: BenchmarkHost
 
@@ -309,7 +309,7 @@ def run_one(
     requirements: dict[str, VersionRange],
     constraints: dict[str, VersionRange] | None,
     *,
-    config: NabProjectConfig,
+    config: ResolveInputs,
     target: ResolveTarget,
     host: BenchmarkHost,
 ) -> dict:

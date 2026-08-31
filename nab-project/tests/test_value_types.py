@@ -1,23 +1,21 @@
-"""The hand-written value types of the ``[tool.nab]`` config surface.
+"""The hand-written value types of the ``[tool.nab]`` surface.
 
-:mod:`nab_project.config`, :mod:`nab_project.config_sources` and
-:mod:`nab_project.values` write their value types against
-:class:`nab_project._value.ValueType` rather than applying
-``@dataclass(slots=True)``.  Field order, equality, hashing, repr and the
-defaults are what the rest of nab reads off them, so each one is pinned
-here instead of being left to the decorator.
+They subclass :class:`nab_project._value.ValueType` rather than applying
+``@dataclass(slots=True)``, so field order, equality, hashing, repr and the
+defaults are pinned here instead of left to the decorator.
 """
 
 from __future__ import annotations
 
 import copy
 import pickle
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
 
-from nab_project import config, config_sources, values
+from nab_project import config, config_sources, conflicts, inputs, values
 from nab_project._value import ValueType
 from nab_project.config import (
     ConflictFork,
@@ -37,7 +35,21 @@ from nab_project.config_sources import (
     SourceKind,
     SourceRoots,
 )
+from nab_project.inputs import ResolveInputs
+from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider.overrides import IndexOverride, PackageOverride
+from nab_provider.policy import (
+    ArchiveSource,
+    BuildPolicy,
+    DecisionOrder,
+    DistPolicy,
+    LocalSource,
+    ResolutionStrategy,
+    VcsSource,
+)
+from nab_provider.records import IndexConfig
 from nab_provider.tags import PlatformSpec
+from nab_provider.vcs_admission import VcsConfig, VcsPolicy
 
 
 def _parse(value: Any, where: str) -> Any:
@@ -52,6 +64,13 @@ def _round_trip_pickle(instance: Any) -> Any:
     """A pickled and restored copy of ``instance``."""
     return pickle.loads(pickle.dumps(instance))  # noqa: S301
 
+
+_OVERRIDDEN_REQUIREMENT = Requirement("foo>=1")
+PACKAGE_OVERRIDE = PackageOverride(
+    requirement=_OVERRIDDEN_REQUIREMENT,
+    name="foo",
+    version_range=_OVERRIDDEN_REQUIREMENT.specifier.to_range(),
+)
 
 ORIGIN = Origin(SourceKind.PYPROJECT, "/p/pyproject.toml")
 OTHER_ORIGIN = Origin(SourceKind.USER_TOML, "/u/nab.toml")
@@ -74,14 +93,16 @@ class Case(NamedTuple):
     ``fields`` is in declaration order, which is what ``__match_args__``
     and ``__slots__`` are checked against.  ``alternates`` supplies one
     differing value per field so equality can be varied a field at a
-    time.  ``hashable`` is False where one of the field values is
-    itself unhashable.
+    time.  ``hashable`` is False where one of the field values is itself
+    unhashable, and ``positional`` False where the constructor takes
+    keywords only.
     """
 
     cls: type[ValueType]
     fields: dict[str, Any]
     alternates: dict[str, Any]
     hashable: bool = True
+    positional: bool = True
 
     @property
     def id(self) -> str:
@@ -209,6 +230,59 @@ CASES = [
         },
     ),
     Case(
+        ResolveInputs,
+        {
+            "archive_sources": (ArchiveSource("acme", "https://acme.test/a-1.zip"),),
+            "base_group": "project",
+            "build_group": "build",
+            "build_policy": BuildPolicy.BUILD_REMOTE,
+            "build_requires_depth": 1,
+            "conflicts": (ConflictSet((ConflictMember(ConflictKind.EXTRA, "cpu"),)),),
+            "constraints": ("pip<26",),
+            "decision_order": DecisionOrder.STABLE,
+            "default_groups": ("dev",),
+            "dist_policy": DistPolicy.WHEEL_ONLY,
+            "index_overrides": {
+                "private": IndexOverride(build_policy=BuildPolicy.NEVER)
+            },
+            "indexes": (IndexConfig("private", "https://private.test/simple/"),),
+            "local_sources": (LocalSource("alpha", "alpha"),),
+            # A ``PackageOverride`` holds a ``VersionRange``, which refuses to
+            # rebuild from a pickle, so the copy cases carry none.
+            "package_overrides": (),
+            "requires_python": ">=3.10",
+            "resolution": ResolutionStrategy.LOWEST,
+            "trust_unverified_sdist_deps": True,
+            "uploaded_prior_to": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "vcs": VcsConfig(policy=VcsPolicy.ALLOW),
+            "vcs_sources": (VcsSource("beta", "git+https://beta.test/beta"),),
+        },
+        {
+            "archive_sources": (ArchiveSource("acme", "https://acme.test/a-2.zip"),),
+            "base_group": "runtime",
+            "build_group": "buildreqs",
+            "build_policy": BuildPolicy.NEVER,
+            "build_requires_depth": 2,
+            "conflicts": (ConflictSet((ConflictMember(ConflictKind.GROUP, "cpu"),)),),
+            "constraints": ("pip<25",),
+            "decision_order": DecisionOrder.ARRIVAL,
+            "default_groups": ("docs",),
+            "dist_policy": DistPolicy.SDIST_ONLY,
+            "index_overrides": {"private": IndexOverride(build_policy=None)},
+            "indexes": (IndexConfig("public", "https://public.test/simple/"),),
+            "local_sources": (LocalSource("beta", "beta"),),
+            "package_overrides": (PACKAGE_OVERRIDE,),
+            "requires_python": ">=3.11",
+            "resolution": ResolutionStrategy.HIGHEST,
+            "trust_unverified_sdist_deps": False,
+            "uploaded_prior_to": None,
+            "vcs": VcsConfig(policy=VcsPolicy.BLOCK),
+            "vcs_sources": (VcsSource("beta", "git+https://beta.test/gamma"),),
+        },
+        hashable=False,
+        positional=False,
+    ),
+    Case(
         SourceRoots,
         {
             "system_toml": Path("/etc/nab.toml"),
@@ -262,10 +336,10 @@ DEFAULTS = [
 
 
 def test_the_cases_cover_every_value_type() -> None:
-    """A subclass added later and left out of ``CASES`` would go unchecked."""
+    """A subclass these modules name and ``CASES`` omits would go unchecked."""
     declared = {
         obj
-        for module in (config, config_sources, values)
+        for module in (config, config_sources, conflicts, inputs, values)
         for obj in vars(module).values()
         if isinstance(obj, type) and issubclass(obj, ValueType) and obj is not ValueType
     }
@@ -291,6 +365,11 @@ def test_instances_carry_no_dict(case: Case) -> None:
 @BY_ID
 def test_positional_construction_binds_the_declared_order(case: Case) -> None:
     """A signature binding in a different order than the field tuple shows up here."""
+    if not case.positional:
+        with pytest.raises(TypeError):
+            case.cls(*case.fields.values())
+        return
+
     assert case.cls(*case.fields.values()) == case.build()
 
 
@@ -302,7 +381,7 @@ def test_repr_names_every_field_in_order(case: Case) -> None:
 
 
 def test_repr_leads_with_the_qualified_name() -> None:
-    """All ten are module-level, so only a nested class separates the two names."""
+    """All eleven are module-level, so only a nested class separates the two names."""
 
     class Nested(ValueType):
         __slots__ = __match_args__ = ("value",)
