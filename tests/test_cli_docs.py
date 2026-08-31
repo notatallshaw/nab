@@ -17,15 +17,15 @@ import inspect
 import io
 import logging
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import pytest
 
-from nab._download import download
 from nab._lock import lock
 from nab.cli import app
+from nab.optiontable import ALL
 from nab.output import ColorChoice, Verbosity, parse_output_options
 from nab_project.config_sources import OPTIONS
 from nab_project.lockfile import (
@@ -54,6 +54,10 @@ _CONFLICTS_DOC = _DOCS / "explanation" / "conflicts.md"
 _README = Path(__file__).resolve().parents[1] / "README.md"
 
 _SUBCOMMANDS = ("lock", "download", "config", "cache")
+
+# The flag counts lock and download carry.  The other two commands have no
+# documented flag list, so nothing here derives theirs.
+_FLAG_COUNTS = {"lock": 28, "download": 24}
 
 # A ``--flag`` opening a code span, so prose naming one is matched and a
 # ``--hash=`` inside a fenced example is not.
@@ -136,13 +140,19 @@ def _prose_chunks(text: str) -> list[str]:
     return chunks
 
 
-def _command_flags(command: Callable[..., None]) -> list[str]:
-    """The ``--flag`` spelling of every keyword-only parameter of ``command``."""
-    return [
-        "--" + name.replace("_", "-")
-        for name, param in inspect.signature(command).parameters.items()
-        if param.kind is inspect.Parameter.KEYWORD_ONLY
+def _command_flags(command: str) -> list[str]:
+    """The flags ``command`` accepts, off the one option declaration.
+
+    The size is asserted here because three of the four readers assert
+    inside a loop over this, and an empty list would pass them all.
+    """
+    flags = [
+        row.cli_flag
+        for row in ALL
+        if command in row.commands and row.cli_flag is not None
     ]
+    assert len(flags) == _FLAG_COUNTS[command], flags
+    return flags
 
 
 def _cli_flag_section() -> str:
@@ -218,18 +228,32 @@ def _emitted_labels(
     return [line for line in printed.splitlines() if line.startswith("# ")]
 
 
+class TestEveryRowNamesAPage:
+    """A row's ``docs=`` is where ``nab config explain`` sends a reader.
+
+    Nothing else checks the page is a file: the umbrella sdist ships
+    ``src/nab`` and ``tests`` alone, so a row cannot look for it as it is
+    built without raising on every installed nab.
+    """
+
+    def test_no_row_names_a_page_that_is_not_there(self) -> None:
+        missing = sorted({row.docs for row in ALL if not (_DOCS / row.docs).is_file()})
+
+        assert missing == []
+
+
 class TestCliReferenceFlagCoverage:
     """Every flag a run subcommand accepts is named on one of its pages."""
 
     @pytest.mark.parametrize(
         ("heading", "command", "pages"),
         [
-            ("## `nab lock`", lock, (_SELECTION, _FORMATS)),
-            ("## `nab download`", download, ()),
+            ("## `nab lock`", "lock", (_SELECTION, _FORMATS)),
+            ("## `nab download`", "download", ()),
         ],
     )
     def test_section_names_every_flag(
-        self, heading: str, command: Callable[..., None], pages: tuple[Path, ...]
+        self, heading: str, command: str, pages: tuple[Path, ...]
     ) -> None:
         # Flags shared by both commands are documented once, in Runtime
         # flags; what `nab lock` selects and what it writes have their own
@@ -263,7 +287,7 @@ class TestCliReferenceSplitPages:
         """A browser search of the `nab lock` section finds a flag that moved."""
         section = _reference_section(_CLI_REFERENCE, "## `nab lock`")
         moved = _page(page)
-        for flag in _command_flags(lock):
+        for flag in _command_flags("lock"):
             if _names_flag(moved, flag):
                 assert _names_flag(section, flag), f"`nab lock` omits {flag}"
 
@@ -446,14 +470,14 @@ class TestConfigReferenceCliFlags:
     def test_block_lists_every_lock_flag(self) -> None:
         declared = set(_block_flags(_flag_block()))
 
-        for flag in _command_flags(lock):
+        for flag in _command_flags("lock"):
             forms = _flag_forms(flag, wildcard=self._WILDCARD)
             assert declared.intersection(forms), f"the flag block omits {flag}"
 
     def test_block_lists_only_flags_lock_accepts(self) -> None:
         accepted = {
             form
-            for flag in _command_flags(lock)
+            for flag in _command_flags("lock")
             for form in _flag_forms(flag, wildcard=self._WILDCARD)
         }
 

@@ -97,17 +97,15 @@ from ._run import (
     resolve_extra_selection,
     resolve_group_selection,
 )
-from .cli import (
+from .cli import OfflineFlag, PathArg, app
+from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
     DecisionOrderFlag,
     DistPolicyFlag,
     HttpBackend,
     LockFormat,
     ModeFlag,
-    OfflineFlag,
-    PathArg,
     ResolutionFlag,
-    app,
 )
 from .output import ProgressReporter, printer
 

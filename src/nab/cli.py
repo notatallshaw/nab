@@ -17,7 +17,7 @@ import io
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import tyro
 from typing_extensions import override
@@ -38,18 +38,6 @@ __all__ = [
 
 # A pyproject.toml positional that may also be omitted to default to ./pyproject.toml.
 PathArg = Annotated[Path, tyro.conf.Positional]
-
-# Lowercase Literal types so --http-backend and --format render lowercase
-# choices in --help rather than the uppercase enum names.
-HttpBackend = Literal["urllib3", "httpx"]
-LockFormat = Literal["pylock", "requirements", "requirements-without-hashes"]
-ResolutionFlag = Literal["highest", "lowest", "lowest-direct"]
-ModeFlag = Literal["specific", "universal"]
-DistPolicyFlag = Literal[
-    "wheel-only", "prefer-wheel", "wheel-or-sdist", "sdist-only", "sdist-install"
-]
-BuildPolicyFlag = Literal["never", "build-local", "build-remote"]
-DecisionOrderFlag = Literal["arrival", "stable"]
 
 # --offline is layered (an nab.toml or NAB_OFFLINE may set it), so it stays
 # tri-state: an explicit value overrides the lower layers while an absent flag
