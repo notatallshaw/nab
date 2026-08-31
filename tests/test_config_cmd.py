@@ -36,7 +36,6 @@ from nab._download import download
 from nab._lock import lock
 from nab._run import effective_config
 from nab.cli import run
-from nab_project.config import NabProjectConfig
 from nab_project.config_sources import (
     OPTIONS,
     OptionSpec,
@@ -45,6 +44,7 @@ from nab_project.config_sources import (
     SourceRoots,
 )
 from nab_project.download import DownloadResult
+from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
     IndexPin,
     SdistArtifact,
@@ -59,7 +59,6 @@ from nab_provider.provider import (
     DecisionOrder,
     DistPolicy,
     ResolutionStrategy,
-    ResolveMode,
 )
 from nab_provider.target import ResolveTarget
 
@@ -100,7 +99,9 @@ _DOWNLOAD_PROJECT_ARGV: tuple[tuple[str, str], ...] = (
     ("--project-default-group", "dev"),
     ("--project-base-group", "main-deps"),
     ("--project-build-group", "build-reqs"),
-    ("--project-requires-python", ">=3.11"),
+    # >=3.10, not >=3.11: the host plans the targets now, so a floor above
+    # the running interpreter fails the run before the assertions.
+    ("--project-requires-python", ">=3.10"),
     ("--project-uploaded-prior-to", "2024-06-01T00:00:00Z"),
     ("--project-dist-policy", "sdist-only"),
     ("--project-build-policy", "never"),
@@ -1059,9 +1060,10 @@ class TestNoOpLock:
 class TestProjectCliOverrides:
     """``--project-*`` overrides flow through ``nab lock`` into the resolve."""
 
-    def _lock_config(
+    def _lock_call(
         self, proj: Path, out: Path, extra: list[str]
-    ) -> tuple[NabProjectConfig, Path]:
+    ) -> Mapping[str, object]:
+        """The keywords this ``nab lock`` argv hands ``resolve_for_targets``."""
         with (
             patch(
                 "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
@@ -1069,17 +1071,22 @@ class TestProjectCliOverrides:
             patch("nab._lock.write_lock"),
         ):
             _cli("lock", str(proj), "--no-cache", "--output", str(out), *extra)
-        call = mock_resolve.call_args
-        return call.kwargs["config"], call.args[0]
+        return mock_resolve.call_args.kwargs
+
+    def _lock_inputs(self, proj: Path, out: Path, extra: list[str]) -> ResolveInputs:
+        """The settings that argv hands the resolve."""
+        inputs = self._lock_call(proj, out, extra)["inputs"]
+        assert isinstance(inputs, ResolveInputs)
+        return inputs
 
     def test_project_dist_policy_reaches_resolve(self, hermetic_roots: Path) -> None:
         proj = _project(hermetic_roots)
-        config, _ = self._lock_config(
+        inputs = self._lock_inputs(
             proj,
             hermetic_roots / "pylock.toml",
             ["--project-dist-policy", "sdist-only"],
         )
-        assert config.dist_policy is DistPolicy.SDIST_ONLY
+        assert inputs.dist_policy is DistPolicy.SDIST_ONLY
 
     def test_project_dist_policy_override_replaces_trust(
         self, hermetic_roots: Path
@@ -1091,36 +1098,36 @@ class TestProjectCliOverrides:
             'dist-policy = { policy = "wheel-or-sdist",'
             " trust-unverified-deps = true }\n",
         )
-        config, _ = self._lock_config(
+        inputs = self._lock_inputs(
             proj,
             hermetic_roots / "pylock.toml",
             ["--project-dist-policy", "sdist-only"],
         )
-        assert config.dist_policy is DistPolicy.SDIST_ONLY
-        assert config.trust_unverified_sdist_deps is False
+        assert inputs.dist_policy is DistPolicy.SDIST_ONLY
+        assert inputs.trust_unverified_sdist_deps is False
 
     def test_project_build_requires_depth_reaches_resolve(
         self, hermetic_roots: Path
     ) -> None:
         # The file declares 1, so a resolve seeing 3 read it off the flag.
         proj = _project(hermetic_roots, "build-requires-depth = 1\n")
-        config, _ = self._lock_config(
+        inputs = self._lock_inputs(
             proj,
             hermetic_roots / "pylock.toml",
             ["--project-build-requires-depth", "3"],
         )
-        assert config.build_requires_depth == 3
+        assert inputs.build_requires_depth == 3
 
     def test_project_build_policy_reaches_resolve(self, hermetic_roots: Path) -> None:
         # The file declares build-remote, so a resolve seeing never read it
         # off the flag.
         proj = _project(hermetic_roots, 'build-policy = "build-remote"\n')
-        config, _ = self._lock_config(
+        inputs = self._lock_inputs(
             proj,
             hermetic_roots / "pylock.toml",
             ["--project-build-policy", "never"],
         )
-        assert config.build_policy is BuildPolicy.NEVER
+        assert inputs.build_policy is BuildPolicy.NEVER
 
     def test_project_mode_specific_takes_one_lock_from_a_matrix(
         self, hermetic_roots: Path
@@ -1129,15 +1136,14 @@ class TestProjectCliOverrides:
         # --project-mode outranks [tool.nab], so the declared matrix does
         # not apply and --python names the environment to resolve for.
         proj = _project(hermetic_roots, _UNIVERSAL_TOOL_NAB)
-        config, _ = self._lock_config(
+        call = self._lock_call(
             proj,
             hermetic_roots / "pylock.toml",
             ["--project-mode", "specific", "--python", "3.13"],
         )
-        assert config.mode is ResolveMode.SPECIFIC
-        assert config.matrix is None
-        assert config.environment is not None
-        assert config.environment.python == "3.13"
+
+        (target,) = call["targets"]
+        assert target.python_version == "3.13"
 
     def test_project_mode_universal_needs_a_declared_matrix(
         self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
@@ -1165,12 +1171,12 @@ class TestProjectCliOverrides:
     def test_project_decision_order_reaches_resolve(self, hermetic_roots: Path) -> None:
         # The file declares stable, so a resolve seeing arrival read the flag.
         proj = _project(hermetic_roots, 'decision-order = "stable"\n')
-        config, _ = self._lock_config(
+        inputs = self._lock_inputs(
             proj,
             hermetic_roots / "pylock.toml",
             ["--project-decision-order", "arrival"],
         )
-        assert config.decision_order is DecisionOrder.ARRIVAL
+        assert inputs.decision_order is DecisionOrder.ARRIVAL
 
     def test_project_constraint_repeats_replace_the_file_list(
         self, hermetic_roots: Path
@@ -1178,12 +1184,12 @@ class TestProjectCliOverrides:
         # Repeats accumulate into the flag's own value, which then replaces
         # the declared list rather than extending it.
         proj = _project(hermetic_roots, 'constraints = ["a<1"]\n')
-        config, _ = self._lock_config(
+        inputs = self._lock_inputs(
             proj,
             hermetic_roots / "pylock.toml",
             ["--project-constraint", "b<2", "--project-constraint", "c<3"],
         )
-        assert config.constraints == ("b<2", "c<3")
+        assert inputs.constraints == ("b<2", "c<3")
 
     def test_append_flag_does_not_swallow_positional_path(
         self, hermetic_roots: Path
@@ -1210,13 +1216,13 @@ class TestProjectCliOverrides:
             )
         call = mock_resolve.call_args
         assert call.args[0] == proj
-        assert call.kwargs["config"].constraints == ("a<1", "b<2")
+        assert call.kwargs["inputs"].constraints == ("a<1", "b<2")
 
     def test_project_override_prints_reproducibility_notice(
         self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         proj = _project(hermetic_roots)
-        self._lock_config(
+        self._lock_inputs(
             proj,
             hermetic_roots / "pylock.toml",
             ["--project-dist-policy", "sdist-only"],
@@ -1244,7 +1250,7 @@ class TestProjectCliOverrides:
                 "2024-06-01T00:00:00Z",
             )
         expected = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        assert mock_resolve.call_args.kwargs["config"].uploaded_prior_to == expected
+        assert mock_resolve.call_args.kwargs["inputs"].uploaded_prior_to == expected
         assert read_lockfile_anchor(out) == expected
         assert "--project-uploaded-prior-to -> 2024-06-01" in capsys.readouterr().err
 
@@ -1355,11 +1361,11 @@ class TestDownloadCliOverrides:
             _cli("download", str(proj), "--output", str(proj.parent / "out"), *extra)
         return mock_resolve.call_args.kwargs
 
-    def _config(self, proj: Path, extra: list[str]) -> NabProjectConfig:
-        """The merged config the resolve reads for this argv."""
-        config = self._resolve_kwargs(proj, extra)["config"]
-        assert isinstance(config, NabProjectConfig)
-        return config
+    def _inputs(self, proj: Path, extra: list[str]) -> ResolveInputs:
+        """The merged settings the resolve reads for this argv."""
+        inputs = self._resolve_kwargs(proj, extra)["inputs"]
+        assert isinstance(inputs, ResolveInputs)
+        return inputs
 
     def test_project_overrides_reach_the_config(self, hermetic_roots: Path) -> None:
         # The file declares something other than each flag's value, so a value
@@ -1382,26 +1388,26 @@ class TestDownloadCliOverrides:
         kwargs = self._resolve_kwargs(
             proj, [arg for pair in _DOWNLOAD_PROJECT_ARGV for arg in pair]
         )
-        config = kwargs["config"]
-        assert isinstance(config, NabProjectConfig)
+        inputs = kwargs["inputs"]
+        assert isinstance(inputs, ResolveInputs)
 
         # --project-resolution keeps its own path into the resolver, so it is
         # the one flag here that does not land in the merged config.
         assert kwargs["resolution_strategy"] is ResolutionStrategy.LOWEST
-        assert config.decision_order is DecisionOrder.ARRIVAL
+        assert inputs.decision_order is DecisionOrder.ARRIVAL
 
         # Repeated --project-constraint accumulates, then replaces the list.
-        assert config.constraints == ("b<2", "c<3")
-        assert config.default_groups == ("dev",)
-        assert config.base_group == "main-deps"
-        assert config.build_group == "build-reqs"
+        assert inputs.constraints == ("b<2", "c<3")
+        assert inputs.default_groups == ("dev",)
+        assert inputs.base_group == "main-deps"
+        assert inputs.build_group == "build-reqs"
 
-        assert config.requires_python == ">=3.11"
-        assert config.uploaded_prior_to == datetime(2024, 6, 1, tzinfo=timezone.utc)
+        assert inputs.requires_python == ">=3.10"
+        assert inputs.uploaded_prior_to == datetime(2024, 6, 1, tzinfo=timezone.utc)
 
-        assert config.dist_policy is DistPolicy.SDIST_ONLY
-        assert config.build_policy is BuildPolicy.NEVER
-        assert config.build_requires_depth == 3
+        assert inputs.dist_policy is DistPolicy.SDIST_ONLY
+        assert inputs.build_policy is BuildPolicy.NEVER
+        assert inputs.build_requires_depth == 3
 
     def test_every_project_flag_has_a_case(self) -> None:
         exercised = {flag for flag, _ in _DOWNLOAD_PROJECT_ARGV} | {"--project-mode"}
@@ -1417,11 +1423,12 @@ class TestDownloadCliOverrides:
         # Same as the lock path: --project-mode specific shadows the declared
         # matrix, and --python names the environment to download for.
         proj = _project(hermetic_roots, _UNIVERSAL_TOOL_NAB)
-        config = self._config(proj, ["--project-mode", "specific", "--python", "3.13"])
-        assert config.mode is ResolveMode.SPECIFIC
-        assert config.matrix is None
-        assert config.environment is not None
-        assert config.environment.python == "3.13"
+        kwargs = self._resolve_kwargs(
+            proj, ["--project-mode", "specific", "--python", "3.13"]
+        )
+
+        (target,) = kwargs["targets"]
+        assert target.python_version == "3.13"
 
     def test_cache_dir_flag_reaches_the_resolve(self, hermetic_roots: Path) -> None:
         proj = _project(hermetic_roots)
@@ -1445,9 +1452,6 @@ class TestDownloadCliOverrides:
             hermetic_roots / "alpha" / "pyproject.toml",
             '[project]\nname = "alpha"\nversion = "0"\ndependencies = []\n',
         )
-        assert self._config(proj, []).workspace_member_names == frozenset({"alpha"})
+        assert [s.name for s in self._inputs(proj, []).local_sources] == ["alpha"]
 
-        assert (
-            self._config(proj, ["--no-workspace-discovery"]).workspace_member_names
-            == frozenset()
-        )
+        assert self._inputs(proj, ["--no-workspace-discovery"]).local_sources == ()

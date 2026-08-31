@@ -48,7 +48,7 @@ from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.conflict_kind import KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 from nab_provider.marker_holds import intractable_as_error
 
-from ..config import conflict_exclusion_groups, conflict_member_groups
+from ..conflicts import conflict_exclusion_groups, conflict_member_groups
 from .builder import require_artifact_hashes
 from .coverage import validate_marker_coverage
 from .disjointness import validate_marker_disjointness

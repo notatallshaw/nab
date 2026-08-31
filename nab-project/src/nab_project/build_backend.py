@@ -4,8 +4,8 @@ Hand a source directory to :func:`extract_metadata` and get back a
 :class:`WheelMetadata`. The static pyproject.toml reader runs first;
 a directory :func:`extract_static_metadata` returns ``None`` for falls
 through to a PEP 517 backend invocation inside
-:class:`~nab_project._build.env.NabBuildEnv`. The dynamic path needs a
-:class:`NabProjectConfig`.
+:class:`~nab_project._build.env.NabBuildEnv`. The dynamic path needs the
+settings a resolve runs under.
 """
 
 from __future__ import annotations
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     from nab_provider._vendor.packaging.requirements import Requirement
 
-    from .config import NabProjectConfig
+    from .inputs import ResolveInputs
 
 __all__ = [
     "BuildBackendError",
@@ -231,7 +231,7 @@ def _collect_provides_extra(project: dict) -> set[str]:
 def extract_metadata(
     source_dir: Path,
     *,
-    config: NabProjectConfig | None = None,
+    config: ResolveInputs | None = None,
     offline: bool = False,
 ) -> WheelMetadata:
     """Extract metadata for a source directory.
@@ -240,9 +240,10 @@ def extract_metadata(
     When that returns ``None``, the dynamic-build path is taken:
     the project's PEP 517 backend is invoked in an isolated venv
     via :func:`nab_project._build.runner.run_build_backend`.  That
-    needs a :class:`NabProjectConfig`; callers that cannot provide
-    one get a :class:`BuildBackendError` instead.  ``offline`` bars
-    that path from fetching the backend's build requirements.
+    needs a :class:`~nab_project.inputs.ResolveInputs`; callers that
+    cannot provide one get a :class:`BuildBackendError` instead.
+    ``offline`` bars that path from fetching the backend's build
+    requirements.
 
     The build env owns its own HTTP transport (see
     :class:`~nab_project._build.env.NabBuildEnv` for why); callers
@@ -253,7 +254,7 @@ def extract_metadata(
         return static
     if config is None:
         msg = (
-            "dynamic-metadata path requires a NabProjectConfig;"
+            "dynamic-metadata path requires a ResolveInputs;"
             f" the static reader returned None for {source_dir}."
             "  Pass one through ``extract_metadata`` or use a"
             " build-policy that does not enter the dynamic path."

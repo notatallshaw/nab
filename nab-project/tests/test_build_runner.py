@@ -27,7 +27,7 @@ import tempfile
 import zipfile
 from collections.abc import Callable
 from contextlib import AbstractContextManager
-from dataclasses import fields, replace
+from dataclasses import replace
 from datetime import datetime, timezone
 from importlib.util import cache_from_source, module_from_spec, spec_from_file_location
 from pathlib import Path
@@ -59,18 +59,9 @@ from nab_project._build.runner import (
     build_wheel_for_install,
     run_build_backend,
 )
-from nab_project.config import (
-    ConflictKind,
-    ConflictMember,
-    ConflictSet,
-    EnvironmentConfig,
-    IndexOverride,
-    MatrixConfig,
-    NabProjectConfig,
-    PackageOverride,
-    ResolveMode,
-)
+from nab_project.config import IndexOverride, PackageOverride
 from nab_project.download import DownloadError, DownloadResult, iter_artifacts
+from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
     IndexPin,
     LocalPin,
@@ -81,22 +72,16 @@ from nab_project.lockfile import (
     WheelArtifact,
 )
 from nab_project.resolve import ResolveResult, TargetResult
-from nab_project.workspace import WorkspaceConfig
 from nab_provider._provider.metadata_resolver import pick_dist
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import (
-    ArchiveSource,
     BuildPolicy,
     DecisionOrder,
     DistPolicy,
     LocalSource,
     MissingExtraError,
-    ResolutionStrategy,
-    VcsConfig,
-    VcsPolicy,
-    VcsSource,
 )
 from nab_provider.tags import PlatformSpec, TagSet
 from nab_provider.target import ResolveTarget
@@ -402,14 +387,14 @@ def _tempdir_denying(denied: str) -> Callable[..., tempfile.TemporaryDirectory[s
 
 
 @pytest.fixture
-def config() -> NabProjectConfig:
-    """A minimal :class:`NabProjectConfig` for the tests."""
-    return NabProjectConfig()
+def config() -> ResolveInputs:
+    """A minimal :class:`ResolveInputs` for the tests."""
+    return ResolveInputs()
 
 
 class TestRunBuildBackend:
     def test_prepare_metadata_happy_path(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """The fake backend's ``prepare_metadata_for_build_wheel`` runs,
         produces a valid METADATA, and we parse it into
@@ -425,13 +410,13 @@ class TestRunBuildBackend:
         assert names == ["click", "rich"]
 
     def test_missing_pyproject_and_setup_py(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         with pytest.raises(BuildBackendError, match="no pyproject.toml or setup.py"):
             run_build_backend(tmp_path, config=config)
 
     def test_oversized_integer_pyproject(
-        self, tmp_path: Path, config: NabProjectConfig, oversized_integer: str
+        self, tmp_path: Path, config: ResolveInputs, oversized_integer: str
     ) -> None:
         (tmp_path / "pyproject.toml").write_text(
             f"[tool.other]\ncount = {oversized_integer}\n", encoding="utf-8"
@@ -442,7 +427,7 @@ class TestRunBuildBackend:
     def test_unsearchable_pyproject_reports_the_errno(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         deny_access: Callable[[Path], AbstractContextManager[None]],
     ) -> None:
         # The presence check must not read EACCES as absence: the file is
@@ -455,7 +440,7 @@ class TestRunBuildBackend:
             run_build_backend(tmp_path, config=config)
 
     def test_directory_pyproject_reports_not_a_regular_file(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         (tmp_path / "pyproject.toml").mkdir()
 
@@ -475,7 +460,7 @@ class TestRunBuildBackend:
     def test_unsearchable_setup_py_takes_the_legacy_branch(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         deny_access: Callable[[Path], AbstractContextManager[None]],
     ) -> None:
         # Same for the setup.py fallback: an unreadable one is a legacy
@@ -492,7 +477,7 @@ class TestRunBuildBackend:
             run_build_backend(tmp_path, config=config)
 
     def test_legacy_setup_py_returns_parsed_metadata(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """A tree with only ``setup.py`` builds through to parsed metadata.
 
@@ -531,16 +516,14 @@ class TestRunBuildBackend:
         assert metadata.name == "legacy-pkg"
         assert str(metadata.version) == "0.1"
 
-    def test_malformed_pyproject(
-        self, tmp_path: Path, config: NabProjectConfig
-    ) -> None:
+    def test_malformed_pyproject(self, tmp_path: Path, config: ResolveInputs) -> None:
         (tmp_path / "pyproject.toml").write_text(
             "not = valid = toml = [", encoding="utf-8"
         )
         with pytest.raises(BuildBackendError, match="could not read"):
             run_build_backend(tmp_path, config=config)
 
-    def test_non_utf8_pyproject(self, tmp_path: Path, config: NabProjectConfig) -> None:
+    def test_non_utf8_pyproject(self, tmp_path: Path, config: ResolveInputs) -> None:
         (tmp_path / "pyproject.toml").write_bytes(
             b"[build-system]\nrequires = []\n# \xe9\n"
         )
@@ -548,7 +531,7 @@ class TestRunBuildBackend:
             run_build_backend(tmp_path, config=config)
 
     def test_backend_metadata_missing_version_raises(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """A backend that returns a METADATA without ``Version`` triggers a
         clean :class:`BuildBackendError`, not an obscure parse traceback.
@@ -571,7 +554,7 @@ class TestRunBuildBackend:
     def test_hatchling_with_dynamic_deps_skips_prepare(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """When a hatchling-based project has ``dynamic =
@@ -602,7 +585,7 @@ class TestRunBuildBackend:
         assert str(metadata.version) == "9.9.9"
 
     def test_build_env_setup_error_wrapped(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """BuildEnvError during env setup is wrapped as BuildBackendError."""
         (tmp_path / "pyproject.toml").write_text(
@@ -620,7 +603,7 @@ class TestRunBuildBackend:
             run_build_backend(tmp_path, config=config)
 
     def test_build_env_resolution_error_wrapped(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """ResolutionError from build deps is wrapped as BuildBackendError."""
         (tmp_path / "pyproject.toml").write_text(
@@ -640,7 +623,7 @@ class TestRunBuildBackend:
             run_build_backend(tmp_path, config=config)
 
     def test_build_system_table_rejected_wrapped(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """build.BuildSystemTableValidationError is wrapped as BuildBackendError.
 
@@ -675,7 +658,7 @@ class TestRunBuildBackend:
     def test_bad_requires_fails_before_the_build_env(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
         table: str,
         message: str,
@@ -693,7 +676,7 @@ class TestRunBuildBackend:
             run_build_backend(tmp_path, config=config)
 
     def test_build_system_not_a_table(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """A scalar build-system key fails the build."""
         (tmp_path / "pyproject.toml").write_text(
@@ -703,7 +686,7 @@ class TestRunBuildBackend:
             run_build_backend(tmp_path, config=config)
 
     def test_backend_path_outside_source_tree_rejected(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """A backend-path that leaves the source tree fails the build."""
         source = tmp_path / "member"
@@ -719,7 +702,7 @@ class TestRunBuildBackend:
             run_build_backend(source, config=config)
 
     def test_absolute_backend_path_rejected(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """backend-path entries are relative to the project root."""
         source = tmp_path / "member"
@@ -751,7 +734,7 @@ class TestRunBuildBackend:
     def test_venv_creation_oserror_wrapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """An OSError building the venv is wrapped as BuildBackendError."""
@@ -777,7 +760,7 @@ class TestRunBuildBackend:
     def test_temp_root_oserror_wrapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """An OSError creating the env's temp root is wrapped as BuildBackendError."""
@@ -796,7 +779,7 @@ class TestRunBuildBackend:
     def test_metadata_directory_oserror_wrapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """An OSError creating the metadata directory is wrapped the same way."""
@@ -815,7 +798,7 @@ class TestRunBuildBackend:
     def test_non_string_build_requirement_wrapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A non-string build requirement is wrapped as BuildBackendError."""
@@ -857,7 +840,7 @@ class TestRunBuildBackend:
     def test_unencodable_build_requirement_wrapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A build requirement with no UTF-8 encoding is wrapped.
@@ -1356,9 +1339,7 @@ class TestRunBuildBackendCorruptBuiltWheel:
         project.build.side_effect = fake_build
         return project
 
-    def _run(
-        self, tmp_path: Path, config: NabProjectConfig, project: MagicMock
-    ) -> None:
+    def _run(self, tmp_path: Path, config: ResolveInputs, project: MagicMock) -> None:
         with (
             patch(
                 "nab_project._build.runner.NabBuildEnv",
@@ -1373,7 +1354,7 @@ class TestRunBuildBackendCorruptBuiltWheel:
             run_build_backend(tmp_path, config=config)
 
     def test_default_path_corrupt_wheel_wrapped(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """The backend has no prepare hook, so the runner builds a wheel and
         reads it with ``zipfile.ZipFile`` after the hook wrapper; a corrupt
@@ -1385,7 +1366,7 @@ class TestRunBuildBackendCorruptBuiltWheel:
         )
 
     def test_invalid_wheel_name_wrapped(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """``parse_wheel_filename`` raises a bare ``ValueError`` when the built
         wheel's name does not parse; the runner normalizes it.
@@ -1396,7 +1377,7 @@ class TestRunBuildBackendCorruptBuiltWheel:
     def test_skip_prepare_corrupt_wheel_wrapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """On the skip-prepare path the runner's own ``_build_wheel_and_extract``
@@ -1411,7 +1392,7 @@ class TestRunBuildBackendCorruptBuiltWheel:
     def test_skip_prepare_invalid_wheel_name_wrapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The skip-prepare path parses the wheel filename too, so a readable
@@ -1434,7 +1415,7 @@ class TestRunBuildBackendCorruptBuiltWheel:
     def test_unreadable_dist_info_member_wrapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
         kind: str,
         skip_prepare: bool,
@@ -1524,7 +1505,7 @@ class TestRunBuildBackendBuildTaggedWheel:
     def test_build_tag_does_not_hide_the_dist_info(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
         wheel_name: str,
         skip_prepare: bool,
@@ -1600,7 +1581,7 @@ class TestRunBuildBackendNonStringHookPath:
             lambda *_a, **_k: build_wheel,
         )
 
-    def _run(self, tmp_path: Path, config: NabProjectConfig) -> None:
+    def _run(self, tmp_path: Path, config: ResolveInputs) -> None:
         env = MagicMock()
         env.__enter__ = MagicMock(return_value=env)
         env.__exit__ = MagicMock(return_value=None)
@@ -1614,7 +1595,7 @@ class TestRunBuildBackendNonStringHookPath:
     def test_prepare_hook_non_string_wrapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
         value: object,
     ) -> None:
@@ -1625,7 +1606,7 @@ class TestRunBuildBackendNonStringHookPath:
     def test_build_wheel_fallback_non_string_wrapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """With no prepare hook, the runner falls back to ``build_wheel``,
@@ -1638,7 +1619,7 @@ class TestRunBuildBackendNonStringHookPath:
     def test_skip_prepare_non_string_wrapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """The skip-prepare path calls ``build_wheel`` from the runner itself."""
@@ -1665,7 +1646,7 @@ class TestRunBuildBackendDefaults:
         """
         index_dir = tmp_path / "index"
         _make_local_index(index_dir, "buildstub", "1.0")
-        config = NabProjectConfig(indexes=(IndexConfig("local", index_dir.as_uri()),))
+        config = ResolveInputs(indexes=(IndexConfig("local", index_dir.as_uri()),))
 
         def fake_download_lock(
             lock_input: LockInput, _transport: object, wheel_dir: Path, *_a: object
@@ -1700,7 +1681,7 @@ class TestRunBuildBackendDefaults:
     def test_backend_exception_remapped(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Any ``build.BuildBackendException`` from the inner call is
@@ -1881,7 +1862,7 @@ class TestNabBuildEnvOutsideContext:
     """Accessors and ``install`` raise when used outside ``with`` scope."""
 
     def _env(self) -> NabBuildEnv:
-        return NabBuildEnv(requires=[], config=NabProjectConfig())
+        return NabBuildEnv(requires=[], config=ResolveInputs())
 
     def test_python_executable_outside_context(self) -> None:
         env = self._env()
@@ -1911,7 +1892,7 @@ class TestNabBuildEnvInstall:
         the venv state).  We assert by checking the resolve helper is
         not called.
         """
-        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        env = NabBuildEnv(requires=[], config=ResolveInputs())
         # Avoid real venv creation by short-circuiting __enter__.
         env._venv_path = tmp_path  # type: ignore[attr-defined]
         env._python_executable = tmp_path / "python"  # type: ignore[attr-defined]
@@ -1931,7 +1912,7 @@ class TestNabBuildEnvInstall:
         """
         from installer.sources import WheelFile
 
-        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        env = NabBuildEnv(requires=[], config=ResolveInputs())
         venv_path = tmp_path / "venv"
         venv_path.mkdir()
         wheel_dir = tmp_path / "wheels"
@@ -1963,7 +1944,7 @@ class TestNabBuildEnvInstall:
 
     def test_install_wraps_unlistable_wheel_dir(self, tmp_path: Path) -> None:
         """An OSError listing the wheel directory surfaces as BuildEnvError."""
-        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        env = NabBuildEnv(requires=[], config=ResolveInputs())
         venv_path = tmp_path / "venv"
         venv_path.mkdir()
         env._venv_path = venv_path  # type: ignore[attr-defined]
@@ -1975,93 +1956,14 @@ class TestNabBuildEnvInstall:
             env.install(["pip"])
 
 
-# Every ``NabProjectConfig`` field, grouped by what the inner build-requires
-# config does with it: forward the outer value, pin a fixed one, or leave the
-# default.  A field in none of the three fails the test below.
-_INNER_FORWARDS = frozenset(
-    {
-        "decision_order",
-        "index_overrides",
-        "indexes",
-        "package_overrides",
-        "uploaded_prior_to",
-    }
-)
-_INNER_PINS = frozenset({"build_policy", "dist_policy"})
-_INNER_DROPS = frozenset(
-    {
-        "archive_sources",
-        "base_group",
-        "build_group",
-        "build_requires_depth",
-        "conflicts",
-        "constraints",
-        "default_groups",
-        "environment",
-        "local_sources",
-        "matrix",
-        "mode",
-        "requires_python",
-        "requires_python_source",
-        "resolution",
-        "trust_unverified_sdist_deps",
-        "vcs",
-        "vcs_sources",
-        "workspace",
-        "workspace_member_names",
-    }
-)
-
-
-def _config_off_every_default(tmp_path: Path) -> NabProjectConfig:
-    """A project config with every field set away from its default.
-
-    No parser produces this combination (``environment`` and ``matrix``
-    are exclusive).  Every value is off-default so that a dropped field
-    leaking into the inner config reads back as the outer value rather
-    than as one that happens to match the default.
-    """
-    cutoff = datetime(2026, 5, 1, tzinfo=timezone.utc)
-    return NabProjectConfig(
-        mode=ResolveMode.UNIVERSAL,
-        constraints=("setuptools<70",),
-        default_groups=("dev",),
-        base_group="project",
-        build_group="build",
-        requires_python=">=3.11",
-        requires_python_source="[project] requires-python",
-        uploaded_prior_to=cutoff,
-        dist_policy=DistPolicy.SDIST_ONLY,
-        build_policy=BuildPolicy.BUILD_REMOTE,
-        build_requires_depth=1,
-        trust_unverified_sdist_deps=True,
-        environment=EnvironmentConfig(python="3.12"),
-        indexes=(IndexConfig("internal", "https://example.invalid/simple/"),),
-        vcs=VcsConfig(policy=VcsPolicy.ALLOW),
-        local_sources=(LocalSource("plugin", str(tmp_path / "plugin")),),
-        vcs_sources=(VcsSource("tool", "git+https://example.invalid/tool.git@v1"),),
-        archive_sources=(
-            ArchiveSource("blob", "https://example.invalid/b-1.0.tar.gz"),
-        ),
-        matrix=MatrixConfig(python=">=3.11", platforms=(PlatformSpec("linux_x86_64"),)),
-        resolution=ResolutionStrategy.LOWEST,
-        decision_order=DecisionOrder.STABLE,
-        workspace=WorkspaceConfig(members=("packages/plugin",)),
-        conflicts=(ConflictSet(members=(ConflictMember(ConflictKind.EXTRA, "cpu"),)),),
-        package_overrides=(pkg_override("hatchling", uploaded_prior_to=cutoff),),
-        index_overrides={"internal": IndexOverride(uploaded_prior_to=cutoff)},
-        workspace_member_names=frozenset({"plugin"}),
-    )
-
-
 class TestResolveAndDownload:
     """What the inner build-requires resolve is allowed to see and do."""
 
     @staticmethod
-    def _capture_inner_config(
+    def _capture_inner_inputs(
         env: NabBuildEnv, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> NabProjectConfig:
-        """Run the inner resolve against stubs and return the config it got."""
+    ) -> ResolveInputs:
+        """Run the inner resolve against stubs and return the settings it got."""
         from nab_project.resolve import ResolveResult, TargetResult
 
         env._tmpdir = MagicMock()  # type: ignore[attr-defined]
@@ -2096,8 +1998,8 @@ class TestResolveAndDownload:
         wheel_dir.mkdir()
 
         env._resolve_and_download(wheel_dir)
-        inner = captured["config"]
-        assert isinstance(inner, NabProjectConfig)
+        inner = captured["inputs"]
+        assert isinstance(inner, ResolveInputs)
         return inner
 
     def test_inner_resolve_admits_both_artifact_kinds(
@@ -2110,9 +2012,9 @@ class TestResolveAndDownload:
         say nothing about it; whether the one it settles on can be
         installed is decided after the resolve, by ``_plan_install``.
         """
-        env = NabBuildEnv(requires=["foo"], config=NabProjectConfig())
+        env = NabBuildEnv(requires=["foo"], config=ResolveInputs())
 
-        inner = self._capture_inner_config(env, tmp_path, monkeypatch)
+        inner = self._capture_inner_inputs(env, tmp_path, monkeypatch)
 
         assert inner.dist_policy is DistPolicy.WHEEL_OR_SDIST
 
@@ -2127,7 +2029,7 @@ class TestResolveAndDownload:
         """
         env = NabBuildEnv(
             requires=["foo"],
-            config=NabProjectConfig(
+            config=ResolveInputs(
                 build_policy=BuildPolicy.BUILD_REMOTE,
                 package_overrides=(
                     pkg_override("foo", build_policy=BuildPolicy.BUILD_REMOTE),
@@ -2139,7 +2041,7 @@ class TestResolveAndDownload:
             ),
         )
 
-        inner = self._capture_inner_config(env, tmp_path, monkeypatch)
+        inner = self._capture_inner_inputs(env, tmp_path, monkeypatch)
 
         assert inner.build_policy is BuildPolicy.NEVER
         assert [o.build_policy for o in inner.package_overrides] == [
@@ -2161,7 +2063,7 @@ class TestResolveAndDownload:
         from nab_project.resolve import ResolveResult, TargetResult
         from nab_provider.target import ResolveTarget
 
-        env = NabBuildEnv(requires=["foo"], config=NabProjectConfig())
+        env = NabBuildEnv(requires=["foo"], config=ResolveInputs())
         env._tmpdir = MagicMock()  # type: ignore[attr-defined]
         env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
         env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
@@ -2199,11 +2101,10 @@ class TestResolveAndDownload:
     def test_inner_resolve_takes_indexes_cutoff_order_and_overrides_only(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The inner config forwards the indexes, cutoff, order and overrides.
+        """The inner settings forward the indexes, cutoff, order and overrides.
 
         Build deps come from the configured indexes alone, so the outer
-        run's constraints, dist policy, local sources and workspace do
-        not reach it.
+        run's constraints, dist policy and local sources do not reach it.
         """
         cutoff = datetime(2026, 5, 1, tzinfo=timezone.utc)
         index = IndexConfig("internal", "https://example.invalid/simple/")
@@ -2211,7 +2112,7 @@ class TestResolveAndDownload:
         index_override = IndexOverride(uploaded_prior_to=cutoff)
         env = NabBuildEnv(
             requires=["hatchling"],
-            config=NabProjectConfig(
+            config=ResolveInputs(
                 indexes=(index,),
                 uploaded_prior_to=cutoff,
                 decision_order=DecisionOrder.STABLE,
@@ -2220,11 +2121,10 @@ class TestResolveAndDownload:
                 constraints=("setuptools<70",),
                 dist_policy=DistPolicy.SDIST_ONLY,
                 local_sources=(LocalSource("plugin", str(tmp_path / "plugin")),),
-                workspace=WorkspaceConfig(members=("packages/plugin",)),
             ),
         )
 
-        inner = self._capture_inner_config(env, tmp_path, monkeypatch)
+        inner = self._capture_inner_inputs(env, tmp_path, monkeypatch)
 
         assert inner.indexes == (index,)
         assert inner.uploaded_prior_to == cutoff
@@ -2235,45 +2135,16 @@ class TestResolveAndDownload:
         assert inner.constraints == ()
         assert inner.dist_policy is DistPolicy.WHEEL_OR_SDIST
         assert inner.local_sources == ()
-        assert inner.workspace is None
 
     def test_inner_resolve_keeps_the_default_decision_order(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """A project that did not ask for ``stable`` does not get it inside."""
-        env = NabBuildEnv(requires=["hatchling"], config=NabProjectConfig())
+        env = NabBuildEnv(requires=["hatchling"], config=ResolveInputs())
 
-        inner = self._capture_inner_config(env, tmp_path, monkeypatch)
+        inner = self._capture_inner_inputs(env, tmp_path, monkeypatch)
 
         assert inner.decision_order is DecisionOrder.ARRIVAL
-
-    def test_every_config_field_is_forwarded_pinned_or_dropped(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """A field crosses into the build env only by being named.
-
-        ``_inner_resolve_config`` copies the fields it lists, so a field
-        added to ``NabProjectConfig`` takes its default inside the build
-        env until someone sorts it into one of the three sets above.
-        """
-        names = {f.name for f in fields(NabProjectConfig)}
-        assert names == _INNER_FORWARDS | _INNER_PINS | _INNER_DROPS
-
-        outer = _config_off_every_default(tmp_path)
-        default = NabProjectConfig()
-
-        # A field left at its default would make the leak check below vacuous.
-        at_default = sorted(
-            name for name in names if getattr(outer, name) == getattr(default, name)
-        )
-        assert not at_default
-
-        env = NabBuildEnv(requires=["hatchling"], config=outer)
-        inner = self._capture_inner_config(env, tmp_path, monkeypatch)
-
-        assert {name: getattr(inner, name) for name in _INNER_DROPS} == {
-            name: getattr(default, name) for name in _INNER_DROPS
-        }
 
     def test_url_build_requirement_wrapped(self, tmp_path: Path) -> None:
         """A direct-URL build requirement the inner resolve refuses is
@@ -2283,7 +2154,7 @@ class TestResolveAndDownload:
         """
         env = NabBuildEnv(
             requires=["plugin @ https://example.com/plugin-1.0.tar.gz"],
-            config=NabProjectConfig(),
+            config=ResolveInputs(),
         )
         env._tmpdir = MagicMock()  # type: ignore[attr-defined]
         env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
@@ -2299,7 +2170,7 @@ class TestResolveAndDownload:
         """
         env = NabBuildEnv(
             requires=["setuptools\n>=61"],
-            config=NabProjectConfig(),
+            config=ResolveInputs(),
         )
         env._tmpdir = MagicMock()  # type: ignore[attr-defined]
         env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
@@ -2320,7 +2191,7 @@ class TestResolveAndDownload:
         from nab_project.resolve import ResolveResult, TargetResult
         from nab_provider.target import ResolveTarget
 
-        env = NabBuildEnv(requires=["foo"], config=NabProjectConfig())
+        env = NabBuildEnv(requires=["foo"], config=ResolveInputs())
         env._tmpdir = MagicMock()  # type: ignore[attr-defined]
         env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
         env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
@@ -2396,7 +2267,7 @@ class TestBuildEnvMissingExtra:
             "nab_project.resolve.resolve_for_targets", _raise_missing_extra
         )
 
-        env = NabBuildEnv(requires=["dummyreq[nope]"], config=NabProjectConfig())
+        env = NabBuildEnv(requires=["dummyreq[nope]"], config=ResolveInputs())
         env._tmpdir = MagicMock()  # type: ignore[attr-defined]
         env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
         env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
@@ -2436,7 +2307,7 @@ class TestBuildEnvMissingExtra:
             match=r"build env setup for 'dummyreq\.backend' failed: build env"
             r" resolve failed: dummyreq==1\.0 does not provide extra 'nope'",
         ):
-            run_build_backend(source, config=NabProjectConfig())
+            run_build_backend(source, config=ResolveInputs())
 
 
 class TestBuildEnvOffline:
@@ -2450,7 +2321,7 @@ class TestBuildEnvOffline:
     def test_refuses_before_the_inner_resolve(self, tmp_path: Path) -> None:
         env = NabBuildEnv(
             requires=["foo"],
-            config=NabProjectConfig(),
+            config=ResolveInputs(),
             offline=True,
             transport_factory=_no_network,  # type: ignore[arg-type]
         )
@@ -2471,7 +2342,7 @@ class TestBuildEnvOffline:
         with pytest.raises(
             BuildBackendError, match=r"unavailable in offline mode: hatchling"
         ):
-            run_build_backend(source, config=NabProjectConfig(), offline=True)
+            run_build_backend(source, config=ResolveInputs(), offline=True)
 
     def test_legacy_setup_py_refusal_names_both_defaults(self, tmp_path: Path) -> None:
         """The refusal names the default backend and the default requirement."""
@@ -2485,10 +2356,10 @@ class TestBuildEnvOffline:
             r" build requirements unavailable in offline mode:"
             r" setuptools >= 40\.8\.0$",
         ):
-            run_build_backend(tmp_path, config=NabProjectConfig(), offline=True)
+            run_build_backend(tmp_path, config=ResolveInputs(), offline=True)
 
     def test_backend_with_no_build_requirements_still_builds(
-        self, tmp_path: Path, config: NabProjectConfig
+        self, tmp_path: Path, config: ResolveInputs
     ) -> None:
         """Nothing to fetch, so the offline run is served."""
         source = _write_fake_backend_project(tmp_path)
@@ -2529,7 +2400,7 @@ class TestBuildEnvOffline:
                 ),
                 pytest.raises(BuildBackendError) as excinfo,
             ):
-                run_build_backend(tmp_path, config=NabProjectConfig(), offline=True)
+                run_build_backend(tmp_path, config=ResolveInputs(), offline=True)
             messages.add(str(excinfo.value))
 
         assert messages == {
@@ -2623,7 +2494,7 @@ class TestResolveAndDownloadSiblingWheels:
 
         monkeypatch.setattr("nab_project._build.env.download_lock", _fake_download)
 
-        env = NabBuildEnv(requires=["demo"], config=NabProjectConfig())
+        env = NabBuildEnv(requires=["demo"], config=ResolveInputs())
         env._tmpdir = MagicMock()  # type: ignore[attr-defined]
         env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
         env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
@@ -2748,7 +2619,7 @@ class TestBuildEnvInstallsOnePreferredWheel:
         """The listing order does not decide which wheel's code wins."""
         index_dir = tmp_path / "index"
         self._index(index_dir, order)
-        config = NabProjectConfig(indexes=(IndexConfig("local", index_dir.as_uri()),))
+        config = ResolveInputs(indexes=(IndexConfig("local", index_dir.as_uri()),))
 
         with NabBuildEnv(requires=["demo"], config=config) as env:
             venv_path = env._venv_path
@@ -2825,7 +2696,7 @@ class TestInstallPickIsNotTheMetadataPick:
     @staticmethod
     def _env(depth: int = 0) -> NabBuildEnv:
         return NabBuildEnv(
-            requires=[], config=NabProjectConfig(build_requires_depth=depth)
+            requires=[], config=ResolveInputs(build_requires_depth=depth)
         )
 
     @classmethod
@@ -2916,7 +2787,7 @@ class TestInstallPickIsNotTheMetadataPick:
         """
         env = NabBuildEnv(
             requires=[],
-            config=NabProjectConfig(build_requires_depth=depth),
+            config=ResolveInputs(build_requires_depth=depth),
             chain=("demo 1.0",),
         )
 
@@ -2932,7 +2803,7 @@ class TestInstallPickIsNotTheMetadataPick:
     def test_a_refusal_names_the_builds_that_led_to_it(self) -> None:
         """Nested refusals are unreadable without the path that reached them."""
         env = NabBuildEnv(
-            requires=[], config=NabProjectConfig(), chain=("meson 1.4.2", "ninja 1.11")
+            requires=[], config=ResolveInputs(), chain=("meson 1.4.2", "ninja 1.11")
         )
 
         with pytest.raises(BuildEnvError, match=r"chain: meson 1\.4\.2 -> ninja 1\.11"):
@@ -2986,7 +2857,7 @@ class TestRefusalNamesTheDistPolicyThatBarsTheWheels:
         ``indexes``.
         """
         fields.setdefault("indexes", (IndexConfig(self.INDEX_NAME, self.INDEX_URL),))
-        config = NabProjectConfig(**fields)
+        config = ResolveInputs(**fields)
         env = NabBuildEnv(requires=[], config=config)
 
         with pytest.raises(BuildEnvError) as excinfo:
@@ -3095,11 +2966,11 @@ class TestDistPolicyExcludesAWheelTheHostCanInstall:
     VERSION = "1.0"
     WHEEL = "buildstub-1.0-py3-none-any.whl"
 
-    def _config(self, tmp_path: Path, **fields: Any) -> NabProjectConfig:
+    def _config(self, tmp_path: Path, **fields: Any) -> ResolveInputs:
         """Config over an index serving a wheel beside a PEP 643 sdist."""
         index_dir = tmp_path / "index"
         _make_local_index(index_dir, self.NAME, self.VERSION)
-        return NabProjectConfig(
+        return ResolveInputs(
             indexes=(IndexConfig("local", index_dir.as_uri()),), **fields
         )
 
@@ -3118,7 +2989,7 @@ class TestDistPolicyExcludesAWheelTheHostCanInstall:
         monkeypatch.setattr("nab_project._build.env.download_lock", fake_download_lock)
         return planned
 
-    def _resolve(self, config: NabProjectConfig, tmp_path: Path) -> None:
+    def _resolve(self, config: ResolveInputs, tmp_path: Path) -> None:
         """Run the inner resolve and its install plan, nothing further."""
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
@@ -3173,7 +3044,7 @@ class TestDistPolicyOverAPackageThatPublishesNoWheel:
         """Return the message an index-wide ``sdist-only`` refuses with."""
         index_dir = tmp_path / "index"
         _make_local_index(index_dir, self.NAME, self.VERSION, sdist_only=True)
-        config = NabProjectConfig(
+        config = ResolveInputs(
             indexes=(IndexConfig("local", index_dir.as_uri()),),
             index_overrides={"local": IndexOverride(dist_policy=DistPolicy.SDIST_ONLY)},
         )
@@ -3210,10 +3081,10 @@ class TestBuildRequirementNeedingItsOwnBuild:
     NAME = "buildstub"
     VERSION = "1.0"
 
-    def _config(self, tmp_path: Path, depth: int) -> NabProjectConfig:
+    def _config(self, tmp_path: Path, depth: int) -> ResolveInputs:
         index_dir = tmp_path / "index"
         _make_local_index(index_dir, self.NAME, self.VERSION, sdist_only=True)
-        return NabProjectConfig(
+        return ResolveInputs(
             indexes=(IndexConfig("local", index_dir.as_uri()),),
             build_requires_depth=depth,
         )
@@ -3305,13 +3176,13 @@ class TestBuildRequirementTwoLevelsDown:
     INNER = "deepstub"
     VERSION = "1.0"
 
-    def _config(self, tmp_path: Path, depth: int) -> NabProjectConfig:
+    def _config(self, tmp_path: Path, depth: int) -> ResolveInputs:
         index_dir = tmp_path / "index"
         _make_local_index(
             index_dir, self.OUTER, self.VERSION, sdist_only=True, requires=(self.INNER,)
         )
         _make_local_index(index_dir, self.INNER, self.VERSION, sdist_only=True)
-        return NabProjectConfig(
+        return ResolveInputs(
             indexes=(IndexConfig("local", index_dir.as_uri()),),
             build_requires_depth=depth,
         )
@@ -3368,7 +3239,7 @@ class TestBuildRequirementBuildFailures:
 
     @staticmethod
     def _env() -> NabBuildEnv:
-        return NabBuildEnv(requires=[], config=NabProjectConfig(build_requires_depth=1))
+        return NabBuildEnv(requires=[], config=ResolveInputs(build_requires_depth=1))
 
     def test_missing_archive(self, tmp_path: Path) -> None:
         """The download step promised a file that is not there."""
@@ -3479,7 +3350,7 @@ class TestBuildRequirementBuildFailures:
 
         with pytest.raises(BuildBackendError, match="non-string path"):
             build_wheel_for_install(
-                source_dir, output_dir=tmp_path / "out", config=NabProjectConfig()
+                source_dir, output_dir=tmp_path / "out", config=ResolveInputs()
             )
 
 
@@ -3523,7 +3394,7 @@ class TestBuiltWheelIdentity:
             "build_wheel_for_install",
             MagicMock(return_value=tmp_path / filename),
         )
-        env = NabBuildEnv(requires=[], config=NabProjectConfig(build_requires_depth=1))
+        env = NabBuildEnv(requires=[], config=ResolveInputs(build_requires_depth=1))
 
         return env._build_requirement(pending, tmp_path)
 
@@ -3602,7 +3473,7 @@ def _build_env_with_cleanup_error(
         _CleanupErrorTemporaryDirectory,
     )
     monkeypatch.setattr(NabBuildEnv, "_provision", lambda self, _root: None)
-    return NabBuildEnv(requires=[], config=NabProjectConfig())
+    return NabBuildEnv(requires=[], config=ResolveInputs())
 
 
 class TestNabBuildEnvLifecycle:
@@ -3615,7 +3486,7 @@ class TestNabBuildEnvLifecycle:
         helpers that call ``with`` against an env construction failure
         do not double-fault.
         """
-        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        env = NabBuildEnv(requires=[], config=ResolveInputs())
         env.__exit__(None, None, None)
         assert env._tmpdir is None  # type: ignore[attr-defined]
 
@@ -3663,10 +3534,10 @@ class TestNabBuildEnvLifecycle:
 
         if cancel:
             with pytest.raises(KeyboardInterrupt):
-                run_build_backend(Path("/tmp/source"), config=NabProjectConfig())
+                run_build_backend(Path("/tmp/source"), config=ResolveInputs())
         else:
             assert (
-                run_build_backend(Path("/tmp/source"), config=NabProjectConfig())
+                run_build_backend(Path("/tmp/source"), config=ResolveInputs())
                 is metadata
             )
 
@@ -3749,7 +3620,7 @@ class TestNabBuildEnvEnterInstall:
             "installer_install",
             lambda **kwargs: installer_calls.append(kwargs),
         )
-        with NabBuildEnv(requires=["pip"], config=NabProjectConfig()):
+        with NabBuildEnv(requires=["pip"], config=ResolveInputs()):
             pass
         assert len(installer_calls) == 1
 
@@ -3785,7 +3656,7 @@ class TestNabBuildEnvEnterInstall:
             raise RuntimeError(msg)
 
         monkeypatch.setattr(NabBuildEnv, "_resolve_and_download", _boom)
-        env = NabBuildEnv(requires=["pip"], config=NabProjectConfig())
+        env = NabBuildEnv(requires=["pip"], config=ResolveInputs())
         with pytest.raises(RuntimeError, match="resolve failed"):
             env.__enter__()
         assert env._tmpdir is None  # type: ignore[attr-defined]
@@ -3808,7 +3679,7 @@ class TestNabBuildEnvEnterInstall:
         import venv as venv_mod
 
         monkeypatch.setattr(venv_mod, "EnvBuilder", _Builder)
-        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        env = NabBuildEnv(requires=[], config=ResolveInputs())
         with pytest.raises(BuildEnvError, match="build venv"):
             env.__enter__()
         assert env._tmpdir is None  # type: ignore[attr-defined]
@@ -3824,7 +3695,7 @@ class TestNabBuildEnvEnterInstall:
         which is where a TMPDIR named with one puts it.
         """
         monkeypatch.setattr("venv.EnvBuilder", _PathsepRefusingEnvBuilder)
-        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        env = NabBuildEnv(requires=[], config=ResolveInputs())
         with pytest.raises(BuildEnvError, match="build venv"):
             env.__enter__()
         assert env._tmpdir is None  # type: ignore[attr-defined]
@@ -3865,7 +3736,7 @@ class TestNabBuildEnvEnterInstall:
 
         monkeypatch.setattr(Path, "write_text", _deny_inner_project)
 
-        env = NabBuildEnv(requires=["pip"], config=NabProjectConfig())
+        env = NabBuildEnv(requires=["pip"], config=ResolveInputs())
         with pytest.raises(BuildEnvError, match="could not populate the build env"):
             env.__enter__()
         assert env._tmpdir is None  # type: ignore[attr-defined]
@@ -3880,7 +3751,7 @@ class TestInstallWheelsCorruptArtifact:
     """
 
     def _env(self, tmp_path: Path) -> NabBuildEnv:
-        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        env = NabBuildEnv(requires=[], config=ResolveInputs())
         venv_path = tmp_path / "venv"
         venv_path.mkdir()
         env._python_executable = venv_path / "bin" / "python"  # type: ignore[attr-defined]
@@ -3937,7 +3808,7 @@ class TestInstallWheelsCorruptArtifact:
     def test_run_build_backend_wraps_corrupt_build_dep(
         self,
         tmp_path: Path,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A corrupt build-dep wheel makes ``run_build_backend`` raise
@@ -4032,7 +3903,7 @@ class TestBuildEnvHeaderScheme:
     def test_header_payload_lands_under_the_dist_include_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        env = NabBuildEnv(requires=[], config=NabProjectConfig())
+        env = NabBuildEnv(requires=[], config=ResolveInputs())
         venv_path = tmp_path / "venv"
         venv_path.mkdir()
         (tmp_path / "wheels").mkdir()
@@ -4079,7 +3950,7 @@ class TestBuildEnvFollowUpInstall:
     ) -> tuple[NabBuildEnv, dict[str, str], Path]:
         from nab_project._build import env as env_mod
 
-        env = NabBuildEnv(requires=["probefoo"], config=NabProjectConfig())
+        env = NabBuildEnv(requires=["probefoo"], config=ResolveInputs())
         venv_path = tmp_path / "venv"
         venv_path.mkdir()
         (tmp_path / "wheels").mkdir()
@@ -4307,7 +4178,7 @@ class TestRunBuildBackendVenvRefused:
             match=r"build env setup for 'dummyreq\.backend' failed: could not"
             r" create build venv at .*: Refusing to create a venv",
         ):
-            run_build_backend(source, config=NabProjectConfig())
+            run_build_backend(source, config=ResolveInputs())
 
 
 @pytest.mark.skipif(
@@ -4349,7 +4220,7 @@ class TestEndToEndAirflow:
 
         metadata = run_build_backend(
             task_sdk,
-            config=NabProjectConfig(),
+            config=ResolveInputs(),
         )
         assert metadata.name == "apache-airflow-task-sdk"
         assert str(metadata.version) == "1.3.0"

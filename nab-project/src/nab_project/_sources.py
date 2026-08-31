@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from nab_provider.metadata import WheelMetadata
     from nab_provider.policy import ArchiveSource, SourceRequest
 
-    from .config import NabProjectConfig
+    from .inputs import ResolveInputs
 
 # The archive names everything under _TREE_DIR, so the cache's own bookkeeping
 # sits beside that directory rather than inside it.
@@ -109,7 +109,7 @@ def _source_for_build(path: Path, persistent_root: Path | None) -> Iterator[Path
 def materialize_source(
     port: FetchPort,
     request: SourceRequest,
-    build_config: NabProjectConfig | None,
+    build_config: ResolveInputs | None,
 ) -> SourceMaterialization:
     """Materialise ``request``'s declared source and read its metadata.
 
@@ -128,7 +128,7 @@ def materialize_source(
 def _materialize_local(
     request: SourceRequest,
     source: LocalSource,
-    build_config: NabProjectConfig | None,
+    build_config: ResolveInputs | None,
     *,
     port: FetchPort,
 ) -> SourceMaterialization:
@@ -150,7 +150,7 @@ def _materialize_local(
 def _materialize_vcs(
     request: SourceRequest,
     source: VcsSource,
-    build_config: NabProjectConfig | None,
+    build_config: ResolveInputs | None,
     *,
     port: FetchPort,
 ) -> SourceMaterialization:
@@ -210,7 +210,7 @@ def extract_source_metadata(
     policy: BuildPolicy,
     kind: str,
     offline: bool,
-    build_config: NabProjectConfig | None,
+    build_config: ResolveInputs | None,
     persistent_root: Path | None = None,
 ) -> WheelMetadata:
     """Read metadata from a directory; gates the backend path on ``policy``.
@@ -383,7 +383,7 @@ def _verified_hashes(target: Path) -> set[tuple[str, str]]:
 def _materialize_archive(
     request: SourceRequest,
     source: ArchiveSource,
-    build_config: NabProjectConfig | None,
+    build_config: ResolveInputs | None,
     *,
     port: FetchPort,
 ) -> SourceMaterialization:  # pragma: no cover (tar data filter)

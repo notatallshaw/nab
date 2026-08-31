@@ -32,11 +32,11 @@ from nab_project.config import (
     ConflictMember,
     ConflictPolicy,
     ConflictSet,
-    NabProjectConfig,
     conflict_forks,
     read_pyproject_config,
 )
 from nab_project.fetch import DEFAULT_INDEX_URL
+from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
     DisjointnessError,
     IndexPin,
@@ -134,23 +134,23 @@ def _reqs(*texts: str) -> list[Requirement]:
     return [Requirement(text) for text in texts]
 
 
-def _no_build(**kwargs: object) -> NabProjectConfig:
-    """A project config that never builds, so a test resolve stays offline."""
-    return NabProjectConfig(build_policy=BuildPolicy.NEVER, **kwargs)  # type: ignore[arg-type]
+def _no_build(**kwargs: object) -> ResolveInputs:
+    """Settings that never build, so a test resolve stays offline."""
+    return ResolveInputs(build_policy=BuildPolicy.NEVER, **kwargs)  # type: ignore[arg-type]
 
 
 def _settings(
     coordinator: FakeFetchPort,
-    config: NabProjectConfig | None = None,
+    inputs: ResolveInputs | None = None,
     *,
     align: bool = True,
     source_root: Path | None = None,
 ) -> _EngineSettings:
     """The settings one bare ``_resolve_one_target`` or ``_run_pass`` needs."""
-    effective = config if config is not None else NabProjectConfig()
+    effective = inputs if inputs is not None else ResolveInputs()
     return _EngineSettings(
         coordinator=coordinator,
-        config=effective,
+        inputs=effective,
         source_root=source_root,
         align=align,
         resolution=effective.resolution,
@@ -384,7 +384,7 @@ class TestConflictForkResolve:
             self._black_coordinator(),
             _one_target(),
             forks=self._black_forks(),
-            config=_no_build(),
+            inputs=_no_build(),
         )
         assert result.success
         by_label = {tr.target.label: tr.pins for tr in result.target_results}
@@ -398,11 +398,11 @@ class TestConflictForkResolve:
             self._black_coordinator(),
             _one_target(),
             forks=self._black_forks(),
-            config=_no_build(),
+            inputs=_no_build(),
         )
         lock_input = build_lock_input(
             result,
-            config=_no_build(conflicts=(_group_set("black22", "black23"),)),
+            inputs=_no_build(conflicts=(_group_set("black22", "black23"),)),
             dependency_groups=("black22", "black23"),
         )
         # Must not raise DisjointnessError: the conflict prunes the
@@ -423,7 +423,7 @@ class TestConflictForkResolve:
             self._black_coordinator(),
             _one_target(),
             forks=self._black_forks(),
-            config=_no_build(),
+            inputs=_no_build(),
         )
         lock_input = build_lock_input(
             result,
@@ -440,11 +440,11 @@ class TestConflictForkResolve:
             self._black_coordinator(),
             _one_target(),
             forks=self._black_forks(),
-            config=_no_build(),
+            inputs=_no_build(),
         )
         lock_input = build_lock_input(
             result,
-            config=_no_build(default_groups=("black22", "black23")),
+            inputs=_no_build(default_groups=("black22", "black23")),
         )
         with pytest.raises(DisjointnessError, match="black"):
             build_pylock(lock_input)
@@ -457,11 +457,11 @@ class TestConflictForkResolve:
             self._black_coordinator(),
             _one_target(),
             forks=self._black_forks(),
-            config=_no_build(),
+            inputs=_no_build(),
         )
         lock_input = build_lock_input(
             result,
-            config=_no_build(conflicts=(_group_set("black22", "black23"),)),
+            inputs=_no_build(conflicts=(_group_set("black22", "black23"),)),
             dependency_groups=("black22", "black23"),
         )
         assert len(lock_input.environments) == 1
@@ -497,7 +497,7 @@ class TestConflictForkResolve:
                 self._black_coordinator(),
                 _one_target(),
                 forks=self._black_forks(),
-                config=_no_build(),
+                inputs=_no_build(),
                 align_across_targets=align_across_targets,
             )
         assert result.success
@@ -547,7 +547,7 @@ class TestConflictForkBaseNames:
             _one_target(),
             forks=self._forks(),
             base_requirements=_reqs("base"),
-            config=_no_build(),
+            inputs=_no_build(),
         )
         assert result.success
         (names,) = result.env_base_names.values()
@@ -560,11 +560,11 @@ class TestConflictForkBaseNames:
             _one_target(),
             forks=self._forks(),
             base_requirements=_reqs("base"),
-            config=_no_build(),
+            inputs=_no_build(),
         )
         lock_input = build_lock_input(
             result,
-            config=_no_build(conflicts=(_extra_set("cpu", "gpu"),)),
+            inputs=_no_build(conflicts=(_extra_set("cpu", "gpu"),)),
             extras=("cpu", "gpu"),
         )
         pylock = build_pylock(lock_input)
@@ -611,13 +611,13 @@ class TestConflictForkBaseNames:
             _one_target(),
             forks=forks,
             base_requirements=_reqs("base"),
-            config=_no_build(),
+            inputs=_no_build(),
         )
         assert result.success
 
         lock_input = build_lock_input(
             result,
-            config=_no_build(
+            inputs=_no_build(
                 conflicts=(
                     _extra_set("cpu", "gpu"),
                     _group_set("mon", "debug"),
@@ -661,7 +661,7 @@ class TestConflictForkBaseNames:
             _one_target(),
             forks=self._forks(),
             base_requirements=_reqs("base==9.9"),
-            config=_no_build(),
+            inputs=_no_build(),
         )
         assert not result.success
         assert result.env_base_names == {}
@@ -679,7 +679,7 @@ class TestConflictForkBaseNames:
                 _one_target(),
                 forks=self._forks(),
                 base_requirements=_reqs("base==9.9"),
-                config=_no_build(),
+                inputs=_no_build(),
             )
         assert any("Base attribution skipped" in rec.message for rec in caplog.records)
 
@@ -751,14 +751,14 @@ class TestTwoConflictSetsPartialInstall:
             _one_target(),
             forks=self._forks(),
             base_requirements=_reqs("base"),
-            config=_no_build(),
+            inputs=_no_build(),
         )
         assert result.success
 
         pylock = build_pylock(
             build_lock_input(
                 result,
-                config=_no_build(
+                inputs=_no_build(
                     conflicts=(_extra_set("a1", "a2"), _extra_set(*b_members))
                 ),
                 extras=("a1", "a2", "b1", "b2"),
@@ -835,7 +835,7 @@ class TestDroppedMembershipMarkerWarnedOnce:
                 self._two_targets(),
                 forks=self._forks(),
                 base_requirements=_reqs("base", 'gated ; extra == "test"'),
-                config=_no_build(),
+                inputs=_no_build(),
             )
         assert result.success
         warnings = [rec for rec in caplog.records if "membership marker" in rec.message]
@@ -850,7 +850,7 @@ class TestDroppedMembershipMarkerWarnedOnce:
                 self._coordinator(),
                 self._two_targets(),
                 reqs,
-                config=_no_build(),
+                inputs=_no_build(),
             )
         assert result.success
         warned = [
@@ -877,7 +877,7 @@ class TestDroppedMembershipMarkerWarnedOnce:
                 self._two_targets(),
                 forks=forks,
                 base_requirements=plain,
-                config=_no_build(constraints=('base<2.0 ; extra == "test"',)),
+                inputs=_no_build(constraints=('base<2.0 ; extra == "test"',)),
             )
         assert result.success
         warned = [
@@ -969,7 +969,7 @@ class TestLowestDirectAcrossTargets:
             self._coordinator(),
             targets,
             _reqs('foo; sys_platform == "win32"', "bar"),
-            config=_no_build(),
+            inputs=_no_build(),
             resolution_strategy=ResolutionStrategy.LOWEST_DIRECT,
         )
         assert result.success
@@ -1059,7 +1059,7 @@ class TestMatrixPerTargetWheelDivergence:
             platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
         ).expand()
         result = resolve_with_coordinator(
-            self._coordinator(), targets, _reqs("pkg"), config=_no_build()
+            self._coordinator(), targets, _reqs("pkg"), inputs=_no_build()
         )
         assert result.success
         pins = {
@@ -1106,7 +1106,7 @@ class TestMatrixMetadataReadGranularity:
         assert len(targets) == 3
 
         result = resolve_with_coordinator(
-            coordinator, targets, _reqs("pkg"), config=_no_build()
+            coordinator, targets, _reqs("pkg"), inputs=_no_build()
         )
         assert result.success
 
@@ -1659,7 +1659,7 @@ class TestVcsConfigPlumbing:
                 _make_coordinator({}),
                 _one_target(),
                 _reqs("pkg"),
-                config=_no_build(
+                inputs=_no_build(
                     vcs=VcsConfig(policy=VcsPolicy.BLOCK),
                     vcs_sources=(self._source(),),
                 ),
@@ -1706,7 +1706,7 @@ class TestVcsConfigPlumbing:
             _make_coordinator({}),
             _one_target(),
             _reqs("pkg"),
-            config=_no_build(vcs=self._allow(), vcs_sources=(self._source(),)),
+            inputs=_no_build(vcs=self._allow(), vcs_sources=(self._source(),)),
             cache_dir=None,
         )
 
@@ -1741,7 +1741,7 @@ class TestVcsConfigPlumbing:
             _make_coordinator({}),
             _one_target(),
             _reqs("pkg"),
-            config=_no_build(vcs=self._allow(), vcs_sources=(self._source(),)),
+            inputs=_no_build(vcs=self._allow(), vcs_sources=(self._source(),)),
             cache_dir=Path("relcache"),
         )
 
@@ -1781,7 +1781,7 @@ class TestVcsConfigPlumbing:
             _make_coordinator({}),
             _one_target(),
             _reqs("pkg"),
-            config=_no_build(vcs=self._allow(), vcs_sources=(self._source(),)),
+            inputs=_no_build(vcs=self._allow(), vcs_sources=(self._source(),)),
             cache_dir=tmp_path,
         )
 
@@ -1832,7 +1832,7 @@ class TestCutoffAndOverridePlumbing:
             self._coordinator(),
             _one_target(),
             _reqs("foo"),
-            config=read_pyproject_config(path),
+            inputs=read_pyproject_config(path).resolve_inputs(),
         )
         assert result.success
 
@@ -2132,13 +2132,13 @@ class TestBuildLockInput:
             },
         )
         result = resolve_with_coordinator(
-            coordinator, [_linux_311()], _reqs("foo"), config=_no_build()
+            coordinator, [_linux_311()], _reqs("foo"), inputs=_no_build()
         )
 
         assert result.success
         assert set(result.target_results[0].pins) == {"foo"}
 
-        merged = build_lock_input(result, config=_no_build())
+        merged = build_lock_input(result, inputs=_no_build())
         assert set(merged.targets) == {"py311-linux_x86_64"}
         assert [str(row) for row in merged.environments] == [
             (
@@ -2170,7 +2170,7 @@ class TestServingIndexInLock:
         coordinator.index.store_listing_index("foo", "internal")
 
         result = resolve_with_coordinator(
-            coordinator, _one_target(), _reqs("foo", "bar"), config=_no_build()
+            coordinator, _one_target(), _reqs("foo", "bar"), inputs=_no_build()
         )
 
         assert result.success
@@ -2314,7 +2314,7 @@ class TestResolveWithCoordinator:
             coordinator,
             _one_target(),
             _reqs("pkg"),
-            config=NabProjectConfig(constraints=("pkg<2.0",)),
+            inputs=ResolveInputs(constraints=("pkg<2.0",)),
         )
         assert result.success
         assert result.target_results[0].pins == {"pkg": Version("1.0")}
@@ -2355,7 +2355,7 @@ class TestResolveWithCoordinator:
             self._dropped_extra_coordinator(),
             _one_target(),
             _reqs("aaa[x]"),
-            config=NabProjectConfig(constraints=(constraint,)),
+            inputs=ResolveInputs(constraints=(constraint,)),
         )
         assert result.success
         assert result.target_results[0].pins == {
@@ -2373,7 +2373,7 @@ class TestResolveWithCoordinator:
             self._dropped_extra_coordinator(),
             _one_target(),
             _reqs("aaa[x]"),
-            config=NabProjectConfig(constraints=("aaa<0.5",)),
+            inputs=ResolveInputs(constraints=("aaa<0.5",)),
         )
         assert not result.success
         message = str(result.target_results[0].error)
@@ -2392,7 +2392,7 @@ class TestResolveWithCoordinator:
                 self._dropped_extra_coordinator(),
                 _one_target(),
                 _reqs("aaa[x]"),
-                config=NabProjectConfig(constraints=("aaa==3.0",)),
+                inputs=ResolveInputs(constraints=("aaa==3.0",)),
             )
 
     @staticmethod
@@ -2451,7 +2451,7 @@ class TestResolveWithCoordinator:
             ),
             _one_target(),
             _reqs("ccc"),
-            config=NabProjectConfig(constraints=("aaa<3.0",)),
+            inputs=ResolveInputs(constraints=("aaa<3.0",)),
         )
         assert result.success
         assert result.target_results[0].pins == {
@@ -2473,7 +2473,7 @@ class TestResolveWithCoordinator:
                 self._transitive_proxy_coordinator(),
                 _one_target(),
                 _reqs("ccc"),
-                config=NabProjectConfig(constraints=("aaa<3.0",)),
+                inputs=ResolveInputs(constraints=("aaa<3.0",)),
             )
 
         assert result.success
@@ -2495,7 +2495,7 @@ class TestResolveWithCoordinator:
             self._transitive_proxy_coordinator(),
             _one_target(),
             _reqs("ccc"),
-            config=NabProjectConfig(constraints=("aaa<0.5",)),
+            inputs=ResolveInputs(constraints=("aaa<0.5",)),
         )
         assert not result.success
 
@@ -2518,7 +2518,7 @@ class TestResolveWithCoordinator:
             coordinator,
             _one_target(),
             _reqs("pkg"),
-            config=NabProjectConfig(resolution=ResolutionStrategy.HIGHEST),
+            inputs=ResolveInputs(resolution=ResolutionStrategy.HIGHEST),
             resolution_strategy=ResolutionStrategy.LOWEST,
         )
         assert result.success
@@ -2544,7 +2544,7 @@ class TestLocalVcsRequiresPython:
             coordinator,
             matrix.expand(),
             _reqs("foo"),
-            config=NabProjectConfig(local_sources=(local,)),
+            inputs=ResolveInputs(local_sources=(local,)),
         )
 
     def test_excluding_python_fails_the_target(self, tmp_path: Path) -> None:
@@ -2677,7 +2677,7 @@ class TestArchiveSourceAcrossTargets:
                 python=">=3.11, <3.13", platforms=(PlatformSpec("linux_x86_64"),)
             ).expand(),
             _reqs("foo"),
-            config=NabProjectConfig(archive_sources=(source,)),
+            inputs=ResolveInputs(archive_sources=(source,)),
             cache_dir=tmp_path,
         )
 
@@ -2712,7 +2712,7 @@ class TestArchiveSourceAcrossTargets:
             coord,
             _one_target(),
             _reqs("foo"),
-            config=NabProjectConfig(archive_sources=(source,)),
+            inputs=ResolveInputs(archive_sources=(source,)),
             cache_dir=tmp_path,
         )
 
@@ -2739,7 +2739,7 @@ class TestArchiveSourceAcrossTargets:
             coord,
             _one_target(),
             _reqs("foo"),
-            config=NabProjectConfig(archive_sources=(source,)),
+            inputs=ResolveInputs(archive_sources=(source,)),
             cache_dir=None,
         )
 
@@ -2764,7 +2764,7 @@ class TestArchiveSourceAcrossTargets:
             coord,
             Matrix(python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)).expand(),
             _reqs("foo"),
-            config=NabProjectConfig(archive_sources=(source,)),
+            inputs=ResolveInputs(archive_sources=(source,)),
             cache_dir=tmp_path,
         )
 
@@ -2841,7 +2841,7 @@ class TestSharedListingFilter:
                 self._coordinator(wheels),
                 self._targets("==3.11"),
                 _reqs("pkg"),
-                config=_no_build(),
+                inputs=_no_build(),
             )
 
         assert result.success
@@ -2861,7 +2861,7 @@ class TestSharedListingFilter:
                 self._coordinator(wheels),
                 self._targets("==3.11"),
                 _reqs("pkg"),
-                config=_no_build(),
+                inputs=_no_build(),
             )
 
         assert result.success
@@ -2881,7 +2881,7 @@ class TestSharedListingFilter:
                 self._coordinator(wheels),
                 self._targets(">=3.11,<3.13"),
                 _reqs("pkg"),
-                config=_no_build(),
+                inputs=_no_build(),
                 align_across_targets=False,
             )
 
@@ -2908,7 +2908,7 @@ class TestSharedListingFilter:
                 self._coordinator(wheels),
                 self._targets(">=3.11,<3.13"),
                 _reqs("pkg"),
-                config=_no_build(),
+                inputs=_no_build(),
                 align_across_targets=False,
             )
 
@@ -2940,7 +2940,7 @@ class TestSharedListingFilter:
                     )
                 ],
                 _reqs("pkg"),
-                config=_no_build(),
+                inputs=_no_build(),
                 align_across_targets=False,
             )
 
@@ -2956,7 +2956,7 @@ class TestSharedListingFilter:
             self._coordinator(wheels),
             self._targets("==3.11"),
             _reqs("pkg"),
-            config=_no_build(),
+            inputs=_no_build(),
         )
 
         assert result.success
@@ -3011,7 +3011,7 @@ class TestMicroBoundaryNarrowing:
             wraps=engine_mod._resolve_one_target,
         ) as spy:
             result = resolve_with_coordinator(
-                coordinator, targets, _reqs("foo"), config=_no_build()
+                coordinator, targets, _reqs("foo"), inputs=_no_build()
             )
 
         assert result.success
@@ -3043,7 +3043,7 @@ class TestMicroBoundaryNarrowing:
                 coordinator,
                 [ResolveTarget.for_host()],
                 _reqs("foo"),
-                config=_no_build(),
+                inputs=_no_build(),
             )
 
         assert result.success
@@ -3072,13 +3072,13 @@ class TestMicroBoundaryNarrowing:
         ).expand()
 
         result = resolve_with_coordinator(
-            coordinator, targets, _reqs("foo"), config=_no_build()
+            coordinator, targets, _reqs("foo"), inputs=_no_build()
         )
 
         assert result.success
         assert self._pins_by_label(result) == {"py310-linux_x86_64": {"foo"}}
 
-        merged = build_lock_input(result, config=_no_build())
+        merged = build_lock_input(result, inputs=_no_build())
         assert [str(row) for row in merged.environments] == [
             (
                 'python_version == "3.10" and sys_platform == "linux"'
@@ -3115,7 +3115,7 @@ class TestMicroBoundaryNarrowing:
         target = ResolveTarget.for_host_python("3.11", env_source=self._linux_host_env)
 
         result = resolve_with_coordinator(
-            coordinator, [target], _reqs("foo"), config=_no_build()
+            coordinator, [target], _reqs("foo"), inputs=_no_build()
         )
 
         assert result.success
@@ -3123,7 +3123,7 @@ class TestMicroBoundaryNarrowing:
             "py311-host-pf3110": {"foo", "mid"},
             "py311-host-pf3114": {"foo"},
         }
-        rows = build_lock_input(result, config=_no_build()).environments
+        rows = build_lock_input(result, inputs=_no_build()).environments
         assert len(rows) == 2
         real_3119 = {
             "python_version": "3.11",
@@ -3152,12 +3152,12 @@ class TestMicroBoundaryNarrowing:
         ).expand()
 
         result = resolve_with_coordinator(
-            coordinator, targets, _reqs("foo"), config=_no_build()
+            coordinator, targets, _reqs("foo"), inputs=_no_build()
         )
 
         assert result.success
         assert self._pins_by_label(result) == {"py310-linux_x86_64": {"foo"}}
-        rows = build_lock_input(result, config=_no_build()).environments
+        rows = build_lock_input(result, inputs=_no_build()).environments
         assert len(rows) == 1
 
     def test_an_epoch_tagged_marker_does_not_fail_the_resolve(self) -> None:
@@ -3177,7 +3177,7 @@ class TestMicroBoundaryNarrowing:
         ).expand()
 
         result = resolve_with_coordinator(
-            coordinator, targets, _reqs("foo"), config=_no_build()
+            coordinator, targets, _reqs("foo"), inputs=_no_build()
         )
 
         assert result.success
@@ -3204,7 +3204,7 @@ class TestMicroBoundaryNarrowing:
         ).expand()
 
         result = resolve_with_coordinator(
-            self._fixpoint_coordinator(), targets, _reqs("foo"), config=_no_build()
+            self._fixpoint_coordinator(), targets, _reqs("foo"), inputs=_no_build()
         )
 
         assert result.success
@@ -3229,7 +3229,7 @@ class TestMicroBoundaryNarrowing:
                 self._fixpoint_coordinator(),
                 targets,
                 _reqs("foo"),
-                config=_no_build(),
+                inputs=_no_build(),
             )
 
     def test_divergent_slice_pins_validate_as_disjoint(self) -> None:
@@ -3255,7 +3255,7 @@ class TestMicroBoundaryNarrowing:
                 'bar==1.0 ; python_full_version < "3.10.4"',
                 'bar==2.0 ; python_full_version >= "3.10.4"',
             ),
-            config=_no_build(),
+            inputs=_no_build(),
         )
 
         assert result.success
@@ -3267,7 +3267,7 @@ class TestMicroBoundaryNarrowing:
             "py310-linux_x86_64-pf3104": "2.0",
         }
 
-        pylock = build_pylock(build_lock_input(result, config=_no_build()))
+        pylock = build_pylock(build_lock_input(result, inputs=_no_build()))
         pylock.validate()
         bars = [pkg for pkg in pylock.packages if str(pkg.name) == "bar"]
         assert len(bars) == 2
@@ -3288,7 +3288,7 @@ class TestMicroBoundaryNarrowing:
         ).expand()
 
         result = resolve_with_coordinator(
-            coordinator, targets, _reqs("foo"), config=_no_build()
+            coordinator, targets, _reqs("foo"), inputs=_no_build()
         )
 
         assert result.success
@@ -3296,7 +3296,7 @@ class TestMicroBoundaryNarrowing:
             "py310-linux_x86_64-pf3100": {"foo", "mid"},
             "py310-linux_x86_64-pf3104": {"foo"},
         }
-        rows = build_lock_input(result, config=_no_build()).environments
+        rows = build_lock_input(result, inputs=_no_build()).environments
         assert len(rows) == 2
         for micro in ("3.10.0", "3.10.3", "3.10.4", "3.10.19"):
             env = {
@@ -3364,7 +3364,7 @@ class TestMicroSliceAlignmentDirection:
             self._coordinator('python_full_version >= "3.11.4"'),
             targets,
             _reqs("foo", "bar", 'bar<2.0 ; sys_platform == "win32"'),
-            config=_no_build(),
+            inputs=_no_build(),
         )
 
         assert result.success
@@ -3390,7 +3390,7 @@ class TestMicroSliceAlignmentDirection:
             ),
             targets,
             _reqs("foo", "bar", 'bar<2.0 ; python_version == "3.11"'),
-            config=_no_build(),
+            inputs=_no_build(),
         )
 
         assert result.success
@@ -3412,7 +3412,7 @@ class TestMicroSliceAlignmentDirection:
             self._coordinator('python_full_version >= "3.11.4"'),
             targets,
             _reqs("foo", "bar", 'bar<2.0 ; python_version == "3.10"'),
-            config=_no_build(),
+            inputs=_no_build(),
         )
 
         assert result.success
@@ -3443,7 +3443,7 @@ class TestMicroSliceAlignmentDirection:
             ),
             targets,
             forks=forks,
-            config=_no_build(),
+            inputs=_no_build(),
         )
 
         assert result.success

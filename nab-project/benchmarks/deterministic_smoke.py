@@ -22,7 +22,7 @@ import sys
 import tempfile
 import time
 import zipfile
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 from urllib.parse import urlparse
@@ -40,8 +40,9 @@ else:
 
 from nab_index.multi_index import IndexConfig
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
-from nab_project.config import NabProjectConfig, enforce_build_policy_for_targets
+from nab_project.build_policy import enforce_build_policy_for_targets
 from nab_project.fetch import FetchCoordinator
+from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import LOCK_VERSION, build_pylock
 from nab_project.resolve import (
     ResolveResult,
@@ -247,7 +248,7 @@ class PreparedScenario:
     scenario: Scenario
     targets: tuple[ResolveTarget, ...]
     index: IndexConfig
-    config: NabProjectConfig
+    config: ResolveInputs
     requirements: tuple[Requirement, ...]
     expected: Mapping[str, Mapping[str, str]]
     align_across_targets: bool
@@ -1066,7 +1067,7 @@ def _expected_fixture_edges(
 def _validate_lock_environments(
     lock: Pylock,
     result: ResolveResult,
-    config: NabProjectConfig,
+    config: ResolveInputs,
     requirements: Sequence[Requirement],
     fixture: Mapping[tuple[str, str], Distribution],
 ) -> None:
@@ -1270,7 +1271,7 @@ def _project_lock_targets(
 def validate_nab_lock(
     lock: Pylock,
     result: ResolveResult,
-    config: NabProjectConfig,
+    config: ResolveInputs,
     requirements: Sequence[Requirement],
     distributions: Sequence[Distribution],
     index_root: Path,
@@ -1295,13 +1296,13 @@ def validate_nab_lock(
 
 def _lock_projection(
     result: ResolveResult,
-    config: NabProjectConfig,
+    config: ResolveInputs,
     requirements: Sequence[Requirement],
     distributions: Sequence[Distribution],
     index_root: Path,
 ) -> dict[str, dict[str, str]]:
     """Emit the lock for one resolve and validate it end to end."""
-    lock_input = build_lock_input(result, config=config)
+    lock_input = build_lock_input(result, inputs=config)
     lock = build_pylock(lock_input, lock_dir=index_root)
     lock.validate()
     return validate_nab_lock(
@@ -1340,13 +1341,13 @@ def prepare_scenario(scenario: Scenario, index_root: Path) -> PreparedScenario:
     ).expand()
 
     index = IndexConfig("smoke", index_root.resolve().as_uri())
-    config = NabProjectConfig(
+    config = ResolveInputs(
         constraints=scenario.constraints,
         requires_python=scenario.python,
         indexes=(index,),
     )
     if scenario.resolution is not None:
-        config = replace(config, resolution=scenario.resolution)
+        config = config.replace(resolution=scenario.resolution)
 
     build_policy = enforce_build_policy_for_targets(
         targets=targets,
@@ -1355,7 +1356,7 @@ def prepare_scenario(scenario: Scenario, index_root: Path) -> PreparedScenario:
         package_overrides=config.package_overrides,
         index_overrides=config.index_overrides,
     )
-    config = replace(config, build_policy=build_policy)
+    config = config.replace(build_policy=build_policy)
 
     expected = _expected(scenario)
     labels = {target.label for target in targets}
@@ -1462,11 +1463,11 @@ def _resolve_once(
         # Omitting the argument entirely is the only way to measure the shipped
         # default; passing its current value would pin the test to today's choice.
         if prepared.scenario.align_across_targets is None:
-            result = resolve_with_coordinator(*arguments, config=prepared.config)
+            result = resolve_with_coordinator(*arguments, inputs=prepared.config)
         else:
             result = resolve_with_coordinator(
                 *arguments,
-                config=prepared.config,
+                inputs=prepared.config,
                 align_across_targets=prepared.scenario.align_across_targets,
             )
         elapsed = time.perf_counter_ns() - start
