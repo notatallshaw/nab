@@ -8,6 +8,7 @@ import sys
 
 import pytest
 
+from nab import env
 from nab.output import (
     ColorChoice,
     OutputOptionError,
@@ -15,10 +16,14 @@ from nab.output import (
     ProgressReporter,
     Verbosity,
     _isatty,
+    begin,
     install_log_handler,
     logging_level_for,
+    options_from_flags,
     parse_output_options,
+    printer,
     reset_log_handlers,
+    reset_run,
     should_color,
     verbosity_from_counts,
 )
@@ -105,6 +110,83 @@ def test_should_color_term_dumb_disables() -> None:
 def test_should_color_auto_follows_tty() -> None:
     assert should_color(ColorChoice.AUTO, _TTY(tty=True), {}) is True
     assert should_color(ColorChoice.AUTO, _TTY(tty=False), {}) is False
+
+
+_COLOR_TABLE = [
+    ("always", False, {"NO_COLOR": "1"}, True),
+    ("never", True, {}, False),
+    ("auto", True, {"NO_COLOR": "1"}, False),
+    ("auto", True, {"NO_COLOR": ""}, True),
+    ("auto", False, {"FORCE_COLOR": "1"}, True),
+    ("auto", False, {"FORCE_COLOR": ""}, False),
+    ("auto", True, {"NO_COLOR": "1", "FORCE_COLOR": "1"}, False),
+    ("auto", True, {"TERM": "dumb"}, False),
+    ("auto", True, {"FORCE_COLOR": "1", "TERM": "dumb"}, True),
+    ("auto", True, {}, True),
+    ("auto", False, {}, False),
+]
+
+
+@pytest.mark.parametrize(("choice", "isatty", "environ", "expected"), _COLOR_TABLE)
+def test_color_enabled_table(
+    choice: str, isatty: bool, environ: dict[str, str], expected: bool
+) -> None:
+    """The colour rule, one row per way a value can decide it."""
+    assert env.color_enabled(choice, isatty=isatty, environ=environ) is expected
+
+
+@pytest.mark.parametrize(("choice", "isatty", "environ", "expected"), _COLOR_TABLE)
+def test_should_color_agrees_with_color_enabled(
+    choice: str, isatty: bool, environ: dict[str, str], expected: bool
+) -> None:
+    """The wrapper adds the printer's types and nothing else.
+
+    Two implementations of one rule is the failure this pairing exists to
+    catch, since ``should_color`` is what every printer goes through.
+    """
+    assert should_color(ColorChoice(choice), _TTY(tty=isatty), environ) is expected
+
+
+@pytest.mark.parametrize("choice", [ColorChoice.ALWAYS, ColorChoice.NEVER])
+def test_should_color_never_asks_a_stream_it_does_not_need(
+    choice: ColorChoice,
+) -> None:
+    """``always`` and ``never`` answer without touching the stream.
+
+    A closed stream still has an ``isatty`` to call, and calling it
+    raises, so the guard has to be the choice rather than the attribute.
+    """
+    closed = io.StringIO()
+    closed.close()
+
+    assert should_color(choice, closed, {}) is (choice is ColorChoice.ALWAYS)
+
+
+def test_color_enabled_reads_the_process_environment_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NO_COLOR", "1")
+    assert env.color_enabled("auto", isatty=True) is False
+
+    monkeypatch.delenv("NO_COLOR")
+    monkeypatch.setenv("FORCE_COLOR", "1")
+    assert env.color_enabled("auto", isatty=False) is True
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["--color", "always", "--no-color"], ColorChoice.ALWAYS),
+        (["--no-color", "--color", "always"], ColorChoice.ALWAYS),
+        (["--color", "never", "--no-color"], ColorChoice.NEVER),
+        (["--color", "auto", "--no-color"], ColorChoice.AUTO),
+        (["--color", "always", "--color", "never"], ColorChoice.NEVER),
+    ],
+)
+def test_color_flag_precedence(argv: list[str], expected: ColorChoice) -> None:
+    """``--color`` beats ``--no-color`` whatever the order; repeats last-win."""
+    opts, _rest = parse_output_options([*argv, "lock"], {})
+    assert opts.color is expected
 
 
 @pytest.mark.parametrize(
@@ -283,6 +365,12 @@ def test_flags_beat_env_verbosity() -> None:
     assert opts.verbosity is Verbosity.QUIET
 
 
+def test_a_touched_counter_beats_env_verbosity_even_when_it_cancels() -> None:
+    """``-v -q`` is NORMAL, not DEBUG: the test is touched, not non-zero."""
+    opts, _rest = parse_output_options(["-v", "-q", "lock"], {"NAB_VERBOSITY": "debug"})
+    assert opts.verbosity is Verbosity.NORMAL
+
+
 def test_parse_bad_env_verbosity() -> None:
     with pytest.raises(OutputOptionError, match="NAB_VERBOSITY"):
         parse_output_options(["lock"], {"NAB_VERBOSITY": "loud"})
@@ -361,10 +449,61 @@ def test_log_handler_untokened_level_is_bare() -> None:
 
 
 def test_reset_log_handlers_detaches() -> None:
-    printer, stream = _handler_printer()
-    install_log_handler(printer)
+    handler_printer, stream = _handler_printer()
+    install_log_handler(handler_printer)
     reset_log_handlers()
     _emit_record("nab_project.demo", logging.WARNING, "after reset")
+    assert stream.getvalue() == ""
+
+
+def _begin_run(*, quiet: int = 0) -> Printer:
+    """Start a run's output the way the CLI does, with colour off."""
+    return begin(
+        options_from_flags(
+            verbose=0,
+            quiet=quiet,
+            color="never",
+            no_color=False,
+            no_progress=True,
+            environ={},
+        )
+    )
+
+
+def test_begin_installs_the_run_printer() -> None:
+    started = _begin_run(quiet=1)
+
+    assert printer() is started
+    assert started.verbosity is Verbosity.QUIET
+
+
+def test_begin_routes_log_records_through_the_run_printer(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A record logged mid-run reads as a printer line.
+
+    ``logging.lastResort`` would write the bare message, so the token is
+    what says the handler is installed.
+    """
+    _begin_run()
+    _emit_record("nab_project.demo", logging.WARNING, "mid-run")
+
+    assert capsys.readouterr().err == "warning: mid-run\n"
+
+
+def test_reset_run_drops_the_run_printer() -> None:
+    started = _begin_run(quiet=1)
+    reset_run()
+
+    assert printer() is not started
+
+
+def test_reset_run_detaches_the_log_handler() -> None:
+    handler_printer, stream = _handler_printer()
+    install_log_handler(handler_printer)
+    reset_run()
+    _emit_record("nab_project.demo", logging.WARNING, "after reset")
+
     assert stream.getvalue() == ""
 
 

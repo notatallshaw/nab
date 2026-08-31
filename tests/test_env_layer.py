@@ -1,20 +1,41 @@
-"""Tests for the ``NAB_*`` environment layer the config ladder reads."""
+"""Tests for the environment nab reads: the ``NAB_*`` layer and the census."""
 
 from __future__ import annotations
 
+import ast
+import os
 import sys
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
+from nab import env
 from nab.cli import main
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _PROJECT = '[project]\nname = "probe"\nversion = "0.1"\ndependencies = []\n'
 
 _TYPO_WARNING = "NAB_OFLINE is not a recognized nab setting"
+
+_ROOT = Path(__file__).resolve().parents[1]
+
+_SOURCE_TREES = {
+    "nab": _ROOT / "src" / "nab",
+    "nab_index": _ROOT / "nab-index" / "src" / "nab_index",
+    "nab_project": _ROOT / "nab-project" / "src" / "nab_project",
+    "nab_provider": _ROOT / "nab-provider" / "src" / "nab_provider",
+    "nab_resolver": _ROOT / "nab-resolver" / "src" / "nab_resolver",
+}
+
+# nab decides what it does from one module.  The nab-index and nab-project
+# reads build the environment a subprocess is handed, which the package
+# spawning it owns rather than the CLI.
+_ENVIRONMENT_READERS = {
+    "nab": {"nab/env.py"},
+    "nab_index": {"nab_index/vcs.py"},
+    "nab_project": {"nab_project/_build/env.py"},
+    "nab_provider": set[str](),
+    "nab_resolver": set[str](),
+}
 
 
 @pytest.mark.parametrize(
@@ -71,3 +92,109 @@ def test_unknown_env_warning_fires_once(
     main()
 
     assert capsys.readouterr().err.count(_TYPO_WARNING) == 1
+
+
+_ENVIRON_READS = frozenset({"environ", "getenv"})
+
+
+def _reads_the_environment(module: ast.Module) -> bool:
+    """Whether ``module`` reaches ``os.environ`` or ``os.getenv``.
+
+    Both spellings count, and under whatever name they were bound:
+    ``import os as _o`` and ``from os import environ`` are the two ways
+    past a check that only knows the literal ``os.environ``.
+    """
+    through_module: set[str] = set()
+    by_name: set[str] = set()
+    for node in ast.walk(module):
+        if isinstance(node, ast.Import):
+            through_module |= {a.asname or a.name for a in node.names if a.name == "os"}
+        elif isinstance(node, ast.ImportFrom) and node.module == "os":
+            by_name |= {
+                a.asname or a.name for a in node.names if a.name in _ENVIRON_READS
+            }
+
+    for node in ast.walk(module):
+        if isinstance(node, ast.Attribute) and node.attr in _ENVIRON_READS:
+            if isinstance(node.value, ast.Name) and node.value.id in through_module:
+                return True
+        elif isinstance(node, ast.Name) and node.id in by_name:
+            return True
+    return False
+
+
+def _environment_readers(tree: Path) -> set[str]:
+    """The modules under ``tree`` that read the process environment."""
+    return {
+        module.relative_to(tree.parent).as_posix()
+        for module in tree.rglob("*.py")
+        if _reads_the_environment(ast.parse(module.read_text(encoding="utf-8")))
+    }
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param("import os\n\nos.environ.get('X')\n", id="attribute"),
+        pytest.param("import os\n\nos.getenv('X')\n", id="getenv"),
+        pytest.param("import os as _o\n\n_o.environ.get('X')\n", id="aliased"),
+        pytest.param("from os import environ\n\nenviron.get('X')\n", id="by-name"),
+        pytest.param("from os import getenv as _g\n\n_g('X')\n", id="renamed"),
+    ],
+)
+def test_the_census_sees_every_spelling(source: str) -> None:
+    assert _reads_the_environment(ast.parse(source)) is True
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param("import os\n\nos.getcwd()\n", id="other-os-call"),
+        pytest.param("environ = {}\n\nenviron.get('X')\n", id="unrelated-name"),
+    ],
+)
+def test_the_census_leaves_other_code_alone(source: str) -> None:
+    assert _reads_the_environment(ast.parse(source)) is False
+
+
+@pytest.mark.parametrize("package", sorted(_SOURCE_TREES))
+def test_the_environment_is_read_where_the_census_says(package: str) -> None:
+    """A new read of the process environment has to be classified on purpose.
+
+    The list is an equality, so a module that starts reading the
+    environment fails here until it is either routed through
+    :mod:`nab.env` or recorded as a subprocess's environment.
+    """
+    assert _environment_readers(_SOURCE_TREES[package]) == _ENVIRONMENT_READERS[package]
+
+
+def test_current_falls_back_to_the_process_environment() -> None:
+    assert env.current() is os.environ
+
+
+def test_current_passes_a_supplied_mapping_through() -> None:
+    supplied = {"NAB_VERBOSITY": "debug"}
+    assert env.current(supplied) is supplied
+
+
+def test_verbosity_name_is_the_raw_value() -> None:
+    assert env.verbosity_name({env.NAB_VERBOSITY: " Debug "}) == " Debug "
+    assert env.verbosity_name({}) is None
+
+
+def test_progress_suppressed_reads_nab_no_progress() -> None:
+    assert env.progress_suppressed({env.NAB_NO_PROGRESS: "1"}) is True
+    assert env.progress_suppressed({env.NAB_NO_PROGRESS: ""}) is False
+    assert env.progress_suppressed({}) is False
+
+
+def test_cache_and_config_roots_are_the_raw_values() -> None:
+    environ = {env.XDG_CACHE_HOME: "cache", env.XDG_CONFIG_HOME: "config"}
+    assert env.cache_root(environ) == "cache"
+    assert env.config_root(environ) == "config"
+    assert env.cache_root({}) is None
+    assert env.config_root({}) is None
+
+
+def test_output_owned_names_the_two_output_variables() -> None:
+    assert sorted(env.OUTPUT_OWNED) == ["NAB_NO_PROGRESS", "NAB_VERBOSITY"]

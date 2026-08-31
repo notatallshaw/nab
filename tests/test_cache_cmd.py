@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from nab import cli as nab_cli
+from nab import _run as nab_run
 from nab.cli import app
 from nab_index.cache import (
     CACHE_VERSION_SDIST,
@@ -51,7 +51,7 @@ def config_anchors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[Path
         anchors.append(pyproject)
         return roots
 
-    monkeypatch.setattr(nab_cli, "_config_search_roots", _roots)
+    monkeypatch.setattr(nab_run, "_config_search_roots", _roots)
     monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
     return anchors
 
@@ -105,7 +105,7 @@ class TestCacheDir:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
-        monkeypatch.setattr(nab_cli.Path, "home", lambda: tmp_path)
+        monkeypatch.setattr(nab_run.Path, "home", lambda: tmp_path)
         _run_cache(["dir"])
         captured = capsys.readouterr()
         assert captured.out == f"{tmp_path / '.cache' / 'nab'}\n"
