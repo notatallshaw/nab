@@ -27,11 +27,11 @@ Four rules:
     ``_vendor`` is stricter still: it is off limits to every other package
     and must not be re-exported to make it reachable. ``VENDOR_ALLOWANCES``
     holds the one exception, nab-project naming
-    ``nab_provider._vendor.packaging``: ``nab_project.config`` builds
-    ``Version``, ``Requirement`` and ``VersionRange`` objects the provider
-    consumes, and a second copy of the fork is a second set of classes that
-    ``isinstance`` and dict keying disagree about. It goes away once the
-    fork's changes land upstream.
+    ``nab_provider._vendor.packaging``: nab-project builds ``Version``,
+    ``Requirement`` and ``VersionRange`` objects the provider consumes, and a
+    second copy of the fork is a second set of classes that ``isinstance`` and
+    dict keying disagree about. It goes away once the fork's changes land
+    upstream.
 
 Only the ``src`` trees are walked, since tests are not shipped and may reach
 into what they test. Vendored code is skipped as third-party.

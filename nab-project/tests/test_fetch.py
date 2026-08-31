@@ -36,7 +36,6 @@ from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
 from nab_index.parsed_listing import encode as encode_parsed
 from nab_index.transport import HttpError, HttpResponse
-from nab_project.config import NabProjectConfig
 from nab_project.fetch import (
     _WARM_SYNC_MIN_BLOB_BYTES,
     FetchCoordinator,
@@ -48,6 +47,7 @@ from nab_project.fetch import (
     _builds_remote_sdists,
     _resolve_routes,
 )
+from nab_project.inputs import ResolveInputs
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride
@@ -1831,7 +1831,7 @@ class TestFetchCoordinator:
             return built
 
         monkeypatch.setattr("nab_project.build_backend.extract_metadata", fake_build)
-        config = NabProjectConfig()
+        config = ResolveInputs()
         with _coord(build_config=config) as coord:
             event = coord.request_built_metadata(
                 "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz", ()
@@ -3921,10 +3921,10 @@ class TestSdistArchiveHolding:
         ("config", "holds"),
         [
             (None, False),
-            (NabProjectConfig(), False),
-            (NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE), True),
+            (ResolveInputs(), False),
+            (ResolveInputs(build_policy=BuildPolicy.BUILD_REMOTE), True),
             (
-                NabProjectConfig(
+                ResolveInputs(
                     package_overrides=(
                         pkg_override("foo", build_policy=BuildPolicy.BUILD_REMOTE),
                     )
@@ -3932,7 +3932,7 @@ class TestSdistArchiveHolding:
                 True,
             ),
             (
-                NabProjectConfig(
+                ResolveInputs(
                     index_overrides={
                         "pypi": IndexOverride(build_policy=BuildPolicy.BUILD_REMOTE)
                     }
@@ -3940,7 +3940,7 @@ class TestSdistArchiveHolding:
                 True,
             ),
             (
-                NabProjectConfig(
+                ResolveInputs(
                     package_overrides=(
                         pkg_override("foo", build_policy=BuildPolicy.NEVER),
                     )
@@ -3950,12 +3950,12 @@ class TestSdistArchiveHolding:
         ],
     )
     def test_build_remote_anywhere_in_the_config_holds(
-        self, config: NabProjectConfig | None, holds: bool
+        self, config: ResolveInputs | None, holds: bool
     ) -> None:
         assert _builds_remote_sdists(config) is holds
 
     def _fetched_with_pyproject(
-        self, pyproject: str | None, config: NabProjectConfig | None
+        self, pyproject: str | None, config: ResolveInputs | None
     ) -> tuple[FetchCoordinator, SdistArchiveHold]:
         """Fetch one version's sdist files with its archive already held.
 
@@ -3983,7 +3983,7 @@ class TestSdistArchiveHolding:
 
     def test_a_static_pyproject_releases_the_archive(self) -> None:
         """A pyproject that declares the deps means the version never builds."""
-        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+        config = ResolveInputs(build_policy=BuildPolicy.BUILD_REMOTE)
         coord, hold = self._fetched_with_pyproject(
             '[project]\nname = "pkg"\ndependencies = []\n', config
         )
@@ -3993,7 +3993,7 @@ class TestSdistArchiveHolding:
 
     def test_a_dynamic_pyproject_keeps_the_archive(self) -> None:
         """A table that defers its deps leaves the build's bytes in place."""
-        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+        config = ResolveInputs(build_policy=BuildPolicy.BUILD_REMOTE)
         _, hold = self._fetched_with_pyproject(
             '[project]\nname = "pkg"\ndynamic = ["dependencies"]\n', config
         )
@@ -4001,7 +4001,7 @@ class TestSdistArchiveHolding:
         assert hold.take("pkg", "1.0") == b"archive bytes"
 
     def test_an_sdist_without_a_pyproject_keeps_the_archive(self) -> None:
-        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+        config = ResolveInputs(build_policy=BuildPolicy.BUILD_REMOTE)
         _, hold = self._fetched_with_pyproject(None, config)
 
         assert hold.take("pkg", "1.0") == b"archive bytes"
@@ -4011,7 +4011,7 @@ class TestSdistArchiveHolding:
 
         The source here starts with a UTF-8 BOM, which tomli rejects.
         """
-        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+        config = ResolveInputs(build_policy=BuildPolicy.BUILD_REMOTE)
         coord, hold = self._fetched_with_pyproject(
             '\ufeff[project]\nname = "pkg"\ndependencies = []\n', config
         )
@@ -4048,7 +4048,7 @@ class TestSdistArchiveHolding:
         archive = self._sdist_bytes()
         url = "https://files.example.com/pkg-1.0.tar.gz"
         route = respx.get(url).mock(return_value=httpx.Response(200, content=archive))
-        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+        config = ResolveInputs(build_policy=BuildPolicy.BUILD_REMOTE)
 
         with _coord(build_config=config) as coord:
             coord.request_sdist("pkg", "1.0", url).wait(timeout=5)
@@ -4073,7 +4073,7 @@ class TestSdistArchiveHolding:
 
     def test_the_fetcher_loop_drops_what_it_still_holds(self) -> None:
         """Nothing takes from the hold once the loop is gone."""
-        config = NabProjectConfig(build_policy=BuildPolicy.BUILD_REMOTE)
+        config = ResolveInputs(build_policy=BuildPolicy.BUILD_REMOTE)
         coord = _coord(build_config=config)
         coord.start()
 

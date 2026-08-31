@@ -57,9 +57,10 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from nab_provider._vendor.packaging.markers import Marker
+    from nab_provider.overrides import PackageOverride
     from nab_provider.target import ResolveTarget
 
-    from .config import ConflictSet, PackageOverride
+    from .conflicts import ConflictSet
 
 
 __all__ = [

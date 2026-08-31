@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 from nab_index.client import WheelFile
 from nab_project._testing.coordinator_fake import make_coordinator
-from nab_project.config import NabProjectConfig, enforce_build_policy_for_targets
+from nab_project.build_policy import enforce_build_policy_for_targets
+from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import build_pylock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
 from nab_provider._vendor.packaging.pylock import Package, Pylock
@@ -117,13 +116,13 @@ def test_overlapping_root_markers_cover_each_python_partition() -> None:
         Requirement("a>=1.1.0; python_version >= '3.13'"),
         Requirement("a>=1.2.0; python_version >= '3.14'"),
     ]
-    config = NabProjectConfig(requires_python=python)
+    inputs = ResolveInputs(requires_python=python)
 
     result = resolve_with_coordinator(
         coordinator,
         targets,
         requirements,
-        config=config,
+        inputs=inputs,
     )
 
     assert result.success
@@ -136,7 +135,7 @@ def test_overlapping_root_markers_cover_each_python_partition() -> None:
         "py314-linux_x86_64": {"a": Version("1.2.0")},
     }
 
-    pylock = build_pylock(build_lock_input(result, config=config))
+    pylock = build_pylock(build_lock_input(result, inputs=inputs))
     pylock.validate()
     assert len(pylock.environments) == len(targets) == 3
     for target in targets:
@@ -189,13 +188,13 @@ def test_transitive_prerelease_admission_stays_in_its_fork() -> None:
             PlatformSpec("windows_amd64"),
         ),
     ).expand()
-    config = NabProjectConfig(requires_python=project_python)
+    inputs = ResolveInputs(requires_python=project_python)
 
     result = resolve_with_coordinator(
         coordinator,
         targets,
         [Requirement("a")],
-        config=config,
+        inputs=inputs,
     )
 
     assert result.success
@@ -213,7 +212,7 @@ def test_transitive_prerelease_admission_stays_in_its_fork() -> None:
         },
     }
 
-    pylock = build_pylock(build_lock_input(result, config=config))
+    pylock = build_pylock(build_lock_input(result, inputs=inputs))
     pylock.validate()
     assert len(pylock.environments) == len(targets) == 2
     for target in targets:
@@ -279,7 +278,7 @@ def test_conditional_dependency_stays_in_its_package_fork() -> None:
             PlatformSpec("macos_arm64"),
         ),
     ).expand()
-    config = NabProjectConfig(requires_python=project_python)
+    inputs = ResolveInputs(requires_python=project_python)
 
     result = resolve_with_coordinator(
         coordinator,
@@ -288,7 +287,7 @@ def test_conditional_dependency_stays_in_its_package_fork() -> None:
             Requirement("a>=2 ; sys_platform == 'linux'"),
             Requirement("a<2 ; sys_platform == 'darwin'"),
         ],
-        config=config,
+        inputs=inputs,
     )
 
     assert result.success
@@ -303,7 +302,7 @@ def test_conditional_dependency_stays_in_its_package_fork() -> None:
         "py312-macos_arm64": {"a": Version("1.0.0")},
     }
 
-    pylock = build_pylock(build_lock_input(result, config=config))
+    pylock = build_pylock(build_lock_input(result, inputs=inputs))
     pylock.validate()
     assert len(pylock.environments) == len(targets) == 2
     for target in targets:
@@ -360,22 +359,22 @@ def test_platform_marked_root_keeps_its_compatible_wheel() -> None:
         ),
     ).expand()
     root = Requirement("win-only ; sys_platform == 'win32'")
-    config = NabProjectConfig(requires_python=project_python)
+    inputs = ResolveInputs(requires_python=project_python)
     build_policy = enforce_build_policy_for_targets(
         targets=targets,
-        build_policy=config.build_policy,
+        build_policy=inputs.build_policy,
         build_policy_set=False,
-        package_overrides=config.package_overrides,
-        index_overrides=config.index_overrides,
+        package_overrides=inputs.package_overrides,
+        index_overrides=inputs.index_overrides,
     )
     assert build_policy is BuildPolicy.NEVER
-    config = replace(config, build_policy=build_policy)
+    inputs = inputs.replace(build_policy=build_policy)
 
     result = resolve_with_coordinator(
         coordinator,
         targets,
         [root],
-        config=config,
+        inputs=inputs,
     )
 
     assert result.success
@@ -403,7 +402,7 @@ def test_platform_marked_root_keeps_its_compatible_wheel() -> None:
         for target_result in result.target_results
     )
 
-    pylock = build_pylock(build_lock_input(result, config=config))
+    pylock = build_pylock(build_lock_input(result, inputs=inputs))
     pylock.validate()
     assert pylock.requires_python is not None
     assert str(pylock.requires_python) == project_python
@@ -481,7 +480,7 @@ def test_platform_and_implementation_forks_keep_transitive_dependencies() -> Non
         ),
         implementations=("cpython", "pypy"),
     ).expand()
-    config = NabProjectConfig(requires_python=python)
+    inputs = ResolveInputs(requires_python=python)
 
     result = resolve_with_coordinator(
         coordinator,
@@ -490,7 +489,7 @@ def test_platform_and_implementation_forks_keep_transitive_dependencies() -> Non
             Requirement("a>=2 ; sys_platform == 'linux'"),
             Requirement("a<2 ; sys_platform == 'darwin'"),
         ],
-        config=config,
+        inputs=inputs,
     )
 
     assert result.success
@@ -511,7 +510,7 @@ def test_platform_and_implementation_forks_keep_transitive_dependencies() -> Non
         },
     }
 
-    pylock = build_pylock(build_lock_input(result, config=config))
+    pylock = build_pylock(build_lock_input(result, inputs=inputs))
     pylock.validate()
     assert pylock.environments is not None
     assert len(pylock.environments) == len(targets) == 4

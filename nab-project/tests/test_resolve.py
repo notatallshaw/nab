@@ -29,11 +29,11 @@ from nab_project.config import (
     ConflictMember,
     ConflictSelectionError,
     ConflictSet,
-    MatrixConfig,
-    NabProjectConfig,
-    ResolveMode,
+    plan_targets,
     read_pyproject_config,
+    with_python_override,
 )
+from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import LockInput, PinShape, build_pylock
 from nab_project.pyproject_files import (
     read_pyproject_groups,
@@ -51,7 +51,7 @@ from nab_project.resolve import (
     _ProjectTables,
     build_lock_input,
     build_resolver_inputs,
-    config_for_build_requirements,
+    inputs_for_build_requirements,
     resolve_for_targets,
 )
 from nab_provider._provider import listing_diagnosis
@@ -76,7 +76,7 @@ from nab_provider.requirements_file import (
     expand_extra_requirements,
 )
 from nab_provider.tags import PlatformSpec
-from nab_provider.target import ResolveTarget
+from nab_provider.target import Matrix, ResolveTarget
 from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
@@ -90,14 +90,32 @@ _FORTY = "0123456789abcdef0123456789abcdef01234567"
 
 
 def _resolved(
-    path: Path, transport: object = _FAKE_TRANSPORT, **kwargs: object
+    path: Path,
+    transport: object = _FAKE_TRANSPORT,
+    *,
+    python_version: str | None = None,
+    **kwargs: object,
 ) -> ResolveResult:
     """Resolve and surface a failed target's error.
+
+    nab-project takes the targets and the settings from its caller, so
+    whichever of the two is not passed is planned off ``path`` the way a
+    host does.  ``python_version`` retargets that plan the way ``--python``
+    does, and has nothing to retarget once both are passed.
 
     The engine records a target that did not resolve rather than raising,
     so a caller resolving for one environment re-raises it; that is what
     every test below asserts against.
     """
+    planned = {"targets", "inputs"} - kwargs.keys()
+    if planned:
+        config = with_python_override(read_pyproject_config(path), python_version)
+        kwargs.setdefault("targets", plan_targets(config))
+        kwargs.setdefault("inputs", config.resolve_inputs())
+    elif python_version is not None:
+        msg = "python_version retargets a planned target; both were passed"
+        raise TypeError(msg)
+
     result = resolve_for_targets(path, transport, **kwargs)  # type: ignore[arg-type]
     result.raise_for_failure()
     return result
@@ -148,16 +166,16 @@ def _tables(path: Path) -> _ProjectTables:
 
 
 def _build_constraints(
-    config: NabProjectConfig, *, environment: dict[str, str]
+    inputs: ResolveInputs, *, environment: dict[str, str]
 ) -> dict[str, Range]:
-    """The resolver-input ranges ``config``'s constraints fold to.
+    """The resolver-input ranges ``inputs``'s constraints fold to.
 
     The parser is shared with the requirement side; ``kind`` is what
     tells the two apart.
     """
     return build_resolver_inputs(
-        [Requirement(text) for text in config.constraints],
-        config.vcs,
+        [Requirement(text) for text in inputs.constraints],
+        inputs.vcs,
         environment=environment,
         marker_holds=dependency_marker_holds,
         kind="constraint",
@@ -322,7 +340,9 @@ class TestSpecificModeConflictValidation:
         assert label_for["2.0.0"].endswith("-extra-gpu")
         # Both forks land in the lock under their own selection.
         lock_input = build_lock_input(
-            result, config=read_pyproject_config(path), extras=("cpu", "gpu")
+            result,
+            inputs=read_pyproject_config(path).resolve_inputs(),
+            extras=("cpu", "gpu"),
         )
         assert len(lock_input.targets) == 2
 
@@ -1122,7 +1142,7 @@ class TestResolvePyproject:
     @patch("nab_project._resolve.engine.Resolver")
     @patch("nab_project._resolve.engine.Provider")
     @patch("nab_project.resolve.FetchCoordinator")
-    def test_explicit_config_arg_skips_file_read(
+    def test_the_constraints_reach_the_resolver(
         self,
         mock_coord_cls: MagicMock,
         mock_provider_cls: MagicMock,
@@ -1130,19 +1150,18 @@ class TestResolvePyproject:
         mock_build_lock: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """An explicit config arg bypasses [tool.nab] parsing on disk."""
+        """``inputs`` carries the constraints the search runs under."""
         pyproject = tmp_path / "pyproject.toml"
-        # File has no [tool.nab] table on disk; the explicit config wins.
+        # No [tool.nab] on disk, so the constraint can only be the caller's.
         pyproject.write_text('[project]\ndependencies = ["foo"]\n')
         mock_coord_cls.return_value.__enter__ = lambda s: s
         mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
         mock_resolver_cls.return_value.resolve.return_value = {}
 
-        explicit = NabProjectConfig(constraints=("urllib3<2",))
         _resolved(
             pyproject,
             _FAKE_TRANSPORT,
-            config=explicit,
+            inputs=ResolveInputs(constraints=("urllib3<2",)),
             python_version="3.12.0",
         )
 
@@ -1294,7 +1313,7 @@ class TestResolvePyproject:
 
         lock_input = build_lock_input(
             result,
-            config=read_pyproject_config(pyproject),
+            inputs=read_pyproject_config(pyproject).resolve_inputs(),
             dependency_groups=("test",),
         )
         assert lock_input.dependency_groups == ("test",)
@@ -1327,7 +1346,7 @@ class TestResolvePyproject:
 
         lock_input = build_lock_input(
             result,
-            config=read_pyproject_config(pyproject),
+            inputs=read_pyproject_config(pyproject).resolve_inputs(),
             dependency_groups=("test",),
         )
         assert lock_input.default_groups == ()
@@ -1387,21 +1406,20 @@ class TestResolveUniversalPyproject:
         assert [t.python_full_version for t in targets] == ["3.11.4", "3.12.0"]
 
     @patch("nab_project.resolve.resolve_with_coordinator")
-    def test_explicit_config_arg(
+    def test_explicit_targets_reach_the_engine(
         self,
         mock_engine: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """Caller can pass a constructed config rather than reading the file."""
+        """The caller says which environments to resolve for, not the file."""
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\ndependencies = ["foo"]\n')
-        config = NabProjectConfig(
-            mode=ResolveMode.UNIVERSAL,
-            matrix=MatrixConfig(
-                python=">=3.12,<3.14", platforms=(PlatformSpec("linux_x86_64"),)
-            ),
-        )
-        _resolved(pyproject, config=config)
+        declared = Matrix(
+            python=">=3.12,<3.14", platforms=(PlatformSpec("linux_x86_64"),)
+        ).expand()
+
+        _resolved(pyproject, targets=declared, inputs=ResolveInputs())
+
         targets = mock_engine.call_args.args[1]
         assert [t.label for t in targets] == [
             "py312-linux_x86_64",
@@ -2358,7 +2376,9 @@ class TestSpecificModeTargetPlan:
         target = mock_provider_cls.call_args.kwargs["target"]
         assert target == ResolveTarget.for_host()
         assert (
-            build_lock_input(result, config=read_pyproject_config(pyproject))
+            build_lock_input(
+                result, inputs=read_pyproject_config(pyproject).resolve_inputs()
+            )
         ).requires_python == ">=3.9"
 
     @patch("nab_project._resolve.engine.build_target_lock")
@@ -2796,7 +2816,7 @@ class TestBuildConstraints:
     def test_duplicate_constraint_intersects(self) -> None:
         """Two constraint lines for one package combine to their overlap."""
         out = _build_constraints(
-            NabProjectConfig(constraints=("foo>=2.0", "foo<3.0")), environment={}
+            ResolveInputs(constraints=("foo>=2.0", "foo<3.0")), environment={}
         )
         assert V("2.5") in out["foo"]
         assert V("1.0") not in out["foo"]
@@ -2806,14 +2826,14 @@ class TestBuildConstraints:
         """Pinned-but-different constraint lines for one package raise."""
         with pytest.raises(ResolutionError, match="conflicting constraints"):
             _build_constraints(
-                NabProjectConfig(constraints=("foo==1.0", "foo==2.0")), environment={}
+                ResolveInputs(constraints=("foo==1.0", "foo==2.0")), environment={}
             )
 
     def test_marker_false_constraint_dropped(self) -> None:
         """A constraint whose marker is False is not applied."""
         env = {"python_version": "3.12"}
         out = _build_constraints(
-            NabProjectConfig(constraints=('foo<2.0 ; python_version < "3.0"',)),
+            ResolveInputs(constraints=('foo<2.0 ; python_version < "3.0"',)),
             environment=env,
         )
         assert "foo" not in out
@@ -2822,7 +2842,7 @@ class TestBuildConstraints:
         """A constraint whose marker is True still restricts the range."""
         env = {"python_version": "3.12"}
         out = _build_constraints(
-            NabProjectConfig(constraints=('foo<2.0 ; python_version >= "3.0"',)),
+            ResolveInputs(constraints=('foo<2.0 ; python_version >= "3.0"',)),
             environment=env,
         )
         assert V("1.0") in out["foo"]
@@ -2832,7 +2852,7 @@ class TestBuildConstraints:
         """A constraint carrying extras is rejected, matching pip."""
         with pytest.raises(ConfigError, match="extras"):
             _build_constraints(
-                NabProjectConfig(constraints=("foo[dev]<2.0",)), environment={}
+                ResolveInputs(constraints=("foo[dev]<2.0",)), environment={}
             )
 
     def test_constraint_with_extras_rejected_under_false_marker(self) -> None:
@@ -2844,16 +2864,14 @@ class TestBuildConstraints:
         """
         with pytest.raises(ConfigError, match="extras"):
             _build_constraints(
-                NabProjectConfig(
-                    constraints=('foo[dev]<2.0 ; python_version < "3.0"',)
-                ),
+                ResolveInputs(constraints=('foo[dev]<2.0 ; python_version < "3.0"',)),
                 environment={"python_version": "3.12"},
             )
 
     def test_set_marker_constraint_dropped(self) -> None:
         """A constraint gated on a lockfile-only set marker drops, not crashes."""
         out = _build_constraints(
-            NabProjectConfig(constraints=('foo<2.0 ; "x" in extras',)), environment={}
+            ResolveInputs(constraints=('foo<2.0 ; "x" in extras',)), environment={}
         )
         assert "foo" not in out
 
@@ -2866,7 +2884,7 @@ class TestBuildConstraints:
         """The one warning a membership-gated constraint logs when dropped."""
         with caplog.at_level("WARNING", logger="nab_provider.resolver_inputs"):
             out = _build_constraints(
-                NabProjectConfig(constraints=(constraint,)),
+                ResolveInputs(constraints=(constraint,)),
                 environment={} if environment is None else environment,
             )
 
@@ -2913,8 +2931,10 @@ class TestBuildConstraints:
             "so drop the membership test from the marker and keep the rest."
         )
 
-        config = read_pyproject_config(_constraints_pyproject(tmp_path, '"foo<2.0"'))
-        out = _build_constraints(config, environment={})
+        inputs = read_pyproject_config(
+            _constraints_pyproject(tmp_path, '"foo<2.0"')
+        ).resolve_inputs()
+        out = _build_constraints(inputs, environment={})
         assert V("1.0") in out["foo"]
         assert V("5.0") not in out["foo"]
 
@@ -2937,15 +2957,15 @@ class TestBuildConstraints:
             "so drop the membership test from the marker and keep the rest."
         )
 
-        config = read_pyproject_config(
+        inputs = read_pyproject_config(
             _constraints_pyproject(tmp_path, "\"foo<2.0 ; python_version < '3.10'\"")
-        )
-        out = _build_constraints(config, environment=on_39)
+        ).resolve_inputs()
+        out = _build_constraints(inputs, environment=on_39)
         assert V("1.0") in out["foo"]
         assert V("5.0") not in out["foo"]
 
         on_311 = {"python_version": "3.11", "python_full_version": "3.11.2"}
-        assert "foo" not in _build_constraints(config, environment=on_311)
+        assert "foo" not in _build_constraints(inputs, environment=on_311)
 
 
 class TestResolvePyprojectConflicts:
@@ -3305,7 +3325,7 @@ class TestResolvePyprojectGroupConflict:
             resolve_for_targets(
                 pyproject,
                 _FAKE_TRANSPORT,
-                python_version="3.12.0",
+                targets=(ResolveTarget.for_host_python("3.12.0"),),
                 groups=["alpha", "beta"],
             )
         assert str(info.value) == (
@@ -4818,7 +4838,9 @@ class TestLockDeclaresItsEnvironment:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             result = _resolved(path, _FAKE_TRANSPORT)
-        return build_lock_input(result, config=read_pyproject_config(path))
+        return build_lock_input(
+            result, inputs=read_pyproject_config(path).resolve_inputs()
+        )
 
     _PYPROJECT = (
         '[project]\nname = "proj"\ndependencies = ["foo"]\n'
@@ -5086,18 +5108,18 @@ class TestExtraAndGroupMembershipMarkers:
             mock_coord_cls.return_value.__enter__ = lambda _self: make_coordinator([])
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             path = tmp_path / "pyproject.toml"
-            config = read_pyproject_config(path)
+            inputs = read_pyproject_config(path).resolve_inputs()
             result = _resolved(
                 path,
                 _FAKE_TRANSPORT,
-                config=config,
+                inputs=inputs,
                 extras=extras,
                 groups=groups,
             )
         pylock = build_pylock(
             build_lock_input(
                 result,
-                config=config,
+                inputs=inputs,
                 extras=extras,
                 dependency_groups=groups,
             ),
@@ -5731,7 +5753,7 @@ class TestBuildRequirementsResolve:
         assert _pins(result) == {"hatchling": V("2.0")}
 
     @patch("nab_project.resolve.resolve_with_coordinator")
-    def test_the_matrix_still_expands(
+    def test_every_target_gets_the_build_requires(
         self, mock_engine: MagicMock, tmp_path: Path
     ) -> None:
         """A static requires list needs no interpreter to read, so it goes wide."""
@@ -5746,7 +5768,12 @@ class TestBuildRequirementsResolve:
             'platforms = ["linux_x86_64"]\n'
         )
 
-        resolve_for_targets(pyproject, _FAKE_TRANSPORT, build_requirements=True)
+        resolve_for_targets(
+            pyproject,
+            _FAKE_TRANSPORT,
+            targets=plan_targets(read_pyproject_config(pyproject)),
+            build_requirements=True,
+        )
 
         targets = mock_engine.call_args.args[1]
         assert [t.label for t in targets] == [
@@ -5781,7 +5808,7 @@ class TestBuildRequirementsResolve:
 class TestBuildRequirementsConfig:
     def test_drops_every_selection_setting(self) -> None:
         """Nothing describing a group or extra survives into a build lock."""
-        config = NabProjectConfig(
+        inputs = ResolveInputs(
             default_groups=("dev",),
             base_group="default",
             conflicts=(
@@ -5794,7 +5821,7 @@ class TestBuildRequirementsConfig:
             ),
         )
 
-        pruned = config_for_build_requirements(config)
+        pruned = inputs_for_build_requirements(inputs)
 
         assert pruned.default_groups == ()
         assert pruned.base_group is None
@@ -5802,9 +5829,9 @@ class TestBuildRequirementsConfig:
 
     def test_keeps_the_settings_a_resolve_still_needs(self) -> None:
         """Constraints and the resolve window are not part of the selection."""
-        config = NabProjectConfig(constraints=("urllib3<2",), requires_python=">=3.10")
+        inputs = ResolveInputs(constraints=("urllib3<2",), requires_python=">=3.10")
 
-        pruned = config_for_build_requirements(config)
+        pruned = inputs_for_build_requirements(inputs)
 
         assert pruned.constraints == ("urllib3<2",)
         assert pruned.requires_python == ">=3.10"
@@ -5882,10 +5909,12 @@ class TestBuildGroup:
         """
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(self._PYPROJECT + _BOTH_GROUPS)
-        config = config_for_build_requirements(read_pyproject_config(pyproject))
+        inputs = inputs_for_build_requirements(
+            read_pyproject_config(pyproject).resolve_inputs()
+        )
 
         result = self._mocked_resolve(pyproject, build_requirements=True)
-        lock_input = build_lock_input(result, config=config)
+        lock_input = build_lock_input(result, inputs=inputs)
 
         assert _pins(result) == {"hatchling": V("2.0")}
         assert lock_input.build_group is None
@@ -6050,7 +6079,11 @@ class TestConfiguredGroupConflicts:
             mock_coord_cls.return_value.__enter__ = lambda coordinator: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
             resolve_for_targets(
-                pyproject, _FAKE_TRANSPORT, python_version="3.12.0", **kwargs
+                pyproject,
+                _FAKE_TRANSPORT,
+                targets=(ResolveTarget.for_host_python("3.12.0"),),
+                inputs=read_pyproject_config(pyproject).resolve_inputs(),
+                **kwargs,
             )
         return mock_engine
 
@@ -6329,10 +6362,10 @@ class TestConfiguredGroupConflictDivergentPins:
         with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
             mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            config = read_pyproject_config(pyproject)
-            result = _resolved(pyproject, _FAKE_TRANSPORT, config=config)
+            inputs = read_pyproject_config(pyproject).resolve_inputs()
+            result = _resolved(pyproject, _FAKE_TRANSPORT, inputs=inputs)
         pylock = build_pylock(
-            build_lock_input(result, config=config), lock_dir=tmp_path
+            build_lock_input(result, inputs=inputs), lock_dir=tmp_path
         )
         pylock.validate()
         return pylock
@@ -6427,9 +6460,9 @@ class TestBuildConfigPlumbing:
     def test_dynamic_local_source_builds_under_the_project_config(
         self, tmp_path: Path
     ) -> None:
-        """``resolve_for_targets`` hands its config to the coordinator it opens."""
+        """``resolve_for_targets`` hands its own settings to the build."""
         pyproject = self._project(tmp_path)
-        config = read_pyproject_config(pyproject)
+        inputs = read_pyproject_config(pyproject).resolve_inputs()
         built = WheelMetadata(name="dyn", version=Version("7.0"))
 
         with patch(
@@ -6438,14 +6471,15 @@ class TestBuildConfigPlumbing:
             result = resolve_for_targets(
                 pyproject,
                 _NoIndexTransport(),
-                config=config,
+                targets=(ResolveTarget.for_host(),),
+                inputs=inputs,
                 cache_dir=tmp_path / "cache",
             )
 
         assert result.success
         assert _pins(result) == {"dyn": Version("7.0")}
 
-        assert runner.call_args.kwargs["config"] is config
+        assert runner.call_args.kwargs["config"] == inputs
 
 
 class TestTrustUnverifiedSdistDeps:
