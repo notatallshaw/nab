@@ -69,7 +69,7 @@ from nab_project.pyproject_files import (
 from nab_project.resolve import (
     active_group_names,
     build_lock_input,
-    config_for_build_requirements,
+    inputs_for_build_requirements,
 )
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
@@ -97,6 +97,7 @@ from .output import ProgressReporter
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
 
+    from nab_project.inputs import ResolveInputs
     from nab_provider.target import ResolveTarget
 
     from .cli import ConfigLadder
@@ -261,8 +262,9 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
         anchor=anchor,
         cli_overrides=project_overrides,
     )
+    inputs = config.resolve_inputs()
     if build_requirements:
-        config = config_for_build_requirements(config)
+        inputs = inputs_for_build_requirements(inputs)
     if locked and config.mode is ResolveMode.UNIVERSAL:
         _cli.printer().error("--locked is not supported in universal mode.")
         sys.exit(1)
@@ -309,7 +311,9 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     )
 
     if locked:
-        _fast_fail_locked(run, config=config, workspace_to_drop=workspace_to_drop)
+        _fast_fail_locked(
+            run, config=config, inputs=inputs, workspace_to_drop=workspace_to_drop
+        )
 
     transport = _cli._make_resolve_transport(  # noqa: SLF001
         settings.http_backend, offline=settings.offline
@@ -332,7 +336,7 @@ def lock(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config obje
     lock_input = drop_workspace_pins(
         build_lock_input(
             result,
-            config=config,
+            inputs=inputs,
             extras=selected_extras,
             dependency_groups=selected_groups,
         ),
@@ -421,7 +425,7 @@ def _refuse_group_selection_with_build_requirements(
     Refusing is what keeps the flags honest.  ``--project-default-group``,
     ``--project-base-group`` and ``--project-build-group`` would otherwise
     be dropped by
-    :func:`~nab_project.resolve.config_for_build_requirements` after the run had
+    :func:`~nab_project.resolve.inputs_for_build_requirements` after the run had
     already printed a reproducibility notice and recorded them in the lock,
     claiming an override that changed nothing.
     """
@@ -540,6 +544,7 @@ def _fast_fail_locked(
     run: _LockRun,
     *,
     config: NabProjectConfig,
+    inputs: ResolveInputs,
     workspace_to_drop: frozenset[str],
 ) -> None:
     """Fast-fail ``nab lock --locked`` before any resolve when a mismatch is proven.
@@ -547,6 +552,10 @@ def _fast_fail_locked(
     Reads and parses the committed lock, then runs the envelope and validity
     checks.  On the first disqualification it prints the reason and exits
     non-zero; otherwise it returns and the full resolve runs.
+
+    ``config`` says which environment the checks evaluate markers against
+    and ``inputs`` carries the settings the lock records, already narrowed
+    for a build-requirements run.
 
     ``--python`` is applied first so a rejected value reports as the flag
     error: reporting a stale lock instead would point at a refresh command
@@ -565,10 +574,10 @@ def _fast_fail_locked(
             run.path,
             extras=run.extras,
             groups=run.groups,
-            default_groups=config.default_groups,
-            base_group=config.base_group,
+            default_groups=inputs.default_groups,
+            base_group=inputs.base_group,
             build_requirements=run.build_requirements,
-            build_group=config.build_group,
+            build_group=inputs.build_group,
         )
     except (
         InvalidProjectTableError,
@@ -591,14 +600,14 @@ def _fast_fail_locked(
     try:
         disqualification = check_locked(
             target,
-            requires_python=config.requires_python,
+            requires_python=inputs.requires_python,
             extras=run.extras,
             dependency_groups=run.groups,
-            default_groups=config.default_groups,
-            base_group=config.base_group,
-            build_group=config.build_group,
+            default_groups=inputs.default_groups,
+            base_group=inputs.base_group,
+            build_group=inputs.build_group,
             roots=roots,
-            constraints=config.constraints,
+            constraints=inputs.constraints,
             resolve_target=resolve_target,
             exclude=workspace_to_drop,
         )

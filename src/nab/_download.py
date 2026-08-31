@@ -142,7 +142,7 @@ def download(  # noqa: PLR0913 - tyro maps each kwarg to a CLI flag so a config 
     )
     lock_input = build_lock_input(
         result,
-        config=config,
+        inputs=config.resolve_inputs(),
         extras=selected_extras,
         dependency_groups=selected_groups,
     )

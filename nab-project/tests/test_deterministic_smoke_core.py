@@ -14,7 +14,7 @@ from types import ModuleType
 
 import pytest
 
-from nab_project.config import NabProjectConfig
+from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import IndexPin, TargetLock, WheelArtifact
 from nab_project.resolve import ResolveResult, TargetResult
 from nab_provider._vendor.packaging.pylock import Pylock
@@ -57,7 +57,7 @@ class _LockValidationCase:
     harness: ModuleType
     lock: Pylock
     result: ResolveResult
-    config: NabProjectConfig
+    config: ResolveInputs
     requirements: Sequence[Requirement]
     distributions: Sequence[object]
     fixture: Path
@@ -156,7 +156,7 @@ def basic_lock_case(smoke_index: Path) -> _LockValidationCase:
     )
 
     lock = harness.build_pylock(
-        harness.build_lock_input(result, config=prepared.config),
+        harness.build_lock_input(result, inputs=prepared.config),
         lock_dir=fixture,
     )
     return _LockValidationCase(
@@ -657,7 +657,7 @@ def test_the_walk_seeds_constraints_and_unions_across_releases(tmp_path: Path) -
     prepared = harness.prepare_scenario(ceiling, tmp_path)
     widened = replace(
         prepared,
-        config=replace(prepared.config, constraints=("nab-smoke-pip-a<2.0.0",)),
+        config=prepared.config.replace(constraints=("nab-smoke-pip-a<2.0.0",)),
     )
 
     assert set(harness._scenario_root_names(widened)) == {

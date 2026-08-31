@@ -3,8 +3,8 @@
 Covers the static path (``extract_static_metadata``) and the
 dynamic dispatch in ``extract_metadata``, including the
 ``BuildBackendError`` raised when the caller did not supply the
-``NabProjectConfig`` the runner needs, and the build-policy page's
-account of when the dynamic path runs.
+``ResolveInputs`` the runner needs, and the build-policy page's account
+of when the dynamic path runs.
 """
 
 from __future__ import annotations
@@ -521,7 +521,9 @@ class TestExtractMetadata:
             dynamic = ["dependencies"]
             """,
         )
-        with pytest.raises(BuildBackendError, match="dynamic-metadata path"):
+        with pytest.raises(
+            BuildBackendError, match="dynamic-metadata path requires a ResolveInputs"
+        ):
             extract_metadata(tmp_path)
 
     def test_dynamic_path_with_config_invokes_runner(self, tmp_path: Path) -> None:

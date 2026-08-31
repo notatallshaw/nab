@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from nab_provider.fetch_port import FetchPort
     from nab_provider.metadata import WheelMetadata
 
-    from .config import NabProjectConfig
+    from .inputs import ResolveInputs
 
 
 def build_remote_sdist(
@@ -30,7 +30,7 @@ def build_remote_sdist(
     version: str,
     url: str,
     sdist_hashes: tuple[tuple[str, str], ...],
-    build_config: NabProjectConfig | None,
+    build_config: ResolveInputs | None,
 ) -> WheelMetadata:
     """Download the sdist at ``url``, extract it, and build it.
 

@@ -311,6 +311,39 @@ def test_a_renamed_build_group_is_out_of_date(
     mock.assert_not_called()
 
 
+def test_a_build_requirements_lock_ignores_the_project_group_names(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A build lock records no group names, so the checks must read none.
+
+    A check reading ``base-group``, ``build-group`` or ``default-groups`` off
+    the project would call every build lock stale for omitting them.
+    """
+    pyproject = _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0.1"\ndependencies = ["bar"]\n'
+        '[build-system]\nrequires = ["foo"]\n'
+        "[dependency-groups]\n"
+        'dev = ["bb"]\n'
+        "[tool.nab]\n"
+        'base-group = "base"\n'
+        'build-group = "build"\n'
+        'default-groups = ["dev"]\n',
+    )
+    out = tmp_path / "pylock.build.toml"
+    _write_lock(pyproject, out, _result({"foo": "1.0"}), "--build-requirements")
+    capsys.readouterr()
+    written = tomli.loads(out.read_text())
+    assert "default-groups" not in written
+    assert "dependency-groups" not in written
+
+    mock = _locked_mock(_result({"foo": "1.0"}))
+    _run_locked(pyproject, out, mock, "--build-requirements")
+
+    assert f"Lockfile {out} is up to date." in capsys.readouterr().err
+    mock.assert_called_once()
+
+
 def test_tightened_constraint_fires_without_resolving(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -753,23 +786,29 @@ def test_unreadable_requirement_falls_through(
     mock.assert_called_once()
 
 
-def test_requires_python_excludes_host_falls_through(
+def test_requires_python_excludes_host_reports_the_declaration_not_staleness(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # requires-python that excludes the host cannot build a target, so
-    # validity is skipped and the resolve runs.
+    # A requires-python excluding the host skips the validity check, so the run
+    # fails on the declaration rather than reporting a stale lock; the lock is
+    # written under a --python the declaration admits.
     pyproject = _write_pyproject(
         tmp_path,
         '[project]\ndependencies = ["foo"]\n[tool.nab]\nrequires-python = ">=99"\n',
     )
     out = tmp_path / "pylock.toml"
-    _write_lock(pyproject, out, _result({"foo": "1.0"}))
+    _write_lock(pyproject, out, _result({"foo": "1.0"}), "--python", "99.0")
     capsys.readouterr()
 
     mock = _locked_mock(_result({"foo": "1.0"}))
-    _run_locked(pyproject, out, mock)
+    with pytest.raises(SystemExit) as exc:
+        _run_locked(pyproject, out, mock)
 
-    mock.assert_called_once()
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "excludes the resolve target" in err
+    assert "out of date" not in err
+    mock.assert_not_called()
 
 
 def test_dropped_workspace_member_direct_dep_falls_through(

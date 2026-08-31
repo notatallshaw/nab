@@ -34,6 +34,7 @@ from nab_project.config import (
     ConfigError,
     NabProjectConfig,
     ResolveMode,
+    plan_targets,
     read_pyproject_config,
     with_python_override,
 )
@@ -689,11 +690,13 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     config = _python_override_or_exit(config, python)
     try:
         try:
+            targets = plan_targets(config)
             with _collector_paused():
                 result = resolve_for_targets(
                     path,
                     transport,
-                    config=config,
+                    targets=targets,
+                    inputs=config.resolve_inputs(),
                     cache_dir=cache_dir,
                     offline=offline,
                     groups=groups,

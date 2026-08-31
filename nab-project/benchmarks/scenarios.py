@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from nab_index.multi_index import IndexConfig
-    from nab_project.config import NabProjectConfig
+    from nab_project.inputs import ResolveInputs
     from nab_provider.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
@@ -523,7 +523,7 @@ class PreparedStandardExecution(NamedTuple):
 
     requirement_strings: list[str]
     constraint_strings: list[str]
-    config: NabProjectConfig
+    config: ResolveInputs
     target: ResolveTarget
     expected_input: dict[str, object]
 
@@ -1334,7 +1334,7 @@ def resolve_scenario(
     requirements: dict[str, VersionRange],
     constraints: dict[str, VersionRange] | None = None,
     *,
-    config: NabProjectConfig,
+    config: ResolveInputs,
     target: ResolveTarget,
     host: BenchmarkHost,
 ) -> dict:
