@@ -282,7 +282,7 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | Variable | Effect |
 | -------- | ------ |
 | `XDG_CACHE_HOME` | If set, `nab`'s default cache root is `$XDG_CACHE_HOME/nab` instead of `~/.cache/nab`. |
-| `NAB_VERBOSITY` | Default verbosity when no `-v` / `-q` flag is given: one of `silent`, `quiet`, `normal`, `verbose`, `debug`. A `-v` / `-q` flag overrides it. An unrecognised value is rejected. |
+| `NAB_VERBOSITY` | Default verbosity when no `-v` / `-q` flag is given: one of `silent`, `quiet`, `normal`, `verbose`, `debug`. A `-v` / `-q` flag overrides it. An unrecognised value is rejected by any command that reads it; `--version` and `--help` do not read it, so they neither honour nor refuse it. |
 | `NAB_NO_PROGRESS` | If set to a non-empty value, suppress the live progress line, like `--no-progress`. |
 | `NO_COLOR` | If set to a non-empty value, disable colour under `--color auto`. |
 | `FORCE_COLOR` | If set to a non-empty value, force colour under `--color auto`. |

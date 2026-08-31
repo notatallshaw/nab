@@ -5462,6 +5462,32 @@ class TestPaintedEagerOutput:
         assert terminal.getvalue().startswith("\033[31mnab:\033[0m ")
 
 
+class TestEagerLinesIgnoreVerbosityFromTheEnvironment:
+    """``--version`` and ``--help`` answer over a ``NAB_VERBOSITY`` others refuse.
+
+    ``--help`` still reads the environment for colour; it is verbosity alone
+    that neither command consults.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _rejected_verbosity(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("NAB_VERBOSITY", "bogus")
+
+    def test_version_answers_over_it(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert run(("--version",)) == 0
+        assert capsys.readouterr().out.startswith("nab ")
+
+    def test_help_answers_over_it(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert run(("--help",)) == 0
+        assert capsys.readouterr().out.startswith("Usage: nab ")
+
+    def test_a_command_that_reads_it_refuses(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert run(("cache", "dir")) == 2
+        assert "NAB_VERBOSITY" in capsys.readouterr().err
+
+
 class TestOfflineFlagSurface:
     """All four ``--offline`` spellings, and what an absent flag leaves.
 
