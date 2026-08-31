@@ -3,8 +3,8 @@
 stdout carries only the requested, machine-readable output (a lockfile, a
 requirements list, a config dump).  stderr carries everything a human reads:
 the run summary, notes, warnings, errors, progress, and logs.  The verbosity
-level and the colour decision are resolved once in :func:`nab.cli.main` and
-shared through a single :class:`Printer`, so no command re-invents the policy.
+level and the colour decision are resolved once by :func:`begin` and shared
+through a single :class:`Printer`, so no command re-invents the policy.
 
 The design follows uv: a small printer with a level, a data channel that
 survives ``--quiet``, and colour applied only to a message's leading token so
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import enum
 import logging
-import os
 import sys
 import threading
 import time
@@ -23,6 +22,14 @@ from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
 
 from typing_extensions import override
+
+from .env import (
+    NAB_VERBOSITY,
+    OUTPUT_OWNED,
+    color_enabled,
+    progress_suppressed,
+    verbosity_name,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -35,18 +42,20 @@ __all__ = [
     "Printer",
     "ProgressReporter",
     "Verbosity",
+    "begin",
     "install_log_handler",
     "logging_level_for",
+    "options_from_flags",
     "parse_output_options",
+    "printer",
     "reset_log_handlers",
+    "reset_run",
     "should_color",
     "verbosity_from_counts",
 ]
 
-NAB_VERBOSITY_ENV = "NAB_VERBOSITY"
-NAB_NO_PROGRESS_ENV = "NAB_NO_PROGRESS"
-OUTPUT_ENV_VARS: frozenset[str] = frozenset({NAB_VERBOSITY_ENV, NAB_NO_PROGRESS_ENV})
-"""The ``NAB_*`` environment variables the output layer owns."""
+OUTPUT_ENV_VARS: frozenset[str] = OUTPUT_OWNED
+"""The names the config ladder is told to skip, because this layer owns them."""
 
 
 class Verbosity(enum.IntEnum):
@@ -87,26 +96,21 @@ def _isatty(stream: IO[str]) -> bool:
     return bool(isatty()) if isatty is not None else False
 
 
-def should_color(choice: ColorChoice, stream: IO[str], env: Mapping[str, str]) -> bool:
+def should_color(
+    choice: ColorChoice, stream: IO[str], env: Mapping[str, str] | None = None
+) -> bool:
     """Decide whether to colour output on ``stream``.
 
-    ``--color always`` / ``never`` win outright.  Otherwise ``NO_COLOR``
-    (non-empty) disables, ``FORCE_COLOR`` (non-empty) forces, ``TERM=dumb``
-    disables, and the fallback is whether ``stream`` is a terminal.  Reading
-    the standard 16-colour slots this enables lets the user's own terminal
-    theme set the actual contrast.
+    The rule itself is :func:`nab.env.color_enabled`; this states it in the
+    printer's own terms, a :class:`ColorChoice` and the stream written to.
+    Reading the standard 16-colour slots it enables lets the user's own
+    terminal theme set the actual contrast.
+
+    ``always`` and ``never`` decide without the stream, so a stream that
+    cannot answer ``isatty()`` is never asked.
     """
-    if choice is ColorChoice.ALWAYS:
-        return True
-    if choice is ColorChoice.NEVER:
-        return False
-    if env.get("NO_COLOR"):
-        return False
-    if env.get("FORCE_COLOR"):
-        return True
-    if env.get("TERM") == "dumb":
-        return False
-    return _isatty(stream)
+    tty = choice is ColorChoice.AUTO and _isatty(stream)
+    return color_enabled(choice.value, isatty=tty, environ=env)
 
 
 # Standard ANSI SGR codes; the terminal theme remaps these, so we never
@@ -173,11 +177,10 @@ class Printer:
         self.verbosity = verbosity
         self._out = stdout if stdout is not None else sys.stdout
         self._err = stderr if stderr is not None else sys.stderr
-        environ = env if env is not None else os.environ
-        self.color_enabled = should_color(color, self._err, environ)
+        self.color_enabled = should_color(color, self._err, env)
         self.progress_allowed = (
             progress
-            and not environ.get(NAB_NO_PROGRESS_ENV)
+            and not progress_suppressed(env)
             and verbosity is Verbosity.NORMAL
             and _isatty(self._err)
         )
@@ -263,6 +266,19 @@ class Printer:
                 self._err.write(_CLEAR_LINE)
                 self._err.flush()
                 self._progress_drawn = False
+
+
+_printer: Printer | None = None
+
+
+def printer() -> Printer:
+    """Return the run's :class:`Printer`.
+
+    :func:`begin` installs the one the global output flags resolved to.  A
+    caller that bypassed the CLI, as many tests do, gets a fresh default
+    printer reading the current process streams.
+    """
+    return _printer if _printer is not None else Printer()
 
 
 # The engine logs through ``logging.getLogger(__name__)``; these are the
@@ -363,6 +379,16 @@ def reset_log_handlers() -> None:
         logger.setLevel(logging.NOTSET)
 
 
+def reset_run() -> None:
+    """Undo :func:`begin`: drop the run's printer and its log handlers.
+
+    Both are process-wide, so the test suite clears them between tests.
+    """
+    global _printer  # noqa: PLW0603 - the run's printer is a module singleton
+    _printer = None
+    reset_log_handlers()
+
+
 _SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _PROGRESS_MIN_INTERVAL = 0.05
 
@@ -453,15 +479,15 @@ class OutputOptions:
 _VERBOSITY_NAMES: dict[str, Verbosity] = {v.name.lower(): v for v in Verbosity}
 
 
-def _verbosity_from_env(env: Mapping[str, str]) -> Verbosity | None:
+def _verbosity_from_env(environ: Mapping[str, str] | None) -> Verbosity | None:
     """Read ``NAB_VERBOSITY`` as a level name, or ``None`` when unset."""
-    raw = env.get(NAB_VERBOSITY_ENV)
+    raw = verbosity_name(environ)
     if raw is None:
         return None
     name = raw.strip().lower()
     if name not in _VERBOSITY_NAMES:
         allowed = ", ".join(_VERBOSITY_NAMES)
-        msg = f"{NAB_VERBOSITY_ENV}={raw!r} is not one of {allowed}"
+        msg = f"{NAB_VERBOSITY}={raw!r} is not one of {allowed}"
         raise OutputOptionError(msg)
     return _VERBOSITY_NAMES[name]
 
@@ -484,7 +510,7 @@ def _repeated_short(arg: str, letter: str) -> bool:
     )
 
 
-def parse_output_options(  # noqa: C901, PLR0912 - a small flag scanner; each flag is one branch
+def parse_output_options(  # noqa: C901 - a small flag scanner; each flag is one branch
     argv: list[str], env: Mapping[str, str]
 ) -> tuple[OutputOptions, list[str]]:
     """Split the global output flags out of ``argv``, returning the rest.
@@ -496,7 +522,7 @@ def parse_output_options(  # noqa: C901, PLR0912 - a small flag scanner; each fl
     parser untouched.  Raises :class:`OutputOptionError` on a bad value.
     """
     verbose = quiet = 0
-    color_choice: ColorChoice | None = None
+    color: str | None = None
     no_color = False
     progress = True
     rest: list[str] = []
@@ -520,24 +546,69 @@ def parse_output_options(  # noqa: C901, PLR0912 - a small flag scanner; each fl
             if i >= len(argv):
                 msg = "--color needs a value: auto, always, or never"
                 raise OutputOptionError(msg)
-            color_choice = _color_choice(argv[i])
+            # Checked as it is read, so a bad value is an error even when a
+            # later --color would have won the last-wins reduction.
+            color = _color_choice(argv[i]).value
         elif arg.startswith("--color="):
-            color_choice = _color_choice(arg.split("=", 1)[1])
+            color = _color_choice(arg.split("=", 1)[1]).value
         else:
             rest.append(arg)
         i += 1
 
+    options = options_from_flags(
+        verbose=verbose,
+        quiet=quiet,
+        color=color,
+        no_color=no_color,
+        no_progress=not progress,
+        environ=env,
+    )
+    return options, rest
+
+
+def options_from_flags(
+    *,
+    verbose: int,
+    quiet: int,
+    color: str | None,
+    no_color: bool,
+    no_progress: bool,
+    environ: Mapping[str, str] | None = None,
+) -> OutputOptions:
+    """Fold the five global output flags into the knobs a printer takes.
+
+    A touched ``-v`` or ``-q`` beats ``NAB_VERBOSITY`` even when the two
+    cancel out, and ``--color`` beats ``--no-color`` whichever came first,
+    because a value names a choice while the flag only refuses one.
+    ``color`` is the flag's raw value; one that names no
+    :class:`ColorChoice` raises :class:`OutputOptionError`.
+    """
     if verbose or quiet:
         verbosity = verbosity_from_counts(verbose, quiet)
     else:
-        from_env = _verbosity_from_env(env)
+        from_env = _verbosity_from_env(environ)
         verbosity = from_env if from_env is not None else Verbosity.NORMAL
 
-    if color_choice is not None:
-        color = color_choice
+    if color is not None:
+        choice = _color_choice(color)
     elif no_color:
-        color = ColorChoice.NEVER
+        choice = ColorChoice.NEVER
     else:
-        color = ColorChoice.AUTO
+        choice = ColorChoice.AUTO
 
-    return OutputOptions(verbosity=verbosity, color=color, progress=progress), rest
+    return OutputOptions(verbosity=verbosity, color=choice, progress=not no_progress)
+
+
+def begin(options: OutputOptions) -> Printer:
+    """Start the run's output from the resolved global flags.
+
+    Builds the run's printer, makes it the one :func:`printer` returns, and
+    routes the engine's log records through it so a record emitted mid-run
+    lands on the same stderr instead of Python's ``lastResort`` fallback.
+    """
+    global _printer  # noqa: PLW0603 - the run's printer is a module singleton
+    _printer = Printer(
+        verbosity=options.verbosity, color=options.color, progress=options.progress
+    )
+    install_log_handler(_printer)
+    return _printer

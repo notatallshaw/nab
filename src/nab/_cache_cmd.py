@@ -21,13 +21,9 @@ import tyro
 from nab_index.cache import OnDiskCache, is_recognized_bucket
 from nab_project.config_sources import SourceConfigError
 
-from .cli import (
-    _default_cache_dir,
-    _fail_config,
-    app,
-    effective_config,
-    printer,
-)
+from ._run import _default_cache_dir, _fail_config, effective_config
+from .cli import app
+from .output import printer
 
 ActionArg = Annotated[str, tyro.conf.Positional]
 

@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
-from nab import cli
-from nab.output import reset_log_handlers
+from nab import _run
+from nab.output import reset_run
 from nab_project.config_sources import SourceRoots
 
 if TYPE_CHECKING:
@@ -37,15 +37,14 @@ def _reset_nab_output(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
       :func:`~nab.output.should_color`, so it forces nab's colour off here
       regardless of the ambient environment; the colour behaviour itself is
       covered by unit tests that set the choice explicitly.
-    * ``nab.cli.main`` sets a module-level printer (bound to the run's streams)
-      and installs a logging handler on the nab loggers; without the reset a
-      test that runs ``main`` would leak the printer (whose captured stream is
-      closed once the test ends) and the handler into later tests.
+    * ``nab.output.begin`` sets a module-level printer (bound to the run's
+      streams) and installs a logging handler on the nab loggers; without the
+      reset a test that runs ``main`` would leak the printer (whose captured
+      stream is closed once the test ends) and the handler into later tests.
     """
     monkeypatch.setenv("NO_COLOR", "1")
     yield
-    cli._printer = None
-    reset_log_handlers()
+    reset_run()
 
 
 @pytest.fixture
@@ -94,7 +93,7 @@ def hermetic_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
             project_dir=project_dir,
         )
 
-    monkeypatch.setattr(cli, "_config_search_roots", fake_roots)
+    monkeypatch.setattr(_run, "_config_search_roots", fake_roots)
     monkeypatch.delenv("NAB_OFFLINE", raising=False)
     monkeypatch.delenv("NAB_CACHE_DIR", raising=False)
     monkeypatch.delenv("NAB_RESOLUTION", raising=False)
