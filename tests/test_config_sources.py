@@ -34,6 +34,7 @@ from nab.config.ladder import (
     build_cli_layer,
     build_cli_overrides,
     discover_layers,
+    docs_url,
     orphan_rejections,
     project_cli_override_notice,
     project_cli_override_records,
@@ -846,7 +847,7 @@ class TestRenderers:
             help_line, docs_line = render_explain(eff, row.key).splitlines()[1:3]
 
             assert help_line == f"  {row.help}", row.key
-            assert docs_line == f"  see docs/{row.docs}", row.key
+            assert docs_line == f"  see {docs_url(row)}", row.key
 
     def test_render_explain_default_only(self, tmp_path: Path) -> None:
         _project(tmp_path)

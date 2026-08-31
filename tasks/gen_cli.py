@@ -144,14 +144,16 @@ def _flag_table() -> str:
 
 
 def _check_pages() -> None:
-    """Check that every row names a documentation page that exists.
+    """Check that every row names a documentation page in the checkout.
 
-    The path checked is the one ``nab config explain`` prints.
+    The path checked is the checkout half of the URL ``nab config
+    explain`` prints, so the page a reader is sent to is one that was
+    written.
     """
     for row in ALL:
-        printed = docs_path(row)
-        if not (_ROOT / printed).is_file():
-            msg = f"{row.name} names {printed}, which is not a documentation page"
+        page = docs_path(row)
+        if not (_ROOT / page).is_file():
+            msg = f"{row.name} names {page}, which is not a documentation page"
             raise SystemExit(msg)
 
 
