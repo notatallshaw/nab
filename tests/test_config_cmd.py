@@ -916,7 +916,10 @@ def test_lock_exits_on_pyproject_user_key_via_fold(
     with pytest.raises(SystemExit):
         lock(hermetic_roots / "pyproject.toml", output=hermetic_roots / "pylock.toml")
     err = capsys.readouterr().err
-    assert "in [tool.nab]" in err
+    assert (
+        "'offline' is a user-scope option and cannot be set in pyproject [tool.nab]"
+        in err
+    )
     assert "user-scope option" in err
 
 

@@ -339,10 +339,9 @@ def _is_pylock(path: Path) -> bool:
 def _project_cli_overrides_or_exit(project_overrides: Mapping[str, object]) -> None:
     """Exit 1 when a ``--project-*`` override has a bad value.
 
-    The refusal already names the flag, since that is the ``where`` the CLI
-    layer parses under.  Without this the value is validated by the
-    ``[tool.nab]`` parse in :func:`nab._resolve._load_config`, whose errors
-    read ``in [tool.nab]:`` and point at a table the project may not have.
+    The refusal names the flag, since that is the ``where`` the CLI layer
+    parses under.  Without this the value is validated by the ``[tool.nab]``
+    parse instead, which points at a table the project may not have.
     """
     for spec in OPTIONS:
         if spec.name not in project_overrides:

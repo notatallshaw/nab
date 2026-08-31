@@ -172,7 +172,7 @@ resolve is refused before any network work:
 
 ```console
 $ nab lock --extras all
-error: in [tool.nab]: extra 'cpu', extra 'gpu' cannot be selected together: declared mutually exclusive (at-most-one) in [tool.nab].conflicts
+error: extra 'cpu', extra 'gpu' cannot be selected together: declared mutually exclusive (at-most-one) in [tool.nab].conflicts
 ```
 
 This happens when an umbrella extra self-references both members
@@ -200,7 +200,7 @@ config is read, before any command-line selection applies:
 
 ```console
 $ nab lock
-error: in [tool.nab]: default-groups activates 'black22', 'black23', which are declared mutually exclusive in [tool.nab].conflicts
+error: default-groups activates 'black22', 'black23', which are declared mutually exclusive in [tool.nab].conflicts
 ```
 
 A default install activates every default group at once. The emit-time

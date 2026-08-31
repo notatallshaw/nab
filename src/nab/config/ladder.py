@@ -301,7 +301,7 @@ def build_cli_overrides(locals_by_param: Mapping[str, Any]) -> dict[str, Any]:
 _logger = logging.getLogger(__name__)
 
 
-def tool_nab_section(data: dict[str, Any]) -> Any:
+def tool_nab_section(data: Mapping[str, Any]) -> Any:
     """Return the raw ``[tool.nab]`` value from parsed TOML ``data``.
 
     Returns ``{}`` when ``[tool]`` is absent or is not a table, so callers can
@@ -322,18 +322,15 @@ def reject_user_keys_in_pyproject(raw: Mapping[str, Any]) -> None:
     parser would otherwise raise.  PROJECT keys and keys the registry
     does not own are left for the pyproject parser to handle.
 
-    The message carries no ``[tool.nab]:`` prefix: the only caller is the
-    pyproject parser, whose ``error: in [tool.nab]:`` wrapper already
-    supplies it, so prefixing here would double it.
+    Each message quotes the key and names the table it refuses, so the
+    caller adds no prefix of its own.
     """
     for key in raw:
         spec = BY_KEY.get(key)
         if spec is None:
             continue
         if not spec.allowed_in_toml(SourceKind.PYPROJECT):
-            reason = _gate_reason(spec, SourceKind.PYPROJECT)
-            msg = f"{key}: {reason}"
-            raise SourceConfigError(msg)
+            raise SourceConfigError(_gate_reason(spec, SourceKind.PYPROJECT))
 
 
 def _load_toml_layer(
@@ -381,7 +378,7 @@ def _load_toml_layer(
                 if rejections is not None:
                     rejections.append(RejectedLayer(origin, key, reason))
                     continue
-                msg = f"{where}: {reason}"
+                msg = f"{path}: {reason}"
                 raise SourceConfigError(msg)
             values[key] = spec.parse(value, where)
     return Layer(origin, values)

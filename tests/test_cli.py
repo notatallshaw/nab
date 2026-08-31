@@ -1918,7 +1918,7 @@ class TestLockCommandSpecific:
         # backslashes of a Windows path.
         assert err.splitlines() == [
             (
-                f"error: in [tool.nab]: cannot read {pyproject}:"
+                f"error: cannot read {pyproject}:"
                 f" [Errno {errno.EACCES}] Permission denied: {str(pyproject)!r}"
             )
         ]
@@ -2079,7 +2079,7 @@ class TestLockCommandSpecific:
         # (the shared [tool.nab] error map) rather than later in the
         # run-settings fold.
         err = capsys.readouterr().err
-        assert "in [tool.nab]:" in err
+        assert "is set to conflicting values in pyproject [tool.nab]" in err
         assert "conflicting values" in err
 
     def test_standalone_nab_toml_malformed_exits(
@@ -2352,9 +2352,10 @@ class TestProjectFlagErrors:
 
         assert mock_resolve.call_args.kwargs["inputs"].requires_python == ">=3.10"
 
-    def test_bad_file_value_still_reads_as_a_table_error(
+    def test_a_bad_file_value_is_named_by_the_file_that_set_it(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        """One wording, under the source: the file here, the flag above."""
         pyproject = _make_pyproject(
             tmp_path,
             '[project]\ndependencies = ["foo"]\n[tool.nab]\nrequires-python = "@@@"\n',
@@ -2364,8 +2365,8 @@ class TestProjectFlagErrors:
             lock(pyproject, output=out)
         assert exc.value.code == 1
         err = capsys.readouterr().err
-        assert "in [tool.nab]:" in err
-        assert "requires-python must be a PEP 440 specifier" in err
+
+        assert f"error: {pyproject}: requires-python must be a PEP 440" in err
 
 
 class TestLockCommandUniversal:
@@ -2421,7 +2422,7 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, output=out)
         err = capsys.readouterr().err
-        assert "in [tool.nab]:" in err
+        assert "[tool.nab].conflicts names extra 'gpuu'" in err
         assert "gpuu" in err
 
     def test_not_implemented_vcs_exits(
@@ -2724,7 +2725,7 @@ class TestLockCommandUniversal:
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject, output=tmp_path / "pylock.toml", groups=("dev",))
         err = capsys.readouterr().err
-        assert "error: in [tool.nab]: base-group 'default' and" in err
+        assert "error: base-group 'default' and" in err
         assert "--project-base-group" not in err
         assert "Traceback" not in err
 
@@ -4122,7 +4123,7 @@ class TestConfigErrors:
         )
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject)
-        assert "in [tool.nab]" in capsys.readouterr().err
+        assert "dist-policy must be one of" in capsys.readouterr().err
 
     def test_workspace_discovery_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -6884,7 +6885,7 @@ class TestDownloadCommand:
         ):
             download(pyproject)
         err = capsys.readouterr().err
-        assert "in [tool.nab]:" in err
+        assert "exactly one of [extra 'cpu', extra 'gpu'] must be selected" in err
         assert "exactly one" in err
 
     @pytest.mark.parametrize("bad", [0, -1])

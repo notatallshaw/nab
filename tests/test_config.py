@@ -1255,7 +1255,11 @@ class TestRequiresPython:
         assert read_pyproject_config(path).requires_python == ">=3.13,<3.14"
 
     def test_excluding_the_resolve_target_is_an_error(self, tmp_path: Path) -> None:
-        """A declaration the target Python fails names the knobs that move it."""
+        """It names its own table and the knobs that move the target.
+
+        ``requires-python`` is a key of both tables, so the message says
+        which one it read, as the ``[project]`` case below does.
+        """
         path = write(
             tmp_path,
             '[tool.nab]\nrequires-python = "==3.9.*"\n'
@@ -1264,7 +1268,8 @@ class TestRequiresPython:
         config = read_pyproject_config(path)
         with pytest.raises(
             ConfigError,
-            match=r"excludes the resolve target Python 3.12.*--python",
+            match=r"\[tool\.nab\] requires-python = '==3\.9\.\*' excludes the"
+            r" resolve target Python 3\.12.*--python",
         ):
             plan_targets(config)
 

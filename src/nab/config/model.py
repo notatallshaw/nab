@@ -99,10 +99,9 @@ __all__ = [
 ]
 
 
-# How a ``requires-python`` declaration is named back to the user.  The
-# [tool.nab] key stays bare because the CLI's error prefix already names that
-# table; the [project] fallback has to name its own.
-_TOOL_NAB_REQUIRES_PYTHON = "requires-python"
+# How a ``requires-python`` declaration is named back to the user.  Both
+# tables hold a key of that name, so each names its own.
+_TOOL_NAB_REQUIRES_PYTHON = "[tool.nab] requires-python"
 _PROJECT_REQUIRES_PYTHON = "[project] requires-python"
 
 
