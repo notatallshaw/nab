@@ -44,10 +44,10 @@ from nab_project.config import (
     ConflictPolicy,
     ConflictSet,
     IndexOverride,
-    NabProjectConfig,
     conflict_exclusion_groups,
     conflict_member_groups,
 )
+from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
     BASE_MEMBER,
     LOCK_VERSION,
@@ -5077,10 +5077,10 @@ def test_lock_input_ignores_vcs_policy() -> None:
     )
 
     allow = build_lock_input(
-        result, config=NabProjectConfig(vcs=VcsConfig(policy=VcsPolicy.ALLOW))
+        result, inputs=ResolveInputs(vcs=VcsConfig(policy=VcsPolicy.ALLOW))
     )
     block = build_lock_input(
-        result, config=NabProjectConfig(vcs=VcsConfig(policy=VcsPolicy.BLOCK))
+        result, inputs=ResolveInputs(vcs=VcsConfig(policy=VcsPolicy.BLOCK))
     )
 
     assert allow == block
@@ -5222,7 +5222,7 @@ class TestDependencyGraph:
             ),
             [_HOST],
             [Requirement("app[cli]")],
-            config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
         )
         assert result.success
 
@@ -5729,7 +5729,7 @@ class TestLockWheelPrunePredicate:
             coordinator,
             list(targets),
             [Requirement("pkg")],
-            config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
         )
 
     def test_property_union_over_seeded_subsets(self) -> None:
@@ -5833,7 +5833,7 @@ class TestLockWheelPrunePredicate:
             coordinator,
             [_PRUNE_LINUX],
             [Requirement("pkg")],
-            config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
         )
         assert result.success
         lock = result.target_results[0].lock
@@ -5870,7 +5870,7 @@ class TestLockPruneObservability:
                 coordinator,
                 [_PRUNE_LINUX],
                 [Requirement("pruner"), Requirement("clean")],
-                config=NabProjectConfig(build_policy=BuildPolicy.NEVER),
+                inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
             )
         assert result.success
         messages = [r.getMessage() for r in caplog.records if r.name == _BUILDER_LOGGER]

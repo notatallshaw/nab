@@ -27,8 +27,8 @@ from nab_index.vcs import (
     prepare_clone,
 )
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_project.config import NabProjectConfig
 from nab_project.fetch import FetchCoordinator
+from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import VcsPin, build_target_lock
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
@@ -1555,7 +1555,7 @@ class TestProviderVcsIntegration:
         monkeypatch.setattr("nab_project.resolve.resolve_for_targets", _boom)
 
         provider = Provider(
-            make_coordinator(build_config=NabProjectConfig(), offline=True),
+            make_coordinator(build_config=ResolveInputs(), offline=True),
             vcs_config=VcsConfig(
                 policy=VcsPolicy.ALLOW,
                 allowed_schemes=frozenset({"git+https"}),

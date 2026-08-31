@@ -2144,8 +2144,9 @@ class TestPythonFlag:
             "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(pyproject, output=out, python="3.11")
-        config = mock_resolve.call_args.kwargs["config"]
-        assert config.environment.python == "3.11"
+
+        (target,) = mock_resolve.call_args.kwargs["targets"]
+        assert target.python_version == "3.11"
 
     def test_absent_flag_leaves_the_host_target(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
@@ -2154,7 +2155,8 @@ class TestPythonFlag:
             "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(pyproject, output=out)
-        assert mock_resolve.call_args.kwargs["config"].environment is None
+
+        assert mock_resolve.call_args.kwargs["targets"] == (ResolveTarget.for_host(),)
 
     def test_invalid_value_is_a_flag_error(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2209,8 +2211,9 @@ class TestPythonFlag:
             ),
         ):
             download(pyproject, output=out, python="3.11")
-        config = mock_resolve.call_args.kwargs["config"]
-        assert config.environment.python == "3.11"
+
+        (target,) = mock_resolve.call_args.kwargs["targets"]
+        assert target.python_version == "3.11"
 
     def test_retargets_a_free_threaded_platform_onto_a_new_python(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -2235,7 +2238,9 @@ class TestPythonFlag:
             "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
             lock(pyproject, output=out, python="3.14")
-        assert mock_resolve.call_args.kwargs["config"].environment.python == "3.14"
+
+        (target,) = mock_resolve.call_args.kwargs["targets"]
+        assert target.python_version == "3.14"
 
     def test_download_rejects_it_in_universal_mode(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2339,13 +2344,15 @@ class TestProjectFlagErrors:
         assert "error: --project-build-group:" in capsys.readouterr().err
 
     def test_valid_override_threads_through(self, tmp_path: Path) -> None:
+        """The value has to admit the host: the run plans its target first."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with patch(
             "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
         ) as mock_resolve:
-            lock(pyproject, output=out, project_requires_python="==3.11")
-        assert mock_resolve.call_args.kwargs["config"].requires_python == "==3.11"
+            lock(pyproject, output=out, project_requires_python=">=3.10")
+
+        assert mock_resolve.call_args.kwargs["inputs"].requires_python == ">=3.10"
 
     def test_bad_file_value_still_reads_as_a_table_error(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -4375,7 +4382,7 @@ class TestLockAnchorReuse:
         ) as mock_resolve:
             lock(pyproject, output=prior, upgrade=upgrade)
 
-        cutoff = mock_resolve.call_args.kwargs["config"].uploaded_prior_to
+        cutoff = mock_resolve.call_args.kwargs["inputs"].uploaded_prior_to
         assert isinstance(cutoff, datetime)
         return cutoff
 

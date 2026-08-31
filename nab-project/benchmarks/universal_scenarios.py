@@ -26,7 +26,6 @@ import subprocess
 import sys
 import time
 from contextlib import contextmanager
-from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -50,8 +49,8 @@ from universal_result import (
 
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project.build_policy import enforce_build_policy_for_targets
-from nab_project.config import NabProjectConfig
 from nab_project.fetch import FetchCoordinator
+from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import build_pylock, render_lock
 from nab_project.resolve import (
     ResolveResult,
@@ -364,7 +363,7 @@ def process_scenario(
         python_order=python_order,
     )
     targets = matrix.expand()
-    config = NabProjectConfig(
+    config = ResolveInputs(
         constraints=tuple(constraint_strings),
         uploaded_prior_to=uploaded_prior_to,
     )
@@ -375,7 +374,7 @@ def process_scenario(
         package_overrides=config.package_overrides,
         index_overrides=config.index_overrides,
     )
-    config = replace(config, build_policy=build_policy)
+    config = config.replace(build_policy=build_policy)
 
     output_dir = output_dir or RESULTS_DIR / commit / "universal"
     output_path = output_dir / f"{scenario_name}.json"
@@ -448,7 +447,7 @@ def process_scenario(
                 coordinator,
                 targets,
                 [Requirement(text) for text in requirement_strings],
-                config=config,
+                inputs=config,
                 cache_dir=CACHE_DIR,
                 resolution_strategy=ResolutionStrategy(resolution_strategy),
                 align_across_targets=align,

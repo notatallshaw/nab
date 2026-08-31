@@ -1481,7 +1481,7 @@ def test_scenario_sdist_trust_default_matches_the_product_default() -> None:
 
     assert (
         module.DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS
-        is module.NabProjectConfig().trust_unverified_sdist_deps
+        is module.ResolveInputs().trust_unverified_sdist_deps
     )
 
 
