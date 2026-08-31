@@ -1,0 +1,12 @@
+--project-resolution
+--project-decision-order
+--project-mode
+--project-constraint
+--project-default-group
+--project-base-group
+--project-build-group
+--project-requires-python
+--project-uploaded-prior-to
+--project-dist-policy
+--project-build-policy
+--project-build-requires-depth
