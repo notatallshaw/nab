@@ -57,6 +57,7 @@ from nab_project.resolve import (
     ResolveFork,
     ResolveResult,
     TargetResult,
+    _resolve_inputs,
     build_lock_input,
     build_resolver_inputs,
     resolve_with_coordinator,
@@ -150,7 +151,7 @@ def _settings(
     effective = config if config is not None else NabProjectConfig()
     return _EngineSettings(
         coordinator=coordinator,
-        config=effective,
+        inputs=_resolve_inputs(effective),
         source_root=source_root,
         align=align,
         resolution=effective.resolution,

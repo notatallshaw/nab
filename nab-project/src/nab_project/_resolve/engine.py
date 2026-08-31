@@ -42,8 +42,8 @@ if TYPE_CHECKING:
     from nab_provider.target import ResolveTarget
     from nab_resolver.types import Incompatibility
 
-    from ..config import NabProjectConfig
     from ..fetch import FetchCoordinator
+    from ..inputs import ResolveInputs
     from ..lockfile import TargetLock
 
 
@@ -477,7 +477,7 @@ class _EngineSettings:
     """What every per-target resolve in one run shares."""
 
     coordinator: FetchCoordinator
-    config: NabProjectConfig
+    inputs: ResolveInputs
 
     # Where a declared VCS clone or archive extraction lands, ``None`` when
     # the project declares neither.
@@ -548,19 +548,19 @@ def _resolve_one_target(
     contexts: InstallContexts | None = None,
 ) -> TargetResult:
     """Run one single-environment resolve for ``target``."""
-    config = settings.config
+    inputs = settings.inputs
     environment = target.marker_env
     try:
         root_requirements, resolver_requirements, root_extras = build_resolver_inputs(
             requirements,
-            config.vcs,
+            inputs.vcs,
             environment=environment,
             marker_holds=settings.marker_holds,
             warned=settings.warned_dropped_markers,
         )
         constraint_ranges = build_resolver_inputs(
             constraints,
-            config.vcs,
+            inputs.vcs,
             environment=environment,
             marker_holds=settings.marker_holds,
             kind="constraint",
@@ -577,21 +577,21 @@ def _resolve_one_target(
         root_requirements=resolver_requirements,
         constraints=resolver_constraints,
         root_extras=root_extras,
-        uploaded_prior_to=config.uploaded_prior_to,
-        dist_policy=config.dist_policy,
-        build_policy=config.build_policy,
-        package_overrides=config.package_overrides,
-        index_overrides=config.index_overrides,
-        trust_unverified_sdist_deps=config.trust_unverified_sdist_deps,
-        vcs_config=config.vcs,
-        local_sources=list(config.local_sources) or None,
-        vcs_sources=list(config.vcs_sources) or None,
+        uploaded_prior_to=inputs.uploaded_prior_to,
+        dist_policy=inputs.dist_policy,
+        build_policy=inputs.build_policy,
+        package_overrides=inputs.package_overrides,
+        index_overrides=inputs.index_overrides,
+        trust_unverified_sdist_deps=inputs.trust_unverified_sdist_deps,
+        vcs_config=inputs.vcs,
+        local_sources=list(inputs.local_sources) or None,
+        vcs_sources=list(inputs.vcs_sources) or None,
         vcs_cache_dir=source_root / VCS_BUCKET if source_root is not None else None,
-        archive_sources=list(config.archive_sources) or None,
+        archive_sources=list(inputs.archive_sources) or None,
         archive_cache_dir=(
             source_root / ARCHIVE_BUCKET if source_root is not None else None
         ),
-        decision_order=config.decision_order,
+        decision_order=inputs.decision_order,
         resolution_strategy=settings.resolution,
         direct_packages=frozenset(
             name for name in resolver_requirements if split_extra(name)[1] is None

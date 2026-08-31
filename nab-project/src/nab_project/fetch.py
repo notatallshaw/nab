@@ -85,7 +85,7 @@ if TYPE_CHECKING:
     from nab_provider.metadata import WheelMetadata
     from nab_provider.policy import SourceRequest
 
-    from .config import NabProjectConfig
+    from .inputs import ResolveInputs
 
 logger = logging.getLogger(__name__)
 
@@ -133,18 +133,18 @@ def _resolve_routes(routes: list[IndexRoute]) -> dict[str, str]:
     return {canonicalize_name(entry.name): entry.index for entry in routes}
 
 
-def _builds_remote_sdists(config: NabProjectConfig | None) -> bool:
-    """Whether ``config`` names ``build-remote`` anywhere.
+def _builds_remote_sdists(inputs: ResolveInputs | None) -> bool:
+    """Whether ``inputs`` names ``build-remote`` anywhere.
 
     Coarser than :meth:`~nab_provider.provider.Provider.effective_build_policy`,
     which decides per version. Holding sdist archives is a whole-run decision,
     so an upper bound on what could reach a build is enough.
     """
-    if config is None:
+    if inputs is None:
         return False
-    if config.build_policy is BuildPolicy.BUILD_REMOTE:
+    if inputs.build_policy is BuildPolicy.BUILD_REMOTE:
         return True
-    overrides = (*config.package_overrides, *config.index_overrides.values())
+    overrides = (*inputs.package_overrides, *inputs.index_overrides.values())
     return any(o.build_policy is BuildPolicy.BUILD_REMOTE for o in overrides)
 
 
@@ -213,7 +213,7 @@ class FetchCoordinator:
         index_routes: list[IndexRoute] | None = None,
         index_cache_floors: Mapping[str, int] | None = None,
         on_fetch: Callable[[], None] | None = None,
-        build_config: NabProjectConfig | None = None,
+        build_config: ResolveInputs | None = None,
     ) -> None:
         """Create a coordinator that wraps ``transport``.
 
@@ -232,7 +232,7 @@ class FetchCoordinator:
         as ``min_fresh_seconds``.  Indexes absent from the map, and the
         ``file://`` local client, get no floor.
 
-        ``build_config`` is the project config a :pep:`517` build runs under;
+        ``build_config`` is the settings a :pep:`517` build runs under;
         a caller that resolves without building leaves it ``None``.
 
         ``cache_backend`` wins over ``cache_dir`` if both are given;

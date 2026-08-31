@@ -70,6 +70,7 @@ if TYPE_CHECKING:
     from nab_provider.tags import TagSet
 
     from ..config import IndexOverride, PackageOverride
+    from ..inputs import ResolveInputs
     from ..lockfile import LockInput, PinShape, SdistArtifact, TargetLock
 
     _OverrideT = TypeVar("_OverrideT", PackageOverride, IndexOverride)
@@ -219,11 +220,9 @@ class NabBuildEnv:
     one ``installer.install`` per wheel.
 
     ``requires`` is the PEP 508 string list from
-    ``[build-system].requires``. ``config`` carries the indexes,
-    ``uploaded-prior-to`` window and other nab inputs from the outer
-    resolve; it is pruned (no local sources, no workspace, no
-    marker overlay) before the inner resolve so the build env is
-    computed against PyPI alone.
+    ``[build-system].requires``.  ``config`` carries the outer resolve's
+    settings, pruned of declared sources, constraints and group selection
+    so the build env resolves against the configured indexes alone.
 
     ``offline`` refuses to populate the env at all, since every build
     requirement would have to come off the network.  An empty
@@ -248,7 +247,7 @@ class NabBuildEnv:
         self,
         requires: list[str],
         *,
-        config: NabProjectConfig,
+        config: ResolveInputs,
         offline: bool = False,
         transport_factory: Callable[[], AsyncHttpTransport] = Urllib3AsyncTransport,
         chain: BuildChain = (),
@@ -661,7 +660,7 @@ def _chain_suffix(chain: BuildChain) -> str:
 
 
 def _wheel_barring_dist_policy(
-    config: NabProjectConfig, pin: IndexPin
+    inputs: ResolveInputs, pin: IndexPin
 ) -> DistPolicy | None:
     """Return the ``dist-policy`` in force for ``pin`` when it bars wheels.
 
@@ -682,7 +681,7 @@ def _wheel_barring_dist_policy(
     policy = next(
         (
             package.dist_policy
-            for package in config.package_overrides
+            for package in inputs.package_overrides
             if package.dist_policy is not None
             and package.name == canonical
             and version in package.version_range
@@ -691,7 +690,7 @@ def _wheel_barring_dist_policy(
     )
 
     if policy is None:
-        policy = _serving_index_dist_policy(config, pin.index)
+        policy = _serving_index_dist_policy(inputs, pin.index)
 
     if policy is DistPolicy.SDIST_ONLY or policy is DistPolicy.SDIST_INSTALL:
         return policy
@@ -699,7 +698,7 @@ def _wheel_barring_dist_policy(
 
 
 def _serving_index_dist_policy(
-    config: NabProjectConfig, pin_index: str
+    inputs: ResolveInputs, pin_index: str
 ) -> DistPolicy | None:
     """Return the ``dist-policy`` the index that served ``pin_index`` sets.
 
@@ -709,18 +708,18 @@ def _serving_index_dist_policy(
     indistinguishable to a pin, so neither is read.
     """
     serving = [
-        index for index in config.indexes if strip_userinfo(index.url) == pin_index
+        index for index in inputs.indexes if strip_userinfo(index.url) == pin_index
     ]
     if len(serving) != 1:
         return None
 
-    override = config.index_overrides.get(serving[0].name)
+    override = inputs.index_overrides.get(serving[0].name)
     return override.dist_policy if override is not None else None
 
 
-def _no_wheel_clause(config: NabProjectConfig, pin: IndexPin, label: str) -> str:
+def _no_wheel_clause(inputs: ResolveInputs, pin: IndexPin, label: str) -> str:
     """Return the opening of a refusal: why the env has no wheel of ``label``."""
-    barred_by = _wheel_barring_dist_policy(config, pin)
+    barred_by = _wheel_barring_dist_policy(inputs, pin)
     if barred_by is None:
         return f"{label} publishes no wheel this build host can install"
     return (
@@ -742,7 +741,7 @@ def _without_build_permission(override: _OverrideT) -> _OverrideT:
     return replace(override, build_policy=None)
 
 
-def _inner_resolve_config(config: NabProjectConfig) -> NabProjectConfig:
+def _inner_resolve_config(inputs: ResolveInputs) -> NabProjectConfig:
     """Return the config the build-requires resolve runs under.
 
     Only the fields named here cross into it: build deps come from the
@@ -750,18 +749,21 @@ def _inner_resolve_config(config: NabProjectConfig) -> NabProjectConfig:
     sources stay out.  The cutoff and the decision order cross because
     this resolve picks the backend that writes the metadata the outer
     resolve reads, and a lock reproduces only if this search does too.
+
+    It is a ``NabProjectConfig`` because the inner resolve enters
+    through ``resolve_for_targets``, which plans its own targets.
     """
     return NabProjectConfig(
-        indexes=config.indexes,
+        indexes=inputs.indexes,
         package_overrides=tuple(
-            _without_build_permission(override) for override in config.package_overrides
+            _without_build_permission(override) for override in inputs.package_overrides
         ),
         index_overrides={
             name: _without_build_permission(override)
-            for name, override in config.index_overrides.items()
+            for name, override in inputs.index_overrides.items()
         },
-        uploaded_prior_to=config.uploaded_prior_to,
-        decision_order=config.decision_order,
+        uploaded_prior_to=inputs.uploaded_prior_to,
+        decision_order=inputs.decision_order,
         dist_policy=DistPolicy.WHEEL_OR_SDIST,
         build_policy=BuildPolicy.NEVER,
     )

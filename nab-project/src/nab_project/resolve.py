@@ -87,6 +87,7 @@ from .config import (
     with_python_override,
 )
 from .fetch import FetchCoordinator
+from .inputs import ResolveInputs
 from .lockfile import LockInput, TargetLock
 
 if TYPE_CHECKING:
@@ -127,6 +128,13 @@ class _ConfiguredContext:
 
     name: str | None
     requirements: tuple[Requirement, ...]
+
+
+def _resolve_inputs(config: NabProjectConfig) -> ResolveInputs:
+    """Copy the settings nab-project resolves with off ``config``."""
+    return ResolveInputs(
+        **{name: getattr(config, name) for name in ResolveInputs.__match_args__}
+    )
 
 
 def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
@@ -200,7 +208,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
         index_routes=index_routes_from_config(config),
         index_cache_floors=index_cache_floors_from_config(config),
         on_fetch=progress.on_fetch if progress is not None else None,
-        build_config=config,
+        build_config=_resolve_inputs(config),
     ) as coordinator:
         return resolve_with_coordinator(
             coordinator,
@@ -250,17 +258,17 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     with its own marker machinery passes that instead and keeps
     ``packaging.markersets`` off the engine's path.
     """
-    effective = config if config is not None else NabProjectConfig()
-    with _source_root(cache_dir, effective) as source_root:
+    inputs = _resolve_inputs(config) if config is not None else ResolveInputs()
+    with _source_root(cache_dir, inputs) as source_root:
         settings = _EngineSettings(
             coordinator=coordinator,
-            config=effective,
+            inputs=inputs,
             source_root=source_root,
             align=align_across_targets,
             resolution=(
                 resolution_strategy
                 if resolution_strategy is not None
-                else effective.resolution
+                else inputs.resolution
             ),
             marker_holds=(
                 dependency_marker_holds if marker_holds is None else marker_holds
@@ -274,7 +282,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
         fork_list = (
             list(forks) if forks is not None else [ResolveFork((), tuple(requirements))]
         )
-        constraints = [parse_requirement(text) for text in effective.constraints]
+        constraints = [parse_requirement(text) for text in inputs.constraints]
 
         return _resolve_with_micro_narrowing(
             list(targets),
@@ -288,7 +296,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
 
 @contextmanager
 def _source_root(
-    cache_dir: Path | None, config: NabProjectConfig
+    cache_dir: Path | None, inputs: ResolveInputs
 ) -> Iterator[Path | None]:
     """Yield the directory a declared VCS or archive source materialises under.
 
@@ -296,7 +304,7 @@ def _source_root(
     materialised to read its version and dependencies, so the run gets a
     temporary directory.
     """
-    if cache_dir is not None or not (config.vcs_sources or config.archive_sources):
+    if cache_dir is not None or not (inputs.vcs_sources or inputs.archive_sources):
         yield cache_dir
         return
 
