@@ -24,12 +24,11 @@ import errno
 import os
 import re
 import stat
-import sys
 import zipfile
 from email.parser import BytesParser, Parser
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
-from urllib.parse import ParseResult, unquote, urljoin, urlparse, urlsplit
+from urllib.parse import unquote, urljoin, urlparse, urlsplit
 
 from packaging.utils import canonicalize_name as _canonical
 
@@ -46,6 +45,7 @@ from .client import (
     is_readable_filename,
     zip_sdist_version,
 )
+from .file_urls import _parsed_file_url_path, is_file_url, parse_file_url
 
 if TYPE_CHECKING:
     from packaging.utils import NormalizedName
@@ -97,61 +97,6 @@ class NonLocalArtifactError(LocalIndexError):
     URLs, so the listing is legal, but a filesystem-backed index cannot fetch
     a remote artifact.
     """
-
-
-def is_file_url(url: str) -> bool:
-    """Return True when ``url`` is a ``file:`` URL in either RFC 8089 spelling.
-
-    An authority :func:`urlsplit` cannot parse, such as an unterminated IPv6
-    bracket, is not one.
-    """
-    try:
-        return urlsplit(url).scheme == "file"
-    except ValueError:
-        return False
-
-
-def parse_file_url(url: str) -> Path:
-    """Resolve a ``file://`` URL to an absolute filesystem path.
-
-    Uses :func:`urllib.request.url2pathname` so Windows-style drive
-    paths (``file:///C:/...``) and percent-encoded characters round-trip
-    cleanly across platforms. An empty or ``localhost`` authority (RFC
-    8089) means the local machine; any other host becomes a UNC share on
-    Windows and is rejected elsewhere.  :mod:`pathlib` accepts a decoded
-    null character, which names no file on any platform, so it raises
-    :class:`ValueError` here instead.
-    """
-    return _parsed_file_url_path(urlparse(url), url)
-
-
-def _parsed_file_url_path(parsed: ParseResult, url: str) -> Path:
-    """:func:`parse_file_url` for a caller that already holds the parse.
-
-    ``url`` is the string ``parsed`` came from and is quoted in the errors.
-    """
-    if parsed.scheme != "file":
-        msg = f"expected file:// URL, got {url!r}"
-        raise ValueError(msg)
-
-    # Deferred to keep urllib.request off the CLI's import path.
-    from urllib.request import url2pathname  # noqa: PLC0415
-
-    netloc = parsed.netloc
-    if not netloc or netloc == "localhost":
-        netloc = ""
-    elif sys.platform == "win32":
-        netloc = "\\\\" + netloc
-    else:
-        msg = f"non-local file:// URL is not supported on this platform: {url!r}"
-        raise ValueError(msg)
-
-    path = url2pathname(netloc + parsed.path)
-    if "\x00" in path:
-        msg = f"file:// URL decodes to a path containing a null character: {url!r}"
-        raise ValueError(msg)
-
-    return Path(path)
 
 
 def _resolve_served_path(url: str) -> Path:

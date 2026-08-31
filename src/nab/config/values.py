@@ -17,7 +17,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, TypeVar, cast
 from urllib.parse import urlsplit
 
-from nab_index.local_index import is_file_url
+from nab_index.file_urls import is_file_url
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,

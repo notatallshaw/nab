@@ -130,6 +130,14 @@ _RESOLVE_STACK = (
     "tomli_w",
 )
 
+# Reading an index URL only needs to know whether it says ``file:``, which
+# is why :mod:`nab_index.file_urls` exists apart from the client.
+_INDEX_READER = (
+    "nab_index.local_index",
+    "nab_index.client",
+    "zipfile",
+)
+
 _PROJECT = '[project]\nname = "probe"\nversion = "0.1"\ndependencies = []\n'
 
 
@@ -233,3 +241,13 @@ def test_a_settings_command_loads_no_resolve_stack(
     (tmp_path / "pyproject.toml").write_text(_PROJECT, encoding="utf-8")
 
     assert _run(_HELD_PROBE, ",".join(_RESOLVE_STACK), *line, cwd=tmp_path) == ""
+
+
+@pytest.mark.parametrize("line", [("cache", "dir"), ("config", "list")])
+def test_a_settings_command_loads_no_index_reader(
+    line: tuple[str, ...], tmp_path: Path
+) -> None:
+    """Probe F: neither command holds the reader, which only fetching needs."""
+    (tmp_path / "pyproject.toml").write_text(_PROJECT, encoding="utf-8")
+
+    assert _run(_HELD_PROBE, ",".join(_INDEX_READER), *line, cwd=tmp_path) == ""
