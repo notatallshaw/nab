@@ -67,9 +67,9 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from nab_index.transport import AsyncHttpTransport
+    from nab_provider.overrides import IndexOverride, PackageOverride
     from nab_provider.tags import TagSet
 
-    from ..config import IndexOverride, PackageOverride
     from ..inputs import ResolveInputs
     from ..lockfile import LockInput, PinShape, SdistArtifact, TargetLock
 

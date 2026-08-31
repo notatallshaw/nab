@@ -6,7 +6,8 @@ from dataclasses import replace
 
 from nab_index.client import WheelFile
 from nab_project._testing.coordinator_fake import make_coordinator
-from nab_project.config import NabProjectConfig, enforce_build_policy_for_targets
+from nab_project.build_policy import enforce_build_policy_for_targets
+from nab_project.config import NabProjectConfig
 from nab_project.lockfile import build_pylock
 from nab_project.resolve import build_lock_input, resolve_with_coordinator
 from nab_provider._vendor.packaging.pylock import Package, Pylock

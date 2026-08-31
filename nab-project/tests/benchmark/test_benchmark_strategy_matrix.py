@@ -1466,9 +1466,7 @@ def test_benchmark_config_combines_routing_and_build_policy() -> None:
     assert overrides["demo-pkg"].build_policy is module.BuildPolicy.BUILD_REMOTE
     assert overrides["build-only"].index is None
     assert overrides["build-only"].build_policy is module.BuildPolicy.BUILD_REMOTE
-    assert module.index_routes_from_config(config) == [
-        module.IndexRoute("demo-pkg", "private")
-    ]
+    assert module.index_routes(config) == [module.IndexRoute("demo-pkg", "private")]
 
 
 def test_benchmark_config_requires_an_explicit_sdist_trust_policy() -> None:
@@ -2849,7 +2847,7 @@ def test_resolve_scenario_coordinates_config_target_and_constraints(
     assert seen["coordinator"] == {
         "indexes": list(config.indexes),
         "cache_dir": module.CACHE_DIR,
-        "index_routes": module.index_routes_from_config(config),
+        "index_routes": module.index_routes(config),
     }
     assert seen["provider_coordinator"] is coordinator
     provider_kwargs = seen["provider"]
@@ -4598,7 +4596,7 @@ def test_standard_canary_and_profile_build_the_same_project_config() -> None:
     assert (
         standard_execution.config.indexes[0].serialization is SimpleSerialization.HTML
     )
-    assert standard.index_routes_from_config(standard_execution.config) == [
+    assert standard.index_routes(standard_execution.config) == [
         IndexRoute("demo-pkg", "private"),
         IndexRoute("other-package", "private"),
     ]
