@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 if TYPE_CHECKING:
+    from nab_project.config import NabProjectConfig
     from nab_provider.target import ResolveTarget
 
 if sys.version_info >= (3, 11):
@@ -60,8 +61,7 @@ from benchmark_host import (
 )
 
 from nab_index.httpx_async_transport import HttpxAsyncTransport
-from nab_project.config import NabProjectConfig, index_routes_from_config
-from nab_project.fetch import FetchCoordinator
+from nab_project.fetch import FetchCoordinator, index_routes
 from nab_provider._vendor.packaging.markers import default_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
@@ -319,7 +319,7 @@ def run_one(
         HttpxAsyncTransport(),
         indexes=list(config.indexes),
         cache_dir=CACHE_DIR,
-        index_routes=index_routes_from_config(config),
+        index_routes=index_routes(config),
     ) as coordinator:
         provider = build_benchmark_provider(
             coordinator,
@@ -367,7 +367,7 @@ def run_one(
                 "indexes": benchmark_index_settings(config.indexes),
                 "index_routes": [
                     {"name": route.name, "index": route.index}
-                    for route in index_routes_from_config(config)
+                    for route in index_routes(config)
                 ],
                 "build_policy_overrides": {
                     override.name: override.build_policy.value

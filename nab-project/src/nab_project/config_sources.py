@@ -60,6 +60,31 @@ from ._toml import tool_nab_section
 from ._value import ValueType
 from .fetch import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL
 from .paths import PathState, is_usable_path_name, path_state
+from .values import (
+    DURATION_PATTERN,
+    check_package_override_overlap,
+    parse_archive_sources,
+    parse_base_group,
+    parse_build_group,
+    parse_conflicts,
+    parse_constraints,
+    parse_dist_policy_global,
+    parse_enum,
+    parse_environment,
+    parse_index_overrides,
+    parse_indexes,
+    parse_local_sources,
+    parse_marker_environment,
+    parse_matrix,
+    parse_package_rules,
+    parse_packages_sugar,
+    parse_requires_python,
+    parse_string_list,
+    parse_uploaded_prior_to,
+    parse_vcs,
+    parse_vcs_sources,
+    parse_workspace,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -345,11 +370,9 @@ def _parse_path(value: Any, where: str) -> Path:
 
 
 def _parse_resolution(value: Any, where: str) -> ResolutionStrategy:
-    from .config import _parse_enum as _impl  # noqa: PLC0415 (config import cycle)
-
     # Unlike the other enum rows, this message names the source location, not the key.
     return _delegate(
-        lambda: _impl(where, value, ResolutionStrategy, ResolutionStrategy.HIGHEST)
+        lambda: parse_enum(where, value, ResolutionStrategy, ResolutionStrategy.HIGHEST)
     )
 
 
@@ -391,12 +414,12 @@ def _parse_max_concurrency(value: Any, where: str) -> int:
 
 
 def _delegate(call: Callable[[], Any]) -> Any:
-    """Run a ``config.py`` parse helper, re-typing its error for the registry.
+    """Run a :mod:`nab_project.values` parser, re-typing its error for the registry.
 
-    The rows reuse the parse helpers in :mod:`nab_project.config`, so a value
-    and its validation wording match the pyproject parse path where there is
-    one.  Those helpers raise :class:`config.ConfigError` and the registry
-    contract is :class:`SourceConfigError`, so re-raise with the same message.
+    The rows reuse those parsers so a value and its validation wording match
+    the pyproject parse path where there is one.  They raise
+    :class:`ConfigError` and the registry contract is
+    :class:`SourceConfigError`, so re-raise with the same message.
     """
     try:
         return call()
@@ -406,29 +429,21 @@ def _delegate(call: Callable[[], Any]) -> Any:
 
 def _parse_mode(value: Any, where: str) -> ResolveMode:
     del where
-    from .config import _parse_enum as _impl  # noqa: PLC0415 (config import cycle)
-
-    return _delegate(lambda: _impl("mode", value, ResolveMode, ResolveMode.SPECIFIC))
+    return _delegate(
+        lambda: parse_enum("mode", value, ResolveMode, ResolveMode.SPECIFIC)
+    )
 
 
 def _parse_requires_python(value: Any, where: str) -> str | None:
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_requires_python as _impl,
-    )
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_requires_python(value))
 
 
 def _parse_dist_policy(value: Any, where: str) -> tuple[DistPolicy, bool]:
     # The scalar-or-table dist-policy folds the sdist-trust bool, so the
     # registry value is the (policy, trust) pair the global parser returns.
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_dist_policy_global as _impl,
-    )
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_dist_policy_global(value))
 
 
 def _parse_build_requires_depth(value: Any, where: str) -> int:
@@ -447,64 +462,51 @@ def _parse_build_policy(value: Any, where: str) -> BuildPolicy:
     # never for a declared target is a post-merge transform applied over the
     # merged config, not this row.
     del where
-    from .config import _parse_enum as _impl  # noqa: PLC0415 (config import cycle)
-
     return _delegate(
-        lambda: _impl("build-policy", value, BuildPolicy, BuildPolicy.BUILD_LOCAL)
+        lambda: parse_enum("build-policy", value, BuildPolicy, BuildPolicy.BUILD_LOCAL)
     )
 
 
 def _parse_decision_order(value: Any, where: str) -> DecisionOrder:
     del where
-    from .config import _parse_enum as _impl  # noqa: PLC0415 (config import cycle)
-
     return _delegate(
-        lambda: _impl("decision-order", value, DecisionOrder, DecisionOrder.ARRIVAL)
+        lambda: parse_enum(
+            "decision-order", value, DecisionOrder, DecisionOrder.ARRIVAL
+        )
     )
 
 
 def _parse_uploaded_prior_to(value: Any, where: str) -> Any:
     """Parse ``uploaded-prior-to`` without re-anchoring relative durations.
 
-    A ``P<n>D`` duration anchors to the lock at resolve time
-    (config._parse_uploaded_prior_to threads the lockfile anchor); the
-    registry merely gates/displays the key and must not silently
-    re-anchor it to ``now``.  So a relative duration is carried as its
-    raw string (the cross-file conflict check compares the raw strings, so
-    identical durations match and different ones conflict), and only an
-    absolute datetime is normalised through the shared parser.  The real
-    resolve still parses the value with the proper anchor via
-    ``read_pyproject_config``.
+    A ``P<n>D`` duration anchors to the lockfile at resolve time, and the
+    registry merely gates and displays the key, so it must not silently
+    re-anchor one to ``now``.  A relative duration is carried as its raw
+    string (the cross-file conflict check compares raw strings, so identical
+    durations match and different ones conflict), and only an absolute
+    datetime is normalised through the shared parser.
     """
     del where
-    from .config import _DURATION_PATTERN  # noqa: PLC0415 (config import cycle)
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_uploaded_prior_to as _impl,
-    )
-
-    if isinstance(value, str) and _DURATION_PATTERN.match(value):
+    if isinstance(value, str) and DURATION_PATTERN.match(value):
         # On the resolve path the active anchor is set, so resolve the
         # relative duration to its absolute cutoff now; the inspector
         # leaves the anchor unset and carries the raw string for display
         # (its now-anchor would be misleading in a stored value).
         if _RESOLVE_ANCHOR.get() is not None:
-            return _delegate(lambda: _impl(value, anchor=_current_anchor()))
+            return _delegate(
+                lambda: parse_uploaded_prior_to(value, anchor=_current_anchor())
+            )
         return value
     # Absolute datetime / TOML offset-datetime: anchor is irrelevant, but
     # the helper requires one, so pass a placeholder it never reads.
-    return _delegate(lambda: _impl(value, anchor=_current_anchor()))
+    return _delegate(lambda: parse_uploaded_prior_to(value, anchor=_current_anchor()))
 
 
 def _parse_marker_environment(value: Any, where: str) -> Mapping[str, str]:
-    # Name-keyed table (PEP 508 marker var -> str).  Delegates to the
-    # single-environment parser so validation (string->string, known
-    # marker vars) is identical to the pyproject path.
+    # Name-keyed table (PEP 508 marker var -> str), validated
+    # (string->string, known marker vars) as on the pyproject path.
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_marker_environment as _impl,
-    )
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_marker_environment(value))
 
 
 def _parse_environment(value: Any, where: str) -> Mapping[str, Any]:
@@ -513,84 +515,54 @@ def _parse_environment(value: Any, where: str) -> Mapping[str, Any]:
     # the axes merge sub-key by sub-key across the ladder and a ``--python``
     # override moves only the python axis.
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_environment as _impl,
-    )
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_environment(value))
 
 
 def _parse_vcs(value: Any, where: str) -> Any:
-    # Nested table (policy, allowed-schemes, allowed-repos, require-pin).
-    # Delegates to config._parse_vcs, returning the frozen VcsConfig.
+    # Nested table (policy, allowed-schemes, allowed-repos, require-pin),
+    # folded into the frozen VcsConfig.
     del where
-    from .config import _parse_vcs as _impl  # noqa: PLC0415 (config import cycle)
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_vcs(value))
 
 
 def _parse_workspace(value: Any, where: str) -> Any:
-    # Nested table (members).  Delegates to config._parse_workspace,
-    # returning a WorkspaceConfig or None.  The discovery walk-up is a
-    # post-merge transform applied by read_pyproject_config, never this
-    # row, so the registry only folds the declared table.
+    # Nested table (members), folded into a WorkspaceConfig or None.  The
+    # discovery walk-up is a post-merge transform, never this row, so the
+    # registry only folds the declared table.
     del where
-    from .config import _parse_workspace as _impl  # noqa: PLC0415 (config import cycle)
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_workspace(value))
 
 
 def _parse_constraints(value: Any, where: str) -> tuple[str, ...]:
-    # Array of PEP 508 strings.  Delegates to config._parse_constraints so
-    # the list-of-strings shape check and the per-item PEP 508 validation
-    # (and their messages) are identical to the pyproject parse path.
+    # Array of PEP 508 strings, shape-checked and validated per item with
+    # the same messages as the pyproject parse path.
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_constraints as _impl,
-    )
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_constraints(value))
 
 
 def _parse_default_groups(value: Any, where: str) -> tuple[str, ...]:
-    # Array of group names.  Delegates to config._parse_string_list so the
-    # list-of-strings shape check and message match the pyproject path.
-    # The default-groups-vs-conflicts cross-check stays in the single
-    # environment parser (it needs both merged values), so this row only
-    # folds the list itself.
+    # Array of group names, shape-checked with the same message as the
+    # pyproject path.  The default-groups-vs-conflicts cross-check needs
+    # both merged values, so this row only folds the list itself.
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_string_list as _impl,
-    )
-
-    return _delegate(lambda: _impl("default-groups", value))
+    return _delegate(lambda: parse_string_list("default-groups", value))
 
 
 def _parse_base_group(value: Any, where: str) -> str | None:
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_base_group as _impl,
-    )
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_base_group(value))
 
 
 def _parse_build_group(value: Any, where: str) -> str | None:
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_build_group as _impl,
-    )
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_build_group(value))
 
 
 def _parse_indexes(value: Any, where: str) -> tuple[IndexConfig, ...]:
-    # One file's array-of-tables: config._parse_indexes validates shape,
-    # keys, and the same-name check into IndexConfig entries.
+    # One file's array-of-tables: shape, keys and the same-name check,
+    # folded into IndexConfig entries.
     del where
-    from .config import _parse_indexes as _impl  # noqa: PLC0415 (config import cycle)
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_indexes(value))
 
 
 def _parse_local_sources(value: Any, where: str) -> tuple[LocalSource, ...]:
@@ -599,12 +571,8 @@ def _parse_local_sources(value: Any, where: str) -> tuple[LocalSource, ...]:
     # share the project dir).  The cross-source local/vcs/archive name check
     # is a whole-config pass on the resolve path.
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_local_sources as _impl,
-    )
-
     base_dir = _declaring_dir()
-    return _delegate(lambda: _impl(value, pyproject_dir=base_dir))
+    return _delegate(lambda: parse_local_sources(value, pyproject_dir=base_dir))
 
 
 def _declaring_dir() -> Path:
@@ -621,21 +589,13 @@ def _declaring_dir() -> Path:
 def _parse_vcs_sources(value: Any, where: str) -> tuple[VcsSource, ...]:
     # One file's array-of-tables (name, url); same shape as local-sources.
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_vcs_sources as _impl,
-    )
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_vcs_sources(value))
 
 
 def _parse_archive_sources(value: Any, where: str) -> tuple[ArchiveSource, ...]:
     # One file's array-of-tables (name, url); same shape as vcs-sources.
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_archive_sources as _impl,
-    )
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_archive_sources(value))
 
 
 def _override_anchor() -> datetime:
@@ -658,29 +618,26 @@ def _override_anchor() -> datetime:
 
 # ``packages`` (name-keyed sugar) and ``package-rules`` (array-of-tables) are
 # two rows that both desugar into one PackageOverride tuple, so each parses
-# only its own surface and config validates the body and the within-surface
-# same-field overlap.  The cross-surface packages-vs-package-rules overlap
-# and the route-names-a-declared-index check both need the merged whole, so
-# they run on the resolve path in config._config_from_effective, not here.
+# only its own surface, with the body and the within-surface same-field
+# overlap validated by the shared parsers.  The cross-surface
+# packages-vs-package-rules overlap and the route-names-a-declared-index
+# check both need the merged whole, so they run on the resolve path in
+# config._config_from_effective, not here.
 def _parse_packages(value: Any, where: str) -> tuple[Any, ...]:
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_packages_sugar as _impl,
-    )
-
     return _delegate(
-        lambda: _checked_overrides(_impl(value, anchor=_override_anchor()))
+        lambda: _checked_overrides(
+            parse_packages_sugar(value, anchor=_override_anchor())
+        )
     )
 
 
 def _parse_package_rules(value: Any, where: str) -> tuple[Any, ...]:
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_package_rules as _impl,
-    )
-
     return _delegate(
-        lambda: _checked_overrides(_impl(value, anchor=_override_anchor()))
+        lambda: _checked_overrides(
+            parse_package_rules(value, anchor=_override_anchor())
+        )
     )
 
 
@@ -691,12 +648,8 @@ def _checked_overrides(overrides: Iterable[Any]) -> tuple[Any, ...]:
     merged, so it runs on the resolve path; this is the within-surface half,
     run here so ``nab config`` refuses the same file the resolve refuses.
     """
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _check_package_override_overlap as _check,
-    )
-
     built = tuple(overrides)
-    _check(built)
+    check_package_override_overlap(built)
     return built
 
 
@@ -706,34 +659,26 @@ def _parse_index_overrides(value: Any, where: str) -> Mapping[str, Any]:
     # key-names-a-declared-index check needs the merged indexes and so runs on
     # the resolve path.
     del where
-    from .config import (  # noqa: PLC0415 (config import cycle)
-        _parse_index_overrides as _impl,
-    )
-
-    return _delegate(lambda: _impl(value, anchor=_override_anchor()))
+    return _delegate(lambda: parse_index_overrides(value, anchor=_override_anchor()))
 
 
 def _parse_conflicts(value: Any, where: str) -> tuple[Any, ...]:
-    # One file's array-of-tables (member list/table + policy): config validates
-    # shape, members, and policy and runs the member-uniqueness check.  The
-    # default-groups-vs-conflicts check needs both merged values, so it runs
-    # on the resolve path.
+    # One file's array-of-tables (member list/table + policy): shape,
+    # members and policy are validated and the member-uniqueness check runs
+    # here.  The default-groups-vs-conflicts check needs both merged values,
+    # so it runs on the resolve path.
     del where
-    from .config import _parse_conflicts as _impl  # noqa: PLC0415 (config import cycle)
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_conflicts(value))
 
 
 def _parse_matrix(value: Any, where: str) -> Any:
     # Nested table (python, platforms, python-order, python-patches,
-    # implementations).  Delegates to config._parse_matrix so axis validation
-    # and eager expansion are identical to the pyproject path.  The
-    # mode/matrix mutual-requirement check needs both merged values, so it
-    # runs over the merged config rather than in this row.
+    # implementations), axis-validated and eagerly expanded as on the
+    # pyproject path.  The mode/matrix mutual-requirement check needs both
+    # merged values, so it runs over the merged config rather than in this
+    # row.
     del where
-    from .config import _parse_matrix as _impl  # noqa: PLC0415 (config import cycle)
-
-    return _delegate(lambda: _impl(value))
+    return _delegate(lambda: parse_matrix(value))
 
 
 def _render_conflicts(value: Sequence[Any]) -> str:

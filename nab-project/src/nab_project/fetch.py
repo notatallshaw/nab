@@ -65,6 +65,8 @@ __all__ = [
     "InMemoryIndex",
     "IndexRoute",
     "WarmSyncStats",
+    "index_cache_floors",
+    "index_routes",
 ]
 
 
@@ -131,6 +133,38 @@ def _resolve_routes(routes: list[IndexRoute]) -> dict[str, str]:
     routes for one name at parse time), so this is a straight projection.
     """
     return {canonicalize_name(entry.name): entry.index for entry in routes}
+
+
+def index_routes(inputs: ResolveInputs) -> list[IndexRoute]:
+    """Project the routing package overrides into coordinator :class:`IndexRoute`s.
+
+    Each per-package override that sets ``index`` contributes one route,
+    keyed by its bare package name.  A routing entry always uses a
+    bare-name requirement (parse-time guarantee), and the parse-time
+    non-overlap check forbids two routes for one package, so the resulting
+    route map has at most one entry per name.
+
+    Only ``package_overrides`` is read, so a ``NabProjectConfig`` satisfies
+    the parameter as well.
+    """
+    return [
+        IndexRoute(name=override.name, index=override.index)
+        for override in inputs.package_overrides
+        if override.index is not None
+    ]
+
+
+def index_cache_floors(inputs: ResolveInputs) -> dict[str, int]:
+    """Project per-index cache-freshness floors, keyed by index name.
+
+    Only ``index_overrides`` is read, so a ``NabProjectConfig`` satisfies
+    the parameter as well.
+    """
+    return {
+        name: override.assume_fresh_seconds
+        for name, override in inputs.index_overrides.items()
+        if override.assume_fresh_seconds is not None
+    }
 
 
 def _builds_remote_sdists(inputs: ResolveInputs | None) -> bool:

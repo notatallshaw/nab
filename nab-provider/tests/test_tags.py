@@ -23,6 +23,7 @@ from nab_provider.records import WheelFile
 from nab_provider.tags import (
     _PLATFORM_ARCH,
     _PLATFORM_KIND,
+    Libc,
     PlatformSpec,
     TagSet,
     _packaging_tags,
@@ -151,6 +152,20 @@ class TestPlatformSpecKnobsBelongToTheirPlatform:
         """
         with pytest.raises(ValueError, match=f"{message}.*higher than any release"):
             PlatformSpec(**kwargs)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize(
+        ("libc", "runs_on_libc", "message"),
+        [
+            ("musl", (2, 5), "musl has only a 1.x series"),
+            ("glibc", (1, 2), "glibc has only a 2.x series"),
+        ],
+    )
+    def test_a_libc_version_from_the_other_family_raises(
+        self, libc: Libc, runs_on_libc: tuple[int, int], message: str
+    ) -> None:
+        """Each family versions one major series, so the other names no tag."""
+        with pytest.raises(ValueError, match=message):
+            PlatformSpec("linux_x86_64", libc=libc, runs_on_libc=runs_on_libc)
 
     def test_unknown_platform_id_defers_to_the_matrix(self) -> None:
         """An unknown id is the matrix's error to report, not the spec's."""

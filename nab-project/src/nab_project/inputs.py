@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from nab_provider.overrides import IndexOverride, PackageOverride
     from nab_provider.policy import ArchiveSource, LocalSource, VcsSource
 
-    from .config import ConflictSet
+    from .conflicts import ConflictSet
 
 __all__ = ["ResolveInputs"]
 
