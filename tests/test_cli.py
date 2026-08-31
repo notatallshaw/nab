@@ -5391,6 +5391,22 @@ class TestPaintedEagerOutput:
         assert page.startswith("\033[1mUsage:\033[0m nab ")
         assert "\033[36m-q\033[0m, \033[36m--quiet\033[0m" in page
 
+    def test_color_always_reaches_a_refusal_the_walk_never_finished(self) -> None:
+        """A refusal reads ``--color`` too, though the line was never understood."""
+        _page, refusal = self._eager("lock", "--color", "always", "--nope", status=2)
+
+        assert refusal.startswith("\033[31mnab lock:\033[0m ")
+
+    def test_color_never_leaves_a_refusal_plain_on_a_terminal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--color never`` beats the terminal, the same as it does for a page."""
+        monkeypatch.delenv("NO_COLOR")
+
+        _page, refusal = self._eager("lock", "--color", "never", "--nope", status=2)
+
+        assert "\033[" not in refusal
+
     def test_a_flag_after_the_command_reaches_the_command_page(self) -> None:
         page, _err = self._eager("lock", "--color", "always", "--help")
 

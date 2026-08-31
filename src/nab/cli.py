@@ -87,7 +87,7 @@ def _outcome(argv: tuple[str, ...]) -> tuple[int, str, str]:
         parsed = parse(argv, spec.ROOT, spec.COMMANDS, _PROG)
     except UsageError as error:
         refusal: str = _load("nab._cli.diagnose").diagnose(
-            error, color=_painting(sys.stderr, _AUTO)
+            error, color=_painting(sys.stderr, _color_choice(error.root_options))
         )
         return _USAGE_STATUS, "", refusal
 

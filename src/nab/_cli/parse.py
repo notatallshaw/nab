@@ -51,9 +51,11 @@ class UsageError(Exception):
 
     ``token`` is the word the user typed and ``candidates`` the spellings
     it might have meant, both empty on an error no suggestion can help.
+    ``root_options`` holds the root flags read before the refusal, so a
+    refusal honours ``--color`` the way an eager page does.
     """
 
-    __slots__ = ("candidates", "message", "prog", "token")
+    __slots__ = ("candidates", "message", "prog", "root_options", "token")
 
     def __init__(
         self,
@@ -68,6 +70,7 @@ class UsageError(Exception):
         self.message = message
         self.token = token
         self.candidates = candidates
+        self.root_options: dict[str, object] = {}
 
 
 class Row:
@@ -193,13 +196,32 @@ def parse(
 ) -> Parsed:
     """Walk ``argv`` once and return what it means.
 
+    A refusal carries the root flags read before it, so ``--color`` reaches
+    a message the walk never finished reading the line for.
+    """
+    seen: dict[str, list[_Hit]] = {}
+    try:
+        return _walk(argv, root, commands, prog, seen)
+    except UsageError as error:
+        error.root_options = _root_options(seen)
+        raise
+
+
+def _walk(
+    argv: tuple[str, ...],
+    root: tuple[Spec, ...],
+    commands: dict[str, tuple[Spec, ...]],
+    prog: str,
+    seen: dict[str, list[_Hit]],
+) -> Parsed:
+    """Walk ``argv`` once and return what it means.
+
     The first operand at the root level is the command name, so a word that
     names no command is an unknown-command error rather than an operand.
     Raises :class:`UsageError` on the first thing it cannot read.
     """
     root_table = build(root, root=True)
     table = build(())
-    seen: dict[str, list[_Hit]] = {}
     operands: list[str] = []
     command = ""
     prog_path = prog
@@ -270,8 +292,12 @@ def _short_circuit(
     the one an eager page reads, and it decides nothing a bad token could
     break.
     """
-    options = {dest: _reduce(hits) for dest, hits in seen.items() if hits[-1][0].root}
-    return Parsed(command, {}, options, prog, eager)
+    return Parsed(command, {}, _root_options(seen), prog, eager)
+
+
+def _root_options(seen: dict[str, list[_Hit]]) -> dict[str, object]:
+    """Return the root flags read so far, as typed, before conversion runs."""
+    return {dest: _reduce(hits) for dest, hits in seen.items() if hits[-1][0].root}
 
 
 def _is_option(word: str) -> bool:
