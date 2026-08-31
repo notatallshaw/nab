@@ -96,6 +96,52 @@ def test_unknown_env_warning_fires_once(
     assert capsys.readouterr().err.count(_TYPO_WARNING) == 1
 
 
+@pytest.mark.parametrize(
+    ("flags", "verbosity", "warnings"),
+    [
+        pytest.param((), None, 1, id="default"),
+        pytest.param(("-q",), None, 1, id="quiet"),
+        pytest.param(("-qq",), None, 0, id="quiet-twice"),
+        pytest.param((), "silent", 0, id="env-silent"),
+    ],
+)
+def test_the_unknown_name_warning_sits_on_the_ordinary_warning_level(
+    flags: tuple[str, ...],
+    verbosity: str | None,
+    warnings: int,
+    hermetic_roots: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """``-qq`` and ``NAB_VERBOSITY=silent`` turn the typo warning off too.
+
+    It reports a mistake nab has already refused to act on and names the
+    fix in its own text, so it is a warning like the rest rather than a
+    line the run cannot switch off.
+    """
+    (hermetic_roots / "pyproject.toml").write_text(_PROJECT)
+    monkeypatch.setenv("NAB_OFLINE", "1")
+    if verbosity is not None:
+        monkeypatch.setenv("NAB_VERBOSITY", verbosity)
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "nab",
+            *flags,
+            "config",
+            "list",
+            "--path",
+            str(hermetic_roots / "pyproject.toml"),
+        ],
+    )
+
+    main()
+
+    assert capsys.readouterr().err.count(_TYPO_WARNING) == warnings
+
+
 _ENVIRON_READS = frozenset({"environ", "getenv"})
 
 
