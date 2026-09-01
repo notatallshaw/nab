@@ -1,11 +1,10 @@
-"""Marker algebra engine behind :class:`~packaging.markersets.MarkerSet`.
+"""Marker algebra engine behind :class:`~nab_markersets.markersets.MarkerSet`.
 
-A marker parses into a normalised op-tree over typed atoms. A value atom's
+A marker parses into a normalised op-tree over typed atoms, and a value atom's
 denotation is packaging's own ``_eval_op``, so a marker means here what it means
-there, and A1 lowers ``python_version`` onto the ``python_full_version`` axis.
-
-A decision partitions each axis the tree names into cells on which every atom is
-constant, then evaluates the tree over the cells of their product.
+there. A decision partitions each axis the tree names into cells on which every
+atom is constant, enumerates their product under ``max_cells``, and evaluates
+the tree once per cell.
 """
 
 from __future__ import annotations
@@ -18,41 +17,42 @@ from functools import lru_cache
 from itertools import pairwise, product
 from typing import TYPE_CHECKING, NamedTuple, cast
 
-from ._parser import Op, Variable, parse_marker
-from ._tokenizer import ParserSyntaxError
-from .markers import (
+from ._packaging import (
     InvalidMarker,
+    InvalidSpecifier,
+    InvalidVersion,
     Marker,
+    Op,
+    ParserSyntaxError,
+    Specifier,
     UndefinedComparison,
     UndefinedEnvironmentName,
+    Value,
+    Variable,
+    Version,
     _eval_op,
+    canonicalize_name,
+    parse_marker,
 )
-from .specifiers import InvalidSpecifier, Specifier
-from .utils import canonicalize_name
-from .version import InvalidVersion, Version
+from .errors import IntractableMarkerSet, UnserializableMarkerSet
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Mapping, Sequence
+    from collections.abc import Container, Iterable, Iterator, Mapping, Sequence
+    from typing import TypeAlias
 
+    # packaging's parse tree, narrowed to what ``parse_marker`` builds. Its own
+    # ``MarkerAtom`` recurses through ``Sequence``, which admits a tuple and so
+    # blocks the isinstance narrowing the walkers below rely on.
+    MarkerOperand: TypeAlias = "Variable | Value"
+    MarkerComparison: TypeAlias = "tuple[MarkerOperand, Op, MarkerOperand]"
+    MarkerNode: TypeAlias = "MarkerComparison | str | list[MarkerNode]"
 
-class IntractableMarkerSet(ValueError):
-    """The set is too complex to decide within the budget.
-
-    Raised rather than hanging or failing obscurely, for any budget the algebra
-    runs under: a cell cap, the work meter, the interpreter's stack, and the
-    digit parse limit.
-
-    Subclasses :class:`ValueError`, as packaging's marker exceptions do.
-    """
-
-
-class UnserializableMarkerSet(ValueError):
-    """The set has no marker-string spelling.
-
-    Raised for the empty set and for complements the grammar cannot express,
-    rather than emitting a string for some other set. Subclasses
-    :class:`ValueError` to match packaging's marker exceptions.
-    """
+    # An axis is a variable's domain, named by its kind. A node key is the
+    # structural key two trees of the same shape share.
+    Axis: TypeAlias = "tuple[str, ...]"
+    NodeKey: TypeAlias = "tuple[object, ...]"
+    AtomKey: TypeAlias = "tuple[str, str, str, bool, bool, str, str, bool]"
+    ClauseKey: TypeAlias = "tuple[AtomKey, ...]"
 
 
 # Axis kinds. Atoms on one axis share a partition and are constant on each cell.
@@ -65,11 +65,9 @@ DOMAIN_STRING = "string"
 DOMAIN_TWIN = "version_or_string"
 DOMAIN_SET = "set"
 
-# Every variable in packaging's marker grammar, typed to a domain. The twins,
-# ``implementation_version`` and ``platform_release``, dispatch as versions yet
-# may hold an arbitrary string, so they also carry the string fall-through.
-# ``python_version`` and ``python_full_version`` always receive a PEP 440 value,
-# so they stay version-only.
+# Every variable in packaging's marker grammar, typed to a domain. The twins
+# dispatch as versions yet may hold an arbitrary string, so they also carry the
+# string fall-through.
 DOMAIN_REGISTRY: dict[str, str] = {
     "implementation_name": DOMAIN_STRING,
     "implementation_version": DOMAIN_TWIN,
@@ -86,6 +84,10 @@ DOMAIN_REGISTRY: dict[str, str] = {
     "extras": DOMAIN_SET,
     "dependency_groups": DOMAIN_SET,
 }
+
+# Stands for both "this environment supplies no value" and "the enumeration
+# found no cell", neither of which None can say.
+_MISSING = object()
 
 _MEMBERSHIP = frozenset({"in", "not in"})
 _ORDERED_UNDEFINED = frozenset({"~=", "==="})
@@ -171,10 +173,8 @@ def _oversized_numeric(text: str) -> bool:
 # ---------------------------------------------------------------------------- atoms
 
 
-# A strong table would hold every distinct atom the process ever built, so the
-# values are weak and an entry lives only while its atom does. The lock stops
-# two threads minting rival atoms for one key, which the algebra would read as
-# two leaves.
+# Weak, so an entry lives only while its atom does. The lock stops two threads
+# minting rival atoms for one key, which the algebra would read as two leaves.
 _INTERNED: weakref.WeakValueDictionary[
     tuple[str, str, str, str, str, bool, bool, bool], Atom
 ] = weakref.WeakValueDictionary()
@@ -185,14 +185,8 @@ class Atom:
     """A normalised leaf whose ``holds`` gives its denotation on one point.
 
     Interned on its fields, so two equal atoms are one object and equality is
-    identity.
-
-    Its version pool is minted lazily and is the only mutation. That pool is a
-    pure function of the same fields, so sharing it is sound.
-
-    Truth is memoised on :class:`Memo` and never here: an atom outlives any one
-    operation, and its truth depends on the int-string limit, which
-    :func:`_apply` keys on and an interned object could not.
+    identity. The lazily minted version pool is the only mutation, and a pure
+    function of those same fields, so sharing is sound.
     """
 
     __slots__ = (
@@ -210,7 +204,7 @@ class Atom:
 
     kind: str
     variable: str  # axis variable (python_version lowers to python_full_version)
-    origin: str  # the parser's spelling, for env lookup and serialisation
+    origin: str  # the variable as written
     op: str
     literal: str
     swapped: bool
@@ -269,11 +263,10 @@ class Atom:
         """Return the axis this atom partitions and is constant on.
 
         A substring test on a string variable joins that variable's value axis,
-        so the substring test and the value comparison decide on one point.
-
-        On a version-dispatch variable that test keeps a boolean axis of its own
-        per literal, because the values embedding a literal are not enumerable
-        from it.
+        so both readings of the variable are decided on one point. On a
+        version-dispatch variable it keeps a boolean axis of its own, one per
+        literal, because the values that embed a literal are not enumerable
+        from the literals alone.
         """
         if self.kind == AXIS_VALUE:
             return (AXIS_VALUE, self.variable)
@@ -293,7 +286,7 @@ class Atom:
         if self.kind == AXIS_VALUE:
             return _holds_value(self, str(point))
         if self.kind == AXIS_SET:
-            member = self.literal in point  # type: ignore[operator]
+            member = self.literal in cast("Container[str]", point)
             return member if self.positive else not member
         present = self.literal in point if isinstance(point, str) else bool(point)
         return present if self.positive else not present
@@ -313,6 +306,12 @@ class Atom:
 
 
 def _holds_value(atom: Atom, text: str) -> bool:
+    """Whether ``atom`` holds where its variable takes ``text``.
+
+    ``derive_mm`` truncates the point to major.minor first, for the
+    ``python_version`` reading of a full version, and ``swapped`` puts the
+    literal on the left, which packaging's operator table is not symmetric in.
+    """
     op, literal = atom.op, atom.literal
     if atom.derive_mm:
         mm = derive_major_minor(text)
@@ -327,20 +326,20 @@ def _holds_value(atom: Atom, text: str) -> bool:
 # --------------------------------------------------------------------- the op-tree
 
 # Two trees with the same ``key()`` have the same shape and atoms, so a decision
-# recorded under one key serves the other. A node mints its key once and keeps it.
+# recorded under one key serves the other.
 
 
 class BoolConst:
-    """A first-class TRUE/FALSE, produced eagerly wherever a combination collapses."""
+    """A TRUE or FALSE constant."""
 
     __slots__ = ("_key", "value")
 
-    def __init__(self, value: bool) -> None:
+    def __init__(self, *, value: bool) -> None:
         self.value = value
-        self._key: tuple | None = None
+        self._key: NodeKey | None = None
 
-    def key(self) -> tuple:
-        """Return this node's structural key."""
+    def key(self) -> NodeKey:
+        """Structural key."""
         if self._key is None:
             self._key = ("c", self.value)
         return self._key
@@ -353,10 +352,10 @@ class AtomLeaf:
 
     def __init__(self, atom: Atom) -> None:
         self.atom = atom
-        self._key: tuple | None = None
+        self._key: NodeKey | None = None
 
-    def key(self) -> tuple:
-        """Return this node's structural key."""
+    def key(self) -> NodeKey:
+        """Structural key."""
         if self._key is None:
             self._key = ("a", self.atom)
         return self._key
@@ -369,10 +368,10 @@ class AndNode:
 
     def __init__(self, children: tuple[Formula, ...]) -> None:
         self.children = children
-        self._key: tuple | None = None
+        self._key: NodeKey | None = None
 
-    def key(self) -> tuple:
-        """Return this node's structural key."""
+    def key(self) -> NodeKey:
+        """Structural key."""
         if self._key is None:
             self._key = ("&", tuple(child.key() for child in self.children))
         return self._key
@@ -385,26 +384,26 @@ class OrNode:
 
     def __init__(self, children: tuple[Formula, ...]) -> None:
         self.children = children
-        self._key: tuple | None = None
+        self._key: NodeKey | None = None
 
-    def key(self) -> tuple:
-        """Return this node's structural key."""
+    def key(self) -> NodeKey:
+        """Structural key."""
         if self._key is None:
             self._key = ("|", tuple(child.key() for child in self.children))
         return self._key
 
 
 class NotNode:
-    """A structural complement, negated per cell at decision time."""
+    """A structural complement."""
 
     __slots__ = ("_key", "child")
 
     def __init__(self, child: Formula) -> None:
         self.child = child
-        self._key: tuple | None = None
+        self._key: NodeKey | None = None
 
-    def key(self) -> tuple:
-        """Return this node's structural key."""
+    def key(self) -> NodeKey:
+        """Structural key."""
         if self._key is None:
             self._key = ("n", self.child.key())
         return self._key
@@ -455,7 +454,7 @@ def make_or(children: Iterable[Formula]) -> Formula:
 
 
 def make_not(node: Formula) -> Formula:
-    """Structural complement with eager double-negation and constant folding."""
+    """Complement a formula, folding double negation and constants."""
     if isinstance(node, BoolConst):
         return FALSE if node.value else TRUE
     if isinstance(node, NotNode):
@@ -466,20 +465,36 @@ def make_not(node: Formula) -> Formula:
 # ------------------------------------------------------------------- construction
 
 
-def _parse_ast(source: str | Marker) -> list | None:
-    """Dispatch a marker to packaging's parser, or None for an empty marker."""
-    if isinstance(source, Marker):
+def _is_marker(source: object) -> bool:
+    """Whether ``source`` is a packaging ``Marker``, from either copy.
+
+    Matched on the class rather than by ``isinstance``, because testing against
+    the copy that lost the probe would mean importing its marker stack, which
+    is the second copy this package exists to leave unloaded.
+    """
+    kind = type(source)
+    return kind.__qualname__ == "Marker" and kind.__module__.endswith(
+        "packaging.markers"
+    )
+
+
+def _parse_ast(source: object) -> list[MarkerNode] | None:
+    """Parse a marker with packaging; None for an empty marker."""
+    if _is_marker(source):
         source = str(source)
     elif not isinstance(source, str):
-        msg = f"expected str or Marker, got {type(source).__name__}"
+        kind = type(source)
+        msg = (
+            "expected str or packaging.markers.Marker, got "
+            f"{kind.__module__}.{kind.__qualname__}"
+        )
         raise TypeError(msg)
     if not source.strip():
         return None
     try:
-        return parse_marker(source)
+        return cast("list[MarkerNode]", parse_marker(source))
     except ParserSyntaxError as exc:
-        # A malformed marker raises the public InvalidMarker, as packaging does,
-        # not the tokenizer's internal syntax error.
+        # Match packaging: a malformed marker raises InvalidMarker.
         raise InvalidMarker(str(exc)) from exc
 
 
@@ -503,25 +518,25 @@ def variable_names(source: str | Marker) -> frozenset[str]:
     return frozenset(names)
 
 
-def _collect_variables(node: list, names: set[str]) -> None:
+def _collect_variables(node: list[MarkerNode], names: set[str]) -> None:
     for item in node:
         if isinstance(item, str):
             continue
-        if isinstance(item, list):
+        if not isinstance(item, tuple):
             _collect_variables(item, names)
-        else:
-            lhs, _op, rhs = item
-            if isinstance(lhs, Variable):
-                names.add(lhs.value)
-            if isinstance(rhs, Variable):
-                names.add(rhs.value)
-            elif not isinstance(lhs, Variable) and rhs.value in DOMAIN_REGISTRY:
-                # packaging reads a literal-vs-literal comparison's right operand
-                # as an environment key when it names a variable.
-                names.add(rhs.value)
+            continue
+
+        lhs, _op, rhs = item
+        if isinstance(lhs, Variable):
+            names.add(lhs.value)
+        if isinstance(rhs, Variable):
+            names.add(rhs.value)
+        elif not isinstance(lhs, Variable) and rhs.value in DOMAIN_REGISTRY:
+            # packaging reads a literal-vs-literal right operand as an environment key.
+            names.add(rhs.value)
 
 
-def _convert(node: list) -> Formula:
+def _convert(node: list[MarkerNode]) -> Formula:
     or_groups: list[list[Formula]] = [[]]
     for item in node:
         if item == "or":
@@ -531,23 +546,29 @@ def _convert(node: list) -> Formula:
         elif isinstance(item, list):
             or_groups[-1].append(_convert(item))
         else:
-            or_groups[-1].append(_convert_atom(item))
+            # "and" and "or" are the only strings the grammar emits.
+            or_groups[-1].append(_convert_atom(cast("MarkerComparison", item)))
     return make_or(make_and(group) for group in or_groups)
 
 
-def _convert_atom(item: tuple) -> Formula:
+def _convert_atom(item: MarkerComparison) -> Formula:
+    """Return the atom or constant one parsed comparison denotes.
+
+    Which operand is the variable decides the atom; a comparison of two
+    literals has no variable and folds to a constant.
+    """
     lhs, op_node, rhs = item
     op = op_node.serialize()
     if isinstance(lhs, Variable):
-        # Variable-vs-variable keys off the left variable and treats the right
-        # variable's name as the literal, matching packaging.
+        # packaging compares against the right variable's name, not its value.
         return _make_atom(lhs.value, op, rhs.value, swapped=False)
     if isinstance(rhs, Variable):
         return _make_atom(rhs.value, op, lhs.value, swapped=True)
 
     # packaging reads the right operand as an environment key, so a quoted
-    # literal naming a known variable routes like a swapped atom. One naming
-    # none folds through the string table where packaging raises instead.
+    # literal naming a known variable routes like a swapped atom, and one naming
+    # none folds through the string operator table where packaging would raise
+    # UndefinedEnvironmentName.
     if rhs.value in DOMAIN_REGISTRY:
         return _make_atom(rhs.value, op, lhs.value, swapped=True)
     return BoolConst(value=_apply(lhs.value, op, rhs.value, key=""))
@@ -561,8 +582,7 @@ def _make_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Formul
     if op in _MEMBERSHIP:
         return _make_membership_atom(variable, op, literal, swapped=swapped)
 
-    # A single-segment probe stands in for the environment value: ``~=`` builds
-    # no specifier from one, so a swapped ``~=`` surfaces as undefined here.
+    # A version axis here seeds single-segment pool points, so the probe is one.
     _reject_undefined_operator(variable, op, literal, swapped=swapped, probe="0")
     if op == "===":
         msg = f"{op!r} is undefined on {variable!r} with literal {literal!r}"
@@ -579,12 +599,11 @@ def _make_python_version_atom(op: str, literal: str, *, swapped: bool) -> Formul
         msg = f"{op!r} is undefined on 'python_version' with literal {literal!r}"
         raise UndefinedComparison(msg)
 
-    # A1-lowering maps python_version onto major.minor, so a two-segment probe
-    # matches the validity of the non-swapped ~= and === forms.
+    # A1 lowers onto major.minor, so the probe carries two segments.
     _reject_undefined_operator(
         "python_version", op, literal, swapped=swapped, probe="1.0"
     )
-    # A1: lower onto python_full_version, evaluated on the major.minor of the point.
+    # A1: lower onto python_full_version.
     return AtomLeaf(
         Atom(
             AXIS_VALUE,
@@ -622,15 +641,15 @@ def _make_set_atom(variable: str, op: str, literal: str, *, swapped: bool) -> Fo
     elif op in _MEMBERSHIP and swapped:
         positive = op == "in"
     else:
-        return FALSE  # a set variable in any non-membership form is constant False.
+        return FALSE  # every other form on a set variable is constant False.
     return AtomLeaf(Atom(AXIS_SET, variable, variable, op, name, positive=positive))
 
 
 def reject_oversized_version_literals(variable: str, literals: Sequence[str]) -> None:
     """Raise before an oversized numeric component reaches packaging.
 
-    A component past ``sys.get_int_max_str_digits()`` digits makes ``Version``
-    raise a bare ValueError; convert it to a bounded failure here.
+    Past ``sys.get_int_max_str_digits()`` digits, packaging's ``Version`` raises
+    a bare ValueError.
     """
     if is_version_dispatch(variable) and any(
         _oversized_numeric(literal) for literal in literals
@@ -665,6 +684,7 @@ def _reject_mint_overflow(literals: Sequence[str]) -> None:
 def _reject_undefined_operator(
     variable: str, op: str, literal: str, *, swapped: bool, probe: str
 ) -> None:
+    """Raise if ``op`` is undefined on ``literal``, tested against ``probe``."""
     if op not in _ORDERED_UNDEFINED:
         return
     reject_oversized_version_literals(variable, (literal,))
@@ -698,26 +718,21 @@ class _Decision(NamedTuple):
 class Memo:
     """The verdicts, partitions, atom truths and version parses a decision re-reads.
 
-    A run over related trees re-decides the same tree shapes and re-partitions
-    the same axes, so all four are memoised here. A decision makes its own
-    unless the caller shares one.
+    A decision makes its own unless the caller passes one to share; see
+    :class:`~nab_markersets.markersets.DecisionStore`.
     """
 
     __slots__ = ("decisions", "partitions", "truths", "versions")
 
     def __init__(self) -> None:
-        self.decisions: dict[tuple, _Decision] = {}
-        self.partitions: dict[tuple, list[Cell]] = {}
+        self.decisions: dict[tuple[NodeKey, int], _Decision] = {}
+        self.partitions: dict[tuple[Axis, tuple[Atom, ...], int], list[Cell]] = {}
         self.truths: dict[tuple[Atom, str], bool] = {}
         self.versions: dict[str, Version | None] = {}
 
 
 def _truth(atom: Atom, point: object, memo: Memo) -> bool:
-    """Return an atom's truth on one point.
-
-    A value-axis atom's is memoised for the operation's span; the others
-    short-circuit to :meth:`Atom.holds`.
-    """
+    """Return an atom's truth on one point, memoised for a value atom."""
     if atom.kind != AXIS_VALUE:
         return atom.holds(point)
     key = (atom, str(point))
@@ -730,10 +745,8 @@ def _truth(atom: Atom, point: object, memo: Memo) -> bool:
 def _pooled_version(text: str, memo: Memo) -> Version | None:
     """Return ``text`` parsed as a version, or None, memoised.
 
-    Keyed on text alone where :func:`_apply` also keys on the int-string limit.
-
-    Every text pooled here is an axis literal, a substring of one, or a point
-    minted from one, and a parse-limit guard bounds each before its read.
+    Keyed on text alone where :func:`_apply` also keys on the int-string limit,
+    because a parse-limit guard bounds every text pooled here before its read.
     """
     versions = memo.versions
     if text not in versions:
@@ -773,8 +786,8 @@ def _version_neighbors(text: str) -> list[str]:
     pre_part = f"{version.pre[0]}{version.pre[1]}" if version.pre is not None else ""
     out = [base, *_equal_twins(version)]
 
-    # Bumps stay in the literal's epoch: 1!3.9 bumps to 1!3.10, not 3.10, which
-    # sorts below and leaves the band above it unrepresented.
+    # Bumps stay in the literal's epoch: 1!3.9 bumps to 1!3.10, not 3.10, which sorts
+    # below and leaves the band above the literal unrepresented.
     prefix = f"{epoch}!" if epoch else ""
     bumps = [prefix + ".".join(str(x) for x in (*release[:-1], release[-1] + 1))]
     if len(release) > 1:
@@ -826,14 +839,12 @@ def _suffix_neighbors(version: Version, release_str: str, pre_part: str) -> list
 
 
 def _equal_twins(version: Version) -> list[str]:
-    """Mint the points that separate the literal's version reading from its string reading.
+    """Mint the points separating the literal's version reading from its string one.
 
     ``in``/``not in`` and an invalid specifier fall through to a raw string
-    test. Separating that reading from PEP 440 matching needs the release
-    zero-padded.
-
-    A local-tagged literal needs the local-stripped release too, since a
-    specifier built from a public point ignores a local label.
+    test, so separating that reading from PEP 440 matching needs the release
+    zero-padded. A local-tagged literal also needs the local-stripped release,
+    since a specifier built from a public point ignores a local label.
     """
     padded = version.__replace__(release=(*version.release, 0))
     if version.local is None:
@@ -844,14 +855,14 @@ def _equal_twins(version: Version) -> list[str]:
 def _release_between(vlow: Version, vhigh: Version) -> str:
     """Return a plain release ranking above every variant of ``vlow``.
 
-    Release ordering runs ahead of pre, post, dev and local, so extending
-    ``vlow``'s release by one outranks it whatever suffix it carries.
-
-    Padding to the wider release keeps the result under ``vhigh`` whenever the
-    two releases differ, that being the deepest place ``vhigh`` can differ.
-
-    Where the ends share a release, or across an epoch boundary, ``vhigh`` does
-    not bound it and the caller's ordering check rejects the candidate.
+    Release ordering runs ahead of pre, post, dev and local, so ``vlow``'s
+    release extended by one outranks ``vlow`` whatever suffix it carries. There
+    is no lowest such release: another zero can always be padded in. Within one
+    epoch the padding runs to the wider of the two releases, which is the
+    deepest place ``vhigh`` can differ, so the result stays under it whenever
+    the two releases differ at all. Across an epoch boundary ``vhigh``'s release
+    does not bound the candidate, so ``vlow``'s own width is enough. The caller
+    checks the ordering either way.
     """
     low = vlow.release
     width = len(low) if vlow.epoch != vhigh.epoch else max(len(low), len(vhigh.release))
@@ -863,12 +874,11 @@ def _release_between(vlow: Version, vhigh: Version) -> str:
 def _between(vlow: Version, low: str, vhigh: Version, memo: Memo) -> str | None:
     """Return a point strictly between two adjacent pool points, or None.
 
-    An exclusive comparison excludes its own bound's post, local, pre and dev
-    variants. Where the two points' releases differ, only a candidate whose own
-    release differs from both lands between them, so the plain release is tried
-    first.
-
-    The suffixed candidates fill a band whose ends share a release.
+    The plain release comes first because an exclusive ordered comparison
+    excludes its own bound's post, local, pre and dev variants, so a band whose
+    two ends share a release is the only one the suffixed candidates can fill.
+    Where the ends differ, only a version whose release differs from both is
+    admitted, and no suffix of ``vlow`` is.
     """
     for candidate in (
         _release_between(vlow, vhigh),
@@ -884,7 +894,7 @@ def _between(vlow: Version, low: str, vhigh: Version, memo: Memo) -> str | None:
     return None
 
 
-# The fixed points anchoring every pool below and above the literal bands.
+# The fixed low and high points every pool starts from.
 _POOL_ANCHORS: tuple[tuple[Version, str], ...] = tuple(
     (Version(text), text) for text in ("0", "0.dev0", "99999")
 )
@@ -923,9 +933,14 @@ def _version_pool(
 def _elevate_epochs(
     base: list[str], parsed: Sequence[tuple[Version, str]], max_cells: int
 ) -> list[str]:
-    # A1 lowers python_version here, so major.minor and full order diverge across
-    # an epoch boundary: 1!3.9 truncates to 3.9 yet outranks 3.14. Each point
-    # needs a twin in every epoch the pool reaches.
+    """Return ``base`` plus a twin of every point in every epoch the pool reaches.
+
+    Raises :class:`IntractableMarkerSet` when that outgrows ``max_cells``.
+    """
+    # A1 lowers python_version here, so major.minor and full ordering diverge across
+    # an epoch boundary: 1!3.9 truncates to 3.9 yet outranks 3.14. Each point needs a
+    # twin in every epoch the pool reaches, and the pool already carries one above
+    # the top literal, so the range runs two past it.
     epochs = {version.epoch for version, _ in parsed}
     targets = range(1, max(epochs) + 2)
 
@@ -942,7 +957,7 @@ def _elevate_epochs(
 def _membership_candidates(atom: Atom, memo: Memo) -> list[str]:
     subs = _substrings(atom.literal)
     if atom.derive_mm:
-        # A1 tests the major.minor, so a realisable point is a version substring.
+        # A1 tests a full version's major.minor; only version substrings are realisable.
         return [
             s for s in subs if _pooled_version(s.removesuffix(".*"), memo) is not None
         ]
@@ -964,8 +979,7 @@ def _dedupe_candidates(
     for candidate in candidates:
         if candidate in seen:
             continue
-        # A pure Version axis holds only PEP 440 versions, so a non-version
-        # candidate is unrealisable there; the twins keep every one.
+        # A pure Version axis holds only PEP 440 versions.
         if pure_version and _pooled_version(candidate, memo) is None:
             continue
         seen.add(candidate)
@@ -986,7 +1000,8 @@ def _unused_character(literals: Iterable[str]) -> str:
     """Return a character none of ``literals`` uses, counting up from ``!``.
 
     A marker literal can hold any character its quote style admits, so the walk
-    can run past printable ASCII. Any unused character serves.
+    can run past printable ASCII; the point only has to be a string no atom on
+    the axis matches by accident, and any unused character serves.
     """
     used = {char for literal in literals for char in literal}
     code = ord("!")
@@ -1000,12 +1015,12 @@ def _contains_candidates(
 ) -> list[str]:
     """Mint a point for each substring pattern the axis's contains atoms allow.
 
-    A separator none of ``literals`` uses joins one subset, so every occurrence
-    in the point falls in one piece.
-
-    The point then embeds that subset and what the subset embeds, equals no
-    literal, and is a substring of none. Every combination the atoms realise
-    together is some subset, so the axis reaches all of them.
+    A separator none of ``literals`` uses joins one subset of the substring
+    literals, so every occurrence inside the point falls in one piece: it
+    embeds that subset and whatever the subset embeds, equals no literal, and
+    is a substring of none. Any string embeds what one subset does, so with the
+    literals and their substrings the axis reaches every combination its atoms
+    can realise together.
     """
     names: list[str] = []
     seen: set[str] = set()
@@ -1067,7 +1082,7 @@ def _value_candidates(
         candidates.append(_other_representative(literals))
     candidates.extend(literals)
 
-    # Cap the enumeration across the axis, not per literal.
+    # Cap substring enumeration across the whole axis, not per literal.
     spent = 0
     for atom in atoms:
         if atom.kind == AXIS_VALUE and atom.op in _MEMBERSHIP:
@@ -1103,21 +1118,24 @@ def _value_candidates(
 def _reduce_cells(
     points: Iterable[object], atoms: Sequence[Atom], max_cells: int, memo: Memo
 ) -> list[Cell]:
+    """Return one cell per distinct truth vector ``atoms`` take over ``points``.
+
+    Points agreeing on every atom decide the same way, so the first of them
+    stands for the rest.
+    """
     points = list(points)
 
-    # The truth vector costs one holds() per atom per point.
     if len(points) * len(atoms) > max_cells:
         msg = (
             f"axis work {len(points)}x{len(atoms)} atoms exceeds max_cells={max_cells}"
         )
         raise IntractableMarkerSet(msg)
 
-    representatives: dict[tuple, object] = {}
+    representatives: dict[tuple[bool, ...], object] = {}
     for point in points:
         vector = tuple(_truth(atom, point, memo) for atom in atoms)
         representatives.setdefault(vector, point)
-        # Every one of the 2**len(atoms) truth vectors now has a representative;
-        # the remaining points can only repeat one.
+        # With all 2**len(atoms) vectors represented, later points only repeat one.
         if len(representatives) == 1 << len(atoms):
             break
     return [Cell(point, vector) for vector, point in representatives.items()]
@@ -1164,7 +1182,7 @@ def partition_boolean_axis(
 
 
 def _partition_axis(
-    axis: tuple, atoms: Sequence[Atom], max_cells: int, memo: Memo
+    axis: Axis, atoms: Sequence[Atom], max_cells: int, memo: Memo
 ) -> list[Cell]:
     kind = axis[0]
     if kind == AXIS_VALUE:
@@ -1174,9 +1192,8 @@ def _partition_axis(
     return partition_boolean_axis(atoms, max_cells, memo)
 
 
-# ``max_cells`` bounds one decision, the meter a whole simplify: every
-# enumeration charges what it is about to do. Thread-local, and unset outside a
-# simplify, so every other decision stays unmetered.
+# ``max_cells`` bounds one decision, the meter a whole simplify. Thread-local and
+# unset outside a simplify, so every other decision stays unmetered.
 _work_meter = threading.local()
 
 
@@ -1193,7 +1210,7 @@ def charge_work(units: int) -> None:
 
 
 def partition_axis(
-    axis: tuple, atoms: Sequence[Atom], max_cells: int, store: Memo
+    axis: Axis, atoms: Sequence[Atom], max_cells: int, store: Memo
 ) -> list[Cell]:
     """Partition one axis's domain into cells on which every atom is constant.
 
@@ -1222,10 +1239,10 @@ def guarded_product_size(sizes: Iterable[int], max_cells: int) -> int:
 
 
 def as_name_set(value: object) -> frozenset[str]:
-    """Normalise a set-variable value: a str is one name, PEP 685 canonical."""
+    """Normalise a set-variable value: a non-empty str is one PEP 685 name."""
     if isinstance(value, str):
         return frozenset({canonicalize_name(value)}) if value else frozenset()
-    return frozenset(canonicalize_name(name) for name in value)  # type: ignore[union-attr]
+    return frozenset(canonicalize_name(name) for name in cast("Iterable[str]", value))
 
 
 def _require(env: Mapping[str, object], key: str) -> object:
@@ -1237,24 +1254,16 @@ def _require(env: Mapping[str, object], key: str) -> object:
 
 
 def evaluate_atom(atom: Atom, env: Mapping[str, object]) -> bool:
-    """Evaluate one atom against a full environment (extras are sets).
-
-    A missing variable raises :class:`UndefinedEnvironmentName` on every axis,
-    as packaging does. A ``python_version`` atom prefers the
-    ``python_full_version`` key when the environment supplies both.
-    """
+    """Evaluate one atom against a full environment (extras are sets)."""
     if atom.kind == AXIS_VALUE:
         if atom.derive_mm and "python_full_version" not in env:
-            # A1 lowers python_version onto python_full_version; honour an env
-            # that supplies only the python_version key (the written variable).
+            # A1 lowers onto python_full_version; fall back to the written key.
             return atom.holds(_require(env, "python_version"))
         return atom.holds(_require(env, atom.variable))
     if atom.kind == AXIS_SET:
         return atom.holds(as_name_set(_require(env, atom.origin)))
-    return atom.holds(atom.literal in _require(env, atom.variable))  # type: ignore[operator]
-
-
-_MISSING = object()
+    names = cast("Container[str]", _require(env, atom.variable))
+    return atom.holds(atom.literal in names)
 
 
 # --------------------------------------------------------------------- walking
@@ -1278,10 +1287,7 @@ def collect_atoms(node: Formula) -> list[Atom]:
 
 
 def reject_oversized_literals(node: Formula, env: Mapping[str, object]) -> None:
-    """Raise the bounded guard for an oversized literal or env value.
-
-    Only atoms whose variable ``env`` supplies are checked.
-    """
+    """Raise the bounded guard for an oversized literal or env value in a tree."""
     for atom in collect_atoms(node):
         value = _atom_env_value(atom, env)
         if value is not _MISSING:
@@ -1297,16 +1303,8 @@ def membership_literals_of(node: Formula) -> frozenset[tuple[str, str]]:
     )
 
 
-def unprovided_variables(node: Formula, env: Mapping[str, object]) -> set[str]:
-    """Return the referenced variables an environment supplies no value for."""
-    return {
-        atom.origin
-        for atom in collect_atoms(node)
-        if _atom_env_value(atom, env) is _MISSING
-    }
-
-
 def _atoms_by_axis(atoms: list[Atom]) -> dict[tuple[str, ...], list[Atom]]:
+    """Group the distinct atoms by axis, keeping encounter order."""
     grouped: dict[tuple[str, ...], list[Atom]] = {}
     seen: dict[tuple[str, ...], set[Atom]] = {}
     for atom in atoms:
@@ -1357,7 +1355,7 @@ def _cell_space(node: Formula, max_cells: int, store: Memo) -> _CellSpace:
         return _CellSpace(axes, atomlists, partitions, 0)
 
     # Repeated atoms inflate the per-cell walk without inflating the cell
-    # product, so the guard multiplies in the leaf count.
+    # product, so the guard counts leaf occurrences too.
     units = guarded_product_size(
         (*(len(part) for part in partitions), len(atoms)), max_cells
     )
@@ -1426,6 +1424,7 @@ def witness(
 def _materialize(
     cell: Mapping[tuple[str, ...], Cell],
 ) -> dict[str, str | frozenset[str]]:
+    """Turn one cell into the environment :func:`witness` returns."""
     env: dict[str, str | frozenset[str]] = {}
     contains: dict[str, list[tuple[str, bool]]] = {}
     for axis, piece in cell.items():
@@ -1433,7 +1432,7 @@ def _materialize(
         if kind == AXIS_VALUE:
             env[axis[1]] = str(piece.point)
         elif kind == AXIS_SET:
-            env[axis[1]] = frozenset(piece.point)  # type: ignore[arg-type]
+            env[axis[1]] = frozenset(cast("Iterable[str]", piece.point))
         else:
             contains.setdefault(axis[1], []).append((axis[2], bool(piece.point)))
 
@@ -1471,7 +1470,7 @@ def _restrict_value(atom: Atom, env: Mapping[str, object]) -> bool | None:
     if atom.kind == AXIS_SET:
         return atom.holds(as_name_set(value))
     if atom.kind == AXIS_CONTAINS:
-        return atom.holds(atom.literal in value)  # type: ignore[operator]
+        return atom.holds(atom.literal in cast("Container[str]", value))
     return atom.holds(value)
 
 
@@ -1523,21 +1522,23 @@ def _builds_specifier(op: str, literal: str) -> bool:
 
 
 def _complement_version(atom: Atom, op: str, var: str) -> Formula:
+    """Return the negation of a version atom, or refuse when nothing spells it."""
     # Excluded middle holds for an unswapped ==/!= on a pure-version axis alone.
-    # An ordered comparison has the prerelease hole and a twin may hold a
-    # non-version, so neither complements to a single atom.
+    # An ordered comparison has the prerelease hole, a twin may hold a
+    # non-version, and a swapped literal is the specifier bound.
     if op in ("==", "!=") and is_pure_version(var) and not atom.swapped:
         return AtomLeaf(atom.replaced(op="!=" if op == "==" else "=="))
-    msg = f"cannot complement version atom on {var!r}"
+    msg = f"no marker string spells the complement of {_render_atom(atom)}"
     raise UnserializableMarkerSet(msg)
 
 
 def _flip_string_op(atom: Atom, flipped: str) -> Formula:
     """Return ``atom`` under ``flipped``, refusing if that leaves the string table.
 
-    An equality specifier accepts a wildcard and a local version where an
-    ordered one does not, so a flip can make the atom dispatch as a version and
-    denote something else.
+    The atom reaches the string table only while its literal builds no specifier
+    under its own operator, and an equality specifier accepts a wildcard and a
+    local version where an ordered one does not, so the flipped atom can
+    dispatch as a version and denote something else.
     """
     if is_version_dispatch(atom.variable) and _builds_specifier(flipped, atom.literal):
         msg = f"no marker string spells the complement of {_render_atom(atom)}"
@@ -1548,15 +1549,13 @@ def _flip_string_op(atom: Atom, flipped: str) -> Formula:
 def _complement_string(atom: Atom, op: str) -> Formula:
     """Complement an atom packaging reads through the string operator table.
 
-    A swapped atom on a version-dispatch variable is not the table's to
-    complement, because packaging builds its specifier from the environment
-    value.
+    That table folds ``<`` and ``>`` to false and ``<=`` and ``>=`` to equality,
+    so no ordered comparison complements to another ordered comparison.
 
-    Such an atom compares as a version wherever that value parses as one, and
-    through the table only on the rest.
-
-    The table folds ``<`` and ``>`` to false and ``<=`` and ``>=`` to equality,
-    so no ordered comparison complements to another.
+    A swapped atom on a version-dispatch variable does not reach the table at
+    all: packaging builds its specifier from the environment value, so the atom
+    compares as a version wherever that value parses as one, and the table's
+    reading holds only on the rest.
     """
     if atom.swapped and is_version_dispatch(atom.variable):
         msg = f"no marker string spells the complement of {_render_atom(atom)}"
@@ -1585,9 +1584,9 @@ def _complement_leaf(atom: Atom) -> Formula:
 def to_nnf(node: Formula) -> Formula:
     """Push complements down to the leaves (negation normal form).
 
-    A leaf and a constant are already in normal form. A tree can normalise to a
-    constant too: the string operator table folds ``<`` and ``>`` to false, so
-    complementing such an atom yields ``TRUE``.
+    A leaf and a constant are already in normal form. A tree can also normalise
+    to a constant, because complementing an atom the string operator table
+    folds to false yields one.
     """
     if isinstance(node, AndNode):
         return make_and(to_nnf(child) for child in node.children)
@@ -1612,12 +1611,15 @@ def _negate(node: Formula) -> Formula:
 
 
 def _quote(literal: str) -> str:
-    """Quote a literal, which the grammar forbids holding its own delimiter."""
+    """Quote a literal for a marker string.
+
+    A PEP 508 literal cannot contain its own delimiter.
+    """
     if '"' not in literal:
         return f'"{literal}"'
     if "'" not in literal:
         return f"'{literal}'"
-    # Unreachable: a parsed literal arrives through the exclusive-quote grammar.
+    # The grammar admits no literal holding both quote styles.
     msg = f"literal {literal!r} has no marker-string quoting"  # pragma: no cover
     raise UnserializableMarkerSet(msg)  # pragma: no cover
 
@@ -1655,9 +1657,8 @@ def serialize(node: Formula) -> str:
 def describe(node: Formula) -> str:
     """Summarise a set for :func:`repr`, without exposing the op-tree.
 
-    Total over what the walks raise: a constant, a set no marker string spells,
-    and a tree nested past the stack each render as a word, so every set can be
-    printed.
+    Total: a constant, a set no marker string spells, and a tree nested past the
+    stack each get a word, so every set can be printed.
     """
     try:
         nnf = to_nnf(node)
@@ -1667,15 +1668,16 @@ def describe(node: Formula) -> str:
     except UnserializableMarkerSet:
         return "unrepresentable"
     except RecursionError:
-        # repr owes its caller a string, not the depth of the tree handed to it.
+        # The two walks are the only recursion under repr, which owes its
+        # caller a string rather than the depth of the tree it was handed.
         return "too deeply nested"
 
 
 # ------------------------------------------------------------------- simplify
 
 
-def _atom_key(atom: Atom) -> tuple[str, str, str, bool, bool, str, str, bool]:
-    """A total order over atoms, for a deterministic factored serialisation."""
+def _atom_key(atom: Atom) -> AtomKey:
+    """Total order over atoms, so a factored serialisation is stable."""
     return (
         atom.origin,
         atom.op,
@@ -1688,16 +1690,16 @@ def _atom_key(atom: Atom) -> tuple[str, str, str, bool, bool, str, str, bool]:
     )
 
 
-def _clause_key(clause: frozenset[Atom]) -> tuple:
+def _clause_key(clause: frozenset[Atom]) -> ClauseKey:
     return tuple(_atom_key(atom) for atom in sorted(clause, key=_atom_key))
 
 
 def _to_clauses(node: Formula, max_cells: int) -> list[frozenset[Atom]]:
     """Distribute an NNF tree into a disjunction of atom-set clauses (DNF).
 
-    An AND of ORs expands multiplicatively, so the running clause count is held
-    to ``max_cells`` and a pathological non-DNF input raises
-    :class:`IntractableMarkerSet`.
+    An AND of ORs expands multiplicatively, so that product is held to
+    ``max_cells`` and a pathological non-DNF input raises
+    :class:`IntractableMarkerSet`. A plain OR chain is not counted.
     """
     if isinstance(node, BoolConst):
         return [frozenset()] if node.value else []
@@ -1739,8 +1741,7 @@ def _row_pins(disjunct: Formula) -> dict[str, str]:
 
     Only an unswapped top-level ``==`` on a :data:`DOMAIN_STRING` variable
     pins: version-dispatch ``==`` is PEP 440 equality, so
-    ``platform_release == "5.10"`` still admits ``"5.10.0"``. Declining to pin
-    loses nothing, because the constraint stays in the row's residual bound.
+    ``platform_release == "5.10"`` still admits ``"5.10.0"``.
     """
     if isinstance(disjunct, AtomLeaf):
         conjuncts: tuple[Formula, ...] = (disjunct,)
@@ -1781,11 +1782,10 @@ def _rows_equivalent(
     max_cells: int,
     store: Memo,
 ) -> bool:
-    """Whether ``left`` agrees with ``right_by_row`` on every row.
+    """Whether ``left`` agrees with the already-restricted right on every row.
 
-    ``right_by_row`` holds the right-hand tree already restricted to each row's
-    pins. Restricting to those pins complements over the row's residual rather
-    than the whole-matrix product.
+    Restricting to a row's pins complements over that row's residual rather than
+    the whole-matrix product.
     """
     for row, right in zip(rows, right_by_row, strict=True):
         left_r = restrict_tree(left, row.pins)
@@ -1842,10 +1842,7 @@ def _rows_within(
     max_cells: int,
     store: Memo,
 ) -> bool:
-    """One direction of :func:`_rows_equivalent`, for a caller that only widens.
-
-    The other direction held before the widening, so only this one is re-decided.
-    """
+    """Whether ``left`` stays inside the already-restricted right on every row."""
     for row, right in zip(rows, right_by_row, strict=True):
         left_r = restrict_tree(left, row.pins)
         if not is_empty(
@@ -1862,10 +1859,7 @@ def _rows_cover(
     max_cells: int,
     store: Memo,
 ) -> bool:
-    """The other direction, for a caller that only narrows.
-
-    Containment held before the narrowing, so only coverage is re-decided.
-    """
+    """Whether ``left`` still reaches everything the already-restricted right does."""
     for row, right in zip(rows, right_by_row, strict=True):
         left_r = restrict_tree(left, row.pins)
         if not is_empty(
@@ -1918,7 +1912,7 @@ def _drop_atoms(
     return [frozenset(clause) for clause in working]
 
 
-def _canonical(clauses: list[frozenset[Atom]]) -> tuple:
+def _canonical(clauses: list[frozenset[Atom]]) -> tuple[ClauseKey, ...]:
     return tuple(sorted(_clause_key(clause) for clause in clauses))
 
 
@@ -1932,17 +1926,19 @@ def simplify_within(
     """Return a tree equivalent to ``node`` on every point of ``universe``.
 
     Greedy: expand to clauses, drop each clause and then each atom whose removal
-    preserves within-universe equivalence, to a fixpoint, then factor out what
-    every survivor shares.
+    preserves within-universe equivalence, to a fixpoint, then factor the atoms
+    common to every survivor into a leading conjunction. Each removal is decided
+    per universe row, which is what keeps a wide multi-platform universe
+    decidable, and a total atom order fixes the output.
 
-    Deciding each removal per universe row is what keeps a wide universe
-    decidable, and a total atom order fixes which of the equally good results
-    comes back.
+    The result is not the smallest equivalent tree, and need not be smaller than
+    ``node``: the clause expansion runs first, so a factored input whose clauses
+    are all needed comes back expanded.
 
-    The result is not the smallest equivalent tree. The expansion runs first, so
-    a factored input whose clauses are all needed comes back expanded.
-
-    ``max_cells`` bounds one decision and ``max_work`` meters the greedy loop.
+    ``max_cells`` bounds one decision. ``max_work`` meters the greedy loop,
+    where a wide matrix runs many cheap decisions and a large membership
+    powerset runs few expensive ones. Either overrun raises
+    :class:`IntractableMarkerSet`.
     """
     nnf = to_nnf(node)
     clauses = _dedupe(_to_clauses(nnf, max_cells))
@@ -1967,7 +1963,7 @@ def simplify_within(
     if not clauses:
         return FALSE
     clauses = sorted(clauses, key=_clause_key)
-    common = frozenset.intersection(*clauses)
+    common: frozenset[Atom] = frozenset.intersection(*clauses)
     residual = sorted((clause - common for clause in clauses), key=_clause_key)
     lead = [AtomLeaf(atom) for atom in sorted(common, key=_atom_key)]
     inner = make_or(

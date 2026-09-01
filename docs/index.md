@@ -11,8 +11,9 @@ installer you trust.
 * New to nab: work through
   [getting started](tutorial/getting-started.md).
 * A task in mind: the how-to guides cover installing nab, local
-  checkouts, VCS sources, multiple indexes, workspaces, and
-  [embedding the resolver](how-to/embed-the-resolver.md).
+  checkouts, VCS sources, multiple indexes, workspaces,
+  [embedding the resolver](how-to/embed-the-resolver.md), and
+  [reasoning about markers](how-to/reason-about-markers.md).
 * Looking something up: the reference covers the
   [`[tool.nab]` keys](reference/configuration.md), the
   [CLI](reference/cli.md) and its
@@ -25,7 +26,7 @@ installer you trust.
 * Want to know how something works: the explanations cover
   [universal resolution](explanation/universal.md),
   [conflicting extras and groups](explanation/conflicts.md), and
-  [the five distributions](explanation/packages.md).
+  [the six distributions](explanation/packages.md).
 
 ```{toctree}
 :maxdepth: 1
@@ -44,6 +45,7 @@ how-to/vcs
 how-to/multi-index
 how-to/workspaces
 how-to/embed-the-resolver
+how-to/reason-about-markers
 ```
 
 ```{toctree}

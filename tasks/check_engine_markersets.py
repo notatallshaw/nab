@@ -1,8 +1,8 @@
-"""Check that the resolve engine does not depend on packaging's marker sets.
+"""Check that the resolve engine does not reach nab's marker sets.
 
-``packaging.markersets`` and ``packaging._markersets`` are 2,200 lines that
-released packaging does not have, so a host vendoring nab's engine carries
-them only if the engine reaches them.
+The marker algebra is its own distribution, ``nab-markersets``. Keeping the
+engine from calling into it, and holding the modules that do import it to a
+named list, is what lets the resolve path be read as one piece.
 
 Two rules, both computed statically over the shipped ``src`` trees.
 
@@ -12,9 +12,10 @@ Two rules, both computed statically over the shipped ``src`` trees.
 
 ``import``
     Importing a module runs its module-level imports, so a module in the
-    engine's import closure that imports marker sets puts them in a host's
-    vendored tree even when nothing calls them. Every such module must be on
-    ``EXEMPT``, and an exemption that no longer fires is an error too.
+    engine's import closure that imports marker sets makes a host vendoring
+    the engine take nab-markersets with it, even when nothing calls it. Every
+    such module must be on ``EXEMPT``, and an exemption that no longer fires is
+    an error too.
 
 Every ``Name`` load inside a definition counts as a possible global
 reference, so a ``use`` result of zero is sound.
@@ -43,14 +44,11 @@ TREES = {
 }
 
 MARKER_SET_MODULES = frozenset(
-    {
-        "nab_provider._vendor.packaging.markersets",
-        "nab_provider._vendor.packaging._markersets",
-    }
+    {"nab_markersets.markersets", "nab_markersets._markersets"}
 )
 
-# The engine entry point: what the walk reaches from here is what a host
-# vendors.
+# The engine entry point: what the walk reaches from here is what a host takes
+# with it.
 ENGINE_MODULE = "nab_project._resolve.engine"
 ENGINE_ENTRY = "_resolve_with_micro_narrowing"
 
@@ -75,7 +73,6 @@ EXEMPT = {
         "it. Reached here through target, requirements_file, "
         "_provider.metadata_resolver and _lockfile.validate."
     ),
-    "nab_provider._vendor.packaging.markersets": "The marker-set module itself.",
 }
 
 

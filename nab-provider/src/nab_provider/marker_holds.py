@@ -2,9 +2,9 @@
 
 ``packaging.markers.Marker.evaluate`` binds ``extra`` to a single string and
 cannot say that several extras are active, so this goes through
-:class:`~packaging.markersets.MarkerSet` instead.  Its own module so the
-resolve engine never imports ``packaging.markersets``;
-``tasks/check_engine_markersets.py`` enforces that.
+:class:`~nab_markersets.markersets.MarkerSet` instead.  Its own module so the resolve
+engine reaches no marker-set definition; ``tasks/check_engine_markersets.py``
+holds the import closure to a named list this module is on.
 """
 
 from __future__ import annotations
@@ -12,11 +12,12 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from nab_markersets.errors import IntractableMarkerSet
+from nab_markersets.markersets import MarkerSet
 from nab_provider._vendor.packaging.markers import (
     UndefinedComparison,
     UndefinedEnvironmentName,
 )
-from nab_provider._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 

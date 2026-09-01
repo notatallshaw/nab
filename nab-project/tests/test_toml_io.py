@@ -174,6 +174,7 @@ class TestCensus:
         assert [package.name for package in SHIPPED_PACKAGES] == [
             "nab",
             "nab_index",
+            "nab_markersets",
             "nab_project",
             "nab_provider",
             "nab_resolver",

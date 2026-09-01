@@ -1,0 +1,30 @@
+extend = "../../pyproject.toml"
+
+[lint]
+extend-ignore = [
+    # Tests don't need full docstrings or rigid docstring style.
+    "D100", "D101", "D102", "D103", "D104", "D107",
+    "D202", "D205", "D209", "D301", "D400", "D401", "D403",
+    # Test fixtures and mock callables routinely accept-but-ignore args.
+    "ARG001", "ARG002", "ARG005",
+    # Tests construct exceptions inline.
+    "EM101", "TRY003",
+    # Tests use /tmp paths.
+    "S108",
+    # Loose-ends commonly hit by test data setup.
+    "B007", "C901", "C416", "FBT001", "FBT002",
+    "FURB171",
+    "PLR0124", "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917", "PLR2004",
+    "PLW0131",
+    # Tests don't need perf-style refactors.
+    "PERF203", "PERF401",
+    # Test ergonomics: inline imports, short aliases, long fixture
+    # lines, quotes, package layout.
+    "E501", "INP001", "N814", "N817", "PLC0415", "Q003",
+    # Tests inspect internal state.
+    "SLF001",
+    # pytest patterns.
+    "PT017", "RUF043", "SIM105",
+    # Type-checking-only imports stay in scope for test-runtime use.
+    "TC001", "TC002", "TC003",
+]

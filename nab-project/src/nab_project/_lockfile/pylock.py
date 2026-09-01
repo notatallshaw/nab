@@ -22,15 +22,11 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import tomli_w
 
 from nab_index.atomic import atomic_write_text
+from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
+from nab_markersets.markersets import DecisionStore, MarkerSet
 from nab_provider._vendor.packaging.markers import (
     MARKERS_REQUIRING_VERSION,
     Marker,
-)
-from nab_provider._vendor.packaging.markersets import (
-    DecisionStore,
-    IntractableMarkerSet,
-    MarkerSet,
-    UnserializableMarkerSet,
 )
 from nab_provider._vendor.packaging.pylock import (
     Package,

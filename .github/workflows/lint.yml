@@ -76,6 +76,9 @@ jobs:
       - name: Check workspace import boundaries
         run: python tasks/check_boundaries.py
 
+      - name: Check the resolve engine takes no marker-set dependency
+        run: python tasks/check_engine_markersets.py
+
   docs:
     name: docs
     runs-on: ubuntu-latest

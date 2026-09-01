@@ -17,7 +17,7 @@ decorators so its example budget is independent of the profile.
 
 ``cap_writes``, ``deny_access``, ``oversized_integer``,
 ``over_nested_marker``, ``refuse_over_nested`` and ``record_parses`` are here
-rather than in one suite's conftest because the five workspace suites are all
+rather than in one suite's conftest because the workspace suites are all
 packages named ``tests``, so only the umbrella suite can carry one.
 """
 

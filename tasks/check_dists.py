@@ -128,13 +128,19 @@ def _dist_info(names: list[str]) -> str:
     raise SystemExit(msg)
 
 
+# nab-markersets declares no required dependency, so the sdist install has to
+# name the extra a standalone user would.
+SDIST_EXTRAS = {"nab-markersets": "[packaging]"}
+
+
 def install_each_sdist(dist_root: Path, scratch: Path) -> None:
     """Install every sdist into its own venv, resolving siblings locally."""
     links = _find_links(dist_root)
     for package in PACKAGES:
         sdist = _sdist(dist_root, package)
         python = _make_venv(scratch / f"sdist-{package}")
-        _run([str(python), "-m", "pip", "install", *links, str(sdist)])
+        target = f"{sdist}{SDIST_EXTRAS.get(package, '')}"
+        _run([str(python), "-m", "pip", "install", *links, target])
 
 
 def _console_script(python: Path) -> str:
@@ -166,7 +172,10 @@ def install_wheels(dist_root: Path, scratch: Path) -> None:
     version = _wheel_version(_wheel(dist_root, "nab"))
     python = _make_venv(scratch / "wheels")
     _run([str(python), "-m", "pip", "install", *wheels])
-    _run([str(python), "-c", f"import {', '.join(MODULES)}"])
+    # nab_markersets' package root binds no names, so importing it proves
+    # nothing about the copy of packaging the algebra binds.
+    smoke = (*MODULES, "nab_markersets.markersets")
+    _run([str(python), "-c", f"import {', '.join(smoke)}"])
     _check_version([str(python), "-m", "nab"], version)
     _check_version([_console_script(python)], version)
 

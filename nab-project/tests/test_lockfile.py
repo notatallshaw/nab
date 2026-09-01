@@ -23,6 +23,8 @@ else:
 
 from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.multi_index import IndexConfig
+from nab_markersets.errors import IntractableMarkerSet
+from nab_markersets.markersets import MarkerSet
 from nab_project._lockfile.builder import _common_requires_python
 from nab_project._lockfile.coverage import (
     CoverageError,
@@ -83,7 +85,6 @@ from nab_project.resolve import (
     resolve_with_coordinator,
 )
 from nab_provider._vendor.packaging.markers import Marker
-from nab_provider._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
 from nab_provider._vendor.packaging.pylock import Package, PackageWheel, Pylock
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
@@ -2760,10 +2761,10 @@ class TestMarkerDisjointness:
 
     def test_contains_over_approximation_reports_without_witness(self) -> None:
         # A ``contains`` atom on a version-dispatch variable is an opaque,
-        # over-approximating boolean.  ``"ab" in v`` implies ``"a" in v``, so no
-        # realisable implementation_version satisfies ``"ab" in v and "a" not in
-        # v``; the algebra cannot rule the pair out (over-approximates to
-        # non-disjoint) and no concrete witness exists.  The gate stays
+        # over-approximating boolean.  ``"ab" in v`` implies ``"a" in v``, so
+        # no realisable implementation_version satisfies ``"ab" in v and "a"
+        # not in v``; the algebra cannot rule the pair out (over-approximates
+        # to non-disjoint) and no concrete witness exists.  The gate stays
         # conservative and reports the pair without a point.  A declared env
         # supplying implementation_version would fold the atoms away, so this
         # uses an env that omits it.

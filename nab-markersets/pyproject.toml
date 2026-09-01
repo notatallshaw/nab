@@ -1,7 +1,7 @@
 [project]
-name = "nab-project"
+name = "nab-markersets"
 version = "0.0.16.dev0"
-description = "Index-backed provider, lockfile emitter, and downloader for nab"
+description = "PEP 508 marker algebra: markers as sets of environments"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -19,22 +19,17 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Typing :: Typed",
 ]
-dependencies = [
-    "nab-markersets==0.0.16.dev0",
-    "nab-provider==0.0.16.dev0",
-    "nab-resolver==0.0.16.dev0",
-    "nab-index==0.0.16.dev0",
-    # fetch.py normalises a name for nab-index's API, which is typed in
-    # released packaging's NormalizedName.
-    "packaging>=24.0",
-    # toml_io builds TOMLDecodeError(msg, doc, pos), a signature 2.2 added.
-    "tomli>=2.2",
-    "tomli_w>=1.2",
-    "build>=1.2",
-    "installer>=1.0",
-    "pyproject_hooks>=1.2",
-    "typing_extensions>=4.6",
-]
+
+# Pick the copy of packaging to run on; `nab_markersets._packaging` binds the
+# first of these at the floor. The floor is where the suite has been run, and
+# it is not open below: the engine reads `_parser.parse_marker`, `_parser.Op`,
+# `_parser.Variable`, `_parser.Value`, `_tokenizer.ParserSyntaxError` and
+# `markers._eval_op`, none of which packaging publishes, so a release may move
+# any of them and `test_the_private_packaging_names_the_engine_reaches` is what
+# says whether one did.
+[project.optional-dependencies]
+packaging = ["packaging>=26.3"]
+nab-vendored-packaging = ["nab-provider==0.0.16.dev0"]
 
 [project.urls]
 Homepage = "https://github.com/notatallshaw/nab"
@@ -46,8 +41,3 @@ Changelog = "https://github.com/notatallshaw/nab/releases"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
-
-# Benchmarks are development tooling, not part of the shipped package, so the
-# sdist carries only the source and tests.
-[tool.hatch.build.targets.sdist]
-exclude = ["/benchmarks"]

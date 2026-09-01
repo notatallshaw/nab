@@ -15,6 +15,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SHIPPED_PACKAGES = (
     "src/nab",
     "nab-index/src/nab_index",
+    "nab-markersets/src/nab_markersets",
     "nab-project/src/nab_project",
     "nab-provider/src/nab_provider",
     "nab-resolver/src/nab_resolver",

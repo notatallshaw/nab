@@ -15,7 +15,13 @@ import tomli
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Every distribution except the umbrella, which builds from the repo root.
-WORKSPACE_PACKAGES = ("nab-resolver", "nab-provider", "nab-project", "nab-index")
+WORKSPACE_PACKAGES = (
+    "nab-resolver",
+    "nab-markersets",
+    "nab-provider",
+    "nab-project",
+    "nab-index",
+)
 
 PYPROJECT_PATHS = (
     REPO_ROOT / "pyproject.toml",

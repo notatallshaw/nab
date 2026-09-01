@@ -33,6 +33,10 @@ Four rules:
     dict keying disagree about. They go away once the fork's changes land
     upstream.
 
+    ``nab_markersets._packaging`` reaches the same tree, by name at import
+    time rather than by an import statement, so nothing here can see it;
+    ``tests/test_workspace_shape.py`` holds that reach instead.
+
 Only the ``src`` trees are walked, since tests are not shipped and may reach
 into what they test. Vendored code is skipped as third-party.
 
@@ -84,7 +88,7 @@ VENDOR_ALLOWANCES: frozenset[tuple[str, str]] = frozenset(
 
 # Packages whose docstring publishes a supported-path table. Listed so a table
 # that stops parsing fails the run instead of dropping the ``supported`` rule.
-PUBLISHES_SUPPORTED_PATHS = ("nab_resolver",)
+PUBLISHES_SUPPORTED_PATHS = ("nab_markersets", "nab_resolver")
 
 
 class Package:

@@ -25,9 +25,9 @@ from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from nab_markersets.markersets import variable_names
 from nab_provider._vendor.packaging import tags as ptags
 from nab_provider._vendor.packaging.markers import Marker, default_environment
-from nab_provider._vendor.packaging.markersets import variable_names
 from nab_provider._vendor.packaging.specifiers import (
     InvalidSpecifier,
     Specifier,

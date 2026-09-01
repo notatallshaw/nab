@@ -1,7 +1,7 @@
 # Install nab
 
-`nab` ships as a CLI plus four importable libraries; see
-[the five distributions](../explanation/packages.md). The recommended
+`nab` ships as a CLI plus five importable libraries; see
+[the six distributions](../explanation/packages.md). The recommended
 path is to install it as an isolated tool.
 
 ## uv tool install
@@ -11,7 +11,7 @@ uv tool install nab
 ```
 
 Drops `nab` into a uv-managed tool venv and exposes the console
-script on `PATH`. uv resolves and installs all five distributions
+script on `PATH`. uv resolves and installs all six distributions
 together. Confirm with:
 
 ```bash
@@ -56,7 +56,7 @@ against it.
 
 ## Installing from a checkout
 
-To run a revision that has not been released, build the five wheels
+To run a revision that has not been released, build the six wheels
 and install from the result:
 
 ```bash
@@ -64,6 +64,7 @@ git clone https://github.com/notatallshaw/nab.git
 cd nab
 mkdir -p /tmp/nab-wheels
 uv build --wheel --out-dir /tmp/nab-wheels nab-resolver
+uv build --wheel --out-dir /tmp/nab-wheels nab-markersets
 uv build --wheel --out-dir /tmp/nab-wheels nab-provider
 uv build --wheel --out-dir /tmp/nab-wheels nab-index
 uv build --wheel --out-dir /tmp/nab-wheels nab-project

@@ -20,9 +20,10 @@ classifiers = [
     "Typing :: Typed",
 ]
 # The provider does no IO, so it takes nothing that fetches, builds, or parses
-# a config file. A host that supplies its own IO can vendor this and the solver
-# without taking nab's HTTP client, cache, or build machinery with it.
+# a config file. A host that supplies its own IO takes this, the solver and the
+# marker algebra, and none of nab's HTTP client, cache, or build machinery.
 dependencies = [
+    "nab-markersets==0.0.16.dev0",
     "nab-resolver==0.0.16.dev0",
     "typing_extensions>=4.6",
 ]

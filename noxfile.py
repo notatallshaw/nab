@@ -1,4 +1,4 @@
-"""Nox sessions for nab: ``tests``, ``types``, ``benchmarks`` and ``dists``.
+"""Nox sessions: ``tests``, ``standalone``, ``types``, ``benchmarks``, ``dists``.
 
 Coverage is split across two files: ``fail_under`` and the
 ``[tool.coverage.paths]`` remaps live in ``pyproject.toml``, while the
@@ -38,8 +38,8 @@ BUILD_LOCK = ".github/requirements/pylock.build.toml"
 #
 # nab-index and nab-provider are both gated with the project workspace:
 # nab-project is nab-index's only consumer, and full coverage of nab_provider
-# needs nab-project's tests. The provider entry gates nothing, and installs
-# only nab-provider and nab-resolver, proving a host can take the provider
+# needs nab-project's tests. The provider entry gates nab_markersets and
+# installs only what nab-provider needs, proving a host can take the provider
 # without nab-index or nab-project.
 WORKSPACES = {
     "resolver": (
@@ -48,17 +48,24 @@ WORKSPACES = {
         ["nab_resolver"],
     ),
     "provider": (
-        ["nab-resolver", "nab-provider"],
-        ["nab-provider/tests"],
-        [],
+        ["nab-resolver", "nab-markersets", "nab-provider"],
+        ["nab-markersets/tests", "nab-provider/tests"],
+        ["nab_markersets"],
     ),
     "project": (
-        ["nab-resolver", "nab-provider", "nab-index", "nab-project"],
+        ["nab-resolver", "nab-markersets", "nab-provider", "nab-index", "nab-project"],
         ["nab-provider/tests", "nab-project/tests", "nab-index/tests"],
         ["nab_provider", "nab_project", "nab_index"],
     ),
     "umbrella": (
-        ["nab-resolver", "nab-provider", "nab-index", "nab-project", "."],
+        [
+            "nab-resolver",
+            "nab-markersets",
+            "nab-provider",
+            "nab-index",
+            "nab-project",
+            ".",
+        ],
         ["tests"],
         ["nab"],
     ),
@@ -67,7 +74,7 @@ WORKSPACES = {
 # nab-provider and nab-project are left out: neither is held to the strict
 # checker configs yet, and nab-provider carries the vendored packaging tree,
 # which is rebuilt from upstream and cannot be edited to satisfy a checker.
-TYPED_TREES = ["nab-resolver/src", "nab-index/src", "src"]
+TYPED_TREES = ["nab-resolver/src", "nab-markersets/src", "nab-index/src", "src"]
 
 # The generated bijection goes to every checker, not to pyright alone: it
 # exists to be read by one, and a row typed wrong for its parameter is an
@@ -212,6 +219,24 @@ def tests(session: nox.Session) -> None:
 
 
 @nox.session
+def standalone(session: nox.Session) -> None:
+    """Run nab-markersets' suite with nab-provider absent.
+
+    Every other session installs nab-provider, whose vendored fork
+    ``nab_markersets`` binds in preference, so this is the only run that reaches
+    released packaging.
+    """
+    _install_lock(session, TESTS_LOCK)
+
+    # The extra, and without --no-deps, so the range nab-markersets declares is
+    # what pip resolves. The lock already pins a packaging inside that range,
+    # so nothing moves; a range that stopped covering it would fail here.
+    session.install("-e", "nab-markersets[packaging]")
+
+    session.run("python", "-m", "pytest", "-n", "auto", "nab-markersets/tests")
+
+
+@nox.session
 def benchmarks(session: nox.Session) -> None:
     """Run the benchmark-harness tests the workspace sessions deselect."""
     # These cover the scripts under nab-resolver/benchmarks and
@@ -219,7 +244,7 @@ def benchmarks(session: nox.Session) -> None:
     _install(
         session,
         TESTS_LOCK,
-        ["nab-resolver", "nab-provider", "nab-index", "nab-project"],
+        ["nab-resolver", "nab-markersets", "nab-provider", "nab-index", "nab-project"],
     )
     session.run(
         "python",

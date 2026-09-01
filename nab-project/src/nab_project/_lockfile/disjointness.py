@@ -24,7 +24,8 @@ import itertools
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.markersets import IntractableMarkerSet, MarkerSet
+from nab_markersets.errors import IntractableMarkerSet
+from nab_markersets.markersets import MarkerSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 
@@ -124,7 +125,7 @@ def validate_marker_disjointness(
 
     for entries in same_name_entries:
         marker_sets = [_marker_set(pkg.marker) for pkg in entries]
-        literals = [ms.membership_literals() for ms in marker_sets]
+        literals = [ms.set_memberships() for ms in marker_sets]
         for i, j in itertools.combinations(range(len(entries)), 2):
             names = literals[i] | literals[j]
             selections = _conflict_respecting_selections(
@@ -438,7 +439,7 @@ def _membership_drives_point(
     referenced = {
         name
         for marker_set in marker_sets
-        for var, name in marker_set.membership_literals()
+        for var, name in marker_set.set_memberships()
         if var == variable
     }
     if not referenced:

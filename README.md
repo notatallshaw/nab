@@ -143,6 +143,8 @@ other tools:
 
  * `nab-resolver`: An agnostic resolver library based on PubGrub, but with
    extensions that make it compatible with Python packaging standards
+ * `nab-markersets`: The PEP 508 marker algebra, reading a marker as the set
+   of environments it selects so markers can be combined and compared
  * `nab-provider`: The Python packaging provider that drives the nab-resolver,
    with lots of specific features and optimizations for the Python packaging
    ecosystem. It does no I/O: everything comes through one interface a host
@@ -153,7 +155,7 @@ other tools:
    nab-index and adds the resolve orchestration, workspace discovery, the
    build path, the lockfile emitter and the downloader
 
-All 4 libraries are in experimental mode, I currently recommend pinning them,
+All 5 libraries are in experimental mode, I currently recommend pinning them,
 e.g. `nab-resolver==0.0.1`, as APIs may change at any point.
 
 Once we reach `0.1.0` we will only break API stability on each minor update,
