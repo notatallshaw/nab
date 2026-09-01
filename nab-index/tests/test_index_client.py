@@ -12,7 +12,9 @@ from nab_index.client import (
     _parse_files,
     _parse_sdist_filename,
     _sdist_member_top_level,
+    holds_named_files,
     holds_only_yanked,
+    holds_unreachable_link,
     holds_unreadable_format,
     is_readable_filename,
     zip_sdist_version,
@@ -21,6 +23,8 @@ from nab_index.client import (
 
 # A version digit run past CPython's int-from-string limit.
 OVERSIZED = "1" * (sys.get_int_max_str_digits() + 1)
+
+INDEX_URL = "https://e.example/simple/"
 
 
 @pytest.mark.parametrize(
@@ -179,7 +183,101 @@ def test_holds_only_yanked_false(data: object) -> None:
     assert not holds_only_yanked(data)
 
 
-def test_the_two_empty_listing_flags_are_exclusive() -> None:
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(
+            {
+                "files": [
+                    {
+                        "filename": "cffi-1.0.2-2.tar.gz",
+                        "url": "https://e.example/cffi-1.0.2-2.tar.gz",
+                    }
+                ]
+            },
+            id="filename-of-another-project",
+        ),
+        pytest.param({"files": [{"filename": "foo-1.0.zip"}]}, id="unreadable-format"),
+        pytest.param(
+            {"files": [{"filename": "foo-1.0-py3-none-any.whl"}]}, id="readable-entry"
+        ),
+    ],
+)
+def test_holds_named_files_true(data: object) -> None:
+    assert holds_named_files(data)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param(["files"], id="body-not-an-object"),
+        pytest.param({"files": "nope"}, id="files-not-a-list"),
+        pytest.param({"files": []}, id="no-entries"),
+        pytest.param({"files": ["foo-1.0.whl"]}, id="entry-not-an-object"),
+        pytest.param(
+            {"files": [{"url": "https://e.example/f"}]}, id="entry-with-no-filename"
+        ),
+        pytest.param(
+            {"files": [{"filename": "foo-1.0-py3-none-any.whl", "yanked": True}]},
+            id="yanked-entry",
+        ),
+    ],
+)
+def test_holds_named_files_false(data: object) -> None:
+    assert not holds_named_files(data)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        pytest.param(
+            "https://[::1/foo-1.0-py3-none-any.whl", id="unbalanced-ipv6-bracket"
+        ),
+        pytest.param(
+            "https://exa\u2100mple.com/foo-1.0-py3-none-any.whl",
+            id="netloc-that-changes-under-nfkc",
+        ),
+    ],
+)
+def test_holds_unreachable_link_finds_an_unusable_url(url: str) -> None:
+    """The entry is dropped, so the page it is alone on parses to nothing."""
+    data = {"files": [{"filename": "foo-1.0-py3-none-any.whl", "url": url}]}
+
+    assert _parse_files(data, INDEX_URL, "foo") == []
+    assert holds_unreachable_link(data, INDEX_URL, "foo")
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        pytest.param({"files": []}, id="no-entries"),
+        pytest.param(
+            {
+                "files": [
+                    {
+                        "filename": "foo-1.0-py3-none-any.whl",
+                        "url": "foo-1.0-py3-none-any.whl",
+                    }
+                ]
+            },
+            id="relative-url-the-page-resolves",
+        ),
+        pytest.param(
+            {"files": [{"filename": "foo-1.0-py3-none-any.whl"}]},
+            id="entry-with-no-url",
+        ),
+        pytest.param(
+            {"files": [{"url": "https://[::1/foo-1.0-py3-none-any.whl"}]},
+            id="entry-with-no-filename",
+        ),
+    ],
+)
+def test_holds_unreachable_link_false(data: object) -> None:
+    """A page marks only where an entry naming a file has a URL nothing can use."""
+    assert not holds_unreachable_link(data, INDEX_URL, "foo")
+
+
+def test_a_yanked_zip_sdist_is_yanked_rather_than_unreadable() -> None:
     """A page of yanked .zip sdists is yanked rather than unreadable.
 
     ``holds_unreadable_format`` skips a yanked entry before reading its

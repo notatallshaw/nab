@@ -1672,6 +1672,7 @@ class TestFetchCoordinator:
                 offline_miss: bool = False,
                 unreadable_only: bool = False,
                 unreachable_only: bool = False,
+                no_usable_file: bool = False,
                 all_yanked: bool = False,
                 zip_sdists: frozenset[str] = frozenset(),
             ) -> None:
@@ -1682,6 +1683,7 @@ class TestFetchCoordinator:
                     offline_miss=offline_miss,
                     unreadable_only=unreadable_only,
                     unreachable_only=unreachable_only,
+                    no_usable_file=no_usable_file,
                     all_yanked=all_yanked,
                     zip_sdists=zip_sdists,
                 )

@@ -1915,6 +1915,97 @@ class TestNoVersionsReasons:
             "the index lists this package but nab cannot reach any of its links"
         )
 
+    def test_remote_page_of_unreachable_links_names_the_links(
+        self, tmp_path: Path
+    ) -> None:
+        """A remote page reads like the local one it mirrors, not like absence.
+
+        The wheel sits behind a URL with an unterminated IPv6 bracket, so
+        the entry is dropped and the page parses to nothing.
+        """
+        body = json.dumps(
+            {
+                "files": [
+                    {
+                        "filename": "foo-1.0-py3-none-any.whl",
+                        "url": "https://[::1/foo-1.0-py3-none-any.whl",
+                    }
+                ]
+            }
+        ).encode()
+        OnDiskCache(tmp_path, DEFAULT_INDEX_URL).put_simple(
+            "foo", body, CachePolicy(fetched_at=0, max_age=1, etag=None)
+        )
+
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            cache_dir=tmp_path,
+            offline=True,
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+
+        assert rendered_reason(provider, "foo") == (
+            "the index lists this package but nab cannot reach any of its links"
+        )
+
+    def test_remote_page_naming_another_project_is_not_absence(
+        self, tmp_path: Path
+    ) -> None:
+        """A filename packaging parses to another project is not a missing package.
+
+        ``cffi-1.0.2-2.tar.gz`` parses as project ``cffi-1-0-2`` at version
+        ``2``, so the file is dropped while the index still lists the
+        project.
+        """
+        body = json.dumps(
+            {
+                "files": [
+                    {
+                        "filename": "cffi-1.0.2-2.tar.gz",
+                        "url": "https://pypi.example/cffi-1.0.2-2.tar.gz",
+                    }
+                ]
+            }
+        ).encode()
+        OnDiskCache(tmp_path, DEFAULT_INDEX_URL).put_simple(
+            "cffi", body, CachePolicy(fetched_at=0, max_age=1, etag=None)
+        )
+
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            cache_dir=tmp_path,
+            offline=True,
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("cffi", SpecifierSet("").to_range())
+
+        assert rendered_reason(provider, "cffi") == (
+            "the index lists this package but nab can use none of the files it names"
+        )
+
+    def test_local_pep503_page_naming_another_project_is_not_absence(
+        self, tmp_path: Path
+    ) -> None:
+        """The local scanner drops the same filename, so it reports the same line."""
+        package_dir = tmp_path / "cffi"
+        package_dir.mkdir()
+        (package_dir / "index.html").write_text(
+            '<a href="cffi-1.0.2-2.tar.gz">cffi-1.0.2-2.tar.gz</a>', encoding="utf-8"
+        )
+        (package_dir / "cffi-1.0.2-2.tar.gz").write_bytes(b"")
+
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            indexes=[IndexConfig("local", tmp_path.as_uri())],
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("cffi", SpecifierSet("").to_range())
+
+        assert rendered_reason(provider, "cffi") == (
+            "the index lists this package but nab can use none of the files it names"
+        )
+
     def test_no_match_in_range_records_no_match_reason(self) -> None:
         """A non-empty listing with no in-range version surfaces a no-match reason."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")

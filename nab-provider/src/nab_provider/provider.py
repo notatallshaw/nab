@@ -1700,10 +1700,9 @@ class Provider:
         index served no files or every file it served was dropped by one of
         the listing filter's rungs.  The stored listing tells absence from
         incompatibility apart, except that it is also empty for an index
-        skipped offline, for a page of formats nab does not read (``.zip``
-        sdists, ``.exe`` installers), and for one whose every file is
-        yanked.  All three are marked when stored, so the reason names what
-        happened instead of absence.
+        skipped offline and for a page that named files nab could not use.
+        Both are marked when stored, so the reason names what happened
+        instead of absence.
 
         A look-ahead rejection emits a clause that removes the rejected
         versions from the range, so the resolver asks again over a range
@@ -1777,15 +1776,31 @@ class Provider:
         if index.is_offline_listing_miss(normalized):
             return _diagnosis.OFFLINE_MISS
 
-        # A page can set both of these marks; the unreadable line wins.
+        served = self._served_page_marker(normalized)
+        if served is not None:
+            return served
+        return self._absent_listing_marker(normalized)
+
+    def _served_page_marker(
+        self, normalized: str
+    ) -> _diagnosis.NoVersionsReason | None:
+        """Classify an empty listing by the marks its page was stored with.
+
+        One page can carry several, so the order is the one the report
+        prefers: the most specific reason nothing came off the page first,
+        the bare fact that it named files last.  ``None`` when no index
+        marked a page for ``normalized``.
+        """
+        index = self.coordinator.index
         if index.is_unreadable_only_listing(normalized):
             return _diagnosis.UNREADABLE_ONLY
         if index.is_unreachable_only_listing(normalized):
             return _diagnosis.UNREACHABLE_ONLY
-
         if index.is_all_yanked_listing(normalized):
             return _diagnosis.YANKED_ONLY
-        return self._absent_listing_marker(normalized)
+        if index.is_no_usable_file_listing(normalized):
+            return _diagnosis.NONE_USABLE
+        return None
 
     def _absent_listing_marker(self, normalized: str) -> _diagnosis.NoVersionsReason:
         """Classify a package no index served a page for.

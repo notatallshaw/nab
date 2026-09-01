@@ -35,7 +35,9 @@ from .client import (
     _listing_body,
     _parse_files,
     _verify_metadata_hash,
+    holds_named_files,
     holds_only_yanked,
+    holds_unreachable_link,
     holds_unreadable_format,
     verify_sdist_hash,
     zip_sdist_versions,
@@ -369,6 +371,8 @@ class CachedAsyncSimpleClient:
         self._offline = offline
         self._serialization = serialization
         self._unreadable_only: set[str] = set()
+        self._unreachable_only: set[str] = set()
+        self._no_usable_file: set[str] = set()
         self._all_yanked: set[str] = set()
         self._zip_sdists: dict[str, frozenset[str]] = {}
         self._range_memo = (
@@ -643,28 +647,39 @@ class CachedAsyncSimpleClient:
         entries resolve against.
         """
         files = _parse_files(data, self._index_url, package, page_url=page_url)
-        if not files and holds_unreadable_format(data):
-            self._unreadable_only.add(package)
-        if not files and holds_only_yanked(data):
-            self._all_yanked.add(package)
+        if not files:
+            self._mark_empty_listing(data, package, page_url)
 
         self._zip_sdists[package] = zip_sdist_versions(data, package)
         return files
+
+    def _mark_empty_listing(
+        self, data: object, package: str, page_url: str | None
+    ) -> None:
+        """Record what a body that parsed to no files still said about ``package``.
+
+        One page can meet more than one of these, so each is marked on its own.
+        """
+        if holds_unreadable_format(data):
+            self._unreadable_only.add(package)
+        if holds_unreachable_link(data, self._index_url, package, page_url=page_url):
+            self._unreachable_only.add(package)
+        if holds_only_yanked(data):
+            self._all_yanked.add(package)
+        if holds_named_files(data):
+            self._no_usable_file.add(package)
 
     def served_unreadable_only(self, package: str) -> bool:
         """Whether a listing for ``package`` held only files nab cannot read."""
         return package in self._unreadable_only
 
-    def served_unreachable_only(
-        self,
-        package: str,  # noqa: ARG002 - the IndexClient protocol fixes the signature
-    ) -> bool:
-        """Whether a listing for ``package`` held only links nab cannot reach.
+    def served_unreachable_only(self, package: str) -> bool:
+        """Whether a listing for ``package`` held only links nab cannot reach."""
+        return package in self._unreachable_only
 
-        Always ``False``: the listing parse drops a remote entry whose URL
-        cannot be used, leaving nothing to mark.
-        """
-        return False
+    def served_no_usable_file(self, package: str) -> bool:
+        """Whether a listing for ``package`` named files and nab kept none."""
+        return package in self._no_usable_file
 
     def served_all_yanked(self, package: str) -> bool:
         """Whether a listing for ``package`` held files and yanked every one."""

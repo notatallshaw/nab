@@ -74,6 +74,7 @@ def test_scan_directory_without_index_html_returns_empty(tmp_path: Path) -> None
     assert not scan.unreadable
     assert not scan.unreachable
     assert not scan.all_yanked
+    assert not scan.named_files
     assert scan.zip_sdists == frozenset()
 
 
@@ -155,6 +156,30 @@ def test_a_page_of_unreachable_links_is_not_an_absent_package(
     assert run(client.get_files("foo")) == []
     assert client.served_unreachable_only("foo")
     assert not client.served_unreadable_only("foo")
+
+
+def test_a_page_of_files_naming_another_project_is_not_absent(tmp_path: Path) -> None:
+    """A filename that parses to another project still leaves the page naming one.
+
+    ``cffi-1.0.2-2.tar.gz`` parses as project ``cffi-1-0-2`` at version
+    ``2``, so the record is dropped while the anchor still named a release.
+    """
+    package_dir = tmp_path / "cffi"
+    package_dir.mkdir()
+    (package_dir / "index.html").write_text(
+        _anchor("cffi-1.0.2-2.tar.gz"), encoding="utf-8"
+    )
+
+    scan = _scan_pep503_directory(package_dir, "cffi")
+
+    assert scan.files == []
+    assert scan.named_files
+    assert not scan.unreadable
+    assert not scan.unreachable
+
+    client = LocalIndexClient(tmp_path.as_uri())
+    assert run(client.get_files("cffi")) == []
+    assert client.served_no_usable_file("cffi")
 
 
 @pytest.mark.parametrize(

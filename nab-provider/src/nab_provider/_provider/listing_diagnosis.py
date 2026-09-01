@@ -131,6 +131,7 @@ class ReasonKind:
     OFFLINE_MISS: Final = "offline-miss"
     UNREADABLE_ONLY: Final = "unreadable-only"
     UNREACHABLE_ONLY: Final = "unreachable-only"
+    NONE_USABLE: Final = "none-usable"
     YANKED_ONLY: Final = "yanked-only"
     ABSENT: Final = "absent"
     PINNED_ABSENT: Final = "pinned-absent"
@@ -352,6 +353,7 @@ class NoVersionsReason:
 OFFLINE_MISS = NoVersionsReason(ReasonKind.OFFLINE_MISS)
 UNREADABLE_ONLY = NoVersionsReason(ReasonKind.UNREADABLE_ONLY)
 UNREACHABLE_ONLY = NoVersionsReason(ReasonKind.UNREACHABLE_ONLY)
+NONE_USABLE = NoVersionsReason(ReasonKind.NONE_USABLE)
 YANKED_ONLY = NoVersionsReason(ReasonKind.YANKED_ONLY)
 ABSENT = NoVersionsReason(ReasonKind.ABSENT)
 PINNED_ABSENT = NoVersionsReason(ReasonKind.PINNED_ABSENT)
@@ -361,7 +363,7 @@ EXTRA_BASE_EMPTY = NoVersionsReason(ReasonKind.EXTRA_BASE_EMPTY)
 
 NO_MATCH = Diagnostic("no version matches the requirement")
 
-# The five situations the index client answers on its own with a fixed line.
+# The six situations the index client answers on its own with a fixed line.
 # None of them is a walk, so only the two with something to add carry a ``-v``
 # body: for the others, saying the same fact at more length is not detail.
 FIXED_DIAGNOSTICS: dict[Kind, Diagnostic] = {
@@ -382,6 +384,9 @@ FIXED_DIAGNOSTICS: dict[Kind, Diagnostic] = {
     ),
     ReasonKind.UNREACHABLE_ONLY: Diagnostic(
         "the index lists this package but nab cannot reach any of its links"
+    ),
+    ReasonKind.NONE_USABLE: Diagnostic(
+        "the index lists this package but nab can use none of the files it names"
     ),
     ReasonKind.YANKED_ONLY: Diagnostic(
         "the index lists this package but every file is yanked"

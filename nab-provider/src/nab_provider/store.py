@@ -77,6 +77,8 @@ class InMemoryIndex:
         self._unreadable_only_listings: set[str] = set()
         # Packages whose empty listing stands for a page of links nab cannot reach.
         self._unreachable_only_listings: set[str] = set()
+        # Packages whose empty listing stands for a page nab kept no file off.
+        self._no_usable_file_listings: set[str] = set()
         # Packages whose empty listing stands for a page of yanked files.
         self._all_yanked_listings: set[str] = set()
         # Versions an index served as a ``.zip`` sdist, which the listing parse
@@ -144,6 +146,7 @@ class InMemoryIndex:
         offline_miss: bool = False,
         unreadable_only: bool = False,
         unreachable_only: bool = False,
+        no_usable_file: bool = False,
         all_yanked: bool = False,
         zip_sdists: frozenset[str] = frozenset(),
     ) -> None:
@@ -154,8 +157,9 @@ class InMemoryIndex:
         ``offline_miss`` marks an empty listing as an index skipped offline
         rather than one that served no files; ``unreadable_only`` marks it as
         a page of formats nab does not read; ``unreachable_only`` marks it as
-        a page whose every link nab cannot reach; ``all_yanked`` marks it as
-        a page whose every file is yanked.
+        a page whose every link nab cannot reach; ``no_usable_file`` marks it
+        as a page that named files nab kept none of; ``all_yanked`` marks it
+        as a page whose every file is yanked.
 
         ``zip_sdists`` names the releases served as a ``.zip`` sdist, which
         nothing in ``data`` records.  It replaces whatever a prior store left,
@@ -171,6 +175,8 @@ class InMemoryIndex:
                 self._unreadable_only_listings.add(package)
             if unreachable_only:
                 self._unreachable_only_listings.add(package)
+            if no_usable_file:
+                self._no_usable_file_listings.add(package)
             if all_yanked:
                 self._all_yanked_listings.add(package)
             if zip_sdists:
@@ -191,6 +197,10 @@ class InMemoryIndex:
     def is_unreachable_only_listing(self, package: str) -> bool:
         """Whether ``package``'s empty listing held only links nab cannot reach."""
         return package in self._unreachable_only_listings
+
+    def is_no_usable_file_listing(self, package: str) -> bool:
+        """Whether ``package``'s empty listing named files nab kept none of."""
+        return package in self._no_usable_file_listings
 
     def is_all_yanked_listing(self, package: str) -> bool:
         """Whether ``package``'s empty listing held files and yanked every one."""

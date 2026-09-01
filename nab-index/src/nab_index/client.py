@@ -61,6 +61,8 @@ __all__ = [
     "WheelFile",
     "WheelHashMismatchError",
     "extract_sdist_archive",
+    "holds_named_files",
+    "holds_unreachable_link",
     "holds_unreadable_format",
     "is_readable_filename",
     "verify_sdist_hash",
@@ -243,8 +245,8 @@ def zip_sdist_version(filename: str, canonical: str) -> str | None:
     return version if _intern_name(name_part) == canonical else None
 
 
-def _listed_filenames(data: object) -> Iterator[str]:
-    """Yield the unyanked filenames a Simple-API body offers.
+def _listed_entries(data: object) -> Iterator[_FileEntry]:
+    """Yield the unyanked file entries a Simple-API body offers.
 
     A body that is not a list of file entries yields nothing.
     """
@@ -255,11 +257,39 @@ def _listed_filenames(data: object) -> Iterator[str]:
         return
 
     for file_info in raw_files:
-        if not isinstance(file_info, dict) or file_info.get("yanked"):
-            continue
+        if isinstance(file_info, dict) and not file_info.get("yanked"):
+            yield file_info
+
+
+def _listed_filenames(data: object) -> Iterator[str]:
+    """Yield the unyanked filenames a Simple-API body offers."""
+    for file_info in _listed_entries(data):
         filename = file_info.get("filename")
         if isinstance(filename, str):
             yield filename
+
+
+def holds_named_files(data: object) -> bool:
+    """Whether a Simple-API body names at least one unyanked file."""
+    return next(_listed_filenames(data), None) is not None
+
+
+def holds_unreachable_link(
+    data: object, index_url: str, package: str, *, page_url: str | None = None
+) -> bool:
+    """Whether a Simple-API body offers a file behind a URL nab cannot use.
+
+    :func:`_parse_files` drops such an entry, so a page offering only
+    these parses to no files at all.  ``index_url``, ``package`` and
+    ``page_url`` fix the base a relative entry resolves against.
+    """
+    base_url = _listing_base_url(index_url, package, page_url)
+    return any(
+        _resolve_file_url(raw_url, base_url) is None
+        for file_info in _listed_entries(data)
+        if isinstance(file_info.get("filename"), str)
+        and isinstance(raw_url := file_info.get("url"), str)
+    )
 
 
 def holds_unreadable_format(data: object) -> bool:
@@ -518,8 +548,7 @@ def _parse_files(
     lower-priority index and risk pinning a different version.
     """
     expected = canonicalize_name(package)
-    # PEP 691: relative URLs resolve against the package page, not the index root.
-    base_url = page_url if page_url is not None else f"{index_url}{package}/"
+    base_url = _listing_base_url(index_url, package, page_url)
     files: list[WheelFile | SdistFile] = []
     if not isinstance(data, dict):
         msg = (
@@ -549,6 +578,14 @@ def _parse_files(
             files.append(parsed)
 
     return files
+
+
+def _listing_base_url(index_url: str, package: str, page_url: str | None) -> str:
+    """Return the URL a listing's relative entries resolve against.
+
+    PEP 691: that is the package page, not the index root.
+    """
+    return page_url if page_url is not None else f"{index_url}{package}/"
 
 
 def _normalized_url(url: str) -> str:
