@@ -5810,6 +5810,31 @@ class TestMain:
         assert info.value.code == 2
         assert "a command is required" in capsys.readouterr().err
 
+    def test_a_resume_reaches_the_command_module_import(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``main`` forwards the callback the whole way down to the dispatch."""
+        resumed: list[int] = []
+
+        main(
+            ["cache", "dir", "--cache-dir", str(tmp_path)],
+            resume=lambda: resumed.append(1),
+        )
+
+        assert resumed == [1]
+        assert capsys.readouterr().out == f"{tmp_path}\n"
+
+    def test_a_line_that_short_circuits_leaves_the_resume_to_its_caller(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``--version`` imports no command module, so nothing resumes here."""
+        resumed: list[int] = []
+
+        main(["--version"], resume=lambda: resumed.append(1))
+
+        assert resumed == []
+        assert capsys.readouterr().out.startswith("nab ")
+
     def test_version_flag_prints_and_returns(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -6043,6 +6068,52 @@ class TestConsoleEntry:
         ):
             console_entry()
         mock_exit.assert_called_once_with(120)
+
+    def test_a_dispatching_line_resumes_at_the_import_and_again_on_the_way_out(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """A line that reaches a command runs ``resume`` at both call sites."""
+        resumed: list[int] = []
+        monkeypatch.setattr(
+            sys, "argv", ["nab", "cache", "dir", "--cache-dir", str(tmp_path)]
+        )
+
+        with patch("nab.cli.os._exit") as mock_exit:
+            console_entry(lambda: resumed.append(1))
+
+        assert resumed == [1, 1]
+        assert capsys.readouterr().out == f"{tmp_path}\n"
+        mock_exit.assert_called_once_with(0)
+
+    def test_a_line_that_never_dispatched_still_resumes_the_caller(self) -> None:
+        """A page or a refusal ends before dispatch, so the resume runs here.
+
+        ``os._exit`` follows, so this is the last chance to put back what
+        the process entry paused.
+        """
+        resumed: list[int] = []
+        with (
+            patch("nab.cli.main"),
+            patch("nab.cli.os._exit"),
+        ):
+            console_entry(lambda: resumed.append(1))
+
+        assert resumed == [1]
+
+    def test_a_crash_resumes_the_caller_before_it_propagates(self) -> None:
+        """An exception on its way to the interpreter leaves nothing paused."""
+        resumed: list[int] = []
+        with (
+            patch("nab.cli.main", side_effect=ValueError("boom")),
+            patch("nab.cli.os._exit"),
+            pytest.raises(ValueError, match="boom"),
+        ):
+            console_entry(lambda: resumed.append(1))
+
+        assert resumed == [1]
 
     def test_a_crash_is_left_to_the_interpreter(self) -> None:
         """Only ``SystemExit`` takes the fast exit; anything else propagates."""

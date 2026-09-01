@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, cast
 from nab import output
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from nab._cli.parse import Parsed
 
 __all__ = ["dispatch"]
@@ -28,16 +30,25 @@ _USAGE_STATUS = 2
 _FAILED_STATUS = 1
 
 
+def _nothing() -> None:
+    """Stand in for the ``resume`` a caller did not supply."""
+
+
 def dispatch(
     parsed: Parsed,
     table: dict[str, tuple[str, str, str]],
     path_dests: dict[str, tuple[str, ...]],
+    *,
+    resume: Callable[[], None] = _nothing,
 ) -> tuple[int, str]:
     """Start the run's output, then run the command, and report how it ended.
 
     The module named in ``table`` is imported here rather than at the top
     of the CLI, so a command's own imports are paid by the command that
     was asked for and by no other.
+
+    ``resume`` runs between that import and the command, so a caller that
+    paused something for startup has a place to put it back.
     """
     try:
         output.begin(_options(parsed.options))
@@ -46,6 +57,7 @@ def dispatch(
 
     module_name, function_name, _summary = table[parsed.command]
     module = __import__(module_name, fromlist=(function_name,))
+    resume()
     command = getattr(module, function_name)
 
     values = dict(parsed.values)

@@ -19,6 +19,7 @@ say so.
 
 from __future__ import annotations
 
+import builtins
 import errno
 import io
 import subprocess
@@ -1353,6 +1354,44 @@ class TestDispatch:
         command.run = run  # type: ignore[attr-defined]
 
         assert dispatch(self._parsed({}), self._TABLE, {}) == (0, "")
+
+    def test_the_resume_runs_between_the_import_and_the_command(
+        self, command: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``resume`` marks the end of startup: the module is in, nothing has run."""
+        events: list[str] = []
+        real_import = builtins.__import__
+
+        def record_import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "nab_probe_command":
+                events.append("import")
+            return real_import(name, *args, **kwargs)
+
+        def run(**_values: object) -> None:
+            events.append("command")
+
+        command.run = run  # type: ignore[attr-defined]
+        monkeypatch.setattr(builtins, "__import__", record_import)
+
+        dispatch(
+            self._parsed({}), self._TABLE, {}, resume=lambda: events.append("resume")
+        )
+
+        assert events == ["import", "resume", "command"]
+
+    def test_a_line_the_printer_refuses_never_resumes(
+        self, command: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nothing was imported, so the caller is left as it was."""
+        monkeypatch.setenv("NAB_VERBOSITY", "loud")
+        resumed: list[int] = []
+
+        status, _message = dispatch(
+            self._parsed({}), self._TABLE, {}, resume=lambda: resumed.append(1)
+        )
+
+        assert status == 2
+        assert resumed == []
 
     def test_a_malformed_verbosity_is_a_usage_error_and_no_command_runs(
         self, command: types.ModuleType, monkeypatch: pytest.MonkeyPatch
