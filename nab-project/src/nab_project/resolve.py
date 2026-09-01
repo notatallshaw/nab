@@ -208,6 +208,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             base_requirements=base_requirements,
             resolution_strategy=resolution_strategy,
             progress=progress,
+            release_refused_wheels=True,
         )
 
 
@@ -225,6 +226,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     preferences: Mapping[str, Version] | None = None,
     progress: ProgressSink | None = None,
     marker_holds: MarkerHolds | None = None,
+    release_refused_wheels: bool = False,
 ) -> ResolveResult:
     """Resolve ``targets`` against an already-open coordinator.
 
@@ -246,6 +248,12 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     :func:`~nab_provider.marker_holds.dependency_marker_holds`.  A host
     with its own marker machinery passes that instead and keeps
     ``nab_markersets`` off the engine's path.
+
+    ``release_refused_wheels`` drops the URL, hashes and sidecar
+    declaration of every wheel a target's tags refuse.  The records come
+    from ``coordinator`` and outlive the resolve, so pass it only when
+    nothing else reads them.  A matrix keeps the payload either way: one
+    target's refusal is another target's candidate.
     """
     inputs = ResolveInputs() if inputs is None else inputs
     with _source_root(cache_dir, inputs) as source_root:
@@ -266,6 +274,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
             listing_filter_cache=ListingFilterCache(
                 len({target.python_full_version for target in targets})
             ),
+            release_refused_wheels=release_refused_wheels and len(targets) == 1,
         )
 
         fork_list = (

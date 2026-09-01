@@ -9,11 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, TypeGuard
 
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
-from nab_provider.records import SdistFile, WheelFile
+from nab_provider.records import SdistFile, WheelFile, release_wheel_payload
 
 from ..errors import (
     ForeignMetadataError,
@@ -645,11 +645,16 @@ def _apply_wheel_tags(
 
     Runs per target: the tags are the one axis of the filter the targets
     of a matrix do not share.
+
+    Where the provider's caller allows it, a refused wheel is released as
+    it is dropped, since nothing fetches it again
+    (:func:`~nab_provider.records.release_wheel_payload`).
     """
     tags = provider.wheel_tags
     if tags is None:
         return base
 
+    release_refused = provider.release_refused_wheels
     result: list[tuple[Version, DistFile]] = []
     tag_rejected_versions: set[Version] = set()
     run_version: Version | None = None
@@ -659,6 +664,9 @@ def _apply_wheel_tags(
         if not excluded_by_wheel_tags(dist, tags):
             result.append((version, dist))
             continue
+
+        if release_refused:
+            release_wheel_payload(dist)
 
         # ``base`` is sorted by version, so a version's rejected wheels arrive
         # together and fold into one tally update.  Identity is enough for the
@@ -727,7 +735,7 @@ def python_or_time_cause(
     return cause
 
 
-def excluded_by_wheel_tags(dist: DistFile, tags: TagSet) -> bool:
+def excluded_by_wheel_tags(dist: DistFile, tags: TagSet) -> TypeGuard[WheelFile]:
     """Return True when ``dist`` is a wheel the target cannot install.
 
     An sdist is never excluded here: it carries no tags, and building it

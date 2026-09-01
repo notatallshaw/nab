@@ -741,7 +741,11 @@ def build_benchmark_provider(
     target: ResolveTarget,
     inputs: _BenchmarkResolveInputs,
 ) -> Provider:
-    """Build a provider from a benchmark scenario's settings and roots."""
+    """Build a provider from a benchmark scenario's settings and roots.
+
+    One provider per coordinator, as in a single-target ``nab lock``, so it
+    may release the wheels its tags refuse.
+    """
     return Provider(
         coordinator,
         target=target,
@@ -760,4 +764,5 @@ def build_benchmark_provider(
         resolution_strategy=config.resolution,
         direct_packages=direct_packages_from_requirements(inputs.requirements),
         constraints=inputs.constraints,
+        release_refused_wheels=True,
     )

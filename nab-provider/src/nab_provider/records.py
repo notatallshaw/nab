@@ -34,6 +34,7 @@ __all__ = [
     "parse_hash_table",
     "rehydrated_sdist",
     "rehydrated_wheel",
+    "release_wheel_payload",
     "select_artifact_hash",
     "sidecar_hash",
 ]
@@ -321,8 +322,10 @@ class WheelFile(_WheelIntegrity):
         """Return the PEP 658/714 metadata URL, or None when unsupported.
 
         The suffix goes on the path, so a PEP 503 hash fragment is dropped.
+        An empty URL answers ``None``: no listing entry carries one, so it
+        marks a record :func:`release_wheel_payload` has reached.
         """
-        if not self.has_metadata:
+        if not self.has_metadata or not self.url:
             return None
 
         try:
@@ -347,6 +350,28 @@ _set_wheel_metadata_hash = _slot_writer(WheelFile, "metadata_hash")
 
 _set_wheel_raw_hashes = _slot_writer(_WheelIntegrity, "_raw_hashes")
 _set_wheel_raw_metadata = _slot_writer(_WheelIntegrity, "_raw_metadata")
+
+
+def release_wheel_payload(wheel: WheelFile) -> None:
+    """Drop what only an installable wheel still reads.
+
+    A wheel the target's tags refuse is never fetched, verified or written
+    to a lock, so its URL, integrity tables and sidecar declaration have no
+    reader left.  The record stays in the listing for the version tallies
+    and the diagnosis walk.  Only the raw tables go, so a record that
+    parsed its hashes at construction keeps them.
+
+    The URL is cleared first so a concurrent reader can order itself
+    against the release: an empty URL makes :attr:`WheelFile.metadata_url`
+    answer ``None``, so a reader that takes a hash and then a URL that is
+    still there took the hash before the release began.
+    """
+    _set_wheel_url(wheel, "")
+    _set_wheel_has_metadata(wheel, False)  # noqa: FBT003 - the slot's __set__ is positional-only
+
+    # A deferred slot holding ``None`` reads back as one holding nothing.
+    _set_wheel_raw_hashes(wheel, None)
+    _set_wheel_raw_metadata(wheel, None)
 
 
 def rehydrated_wheel(  # noqa: PLR0913, PLR0917 - the record's fields, in its own order
