@@ -1042,6 +1042,7 @@ written, like `git config` reporting configured rather than derived state.
 
 A `NAB_*` name that is not one of these (a typo, or `NAB_RESOLUTION`
 for a project-scope option) is ignored with a warning naming the
-variable. `NAB_VERBOSITY` and `NAB_NO_PROGRESS` belong to the
+variable; `-qq` and `NAB_VERBOSITY=silent` turn it off along with
+every other warning. `NAB_VERBOSITY` and `NAB_NO_PROGRESS` belong to the
 [output layer](cli.md) and pass through silently. Run
 `nab config list` to see every effective value and where it came from.
