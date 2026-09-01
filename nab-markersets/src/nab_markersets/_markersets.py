@@ -259,11 +259,10 @@ class Atom:
         """Return the axis this atom partitions and is constant on.
 
         A substring test on a string variable joins that variable's value axis,
-        so the substring test and the value comparison decide on one point.
-
-        On a version-dispatch variable that test keeps a boolean axis of its own
-        per literal, because the values embedding a literal are not enumerable
-        from it.
+        so both readings of the variable are decided on one point. On a
+        version-dispatch variable it keeps a boolean axis of its own, one per
+        literal, because the values that embed a literal are not enumerable
+        from the literals alone.
         """
         if self.kind == AXIS_VALUE:
             return (AXIS_VALUE, self.variable)
@@ -812,7 +811,7 @@ def _suffix_neighbors(version: Version, release_str: str, pre_part: str) -> list
 
 
 def _equal_twins(version: Version) -> list[str]:
-    """Mint the points that separate the literal's version reading from its string reading.
+    """Mint the points separating the literal's version reading from its string one.
 
     ``in``/``not in`` and an invalid specifier fall through to a raw string
     test, so separating that reading from PEP 440 matching needs the release
@@ -828,14 +827,14 @@ def _equal_twins(version: Version) -> list[str]:
 def _release_between(vlow: Version, vhigh: Version) -> str:
     """Return a plain release ranking above every variant of ``vlow``.
 
-    Release ordering runs ahead of pre, post, dev and local, so extending
-    ``vlow``'s release by one outranks it whatever suffix it carries.
-
-    Padding to the wider release keeps the result under ``vhigh`` whenever the
-    two releases differ, that being the deepest place ``vhigh`` can differ.
-
-    Where the ends share a release, or across an epoch boundary, ``vhigh`` does
-    not bound it and the caller's ordering check rejects the candidate.
+    Release ordering runs ahead of pre, post, dev and local, so ``vlow``'s
+    release extended by one outranks ``vlow`` whatever suffix it carries. There
+    is no lowest such release: another zero can always be padded in. Within one
+    epoch the padding runs to the wider of the two releases, which is the
+    deepest place ``vhigh`` can differ, so the result stays under it whenever
+    the two releases differ at all. Across an epoch boundary ``vhigh``'s release
+    does not bound the candidate, so ``vlow``'s own width is enough. The caller
+    checks the ordering either way.
     """
     low = vlow.release
     width = len(low) if vlow.epoch != vhigh.epoch else max(len(low), len(vhigh.release))
@@ -847,12 +846,11 @@ def _release_between(vlow: Version, vhigh: Version) -> str:
 def _between(vlow: Version, low: str, vhigh: Version, memo: Memo) -> str | None:
     """Return a point strictly between two adjacent pool points, or None.
 
-    An exclusive comparison excludes its own bound's post, local, pre and dev
-    variants. Where the two points' releases differ, only a candidate whose own
-    release differs from both lands between them, so the plain release is tried
-    first.
-
-    The suffixed candidates fill a band whose ends share a release.
+    The plain release comes first because an exclusive ordered comparison
+    excludes its own bound's post, local, pre and dev variants, so a band whose
+    two ends share a release is the only one the suffixed candidates can fill.
+    Where the ends differ, only a version whose release differs from both is
+    admitted, and no suffix of ``vlow`` is.
     """
     for candidate in (
         _release_between(vlow, vhigh),
@@ -970,7 +968,8 @@ def _unused_character(literals: Iterable[str]) -> str:
     """Return a character none of ``literals`` uses, counting up from ``!``.
 
     A marker literal can hold any character its quote style admits, so the walk
-    can run past printable ASCII. Any unused character serves.
+    can run past printable ASCII; the point only has to be a string no atom on
+    the axis matches by accident, and any unused character serves.
     """
     used = {char for literal in literals for char in literal}
     code = ord("!")
@@ -984,12 +983,12 @@ def _contains_candidates(
 ) -> list[str]:
     """Mint a point for each substring pattern the axis's contains atoms allow.
 
-    A separator none of ``literals`` uses joins one subset, so every occurrence
-    in the point falls in one piece.
-
-    The point then embeds that subset and what the subset embeds, equals no
-    literal, and is a substring of none. Every combination the atoms realise
-    together is some subset, so the axis reaches all of them.
+    A separator none of ``literals`` uses joins one subset of the substring
+    literals, so every occurrence inside the point falls in one piece: it
+    embeds that subset and whatever the subset embeds, equals no literal, and
+    is a substring of none. Any string embeds what one subset does, so with the
+    literals and their substrings the axis reaches every combination its atoms
+    can realise together.
     """
     names: list[str] = []
     seen: set[str] = set()
@@ -1498,9 +1497,10 @@ def _complement_version(atom: Atom, op: str, var: str) -> Formula:
 def _flip_string_op(atom: Atom, flipped: str) -> Formula:
     """Return ``atom`` under ``flipped``, refusing if that leaves the string table.
 
-    An equality specifier accepts a wildcard and a local version where an
-    ordered one does not, so a flip can make the atom dispatch as a version and
-    denote something else.
+    The atom reaches the string table only while its literal builds no specifier
+    under its own operator, and an equality specifier accepts a wildcard and a
+    local version where an ordered one does not, so the flipped atom can
+    dispatch as a version and denote something else.
     """
     if is_version_dispatch(atom.variable) and _builds_specifier(flipped, atom.literal):
         msg = f"no marker string spells the complement of {_render_atom(atom)}"
@@ -1511,15 +1511,13 @@ def _flip_string_op(atom: Atom, flipped: str) -> Formula:
 def _complement_string(atom: Atom, op: str) -> Formula:
     """Complement an atom packaging reads through the string operator table.
 
-    A swapped atom on a version-dispatch variable is not the table's to
-    complement, because packaging builds its specifier from the environment
-    value.
+    That table folds ``<`` and ``>`` to false and ``<=`` and ``>=`` to equality,
+    so no ordered comparison complements to another ordered comparison.
 
-    Such an atom compares as a version wherever that value parses as one, and
-    through the table only on the rest.
-
-    The table folds ``<`` and ``>`` to false and ``<=`` and ``>=`` to equality,
-    so no ordered comparison complements to another.
+    A swapped atom on a version-dispatch variable does not reach the table at
+    all: packaging builds its specifier from the environment value, so the atom
+    compares as a version wherever that value parses as one, and the table's
+    reading holds only on the rest.
     """
     if atom.swapped and is_version_dispatch(atom.variable):
         msg = f"no marker string spells the complement of {_render_atom(atom)}"
@@ -1548,9 +1546,9 @@ def _complement_leaf(atom: Atom) -> Formula:
 def to_nnf(node: Formula) -> Formula:
     """Push complements down to the leaves (negation normal form).
 
-    A leaf and a constant are already in normal form. A tree can normalise to a
-    constant too: the string operator table folds ``<`` and ``>`` to false, so
-    complementing such an atom yields ``TRUE``.
+    A leaf and a constant are already in normal form. A tree can also normalise
+    to a constant, because complementing an atom the string operator table
+    folds to false yields one.
     """
     if isinstance(node, AndNode):
         return make_and(to_nnf(child) for child in node.children)
@@ -1619,9 +1617,11 @@ def serialize(node: Formula) -> str:
 
 
 def describe(node: Formula) -> str:
-    """Summarise a set for :func:`repr`, without exposing the op-tree."""
-    if isinstance(node, BoolConst):
-        return "universe" if node.value else "empty"
+    """Summarise a set for :func:`repr`, without exposing the op-tree.
+
+    Total: a constant, a set no marker string spells, and a tree nested past the
+    stack each get a word, so every set can be printed.
+    """
     try:
         nnf = to_nnf(node)
         if isinstance(nnf, BoolConst):
@@ -1630,7 +1630,8 @@ def describe(node: Formula) -> str:
     except UnserializableMarkerSet:
         return "unrepresentable"
     except RecursionError:
-        # repr owes its caller a string, not the depth of the tree handed to it.
+        # The two walks are the only recursion under repr, which owes its
+        # caller a string rather than the depth of the tree it was handed.
         return "too deeply nested"
 
 
@@ -1727,7 +1728,7 @@ def _row_pins(disjunct: Formula) -> dict[str, str]:
 
 def _decompose_rows(universe: Formula) -> list[_Row]:
     """Split a universe into rows: each top-level NNF disjunct with its pins."""
-    nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
+    nnf = to_nnf(universe)
     disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
     rows: list[_Row] = []
     for disjunct in disjuncts:
@@ -1765,7 +1766,7 @@ def universe_is_empty(
     universe: Formula, max_cells: int, store: Memo | None = None
 ) -> bool:
     """Whether a universe admits no environment: every top-level disjunct is empty."""
-    nnf = universe if isinstance(universe, BoolConst) else to_nnf(universe)
+    nnf = to_nnf(universe)
     disjuncts = nnf.children if isinstance(nnf, OrNode) else (nnf,)
     shared = Memo() if store is None else store
     return all(is_empty(disjunct, max_cells, shared) for disjunct in disjuncts)

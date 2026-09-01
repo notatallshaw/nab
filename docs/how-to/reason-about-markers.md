@@ -186,33 +186,32 @@ substitutes away stop costing anything.
 
 ## What the decisions do not decide
 
-Emptiness enumerates representative points rather than solving, and two
-constructions read wrong. The first is deliberate: reasoning exactly about
-substrings is intractable, so a `"lit" in var` test is decided as its own
-free boolean, independent of the same variable's value. A contradiction
-between the two is not seen, and the set reads larger than it is.
+Emptiness enumerates representative points rather than solving, and one
+construction reads wrong, deliberately: a `"lit" in var` test on a
+version-dispatch variable (`python_version`, `python_full_version`,
+`platform_release`, `implementation_version`) is decided as its own free
+boolean, independent of the same variable's value, because the versions that
+embed a literal cannot be enumerated from that literal. A contradiction
+between the two readings is not seen, and the set reads larger than it is.
 
 ```pycon
->>> MarkerSet.from_marker('os_name == "posix" and "posix" not in os_name').is_empty()
+>>> MarkerSet.from_marker(
+...     'python_version == "3.9" and "9" not in python_version'
+... ).is_empty()
 False
 ```
 
-The second is a defect, tracked but not yet fixed. Only points around a
-set's own version literals enter the partition, so a band between two
-adjacent literals holds no representative and the set reads smaller than
-it is:
+A string variable has no such limit: its points carry both readings, so the
+same contradiction is decided.
 
 ```pycon
->>> narrow = MarkerSet.from_marker(
-...     'python_full_version > "3" and python_full_version < "3.1"'
-... )
->>> narrow.is_empty()
-True
->>> narrow.evaluate({"python_full_version": "3.0.1", "python_version": "3.0"})
+>>> MarkerSet.from_marker('os_name == "posix" and "posix" not in os_name').is_empty()
 True
 ```
 
-`witness` and `evaluate` inherit neither: both check a concrete
+So `is_empty` returning `True` is safe and `False` is the weak answer.
+
+`witness` and `evaluate` do not inherit it: both check a concrete
 environment against the set. So a `witness` is always right, and only its
 `None` is weaker than "empty".
 

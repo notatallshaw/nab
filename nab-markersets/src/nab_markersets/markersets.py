@@ -90,28 +90,25 @@ class MarkerSet:
     :meth:`equivalent` is semantic.
 
     The decision procedures partition each axis a set names into cells on which
-    every atom is constant, and read the set once per cell. That is exact
-    except on two constructions, and they err in opposite directions, so neither
-    verdict is safe on its own.
+    every atom is constant, and read the set once per cell. That is exact except
+    on one construction, where the set reads larger than it is.
 
-    A substring test is decided as its own free boolean, independent of the
-    variable's value, so the set reads larger than it is:
+    A substring test on a version-dispatch variable (``python_version``,
+    ``python_full_version``, ``platform_release``, ``implementation_version``)
+    is decided as its own free boolean, independent of the variable's value,
+    because the versions that embed a literal are not enumerable from the
+    literal. On a string variable the two readings share one axis, and there
+    the contradiction is decided:
 
-    >>> both = 'os_name == "posix" and "posix" not in os_name'
-    >>> MarkerSet.from_marker(both).is_empty()
+    >>> opaque = 'python_version == "3.9" and "9" not in python_version'
+    >>> MarkerSet.from_marker(opaque).is_empty()
     False
+    >>> decided = 'os_name == "posix" and "posix" not in os_name'
+    >>> MarkerSet.from_marker(decided).is_empty()
+    True
 
-    Only points around a set's own version literals enter the partition, so a
-    band between two adjacent literals holds no representative and the set reads
-    smaller than it is:
-
-    >>> band = MarkerSet.from_marker(
-    ...     'platform_release > "6" and platform_release < "6.1"'
-    ... )
-    >>> band.is_empty(), band.evaluate({"platform_release": "6.0.1"})
-    (True, True)
-
-    :meth:`witness` and :meth:`evaluate` inherit neither.
+    So ``True`` from :meth:`is_empty` is safe and ``False`` is the weak answer.
+    :meth:`witness` and :meth:`evaluate` do not inherit it.
     """
 
     __slots__ = ("_tree",)
@@ -226,7 +223,13 @@ class MarkerSet:
 
     @override
     def __hash__(self) -> int:
-        """Hash the key :meth:`__eq__` compares, so equal sets hash alike."""
+        """Hash the key :meth:`__eq__` compares, so equal sets hash alike.
+
+        Undecorated, unlike every method above: ``dict`` and ``set`` call this
+        where the caller wrote no marker code, so a tree nested past the stack
+        surfaces as the :class:`RecursionError` CPython raises comparing any
+        deep structure rather than as the algebra's own bounded failure.
+        """
         return hash(self._tree.key())
 
     # ---- decision procedures
@@ -235,9 +238,9 @@ class MarkerSet:
     def is_empty(self, *, store: DecisionStore | None = None) -> bool:
         """Whether no environment satisfies this set (the marker is a contradiction).
 
-        Not exact: :class:`MarkerSet` names the two constructions it misreads and
-        which way each one errs. Every other decision procedure reduces to this
-        one, so all of them inherit both gaps.
+        Not exact: :class:`MarkerSet` names the construction it misreads and
+        which way it errs. Every other decision procedure reduces to this one,
+        so all of them inherit that gap.
 
         :raises IntractableMarkerSet: if deciding the set exceeds the internal
             cell budget, or the marker nests past the stack.
@@ -370,8 +373,8 @@ class MarkerSet:
     def evaluate(self, env: Mapping[str, str | AbstractSet[str]]) -> bool:
         """Whether a full environment is in the set (set variables take sets).
 
-        Exact: no cell decomposition runs, so the gaps :meth:`is_empty` carries
-        do not apply.
+        Exact: no cell decomposition runs, so the gap :meth:`is_empty` carries
+        does not apply.
 
         >>> MarkerSet.from_marker('extra == "gpu"').evaluate(
         ...     {"extra": frozenset({"cpu", "gpu"})}
@@ -397,7 +400,7 @@ class MarkerSet:
         """Return an environment in this set, or ``None`` when none is found.
 
         Never wrong: the environment is checked against the set before it is
-        returned, so it inherits neither gap :meth:`is_empty` carries. ``None``
+        returned, so it does not inherit the gap :meth:`is_empty` carries. ``None``
         is weaker than empty, because the search reads the same partition.
 
         >>> minor = MarkerSet.from_marker('python_version >= "3.11"')
@@ -491,5 +494,9 @@ class MarkerSet:
 
     @override
     def __repr__(self) -> str:
-        """Return a short summary of the set, for debugging."""
+        """Return a short summary of the set, for debugging.
+
+        Total: a set no marker string spells and one nested past the stack are
+        summarised in a word rather than reported as a failure.
+        """
         return f"<{type(self).__name__} {_markersets.describe(self._tree)!r}>"

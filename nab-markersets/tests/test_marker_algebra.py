@@ -22,6 +22,7 @@ from packaging.markers import (
     UndefinedEnvironmentName,
     _eval_op,
 )
+from packaging.version import Version
 
 from nab_markersets import errors, markersets
 from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
@@ -131,6 +132,35 @@ def test_exclusive_below_dev_literal() -> None:
         'python_full_version > "3.14.0.dev0"'
     )
     assert not lower.is_empty()
+
+
+def test_open_band_holds_across_the_version_axes() -> None:
+    bands = [
+        (
+            'python_full_version > "3" and python_full_version < "3.1"',
+            {"python_full_version": "3.0.1"},
+        ),
+        (
+            'python_full_version > "3.9" and python_full_version < "3.9.1"',
+            {"python_full_version": "3.9.0.1"},
+        ),
+        (
+            'python_full_version > "1!3" and python_full_version < "1!3.1"',
+            {"python_full_version": "1!3.0.1"},
+        ),
+        (
+            'implementation_version > "3" and implementation_version < "3.1"',
+            {"implementation_version": "3.0.1"},
+        ),
+    ]
+    for text, inside in bands:
+        band = ms(text)
+        assert not band.is_empty(), text
+        assert band.evaluate(inside), text
+
+        env = band.witness()
+        assert env is not None, text
+        assert Marker(text).evaluate(env), text
 
 
 def test_dev0_literal_mints_no_below_neighbour() -> None:
@@ -660,6 +690,84 @@ def test_platform_version_dispatches_as_string() -> None:
     assert not marker.is_empty()
 
 
+def test_substring_and_value_on_one_string_variable_decide_together() -> None:
+    """A string variable carries both readings of itself on one axis.
+
+    ``literal in point`` is decidable at a point, so a substring test on a
+    variable the tree also compares by value is read on that value rather than
+    on a boolean of its own.
+    """
+    assert ms('os_name == "posix" and "posix" not in os_name').is_empty()
+    assert ms('sys_platform == "linux" and "win" in sys_platform').is_empty()
+    assert ms('os_name == "posix"').is_subset(ms('"posix" in os_name'))
+
+
+def test_substring_points_reach_past_the_value_literals() -> None:
+    """The axis keeps the strings that embed a literal without equalling one.
+
+    ``!= "posix"`` holds at every string but one, and ``"posix" in os_name``
+    at every string embedding it, so the two meet. Deciding the substring test
+    only on the value literals would miss that and read the set as empty.
+    """
+    wider = ms('os_name != "posix" and "posix" in os_name')
+
+    assert not wider.is_empty()
+
+    env = wider.witness()
+    assert env is not None
+    assert wider.evaluate(env)
+
+
+def test_substring_points_reach_every_realisable_combination() -> None:
+    """Two independent substrings can hold at once, and either alone.
+
+    A point is minted for each subset of the axis's substring literals, so a
+    combination is ruled out only when one literal embeds another.
+    """
+    both = ms('"aa" in platform_version and "bb" in platform_version')
+    assert not both.is_empty()
+    assert not both.is_subset(ms('platform_version == "aabb"'))
+
+    assert ms('"aa" in platform_version and "a" not in platform_version').is_empty()
+
+
+def test_substring_points_avoid_a_literal_holding_the_first_separator() -> None:
+    """The joined point uses a character the axis's own literals do not.
+
+    "ab" carries both substrings and neither excluded one, and only a joined
+    point carries two at once. A separator one literal already holds would put
+    that literal into every joined point and lose the combination.
+    """
+    marker = ms(
+        '"a" in platform_version and "b" in platform_version'
+        ' and "!" not in platform_version'
+    )
+
+    assert not marker.is_empty()
+
+    env = marker.witness()
+    assert env is not None
+    assert marker.evaluate(env)
+
+
+def test_substring_on_a_version_variable_stays_a_free_boolean() -> None:
+    """A version axis keeps the opaque reading rather than folding the two.
+
+    No finite pool covers the values that embed an arbitrary literal, so
+    folding would decide empty where a real value satisfies both. The price is
+    that a genuine contradiction reads as inhabited.
+    """
+    # A contradiction: every PEP 440 version equal to 3.9 writes the digit 9.
+    assert not ms('python_version == "3.9" and "9" not in python_version').is_empty()
+
+    # Not a contradiction: a local segment satisfies both, and keeping the axis
+    # opaque is what lets the algebra see it. No pool of versions built from
+    # "6" and "zq" would mint this point.
+    both = ms('platform_release == "6" and "zq" in platform_release')
+    assert not both.is_empty()
+    assert both.evaluate({"platform_release": "6.0+zq"})
+
+
 def test_implementation_version_is_version_or_string_twin() -> None:
     # implementation_version dispatches as a version yet may hold an arbitrary
     # string (like platform_release), so a non-version literal stays realisable
@@ -907,10 +1015,9 @@ def test_string_axis_decides_a_substring_contradiction() -> None:
 
 
 def test_witness_none_for_opaque_over_approximation() -> None:
-    # A version-dispatch variable keeps the opaque boolean, because the values
-    # embedding a literal are not enumerable from it. So the pair reads as
-    # inhabited and no cell representative satisfies it.
-    marker = ms('implementation_version == "3.9" and "zq" in implementation_version')
+    # A twin keeps the opaque reading of a substring test, so the set is not
+    # is_empty although no string equal to "pypy" carries "x86".
+    marker = ms('implementation_version == "pypy" and "x86" in implementation_version')
     assert not marker.is_empty()
     assert marker.witness() is None
 
@@ -1032,14 +1139,18 @@ def test_open_band_between_adjacent_literals_is_sound() -> None:
     # variants, so a band open at both ends admits only a version whose release
     # differs from both. The pool seeds one; before it did not and the band
     # decided empty.
-    for text, witness in (
+    for text, value in (
         ('platform_release > "6" and platform_release < "6.1"', "6.0.1"),
         ('python_full_version > "3" and python_full_version < "3.1"', "3.0.1"),
         ('implementation_version > "9" and implementation_version < "9.1"', "9.0.1"),
     ):
         band = ms(text)
         assert not band.is_empty(), text
-        assert band.evaluate(_env_for(text, witness)), text
+        assert band.evaluate(_env_for(text, value)), text
+
+        env = band.witness()
+        assert env is not None, text
+        assert Marker(text).evaluate(env), text
 
 
 def _env_for(text: str, value: str) -> dict[str, str]:
@@ -1052,22 +1163,17 @@ def _env_for(text: str, value: str) -> dict[str, str]:
 
 
 def test_open_band_predicates_and_simplify_stay_sound() -> None:
-    band = ms('platform_release > "6" and platform_release < "6.1"')
+    # Every predicate reduces to is_empty, so each one inherits the band fix.
+    for text in (
+        'platform_release > "6" and platform_release < "6.1"',
+        'python_full_version > "3" and python_full_version < "3.1"',
+    ):
+        band = ms(text)
 
-    assert not band.is_subset(ms('sys_platform == "win32"'))
-    assert not band.is_disjoint(MarkerSet.full())
-    assert not band.equivalent(MarkerSet.empty())
-    assert not band.simplify(within=MarkerSet.full()).is_empty()
-
-
-def test_release_between_reads_both_epochs_and_widths() -> None:
-    # Two branches no marker-level case separates: the padding width is vhigh's
-    # only inside one epoch, and the prefix is vlow's epoch, not vhigh's.
-    between = _markersets._release_between
-
-    assert between(Version("1!3"), Version("1!3.1")) == "1!3.0.1"
-    assert between(Version("3"), Version("3.1.1.1")) == "3.0.0.0.1"
-    assert between(Version("3"), Version("1!3.1.1.1")) == "3.1"
+        assert not band.is_disjoint(MarkerSet.full()), text
+        assert not band.is_subset(ms('sys_platform == "win32"')), text
+        assert not band.equivalent(MarkerSet.empty()), text
+        assert not band.simplify(within=MarkerSet.full()).is_empty(), text
 
 
 def test_string_axis_decides_a_substring_against_its_own_value() -> None:
@@ -1081,17 +1187,6 @@ def test_string_axis_decides_a_substring_against_its_own_value() -> None:
     both = ms('"lin" in sys_platform and "ux" in sys_platform')
     assert not both.is_empty()
     assert both.evaluate({"sys_platform": "linux"})
-
-
-def test_substring_on_a_version_variable_stays_a_free_boolean() -> None:
-    # A version axis keeps the opaque reading rather than folding the two. No
-    # finite pool covers the values that embed an arbitrary literal, so folding
-    # would decide empty where a real value satisfies both.
-    assert not ms('python_version == "3.9" and "9" not in python_version').is_empty()
-
-    both = ms('platform_release == "6" and "zq" in platform_release')
-    assert not both.is_empty()
-    assert both.evaluate({"platform_release": "6.0+zq"})
 
 
 def test_many_substring_literals_on_one_axis_refuse_loudly() -> None:
@@ -1117,6 +1212,19 @@ def test_unserializable_ordered_version_complement() -> None:
         ms('python_full_version >= "3.9"').complement().to_marker_string()
 
 
+def test_release_between_reads_both_epochs_and_widths() -> None:
+    # Two branches the marker-level tests do not separate: the padding width is
+    # vhigh's only inside one epoch, and the prefix is vlow's epoch, not vhigh's.
+    between = _markersets._release_between
+
+    assert between(Version("1!3"), Version("1!3.1")) == "1!3.0.1"
+    assert between(Version("3"), Version("3.1.1.1")) == "3.0.0.0.1"
+
+    # Across an epoch boundary vhigh's release does not bound the candidate, so
+    # padding to it would mint a needlessly deep point.
+    assert between(Version("3"), Version("1!3.1.1.1")) == "3.1"
+
+
 def test_unserializable_swapped_version_complement() -> None:
     # A swapped atom builds its specifier from the environment value, so it
     # compares as a version wherever that value parses as one and through the
@@ -1128,7 +1236,9 @@ def test_unserializable_swapped_version_complement() -> None:
         '"3.9+local" < python_full_version',
         '"3.9" >= platform_release',
     ):
-        with pytest.raises(UnserializableMarkerSet):
+        with pytest.raises(
+            UnserializableMarkerSet, match="no marker string spells the complement"
+        ):
             ms(text).complement().to_marker_string()
 
     # A swapped atom on a string variable still complements: that variable never
@@ -1146,19 +1256,41 @@ def test_unserializable_twin_equality_complement() -> None:
         ms('platform_release == "6.6"').complement().to_marker_string()
 
 
-def test_repr_is_total_on_a_constant_normal_form() -> None:
-    # Complementing an atom the string table folds to false yields a constant,
-    # which serialize has no atom spelling for. repr answers with a word.
+def test_unserializable_degraded_equality_complement() -> None:
+    # A literal the ordered specifier rejects sends >= and <= down the string
+    # operator table, where they mean exact equality. Spelling that complement
+    # as != would re-dispatch as a version, so it has no marker string.
+    for text in (
+        'python_full_version >= "3.9+local"',
+        'platform_release <= "6.6+x"',
+    ):
+        with pytest.raises(
+            UnserializableMarkerSet,
+            match="no marker string spells the complement of",
+        ):
+            ms(text).complement().to_marker_string()
+
+    # A wildcard literal has no realisable value, so its set reads empty and
+    # to_marker_string answers None for the complement before serialising it.
+    assert repr(~ms('python_full_version <= "3.*"')) == "<MarkerSet 'unrepresentable'>"
+
+
+def test_string_table_equality_complement_serialises() -> None:
+    # On a string variable the same degradation is spellable: >= means equality
+    # and != is its complement on the same table.
+    marker = ms('os_name >= "posix"').complement()
+    text = marker.to_marker_string()
+    assert text == 'os_name != "posix"'
+    assert marker.equivalent(ms(text))
+
+
+def test_repr_of_a_constant_complement_is_total() -> None:
+    # < and > are constant-false on the string operator table, which a
+    # version-dispatch variable falls onto when its literal builds no specifier.
+    # The complement is then the universe, which has no atom to render.
+    assert repr(~ms('sys_platform < "linux"')) == "<MarkerSet 'universe'>"
     assert repr(~ms('python_full_version < "3.*"')) == "<MarkerSet 'universe'>"
-
-
-def test_repr_past_the_stack_is_total() -> None:
-    deep = ms('sys_platform == "linux"')
-    other = ms('os_name == "posix"')
-    for i in range(3000):
-        deep = (deep | other) if i % 2 else (deep & other)
-
-    assert repr(deep) == "<MarkerSet 'too deeply nested'>"
+    assert repr(~ms('implementation_version > "pypy"')) == "<MarkerSet 'universe'>"
 
 
 def test_repr_summarises_without_leaking_the_tree() -> None:
@@ -1226,6 +1358,14 @@ def test_guard_repeated_clause_tree_walk() -> None:
     marker = ms(" or ".join(f"({axes})" for _ in range(8)))
     with pytest.raises(IntractableMarkerSet):
         marker.is_empty()
+
+
+def test_guard_substring_subsets() -> None:
+    # A string axis mints one point per subset of its substring literals, so
+    # the subset count is guarded before the points are built.
+    text = " and ".join(f'"lit{i}" in sys_platform' for i in range(17))
+    with pytest.raises(IntractableMarkerSet, match="substring subsets over 17"):
+        ms(text).is_empty()
 
 
 def test_guard_value_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1462,6 +1602,23 @@ def test_deep_nesting_decision_reports_complexity() -> None:
         for decide in decisions:
             with pytest.raises(IntractableMarkerSet):
                 decide()
+
+        # The two dunders stay undecorated, so they report the depth the way
+        # CPython does for any deep structure.
+        for dunder in (lambda: deep == shallow, lambda: hash(deep)):
+            with pytest.raises(RecursionError):
+                dunder()
+    finally:
+        sys.setrecursionlimit(original)
+
+
+def test_repr_past_the_stack_is_total() -> None:
+    # repr answers where every decision procedure above reports the depth.
+    deep = _nested_alternating(1200)
+    original = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(len(traceback.extract_stack()) + 300)
+        assert repr(deep) == "<MarkerSet 'too deeply nested'>"
     finally:
         sys.setrecursionlimit(original)
 

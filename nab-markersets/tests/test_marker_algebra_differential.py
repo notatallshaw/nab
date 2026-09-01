@@ -1,6 +1,6 @@
 """Differential and law checks for the marker algebra.
 
-Two ground-truth cross-checks against the vendored packaging:
+Two ground-truth cross-checks against packaging:
 
 * ``evaluate`` must agree with ``packaging.markers.Marker.evaluate`` on every
   generated (marker, environment) pair, for the environment-variable fragment.
@@ -8,9 +8,10 @@ Two ground-truth cross-checks against the vendored packaging:
   equivalent is checked against an exact packaging grid, and any disagreement
   where the algebra is more permissive than the grid is a failure.
 
-Both use a deterministic, CI-fast generator (a few hundred cases). The census at
-the end of the file is exhaustive instead, over every two-atom marker its
-alphabet spells.
+On one string variable the grid is replaced by an exhaustive string domain,
+which pins emptiness in both directions rather than one.
+
+All three use a deterministic, CI-fast generator (a few hundred cases).
 """
 
 from __future__ import annotations
@@ -26,11 +27,14 @@ from nab_markersets.markersets import MarkerSet
 
 # Version values straddle every literal the alphabets use
 # (3.9, 3.10, 3.14), including the 3.14 prerelease-carve-out witnesses, an epoch
-# version (full ordering and major.minor truncation diverge), and a local one.
+# version (full ordering and major.minor truncation diverge), a local one, and
+# the deeper releases that are the only shape entering the band between two
+# adjacent literals.
 PFV_GRID = [
     "2.7.18",
     "3.8.0",
     "3.9.0",
+    "3.9.0.1",
     "3.9.0b2",
     "3.9.7",
     "3.10.0",
@@ -43,6 +47,7 @@ PFV_GRID = [
     "3.14.0.post6",
     "3.14.2",
     "3.15.0",
+    "1!3.0.1",
     "1!3.9",
     "1!4.0",
     "2!0",
@@ -97,6 +102,16 @@ GRID = [
     {**GRID[0], "implementation_version": "foo"},
 ]
 
+# platform_release is one value for the whole product above, so the values that
+# separate its atoms are pinned here instead of widening every environment.
+GRID = [
+    *GRID,
+    *(
+        {**GRID[0], "platform_release": release}
+        for release in ("6", "6.0.1", "6.1", "6.1.0.4", "7", "generic")
+    ),
+]
+
 VERSION_ATOMS = [
     'python_full_version < "3.14"',
     'python_full_version >= "3.14"',
@@ -141,7 +156,21 @@ TWIN_ATOMS = [
     'platform_release > "6.1"',
     'platform_release <= "6.1.0.4"',
 ]
-ALPHABET = VERSION_ATOMS + STRING_ATOMS + TWIN_ATOMS
+
+# packaging's string operator table reads < and > as constant false and <= and
+# >= as equality, and a version-dispatch variable falls onto that table whenever
+# the literal builds no specifier. Both degradations reshape the complement, so
+# the alphabet carries one of each: a wildcard and a local version are the
+# literals an ordered specifier rejects while an equality specifier accepts.
+DEGRADED_ATOMS = [
+    'sys_platform < "linux"',
+    'platform_machine > "x86_64"',
+    'python_full_version < "3.*"',
+    'python_full_version <= "3.*"',
+    'implementation_version > "pypy"',
+    'implementation_version >= "3.9+local"',
+]
+ALPHABET = VERSION_ATOMS + STRING_ATOMS + TWIN_ATOMS + DEGRADED_ATOMS
 
 
 def _random_marker(rng: random.Random, depth: int) -> str:
@@ -195,6 +224,26 @@ def test_decisions_are_never_unsound() -> None:
     assert checked == 400
 
 
+def test_every_atom_pair_decides_soundly() -> None:
+    """Every two-atom conjunction and disjunction, checked against the grid.
+
+    The random walk reaches a given pair of atoms too rarely to pin one, and a
+    band closed by two adjacent literals is exactly a pair.
+    """
+    pairs = 0
+    for left, right in itertools.product(ALPHABET, repeat=2):
+        for joiner in (" and ", " or "):
+            text = f"{left}{joiner}{right}"
+            algebra = MarkerSet.from_marker(text)
+            marker = Marker(text)
+            if algebra.is_empty():
+                assert not any(marker.evaluate(e) for e in GRID), ("empty", text)
+            if algebra.is_full():
+                assert all(marker.evaluate(e) for e in GRID), ("tautology", text)
+            pairs += 1
+    assert pairs == 2 * len(ALPHABET) ** 2
+
+
 def test_is_empty_and_tautology_never_unsound() -> None:
     rng = random.Random(99)  # noqa: S311
     for _ in range(300):
@@ -207,110 +256,113 @@ def test_is_empty_and_tautology_never_unsound() -> None:
             assert all(marker.evaluate(e) for e in GRID), ("tautology", text)
 
 
-# ------------------------------------------------------------------- census
+# ------------------------------------------------- exhaustive string axis
 
-# Every two-atom marker over these, against every environment the values below
-# spell. The alphabet holds both directions of each shape the decision reads
-# through a pool: a value comparison, a substring test and an ordered band, on a
-# string variable, on both pure-version variables and on a twin.
-CENSUS_ATOMS = [
-    'os_name == "posix"',
-    'os_name != "posix"',
-    'os_name >= "posix"',
-    '"posix" in os_name',
-    '"posix" not in os_name',
-    'python_version == "3.9"',
-    'python_version >= "3.10"',
-    '"9" in python_version',
-    '"9" not in python_version',
-    'python_full_version < "3.14"',
-    'python_full_version > "3.9.7"',
-    'platform_release == "6"',
-    'platform_release > "6"',
-    'platform_release < "6.1"',
-    '"zq" in platform_release',
-    '"zq" not in platform_release',
+# A string variable is compared for exact equality, tested for being a
+# substring of a literal, and tested for carrying one; its ordered operators are
+# constant. So a finite domain of strings decides it exactly. The domain below
+# is every string of up to three characters over "abc", which covers the atoms'
+# literals ("a", "b", "ab"), their concatenations, and the separator "c" the
+# engine mints, without claiming to be the smallest such domain.
+STRING_DOMAIN = [
+    "".join(chars)
+    for width in range(4)
+    for chars in itertools.product("abc", repeat=width)
 ]
 
-# Wide enough to realise every truth vector the atoms admit together, which is
-# what makes an unsatisfied marker evidence rather than a gap in the values.
-# platform_release carries the awkward ones: 6.0.1 sits inside the open band,
-# and 6.0+zq embeds a literal while still comparing as a version.
-CENSUS_VALUES = {
-    "os_name": ["posix", "nt", "posixx", "xposix", "java"],
-    "python_version": ["3.9", "3.10", "3.11", "9.0", "3.19"],
-    "python_full_version": [
-        "3.9.0",
-        "3.9.7",
-        "3.9.8",
-        "3.10.0",
-        "3.13.9",
-        "3.14.0",
-        "9.0.0",
-    ],
-    "platform_release": [
-        "6",
-        "6.0",
-        "6.0.1",
-        "6.1",
-        "6.0+zq",
-        "6zq",
-        "zq",
-        "6.0.1+zq",
-        "7",
-        "generic",
-    ],
-}
+STRING_AXIS_ATOMS = [
+    'os_name == "ab"',
+    'os_name != "ab"',
+    'os_name == "a"',
+    'os_name in "ab"',
+    'os_name not in "ab"',
+    '"a" in os_name',
+    '"a" not in os_name',
+    '"b" in os_name',
+    '"ab" in os_name',
+    '"ab" not in os_name',
+]
 
-# A substring test on a version-dispatch variable is decided as its own free
-# boolean, so a marker pairing one with a value comparison reads as inhabited
-# when it is not. The gap is deliberate: no pool built from these literals mints
-# 6.0+zq, which is what makes platform_release == "6" and "zq" in
-# platform_release right.
-CENSUS_OVER_APPROXIMATE = {
-    'python_version == "3.9" and "9" not in python_version',
-    '"9" not in python_version and python_version == "3.9"',
-}
+_STRING_AXIS_TRIPLES = 150
 
 
-def _census_environments() -> list[dict[str, str]]:
-    """Every combination of CENSUS_VALUES, over a fixed base for the rest."""
-    names = sorted(CENSUS_VALUES)
-    columns = [CENSUS_VALUES[name] for name in names]
-    return [
-        {**GRID[0], **dict(zip(names, values, strict=True))}
-        for values in itertools.product(*columns)
+def _string_axis_markers(rng: random.Random) -> list[str]:
+    """Every pair of string-axis atoms under both joiners, plus random triples."""
+    out = [
+        f"{left} {joiner} {right}"
+        for left, right in itertools.product(STRING_AXIS_ATOMS, repeat=2)
+        for joiner in ("and", "or")
     ]
+    out.extend(
+        " ".join(
+            (
+                rng.choice(STRING_AXIS_ATOMS),
+                rng.choice(("and", "or")),
+                rng.choice(STRING_AXIS_ATOMS),
+                rng.choice(("and", "or")),
+                rng.choice(STRING_AXIS_ATOMS),
+            )
+        )
+        for _ in range(_STRING_AXIS_TRIPLES)
+    )
+    return out
 
 
-def test_two_atom_census_pins_soundness_and_its_one_gap() -> None:
-    """No marker decides empty while inhabited, and the gap is exactly two.
+def test_string_axis_emptiness_is_exact() -> None:
+    """A string axis is neither over- nor under-approximated.
 
-    Both halves discriminate. Deciding an inhabited marker empty is the failure
-    that reaches a caller as a dropped requirement, and a widened gap costs
-    precision without announcing itself.
+    Both directions are asserted against packaging over the finite domain, so a
+    substring test read apart from the variable's value fails here: it reports
+    a set as inhabited that no string inhabits.
     """
-    environments = _census_environments()
-    joined = [
-        f"{left}{joiner}{right}"
-        for left in CENSUS_ATOMS
-        for right in CENSUS_ATOMS
-        for joiner in (" and ", " or ")
-    ]
+    rng = random.Random(20260829)  # noqa: S311
+    markers = _string_axis_markers(rng)
+    for text in markers:
+        satisfiable = any(
+            Marker(text).evaluate({"os_name": value}) for value in STRING_DOMAIN
+        )
+        assert MarkerSet.from_marker(text).is_empty() == (not satisfiable), text
+    assert len(markers) == 2 * len(STRING_AXIS_ATOMS) ** 2 + _STRING_AXIS_TRIPLES
 
-    unsound, over_approximate = [], set()
-    for text in joined:
-        inhabited = any(Marker(text).evaluate(env) for env in environments)
-        if MarkerSet.from_marker(text).is_empty():
-            if inhabited:
-                unsound.append(text)
-        elif not inhabited:
-            over_approximate.add(text)
 
-    assert len(joined) == 512
-    assert len(environments) == 1750
-    assert unsound == []
-    assert over_approximate == CENSUS_OVER_APPROXIMATE
+SUMMARY_PREFIX = "<MarkerSet '"
+SUMMARY_SUFFIX = "'>"
+
+# The words repr uses where no marker string applies.
+PLACEHOLDERS = frozenset({"universe", "empty", "unrepresentable", "too deeply nested"})
+
+
+def _summary(marker_set: MarkerSet) -> str:
+    """Return the marker-string summary inside a set's repr."""
+    rendered = repr(marker_set)
+    assert rendered.startswith(SUMMARY_PREFIX), rendered
+    assert rendered.endswith(SUMMARY_SUFFIX), rendered
+    return rendered[len(SUMMARY_PREFIX) : -len(SUMMARY_SUFFIX)]
+
+
+def test_repr_is_total_and_agrees_on_the_grid() -> None:
+    """repr renders every set, and what it renders denotes that set."""
+    rng = random.Random(20260829)  # noqa: S311
+    spelled = 0
+    universes = 0
+    for _ in range(300):
+        text = _random_marker(rng, 2)
+        base = MarkerSet.from_marker(text)
+        for candidate in (base, ~base, base & ~base, base | ~base):
+            summary = _summary(candidate)
+            if summary in PLACEHOLDERS:
+                if summary == "universe":
+                    universes += 1
+                continue
+            marker = Marker(summary)
+            for env in GRID:
+                assert marker.evaluate(env) == candidate.evaluate(env), (summary, env)
+            spelled += 1
+
+    assert spelled > 300
+    # A complement that normalises to a constant is the shape with no atom to
+    # render, so the run reaches that path only while it produces some.
+    assert universes > 0
 
 
 # --------------------------------------------------------------------- laws
