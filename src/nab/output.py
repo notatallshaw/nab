@@ -25,7 +25,6 @@ from typing_extensions import override
 
 from .env import (
     NAB_VERBOSITY,
-    OUTPUT_OWNED,
     color_enabled,
     progress_suppressed,
     verbosity_name,
@@ -35,7 +34,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 __all__ = [
-    "OUTPUT_ENV_VARS",
     "ColorChoice",
     "OutputOptionError",
     "OutputOptions",
@@ -52,9 +50,6 @@ __all__ = [
     "should_color",
     "verbosity_from_counts",
 ]
-
-OUTPUT_ENV_VARS: frozenset[str] = OUTPUT_OWNED
-"""The names the config ladder is told to skip, because this layer owns them."""
 
 
 class Verbosity(enum.IntEnum):
