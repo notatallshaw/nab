@@ -248,7 +248,6 @@ class ProjectKeys(
             render=hooks.render_dist_policy,
         ),
         help="which distribution kinds the resolve may pin",
-        docs="reference/build-policy.md",
     )
 
     build_policy = Value[BuildPolicyFlag | None](
