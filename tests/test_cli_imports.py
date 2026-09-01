@@ -10,8 +10,9 @@ the heavier stdlib modules the rest of nab uses.  ``nab._cli.dispatch``,
 ``nab._cli.render``, ``nab._cli.diagnose`` and ``nab.env`` are the
 sanctioned exemptions, and each is loaded only by a line that asked for it.
 
-The last case bans what a command holds after it has dispatched: a line
-that only reads settings loads nothing a resolve needs.
+The last cases ban what a command holds after it has dispatched: a line
+that only reads settings loads nothing a resolve needs, and a line that
+locks holds no part of ``email``.
 """
 
 from __future__ import annotations
@@ -251,3 +252,16 @@ def test_a_settings_command_loads_no_index_reader(
     (tmp_path / "pyproject.toml").write_text(_PROJECT, encoding="utf-8")
 
     assert _run(_HELD_PROBE, ",".join(_INDEX_READER), *line, cwd=tmp_path) == ""
+
+
+def test_a_lock_command_holds_no_email_module(tmp_path: Path) -> None:
+    """Probe G: locking loads no header parser and no HTTP-date reader.
+
+    :mod:`nab_index.cached_client` and :mod:`nab_index.local_index` are held
+    by the line even under ``--offline``, which keeps the probe off the
+    network. They reach :mod:`email` only from the branch that reads an
+    ``Expires`` header and the two that read a metadata block.
+    """
+    (tmp_path / "pyproject.toml").write_text(_PROJECT, encoding="utf-8")
+
+    assert _run(_HELD_PROBE, "email", "lock", "--offline", cwd=tmp_path) == ""

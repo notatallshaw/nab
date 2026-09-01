@@ -1,9 +1,9 @@
 """File-URL helpers, in a module that imports no index client.
 
 :mod:`nab_index.local_index` reads listings and wheels, so importing it pulls
-in :mod:`zipfile`, :mod:`email.parser` and the HTTP client.  Deciding whether
-a configured index URL is a ``file:`` one needs none of that, and that check
-runs while a command line is still being read, so the two live apart.
+in :mod:`zipfile` and the HTTP client.  Deciding whether a configured index URL
+is a ``file:`` one needs none of that, and that check runs while a command line
+is still being read, so the two live apart.
 """
 
 from __future__ import annotations
