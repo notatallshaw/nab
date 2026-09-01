@@ -560,7 +560,7 @@ class NabBuildEnv:
             # The sdist goes with the wheels the narrowing drops: nothing
             # installs it, and a bad one would fail the download and take
             # the build with it.
-            return replace(pin, wheels=(preferred,), sdist=None)
+            return pin.replace(wheels=(preferred,), sdist=None)
 
         label = chain_label(pin.name, pin.version)
         chain = self._chain
@@ -588,7 +588,7 @@ class NabBuildEnv:
         to_build.append(
             _PendingBuild(name=pin.name, version=pin.version, sdist=pin.sdist)
         )
-        return replace(pin, wheels=())
+        return pin.replace(wheels=())
 
     def _build_requirement(self, pending: _PendingBuild, wheel_dir: Path) -> Path:
         """Build the downloaded sdist of ``pending`` and return the wheel's path.

@@ -50,6 +50,7 @@ from ._lockfile.validate import (
     RootRequirement,
     check_locked,
 )
+from .value import ValueType
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -123,8 +124,7 @@ def _select_primary_digest(
     return None
 
 
-@dataclass(frozen=True, slots=True)
-class WheelArtifact:
+class WheelArtifact(ValueType):
     """A single wheel file to record in the lockfile.
 
     ``hashes`` is the set of (algorithm, digest) pairs the index
@@ -141,12 +141,38 @@ class WheelArtifact:
     for a wheel fetched from a remote index.
     """
 
+    __slots__ = __match_args__ = (
+        "filename",
+        "url",
+        "hashes",
+        "size",
+        "upload_time",
+        "local_path",
+    )
+
     filename: str
     url: str
     hashes: tuple[tuple[str, str], ...]
-    size: int | None = None
-    upload_time: datetime | None = None
-    local_path: Path | None = None
+    size: int | None
+    upload_time: datetime | None
+    local_path: Path | None
+
+    def __init__(
+        self,
+        filename: str,
+        url: str,
+        hashes: tuple[tuple[str, str], ...],
+        size: int | None = None,
+        upload_time: datetime | None = None,
+        local_path: Path | None = None,
+    ) -> None:
+        """Record the wheel ``filename`` and where its bytes come from."""
+        self.filename = filename
+        self.url = url
+        self.hashes = hashes
+        self.size = size
+        self.upload_time = upload_time
+        self.local_path = local_path
 
     @property
     def primary_digest(self) -> tuple[str, str]:
@@ -158,20 +184,45 @@ class WheelArtifact:
         return chosen
 
 
-@dataclass(frozen=True, slots=True)
-class SdistArtifact:
+class SdistArtifact(ValueType):
     """An sdist tarball to record in the lockfile.
 
     See :class:`WheelArtifact` for the meaning of ``hashes``,
     ``upload_time`` and ``local_path``.
     """
 
+    __slots__ = __match_args__ = (
+        "filename",
+        "url",
+        "hashes",
+        "size",
+        "upload_time",
+        "local_path",
+    )
+
     filename: str
     url: str
     hashes: tuple[tuple[str, str], ...]
-    size: int | None = None
-    upload_time: datetime | None = None
-    local_path: Path | None = None
+    size: int | None
+    upload_time: datetime | None
+    local_path: Path | None
+
+    def __init__(
+        self,
+        filename: str,
+        url: str,
+        hashes: tuple[tuple[str, str], ...],
+        size: int | None = None,
+        upload_time: datetime | None = None,
+        local_path: Path | None = None,
+    ) -> None:
+        """Record the sdist ``filename`` and where its bytes come from."""
+        self.filename = filename
+        self.url = url
+        self.hashes = hashes
+        self.size = size
+        self.upload_time = upload_time
+        self.local_path = local_path
 
     @property
     def primary_digest(self) -> tuple[str, str]:
@@ -183,24 +234,53 @@ class SdistArtifact:
         return chosen
 
 
-@dataclass(frozen=True, slots=True)
-class IndexPin:
+class IndexPin(ValueType):
     """A package resolved from a Simple-API index.
 
     ``index`` is the URL of the Simple-API root that served the
     package, matching what PEP 751 expects for ``packages.index``.
     """
 
+    __slots__ = __match_args__ = (
+        "name",
+        "version",
+        "index",
+        "sdist",
+        "wheels",
+        "requires_python",
+    )
+
     name: str
     version: str
     index: str
-    sdist: SdistArtifact | None = None
-    wheels: tuple[WheelArtifact, ...] = ()
-    requires_python: str | None = None
+    sdist: SdistArtifact | None
+    wheels: tuple[WheelArtifact, ...]
+    requires_python: str | None
+
+    def __init__(
+        self,
+        name: str,
+        version: str,
+        index: str,
+        sdist: SdistArtifact | None = None,
+        wheels: tuple[WheelArtifact, ...] = (),
+        requires_python: str | None = None,
+    ) -> None:
+        """Record the ``version`` of ``name`` that ``index`` served."""
+        self.name = name
+        self.version = version
+        self.index = index
+        self.sdist = sdist
+        self.wheels = wheels
+        self.requires_python = requires_python
+
+    def replace(self, **changes: object) -> IndexPin:
+        """Return a copy with ``changes`` applied, as ``dataclasses.replace`` would."""
+        kept = {name: getattr(self, name) for name in self.__match_args__}
+        return IndexPin(**{**kept, **changes})
 
 
-@dataclass(frozen=True, slots=True)
-class LocalPin:
+class LocalPin(ValueType):
     """A package resolved from a local checkout.
 
     ``path`` is the absolute filesystem path the resolver was pointed
@@ -211,15 +291,32 @@ class LocalPin:
     Both come from the ``[[tool.nab.local-sources]]`` entry.
     """
 
+    __slots__ = __match_args__ = ("name", "version", "path", "editable", "subdirectory")
+
     name: str
     version: str
     path: str
-    editable: bool = False
-    subdirectory: str | None = None
+    editable: bool
+    subdirectory: str | None
+
+    def __init__(
+        self,
+        name: str,
+        version: str,
+        path: str,
+        *,
+        editable: bool = False,
+        subdirectory: str | None = None,
+    ) -> None:
+        """Record the tree at ``path`` as the source of ``name``."""
+        self.name = name
+        self.version = version
+        self.path = path
+        self.editable = editable
+        self.subdirectory = subdirectory
 
 
-@dataclass(frozen=True, slots=True)
-class VcsPin:
+class VcsPin(ValueType):
     """A package resolved from a VCS clone.
 
     ``repo_url`` is the reproducible pip-style installable URL: the
@@ -239,18 +336,49 @@ class VcsPin:
     scheme.
     """
 
+    __slots__ = __match_args__ = (
+        "name",
+        "version",
+        "repo_url",
+        "bare_repo_url",
+        "commit_id",
+        "subdirectory",
+        "requested_revision",
+        "vcs_type",
+    )
+
     name: str
     version: str
     repo_url: str
     bare_repo_url: str
     commit_id: str
-    subdirectory: str | None = None
-    requested_revision: str | None = None
-    vcs_type: str = "git"
+    subdirectory: str | None
+    requested_revision: str | None
+    vcs_type: str
+
+    def __init__(
+        self,
+        name: str,
+        version: str,
+        repo_url: str,
+        bare_repo_url: str,
+        commit_id: str,
+        subdirectory: str | None = None,
+        requested_revision: str | None = None,
+        vcs_type: str = "git",
+    ) -> None:
+        """Record ``name`` as the clone of ``repo_url`` at ``commit_id``."""
+        self.name = name
+        self.version = version
+        self.repo_url = repo_url
+        self.bare_repo_url = bare_repo_url
+        self.commit_id = commit_id
+        self.subdirectory = subdirectory
+        self.requested_revision = requested_revision
+        self.vcs_type = vcs_type
 
 
-@dataclass(frozen=True, slots=True)
-class ArchivePin:
+class ArchivePin(ValueType):
     """A package resolved from a direct-URL archive.
 
     ``url`` is the archive URL with the hash fragment stripped, written
@@ -263,11 +391,28 @@ class ArchivePin:
     records it (see :func:`_pin_to_package`).
     """
 
+    __slots__ = __match_args__ = ("name", "version", "url", "hashes", "subdirectory")
+
     name: str
     version: str
     url: str
     hashes: tuple[tuple[str, str], ...]
-    subdirectory: str | None = None
+    subdirectory: str | None
+
+    def __init__(
+        self,
+        name: str,
+        version: str,
+        url: str,
+        hashes: tuple[tuple[str, str], ...],
+        subdirectory: str | None = None,
+    ) -> None:
+        """Record the archive at ``url`` as the source of ``name``."""
+        self.name = name
+        self.version = version
+        self.url = url
+        self.hashes = hashes
+        self.subdirectory = subdirectory
 
     @property
     def primary_digest(self) -> tuple[str, str]:
@@ -282,8 +427,7 @@ class ArchivePin:
 PinShape = IndexPin | LocalPin | VcsPin | ArchivePin
 
 
-@dataclass(frozen=True, slots=True)
-class Provenance:
+class Provenance(ValueType):
     """Optional ``[tool.nab]`` provenance block written into the lock.
 
     PEP 751 lets tools record any additional metadata under
@@ -295,20 +439,58 @@ class Provenance:
     feed any of it into the install path.
     """
 
+    __slots__ = __match_args__ = (
+        "nab_version",
+        "created_at",
+        "command_line",
+        "input_path",
+        "mode",
+        "python_specifier",
+        "platforms",
+        "cli_project_overrides",
+        "package_metadata_overrides",
+    )
+
     nab_version: str
     created_at: datetime
     command_line: tuple[str, ...]
     input_path: str
     mode: str
-    python_specifier: str | None = None
-    platforms: tuple[str, ...] = ()
-    # The --project-* CLI overrides that shaped this lock, as
-    # ``(flag, rendered value)`` pairs.  Recorded so a reader can see the
-    # lock did not derive from the committed files alone.
-    cli_project_overrides: tuple[tuple[str, str], ...] = ()
-    # The configured ``[tool.nab]`` per-package metadata overrides as
-    # ``(requirement, (field, ...))`` pairs; input provenance, audit-only.
-    package_metadata_overrides: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    python_specifier: str | None
+    platforms: tuple[str, ...]
+
+    cli_project_overrides: tuple[tuple[str, str], ...]
+    """The ``--project-*`` CLI overrides that shaped this lock, as
+    ``(flag, rendered value)`` pairs.  Recorded so a reader can see the
+    lock did not derive from the committed files alone."""
+
+    package_metadata_overrides: tuple[tuple[str, tuple[str, ...]], ...]
+    """The configured ``[tool.nab]`` per-package metadata overrides, as
+    ``(requirement, (field, ...))`` pairs."""
+
+    def __init__(  # noqa: PLR0913 - one keyword per input the lock records
+        self,
+        nab_version: str,
+        created_at: datetime,
+        command_line: tuple[str, ...],
+        input_path: str,
+        mode: str,
+        *,
+        python_specifier: str | None = None,
+        platforms: tuple[str, ...] = (),
+        cli_project_overrides: tuple[tuple[str, str], ...] = (),
+        package_metadata_overrides: tuple[tuple[str, tuple[str, ...]], ...] = (),
+    ) -> None:
+        """Record the inputs that produced the lock."""
+        self.nab_version = nab_version
+        self.created_at = created_at
+        self.command_line = command_line
+        self.input_path = input_path
+        self.mode = mode
+        self.python_specifier = python_specifier
+        self.platforms = platforms
+        self.cli_project_overrides = cli_project_overrides
+        self.package_metadata_overrides = package_metadata_overrides
 
     def to_block(self) -> dict[str, Any]:
         """Render to the dict the TOML writer drops under ``[tool.nab]``.

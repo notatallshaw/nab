@@ -1,9 +1,10 @@
-"""The value types nab-project declares.
+"""The conflict and input value types nab-project declares.
 
 ``ConflictSet``, ``ConflictMember``, ``ConflictFork`` and ``ResolveInputs``
 are written against :class:`nab_project.value.ValueType` rather than
 ``@dataclass``, so the base's equality and each type's own rendering are
-pinned here.
+pinned here.  A new subclass also needs a case in the umbrella suite's
+``tests/test_value_types.py``.
 """
 
 from __future__ import annotations
