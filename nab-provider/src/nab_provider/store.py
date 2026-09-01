@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import threading
 from contextlib import contextmanager
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from nab_provider.metadata import metadata_header_block
@@ -26,9 +25,9 @@ __all__ = [
 ]
 
 
-@dataclass
-class _Pending:
-    event: threading.Event = field(default_factory=threading.Event)
+# Every published key shares this one set event rather than keeping its own.
+_PUBLISHED = threading.Event()
+_PUBLISHED.set()
 
 
 def metadata_pending_key(package: str, version: str, metadata_url: str | None) -> str:
@@ -63,7 +62,7 @@ class InMemoryIndex:
     def __init__(self) -> None:
         """Create an empty index."""
         self._lock = threading.Lock()
-        self._pending: dict[str, _Pending] = {}
+        self._pending: dict[str, threading.Event] = {}
 
         self._listings: dict[str, list[WheelFile | SdistFile]] = {}
         self._listing_errors: dict[str, BaseException] = {}
@@ -125,12 +124,18 @@ class InMemoryIndex:
         """Hold the lock for a store write, then wake ``key``'s waiter.
 
         The wake is outside the lock, and a body that raises skips it.
+
+        A published key stays in the map so it keeps deduplicating, but holds
+        the shared set event rather than one of its own.
         """
         with self._lock:
             yield
             pending = self._pending.get(key)
+            if pending is not None:
+                self._pending[key] = _PUBLISHED
+
         if pending is not None:
-            pending.event.set()
+            pending.set()
 
     def get_listing(self, package: str) -> list[WheelFile | SdistFile] | None:
         """Return the cached listing for ``package``, or ``None``."""
@@ -538,13 +543,17 @@ class InMemoryIndex:
 
         The speculative prefetch, the scan batch and the read can all ask for
         one fetch, so a later caller waits on the request in flight.
+
+        A key whose fetch already landed hands back the shared set event.
         """
         with self._lock:
-            if key in self._pending:
-                return self._pending[key].event, True
-            pending = _Pending()
-            self._pending[key] = pending
-            return pending.event, False
+            event = self._pending.get(key)
+            if event is not None:
+                return event, True
+
+            event = threading.Event()
+            self._pending[key] = event
+            return event, False
 
     def get_parsed_metadata(
         self, package: str, version: str, source_text: str

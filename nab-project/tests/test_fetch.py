@@ -357,6 +357,17 @@ class TestInMemoryIndex:
         assert existed2
         assert first is second
 
+    def test_get_or_create_after_the_fetch_landed(self) -> None:
+        """A published key still reports as existing, and its event is set."""
+        idx = InMemoryIndex()
+        idx.get_or_create_pending("listing:foo")
+        idx.store_listing("foo", [])
+
+        event, existed = idx.get_or_create_pending("listing:foo")
+
+        assert existed
+        assert event.is_set()
+
     def test_store_sdist_metadata_fires_sdist_pending(self) -> None:
         idx = InMemoryIndex()
         event, _ = idx.get_or_create_pending("sdist:foo:1.0")
@@ -3016,7 +3027,19 @@ def _crashed_range_coord() -> FetchCoordinator:
 
 class TestRangeMetadataCoordinator:
     def test_single_flight_one_enqueue(self) -> None:
-        transport = FakeRangeTransport("well_behaved", _build_range_wheel())
+        """A second request for a read still in flight shares its event."""
+        release = threading.Event()
+
+        class _HeldRangeTransport(FakeRangeTransport):
+            """Hold every range read until the test releases it."""
+
+            async def get(
+                self, url: str, *, headers: dict[str, str] | None = None
+            ) -> _FakeRangeResponse:
+                await asyncio.to_thread(release.wait, 5)
+                return await super().get(url, headers=headers)
+
+        transport = _HeldRangeTransport("well_behaved", _build_range_wheel())
         with FetchCoordinator(transport=transport) as coord:  # type: ignore[arg-type]
             submitted: list[FetchRequest] = []
             orig = coord._submit
@@ -3033,6 +3056,8 @@ class TestRangeMetadataCoordinator:
             e1 = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
             e2 = coord.request_range_metadata("widget", "1.0", _RANGE_URL)
             assert e1 is e2
+
+            release.set()
             assert e1.wait(timeout=5)
             assert len(submitted) == 1
             assert (
