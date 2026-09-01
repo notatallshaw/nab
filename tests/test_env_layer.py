@@ -236,12 +236,26 @@ def test_progress_suppressed_reads_nab_no_progress() -> None:
     assert env.progress_suppressed({}) is False
 
 
-def test_cache_and_config_roots_are_the_raw_values() -> None:
-    environ = {env.XDG_CACHE_HOME: "cache", env.XDG_CONFIG_HOME: "config"}
-    assert env.cache_root(environ) == "cache"
-    assert env.config_root(environ) == "config"
+def test_cache_and_config_roots_are_the_raw_values(tmp_path: Path) -> None:
+    cache, config = str(tmp_path / "cache"), str(tmp_path / "config")
+    environ = {env.XDG_CACHE_HOME: cache, env.XDG_CONFIG_HOME: config}
+
+    assert env.cache_root(environ) == cache
+    assert env.config_root(environ) == config
     assert env.cache_root({}) is None
     assert env.config_root({}) is None
+
+
+def test_a_relative_root_is_ignored() -> None:
+    relative = {env.XDG_CACHE_HOME: "cache", env.XDG_CONFIG_HOME: "../config"}
+
+    assert env.cache_root(relative) is None
+    assert env.config_root(relative) is None
+
+
+def test_an_empty_root_is_ignored() -> None:
+    assert env.cache_root({env.XDG_CACHE_HOME: ""}) is None
+    assert env.config_root({env.XDG_CONFIG_HOME: ""}) is None
 
 
 def test_output_owned_names_the_two_output_variables() -> None:
