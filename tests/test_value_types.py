@@ -1,4 +1,4 @@
-"""The hand-written value types of the ``[tool.nab]`` surface.
+"""The hand-written value types of the ``[tool.nab]`` surface and the lockfile.
 
 They subclass :class:`nab_project.value.ValueType` rather than applying
 ``@dataclass(slots=True)``, so field order, equality, hashing, repr and the
@@ -26,7 +26,7 @@ from nab.config.ladder import (
 )
 from nab.config.values import MatrixConfig
 from nab.optiondefs import Kind, Opt, Scope, VType
-from nab_project import conflicts, inputs
+from nab_project import conflicts, inputs, lockfile
 from nab_project.conflicts import (
     ConflictFork,
     ConflictKind,
@@ -35,6 +35,15 @@ from nab_project.conflicts import (
     ConflictSet,
 )
 from nab_project.inputs import ResolveInputs
+from nab_project.lockfile import (
+    ArchivePin,
+    IndexPin,
+    LocalPin,
+    Provenance,
+    SdistArtifact,
+    VcsPin,
+    WheelArtifact,
+)
 from nab_project.value import ValueType
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.overrides import IndexOverride, PackageOverride
@@ -94,6 +103,18 @@ PACKAGE_OVERRIDE = PackageOverride(
 ORIGIN = Origin(SourceKind.PYPROJECT, "/p/pyproject.toml")
 OTHER_ORIGIN = Origin(SourceKind.USER_TOML, "/u/nab.toml")
 SPEC = _option("mode")
+
+LOCKED_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
+LATER = datetime(2026, 2, 1, tzinfo=timezone.utc)
+
+WHEEL = WheelArtifact(
+    "acme-1.0-py3-none-any.whl",
+    "https://acme.test/acme-1.0-py3-none-any.whl",
+    (("sha256", "a" * 64),),
+)
+SDIST = SdistArtifact(
+    "acme-1.0.tar.gz", "https://acme.test/acme-1.0.tar.gz", (("sha256", "b" * 64),)
+)
 
 
 class Case(NamedTuple):
@@ -271,6 +292,147 @@ CASES = [
             "pyproject": None,
         },
     ),
+    Case(
+        WheelArtifact,
+        {
+            "filename": "acme-1.0-py3-none-any.whl",
+            "url": "https://acme.test/acme-1.0-py3-none-any.whl",
+            "hashes": (("sha256", "a" * 64),),
+            "size": 1024,
+            "upload_time": LOCKED_AT,
+            "local_path": Path("/w/acme-1.0-py3-none-any.whl"),
+        },
+        {
+            "filename": "acme-2.0-py3-none-any.whl",
+            "url": "https://acme.test/acme-2.0-py3-none-any.whl",
+            "hashes": (("sha256", "b" * 64),),
+            "size": 2048,
+            "upload_time": LATER,
+            "local_path": None,
+        },
+    ),
+    Case(
+        SdistArtifact,
+        {
+            "filename": "acme-1.0.tar.gz",
+            "url": "https://acme.test/acme-1.0.tar.gz",
+            "hashes": (("sha256", "b" * 64),),
+            "size": 4096,
+            "upload_time": LOCKED_AT,
+            "local_path": Path("/w/acme-1.0.tar.gz"),
+        },
+        {
+            "filename": "acme-2.0.tar.gz",
+            "url": "https://acme.test/acme-2.0.tar.gz",
+            "hashes": (("sha256", "c" * 64),),
+            "size": 8192,
+            "upload_time": LATER,
+            "local_path": None,
+        },
+    ),
+    Case(
+        IndexPin,
+        {
+            "name": "acme",
+            "version": "1.0",
+            "index": "https://acme.test/simple/",
+            "sdist": SDIST,
+            "wheels": (WHEEL,),
+            "requires_python": ">=3.10",
+        },
+        {
+            "name": "beta",
+            "version": "2.0",
+            "index": "https://beta.test/simple/",
+            "sdist": None,
+            "wheels": (),
+            "requires_python": ">=3.11",
+        },
+    ),
+    Case(
+        LocalPin,
+        {
+            "name": "alpha",
+            "version": "1.0",
+            "path": "/p/alpha",
+            "editable": True,
+            "subdirectory": "packages/alpha",
+        },
+        {
+            "name": "beta",
+            "version": "2.0",
+            "path": "/p/beta",
+            "editable": False,
+            "subdirectory": None,
+        },
+        positional=False,
+    ),
+    Case(
+        VcsPin,
+        {
+            "name": "gamma",
+            "version": "1.0",
+            "repo_url": "git+https://g.test/gamma@" + "c" * 40,
+            "bare_repo_url": "https://g.test/gamma",
+            "commit_id": "c" * 40,
+            "subdirectory": "packages/gamma",
+            "requested_revision": "main",
+            "vcs_type": "git",
+        },
+        {
+            "name": "delta",
+            "version": "2.0",
+            "repo_url": "git+https://d.test/delta@" + "d" * 40,
+            "bare_repo_url": "https://d.test/delta",
+            "commit_id": "d" * 40,
+            "subdirectory": None,
+            "requested_revision": "release",
+            "vcs_type": "hg",
+        },
+    ),
+    Case(
+        ArchivePin,
+        {
+            "name": "epsilon",
+            "version": "1.0",
+            "url": "https://e.test/epsilon-1.0.zip",
+            "hashes": (("sha256", "e" * 64),),
+            "subdirectory": "packages/epsilon",
+        },
+        {
+            "name": "zeta",
+            "version": "2.0",
+            "url": "https://e.test/zeta-2.0.zip",
+            "hashes": (("sha256", "f" * 64),),
+            "subdirectory": None,
+        },
+    ),
+    Case(
+        Provenance,
+        {
+            "nab_version": "0.0.7",
+            "created_at": LOCKED_AT,
+            "command_line": ("nab", "lock"),
+            "input_path": "/p/pyproject.toml",
+            "mode": "specific",
+            "python_specifier": ">=3.10",
+            "platforms": ("linux_x86_64",),
+            "cli_project_overrides": (("--project-resolution", "lowest"),),
+            "package_metadata_overrides": (("foo>=1", ("requires-dist",)),),
+        },
+        {
+            "nab_version": "0.0.8",
+            "created_at": LATER,
+            "command_line": ("nab", "lock", "--upgrade"),
+            "input_path": "/q/pyproject.toml",
+            "mode": "universal",
+            "python_specifier": ">=3.11",
+            "platforms": ("macos_arm64",),
+            "cli_project_overrides": (),
+            "package_metadata_overrides": (),
+        },
+        positional=False,
+    ),
 ]
 
 BY_ID = pytest.mark.parametrize("case", CASES, ids=[c.id for c in CASES])
@@ -313,7 +475,7 @@ def test_the_cases_cover_every_value_type() -> None:
     """A subclass these modules name and ``CASES`` omits would go unchecked."""
     declared = {
         obj
-        for module in (hooks, ladder, model, values, conflicts, inputs)
+        for module in (hooks, ladder, model, values, conflicts, inputs, lockfile)
         for obj in vars(module).values()
         if isinstance(obj, type) and issubclass(obj, ValueType) and obj is not ValueType
     }
@@ -355,7 +517,7 @@ def test_repr_names_every_field_in_order(case: Case) -> None:
 
 
 def test_repr_leads_with_the_qualified_name() -> None:
-    """All eleven are module-level, so only a nested class separates the two names."""
+    """Every case is module-level, so only a nested class separates the two names."""
 
     class Nested(ValueType):
         __slots__ = __match_args__ = ("value",)
