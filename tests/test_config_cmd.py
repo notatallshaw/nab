@@ -609,13 +609,14 @@ def test_only_structured_tables_lack_a_project_flag() -> None:
 
 
 class TestConfigErrors:
-    def test_unknown_action_exits(
-        self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
+    def test_an_unknown_action_never_reaches_the_body(
+        self, hermetic_roots: Path
     ) -> None:
+        """The parser refuses it, so the body only asserts it cannot happen."""
         _project(hermetic_roots)
-        with pytest.raises(SystemExit):
+
+        with pytest.raises(AssertionError, match="unreachable config action"):
             config_command("frobnicate", path=hermetic_roots / "pyproject.toml")
-        assert "unknown config action" in capsys.readouterr().err
 
     def test_missing_path_exits(
         self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]

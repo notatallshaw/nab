@@ -495,10 +495,12 @@ class TestCacheSourceTrees:
 
 
 class TestCacheUnknownAction:
-    def test_unknown_action_exits_one(
+    def test_unknown_action_is_a_usage_refusal(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        """The parser refuses a verb outside the declared set, so the body never runs."""
+        _run_cache(["frobnicate", "--cache-dir", str(tmp_path)], status=2)
 
-        _run_cache(["frobnicate", "--cache-dir", str(tmp_path)], status=1)
-
-        assert "unknown cache action" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "invalid value 'frobnicate' for 'action'" in err
+        assert "choose from dir, verify, clear" in err

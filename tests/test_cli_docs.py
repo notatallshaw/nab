@@ -914,13 +914,12 @@ class TestCliReferenceMatchesTheseFourBehaviours:
             assert fragment in page, fragment
             assert fragment in body, fragment
 
-    def test_the_exit_one_row_names_an_unknown_action(self, tmp_path: Path) -> None:
-        assert run(("cache", "bogus", "--cache-dir", str(tmp_path))) == 1
+    def test_the_exit_two_row_names_an_unknown_action(self, tmp_path: Path) -> None:
+        assert run(("cache", "bogus", "--cache-dir", str(tmp_path))) == 2
 
-        row = self._rows("## Exit codes")["1"]
-        assert "action" in row
-        for sub in ("cache", "config"):
-            assert f"`{sub}`" in row, sub
+        rows = self._rows("## Exit codes")
+        assert "action" in rows["2"]
+        assert "action" not in rows["1"]
 
     def test_the_environment_table_names_the_config_root(self) -> None:
         assert "XDG_CONFIG_HOME" in self._rows("## Environment variables")

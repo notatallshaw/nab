@@ -136,24 +136,19 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
     if action == "list":
         printer().data(render_list(effective, rejected=rejected))
         return
-    if action in {"get", "explain"}:
-        _require_key_arg(key, action)
-        try:
-            if action == "get":
-                rendered = render_get(effective, key)
-            else:
-                rendered = render_explain(
-                    effective, key, include_rejected=include_rejected
-                )
-        except SourceConfigError as exc:
-            _fail_config(exc)
-        printer().data(rendered)
-        return
+    if action not in {"get", "explain"}:  # pragma: no cover - the parser refuses it
+        msg = f"unreachable config action {action!r}"
+        raise AssertionError(msg)
 
-    printer().error(
-        f"unknown config action {action!r}; expected one of 'list', 'get', 'explain'"
-    )
-    sys.exit(1)
+    _require_key_arg(key, action)
+    try:
+        if action == "get":
+            rendered = render_get(effective, key)
+        else:
+            rendered = render_explain(effective, key, include_rejected=include_rejected)
+    except SourceConfigError as exc:
+        _fail_config(exc)
+    printer().data(rendered)
 
 
 def _require_key_arg(key: str, action: str) -> None:
