@@ -20,11 +20,11 @@ so a checker reads ``Root.color`` as ``ColorChoice`` while
 for real would hide the rows from the lowering and cost a descriptor call
 per read.
 
-The imports here are ``enum``, ``typing`` and ``typing_extensions``, so the
-module reads a declaration without nab installed.  It is not neutral of nab
-for all that: :class:`Scope` is nab's configuration model and every field of
-:class:`Layer` is a rung of nab's ladder.  :mod:`nab.optionlower` is where
-the rows meet :class:`nab.optiondefs.Opt`.
+The imports here are ``enum``, ``typing`` and :mod:`nab._compat`, so the
+module reads a declaration without the rest of nab loaded.  It is not
+neutral of nab for all that: :class:`Scope` is nab's configuration model
+and every field of :class:`Layer` is a rung of nab's ladder.
+:mod:`nab.optionlower` is where the rows meet :class:`nab.optiondefs.Opt`.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from __future__ import annotations
 import enum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from typing_extensions import override
+from ._compat import override
 
 if TYPE_CHECKING:
     from collections.abc import Callable

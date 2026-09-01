@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-from typing_extensions import override
+from ._compat import override
 
 __all__ = ["ValueType"]
 
