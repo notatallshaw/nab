@@ -628,9 +628,7 @@ class TagSet:
                 fixed[ptags.Tag(interpreter, abi, platform_)] = base
                 base += 1
 
-        return _AxisIndex(
-            multiplied, fixed, {p: i for i, p in enumerate(self._platforms)}
-        )
+        return _AxisIndex(multiplied, fixed, _platform_offsets(self._platforms))
 
     @cached_property
     def _placed(self) -> dict[frozenset[Tag], int | None]:
@@ -810,6 +808,16 @@ def _platform_axis(spec: PlatformSpec) -> tuple[str, ...]:
     and the platform axis is the same list each time.
     """
     return tuple(_platform_tags_for_spec(spec))
+
+
+@cache
+def _platform_offsets(platforms: tuple[str, ...]) -> Mapping[str, int]:
+    """Return each platform tag's offset within a block, shared across targets.
+
+    A matrix's targets differ on the interpreter/abi axis and share the
+    platform one, so one table serves every target built from ``platforms``.
+    """
+    return {platform: i for i, platform in enumerate(platforms)}
 
 
 def _python_pair(python_version: str) -> tuple[int, int]:
