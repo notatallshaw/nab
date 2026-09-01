@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any
 
 import tomli
 
-from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider.policy import LocalSource
 
 from . import toml_io
@@ -143,8 +143,8 @@ def workspace_local_sources(
     or ``[`` raises :class:`WorkspaceDiscoveryError` with a message
     naming the offending entry.  For every member directory the function
     opens ``<member>/pyproject.toml`` and requires ``[project].name``; a
-    pyproject that is missing or not a regular file, and a missing name,
-    are hard errors.
+    pyproject that is missing or not a regular file, and a name that is
+    missing or not a valid package name, are hard errors.
 
     Two members declaring the same canonical name raises
     :class:`WorkspaceDiscoveryError`.  The returned tuple preserves
@@ -208,7 +208,15 @@ def workspace_local_sources(
             )
             raise WorkspaceDiscoveryError(msg)
 
-        canonical = canonicalize_name(name)
+        try:
+            canonical = canonicalize_name(name, validate=True)
+        except InvalidName as exc:
+            msg = (
+                f"{member_pyproject}: workspace member [project].name"
+                f" {name!r} is not a valid package name"
+            )
+            raise WorkspaceDiscoveryError(msg) from exc
+
         if canonical in seen:
             msg = (
                 f"{declared_in}: workspace members declare duplicate"

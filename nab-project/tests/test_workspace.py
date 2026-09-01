@@ -528,6 +528,23 @@ class TestReadWorkspaceMembers:
         ):
             read_workspace_members(root)
 
+    def test_member_with_invalid_name_raises(self, tmp_path: Path) -> None:
+        root = _write(
+            tmp_path / "pyproject.toml",
+            '[project]\nname = "ws"\nversion = "0"\n'
+            "[tool.nab.workspace]\n"
+            'members = ["pkg"]\n',
+        )
+        member = _write(
+            tmp_path / "pkg" / "pyproject.toml",
+            '[project]\nname = "my pkg"\nversion = "0"\n',
+        )
+        with pytest.raises(
+            WorkspaceDiscoveryError,
+            match=rf"{re.escape(str(member))}.*is not a valid package name",
+        ):
+            read_workspace_members(root)
+
     def test_duplicate_canonical_name_raises(self, tmp_path: Path) -> None:
         # ``A`` and ``a`` canonicalise to the same name.
         root = _write(

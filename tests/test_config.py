@@ -2629,6 +2629,14 @@ class TestIndexes:
         with pytest.raises(ConfigError, match="duplicate index name"):
             read_pyproject_config(path)
 
+    def test_name_is_a_label_not_a_package_name(self, tmp_path: Path) -> None:
+        # Index names label repositories, so the package-name rule does not apply.
+        path = write(
+            tmp_path,
+            '[[tool.nab.indexes]]\nname = "my index"\nurl = "https://a/"\n',
+        )
+        assert [i.name for i in read_pyproject_config(path).indexes] == ["my index"]
+
     def test_unknown_key_rejected(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
@@ -2984,6 +2992,25 @@ class TestLocalSources:
         with pytest.raises(ConfigError, match="duplicate canonical name"):
             read_pyproject_config(path)
 
+    @pytest.mark.parametrize(
+        "name", ["", "my pkg", "mypkg ", " mypkg", "my!pkg", "my/pkg"]
+    )
+    def test_invalid_name_rejected(self, tmp_path: Path, name: str) -> None:
+        path = write(
+            tmp_path,
+            f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "../a"\n',
+        )
+        with pytest.raises(ConfigError, match="is not a valid package name"):
+            read_pyproject_config(path)
+
+    def test_name_needing_canonicalisation_accepted(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[[tool.nab.local-sources]]\nname = "My_Fork"\npath = "../a"\n',
+        )
+        (source,) = read_pyproject_config(path).local_sources
+        assert source.name == "My_Fork"
+
 
 class TestVcsSources:
     def test_round_trip(self, tmp_path: Path) -> None:
@@ -3047,6 +3074,16 @@ class TestVcsSources:
         with pytest.raises(ConfigError, match="duplicate canonical name"):
             read_pyproject_config(path)
 
+    def test_invalid_name_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            '[tool.nab.vcs]\npolicy = "allow"\n'
+            '[[tool.nab.vcs-sources]]\nname = "my pkg"\n'
+            'url = "git+https://github.com/me/x.git@abc"\n',
+        )
+        with pytest.raises(ConfigError, match="is not a valid package name"):
+            read_pyproject_config(path)
+
     def test_canonical_name_collides_with_local_source(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
@@ -3069,6 +3106,14 @@ class TestArchiveSources:
         (source,) = read_pyproject_config(path).archive_sources
         assert source.name == "foo"
         assert source.url == self._URL
+
+    def test_invalid_name_rejected(self, tmp_path: Path) -> None:
+        path = write(
+            tmp_path,
+            f'[[tool.nab.archive-sources]]\nname = "my pkg"\nurl = "{self._URL}"\n',
+        )
+        with pytest.raises(ConfigError, match="is not a valid package name"):
+            read_pyproject_config(path)
 
     def test_must_be_array(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\narchive-sources = "x"\n')
