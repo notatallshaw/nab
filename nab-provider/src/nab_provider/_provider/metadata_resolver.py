@@ -661,7 +661,7 @@ def requirement_gating(provider: Provider, req: Requirement) -> Gating:
     marker_id = id(marker)
     if marker_matches_base(provider, marker, marker_id):
         return "base"
-    if "extra" not in marker_text(provider, marker, marker_id):
+    if "extra" not in str(marker):
         return "excluded"
     return "extra"
 
@@ -704,15 +704,6 @@ def marker_matches_base(provider: Provider, marker: Marker, marker_id: int) -> b
         result = evaluate_prepared(marker, provider.prepared_environment)
         provider.marker_base_cache[marker_id] = result
     return result
-
-
-def marker_text(provider: Provider, marker: Marker, marker_id: int) -> str:
-    """Return ``str(marker)``, cached. Walks the AST on big graphs."""
-    text = provider.marker_text_cache.get(marker_id)
-    if text is None:
-        text = str(marker)
-        provider.marker_text_cache[marker_id] = text
-    return text
 
 
 def marker_matched_extras(

@@ -12354,7 +12354,6 @@ class TestSiblingMetadataDivergence:
         )
         assert provider.consulted_markers == set()
         assert provider.marker_base_cache == {}
-        assert provider.marker_text_cache == {}
         assert provider.marker_extra_cache == {}
 
     def test_sidecar_vs_range_recovered_sibling_crash(self) -> None:

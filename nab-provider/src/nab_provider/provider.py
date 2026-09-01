@@ -670,8 +670,6 @@ class Provider:
         # alive (see its note above).
         self.marker_base_cache: dict[int, bool] = {}
         self.marker_extra_cache: dict[int, dict[str, bool]] = {}
-        # Memoised str(marker) for the cheap "extra" in marker_text gate.
-        self.marker_text_cache: dict[int, str] = {}
 
         # ``Marker.evaluate`` rebuilds its environment on every call, and this
         # resolve's is fixed, so prepare it up front.  The base environment is
