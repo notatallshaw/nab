@@ -72,6 +72,9 @@ __all__ = [
 
 # Maximum time the main thread waits for the fetcher thread to drain
 # its queue and exit on :meth:`FetchCoordinator.shutdown`.
+# How many fetches a resolve opens at once when its caller names no bound.
+DEFAULT_MAX_CONCURRENCY = 50
+
 _COORDINATOR_JOIN_TIMEOUT_SECONDS = 10
 
 # A warm listing whose parsed blob is smaller than this is declined to the
@@ -233,7 +236,7 @@ class FetchCoordinator:
         transport: AsyncHttpTransport,
         *,
         indexes: list[IndexConfig] | None = None,
-        max_concurrency: int = 50,
+        max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
         cache_dir: Path | None = None,
         cache_backend: CacheBackend | None = None,
         offline: bool = False,

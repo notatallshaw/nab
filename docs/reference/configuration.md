@@ -1038,7 +1038,7 @@ written, like `git config` reporting configured rather than derived state.
 | `NAB_OFFLINE` | `offline` | `1`/`0`/`true`/`false`. |
 | `NAB_CACHE_DIR` | `cache-dir` | Cache root path. |
 | `NAB_HTTP_BACKEND` | `http-backend` | `urllib3` or `httpx`. |
-| `NAB_MAX_CONCURRENCY` | `max-concurrency` | Parallel HTTP fetches for `nab download` (at least `1`). |
+| `NAB_MAX_CONCURRENCY` | `max-concurrency` | Parallel HTTP fetches, for the resolve as well as the downloads (at least `1`). |
 
 A `NAB_*` name that is not one of these (a typo, or `NAB_RESOLUTION`
 for a project-scope option) is ignored with a warning naming the

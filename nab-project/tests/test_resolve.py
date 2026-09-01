@@ -31,6 +31,7 @@ from nab_project.conflicts import (
     ConflictSelectionError,
     ConflictSet,
 )
+from nab_project.fetch import DEFAULT_MAX_CONCURRENCY
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import LockInput, PinShape, build_pylock
 from nab_project.pyproject_files import (
@@ -7378,3 +7379,39 @@ class TestPyprojectParsedOnce:
             ).raise_for_failure()
 
         assert parsed.count(body) == 1
+
+
+class TestFetchWidth:
+    """The width the resolve opens its fetches at is the caller's to set."""
+
+    @staticmethod
+    def _project(tmp_path: Path) -> Path:
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
+        )
+        return pyproject
+
+    @staticmethod
+    def _width(path: Path, **kwargs: object) -> int:
+        """The ``max_concurrency`` the resolve hands its coordinator."""
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = MagicMock(
+                side_effect=RuntimeError("stop after construction")
+            )
+            try:
+                _resolved(path, **kwargs)
+            except RuntimeError:
+                pass
+
+        return mock_coord_cls.call_args.kwargs["max_concurrency"]
+
+    def test_an_unset_width_is_the_named_default(self, tmp_path: Path) -> None:
+        path = self._project(tmp_path)
+
+        assert self._width(path) == DEFAULT_MAX_CONCURRENCY
+
+    def test_the_callers_width_reaches_the_coordinator(self, tmp_path: Path) -> None:
+        path = self._project(tmp_path)
+
+        assert self._width(path, max_concurrency=3) == 3

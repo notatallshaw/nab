@@ -78,7 +78,12 @@ from .conflicts import (
     validate_conflict_exclusions,
     validate_conflict_minimums,
 )
-from .fetch import FetchCoordinator, index_cache_floors, index_routes
+from .fetch import (
+    DEFAULT_MAX_CONCURRENCY,
+    FetchCoordinator,
+    index_cache_floors,
+    index_routes,
+)
 from .inputs import ResolveInputs
 from .lockfile import LockInput, TargetLock
 
@@ -135,6 +140,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     build_requirements: bool = False,
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressSink | None = None,
+    max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
 ) -> ResolveResult:
     """Resolve the project at ``path`` for each of ``targets``.
 
@@ -191,6 +197,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
         index_cache_floors=index_cache_floors(inputs),
         on_fetch=progress.on_fetch if progress is not None else None,
         build_config=inputs,
+        max_concurrency=max_concurrency,
     ) as coordinator:
         return resolve_with_coordinator(
             coordinator,
