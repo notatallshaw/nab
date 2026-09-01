@@ -74,6 +74,11 @@ platforms = ["linux_x86_64", "macos_arm64"]
 python-order = "asc"
 ```
 
+`mode` selects the resolve. It defaults to `"specific"`, one version
+per package for a single environment. `"universal"` resolves every
+target the matrix declares, and a project file setting one without the
+other is a config error.
+
 `python` is a PEP 440 specifier expanded into one target per
 minor version. `platforms` is a list of platform ids
 (`linux_x86_64`, `linux_aarch64`, `linux_i686`, `linux_armv7l`,

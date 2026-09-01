@@ -133,6 +133,11 @@ def _names_flag(text: str, flag: str) -> bool:
     )
 
 
+def _names_value(text: str, value: str) -> bool:
+    """Whether ``text`` writes ``value`` as a literal: a code span or a quoted token."""
+    return re.search(rf"""[`"']{re.escape(value)}(?![\w-])""", text) is not None
+
+
 def _unwrapped(text: str) -> str:
     """``text`` with its line wrapping removed, so a claim matches on one line."""
     return " ".join(text.split())
@@ -255,6 +260,25 @@ class TestEveryRowNamesAPage:
         missing = sorted({row.docs for row in ALL if not (_DOCS / row.docs).is_file()})
 
         assert missing == []
+
+    def test_a_key_links_to_a_page_that_writes_out_its_values(self) -> None:
+        """The page a key names writes out every value that key takes.
+
+        A value counts only where the page writes it as a literal, so the
+        word in ordinary prose does not stand in for the documented value.
+        The key count is asserted because an empty list would pass the loop.
+        """
+        enumerated = [row for row in OPTIONS if row.choices]
+        assert len(enumerated) == 6, [row.name for row in enumerated]
+
+        unlisted: dict[str, list[str]] = {}
+        for row in enumerated:
+            page = _page(_DOCS / row.docs)
+            missing = [value for value in row.choices if not _names_value(page, value)]
+            if missing:
+                unlisted[row.name] = missing
+
+        assert unlisted == {}
 
 
 class TestCliReferenceFlagCoverage:

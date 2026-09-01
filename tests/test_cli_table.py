@@ -54,7 +54,7 @@ _PAGES = (
     ("build-group", "reference/selection.md"),
     ("requires-python", "reference/configuration.md"),
     ("uploaded-prior-to", "reference/configuration.md"),
-    ("dist-policy", "reference/build-policy.md"),
+    ("dist-policy", "reference/configuration.md"),
     ("build-policy", "reference/build-policy.md"),
     ("build-requires-depth", "reference/build-policy.md"),
     ("environment", "reference/configuration.md"),
