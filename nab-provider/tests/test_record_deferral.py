@@ -16,7 +16,9 @@ from nab_provider.records import (
 )
 
 DIGEST = "a" * 64
+SHA512_DIGEST = "b" * 128
 SHA256 = "sha256"
+SHA512 = "sha512"
 _TIMEOUT = 10.0
 
 
@@ -79,12 +81,33 @@ def test_a_second_read_returns_the_value_the_first_stored() -> None:
     assert wheel.metadata_hash is metadata_hash
 
 
-def test_a_one_algorithm_table_is_held_as_a_pair() -> None:
+def test_a_lone_sha256_table_is_held_as_the_digest_alone() -> None:
     """The compact form is why a deferred record costs less than the served dict."""
     wheel = _deferred_wheel({"sha256": DIGEST}, sidecar={"sha256": DIGEST})
 
-    assert wheel._raw_hashes == (SHA256, DIGEST)
-    assert wheel._raw_metadata == (SHA256, DIGEST)
+    assert wheel._raw_hashes == DIGEST
+    assert wheel._raw_metadata == DIGEST
+
+
+def test_a_lone_other_algorithm_table_is_held_as_a_pair() -> None:
+    """Only sha256 can be held as the digest alone; another name is kept beside it."""
+    wheel = _deferred_wheel(
+        {"sha512": SHA512_DIGEST}, sidecar={"sha512": SHA512_DIGEST}
+    )
+
+    assert wheel._raw_hashes == (SHA512, SHA512_DIGEST)
+    assert wheel._raw_metadata == (SHA512, SHA512_DIGEST)
+
+
+def test_a_lone_sha256_whose_digest_is_not_a_string_keeps_its_name() -> None:
+    """Only a string digest can stand for the table, so a non-string keeps its name."""
+    wheel = _deferred_wheel({"sha256": 7}, sidecar={"sha256": 7})
+
+    assert wheel._raw_hashes == (SHA256, 7)
+    assert wheel._raw_metadata == (SHA256, 7)
+
+    assert wheel.raw_hashes() == {"sha256": 7}
+    assert wheel.raw_sidecar() == {"sha256": 7}
 
 
 def test_a_many_algorithm_table_is_held_as_it_stands() -> None:
@@ -96,23 +119,35 @@ def test_a_many_algorithm_table_is_held_as_it_stands() -> None:
     assert wheel._raw_metadata == table
 
 
+def test_a_rehydrated_lone_sha256_table_is_held_as_the_digest_alone() -> None:
+    """A row rebuilt from a cached listing takes the same compact form."""
+    wheel = _rehydrated_wheel({"sha256": DIGEST})
+
+    assert wheel._raw_hashes == DIGEST
+    assert wheel._raw_metadata == DIGEST
+
+    assert wheel.hashes == ((SHA256, DIGEST),)
+    assert wheel.metadata_hash == (SHA256, DIGEST)
+    assert wheel.raw_hashes() == {"sha256": DIGEST}
+
+
 def test_a_rehydrated_one_algorithm_table_keeps_the_name_the_row_carried() -> None:
     """One blob decodes to one name object, so re-interning it per row buys nothing."""
-    algo = b"sha256".decode()
-    assert algo is not SHA256
+    algo = b"sha512".decode()
+    assert algo is not SHA512
 
-    wheel = _rehydrated_wheel({algo: DIGEST})
+    wheel = _rehydrated_wheel({algo: SHA512_DIGEST})
     hashes, metadata = wheel._raw_hashes, wheel._raw_metadata
     assert isinstance(hashes, tuple)
     assert isinstance(metadata, tuple)
 
-    assert hashes == (algo, DIGEST)
+    assert hashes == (algo, SHA512_DIGEST)
     assert hashes[0] is algo
     assert metadata[0] is algo
 
     # Reading the field parses and interns, so the pair a caller sees is unchanged.
-    assert wheel.hashes == ((SHA256, DIGEST),)
-    assert wheel.hashes[0][0] is SHA256
+    assert wheel.hashes == ((SHA512, SHA512_DIGEST),)
+    assert wheel.hashes[0][0] is SHA512
 
 
 @pytest.mark.parametrize(
