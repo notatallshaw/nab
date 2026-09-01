@@ -889,3 +889,44 @@ class TestLockFormatSummaries:
         for source in ("formats.md", "lockfile.md"):
             for shape in sorted(url_shapes):
                 assert shape in summaries[source].lower(), f"{source} omits {shape}"
+
+
+class TestCliReferenceMatchesTheseFourBehaviours:
+    """Four claims on the CLI page, each checked against what the code does."""
+
+    @staticmethod
+    def _rows(heading: str) -> dict[str, str]:
+        """Each markdown table row under ``heading``, keyed by its first cell."""
+        rows: dict[str, str] = {}
+        for line in _reference_section(_CLI_REFERENCE, heading).splitlines():
+            if line.startswith("|"):
+                cells = [cell.strip().strip("`") for cell in line.strip("|").split("|")]
+                rows[cells[0]] = " ".join(cells[1:])
+        return rows
+
+    def test_the_backend_paragraph_quotes_the_refusals_it_prints(self) -> None:
+        page = _page(_CLI_REFERENCE)
+        source = Path(run.__module__.replace(".", "/")).parent / "_resolve.py"
+        body = (Path(__file__).resolve().parents[1] / "src" / source).read_text()
+
+        assert "ImportError" not in page
+        for fragment in ("httpx is not installed", "without HTTP/2 support"):
+            assert fragment in page, fragment
+            assert fragment in body, fragment
+
+    def test_the_exit_one_row_names_an_unknown_action(self, tmp_path: Path) -> None:
+        assert run(("cache", "bogus", "--cache-dir", str(tmp_path))) == 1
+
+        row = self._rows("## Exit codes")["1"]
+        assert "action" in row
+        for sub in ("cache", "config"):
+            assert f"`{sub}`" in row, sub
+
+    def test_the_environment_table_names_the_config_root(self) -> None:
+        assert "XDG_CONFIG_HOME" in self._rows("## Environment variables")
+
+    def test_list_reports_the_winning_source_and_explain_the_option(self) -> None:
+        text = _reference_section(_CLI_REFERENCE, "## `nab config`")
+
+        assert "the scope of" in _doc_paragraph(text, "config list")
+        assert "explain" in _doc_paragraph(text, "config list")
