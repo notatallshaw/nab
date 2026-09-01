@@ -59,9 +59,15 @@ def terminal_width(environ: dict[str, str] | None = None) -> int:
     """
     env = os.environ if environ is None else environ
 
-    declared = env.get("COLUMNS", "")
-    if declared.isdigit() and int(declared) > 0:
-        return int(declared)
+    # str.isdigit() is not enough of a test: int() refuses a superscript
+    # digit, and a digit run past CPython's conversion limit.
+    try:
+        declared = int(env.get("COLUMNS", ""))
+    except ValueError:
+        declared = 0
+
+    if declared > 0:
+        return declared
 
     try:
         return os.get_terminal_size().columns
