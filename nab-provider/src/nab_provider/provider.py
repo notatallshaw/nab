@@ -1778,13 +1778,24 @@ class Provider:
             return _diagnosis.FILTERED_EMPTY
         if index.is_offline_listing_miss(normalized):
             return _diagnosis.OFFLINE_MISS
-        # Nothing sets both: the unreadable flag needs a file that stands,
-        # and the yank flag needs every one withdrawn.
+
+        # A page can set both of these marks; the unreadable line wins.
         if index.is_unreadable_only_listing(normalized):
             return _diagnosis.UNREADABLE_ONLY
+        if index.is_unreachable_only_listing(normalized):
+            return _diagnosis.UNREACHABLE_ONLY
+
         if index.is_all_yanked_listing(normalized):
             return _diagnosis.YANKED_ONLY
-        if index.is_pinned_listing(normalized):
+        return self._absent_listing_marker(normalized)
+
+    def _absent_listing_marker(self, normalized: str) -> _diagnosis.NoVersionsReason:
+        """Classify a package no index served a page for.
+
+        A pin routes the ask to one index, so missing there is not missing
+        from the configured set.
+        """
+        if self.coordinator.index.is_pinned_listing(normalized):
             return _diagnosis.PINNED_ABSENT
         return _diagnosis.ABSENT
 

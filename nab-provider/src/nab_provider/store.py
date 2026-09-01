@@ -75,6 +75,8 @@ class InMemoryIndex:
         self._offline_listing_misses: set[str] = set()
         # Packages whose empty listing stands for a page of formats nab cannot read.
         self._unreadable_only_listings: set[str] = set()
+        # Packages whose empty listing stands for a page of links nab cannot reach.
+        self._unreachable_only_listings: set[str] = set()
         # Packages whose empty listing stands for a page of yanked files.
         self._all_yanked_listings: set[str] = set()
         # Versions an index served as a ``.zip`` sdist, which the listing parse
@@ -141,6 +143,7 @@ class InMemoryIndex:
         *,
         offline_miss: bool = False,
         unreadable_only: bool = False,
+        unreachable_only: bool = False,
         all_yanked: bool = False,
         zip_sdists: frozenset[str] = frozenset(),
     ) -> None:
@@ -150,8 +153,9 @@ class InMemoryIndex:
 
         ``offline_miss`` marks an empty listing as an index skipped offline
         rather than one that served no files; ``unreadable_only`` marks it as
-        a page of formats nab does not read; ``all_yanked`` marks it as a page
-        whose every file is yanked.
+        a page of formats nab does not read; ``unreachable_only`` marks it as
+        a page whose every link nab cannot reach; ``all_yanked`` marks it as
+        a page whose every file is yanked.
 
         ``zip_sdists`` names the releases served as a ``.zip`` sdist, which
         nothing in ``data`` records.  It replaces whatever a prior store left,
@@ -165,6 +169,8 @@ class InMemoryIndex:
                 self._offline_listing_misses.add(package)
             if unreadable_only:
                 self._unreadable_only_listings.add(package)
+            if unreachable_only:
+                self._unreachable_only_listings.add(package)
             if all_yanked:
                 self._all_yanked_listings.add(package)
             if zip_sdists:
@@ -181,6 +187,10 @@ class InMemoryIndex:
     def is_unreadable_only_listing(self, package: str) -> bool:
         """Whether ``package``'s empty listing held only unreadable formats."""
         return package in self._unreadable_only_listings
+
+    def is_unreachable_only_listing(self, package: str) -> bool:
+        """Whether ``package``'s empty listing held only links nab cannot reach."""
+        return package in self._unreachable_only_listings
 
     def is_all_yanked_listing(self, package: str) -> bool:
         """Whether ``package``'s empty listing held files and yanked every one."""

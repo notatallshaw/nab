@@ -655,6 +655,17 @@ class CachedAsyncSimpleClient:
         """Whether a listing for ``package`` held only files nab cannot read."""
         return package in self._unreadable_only
 
+    def served_unreachable_only(
+        self,
+        package: str,  # noqa: ARG002 - the IndexClient protocol fixes the signature
+    ) -> bool:
+        """Whether a listing for ``package`` held only links nab cannot reach.
+
+        Always ``False``: the listing parse drops a remote entry whose URL
+        cannot be used, leaving nothing to mark.
+        """
+        return False
+
     def served_all_yanked(self, package: str) -> bool:
         """Whether a listing for ``package`` held files and yanked every one."""
         return package in self._all_yanked

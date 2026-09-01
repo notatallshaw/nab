@@ -44,6 +44,7 @@ class FakeClient:
     def __init__(self, listing: dict[str, list[WheelFile | SdistFile]]) -> None:
         self.listing = listing
         self.unreadable: set[str] = set()
+        self.unreachable: set[str] = set()
         self.all_yanked: set[str] = set()
         self.zip_sdists: dict[str, frozenset[str]] = {}
         self.get_files_calls: list[str] = []
@@ -62,6 +63,9 @@ class FakeClient:
 
     def served_unreadable_only(self, package: str) -> bool:
         return package in self.unreadable
+
+    def served_unreachable_only(self, package: str) -> bool:
+        return package in self.unreachable
 
     def served_all_yanked(self, package: str) -> bool:
         return package in self.all_yanked

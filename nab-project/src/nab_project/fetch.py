@@ -1065,6 +1065,7 @@ class FetchCoordinator:
             req.package,
             files,
             unreadable_only=client.served_unreadable_only(req.package),
+            unreachable_only=client.served_unreachable_only(req.package),
             all_yanked=client.served_all_yanked(req.package),
             zip_sdists=client.served_zip_sdists(req.package),
         )
