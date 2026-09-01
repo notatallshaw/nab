@@ -264,7 +264,7 @@ at every verbosity.
 | ---- | ------ |
 | `-v`, `-vv`, `--verbose` | Raise verbosity. `-v` adds the engine's `INFO` records and deepens the `Diagnostics:` section of a resolution failure, `-vv` adds `DEBUG`. `--verbose` counts as one `-v`; repeats add, and `-vvv` saturates at `-vv`. |
 | `-q`, `-qq`, `--quiet` | Lower verbosity. `-q` drops the run summary and notes, keeping warnings and errors; `-qq` keeps only errors. `--quiet` counts as one `-q`. |
-| `--color` | When to colour nab's output: `auto` (default), `always`, or `never`. `auto` asks each stream on its own, so a help page piped to a file is plain while a refusal on the terminal beside it is not, and it honours `NO_COLOR`, `FORCE_COLOR`, and `TERM=dumb`; `always` and `never` win outright. Colour marks a message's leading token, a heading, and a spelling you can type, so every page reads the same stripped. |
+| `--color` | When to colour nab's output: `auto` (default), `always`, or `never`. `auto` decides per stream and honours the colour variables below, so a redirected page is plain while an error on the terminal is not. `always` and `never` win outright. |
 | `--no-color` | Shorthand for `--color never`. |
 | `--no-progress` | Suppress the live progress line (also `NAB_NO_PROGRESS`). |
 
@@ -291,9 +291,12 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | `XDG_CONFIG_HOME` | If set, the user `nab.toml` is read from `$XDG_CONFIG_HOME/nab/nab.toml` instead of `~/.config/nab/nab.toml`. |
 | `NAB_VERBOSITY` | Default verbosity when no `-v` / `-q` flag is given: one of `silent`, `quiet`, `normal`, `verbose`, `debug`. A `-v` / `-q` flag overrides it. An unrecognised value is rejected by any command that reads it; `--version` and `--help` do not read it, so they neither honour nor refuse it. |
 | `NAB_NO_PROGRESS` | If set to a non-empty value, suppress the live progress line, like `--no-progress`. |
-| `NO_COLOR` | If set to a non-empty value, disable colour under `--color auto`. |
-| `FORCE_COLOR` | If set to a non-empty value, force colour under `--color auto`. |
+| `NO_COLOR` | Any non-empty value disables colour under `--color auto`. |
+| `FORCE_COLOR` | Any non-empty value, `0` included, forces colour under `--color auto`. |
 | `TERM` | `dumb` disables colour under `--color auto`. |
+
+Under `--color auto` those three are read in that order, and the first that
+applies decides.
 
 ## Exit codes
 

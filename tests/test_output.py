@@ -668,3 +668,23 @@ def test_progress_repaints_after_diagnostic() -> None:
     printer.warning("careful")
     reporter.on_pin(1)
     assert err.getvalue().endswith("\r\033[K⠙ Resolving... 1 fetched, 1 pinned")
+
+
+class TestColourPrecedence:
+    """The order the three variables are read in, as the CLI page states it."""
+
+    _PLAIN = _TTY(tty=False)
+
+    def test_no_color_beats_force_color(self) -> None:
+        env = {"NO_COLOR": "1", "FORCE_COLOR": "1"}
+        assert should_color(ColorChoice.AUTO, self._PLAIN, env) is False
+
+    def test_force_color_beats_a_dumb_terminal(self) -> None:
+        env = {"FORCE_COLOR": "1", "TERM": "dumb"}
+        assert should_color(ColorChoice.AUTO, self._PLAIN, env) is True
+
+    def test_force_color_zero_still_forces(self) -> None:
+        assert should_color(ColorChoice.AUTO, self._PLAIN, {"FORCE_COLOR": "0"}) is True
+
+    def test_a_dumb_terminal_disables_on_its_own(self) -> None:
+        assert should_color(ColorChoice.AUTO, self._PLAIN, {"TERM": "dumb"}) is False
