@@ -357,6 +357,17 @@ class TestInMemoryIndex:
         assert existed2
         assert first is second
 
+    def test_get_or_create_after_the_fetch_landed(self) -> None:
+        """A published key still reports as existing, and its event is set."""
+        idx = InMemoryIndex()
+        idx.get_or_create_pending("listing:foo")
+        idx.store_listing("foo", [])
+
+        event, existed = idx.get_or_create_pending("listing:foo")
+
+        assert existed
+        assert event.is_set()
+
     def test_store_sdist_metadata_fires_sdist_pending(self) -> None:
         idx = InMemoryIndex()
         event, _ = idx.get_or_create_pending("sdist:foo:1.0")
