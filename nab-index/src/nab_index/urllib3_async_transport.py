@@ -9,15 +9,17 @@ where users already have urllib3 in their environment.
 from __future__ import annotations
 
 import asyncio
+import http.client
 import json as _json
 import ssl
 import threading
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import urljoin
 
 import truststore
 import urllib3
+import urllib3.connection
 from typing_extensions import override
 
 from .retry import GET_RETRY, next_delay
@@ -61,6 +63,48 @@ class _SSLContext(truststore.SSLContext):
     @override
     def cert_store_stats(self) -> dict[str, int]:
         return {"x509_ca": 1, "x509": 1, "crl": 0}
+
+
+# RFC 9110 section 15.2: a status below 200 is informational, and the client
+# keeps reading for the final response behind it.
+_FINAL_STATUS_MIN: Final = 200
+
+
+class _FinalStatusResponse(http.client.HTTPResponse):
+    """``http.client`` response that reads past 1xx informational responses.
+
+    ``begin`` skips a ``100 Continue`` and stops at every other status, so a
+    ``103 Early Hints`` (RFC 8297) becomes the response and the real one is
+    never parsed. ``begin`` returns early once ``headers`` is set, so clearing
+    it back to ``None`` re-enters the parse for the next status.
+    """
+
+    @override
+    def begin(self) -> None:
+        super().begin()
+        while self.status < _FINAL_STATUS_MIN:
+            self.headers = None  # type: ignore[assignment]  # ty: ignore[invalid-assignment]
+            super().begin()
+
+
+# urllib3 picks its pool class from the manager and its connection class from
+# the pool, so reaching the response class means subclassing both.
+class _HTTPConnection(urllib3.connection.HTTPConnection):
+    response_class: type[http.client.HTTPResponse] = _FinalStatusResponse
+
+
+class _HTTPSConnection(urllib3.connection.HTTPSConnection):
+    response_class: type[http.client.HTTPResponse] = _FinalStatusResponse
+
+
+# ``ConnectionCls`` is typed against protocols urllib3 exports only under
+# ``TYPE_CHECKING``, so an override cannot restate its type.
+class _HTTPConnectionPool(urllib3.HTTPConnectionPool):
+    ConnectionCls: type[Any] = _HTTPConnection
+
+
+class _HTTPSConnectionPool(urllib3.HTTPSConnectionPool):
+    ConnectionCls: type[Any] = _HTTPSConnection
 
 
 def _final_url(response: urllib3.BaseHTTPResponse, requested_url: str) -> str:
@@ -163,6 +207,12 @@ class Urllib3AsyncTransport:
                 maxsize=self._maxsize,
                 ssl_context=_SSLContext(ssl.PROTOCOL_TLS_CLIENT),
             )
+            # urllib3 leaves the scheme map unannotated, so ty infers its
+            # value type as the two default pool classes and not a subclass.
+            pool.pool_classes_by_scheme = {  # ty: ignore[invalid-assignment]
+                "http": _HTTPConnectionPool,
+                "https": _HTTPSConnectionPool,
+            }
             self._local.pool = pool
             with self._pools_lock:
                 self._pools.append(pool)

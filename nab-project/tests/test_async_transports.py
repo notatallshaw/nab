@@ -14,6 +14,7 @@ import tarfile
 import threading
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,7 @@ from nab_index.transport import (
 )
 from nab_index.urllib3_async_transport import (
     Urllib3AsyncTransport,
+    _FinalStatusResponse,
     _SSLContext,
     _Urllib3Response,
 )
@@ -247,6 +249,58 @@ class _UserAgentStubIndexHandler(BaseHTTPRequestHandler):
 def _user_agent_stub_index() -> Iterator[_UserAgentStubIndex]:
     server = _UserAgentStubIndex(("127.0.0.1", 0), _UserAgentStubIndexHandler)
     server.user_agents = []
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+EARLY_HINTS_LISTING = (
+    b'{"meta": {"api-version": "1.0"}, "name": "pkg", "files": ['
+    b'{"filename": "pkg-1.0-py3-none-any.whl", '
+    b'"url": "https://files.example.com/pkg-1.0-py3-none-any.whl", '
+    b'"hashes": {"sha256": "' + b"0" * 64 + b'"}}]}'
+)
+
+
+class _EarlyHintsIndex(ThreadingHTTPServer):
+    """Loopback index that precedes its listing with informational responses.
+
+    Each status in ``informational`` is written raw as a complete 1xx response
+    of its own, ahead of the 200 that carries the listing.
+    """
+
+    informational: list[int]
+
+
+class _EarlyHintsIndexHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        assert isinstance(self.server, _EarlyHintsIndex)
+        for status in self.server.informational:
+            self.wfile.write(
+                f"HTTP/1.1 {status} {HTTPStatus(status).phrase}\r\n"
+                "Link: </pkg-1.0-py3-none-any.whl>; rel=preload\r\n"
+                "\r\n".encode("latin-1")
+            )
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/vnd.pypi.simple.v1+json")
+        self.send_header("Content-Length", str(len(EARLY_HINTS_LISTING)))
+        self.end_headers()
+        self.wfile.write(EARLY_HINTS_LISTING)
+
+    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+        """Drop the handler's stderr access log."""
+
+
+@contextmanager
+def _early_hints_index(informational: list[int]) -> Iterator[_EarlyHintsIndex]:
+    server = _EarlyHintsIndex(("127.0.0.1", 0), _EarlyHintsIndexHandler)
+    server.informational = list(informational)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -1650,6 +1704,14 @@ class TestUrllib3AsyncTransport:
         stats = ctx.cert_store_stats()
         assert stats["x509_ca"] >= 1
 
+    def test_an_https_url_gets_a_pool_that_reads_past_a_1xx(self) -> None:
+        """Nothing else covers the https pool: the loopback index is plain HTTP."""
+        transport = Urllib3AsyncTransport()
+        pool = transport._pool().connection_from_url("https://example.invalid/simple/")
+        asyncio.run(transport.aclose())
+
+        assert pool.ConnectionCls.response_class is _FinalStatusResponse
+
 
 class TestAsyncSimpleClient:
     """Tests for nab-index's AsyncSimpleClient via a faked transport."""
@@ -2033,6 +2095,58 @@ class TestUserAgentAcrossBackends:
             asyncio.run(go())
 
         assert index.user_agents == [USER_AGENT]
+
+
+class TestInformationalResponseAcrossBackends:
+    """Both backends read past a 1xx and serve the final response.
+
+    RFC 9110 section 15.2: a client must parse one or more 1xx responses
+    received before the final response, even when it expects none.
+    """
+
+    @pytest.mark.parametrize(
+        "informational",
+        [
+            pytest.param([103], id="early-hints"),
+            pytest.param([102], id="processing"),
+            pytest.param([103, 103], id="two-early-hints"),
+        ],
+    )
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_get_returns_the_status_after_the_1xx(
+        self,
+        make_transport: Callable[[], AsyncHttpTransport],
+        informational: list[int],
+    ) -> None:
+        with _early_hints_index(informational) as index:
+            url = f"http://127.0.0.1:{index.server_port}/simple/pkg/"
+
+            async def go() -> HttpResponse:
+                transport = make_transport()
+                try:
+                    return await transport.get(url)
+                finally:
+                    await transport.aclose()
+
+            response = asyncio.run(go())
+
+        assert response.status_code == 200
+        assert response.content == EARLY_HINTS_LISTING
+
+    @pytest.mark.parametrize("make_transport", TRANSPORTS)
+    def test_early_hints_do_not_fail_the_listing(
+        self, make_transport: Callable[[], AsyncHttpTransport]
+    ) -> None:
+        with _early_hints_index([103]) as index:
+            root = f"http://127.0.0.1:{index.server_port}/simple/"
+
+            async def go() -> list[WheelFile | SdistFile]:
+                async with AsyncSimpleClient(make_transport(), root) as client:
+                    return await client.get_files("pkg")
+
+            (wheel,) = asyncio.run(go())
+
+        assert wheel.filename == "pkg-1.0-py3-none-any.whl"
 
 
 RELATIVE_LISTING = (
