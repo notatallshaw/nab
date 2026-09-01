@@ -1066,6 +1066,7 @@ class FetchCoordinator:
             files,
             unreadable_only=client.served_unreadable_only(req.package),
             unreachable_only=client.served_unreachable_only(req.package),
+            no_usable_file=client.served_no_usable_file(req.package),
             all_yanked=client.served_all_yanked(req.package),
             zip_sdists=client.served_zip_sdists(req.package),
         )

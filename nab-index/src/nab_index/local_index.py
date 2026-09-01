@@ -170,20 +170,23 @@ _FLAT_EXTS = re.compile(r"\.(whl|tar\.gz)$", re.IGNORECASE)
 class _ScanResult(NamedTuple):
     """What one scan of a local index found for a package.
 
-    The four fields beside ``files`` describe what the scan dropped, none of
+    The five fields beside ``files`` describe what the scan dropped, none of
     which leaves a record.  ``unreadable`` says the listing offered a file in
     a format nab does not read, which tells a page of ``.zip`` sdists from an
     empty one; ``unreachable`` says it offered a wheel or ``.tar.gz`` sdist
     behind an href that resolves to no usable URL; ``all_yanked`` says every
     anchor naming a file was yanked, which tells a page of yanked releases
-    from a package this index does not carry; ``zip_sdists`` names the
-    releases it offered as ``.zip`` sdists.
+    from a package this index does not carry; ``named_files`` says an
+    unyanked anchor named a release, whatever the scan then made of it,
+    which tells a page that offered releases from one that offered none;
+    ``zip_sdists`` names the releases it offered as ``.zip`` sdists.
     """
 
     files: list[WheelFile | SdistFile]
     unreadable: bool
     unreachable: bool
     all_yanked: bool
+    named_files: bool
     zip_sdists: frozenset[str]
 
 
@@ -203,6 +206,7 @@ def _scan_pep503_directory(
             unreadable=False,
             unreachable=False,
             all_yanked=False,
+            named_files=False,
             zip_sdists=frozenset(),
         )
 
@@ -258,13 +262,15 @@ def _scan_pep503_directory(
         if record is not None:
             files.append(record)
 
-    # A navigation link is not a release, so the all-yanked test counts only
-    # the anchors that name one.
+    # A navigation link is not a release, so both counts below read the
+    # anchors that name one.
+    named = len(anchors) - yanked - nameless
     return _ScanResult(
         files,
         unreadable=unreadable,
         unreachable=unreachable,
-        all_yanked=yanked > 0 and yanked == len(anchors) - nameless,
+        all_yanked=yanked > 0 and named == 0,
+        named_files=named > 0,
         zip_sdists=frozenset(zip_sdists),
     )
 
@@ -501,7 +507,8 @@ def _scan_flat_wheelhouse(
 
     One directory serves every package, so a file that does not name
     ``package`` says nothing about it: only a ``.zip`` sdist of ``package``
-    makes the scan unreadable.  A flat directory has no yank marks.
+    makes the scan unreadable.  A flat directory has no yank marks and no
+    page that named ``package``'s files.
     """
     canonical = _canonical(package)
     files: list[WheelFile | SdistFile] = []
@@ -531,6 +538,7 @@ def _scan_flat_wheelhouse(
         unreadable=bool(zip_sdists),
         unreachable=False,
         all_yanked=False,
+        named_files=False,
         zip_sdists=frozenset(zip_sdists),
     )
 
@@ -744,6 +752,7 @@ class LocalIndexClient:
         self._root = Path(os.path.abspath(root))  # noqa: PTH100
         self._unreadable_only: set[str] = set()
         self._unreachable_only: set[str] = set()
+        self._no_usable_file: set[str] = set()
         self._all_yanked: set[str] = set()
         self._zip_sdists: dict[str, frozenset[str]] = {}
 
@@ -777,6 +786,7 @@ class LocalIndexClient:
                     unreadable=False,
                     unreachable=False,
                     all_yanked=False,
+                    named_files=False,
                     zip_sdists=frozenset(),
                 )
             else:
@@ -791,6 +801,8 @@ class LocalIndexClient:
             self._unreachable_only.add(package)
         if not scan.files and scan.all_yanked:
             self._all_yanked.add(package)
+        if not scan.files and scan.named_files:
+            self._no_usable_file.add(package)
         self._zip_sdists[package] = scan.zip_sdists
         return scan.files
 
@@ -801,6 +813,10 @@ class LocalIndexClient:
     def served_unreachable_only(self, package: str) -> bool:
         """Whether a listing for ``package`` held only links nab cannot reach."""
         return package in self._unreachable_only
+
+    def served_no_usable_file(self, package: str) -> bool:
+        """Whether a listing for ``package`` named files and nab kept none."""
+        return package in self._no_usable_file
 
     def served_all_yanked(self, package: str) -> bool:
         """Whether a listing for ``package`` held file links and yanked every one."""

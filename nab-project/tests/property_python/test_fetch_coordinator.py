@@ -124,6 +124,9 @@ class FakeClient:
     def served_unreachable_only(self, package: str) -> bool:
         return False
 
+    def served_no_usable_file(self, package: str) -> bool:
+        return False
+
     def served_all_yanked(self, package: str) -> bool:
         return False
 

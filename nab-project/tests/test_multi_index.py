@@ -45,6 +45,7 @@ class FakeClient:
         self.listing = listing
         self.unreadable: set[str] = set()
         self.unreachable: set[str] = set()
+        self.no_usable_file: set[str] = set()
         self.all_yanked: set[str] = set()
         self.zip_sdists: dict[str, frozenset[str]] = {}
         self.get_files_calls: list[str] = []
@@ -66,6 +67,9 @@ class FakeClient:
 
     def served_unreachable_only(self, package: str) -> bool:
         return package in self.unreachable
+
+    def served_no_usable_file(self, package: str) -> bool:
+        return package in self.no_usable_file
 
     def served_all_yanked(self, package: str) -> bool:
         return package in self.all_yanked
