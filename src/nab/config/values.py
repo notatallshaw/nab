@@ -1416,6 +1416,19 @@ def _validate_allowed_repo(repo: str) -> None:
         raise SourceConfigError(msg) from exc
 
 
+def _validate_source_name(where: str, index: int, name: str) -> None:
+    """Reject a declared source ``name`` that is not a valid package name.
+
+    A source is matched to a requirement by canonical name, so a name
+    that is not a package name can never match one.
+    """
+    try:
+        canonicalize_name(name, validate=True)
+    except InvalidName as exc:
+        msg = f"{where}[{index}] name {name!r} is not a valid package name"
+        raise SourceConfigError(msg) from exc
+
+
 _LOCAL_SOURCE_KEYS = frozenset({"name", "path", "editable", "subdirectory"})
 
 
@@ -1443,6 +1456,8 @@ def _parse_local_source(
     if not isinstance(name, str) or not isinstance(path_value, str):
         msg = f"{where}[{i}] name and path must be strings"
         raise SourceConfigError(msg)
+
+    _validate_source_name(where, i, name)
 
     editable = entry.get("editable", False)
     if not isinstance(editable, bool):
@@ -1485,16 +1500,18 @@ def parse_local_sources(
 
 def parse_vcs_sources(value: object, where: str) -> tuple[VcsSource, ...]:
     """Read ``vcs-sources``, one name and url per table."""
-    return tuple(
-        VcsSource(name=entry.name, url=entry.url)
-        for entry in _iter_name_url_tables(where, value)
-    )
+    out: list[VcsSource] = []
+    for entry in _iter_name_url_tables(where, value):
+        _validate_source_name(where, entry.position, entry.name)
+        out.append(VcsSource(name=entry.name, url=entry.url))
+    return tuple(out)
 
 
 def parse_archive_sources(value: object, where: str) -> tuple[ArchiveSource, ...]:
     """Read ``archive-sources``, one name and url per table, each url validated."""
     out: list[ArchiveSource] = []
     for entry in _iter_name_url_tables(where, value):
+        _validate_source_name(where, entry.position, entry.name)
         _validate_archive_url(where, entry.position, entry.url)
         out.append(ArchiveSource(name=entry.name, url=entry.url))
     return tuple(out)
