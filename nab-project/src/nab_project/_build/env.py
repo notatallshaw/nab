@@ -43,15 +43,22 @@ from installer.utils import get_launcher_kind
 
 from nab_index.client import extract_sdist_archive
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_provider._vendor.packaging.requirements import InvalidRequirement
 from nab_provider._vendor.packaging.utils import (
     canonicalize_name,
     parse_wheel_filename,
 )
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import MissingExtraError
+from nab_provider.marker_holds import (
+    IntractableMarkerError,
+    UnevaluableMarkerError,
+    dependency_marker_holds,
+)
+from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import BuildPolicy, DistPolicy
 from nab_provider.requirements_file import InvalidProjectRequirementError
-from nab_provider.target import ResolveTarget
+from nab_provider.target import ResolveTarget, host_environment
 from nab_provider.vcs_admission import UnsupportedVcsError
 
 from ..download import DownloadError, download_lock
@@ -224,9 +231,10 @@ class NabBuildEnv:
     settings, pruned of declared sources, constraints and group selection
     so the build env resolves against the configured indexes alone.
 
-    ``offline`` refuses to populate the env at all, since every build
-    requirement would have to come off the network.  An empty
-    ``requires`` needs nothing fetched and is still served.
+    ``offline`` refuses to populate the env when a build requirement
+    would have to come off the network.  A ``requires`` that is empty,
+    or whose entries are all excluded by their markers on the host,
+    needs nothing fetched and is still served.
 
     ``chain`` is the :data:`BuildChain` of builds this env is already
     nested inside.  It is empty for the build a resolve asked for, and
@@ -432,6 +440,9 @@ class NabBuildEnv:
         no inherited override may raise it.  A backend invocation to
         learn a build requirement's dependencies would be a second
         recursion, one the depth budget does not count.
+
+        Offline it returns no wheels rather than refusing when the
+        host's markers exclude every entry.
         """
         # Late import, breaking the cycle ``resolve`` -> ``fetch`` ->
         # ``_sources`` -> ``build_backend`` -> ``_build.runner`` -> this
@@ -443,7 +454,11 @@ class NabBuildEnv:
             requires.extend(extra)
 
         if self._offline:
-            joined = ", ".join(requires)
+            needed = _applicable_requirements(requires)
+            if not needed:
+                return []
+
+            joined = ", ".join(needed)
             msg = f"build requirements unavailable in offline mode: {joined}"
             raise BuildEnvError(msg)
 
@@ -864,6 +879,40 @@ def _dist_scheme_paths(
 def _supports_symlinks() -> bool:
     """``venv.EnvBuilder(symlinks=...)`` heuristic; avoids Windows traps."""
     return sys.platform != "win32"
+
+
+def _applicable_requirements(requires: list[str]) -> list[str]:
+    """Return the entries of ``requires`` the host has to install.
+
+    The venv is created from the host interpreter, so a requirement
+    whose PEP 508 marker excludes the host is never installed.
+    """
+    environment = host_environment()
+    return [
+        requirement
+        for requirement in requires
+        if _requirement_applies(requirement, environment)
+    ]
+
+
+def _requirement_applies(requirement: str, environment: Mapping[str, str]) -> bool:
+    """Whether ``requirement`` applies under the ``environment`` marker values.
+
+    An unparseable string and a marker nothing decides both count as
+    applying, since neither shows the host to be excluded.
+    """
+    try:
+        parsed = parse_requirement(requirement)
+    except InvalidRequirement:
+        return True
+
+    if parsed.marker is None:
+        return True
+
+    try:
+        return dependency_marker_holds(parsed.marker, environment)
+    except (UnevaluableMarkerError, IntractableMarkerError):
+        return True
 
 
 def _render_synthetic_pyproject(requires: list[str]) -> str:
