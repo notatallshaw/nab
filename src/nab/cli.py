@@ -24,6 +24,11 @@ from nab._cli import spec
 from nab._cli.parse import Parsed, UsageError, parse
 from nab._version import __version__
 
+# Declared rather than imported from ``typing``, which this path never loads.
+TYPE_CHECKING = False
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 __all__ = [
     "console_entry",
     "main",
@@ -49,6 +54,10 @@ _INTERRUPTED = "error: interrupted\n"
 _AUTO = "auto"
 
 
+def _nothing() -> None:
+    """Stand in for the ``resume`` a caller did not supply."""
+
+
 def _load(name: str) -> types.ModuleType:
     """Import one module the entry path defers, and return it.
 
@@ -61,14 +70,17 @@ def _load(name: str) -> types.ModuleType:
     return sys.modules[name]
 
 
-def run(argv: tuple[str, ...]) -> int:
+def run(argv: tuple[str, ...], resume: Callable[[], None] = _nothing) -> int:
     """Run one command line and report the status it ends with.
 
     Both writes a run makes are here, one per stream. A stream that
     refuses one replaces the status with 120, which is what makes a page
     redirected to a full disk an exit code rather than a traceback.
+
+    ``resume`` runs when the line reaches a command module, and not at
+    all on a page or a refusal.
     """
-    status, out, err = _outcome(argv)
+    status, out, err = _outcome(argv, resume)
 
     try:
         if out:
@@ -81,7 +93,7 @@ def run(argv: tuple[str, ...]) -> int:
     return status
 
 
-def _outcome(argv: tuple[str, ...]) -> tuple[int, str, str]:
+def _outcome(argv: tuple[str, ...], resume: Callable[[], None]) -> tuple[int, str, str]:
     """Read the line and act on it: a status, stdout text, and stderr text."""
     try:
         parsed = parse(argv, spec.ROOT, spec.COMMANDS, _PROG)
@@ -106,7 +118,7 @@ def _outcome(argv: tuple[str, ...]) -> tuple[int, str, str]:
         )
         return 0, page, ""
 
-    return _dispatch(parsed)
+    return _dispatch(parsed, resume)
 
 
 def _color_choice(options: dict[str, object]) -> str:
@@ -135,11 +147,11 @@ def _painting(stream: object, choice: str) -> bool:
     return bool(_load("nab.env").color_enabled(choice, isatty=tty))
 
 
-def _dispatch(parsed: Parsed) -> tuple[int, str, str]:
+def _dispatch(parsed: Parsed, resume: Callable[[], None]) -> tuple[int, str, str]:
     """Run the command the line named, reporting Ctrl-C as an interrupt."""
     try:
         outcome: tuple[int, str] = _load("nab._cli.dispatch").dispatch(
-            parsed, spec.DISPATCH, spec.PATH_DESTS
+            parsed, spec.DISPATCH, spec.PATH_DESTS, resume=resume
         )
     except KeyboardInterrupt:
         return _SIGINT_EXIT_CODE, "", _INTERRUPTED
@@ -148,16 +160,19 @@ def _dispatch(parsed: Parsed) -> tuple[int, str, str]:
     return status, "", f"{message}\n" if message else ""
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None, resume: Callable[[], None] = _nothing) -> None:
     """Run the CLI over ``argv``, defaulting to the process's own.
 
     Raises :class:`SystemExit` with the status the run produced, and
     returns normally on success, so a caller that owns the process can
     still do its own teardown.
+
+    ``resume`` runs when the line reaches a command module, and not at
+    all on a page or a refusal.
     """
     _replace_closed_std_streams()
 
-    status = run(tuple(sys.argv[1:] if argv is None else argv))
+    status = run(tuple(sys.argv[1:] if argv is None else argv), resume)
     if _output_was_dropped():
         status = _FLUSH_FAILED_EXIT_CODE
 
@@ -232,19 +247,24 @@ def _flush_std_streams() -> bool:
     return flushed
 
 
-def console_entry() -> None:
+def console_entry(resume: Callable[[], None] = _nothing) -> None:
     """Run the CLI, then end the process without freeing the resolve graph.
 
     Both ``nab`` and ``python -m nab`` end here; :func:`main` returns
     normally for every other caller. No ``atexit`` hook and no finalizer runs
     after this, so a command has to finish any work it cannot lose before
     :func:`main` returns.
+
+    ``resume`` runs when the line reaches a command module and again on
+    the way out, so it has to be safe to call twice.
     """
     status = 0
     try:
-        main()
+        main(resume=resume)
     except SystemExit as exc:
         status = _system_exit_status(exc.code)
+    finally:
+        resume()
 
     if not _flush_std_streams():
         status = _FLUSH_FAILED_EXIT_CODE

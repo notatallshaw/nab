@@ -8,6 +8,7 @@ import importlib
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +46,7 @@ def test_imports_the_cli_while_the_collector_is_off(
             enabled_at_import.append(gc.isenabled())
         return real_import(name, *args, **kwargs)
 
-    monkeypatch.setattr("nab.cli.console_entry", lambda: None)
+    monkeypatch.setattr("nab.cli.console_entry", lambda _resume: None)
     monkeypatch.setattr(builtins, "__import__", record_import)
 
     console_entry()
@@ -54,19 +55,56 @@ def test_imports_the_cli_while_the_collector_is_off(
 
 
 @pytest.mark.usefixtures("restored_gc_state")
-def test_freezes_the_import_graph_before_enabling(
+def test_the_cli_runs_with_the_collector_off_until_it_resumes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The freeze runs while the collector is still off, the CLI once it is on."""
+    """The collector stays off until the CLI calls back.
+
+    Everything the CLI imports before that call is inside the freeze.
+    """
     events: list[tuple[str, bool]] = []
     monkeypatch.setattr(gc, "freeze", lambda: events.append(("freeze", gc.isenabled())))
-    monkeypatch.setattr(
-        "nab.cli.console_entry", lambda: events.append(("cli", gc.isenabled()))
-    )
+
+    def run_cli(resume: Callable[[], None]) -> None:
+        events.append(("cli", gc.isenabled()))
+        resume()
+        events.append(("resumed", gc.isenabled()))
+
+    monkeypatch.setattr("nab.cli.console_entry", run_cli)
 
     console_entry()
 
-    assert events == [("freeze", False), ("cli", True)]
+    assert events == [("cli", False), ("freeze", False), ("resumed", True)]
+
+
+@pytest.mark.usefixtures("restored_gc_state", "stubbed_gc_freeze")
+def test_a_cli_that_never_resumes_still_leaves_the_collector_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The module that switches the collector off is the one that guarantees it back."""
+    monkeypatch.setattr("nab.cli.console_entry", lambda _resume: None)
+
+    console_entry()
+
+    assert gc.isenabled()
+
+
+@pytest.mark.usefixtures("restored_gc_state")
+def test_a_second_resume_does_not_freeze_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One freeze between the CLI's call and this module's own.
+
+    A freeze on the second would take the command's own graph into the
+    permanent generation.
+    """
+    freezes: list[int] = []
+    monkeypatch.setattr(gc, "freeze", lambda: freezes.append(1))
+    monkeypatch.setattr("nab.cli.console_entry", lambda resume: resume())
+
+    console_entry()
+
+    assert freezes == [1]
 
 
 @pytest.mark.usefixtures("restored_gc_state")
@@ -74,15 +112,38 @@ def test_without_gc_freeze_still_reenables_the_collector(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The collector comes back on an interpreter without ``gc.freeze``."""
-    enabled_during: list[bool] = []
+    enabled_after: list[bool] = []
     monkeypatch.delattr(gc, "freeze")
-    monkeypatch.setattr(
-        "nab.cli.console_entry", lambda: enabled_during.append(gc.isenabled())
-    )
+
+    def run_cli(resume: Callable[[], None]) -> None:
+        resume()
+        enabled_after.append(gc.isenabled())
+
+    monkeypatch.setattr("nab.cli.console_entry", run_cli)
 
     console_entry()
 
-    assert enabled_during == [True]
+    assert enabled_after == [True]
+
+
+@pytest.mark.usefixtures("restored_gc_state", "stubbed_gc_freeze")
+def test_a_cli_that_cannot_be_imported_leaves_the_collector_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken install raises out of here rather than out of a paused process."""
+    real_import = builtins.__import__
+
+    def refuse_cli(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name == "nab.cli":
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse_cli)
+
+    with pytest.raises(ImportError):
+        console_entry()
+
+    assert gc.isenabled()
 
 
 def test_console_script_runs_the_collector_off_entry() -> None:
