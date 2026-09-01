@@ -589,7 +589,7 @@ def _token(row: Row, value: object, prog: str) -> object:
     if row.vtype == "bool":
         return _boolean(row, value, prog)
 
-    if row.vtype == "choice" and value not in row.choices:
+    if row.choices and value not in row.choices:
         raise _bad_choice(prog, row, value, row.choices)
 
     return value

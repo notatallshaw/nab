@@ -36,17 +36,13 @@ def cache_command(
     root = _cache_root(cache_dir)
     if action == "dir":
         printer().data(f"{root}\n")
-        return
-    if action == "verify":
+    elif action == "verify":
         _verify(root)
-        return
-    if action == "clear":
+    elif action == "clear":
         _clear(root)
-        return
-    printer().error(
-        f"unknown cache action {action!r}; expected one of 'dir', 'verify', 'clear'"
-    )
-    sys.exit(1)
+    else:  # pragma: no cover - the parser refuses any other verb
+        msg = f"unreachable cache action {action!r}"
+        raise AssertionError(msg)
 
 
 def _cache_root(cache_dir: Path | None) -> Path:

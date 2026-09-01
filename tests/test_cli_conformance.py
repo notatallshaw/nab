@@ -20,6 +20,7 @@ import pytest
 
 from nab._cli import spec as cli_spec
 from nab._cli.parse import UsageError, parse
+from nab.cli import run
 from nab.config.ladder import build_cli_layer
 from nab.optiondefs import COMMANDS, UNSET, Kind, Opt, Scope, VType
 from nab.optiontable import ALL
@@ -184,39 +185,23 @@ class TestRootRowsAgainstTheirReader:
 
 
 class TestVerbSets:
-    """A verb row's choices are the verbs its command body offers.
+    """A verb row's declared choices are the verbs the parser will accept.
 
-    Neither verb set is annotated with a ``Literal``, because an unknown
-    verb exits 1 from the body rather than raising a type error.  Driving
-    the body with a verb it does not know makes it name the ones it does.
+    The set is written once, as the ``Literal`` the row is annotated with,
+    and the parser refuses anything outside it.  Driving a real command
+    line with a verb no row declares makes the refusal list the set.
     """
 
     @pytest.mark.parametrize("command", ["config", "cache"])
     def test_the_refusal_names_exactly_the_declared_verbs(
-        self,
-        command: str,
-        hermetic_roots: Path,
-        capsys: pytest.CaptureFixture[str],
+        self, command: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         row = next(row for row in _rows(command) if row.kind is Kind.VERB)
-        offered = "expected one of " + ", ".join(repr(verb) for verb in row.choices)
+        offered = "choose from " + ", ".join(row.choices)
 
-        with pytest.raises(SystemExit):
-            self._refuse(command, hermetic_roots)
+        assert run((command, "frobnicate", "--cache-dir", str(tmp_path))) == 2
 
-        assert capsys.readouterr().err.rstrip().endswith(offered)
-
-    @staticmethod
-    def _refuse(command: str, project: Path) -> None:
-        """Call ``command`` with a verb no body knows."""
-        arguments: dict[str, Any] = {"cache_dir": project / "cache"}
-
-        if command == "config":
-            pyproject = project / "pyproject.toml"
-            pyproject.write_text(_MINIMAL_PROJECT, encoding="utf-8")
-            arguments["path"] = pyproject
-
-        _command_function(command)("frobnicate", **arguments)
+        assert offered in capsys.readouterr().err
 
 
 class TestLockfileFlagStability:
