@@ -16,7 +16,6 @@ import re
 import time
 from dataclasses import dataclass, replace
 from datetime import timezone
-from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING
 
 from nab_provider.records import select_artifact_hash
@@ -178,6 +177,9 @@ def _http_date_seconds(value: str | None) -> int | None:
     """
     if value is None:
         return None
+
+    # Deferred so importing this module does not load the email package.
+    from email.utils import parsedate_to_datetime  # noqa: PLC0415
 
     try:
         parsed = parsedate_to_datetime(value)

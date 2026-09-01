@@ -25,7 +25,6 @@ import os
 import re
 import stat
 import zipfile
-from email.parser import BytesParser, Parser
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import unquote, urljoin, urlparse, urlsplit
@@ -560,6 +559,9 @@ def _read_sdist_requires_python(sdist_path: Path) -> str | None:
     if pkg_info is None:
         return None
 
+    # Deferred so importing this module does not load the email package.
+    from email.parser import Parser  # noqa: PLC0415
+
     value = Parser().parsestr(pkg_info, headersonly=True).get("Requires-Python")
     return value if isinstance(value, str) else None
 
@@ -581,6 +583,9 @@ def _read_wheel_requires_python(wheel_path: Path, expected: str) -> str | None:
         # Corrupt content raises a different type per compression method, and
         # zstd's does not exist before 3.14, so an explicit list leaves holes.
         return None
+
+    # Deferred so importing this module does not load the email package.
+    from email.parser import BytesParser  # noqa: PLC0415
 
     value = BytesParser().parsebytes(raw, headersonly=True).get("Requires-Python")
     return value if isinstance(value, str) else None
