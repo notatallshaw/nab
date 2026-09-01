@@ -106,12 +106,15 @@ def sidecar_hash(value: object) -> tuple[str, str] | None:
 def _compact_table(table: dict[object, object]) -> object:
     """Return the form of ``table`` a record holds until something reads it.
 
-    An index almost always publishes one algorithm, and holding that as an
-    interned ``(algo, digest)`` pair retains less than the dict it was served
-    as.  Anything else is held as it stands.
+    An index almost always publishes one sha256 digest, and that is held as the
+    digest alone.  Any other one-entry table with a string name is held as an
+    interned ``(algo, digest)`` pair, and anything else as the dict it was
+    served as.
     """
     if len(table) == 1:
         ((algo, digest),) = table.items()
+        if algo == "sha256" and type(digest) is str:
+            return digest
         if type(algo) is str:
             return (sys.intern(algo), digest)
     return table
@@ -127,6 +130,8 @@ def _compact_shared_table(table: dict[object, object]) -> object:
     """
     if len(table) == 1:
         ((algo, digest),) = table.items()
+        if algo == "sha256" and type(digest) is str:
+            return digest
         if type(algo) is str:
             return (algo, digest)
     return table
@@ -134,6 +139,8 @@ def _compact_shared_table(table: dict[object, object]) -> object:
 
 def _expand_table(held: object) -> object:
     """Return ``held`` as the index served it, undoing :func:`_compact_table`."""
+    if type(held) is str:
+        return {"sha256": held}
     if isinstance(held, tuple):
         algo, digest = held
         return {algo: digest}
