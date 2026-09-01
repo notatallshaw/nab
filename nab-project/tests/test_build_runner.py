@@ -2318,15 +2318,23 @@ class TestBuildEnvOffline:
         monkeypatch.setattr("nab_project.resolve.resolve_for_targets", _no_network)
         monkeypatch.setattr("nab_project._build.env.download_lock", _no_network)
 
-    def test_refuses_before_the_inner_resolve(self, tmp_path: Path) -> None:
+    def _offline_env(
+        self, tmp_path: Path, requires: list[str]
+    ) -> tuple[NabBuildEnv, Path]:
+        """An offline env over ``requires``, and the wheel dir to fill."""
         env = NabBuildEnv(
-            requires=["foo"],
+            requires=requires,
             config=ResolveInputs(),
             offline=True,
             transport_factory=_no_network,  # type: ignore[arg-type]
         )
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
+        return env, wheel_dir
+
+    def test_refuses_before_the_inner_resolve(self, tmp_path: Path) -> None:
+        env, wheel_dir = self._offline_env(tmp_path, ["foo"])
+
         with pytest.raises(BuildEnvError, match=r"unavailable in offline mode: foo"):
             env._resolve_and_download(wheel_dir)
 
@@ -2365,6 +2373,60 @@ class TestBuildEnvOffline:
         source = _write_fake_backend_project(tmp_path)
         metadata = run_build_backend(source, config=config, offline=True)
         assert metadata.name == "fake-pkg"
+
+    def test_backend_whose_requirements_are_all_excluded_still_builds(
+        self, tmp_path: Path, config: ResolveInputs
+    ) -> None:
+        """The one build requirement is marker-excluded, so nothing is fetched."""
+        source = _write_fake_backend_project(tmp_path)
+        (source / "pyproject.toml").write_text(
+            "[build-system]\n"
+            "requires = ['tomli; python_version < \"3.0\"']\n"
+            'build-backend = "nab_test_backend"\n'
+            'backend-path = ["."]\n',
+            encoding="utf-8",
+        )
+
+        metadata = run_build_backend(source, config=config, offline=True)
+
+        assert metadata.name == "fake-pkg"
+
+    def test_marker_excluded_requirements_need_no_fetch(self, tmp_path: Path) -> None:
+        """The host's markers exclude every entry, so nothing has to be fetched."""
+        env, wheel_dir = self._offline_env(tmp_path, ['tomli; python_version < "3.0"'])
+
+        assert env._resolve_and_download(wheel_dir) == []
+
+    def test_refusal_names_only_the_requirements_that_apply(
+        self, tmp_path: Path
+    ) -> None:
+        """A partly excluded list still refuses, naming what has to be fetched."""
+        env, wheel_dir = self._offline_env(
+            tmp_path, ['tomli; python_version < "3.0"', "hatchling"]
+        )
+
+        with pytest.raises(
+            BuildEnvError, match=r"unavailable in offline mode: hatchling$"
+        ):
+            env._resolve_and_download(wheel_dir)
+
+    def test_unparseable_requirement_is_refused(self, tmp_path: Path) -> None:
+        """A string that is not PEP 508 is not an exclusion."""
+        env, wheel_dir = self._offline_env(tmp_path, ["not a requirement!!"])
+
+        with pytest.raises(
+            BuildEnvError, match=r"unavailable in offline mode: not a requirement!!$"
+        ):
+            env._resolve_and_download(wheel_dir)
+
+    def test_undecidable_marker_is_refused(self, tmp_path: Path) -> None:
+        """A marker nothing decides is not an exclusion."""
+        env, wheel_dir = self._offline_env(
+            tmp_path, ['foo; python_full_version ~= "3"']
+        )
+
+        with pytest.raises(BuildEnvError, match=r"unavailable in offline mode: foo;"):
+            env._resolve_and_download(wheel_dir)
 
     def test_hook_extras_named_in_a_stable_order(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
