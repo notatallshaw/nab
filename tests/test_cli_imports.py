@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 _BANNED_ROOTS = (
     "nab_project",
     "nab_provider",
+    "nab_markersets",
     "nab_resolver",
     "nab_index",
     "truststore",

@@ -65,6 +65,25 @@ def test_no_candidate_at_all_names_both_extras() -> None:
         _packaging._import_backend((ABSENT, f"{ABSENT}_either"))
 
 
+@pytest.mark.parametrize("version", ["26.2", "0", "", "not-a-version"])
+def test_a_copy_below_the_floor_is_refused(version: str) -> None:
+    """An install that names no extra declares no floor, so this is where it holds."""
+    with pytest.raises(ImportError, match=rf"packaging>={_packaging.MINIMUM}"):
+        _packaging._require_floor("packaging", version)
+
+
+@pytest.mark.parametrize("version", ["26.3", "26.4.dev0", "27.0"])
+def test_a_copy_at_or_above_the_floor_passes(version: str) -> None:
+    assert _packaging._require_floor("packaging", version) is None
+
+
+def test_the_bound_copy_clears_the_floor() -> None:
+    bound = _packaging._import_or_none(BACKEND)
+
+    assert bound is not None
+    assert _packaging._require_floor(BACKEND, bound.__version__) is None
+
+
 def test_every_bound_name_comes_from_the_bound_backend() -> None:
     """No name is left over from the copy that lost the probe."""
     homes = {name: getattr(_packaging, name).__module__ for name in BOUND_NAMES}

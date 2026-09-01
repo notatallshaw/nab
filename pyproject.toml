@@ -346,8 +346,8 @@ extend-exclude = ["**/_vendor/**"]
 "nab-markersets/src/nab_markersets/errors.py" = ["N818"]
 
 # Atom.__new__ returns an interned instance, so PYI034 wants Self, which needs
-# typing_extensions on the 3.10 floor; this distribution declares packaging and
-# nothing else.
+# typing_extensions on the 3.10 floor; this distribution declares no required
+# dependency.
 "nab-markersets/src/nab_markersets/_markersets.py" = ["PYI034"]
 
 # Subpackages defer imports to break cycles with their parent modules.

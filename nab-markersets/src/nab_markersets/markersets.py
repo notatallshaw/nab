@@ -140,11 +140,15 @@ class MarkerSet:
     def from_marker(cls, marker: str | Marker) -> MarkerSet:
         """Return the set of environments a marker denotes.
 
-        :raises packaging.markers.InvalidMarker: if ``marker`` is a string that is
-            not a valid PEP 508 marker.
-        :raises IntractableMarkerSet: if a version literal overruns the
-            interpreter's integer-string limit, or the marker nests past the
-            stack.
+        A ``Marker`` argument has to come from the copy of packaging the algebra
+        bound; ``str(marker)`` is the spelling that always works. A blank string
+        is the absent marker and gives the full set, where packaging refuses it.
+
+        :raises InvalidMarker: packaging's, if ``marker`` is a string the
+            grammar rejects.
+        :raises IntractableMarkerSet: if the marker nests past the stack, or a
+            ``~=`` literal overruns the interpreter's integer-string limit.
+            Under the other operators that surfaces on the first decision.
         """
         return cls._wrap(_markersets.parse(marker))
 
@@ -290,7 +294,10 @@ class MarkerSet:
     def is_superset(
         self, other: MarkerSet, *, store: DecisionStore | None = None
     ) -> bool:
-        """Whether every environment in ``other`` is in this set."""
+        """Whether every environment in ``other`` is in this set.
+
+        :raises IntractableMarkerSet: see :meth:`is_empty`.
+        """
         return other.is_subset(self, store=store)
 
     @_bounded
@@ -325,7 +332,9 @@ class MarkerSet:
 
         Deciding each row of ``within`` under its own pins keeps a wide
         multi-platform universe decidable, where complementing the whole matrix
-        at once does not. Use :meth:`equivalent` when the universe is full.
+        at once does not. Use :meth:`equivalent` when the universe is full. An
+        empty ``within`` makes every pair equivalent; :meth:`simplify` refuses
+        it instead.
 
         :raises IntractableMarkerSet: see :meth:`is_empty`.
         """
@@ -380,7 +389,7 @@ class MarkerSet:
         ... )
         True
 
-        :raises packaging.markers.UndefinedEnvironmentName: if the marker
+        :raises UndefinedEnvironmentName: packaging's, if the marker
             references a variable ``env`` does not supply.
         :raises IntractableMarkerSet: if a version literal or value overruns the
             integer-string limit, or the marker nests past the stack.

@@ -145,20 +145,15 @@ def _packaging_requirement(name: str) -> str | None:
     return None
 
 
-def _nox_workspaces() -> dict[str, tuple[list[str], list[str], list[str]]]:
-    """noxfile.py's workspace -> (editables, pytest paths, gated packages) table."""
-    return _literal(NOXFILE, "WORKSPACES")
-
-
-def _benchmark_editables() -> list[str]:
-    """The editable targets noxfile.py's ``benchmarks`` session installs.
+def _session_editables(name: str) -> list[str]:
+    """The editable targets one noxfile.py session installs.
 
     Its own list, outside the WORKSPACES table the other tests read.
     """
     session = next(
         node
         for node in ast.walk(ast.parse(NOXFILE.read_text(encoding="utf-8")))
-        if isinstance(node, ast.FunctionDef) and node.name == "benchmarks"
+        if isinstance(node, ast.FunctionDef) and node.name == name
     )
     call = next(
         node
@@ -168,6 +163,11 @@ def _benchmark_editables() -> list[str]:
         and node.func.id == "_install"
     )
     return ast.literal_eval(call.args[-1])
+
+
+def _nox_workspaces() -> dict[str, tuple[list[str], list[str], list[str]]]:
+    """noxfile.py's workspace -> (editables, pytest paths, gated packages) table."""
+    return _literal(NOXFILE, "WORKSPACES")
 
 
 def _distributions(editables: list[str]) -> set[str]:
@@ -286,7 +286,7 @@ def test_benchmarks_session_installs_every_member() -> None:
     ``benchmark`` marker deselects anything, so a member missing here fails
     collection in a job no coverage gate or workspace table watches.
     """
-    assert _distributions(_benchmark_editables()) == set(MEMBERS)
+    assert _distributions(_session_editables("benchmarks")) == set(MEMBERS)
 
 
 def test_umbrella_workspace_installs_every_released_package() -> None:
@@ -450,6 +450,22 @@ def test_the_marker_algebra_takes_the_vendored_fork_first() -> None:
         "packaging": [PACKAGING_REQUIREMENTS["nab-markersets"]],
         "nab-vendored-packaging": [f"nab-provider=={version}"],
     }
+
+
+def test_the_marker_algebra_holds_the_floor_it_declares() -> None:
+    """The floor `_packaging` checks at import is the one the extra installs."""
+    minimum = _literal(PACKAGING_BACKENDS, "MINIMUM")
+
+    assert PACKAGING_REQUIREMENTS["nab-markersets"].startswith(f"packaging>={minimum},")
+
+
+def test_the_standalone_session_installs_the_algebra_alone() -> None:
+    """Adding a package here would put nab-provider's fork back in reach.
+
+    That session is the only run where `nab_markersets` binds released
+    packaging, and nothing about it would go red if it stopped doing so.
+    """
+    assert _distributions(_session_editables("standalone")) == {"nab-markersets"}
 
 
 def test_cli_log_handlers_reach_every_released_package() -> None:

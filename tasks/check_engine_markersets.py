@@ -12,9 +12,10 @@ Two rules, both computed statically over the shipped ``src`` trees.
 
 ``import``
     Importing a module runs its module-level imports, so a module in the
-    engine's import closure that imports marker sets makes a host install
-    the distribution even when nothing calls it. Every such module must be on
-    ``EXEMPT``, and an exemption that no longer fires is an error too.
+    engine's import closure that imports marker sets makes a host vendoring
+    the engine take nab-markersets with it, even when nothing calls it. Every
+    such module must be on ``EXEMPT``, and an exemption that no longer fires is
+    an error too.
 
 Every ``Name`` load inside a definition counts as a possible global
 reference, so a ``use`` result of zero is sound.

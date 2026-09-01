@@ -166,7 +166,10 @@ def install_wheels(dist_root: Path, scratch: Path) -> None:
     version = _wheel_version(_wheel(dist_root, "nab"))
     python = _make_venv(scratch / "wheels")
     _run([str(python), "-m", "pip", "install", *wheels])
-    _run([str(python), "-c", f"import {', '.join(MODULES)}"])
+    # nab_markersets' package root binds no names, so importing it proves
+    # nothing about the copy of packaging the algebra binds.
+    smoke = (*MODULES, "nab_markersets.markersets")
+    _run([str(python), "-c", f"import {', '.join(smoke)}"])
     _check_version([str(python), "-m", "nab"], version)
     _check_version([_console_script(python)], version)
 

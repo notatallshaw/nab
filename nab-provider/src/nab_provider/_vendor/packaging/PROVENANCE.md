@@ -174,4 +174,7 @@ normal dependency:
 - Search-replace `from nab_provider._vendor.packaging` -> `from packaging` and
   `import nab_provider._vendor.packaging` -> `import packaging` across the
   workspace.
+- Drop `nab_provider._vendor.packaging` from `nab_markersets._packaging`'s
+  `BACKENDS`, and retire the `nab-vendored-packaging` extra with it. That reach
+  is by name at import time, so `tasks/check_boundaries.py` does not see it.
 - Remove this `_vendor/` tree and the `tasks/vendoring/` files.

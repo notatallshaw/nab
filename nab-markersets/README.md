@@ -43,8 +43,10 @@ pip install "nab-markersets[nab-vendored-packaging]"
 ```
 
 With both installed the fork wins, so a `Marker` built inside nab and the
-exception classes the algebra raises stay on one copy. With neither, importing
-the package fails and says so.
+exception classes the algebra raises stay on one copy. A `Marker` from the
+other copy is refused, and `str(marker)` is the spelling that always works.
+With neither, importing `nab_markersets.markersets` fails and names both
+extras.
 
 ## When to use it
 
@@ -68,6 +70,6 @@ The package root binds no names, so importing `nab_markersets` pulls in no
 submodules.
 
 Two things before you call it. A `MarkerSet` comes from `from_marker`, `full`
-or `empty`, so it does not survive `pickle`, which reaches for the
-constructor. And `==` is structural, over the tree the set was built from,
-where `equivalent` is the semantic test.
+or `empty`, so `pickle.loads` fails on one: the constructor it reaches for
+refuses. And `==` is structural, over the tree the set was built from, where
+`equivalent` is the semantic test.

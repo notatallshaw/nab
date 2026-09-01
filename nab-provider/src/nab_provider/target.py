@@ -285,7 +285,7 @@ def marker_variables(marker_text: str) -> frozenset[str]:
     wrong in.
 
     Every call site passes a serialised :class:`Marker`; an input that is not
-    a valid marker raises :class:`packaging.markers.InvalidMarker`.
+    a valid marker raises :class:`InvalidMarker`.
 
     Memoised on the text, which a matrix lock asks for again on every
     target.  The keys are marker texts out of resolved metadata, so the

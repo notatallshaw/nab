@@ -121,6 +121,6 @@ binds one. Inside nab the fork wins, so a `Marker` the provider built is the
 class the algebra tests against and the exceptions it raises are the ones
 `marker_holds` catches. `nab-markersets[nab-vendored-packaging]` is the extra
 that installs it; `nab-markersets[packaging]` is what a standalone install
-takes. Two copies still run in one process, because `nab-index` and
-`nab-project` read `packaging.utils` for the normalised names their API is
-typed in, but no marker crosses between them.
+takes. Two copies still run in one process, because `nab-index` reads
+`packaging.utils` and `packaging.version` and `nab-project` reads
+`packaging.utils`, but no marker crosses between them.

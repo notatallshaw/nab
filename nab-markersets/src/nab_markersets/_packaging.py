@@ -5,6 +5,11 @@ and released ``packaging`` is on PyPI; each is an extra of this distribution.
 The fork wins when both are there, so a caller inside nab hands the algebra its
 own ``Marker`` objects and catches its own exception classes. With neither,
 importing this module raises rather than leaving it half bound.
+
+The floor is checked here as well as declared, because an install that names
+no extra declares no dependency at all, and an older copy answers differently
+rather than failing. The ceiling is not: a release that moves the private names
+below fails loudly on its own, and a hard refusal in code could not be waived.
 """
 
 from __future__ import annotations
@@ -18,6 +23,10 @@ if TYPE_CHECKING:
 
 BACKENDS = ("nab_provider._vendor.packaging", "packaging")
 
+#: The oldest packaging this suite has been run against; the ``packaging``
+#: extra declares the same floor.
+MINIMUM = "26.3"
+
 _MISSING = (
     "nab-markersets needs a copy of packaging: install nab-markersets[packaging]"
     " for the released one, or nab-markersets[nab-vendored-packaging] for the"
@@ -26,7 +35,7 @@ _MISSING = (
 
 
 def _import_or_none(name: str) -> ModuleType | None:
-    """Return the module ``name``, or ``None`` when it is not installed."""
+    """Return the module ``name``, or ``None`` when it does not import."""
     try:
         return import_module(name)
     except ImportError:
@@ -34,10 +43,10 @@ def _import_or_none(name: str) -> ModuleType | None:
 
 
 def _import_backend(candidates: Sequence[str]) -> ModuleType:
-    """Return the first candidate root package that imports.
+    """Return the first candidate that imports.
 
-    Only the root is probed, so a submodule that fails for a reason of its own
-    raises where it failed instead of reading as a missing backend.
+    Only the package is named, so a submodule that fails for a reason of its
+    own raises where it failed rather than reading as a missing backend.
     """
     for name in candidates:
         module = _import_or_none(name)
@@ -46,13 +55,14 @@ def _import_backend(candidates: Sequence[str]) -> ModuleType:
     raise ImportError(_MISSING)
 
 
+_backend = _import_backend(BACKENDS)
+
 #: Import path of the packaging copy every name below comes from.
-BACKEND = _import_backend(BACKENDS).__name__
+BACKEND = _backend.__name__
 
 # Re-exported, so the engine names one module rather than six.
 __all__ = [
     "BACKEND",
-    "BACKENDS",
     "InvalidMarker",
     "InvalidSpecifier",
     "InvalidVersion",
@@ -103,8 +113,8 @@ else:
     UndefinedComparison = _markers.UndefinedComparison
     UndefinedEnvironmentName = _markers.UndefinedEnvironmentName
     # packaging publishes no per-atom evaluator, and writing one here would let
-    # a marker mean something it does not mean there. This is the dependence
-    # the version ceiling in pyproject.toml is for.
+    # a marker mean something it does not mean there. It is one of the six
+    # private names pyproject.toml lists behind the version range.
     _eval_op = _markers._eval_op  # noqa: SLF001
 
     InvalidSpecifier = _specifiers.InvalidSpecifier
@@ -114,3 +124,20 @@ else:
 
     InvalidVersion = _version.InvalidVersion
     Version = _version.Version
+
+
+def _require_floor(backend: str, version: str) -> None:
+    """Refuse a packaging copy older than :data:`MINIMUM`, or one with no version."""
+    try:
+        too_old = Version(version) < Version(MINIMUM)
+    except InvalidVersion:
+        too_old = True
+    if too_old:
+        msg = (
+            f"{backend} is {version or 'unversioned'}; nab-markersets needs"
+            f" packaging>={MINIMUM}, which nab-markersets[packaging] installs"
+        )
+        raise ImportError(msg)
+
+
+_require_floor(BACKEND, getattr(_backend, "__version__", ""))

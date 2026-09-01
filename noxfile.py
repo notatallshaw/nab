@@ -220,11 +220,12 @@ def tests(session: nox.Session) -> None:
 
 @nox.session
 def standalone(session: nox.Session) -> None:
-    """Run nab-markersets' suite on released packaging, as a PyPI install has it.
+    """Run nab-markersets' suite with nab-provider absent.
 
     Every other session installs nab-provider, whose vendored fork
     ``nab_markersets`` binds in preference, so this is the only run that reaches
-    the copy the published distribution declares.
+    released packaging. It comes from the tests lock rather than from the
+    ``packaging`` extra, which ``--no-deps`` does not resolve.
     """
     _install(session, TESTS_LOCK, ["nab-markersets"])
     session.run("python", "-m", "pytest", "-n", "auto", "nab-markersets/tests")
