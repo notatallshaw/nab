@@ -1240,6 +1240,20 @@ class TestTheWrapper:
 
         assert terminal_width({"COLUMNS": "wide"}) == 99
 
+    def test_a_columns_that_int_refuses_is_ignored(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A superscript digit, and a decimal run past CPython's limit."""
+        monkeypatch.setattr(
+            "nab._cli.render.os.get_terminal_size",
+            lambda: types.SimpleNamespace(columns=99),
+        )
+
+        past_the_limit = "9" * (sys.get_int_max_str_digits() + 1)
+
+        assert terminal_width({"COLUMNS": "\N{SUPERSCRIPT TWO}"}) == 99
+        assert terminal_width({"COLUMNS": past_the_limit}) == 99
+
     def test_no_terminal_falls_back_to_eighty(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
