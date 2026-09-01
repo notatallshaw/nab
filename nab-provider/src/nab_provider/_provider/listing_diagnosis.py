@@ -1256,6 +1256,10 @@ def blockers_diagnostic(
 ) -> Diagnostic:
     """Say what the look-ahead found rejecting every candidate in range.
 
+    Blocker lines say "in range" because the scan saw only what the asked
+    range admits: a version outside it may declare none of these
+    dependencies.
+
     One rejection states its ranges on the line, and gets no ``-v`` body:
     the detail would be that same pair of ranges again.  Several name their
     packages and leave the ranges to ``-v``, since two pairs do not fit.
@@ -1265,7 +1269,9 @@ def blockers_diagnostic(
     if len(blockers) + bool(metadata) == 1:
         if not blockers:
             return metadata_diagnostic(provider, normalized, metadata)
-        return Diagnostic(f"every version {_blocker_clause(provider, blockers[0])}")
+        return Diagnostic(
+            f"every version in range {_blocker_clause(provider, blockers[0])}"
+        )
 
     detail = [_blocker_clause(provider, blocker) for blocker in blockers]
     detail.extend(block.message for block in metadata)
@@ -1316,8 +1322,8 @@ def _several_blockers_short(
         list(dict.fromkeys(blocker.package for blocker in blockers)), "packages"
     )
     if not metadata:
-        return f"every version is blocked by {names}"
-    return f"every version is blocked by {names} or rejected on its metadata"
+        return f"every version in range is blocked by {names}"
+    return f"every version in range is blocked by {names} or rejected on its metadata"
 
 
 def metadata_diagnostic(

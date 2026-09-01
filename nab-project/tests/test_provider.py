@@ -1160,7 +1160,7 @@ class TestHasSatisfyingVersion:
             "foo", SpecifierSet(">=5.0").to_range()
         )
         assert short_reason(provider, "foo") == (
-            "every version needs bar in ==2.0, but the resolve chose bar 1.0"
+            "every version in range needs bar in ==2.0, but the resolve chose bar 1.0"
         )
 
     def test_false_when_every_candidate_hits_the_abort_blocker(self) -> None:
@@ -2251,7 +2251,7 @@ class TestNoVersionsReasons:
         assert result is None
         reason = rendered_reason(provider, "foo")
         assert "bar" in reason
-        assert reason.startswith("every version needs bar in ==2.0")
+        assert reason.startswith("every version in range needs bar in ==2.0")
 
     def test_blocker_reason_outlives_a_later_empty_range(self) -> None:
         """A later ask over an empty range keeps the blocker reason.
@@ -2282,7 +2282,7 @@ class TestNoVersionsReasons:
         assert provider.choose_version("foo", SpecifierSet(">=5.0").to_range()) is None
 
         assert rendered_reason(provider, "foo") == (
-            "every version needs bar in ==2.0, but the resolve chose bar 1.0"
+            "every version in range needs bar in ==2.0, but the resolve chose bar 1.0"
         )
 
     def test_sdist_only_under_dynamic_local_names_build_policy(self) -> None:
@@ -2366,7 +2366,7 @@ class TestNoVersionsReasons:
         )
 
         assert short_reason(provider, "foo") == (
-            "every version needs bar in ==2.0, but the resolve holds bar in <2.0"
+            "every version in range needs bar in ==2.0, but the resolve holds bar in <2.0"
         )
 
     @pytest.mark.parametrize(
@@ -5145,7 +5145,7 @@ class TestDecisionLookAhead:
         )
 
         assert short_reason(provider, "proj") == (
-            "every version needs proj in ==2.0, but the resolve holds proj in >2.0"
+            "every version in range needs proj in ==2.0, but the resolve holds proj in >2.0"
         )
 
     def test_flush_widens_terms_onto_listed_gaps(self) -> None:

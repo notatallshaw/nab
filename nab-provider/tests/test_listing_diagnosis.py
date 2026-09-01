@@ -1652,20 +1652,20 @@ class TestBlockerLines:
         decided = blocker("bar", diagnosis_mod.BlockerKind.DECIDED)
         diagnostic = self._diagnostic([decided])
         assert diagnostic.short == (
-            "every version needs bar in ==2.0, but the resolve chose bar 1.0"
+            "every version in range needs bar in ==2.0, but the resolve chose bar 1.0"
         )
         assert diagnostic.detail == ()
 
     def test_one_held_blocker(self) -> None:
         held = blocker("bar", diagnosis_mod.BlockerKind.HELD)
         assert self._diagnostic([held]).short == (
-            "every version needs bar in ==2.0, but the resolve holds bar in ==1.0"
+            "every version in range needs bar in ==2.0, but the resolve holds bar in ==1.0"
         )
 
     def test_one_root_blocker(self) -> None:
         root = blocker("bar", diagnosis_mod.BlockerKind.ROOT)
         assert self._diagnostic([root]).short == (
-            "every version needs bar in ==2.0, but your project requires bar ==1.0"
+            "every version in range needs bar in ==2.0, but your project requires bar ==1.0"
         )
 
     def test_two_blockers_name_their_packages_and_stop(self) -> None:
@@ -1676,7 +1676,7 @@ class TestBlockerLines:
                 blocker("baz", diagnosis_mod.BlockerKind.ROOT),
             ]
         )
-        assert diagnostic.short == ("every version is blocked by bar and baz")
+        assert diagnostic.short == ("every version in range is blocked by bar and baz")
         assert len(diagnostic.detail) == 2
 
     def test_three_blockers_are_named_on_the_line(self) -> None:
@@ -1688,7 +1688,9 @@ class TestBlockerLines:
                 blocker("qux", diagnosis_mod.BlockerKind.HELD),
             ]
         )
-        assert diagnostic.short == ("every version is blocked by bar, baz and qux")
+        assert diagnostic.short == (
+            "every version in range is blocked by bar, baz and qux"
+        )
         assert len(diagnostic.detail) == 3
 
     def test_four_blockers_are_counted(self) -> None:
@@ -1701,7 +1703,7 @@ class TestBlockerLines:
                 blocker("quux", diagnosis_mod.BlockerKind.DECIDED),
             ]
         )
-        assert diagnostic.short == ("every version is blocked by 4 packages")
+        assert diagnostic.short == ("every version in range is blocked by 4 packages")
         assert len(diagnostic.detail) == 4
 
     def test_two_blockers_on_one_package_name_it_once(self) -> None:
@@ -1712,7 +1714,7 @@ class TestBlockerLines:
                 blocker("bar", diagnosis_mod.BlockerKind.ROOT),
             ]
         )
-        assert diagnostic.short == ("every version is blocked by bar")
+        assert diagnostic.short == ("every version in range is blocked by bar")
 
     def test_a_blocker_beside_unreadable_metadata_says_both(self) -> None:
         diagnostic = self._diagnostic(
@@ -1720,7 +1722,7 @@ class TestBlockerLines:
             (diagnosis_mod.MetadataBlock("No metadata for pkg==2.0"),),
         )
         assert diagnostic.short == (
-            "every version is blocked by bar or rejected on its metadata"
+            "every version in range is blocked by bar or rejected on its metadata"
         )
         assert diagnostic.detail == (
             "needs bar in ==2.0, but the resolve chose bar 1.0",

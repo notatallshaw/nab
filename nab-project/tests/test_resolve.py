@@ -4145,9 +4145,55 @@ class TestAugmentResolutionError:
                 _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
 
         diagnostics = _diagnostics(info.value)
-        assert "foo: every version needs bar in >=2" in diagnostics
+        assert "foo: every version in range needs bar in >=2" in diagnostics
         assert "bar" in diagnostics
         assert "foo: no version matches the requirement" not in diagnostics
+
+    def test_blocker_line_is_scoped_to_the_range_the_scan_covered(
+        self, tmp_path: Path
+    ) -> None:
+        """The blocker line says "in range" when the ask excluded working versions.
+
+        ``app`` bounds ``lib`` to ``>=3``, so the look-ahead sees only
+        ``lib`` 3.0 and its ``dep==2.2``.  ``lib`` 2.0 and 1.2 declare no
+        ``dep``, so an unqualified "every version" would be false of the
+        package.
+        """
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["app", "web"]\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "app": _index_wheels("app", "1.0"),
+                "web": _index_wheels("web", "1.1"),
+                "lib": _index_wheels("lib", "3.0", "2.0", "1.2"),
+                "dep": _index_wheels("dep", "2.2", "2.1"),
+            },
+            metadata_by_version={
+                "1.0": _metadata("app", "1.0", "lib>=3"),
+                "1.1": _metadata("web", "1.1", "dep==2.1"),
+                "3.0": _metadata("lib", "3.0", "dep==2.2"),
+                "2.0": _metadata("lib", "2.0"),
+                "1.2": _metadata("lib", "1.2"),
+                "2.2": _metadata("dep", "2.2"),
+                "2.1": _metadata("dep", "2.1"),
+            },
+        )
+
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        diagnostics = _diagnostics(info.value)
+        assert (
+            "lib: every version in range needs dep in ==2.2, but the resolve"
+            " chose dep 2.1" in diagnostics
+        )
 
     def test_filtered_release_is_not_reported_as_a_missing_version(
         self, tmp_path: Path
@@ -4238,7 +4284,7 @@ class TestAugmentResolutionError:
         diagnostics = _diagnostics(info.value)
         assert "<VersionRange" not in diagnostics
         assert (
-            "foo: every version needs lib in ==5.0, but the resolve chose"
+            "foo: every version in range needs lib in ==5.0, but the resolve chose"
             " lib 9.0" in diagnostics
         )
         assert "requires lib != 9.0" not in diagnostics
@@ -4583,7 +4629,7 @@ class TestAugmentResolutionError:
         assert "<VersionRange" not in diagnostics
         assert "AFTER_LOCALS" not in diagnostics
         assert (
-            "c: every version needs b in ==1.0, but your project requires b >=2"
+            "c: every version in range needs b in ==1.0, but your project requires b >=2"
         ) in diagnostics
 
     def test_blocker_diagnostics_spell_each_declared_range(
@@ -4626,7 +4672,7 @@ class TestAugmentResolutionError:
         assert "<VersionRange" not in diagnostics
         assert "AFTER_LOCALS" not in diagnostics
         assert (
-            "a: every version needs c in ==2.0 or ==1.0, but the resolve chose c 3.0"
+            "a: every version in range needs c in ==2.0 or ==1.0, but the resolve chose c 3.0"
         ) in diagnostics
 
     def test_derivation_renders_readable_ranges(self, tmp_path: Path) -> None:
