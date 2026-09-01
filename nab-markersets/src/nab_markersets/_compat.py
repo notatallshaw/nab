@@ -1,10 +1,8 @@
-"""Runtime fallback for :func:`typing.override`, so this package needs no dependency.
+"""Runtime fallback for :func:`typing.override`, so ``typing_extensions`` is not needed.
 
 ``override`` runs at class-body time, so unlike the annotation-only helpers it
-cannot hide under ``TYPE_CHECKING``.  It is looked up by name rather than by
-interpreter version, which keeps this free of a version-gated branch.  Before
-3.12 the fallback is the identity and so does not set ``__override__``, which
-nothing here reads.
+cannot hide under ``TYPE_CHECKING``.  Looking it up by name rather than by
+interpreter version keeps this free of a version-gated branch.
 """
 
 from __future__ import annotations

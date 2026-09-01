@@ -87,13 +87,8 @@ def validate_marker_coverage(
     if not environments:
         return
 
-    # A declared row is the vendored packaging's Marker while the algebra parses
-    # released packaging's grammar, so a row is handed over as its string.  The
-    # references below are already strings.
     if environment_sets is None:
-        environment_sets = [
-            MarkerSet.from_marker(str(marker)) for marker in environments
-        ]
+        environment_sets = [MarkerSet.from_marker(marker) for marker in environments]
     covered = reduce(MarkerSet.union, environment_sets, MarkerSet.empty())
     covered = _project_implementation_version(covered, environments, targets)
 
@@ -162,9 +157,7 @@ def _project_implementation_version(
     axis, and the union over the targets' ``python_full_version`` reassembles
     the minor.  Runs only when a row names ``implementation_version``.
     """
-    if not any(
-        "implementation_version" in variable_names(str(row)) for row in environments
-    ):
+    if not any("implementation_version" in variable_names(row) for row in environments):
         return covered
     reps = {target.python_full_version for target in targets}
     return reduce(

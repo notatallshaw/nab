@@ -50,7 +50,12 @@ CI gates each workspace's coverage on its own tests through nox (see
 ```bash
 .venv/bin/nox -s tests                    # every workspace, each gated
 .venv/bin/nox -s tests -- project         # just one workspace
+.venv/bin/nox -s standalone               # nab-markersets on released packaging
 ```
+
+`standalone` is the only run without `nab-provider` installed, so it is the
+only one where `nab_markersets` binds released `packaging` rather than the
+vendored fork.
 
 Property-based tests are opt-in via marker:
 
@@ -113,14 +118,16 @@ to whatever still supports the floor.
 The `pyproject.toml` `[tool.coverage.report] fail_under = 100`
 setting requires 100 percent branch coverage on every workspace
 package: `nab_resolver`, `nab_markersets`, `nab_provider`,
-`nab_project`, `nab_index`, and `nab`. The full local suite under
-`coverage run -m pytest` checks all six together; nox splits them
-per workspace in CI, with `nab_index` and `nab_provider` gated in
-the `project` workspace, whose tests are the only ones that reach
-every line of both. The `provider` workspace runs
+`nab_project`, `nab_index`, and `nab`.
+
+The full local suite under `coverage run -m pytest` checks all six
+together. Nox splits them per workspace in CI, with `nab_index` and
+`nab_provider` gated in the `project` workspace, whose tests are the
+only ones that reach every line of both. The `provider` workspace runs
 `nab-markersets/tests` and `nab-provider/tests` without `nab-index`
-installed, and gates `nab_markersets`. When code is unreachable from
-the default suite, prefer:
+installed, and gates `nab_markersets`.
+
+When code is unreachable from the default suite, prefer:
 
 * `# pragma: no cover` for a platform-specific or defensively
   unreachable line.

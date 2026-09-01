@@ -24,7 +24,9 @@ dependencies = [
     "nab-provider==0.0.16.dev0",
     "nab-resolver==0.0.16.dev0",
     "nab-index==0.0.16.dev0",
-    "packaging>=26.3",
+    # fetch.py normalises a name for nab-index's API, which is typed in
+    # released packaging's NormalizedName.
+    "packaging>=24.0",
     # toml_io builds TOMLDecodeError(msg, doc, pos), a signature 2.2 added.
     "tomli>=2.2",
     "tomli_w>=1.2",

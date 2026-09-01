@@ -15,9 +15,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
-from packaging.markers import Marker
 
 from nab_markersets import _markersets as engine
+from nab_markersets._packaging import Marker
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import _MAX_CELLS, _MAX_WORK, DecisionStore, MarkerSet
 

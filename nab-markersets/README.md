@@ -1,9 +1,13 @@
 # nab-markersets
 
-A PEP 508 marker read as the set of environments it selects.
-`packaging` answers "does this marker hold here"; this answers "can
-these two ever both hold", "does one imply the other", and "is this a
-contradiction". `packaging` is its only dependency.
+A PEP 508 marker read as the set of environments it selects. `packaging`
+answers "does this marker hold here"; this answers "can these two ever both
+hold", "does one imply the other", and "is this a contradiction".
+
+**Experimental.** Anything here can change in any release, so pin an exact
+version. The intent is to land this algebra in `packaging` itself, and the
+shape below is what that proposal is being tried against; the discussion is
+[pypa/packaging#448](https://github.com/pypa/packaging/issues/448).
 
 ```pycon
 >>> from nab_markersets.markersets import MarkerSet
@@ -14,9 +18,9 @@ True
 ```
 
 A set also holds what a marker string cannot: the full set of an absent
-marker, the empty set of a contradiction, and complements the grammar
-cannot spell. `witness` returns a point, which is how two markers that
-look like one constraint give up the interpreter that separates them.
+marker, the empty set of a contradiction, and complements the grammar cannot
+spell. `witness` returns a point in the set, which is what separates two
+markers that look like one constraint.
 
 ```pycon
 >>> minor = MarkerSet.from_marker('python_version >= "3.11"')
@@ -27,39 +31,43 @@ False
 '3.11.0.dev0'
 ```
 
+## Installing
+
+The engine runs on `packaging`'s parse tree and its single-atom evaluator, and
+two copies of `packaging` exist: the released one, and the fork
+[`nab`](https://pypi.org/project/nab/) vendors. An extra picks which.
+
+```bash
+pip install "nab-markersets[packaging]"
+pip install "nab-markersets[nab-vendored-packaging]"
+```
+
+With both installed the fork wins, so a `Marker` built inside nab and the
+exception classes the algebra raises stay on one copy. With neither, importing
+the package fails and says so.
+
 ## When to use it
 
-When markers have to be reasoned about rather than tested against one
-environment: whether two lock entries can both apply, whether a
-dependency is reachable inside your `requires-python`, or what a marker
-still says once you fix the platform. It is what
-[`nab`](https://pypi.org/project/nab/) uses for markers. The guide walks
-through those, and through what the decisions do not decide:
+Whether two lock entries can both apply, whether a dependency is reachable
+inside your `requires-python`, or what a marker still says once you fix the
+platform. The guide walks through those, and through what the decisions do not
+decide:
 <https://nab.readthedocs.io/en/stable/how-to/reason-about-markers.html>
 
 ## The public API
 
-The supported API is the module paths below. They will not move without
-a major version bump. Everything else in the package is internal and may
-be renamed or relocated in any release.
+The supported API is the module paths below. Everything else in the package is
+internal and may be renamed or relocated in any release.
 
 ```text
 nab_markersets.errors       IntractableMarkerSet, UnserializableMarkerSet
 nab_markersets.markersets   DecisionStore, MarkerSet, variable_names
 ```
 
-The package root binds no names, so importing `nab_markersets` pulls in
-no submodules and a caller loads only what it imports.
+The package root binds no names, so importing `nab_markersets` pulls in no
+submodules.
 
-Three things to know before you call it. A `MarkerSet` is built through
-`from_marker`, `full` or `empty`, so it does not survive `pickle`, which
-reaches for the constructor. `==` is structural, over the tree the set
-was built from, and `equivalent` is the semantic test. And emptiness
-enumerates representative points rather than solving, so two
-constructions read wrong in opposite directions; `MarkerSet`'s own
-docstring shows both.
-
-The engine needs packaging's marker parse tree and its single-atom
-evaluator, and packaging publishes neither, which is why the dependency
-carries a ceiling. The API is under rapid experimentation: pin an exact
-version.
+Two things before you call it. A `MarkerSet` comes from `from_marker`, `full`
+or `empty`, so it does not survive `pickle`, which reaches for the
+constructor. And `==` is structural, over the tree the set was built from,
+where `equivalent` is the semantic test.

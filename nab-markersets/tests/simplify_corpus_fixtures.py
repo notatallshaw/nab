@@ -16,7 +16,7 @@ from __future__ import annotations
 import itertools
 from collections.abc import Iterator
 
-from packaging.markers import Marker
+from nab_markersets._packaging import Marker
 
 # The tiers the oracle reaches on FIXTURES, in marker-string characters.
 TOTAL_CHARS = 9742

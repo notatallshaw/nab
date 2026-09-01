@@ -9,22 +9,27 @@ pinning the private packaging names the engine imports.
 from __future__ import annotations
 
 import gc
+import re
 import sys
 import traceback
 import weakref
 
 import pytest
-from packaging._parser import Op, Value, Variable, parse_marker
-from packaging._tokenizer import ParserSyntaxError
-from packaging.markers import (
-    InvalidMarker,
-    Marker,
-    UndefinedEnvironmentName,
-    _eval_op,
-)
-from packaging.version import Version
 
 from nab_markersets import errors, markersets
+from nab_markersets._packaging import (
+    BACKEND,
+    InvalidMarker,
+    Marker,
+    Op,
+    ParserSyntaxError,
+    UndefinedEnvironmentName,
+    Value,
+    Variable,
+    Version,
+    _eval_op,
+    parse_marker,
+)
 from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
 from nab_markersets.markersets import MarkerSet, _markersets, variable_names
 
@@ -279,11 +284,13 @@ def test_from_marker_accepts_marker_object() -> None:
 
 
 def test_from_marker_rejects_other_types() -> None:
-    # A vendored packaging is a real caller mistake here, and its Marker has the
-    # same class name as the released one, so the message qualifies both.
+    # A Marker from the copy of packaging that is not bound is a real caller
+    # mistake here, and both spell the class the same, so the message names the
+    # bound one in full.
     with pytest.raises(
         TypeError,
-        match=r"expected str or packaging\.markers\.Marker, got builtins\.int",
+        match=rf"expected str or {re.escape(BACKEND)}\.markers\.Marker, "
+        r"got builtins\.int",
     ):
         MarkerSet.from_marker(42)  # type: ignore[arg-type]
 

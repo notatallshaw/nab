@@ -12,9 +12,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
-from packaging.markers import InvalidMarker
 
-from nab_provider._vendor.packaging.markers import Marker, default_environment
+from nab_provider._vendor.packaging.markers import (
+    InvalidMarker,
+    Marker,
+    default_environment,
+)
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.tags import Tag

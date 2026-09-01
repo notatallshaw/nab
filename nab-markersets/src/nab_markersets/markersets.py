@@ -25,9 +25,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from collections.abc import Set as AbstractSet
 
-    from packaging.markers import Marker
-
     from ._markersets import Formula
+    from ._packaging import Marker
 
 # Resource caps, not semantic parameters: no answer depends on their value, so
 # neither reaches the public surface. `_MAX_CELLS` bounds one decision and
@@ -67,10 +66,10 @@ def _bounded(method: Callable[_P, _R]) -> Callable[_P, _R]:
 class DecisionStore(_markersets.Memo):
     """Scratch several decisions can share, for one piece of work.
 
-    A run over related sets repeats most of one decision's partitioning. Passing
-    one store keeps that work, and passing none is always correct: answers never
-    depend on it. It grows with what it has read, so drop it when the work is
-    done, and do not share one across threads.
+    Related sets repartition the same axes, and one store keeps that work.
+    Passing none is always correct: answers never depend on it. It grows with
+    what it has read, so drop it when the work is done, and do not share one
+    across threads.
     """
 
     __slots__ = ()
@@ -117,7 +116,7 @@ class MarkerSet:
     _tree: Formula
 
     # NoReturn is the truthful annotation and mypy then reads every class-level
-    # access as Never, so this keeps VersionRange.__new__'s spelling and its noqa.
+    # access as Never.
     def __new__(cls, *_args: object, **_kwargs: object) -> MarkerSet:  # noqa: PYI034
         """Refuse direct construction, naming the three factories instead."""
         msg = (
@@ -225,10 +224,10 @@ class MarkerSet:
     def __hash__(self) -> int:
         """Hash the key :meth:`__eq__` compares, so equal sets hash alike.
 
-        Undecorated, unlike every method above: ``dict`` and ``set`` call this
-        where the caller wrote no marker code, so a tree nested past the stack
-        surfaces as the :class:`RecursionError` CPython raises comparing any
-        deep structure rather than as the algebra's own bounded failure.
+        Deliberately not :func:`_bounded`: ``dict`` and ``set`` call this where
+        the caller wrote no marker code, so a tree nested past the stack should
+        surface as CPython's own :class:`RecursionError` rather than as the
+        algebra's failure.
         """
         return hash(self._tree.key())
 
@@ -459,13 +458,9 @@ class MarkerSet:
     def to_marker_string(self, *, store: DecisionStore | None = None) -> str | None:
         """Return a marker string denoting this set, or ``None`` for the full set.
 
-        ``None`` means no marker is needed, the opposite of
-        :meth:`packaging.ranges.VersionRange.to_specifier_set`, whose ``None``
-        means unspellable.
-
-        A set the grammar cannot spell raises rather than emit a string for some
-        other set, and what is returned is parsed back and checked equivalent
-        first.
+        ``None`` means no marker is needed. A set the grammar cannot spell
+        raises rather than emit a string for some other set, and what is
+        returned is parsed back and checked equivalent first.
 
         >>> MarkerSet.from_marker('os_name == "posix"').to_marker_string()
         'os_name == "posix"'
@@ -494,9 +489,5 @@ class MarkerSet:
 
     @override
     def __repr__(self) -> str:
-        """Return a short summary of the set, for debugging.
-
-        Total: a set no marker string spells and one nested past the stack are
-        summarised in a word rather than reported as a failure.
-        """
+        """Return a short summary of the set."""
         return f"<{type(self).__name__} {_markersets.describe(self._tree)!r}>"

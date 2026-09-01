@@ -10,9 +10,8 @@ versions and ranges, with no knowledge of Python packaging. It does not import
 `packaging`.
 
 `nab-markersets` is the marker algebra: a PEP 508 marker read as the set of
-environments it selects, so markers can be intersected, complemented and
-compared for emptiness, subset and equivalence. Its parser and evaluator come
-from released `packaging`, not from the fork `nab-provider` vendors.
+environments it selects. Its parser and evaluator come from whichever
+`packaging` is installed, released or nab's fork.
 [Reasoning about markers](../how-to/reason-about-markers.md) works through it.
 
 `nab-provider` is the resolution logic: the provider the solver asks for
@@ -40,8 +39,8 @@ inputs nab-project resolves under.
 
 ```text
 nab-resolver   ->  (nothing outside the standard library)
-nab-markersets ->  packaging
-nab-provider   ->  nab-markersets, nab-resolver, packaging
+nab-markersets ->  packaging, or nab-provider, by extra
+nab-provider   ->  nab-markersets, nab-resolver
 nab-index      ->  nab-provider, packaging
 nab-project    ->  nab-markersets, nab-provider, nab-index, nab-resolver,
                    packaging
@@ -50,7 +49,7 @@ nab            ->  nab-markersets, nab-provider, nab-index, nab-project,
 ```
 
 Of the third-party dependencies only `packaging` is shown, since it is the one
-that exists here in two copies. Each manifest lists the rest.
+that exists here in two copies.
 
 `nab-index` depends on `nab-provider` because the records `WheelFile`,
 `SdistFile`, `IndexConfig` and the fetch errors live with the side that must
@@ -115,10 +114,13 @@ distinct classes that `isinstance` and dict keying disagree about.
 `tasks/check_boundaries.py` forbids every other reach into another package's
 `_vendor`, and lists these two in `VENDOR_ALLOWANCES`.
 
-`nab-markersets` is outside that: it takes released `packaging` and never reads
-the fork. Both copies already ran in one process, since `nab-index` reads
-`packaging.utils` and `packaging.version`; marker handling on the released copy
-is what the sixth distribution adds. No object built by one copy is handed to
-the other: a marker goes over as `str(marker)`. `nab_provider.marker_holds` is
-the one module that holds both in scope, because a vendored `Marker` and the
-algebra raise different classes for the same condition.
+`nab-markersets` reaches the same tree from outside the workspace, by name
+rather than by import: `nab_markersets._packaging` probes
+`nab_provider._vendor.packaging` first and released `packaging` second, and
+binds one. Inside nab the fork wins, so a `Marker` the provider built is the
+class the algebra tests against and the exceptions it raises are the ones
+`marker_holds` catches. `nab-markersets[nab-vendored-packaging]` is the extra
+that installs it; `nab-markersets[packaging]` is what a standalone install
+takes. Two copies still run in one process, because `nab-index` and
+`nab-project` read `packaging.utils` for the normalised names their API is
+typed in, but no marker crosses between them.

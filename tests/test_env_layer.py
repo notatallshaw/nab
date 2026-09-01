@@ -22,6 +22,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 _SOURCE_TREES = {
     "nab": _ROOT / "src" / "nab",
     "nab_index": _ROOT / "nab-index" / "src" / "nab_index",
+    "nab_markersets": _ROOT / "nab-markersets" / "src" / "nab_markersets",
     "nab_project": _ROOT / "nab-project" / "src" / "nab_project",
     "nab_provider": _ROOT / "nab-provider" / "src" / "nab_provider",
     "nab_resolver": _ROOT / "nab-resolver" / "src" / "nab_resolver",
@@ -34,6 +35,7 @@ _SOURCE_TREES = {
 _ENVIRONMENT_READERS = {
     "nab": {"nab/env.py", "nab/_cli/render.py"},
     "nab_index": {"nab_index/vcs.py"},
+    "nab_markersets": set[str](),
     "nab_project": {"nab_project/_build/env.py"},
     "nab_provider": set[str](),
     "nab_resolver": set[str](),

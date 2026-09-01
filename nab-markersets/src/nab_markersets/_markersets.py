@@ -17,19 +17,24 @@ from functools import lru_cache
 from itertools import pairwise, product
 from typing import TYPE_CHECKING, NamedTuple, cast
 
-from packaging._parser import Op, Value, Variable, parse_marker
-from packaging._tokenizer import ParserSyntaxError
-from packaging.markers import (
+from ._packaging import (
+    BACKEND,
     InvalidMarker,
+    InvalidSpecifier,
+    InvalidVersion,
     Marker,
+    Op,
+    ParserSyntaxError,
+    Specifier,
     UndefinedComparison,
     UndefinedEnvironmentName,
+    Value,
+    Variable,
+    Version,
     _eval_op,
+    canonicalize_name,
+    parse_marker,
 )
-from packaging.specifiers import InvalidSpecifier, Specifier
-from packaging.utils import canonicalize_name
-from packaging.version import InvalidVersion, Version
-
 from .errors import IntractableMarkerSet, UnserializableMarkerSet
 
 if TYPE_CHECKING:
@@ -302,6 +307,12 @@ class Atom:
 
 
 def _holds_value(atom: Atom, text: str) -> bool:
+    """Whether ``atom`` holds where its variable takes ``text``.
+
+    ``derive_mm`` truncates the point to major.minor first, for the
+    ``python_version`` reading of a full version, and ``swapped`` puts the
+    literal on the left, which packaging's operator table is not symmetric in.
+    """
     op, literal = atom.op, atom.literal
     if atom.derive_mm:
         mm = derive_major_minor(text)
@@ -460,9 +471,11 @@ def _parse_ast(source: object) -> list[MarkerNode] | None:
     if isinstance(source, Marker):
         source = str(source)
     elif not isinstance(source, str):
+        # Naming the bound copy matters: with both installed, a Marker built by
+        # the other one lands here, and str(marker) is the way across.
         kind = type(source)
         msg = (
-            "expected str or packaging.markers.Marker, got "
+            f"expected str or {BACKEND}.markers.Marker, got "
             f"{kind.__module__}.{kind.__qualname__}"
         )
         raise TypeError(msg)
@@ -529,6 +542,11 @@ def _convert(node: list[MarkerNode]) -> Formula:
 
 
 def _convert_atom(item: MarkerComparison) -> Formula:
+    """Return the atom or constant one parsed comparison denotes.
+
+    Which operand is the variable decides the atom; a comparison of two
+    literals has no variable and folds to a constant.
+    """
     lhs, op_node, rhs = item
     op = op_node.serialize()
     if isinstance(lhs, Variable):
@@ -905,6 +923,10 @@ def _version_pool(
 def _elevate_epochs(
     base: list[str], parsed: Sequence[tuple[Version, str]], max_cells: int
 ) -> list[str]:
+    """Return ``base`` plus a twin of every point in every epoch the pool reaches.
+
+    Raises :class:`IntractableMarkerSet` when that outgrows ``max_cells``.
+    """
     # A1 lowers python_version here, so major.minor and full ordering diverge across
     # an epoch boundary: 1!3.9 truncates to 3.9 yet outranks 3.14. Each point needs a
     # twin in every epoch the pool reaches, and the pool already carries one above
@@ -1086,6 +1108,11 @@ def _value_candidates(
 def _reduce_cells(
     points: Iterable[object], atoms: Sequence[Atom], max_cells: int, memo: Memo
 ) -> list[Cell]:
+    """Return one cell per distinct truth vector ``atoms`` take over ``points``.
+
+    Points agreeing on every atom decide the same way, so the first of them
+    stands for the rest.
+    """
     points = list(points)
 
     if len(points) * len(atoms) > max_cells:
@@ -1485,6 +1512,7 @@ def _builds_specifier(op: str, literal: str) -> bool:
 
 
 def _complement_version(atom: Atom, op: str, var: str) -> Formula:
+    """Return the negation of a version atom, or refuse when nothing spells it."""
     # Excluded middle holds for an unswapped ==/!= on a pure-version axis alone.
     # An ordered comparison has the prerelease hole, a twin may hold a
     # non-version, and a swapped literal is the specifier bound.

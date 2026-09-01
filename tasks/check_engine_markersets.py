@@ -70,8 +70,7 @@ EXEMPT = {
     "nab_provider.marker_holds": (
         "Where the marker-set dependency lives so the engine does not import "
         "it. Reached here through target, requirements_file, "
-        "_provider.metadata_resolver and _lockfile.validate. It pulls released "
-        "packaging's markers module too, to catch what the algebra raises."
+        "_provider.metadata_resolver and _lockfile.validate."
     ),
 }
 

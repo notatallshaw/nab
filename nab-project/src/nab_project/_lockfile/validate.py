@@ -35,8 +35,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import tomli
-from packaging.markers import UndefinedEnvironmentName
 
+from nab_provider._vendor.packaging.markers import UndefinedEnvironmentName
 from nab_provider._vendor.packaging.pylock import Pylock, PylockValidationError
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name

@@ -15,6 +15,7 @@ import ast
 import importlib.util
 import re
 import sys
+from itertools import chain
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -29,13 +30,15 @@ DEPENDABOT = REPO_ROOT / ".github" / "dependabot.yml"
 TEST_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "test.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 CLI_OUTPUT = REPO_ROOT / "src" / "nab" / "output.py"
+PACKAGING_BACKENDS = (
+    REPO_ROOT / "nab-markersets" / "src" / "nab_markersets" / "_packaging.py"
+)
 
-# The released `packaging` each distribution declares.
+# The released `packaging` each distribution declares, wherever it declares it.
 PACKAGING_REQUIREMENTS = {
     "nab-markersets": "packaging>=26.3,<27",
-    "nab-provider": "packaging>=26.3",
     "nab-index": "packaging>=24.0",
-    "nab-project": "packaging>=26.3",
+    "nab-project": "packaging>=24.0",
 }
 
 
@@ -128,9 +131,14 @@ def _imports_released_packaging(name: str) -> bool:
 
 
 def _packaging_requirement(name: str) -> str | None:
-    """The ``packaging`` requirement a distribution declares, or None."""
+    """The ``packaging`` requirement a distribution declares, or None.
+
+    An extra counts: nab-markersets runs on either copy and declares one under
+    each, so the released spelling is optional there rather than absent.
+    """
     manifest = _toml(RELEASED_DIRS[name] / "pyproject.toml")["project"]
-    for text in manifest.get("dependencies", []):
+    extras = manifest.get("optional-dependencies", {}).values()
+    for text in [*manifest.get("dependencies", []), *chain.from_iterable(extras)]:
         found = _REQUIREMENT_NAME.match(text)
         if found is not None and found.group() == "packaging":
             return text
@@ -409,7 +417,7 @@ def test_released_packaging_is_declared_wherever_it_is_imported() -> None:
 def test_declared_packaging_ranges_are_the_tested_ones() -> None:
     """The declared ranges are the ones the suites have been run against.
 
-    nab_markersets imports ``packaging._parser``, ``packaging._tokenizer`` and
+    nab_markersets reads ``packaging._parser``, ``packaging._tokenizer`` and
     ``packaging.markers._eval_op``, none of which packaging promises, so its
     range carries a ceiling the others do not need.
     """
@@ -420,6 +428,28 @@ def test_declared_packaging_ranges_are_the_tested_ones() -> None:
     }
 
     assert declared == PACKAGING_REQUIREMENTS
+
+
+def test_the_marker_algebra_takes_the_vendored_fork_first() -> None:
+    """nab-markersets binds nab's fork when it is installed, released packaging otherwise.
+
+    The reach into nab-provider's ``_vendor`` is by name at import time, so
+    ``tasks/check_boundaries.py`` cannot see it and this is where it is held.
+    Each candidate is an extra, so an install can ask for either by name.
+    """
+    extras = _toml(RELEASED_DIRS["nab-markersets"] / "pyproject.toml")["project"][
+        "optional-dependencies"
+    ]
+    version = _toml(PYPROJECT)["project"]["version"]
+
+    assert _literal(PACKAGING_BACKENDS, "BACKENDS") == (
+        "nab_provider._vendor.packaging",
+        "packaging",
+    )
+    assert extras == {
+        "packaging": [PACKAGING_REQUIREMENTS["nab-markersets"]],
+        "nab-vendored-packaging": [f"nab-provider=={version}"],
+    }
 
 
 def test_cli_log_handlers_reach_every_released_package() -> None:

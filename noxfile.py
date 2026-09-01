@@ -1,4 +1,4 @@
-"""Nox sessions for nab: ``tests``, ``types``, ``benchmarks`` and ``dists``.
+"""Nox sessions: ``tests``, ``standalone``, ``types``, ``benchmarks``, ``dists``.
 
 Coverage is split across two files: ``fail_under`` and the
 ``[tool.coverage.paths]`` remaps live in ``pyproject.toml``, while the
@@ -216,6 +216,18 @@ def tests(session: nox.Session) -> None:
 
     if failed:
         session.error(f"failing workspaces: {', '.join(failed)}")
+
+
+@nox.session
+def standalone(session: nox.Session) -> None:
+    """Run nab-markersets' suite on released packaging, as a PyPI install has it.
+
+    Every other session installs nab-provider, whose vendored fork
+    ``nab_markersets`` binds in preference, so this is the only run that reaches
+    the copy the published distribution declares.
+    """
+    _install(session, TESTS_LOCK, ["nab-markersets"])
+    session.run("python", "-m", "pytest", "-n", "auto", "nab-markersets/tests")
 
 
 @nox.session

@@ -164,14 +164,10 @@ def _distinct_environments(
 
 
 def _marker_set(marker: Marker | None) -> MarkerSet:
-    """Return the algebra set for ``marker``; the full set when absent.
-
-    Handed over as a string: the algebra parses released packaging's grammar and
-    ``marker`` is the vendored fork's class.
-    """
+    """Return the algebra set for ``marker``; the full set when absent."""
     if marker is None:
         return MarkerSet.full()
-    return MarkerSet.from_marker(str(marker))
+    return MarkerSet.from_marker(marker)
 
 
 def _canonical_exclusion_sets(

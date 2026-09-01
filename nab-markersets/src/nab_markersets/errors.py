@@ -2,9 +2,10 @@
 
 A marker the grammar rejects still raises packaging's
 :class:`~packaging.markers.InvalidMarker` and an operator it cannot decide
-packaging's ``UndefinedComparison``, both :class:`ValueError`. These two are
-``ValueError`` to match. An environment missing a variable raises packaging's
-``UndefinedEnvironmentName``, which is a :class:`KeyError`.
+packaging's ``UndefinedComparison``, both :class:`ValueError`, and these two
+match. An environment missing a variable raises packaging's
+``UndefinedEnvironmentName``, which is a :class:`KeyError`. They come from
+whichever copy of packaging :mod:`nab_markersets._packaging` bound.
 """
 
 from __future__ import annotations

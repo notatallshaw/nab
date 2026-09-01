@@ -187,6 +187,35 @@ jobs:
       - name: Build every distribution and install each sdist and wheel
         run: nox -s dists
 
+  standalone:
+    name: nab-markersets on released packaging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+          cache: pip
+          cache-dependency-path: |
+            .github/requirements/pylock.nox.toml
+            .github/requirements/pylock.tests.toml
+          allow-prereleases: true
+
+      - name: Upgrade pip to PEP 751 install support
+        run: python -m pip install --upgrade "pip>=26.1"
+
+      - name: Install nox
+        run: pip install -r .github/requirements/pylock.nox.toml
+
+      # Without nab-provider installed the algebra binds released packaging,
+      # which no other job reaches.
+      - name: Run the marker-set suite without the vendored fork
+        run: nox -s standalone
+
   pass:
     name: All tests pass
     if: always()
@@ -196,6 +225,7 @@ jobs:
       - property-tests
       - crosshair-tests
       - dists
+      - standalone
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

@@ -163,7 +163,8 @@ in it.
 
 Vendoring ends when the patch is empty. Until then the pin moves forward and the
 patch shrinks as pieces land upstream. The marker algebra was two thirds of it and
-is gone: it ships as `nab-markersets` against released `packaging`.
+is gone: it ships as `nab-markersets`, which binds this tree when it is importable
+and released `packaging` otherwise.
 
 Once the patch is empty, delete this directory and reinstate `packaging` as a
 normal dependency:
