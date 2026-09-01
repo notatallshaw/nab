@@ -400,7 +400,7 @@ def _report_failures(result: ResolveResult) -> None:
     resolve with several (a matrix's tuples, or a conflict fork's members,
     which fork in specific mode too) has one error per target, and the pins
     that did resolve are as informative as the failures, so each target gets
-    a labelled block.
+    a labelled block under the same ``error: resolution failed:`` line.
     """
     if len(result.target_results) <= 1:
         first = next(tr.error for tr in result.every_result if tr.error is not None)
@@ -425,7 +425,7 @@ def _report_failures(result: ResolveResult) -> None:
         blocks.append(f"# base/{br.target.label}: FAILED")
         blocks.extend(_error_lines(br.error))
 
-    sys.stderr.write("\n".join(blocks) + "\n")
+    printer().error("resolution failed:\n" + "\n".join(blocks))
 
 
 def _error_lines(error: ResolutionError | None) -> list[str]:

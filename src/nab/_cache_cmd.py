@@ -1,9 +1,9 @@
 """``nab cache`` subcommand: inspect and clear the on-disk cache.
 
 ``dir`` prints the resolved cache root, whether or not it exists.
-``verify`` walks the record buckets read-only and reports corrupt
-entries by path and reason. ``clear`` removes every bucket nab owns,
-including the cloned and extracted source trees.
+``verify`` walks the record buckets read-only and lists corrupt entries
+by path and reason, exiting 1 when it found any. ``clear`` removes every
+bucket nab owns, including the cloned and extracted source trees.
 
 ``verify`` and ``clear`` descend only into the buckets nab owns, never
 follow a symlink out of the root, and refuse a root that holds foreign
@@ -30,12 +30,12 @@ def cache_command(
     """Inspect and clear nab's on-disk cache.
 
     ``nab cache dir`` prints the resolved cache root. ``nab cache verify``
-    walks the cache read-only and reports corrupt entries. ``nab cache
+    walks the cache read-only and lists corrupt entries. ``nab cache
     clear`` removes every recognized bucket.
     """
     root = _cache_root(cache_dir)
     if action == "dir":
-        sys.stdout.write(f"{root}\n")
+        printer().data(f"{root}\n")
         return
     if action == "verify":
         _verify(root)
@@ -71,12 +71,24 @@ def _cache_root(cache_dir: Path | None) -> Path:
 
 
 def _verify(root: Path) -> None:
+    """List every corrupt entry on stdout, and exit 1 when there was one.
+
+    The listing is what the verb was run to get, so it is the artefact and
+    ``nab cache verify > report.txt`` captures it.  A clean cache prints
+    nothing, so the status is what a script reads to learn the cache is
+    not clean.
+    """
     _refuse_foreign_root(root)
     cache = OnDiskCache(root, "")
+    corrupt = 0
     for entry in cache.iter_cache_entries():
         reason = cache.read_cache_entry(entry)
         if reason is not None:
-            printer().error(f"{entry}: {reason}")
+            printer().data(f"{entry}: {reason}\n")
+            corrupt += 1
+
+    if corrupt:
+        sys.exit(1)
 
 
 def _clear(root: Path) -> None:

@@ -162,6 +162,37 @@ def _failed(target: ResolveTarget, error: ResolutionError | None) -> TargetResul
     return TargetResult(target=target, success=False, pins={}, error=error, lock=None)
 
 
+def _one_tuple_failed() -> ResolveResult:
+    """A two-tuple resolve where linux pins ``foo==1.0`` and windows fails."""
+    ok_tuple = _target()
+    bad_tuple = _target(platform_id="windows_amd64")
+    return ResolveResult(
+        targets=(ok_tuple, bad_tuple),
+        target_results=[
+            _resolved(ok_tuple, {"foo": V("1.0")}),
+            _failed(bad_tuple, ResolutionError("conflict")),
+        ],
+    )
+
+
+def _begin_quiet(quiet: int) -> None:
+    """Start the run's output at ``-q`` repeated ``quiet`` times, colour off.
+
+    A direct call to ``lock`` never reaches ``begin``, so a test that wants
+    the run's verbosity to matter has to install the printer itself.
+    """
+    nab_output.begin(
+        nab_output.options_from_flags(
+            verbose=0,
+            quiet=quiet,
+            color="never",
+            no_color=False,
+            no_progress=True,
+            environ={},
+        )
+    )
+
+
 def _lock_input(pins: dict[str, PinShape]) -> LockInput:
     """The lock input one host-target resolve of ``pins`` produces."""
     target = ResolveTarget.for_host()
@@ -2031,6 +2062,31 @@ class TestLockCommandSpecific:
         assert "does not derive from the committed" in err
         assert "--project-resolution -> lowest" in err
 
+    def test_cli_project_override_notice_is_quietable(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The notice sits at the normal level, so ``-q`` drops it.
+
+        It fires only when the user typed a ``--project-*`` flag on this
+        line, so a ``-q`` they also typed is not hiding a surprise.
+        """
+        _begin_quiet(1)
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        monkeypatch.setattr(
+            "nab._run.config_search_roots",
+            lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
+        )
+        with patch(
+            "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
+        ):
+            lock(pyproject, output=out, project_resolution="lowest")
+
+        assert "--project-resolution -> lowest" not in capsys.readouterr().err
+
     def test_no_cli_project_override_prints_no_notice(
         self,
         tmp_path: Path,
@@ -3110,15 +3166,7 @@ class TestLockCommandUniversal:
         successful tuple's ``# label`` + pins block.
         """
         pyproject = _universal_pyproject(tmp_path)
-        ok_tuple = _target()
-        bad_tuple = _target(platform_id="windows_amd64")
-        mixed = ResolveResult(
-            targets=(ok_tuple, bad_tuple),
-            target_results=[
-                _resolved(ok_tuple, {"foo": V("1.0")}),
-                _failed(bad_tuple, ResolutionError("conflict")),
-            ],
-        )
+        mixed = _one_tuple_failed()
         with (
             patch("nab._resolve.resolve_for_targets", return_value=mixed),
             pytest.raises(SystemExit, match="1"),
@@ -3128,6 +3176,44 @@ class TestLockCommandUniversal:
         assert "# py311-linux_x86_64" in err
         assert "foo==1.0" in err
         assert "# py311-windows_amd64: FAILED" in err
+
+    def test_print_blocks_open_with_the_error_token(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The many-target report reads as one error, like the one-target one.
+
+        Both shapes open with ``error: resolution failed:``, so a reader
+        does not have to count targets to recognize a failed run.
+        """
+        pyproject = _universal_pyproject(tmp_path)
+        mixed = _one_tuple_failed()
+        with (
+            patch("nab._resolve.resolve_for_targets", return_value=mixed),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes")
+
+        err = capsys.readouterr().err
+        assert "error: resolution failed:\n# py311-linux_x86_64\nfoo==1.0\n" in err
+
+    def test_print_blocks_survive_the_quietest_level(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A failure report is an error, so ``-qq`` does not drop it.
+
+        Going through the printer is what put the blocks on a level at all;
+        the level they went onto has to be the one nothing suppresses.
+        """
+        _begin_quiet(2)
+        pyproject = _universal_pyproject(tmp_path)
+        mixed = _one_tuple_failed()
+        with (
+            patch("nab._resolve.resolve_for_targets", return_value=mixed),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes")
+
+        assert "# py311-windows_amd64: FAILED" in capsys.readouterr().err
 
     def test_print_blocks_surfaces_base_pass_failure(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

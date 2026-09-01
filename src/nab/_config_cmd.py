@@ -131,10 +131,10 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
     # lock, so the notice is worded for inspection (produces_lock=False).
     notice = project_cli_override_notice(effective, produces_lock=False)
     if notice is not None:
-        sys.stderr.write(notice)
+        printer().stderr_line(notice)
 
     if action == "list":
-        sys.stdout.write(render_list(effective, rejected=rejected))
+        printer().data(render_list(effective, rejected=rejected))
         return
     if action in {"get", "explain"}:
         _require_key_arg(key, action)
@@ -147,7 +147,7 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
                 )
         except SourceConfigError as exc:
             _fail_config(exc)
-        sys.stdout.write(rendered)
+        printer().data(rendered)
         return
 
     printer().error(
