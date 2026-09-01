@@ -38,12 +38,11 @@ from nab_project._lockfile.pylock import (
     _relativize_path,
 )
 from nab_project._testing.coordinator_fake import make_coordinator
-from nab_project.config import (
+from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
     ConflictPolicy,
     ConflictSet,
-    IndexOverride,
     conflict_exclusion_groups,
     conflict_member_groups,
 )
@@ -89,6 +88,7 @@ from nab_provider._vendor.packaging.pylock import Package, PackageWheel, Pylock
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.overrides import IndexOverride
 from nab_provider.provider import (
     ArchiveSource,
     BuildPolicy,

@@ -12,6 +12,7 @@ import itertools
 import logging
 import subprocess
 import tarfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 from unittest.mock import patch
@@ -26,14 +27,12 @@ from nab_project import resolve as resolve_mod
 from nab_project._resolve import engine as engine_mod
 from nab_project._resolve.engine import _EngineSettings, _resolve_one_target, _run_pass
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
-from nab_project.config import (
-    ConfigError,
+from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
     ConflictPolicy,
     ConflictSet,
     conflict_forks,
-    read_pyproject_config,
 )
 from nab_project.fetch import DEFAULT_INDEX_URL
 from nab_project.inputs import ResolveInputs
@@ -66,7 +65,9 @@ from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.provider import (
     ArchiveSource,
     BuildPolicy,
@@ -1796,16 +1797,17 @@ class TestVcsConfigPlumbing:
         assert 'version = "99.0"' in legacy_pyproject.read_text(encoding="utf-8")
 
 
+_MARCH_2024 = datetime(2024, 3, 1, tzinfo=timezone.utc)
+
+_NO_BUILD = ResolveInputs(build_policy=BuildPolicy.NEVER)
+
+
 class TestCutoffAndOverridePlumbing:
     """The upload cutoff and the two override tables reach the provider.
 
-    Each key is parsed from a pyproject and driven through
-    ``resolve_with_coordinator``, so the pins show whether it arrived.
+    Each setting is driven through ``resolve_with_coordinator``, so the
+    pins show whether it arrived.
     """
-
-    _PYPROJECT = (
-        '[project]\nname = "proj"\nversion = "0"\n[tool.nab]\nbuild-policy = "never"\n'
-    )
 
     def _coordinator(self) -> FakeFetchPort:
         """Two foo releases either side of March 2024, plus a bar to depend on."""
@@ -1823,52 +1825,58 @@ class TestCutoffAndOverridePlumbing:
             }
         )
 
-    def _pins(self, tmp_path: Path, body: str = "") -> dict[str, Version]:
-        """Resolve ``foo`` under a pyproject carrying ``body``."""
-        path = tmp_path / "pyproject.toml"
-        path.write_text(self._PYPROJECT + body, encoding="utf-8")
-
+    def _pins(self, inputs: ResolveInputs = _NO_BUILD) -> dict[str, Version]:
+        """Resolve ``foo`` under ``inputs``, from a project that builds nothing."""
         result = resolve_with_coordinator(
             self._coordinator(),
             _one_target(),
             _reqs("foo"),
-            inputs=read_pyproject_config(path).resolve_inputs(),
+            inputs=inputs,
         )
         assert result.success
 
         return result.target_results[0].pins
 
-    def test_project_cutoff_excludes_the_newer_release(self, tmp_path: Path) -> None:
+    def test_project_cutoff_excludes_the_newer_release(self) -> None:
         """``[tool.nab] uploaded-prior-to`` narrows the candidate listing."""
-        assert self._pins(tmp_path) == {"foo": Version("2.0")}
+        assert self._pins() == {"foo": Version("2.0")}
 
-        cutoff = 'uploaded-prior-to = "2024-03-01T00:00:00Z"\n'
-        assert self._pins(tmp_path, cutoff) == {"foo": Version("1.0")}
+        cutoff = _NO_BUILD.replace(uploaded_prior_to=_MARCH_2024)
+        assert self._pins(cutoff) == {"foo": Version("1.0")}
 
-    def test_package_override_replaces_declared_dependencies(
-        self, tmp_path: Path
-    ) -> None:
+    def test_package_override_replaces_declared_dependencies(self) -> None:
         """``[tool.nab.packages.<name>] dependencies`` reaches the resolve.
 
         The listing declares no dependencies, so bar is pinned only
         because the override supplies it.
         """
-        assert self._pins(tmp_path) == {"foo": Version("2.0")}
+        assert self._pins() == {"foo": Version("2.0")}
 
-        override = '[tool.nab.packages.foo]\ndependencies = ["bar"]\n'
-        assert self._pins(tmp_path, override) == {
+        requirement = Requirement("foo")
+        override = _NO_BUILD.replace(
+            package_overrides=(
+                PackageOverride(
+                    requirement=requirement,
+                    name="foo",
+                    version_range=requirement.specifier.to_range(),
+                    dependencies=(Requirement("bar"),),
+                    name_keyed=True,
+                ),
+            )
+        )
+        assert self._pins(override) == {
             "foo": Version("2.0"),
             "bar": Version("1.0"),
         }
 
-    def test_index_override_cutoff_excludes_the_newer_release(
-        self, tmp_path: Path
-    ) -> None:
+    def test_index_override_cutoff_excludes_the_newer_release(self) -> None:
         """``[tool.nab.index.<name>] uploaded-prior-to`` reaches the resolve."""
-        assert self._pins(tmp_path) == {"foo": Version("2.0")}
+        assert self._pins() == {"foo": Version("2.0")}
 
-        override = '[tool.nab.index.pypi]\nuploaded-prior-to = "2024-03-01T00:00:00Z"\n'
-        assert self._pins(tmp_path, override) == {"foo": Version("1.0")}
+        override = _NO_BUILD.replace(
+            index_overrides={"pypi": IndexOverride(uploaded_prior_to=_MARCH_2024)}
+        )
+        assert self._pins(override) == {"foo": Version("1.0")}
 
 
 class TestRunPassSerial:

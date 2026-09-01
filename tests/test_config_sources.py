@@ -1,4 +1,4 @@
-"""Tests for the layered config registry (:mod:`nab_project.config_sources`).
+"""Tests for the layered config registry (:mod:`nab.config.ladder`).
 
 The registry drives the toml loader, env reader, merge, category gate,
 and the ``nab config`` renderers.  These tests exercise the full
@@ -20,29 +20,20 @@ from unittest.mock import patch
 
 import pytest
 
-from nab_index.multi_index import IndexConfig
-from nab_project.config import (
-    ConflictKind,
-    ConflictMember,
-    ConflictPolicy,
-    ConflictSet,
-    MatrixConfig,
-)
-from nab_project.config_sources import (
+from nab.config.hooks import inspector_anchor
+from nab.config.ladder import (
     OPTIONS,
     EffectiveValue,
     Layer,
     Origin,
     RejectedLayer,
     Scope,
-    SourceConfigError,
     SourceKind,
     SourceRoots,
     _load_toml_layer,
     build_cli_layer,
     build_cli_overrides,
     discover_layers,
-    inspector_anchor,
     orphan_rejections,
     project_cli_override_notice,
     project_cli_override_records,
@@ -54,7 +45,14 @@ from nab_project.config_sources import (
     render_list,
     resolve_config,
 )
-from nab_project.values import _INDEX_KEYS
+from nab.config.values import _INDEX_KEYS, MatrixConfig, SourceConfigError
+from nab_index.multi_index import IndexConfig
+from nab_project.conflicts import (
+    ConflictKind,
+    ConflictMember,
+    ConflictPolicy,
+    ConflictSet,
+)
 from nab_project.workspace import WorkspaceConfig
 from nab_provider.provider import (
     ArchiveSource,
@@ -768,9 +766,8 @@ class TestRenderers:
     def test_render_list_surfaces_known_key_gate_rejection(
         self, tmp_path: Path
     ) -> None:
-        # A PROJECT key set in a user nab.toml attaches to its option, so it
-        # is reachable from explain; render_list also lists it (it was
-        # previously shown only by explain, not by list).
+        # A PROJECT key set in a user nab.toml attaches to its option, so
+        # both explain and list can name it.
         _project(tmp_path)
         user_toml = tmp_path / "user.toml"
         user_toml.write_text('resolution = "lowest"\n', encoding="utf-8")
@@ -1325,7 +1322,9 @@ class TestTableProjectOptions:
             tmp_path,
             '[tool.nab.marker-environment]\nnonsense_var = "x"\n',
         )
-        with pytest.raises(SourceConfigError, match="unknown marker-environment"):
+        with pytest.raises(
+            SourceConfigError, match="marker-environment has unknown variable"
+        ):
             _resolve(SourceRoots(project_dir=tmp_path))
 
     def test_marker_environment_cross_file_conflict(self, tmp_path: Path) -> None:
@@ -1493,7 +1492,7 @@ class TestTableProjectOptions:
 
     def test_workspace_bad_value_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, '[tool.nab.workspace]\nmember = ["pkgs/a"]\n')
-        with pytest.raises(SourceConfigError, match="unknown .tool.nab.workspace"):
+        with pytest.raises(SourceConfigError, match="workspace has unknown keys"):
             _resolve(SourceRoots(project_dir=tmp_path))
 
     def test_workspace_cross_file_conflict(self, tmp_path: Path) -> None:
@@ -1790,7 +1789,7 @@ class TestArrayOfTablesSources:
             tmp_path,
             '[[tool.nab.indexes]]\nname = "x"\nurl = "u"\nbogus = "y"\n',
         )
-        with pytest.raises(SourceConfigError, match="unknown indexes"):
+        with pytest.raises(SourceConfigError, match=r"indexes\[0\] has unknown keys"):
             _resolve(SourceRoots(project_dir=tmp_path))
 
     def test_indexes_cross_file_conflict(self, tmp_path: Path) -> None:
@@ -1819,7 +1818,7 @@ class TestArrayOfTablesSources:
     def test_indexes_render(self) -> None:
         spec = next(s for s in OPTIONS if s.key == "indexes")
         assert spec.render(()) == "<none>"
-        rendered = spec.render(spec.default)
+        rendered = spec.render(spec.rdefault)
         assert rendered == "pypi=https://pypi.org/simple/"
 
     def test_indexes_render_shows_a_pin(self) -> None:
@@ -2531,9 +2530,7 @@ class TestCrossFieldProjectOptions:
 
     def test_matrix_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, "matrix = 3\n")
-        with pytest.raises(
-            SourceConfigError, match=r"\[tool.nab.matrix\] must be a table"
-        ):
+        with pytest.raises(SourceConfigError, match="matrix must be a table"):
             _resolve(SourceRoots(project_dir=tmp_path))
 
     def test_matrix_python_order_bad_type_keeps_message(self, tmp_path: Path) -> None:

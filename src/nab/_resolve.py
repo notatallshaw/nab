@@ -17,14 +17,6 @@ from typing import TYPE_CHECKING
 
 import tomli
 
-from nab_project.config import (
-    ConfigError,
-    NabProjectConfig,
-    ResolveMode,
-    plan_targets,
-    read_pyproject_config,
-    with_python_override,
-)
 from nab_project.lockfile import MissingHashError, MissingSdistError
 from nab_project.pyproject_files import (
     read_pyproject_groups,
@@ -58,6 +50,14 @@ from nab_provider.target import (
 from nab_resolver.errors import ResolutionError
 
 from ._run import require_pyproject_file
+from .config.model import (
+    ConfigError,
+    NabProjectConfig,
+    ResolveMode,
+    plan_targets,
+    read_pyproject_config,
+    with_python_override,
+)
 from .output import Verbosity, printer
 
 if TYPE_CHECKING:
@@ -228,7 +228,7 @@ def _load_config(
             cli_overrides=cli_overrides,
         )
     except ConfigError as exc:
-        printer().error(f"in [tool.nab]: {exc}")
+        printer().error(str(exc))
         sys.exit(1)
     except WorkspaceDiscoveryError as exc:
         printer().error(f"workspace discovery error: {exc}")
@@ -381,7 +381,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
         printer().error(f"{failure_prefix}: {e}")
         sys.exit(1)
     except ConfigError as e:
-        printer().error(f"in [tool.nab]: {e}")
+        printer().error(str(e))
         sys.exit(1)
     except IndexAccessError as e:
         printer().error(f"{failure_prefix}: {e}")

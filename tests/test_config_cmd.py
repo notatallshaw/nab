@@ -1,10 +1,9 @@
-"""Tests for the ``nab config`` subcommand and its registry conformance gate.
+"""Tests for the ``nab config`` subcommand.
 
 The config command is the read-only inspector over the layered registry.
 These tests drive it through :func:`nab.cli.run` (so the real flag surface
-is exercised) with injected search roots, and assert the CLI surface
-matches the registry one-for-one: a flag the registry declares and the
-command signature does not carry is what the gate catches.
+is exercised) with injected search roots.  The gate holding that surface to
+the registry is ``tests/test_cli_conformance.py``.
 They also pin the ``--resolution`` -> ``--project-resolution`` rename, the
 lock-ladder config-error exit, a byte-identical no-op lock at defaults, and
 every override flag reaching the config that ``nab lock`` and ``nab download``
@@ -13,7 +12,6 @@ resolve from.
 
 from __future__ import annotations
 
-import inspect
 import io
 import logging
 import re
@@ -36,13 +34,8 @@ from nab._download import download
 from nab._lock import lock
 from nab._run import effective_config
 from nab.cli import run
-from nab_project.config_sources import (
-    OPTIONS,
-    OptionSpec,
-    Scope,
-    SourceConfigError,
-    SourceRoots,
-)
+from nab.config.ladder import OPTIONS, Scope, SourceRoots
+from nab.config.values import SourceConfigError
 from nab_project.download import DownloadResult
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
@@ -174,14 +167,6 @@ def _run_config(args: list[str], *, status: int = 0) -> str:
     return buf.getvalue()
 
 
-def _config_help() -> str:
-    """What ``nab config --help`` prints."""
-    buf = io.StringIO()
-    with redirect_stdout(buf):
-        _cli("config", "--help")
-    return buf.getvalue()
-
-
 def _doc_sentences(needle: str) -> list[str]:
     """The sentences of ``config_command``'s docstring that name ``needle``.
 
@@ -205,7 +190,7 @@ def test_config_search_roots_uses_symlink_dir_not_target(tmp_path: Path) -> None
         link.symlink_to(real / "pyproject.toml")
     except (OSError, NotImplementedError):
         pytest.skip("symlinks not supported on this platform")
-    roots = nab_run._config_search_roots(link)
+    roots = nab_run.config_search_roots(link)
     assert roots.project_dir == link_dir.resolve()
     assert roots.pyproject == link_dir.resolve() / "pyproject.toml"
 
@@ -288,6 +273,26 @@ class TestConfigGet:
             "build-reqs\n"
         )
 
+    def test_get_base_group_renders_the_unset_marker(
+        self, hermetic_roots: Path
+    ) -> None:
+        """An unset ``base-group`` prints the marker, not a bare ``None``."""
+        _project(hermetic_roots)
+        path = str(hermetic_roots / "pyproject.toml")
+
+        assert _run_config(["get", "base-group", "--path", path]) == "<none>\n"
+
+    def test_get_package_rules_renders_each_match(self, hermetic_roots: Path) -> None:
+        """``package-rules`` prints the requirement each override matches on."""
+        _project(
+            hermetic_roots,
+            '\n[[tool.nab.package-rules]]\nmatch = ["attrs"]\n'
+            'dist-policy = "wheel-only"\n',
+        )
+        path = str(hermetic_roots / "pyproject.toml")
+
+        assert _run_config(["get", "package-rules", "--path", path]) == "attrs\n"
+
     def test_get_reads_new_user_env_vars(
         self, hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -331,9 +336,27 @@ class TestConfigExplain:
                 "highest",
             ]
         )
-        assert out.splitlines()[0].startswith("resolution (project,")
+        assert out.splitlines()[0] == (
+            "resolution (project, enum(highest|lowest|lowest-direct))"
+        )
         assert any(line.startswith(">") for line in out.splitlines())
         assert "shadowed" in out
+
+    def test_explain_marks_a_deprecated_key(self, hermetic_roots: Path) -> None:
+        """The header appends the row's own ``deprecated`` field."""
+        _project(hermetic_roots)
+        out = _run_config(
+            [
+                "explain",
+                "marker-environment",
+                "--path",
+                str(hermetic_roots / "pyproject.toml"),
+            ]
+        )
+
+        assert out.splitlines()[0] == (
+            "marker-environment (project, table(marker-var=str) [deprecated])"
+        )
 
     def test_explain_requires_key(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
@@ -703,121 +726,12 @@ class TestConfigProjectFileConflict:
         assert "conflicting values" in capsys.readouterr().err
 
 
-class TestRegistryConformance:
-    """The CLI surface must match the registry one-for-one.
-
-    The walk reads a generated table and the command bodies read their
-    parameters, and nothing ties either to the registry.  These cases do:
-    every registry CLI flag must appear in the rendered ``config`` page,
-    and the backing parameter names must match the rows.
-    """
-
-    def test_every_registry_flag_present_in_help(self) -> None:
-        help_text = _config_help()
-        for spec in OPTIONS:
-            if spec.cli_flag is None:
-                # File-only rows (vcs/workspace/marker-environment) carry
-                # no CLI flag, so there is nothing to assert in the help.
-                continue
-            assert spec.cli_flag in help_text, (
-                f"registry flag {spec.cli_flag} missing from `nab config` help"
-            )
-
-    def test_every_registry_param_present(self) -> None:
-        sig = inspect.signature(config_command)
-        params = set(sig.parameters)
-        for spec in OPTIONS:
-            if spec.cli_param is None:
-                continue
-            assert spec.cli_param in params
-
-    def test_param_types_match_registry(self) -> None:
-        sig = inspect.signature(config_command)
-        # offline is the layered tri-state, spelled the same way here as on
-        # lock and download so the flag presents identically across them.
-        assert "bool | None" in str(sig.parameters["offline"].annotation)
-        assert "Path" in str(sig.parameters["cache_dir"].annotation)
-        # project_resolution carries the same constrained ResolutionFlag
-        # type as lock/download, so a bad choice is refused identically
-        # across subcommands.
-        assert "ResolutionFlag" in str(sig.parameters["project_resolution"].annotation)
-
-    def test_lock_exposes_project_resolution_not_bare(self) -> None:
-        # The hard rename: lock carries --project-resolution and the bare
-        # resolution parameter no longer exists.
-        sig = inspect.signature(lock)
-        assert "project_resolution" in sig.parameters
-        assert "resolution" not in sig.parameters
-
-    def test_lock_help_has_project_resolution_flag(self) -> None:
-        buf = io.StringIO()
-        with redirect_stdout(buf):
-            _cli("lock", "--help")
-        help_text = buf.getvalue()
-        assert "--project-resolution" in help_text
-
-    def test_every_cli_param_present_on_run_commands(self) -> None:
-        # Every registry option with a CLI flag is exposed on lock, download,
-        # and config, driven from OPTIONS so the run surface cannot silently
-        # drift from the registry. The one deliberate omission is
-        # max-concurrency, a download-only knob (lock has no parallel-fetch
-        # step to bound); the allowlist asserts it stays absent from lock so
-        # the carve-out is intentional, not accidental drift.
-        omitted = {"lock": {"max_concurrency"}}
-        cli_params = [s.cli_param for s in OPTIONS if s.cli_param is not None]
-        for command in (lock, download, config_command):
-            params = set(inspect.signature(command).parameters)
-            allowed_missing = omitted.get(command.__name__, set())
-            for cli_param in cli_params:
-                if cli_param in allowed_missing:
-                    assert cli_param not in params, (command.__name__, cli_param)
-                else:
-                    assert cli_param in params, (command.__name__, cli_param)
-
-    def test_conformance_catches_a_deliberate_mismatch(self) -> None:
-        """Prove the gate is real: a registry flag with no CLI param fails."""
-        from nab_project.config_sources import _parse_bool
-
-        bogus = OptionSpec(
-            key="made-up",
-            scope=Scope.USER,
-            type_label="bool",
-            default=False,
-            env_var=None,
-            cli_flag="--made-up",
-            cli_param="made_up",
-            parse=_parse_bool,
-            render=str,
-        )
-        patched = (*OPTIONS, bogus)
-        sig = inspect.signature(config_command)
-        params = set(sig.parameters)
-        help_text = _config_help()
-
-        def check_params() -> None:
-            for spec in patched:
-                if spec.cli_param is None:
-                    continue
-                assert spec.cli_param in params, spec.cli_flag
-
-        def check_flags() -> None:
-            for spec in patched:
-                if spec.cli_flag is None:
-                    continue
-                assert spec.cli_flag in help_text, spec.cli_flag
-
-        with pytest.raises(AssertionError):
-            check_params()
-        with pytest.raises(AssertionError):
-            check_flags()
-
-
 class TestCliFlagValues:
     """``config get`` prints the value each registry flag was given.
 
-    The conformance tests above pin the flag surface; these pin what it
-    carries.  Every case's value differs from what the key reads with no
-    flag, so a flag that stopped forwarding changes the printed output.
+    ``test_cli_conformance.py`` pins which flags a command takes; these pin
+    what one carries.  Every case's value differs from what the key reads
+    with no flag, so a flag that stopped forwarding changes the output.
     """
 
     @pytest.mark.parametrize(("key", "argv_value", "printed"), _CLI_FLAG_CASES)
@@ -864,7 +778,7 @@ class TestEffectiveConfigBridge:
     def test_effective_config_default_roots_callable(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Exercise the real _config_search_roots (no monkeypatch) but with a
+        # Exercise the real config_search_roots (no monkeypatch) but with a
         # project that has no nab.toml, so only defaults/pyproject apply.
         proj = _project(tmp_path)
         monkeypatch.delenv("NAB_OFFLINE", raising=False)
@@ -950,7 +864,7 @@ def test_default_config_search_roots_xdg(
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     pyproject = tmp_path / "pyproject.toml"
-    roots = nab_run._config_search_roots(pyproject)
+    roots = nab_run.config_search_roots(pyproject)
     assert roots.user_toml == tmp_path / "xdg" / "nab" / "nab.toml"
     assert roots.system_toml == Path("/etc/nab/nab.toml")
     assert roots.project_dir == tmp_path.resolve()
@@ -961,7 +875,7 @@ def test_config_search_roots_threads_custom_pyproject_name(tmp_path: Path) -> No
     # A non-default pyproject name is threaded through so the registry's
     # pyproject layer reads the file the user actually pointed at.
     custom = tmp_path / "app.toml"
-    roots = nab_run._config_search_roots(custom)
+    roots = nab_run.config_search_roots(custom)
     assert roots.pyproject == custom.resolve()
     assert roots.project_dir == tmp_path.resolve()
 
@@ -971,7 +885,7 @@ def test_default_config_search_roots_no_xdg(
 ) -> None:
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setattr(nab_run.Path, "home", lambda: tmp_path)
-    roots = nab_run._config_search_roots(tmp_path / "pyproject.toml")
+    roots = nab_run.config_search_roots(tmp_path / "pyproject.toml")
     assert roots.user_toml == tmp_path / ".config" / "nab" / "nab.toml"
 
 
@@ -1002,7 +916,10 @@ def test_lock_exits_on_pyproject_user_key_via_fold(
     with pytest.raises(SystemExit):
         lock(hermetic_roots / "pyproject.toml", output=hermetic_roots / "pylock.toml")
     err = capsys.readouterr().err
-    assert "in [tool.nab]" in err
+    assert (
+        "'offline' is a user-scope option and cannot be set in pyproject [tool.nab]"
+        in err
+    )
     assert "user-scope option" in err
 
 
@@ -1034,7 +951,7 @@ class TestNoOpLock:
         usr_root = tmp_path / "usr" / "nab.toml"
         monkeypatch.setattr(
             nab_run,
-            "_config_search_roots",
+            "config_search_roots",
             lambda pyproject: SourceRoots(
                 system_toml=sys_root,
                 user_toml=usr_root,

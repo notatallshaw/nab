@@ -27,12 +27,6 @@ from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 from nab._version import __version__
 from nab_project import toml_io
-from nab_project.config import (
-    ConfigError,
-    NabProjectConfig,
-    ResolveMode,
-    plan_targets,
-)
 from nab_project.lockfile import (
     DisjointnessError,
     DivergentBaseDependencyError,
@@ -96,6 +90,12 @@ from ._run import (
     project_config_overrides,
     project_override_arguments,
     read_config_ladder,
+)
+from .config.model import (
+    ConfigError,
+    NabProjectConfig,
+    ResolveMode,
+    plan_targets,
 )
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,

@@ -59,7 +59,6 @@ from nab_project._build.runner import (
     build_wheel_for_install,
     run_build_backend,
 )
-from nab_project.config import IndexOverride, PackageOverride
 from nab_project.download import DownloadError, DownloadResult, iter_artifacts
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
@@ -76,6 +75,7 @@ from nab_provider._provider.metadata_resolver import pick_dist
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.provider import (
     BuildPolicy,
     DecisionOrder,

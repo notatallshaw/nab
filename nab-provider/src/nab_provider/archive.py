@@ -6,7 +6,7 @@ its bare URL, the declared hashes, and any subdirectory.
 
 The download happens in the fetch coordinator, which reads the URL by its
 own scheme; which archives are permitted is a policy decision in
-:mod:`nab_project.config`.
+:mod:`nab.config.model`.
 """
 
 from __future__ import annotations

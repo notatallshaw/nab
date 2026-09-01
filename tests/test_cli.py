@@ -49,6 +49,8 @@ from nab._resolve import (
 )
 from nab._run import ConfigLadder, _default_cache_dir, read_config_ladder
 from nab.cli import _system_exit_status, console_entry, main, run
+from nab.config.ladder import SourceRoots
+from nab.config.model import read_pyproject_config
 from nab.output import Printer, ProgressReporter, Verbosity
 from nab_index.atomic import atomic_write_text
 from nab_index.httpx_async_transport import HttpxAsyncTransport
@@ -56,8 +58,6 @@ from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
 from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project._testing.coordinator_fake import make_coordinator
-from nab_project.config import ConfigError, read_pyproject_config
-from nab_project.config_sources import SourceRoots
 from nab_project.download import DownloadError, DownloadResult
 from nab_project.fetch import FetchCoordinator
 from nab_project.lockfile import (
@@ -78,6 +78,7 @@ from nab_project.resolve import ResolveResult, TargetResult, env_signature
 from nab_provider._vendor.packaging.pylock import Pylock
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.errors import ConfigError
 from nab_provider.provider import (
     InvalidUploadTimeError,
     MissingExtraError,
@@ -902,7 +903,7 @@ class TestLockCommandSpecific:
     ) -> None:
         """A URL that requirements syntax would split is rejected at config load."""
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         pyproject, source_url = _make_archive_source_project(
@@ -933,7 +934,7 @@ class TestLockCommandSpecific:
     ) -> None:
         """A percent-encoded local archive resolves to a parseable requirement."""
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         pyproject, source_url = _make_archive_source_project(
@@ -1459,7 +1460,7 @@ class TestLockCommandSpecific:
         advertising a ``core-metadata`` sha256 the sidecar bytes do not match.
         """
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         pyproject = _make_pyproject(tmp_path)
@@ -1509,7 +1510,7 @@ class TestLockCommandSpecific:
         carrier of that digest.
         """
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
 
@@ -1571,7 +1572,7 @@ class TestLockCommandSpecific:
         steps down to the whole body and checks it against that digest.
         """
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         pyproject = _make_pyproject(tmp_path)
@@ -1617,7 +1618,7 @@ class TestLockCommandSpecific:
         is an sdist published with a sha256 the served archive does not match.
         """
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         pyproject = _make_pyproject(tmp_path)
@@ -1917,7 +1918,7 @@ class TestLockCommandSpecific:
         # backslashes of a Windows path.
         assert err.splitlines() == [
             (
-                f"error: in [tool.nab]: cannot read {pyproject}:"
+                f"error: cannot read {pyproject}:"
                 f" [Errno {errno.EACCES}] Permission denied: {str(pyproject)!r}"
             )
         ]
@@ -2019,7 +2020,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         with patch(
@@ -2040,7 +2041,7 @@ class TestLockCommandSpecific:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         with patch(
@@ -2063,7 +2064,7 @@ class TestLockCommandSpecific:
         (tmp_path / "nab.toml").write_text('resolution = "lowest"\n')
         out = tmp_path / "pylock.toml"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         with (
@@ -2078,7 +2079,7 @@ class TestLockCommandSpecific:
         # (the shared [tool.nab] error map) rather than later in the
         # run-settings fold.
         err = capsys.readouterr().err
-        assert "in [tool.nab]:" in err
+        assert "is set to conflicting values in pyproject [tool.nab]" in err
         assert "conflicting values" in err
 
     def test_standalone_nab_toml_malformed_exits(
@@ -2094,7 +2095,7 @@ class TestLockCommandSpecific:
         user.write_text("offline = \n")
         out = tmp_path / "pylock.toml"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(user_toml=user, project_dir=p.parent, pyproject=p),
         )
         with (
@@ -2119,7 +2120,7 @@ class TestLockCommandSpecific:
         user.write_text("typoo = 1\n")
         out = tmp_path / "pylock.toml"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(user_toml=user, project_dir=p.parent, pyproject=p),
         )
         with (
@@ -2224,7 +2225,7 @@ class TestPythonFlag:
         run the flag retargets onto 3.14.
         """
         env = {**host_environment(), "python_full_version": "3.12.11"}
-        monkeypatch.setattr("nab_project.config.host_environment", lambda: env)
+        monkeypatch.setattr("nab.config.model.host_environment", lambda: env)
 
         pyproject = _make_pyproject(
             tmp_path,
@@ -2270,8 +2271,8 @@ class TestProjectFlagErrors:
         assert exc.value.code == 1
         err = capsys.readouterr().err
         assert (
-            "error: --project-requires-python: requires-python must be a"
-            " PEP 440 specifier, got '@@@'" in err
+            "error: --project-requires-python must be a PEP 440 specifier,"
+            " got '@@@'" in err
         )
         assert "[tool.nab]" not in err
         assert not out.exists()
@@ -2285,7 +2286,7 @@ class TestProjectFlagErrors:
             lock(pyproject, output=out, project_uploaded_prior_to="not-a-date")
         assert exc.value.code == 1
         err = capsys.readouterr().err
-        assert "--project-uploaded-prior-to: uploaded-prior-to must be an" in err
+        assert "error: --project-uploaded-prior-to must be an" in err
         assert "[tool.nab]" not in err
         assert not out.exists()
 
@@ -2298,7 +2299,7 @@ class TestProjectFlagErrors:
             lock(pyproject, output=out, project_constraint=("this is not pep508 !!!",))
         assert exc.value.code == 1
         err = capsys.readouterr().err
-        assert "--project-constraint: constraints[0] is not a valid requirement" in err
+        assert "error: --project-constraint[0] is not a valid requirement" in err
         assert "[tool.nab]" not in err
         assert not out.exists()
 
@@ -2313,10 +2314,7 @@ class TestProjectFlagErrors:
             lock(pyproject, output=out, project_requires_python=">=3." + "9" * 5000)
         assert exc.value.code == 1
         err = capsys.readouterr().err
-        assert (
-            "error: --project-requires-python: requires-python must be a"
-            " PEP 440 specifier" in err
-        )
+        assert "error: --project-requires-python must be a PEP 440 specifier" in err
         assert "[tool.nab]" not in err
         assert not out.exists()
 
@@ -2330,7 +2328,7 @@ class TestProjectFlagErrors:
             )
         assert exc.value.code == 1
         err = capsys.readouterr().err
-        assert "error: --project-requires-python: requires-python must be a" in err
+        assert "error: --project-requires-python must be a" in err
         assert "[tool.nab]" not in err
 
     def test_download_build_group_bad_value_names_the_flag(
@@ -2341,7 +2339,7 @@ class TestProjectFlagErrors:
         with pytest.raises(SystemExit) as exc:
             download(pyproject, output=tmp_path / "wheels", project_build_group="-no-")
         assert exc.value.code == 1
-        assert "error: --project-build-group:" in capsys.readouterr().err
+        assert "error: --project-build-group '-no-'" in capsys.readouterr().err
 
     def test_valid_override_threads_through(self, tmp_path: Path) -> None:
         """The value has to admit the host: the run plans its target first."""
@@ -2354,9 +2352,10 @@ class TestProjectFlagErrors:
 
         assert mock_resolve.call_args.kwargs["inputs"].requires_python == ">=3.10"
 
-    def test_bad_file_value_still_reads_as_a_table_error(
+    def test_a_bad_file_value_is_named_by_the_file_that_set_it(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        """One wording, under the source: the file here, the flag above."""
         pyproject = _make_pyproject(
             tmp_path,
             '[project]\ndependencies = ["foo"]\n[tool.nab]\nrequires-python = "@@@"\n',
@@ -2366,7 +2365,8 @@ class TestProjectFlagErrors:
             lock(pyproject, output=out)
         assert exc.value.code == 1
         err = capsys.readouterr().err
-        assert "in [tool.nab]: requires-python must be a PEP 440 specifier" in err
+
+        assert f"error: {pyproject}: requires-python must be a PEP 440" in err
 
 
 class TestLockCommandUniversal:
@@ -2422,7 +2422,7 @@ class TestLockCommandUniversal:
         ):
             lock(pyproject, output=out)
         err = capsys.readouterr().err
-        assert "in [tool.nab]:" in err
+        assert "[tool.nab].conflicts names extra 'gpuu'" in err
         assert "gpuu" in err
 
     def test_not_implemented_vcs_exits(
@@ -2725,7 +2725,7 @@ class TestLockCommandUniversal:
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject, output=tmp_path / "pylock.toml", groups=("dev",))
         err = capsys.readouterr().err
-        assert "error: in [tool.nab]: base-group 'default' and" in err
+        assert "error: base-group 'default' and" in err
         assert "--project-base-group" not in err
         assert "Traceback" not in err
 
@@ -4123,7 +4123,7 @@ class TestConfigErrors:
         )
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject)
-        assert "in [tool.nab]" in capsys.readouterr().err
+        assert "dist-policy must be one of" in capsys.readouterr().err
 
     def test_workspace_discovery_error_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -4326,7 +4326,7 @@ class TestDetermineLockAnchor:
                 pyproject=p.resolve(),
             )
 
-        monkeypatch.setattr("nab._run._config_search_roots", fake_roots)
+        monkeypatch.setattr("nab._run.config_search_roots", fake_roots)
         anchor = _determine_lock_anchor(
             _ladder(pyproject), output=target, format="pylock", upgrade=False
         )
@@ -6712,7 +6712,7 @@ class TestDownloadCommand:
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "vendor"
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         monkeypatch.setenv("NAB_MAX_CONCURRENCY", "2")
@@ -6819,7 +6819,7 @@ class TestDownloadCommand:
         out = tmp_path / "vendor"
         download_result = DownloadResult(written=(out / "x.whl",), skipped=())
         monkeypatch.setattr(
-            "nab._run._config_search_roots",
+            "nab._run.config_search_roots",
             lambda p: SourceRoots(project_dir=p.parent, pyproject=p),
         )
         with (
@@ -6885,7 +6885,7 @@ class TestDownloadCommand:
         ):
             download(pyproject)
         err = capsys.readouterr().err
-        assert "in [tool.nab]:" in err
+        assert "exactly one of [extra 'cpu', extra 'gpu'] must be selected" in err
         assert "exactly one" in err
 
     @pytest.mark.parametrize("bad", [0, -1])

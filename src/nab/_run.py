@@ -20,26 +20,26 @@ from typing import TYPE_CHECKING, NoReturn
 import tomli
 
 from nab_project import toml_io
-from nab_project.config_sources import (
+from nab_project.paths import PathState, path_state
+
+from . import env
+from .config.hooks import inspector_anchor
+from .config.ladder import (
     OPTIONS,
     EffectiveValue,
     RejectedLayer,
     Scope,
-    SourceConfigError,
     SourceKind,
-    SourceRoots,
     build_cli_layer,
     build_cli_overrides,
+    config_search_roots,
     discover_layers,
-    inspector_anchor,
     project_cli_override_notice,
     project_cli_override_records,
     read_env_layer,
     resolve_config,
 )
-from nab_project.paths import PathState, path_state, realpath
-
-from . import env
+from .config.values import SourceConfigError
 from .output import OUTPUT_ENV_VARS, printer
 
 if TYPE_CHECKING:
@@ -99,33 +99,6 @@ def _resolve_effective_cache_dir(cache_dir: Path | None, *, cache: bool) -> Path
     return _default_cache_dir()
 
 
-def _config_search_roots(pyproject: Path) -> SourceRoots:
-    """Locate the system/user/project config roots for ``pyproject``.
-
-    The same XDG roots as cache-dir: the user ``nab.toml`` at
-    ``$XDG_CONFIG_HOME/nab/nab.toml`` or ``~/.config/nab/nab.toml``, the
-    system one at ``/etc/nab/nab.toml``.  Discovery is project-dir only,
-    with no walk-up, and the suite injects roots by monkeypatching this
-    function so the real ``~/.config`` is never read.
-
-    ``pyproject`` is the file the user pointed at, so the pyproject layer
-    reads that exact file even when its name is not ``pyproject.toml``, and
-    the project-dir ``nab.toml`` is looked up beside it.  The root keeps
-    that file's resolved directory rather than the resolved file, so a
-    relative ``local-sources`` path resolves against the symlink's
-    directory the way the resolve does.
-    """
-    base = env.config_root()
-    user_dir = Path(base) if base else Path.home() / ".config"
-    project_dir = realpath(pyproject.parent)
-    return SourceRoots(
-        system_toml=Path("/etc/nab/nab.toml"),
-        user_toml=user_dir / "nab" / "nab.toml",
-        project_dir=project_dir,
-        pyproject=project_dir / pyproject.name,
-    )
-
-
 def effective_config(
     path: Path,
     *,
@@ -136,7 +109,7 @@ def effective_config(
 ) -> dict[str, EffectiveValue]:
     """Resolve the full layered config for the pyproject at ``path``.
 
-    Discovers the TOML layers over :func:`_config_search_roots`, reads the
+    Discovers the TOML layers over :func:`config_search_roots`, reads the
     ``NAB_*`` layer, builds the CLI layer from the keys ``cli_overrides``
     names, and merges the four through the registry.
 
@@ -147,7 +120,7 @@ def effective_config(
     ``read_pyproject=False`` skips the pyproject layer, for a caller
     reading a USER-scope key that pyproject may not set.
     """
-    roots = _config_search_roots(path)
+    roots = config_search_roots(path)
     rejected: list[RejectedLayer] = []
     sink = rejected if collect_rejected else None
     # Pin one ``now`` for the pass so identical relative ``P<n>D`` override
@@ -274,9 +247,9 @@ def project_config_overrides(
     :func:`read_pyproject_config`.
     """
     project_keys = {
-        spec.key
+        spec.name
         for spec in OPTIONS
-        if spec.scope is Scope.PROJECT and spec.key != "resolution"
+        if spec.scope is Scope.PROJECT and spec.name != "resolution"
     }
     return {key: value for key, value in cli_overrides.items() if key in project_keys}
 
@@ -293,7 +266,7 @@ def project_override_arguments(cli_overrides: Mapping[str, object]) -> list[str]
         flag = spec.cli_flag
         if spec.scope is not Scope.PROJECT or flag is None:
             continue
-        value = cli_overrides.get(spec.key)
+        value = cli_overrides.get(spec.name)
         if value is None:
             continue
         items = value if isinstance(value, tuple) else (value,)
@@ -364,17 +337,17 @@ def _is_pylock(path: Path) -> bool:
 
 
 def _project_cli_overrides_or_exit(project_overrides: Mapping[str, object]) -> None:
-    """Exit 1 when a ``--project-*`` override has a bad value, naming the flag.
+    """Exit 1 when a ``--project-*`` override has a bad value.
 
-    Without this the value is validated by the ``[tool.nab]`` parse in
-    :func:`nab._resolve._load_config`, whose errors read ``in [tool.nab]:``
-    and point at a table the project may not have.
+    The refusal names the flag, since that is the ``where`` the CLI layer
+    parses under.  Without this the value is validated by the ``[tool.nab]``
+    parse instead, which points at a table the project may not have.
     """
     for spec in OPTIONS:
-        if spec.key not in project_overrides:
+        if spec.name not in project_overrides:
             continue
         try:
-            build_cli_layer({spec.key: project_overrides[spec.key]})
+            build_cli_layer({spec.name: project_overrides[spec.name]})
         except SourceConfigError as exc:
-            printer().error(f"{spec.cli_flag}: {exc}")
+            printer().error(str(exc))
             sys.exit(1)

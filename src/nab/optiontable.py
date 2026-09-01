@@ -32,9 +32,8 @@ command set they do not share, and each table's docstring names its own.
 
 Adding an option is a row here, a parameter on the command function that
 takes it, and ``python tasks/gen_bijection.py --write``.  A row with a
-configuration key needs three more: an ``OptionSpec`` in
-``nab_project.config_sources``, an entry in ``nab._run._cli_overrides``, and
-the page its ``docs=`` names.  The censuses in ``tests/test_cli_table.py``,
+configuration key needs two more: an entry in ``nab._run._cli_overrides``,
+and the page its ``docs=`` names.  The censuses in ``tests/test_cli_table.py``,
 ``tests/test_cli_docs.py`` and ``tests/test_config_cmd.py`` are written out
 rather than derived, so a new row moves those too.
 """
@@ -42,19 +41,28 @@ rather than derived, so a new row moves those too.
 from __future__ import annotations
 
 import types
+from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, NewType
 
+from nab_project.conflicts import ConflictSet
+from nab_project.workspace import WorkspaceConfig
 from nab_provider.policy import (
+    ArchiveSource,
     BuildPolicy,
     DecisionOrder,
     DistPolicy,
+    LocalSource,
     ResolutionStrategy,
     ResolveMode,
+    VcsSource,
 )
 from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
 from nab_provider.vcs_admission import VcsConfig
 
+from .config import hooks, values
+from .config.values import MatrixConfig
 from .flagtypes import (
     BuildPolicyFlag,
     DecisionOrderFlag,
@@ -139,34 +147,50 @@ class ProjectKeys(
 
     resolution = Value[ResolutionFlag | None](
         mirrors=ResolutionStrategy,
-        key=Layer(rdefault=ResolutionStrategy.HIGHEST),
+        key=Layer[ResolutionStrategy](
+            rdefault=ResolutionStrategy.HIGHEST,
+            parse=values.parse_resolution,
+            render=hooks.render_enum_value,
+        ),
         help="which version of each package to prefer",
     )
 
     decision_order = Value[DecisionOrderFlag | None](
         mirrors=DecisionOrder,
-        key=Layer(rdefault=DecisionOrder.ARRIVAL),
+        key=Layer[DecisionOrder](
+            rdefault=DecisionOrder.ARRIVAL,
+            parse=values.parse_decision_order,
+            render=hooks.render_enum_value,
+        ),
         help="whether an arrived listing may steer the decision order",
     )
 
     mode = Value[ModeFlag | None](
         mirrors=ResolveMode,
-        key=Layer(rdefault=ResolveMode.SPECIFIC),
+        key=Layer[ResolveMode](
+            rdefault=ResolveMode.SPECIFIC,
+            parse=values.parse_mode,
+            render=hooks.render_enum_value,
+        ),
         help="resolve for this environment or across a matrix",
         docs="explanation/universal.md",
     )
 
     constraints = Many[Requirement](
-        key=Layer(
+        key=Layer[tuple[str, ...]](
             rdefault=(),
+            parse=values.parse_constraints,
+            render=hooks.render_string_tuple,
             sample="attrs<24",
         ),
         help="bound a package's versions without pulling it into the resolve",
     )
 
     default_groups = Many[Group](
-        key=Layer(
+        key=Layer[tuple[str, ...]](
             rdefault=(),
+            parse=values.parse_default_groups,
+            render=hooks.render_string_tuple,
             sample="dev",
         ),
         help="a dependency group every resolve selects",
@@ -174,8 +198,10 @@ class ProjectKeys(
     )
 
     base_group = Value[Group | None](
-        key=Layer(
+        key=Layer[str | None](
             rdefault=None,
+            parse=values.parse_base_group,
+            render=hooks.render_optional_text,
             sample="runtime",
         ),
         help="the group name the project's own dependencies lock under",
@@ -183,8 +209,10 @@ class ProjectKeys(
     )
 
     build_group = Value[Group | None](
-        key=Layer(
+        key=Layer[str | None](
             rdefault=None,
+            parse=values.parse_build_group,
+            render=hooks.render_optional_text,
             sample="build",
         ),
         help="the group name [build-system].requires locks under",
@@ -192,16 +220,20 @@ class ProjectKeys(
     )
 
     requires_python = Value[Specifier | None](
-        key=Layer(
+        key=Layer[str | None](
             rdefault=None,
+            parse=values.parse_requires_python,
+            render=hooks.render_optional_text,
             sample=">=3.11",
         ),
         help="the Python range the project supports, as a specifier",
     )
 
     uploaded_prior_to = Value[str | None](
-        key=Layer(
+        key=Layer[datetime | None](
             rdefault=None,
+            parse=hooks.parse_uploaded_prior_to,
+            render=hooks.render_uploaded_prior_to,
             sample="P7D",
             label="datetime|PnD",
         ),
@@ -210,21 +242,31 @@ class ProjectKeys(
 
     dist_policy = Value[DistPolicyFlag | None](
         mirrors=DistPolicy,
-        key=Layer(rdefault=(DistPolicy.WHEEL_OR_SDIST, False)),
+        key=Layer[tuple[DistPolicy, bool]](
+            rdefault=(DistPolicy.WHEEL_OR_SDIST, False),
+            parse=values.parse_dist_policy,
+            render=hooks.render_dist_policy,
+        ),
         help="which distribution kinds the resolve may pin",
         docs="reference/build-policy.md",
     )
 
     build_policy = Value[BuildPolicyFlag | None](
         mirrors=BuildPolicy,
-        key=Layer(rdefault=BuildPolicy.BUILD_LOCAL),
+        key=Layer[BuildPolicy](
+            rdefault=BuildPolicy.BUILD_LOCAL,
+            parse=values.parse_build_policy,
+            render=hooks.render_enum_value,
+        ),
         help="whether nab may build an sdist, and which ones",
         docs="reference/build-policy.md",
     )
 
     build_requires_depth = Value[int | None](
-        key=Layer(
+        key=Layer[int](
             rdefault=0,
+            parse=values.parse_build_requires_depth,
+            render=hooks.render_text,
             sample="1",
         ),
         help="how many build environments nab may open beneath the first",
@@ -232,16 +274,20 @@ class ProjectKeys(
     )
 
     environment = Key(
-        Layer(
+        Layer[Mapping[str, Any]](
             rdefault=_EMPTY_MAPPING,
+            parse=values.parse_environment,
+            render=hooks.render_environment,
             label="table(python,platform[,knobs],implementation)",
         ),
         help="the target whose markers and wheel tags the resolve uses",
     )
 
     marker_environment = Key(
-        Layer(
+        Layer[Mapping[str, str]](
             rdefault=_EMPTY_MAPPING,
+            parse=values.parse_marker_environment,
+            render=hooks.render_marker_environment,
             label="table(marker-var=str)",
         ),
         deprecated=True,
@@ -249,8 +295,10 @@ class ProjectKeys(
     )
 
     vcs = Key(
-        Layer(
+        Layer[VcsConfig](
             rdefault=VcsConfig(),
+            parse=values.parse_vcs,
+            render=hooks.render_vcs,
             label="table(vcs-policy)",
         ),
         help="whether a requirement may name a VCS URL, and which ones",
@@ -258,8 +306,10 @@ class ProjectKeys(
     )
 
     workspace = Key(
-        Layer(
+        Layer[WorkspaceConfig | None](
             rdefault=None,
+            parse=values.parse_workspace,
+            render=hooks.render_workspace,
             label="table(members)",
         ),
         help="the member paths a workspace root declares",
@@ -267,8 +317,10 @@ class ProjectKeys(
     )
 
     indexes = Key(
-        Layer(
+        Layer[tuple[IndexConfig, ...]](
             rdefault=(IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),),
+            parse=values.parse_indexes,
+            render=hooks.render_index_list,
             label="array-of-tables(name,url,serialization)",
         ),
         help="the package indexes, consulted in the order declared",
@@ -276,8 +328,10 @@ class ProjectKeys(
     )
 
     local_sources = Key(
-        Layer(
+        Layer[tuple[LocalSource, ...]](
             rdefault=(),
+            parse=hooks.parse_local_sources,
+            render=hooks.render_local_sources,
             label="array-of-tables(name,path)",
         ),
         help="a directory that becomes the only candidate for a named package",
@@ -285,8 +339,10 @@ class ProjectKeys(
     )
 
     vcs_sources = Key(
-        Layer(
+        Layer[tuple[VcsSource, ...]](
             rdefault=(),
+            parse=values.parse_vcs_sources,
+            render=hooks.render_vcs_sources,
             label="array-of-tables(name,url)",
         ),
         help="a repository that becomes the only candidate for a named package",
@@ -294,32 +350,40 @@ class ProjectKeys(
     )
 
     archive_sources = Key(
-        Layer(
+        Layer[tuple[ArchiveSource, ...]](
             rdefault=(),
+            parse=values.parse_archive_sources,
+            render=hooks.render_archive_sources,
             label="array-of-tables(name,url)",
         ),
         help="a hashed .tar.gz URL a named package is pinned to",
     )
 
     packages = Key(
-        Layer(
+        Layer[tuple[Any, ...]](
             rdefault=(),
+            parse=hooks.parse_packages,
+            render=hooks.render_package_overrides,
             label="table(package-override)",
         ),
         help="policy and metadata overrides keyed by package name",
     )
 
     package_rules = Key(
-        Layer(
+        Layer[tuple[Any, ...]](
             rdefault=(),
+            parse=hooks.parse_package_rules,
+            render=hooks.render_package_overrides,
             label="array-of-tables(match,policy)",
         ),
         help="policy and metadata overrides selected by a list of requirements",
     )
 
     index = Key(
-        Layer(
+        Layer[Mapping[str, Any]](
             rdefault=_EMPTY_MAPPING,
+            parse=hooks.parse_index_overrides,
+            render=hooks.render_index_overrides,
             label="table(index-override)",
         ),
         help="policy overrides keyed by index name",
@@ -327,8 +391,10 @@ class ProjectKeys(
     )
 
     conflicts = Key(
-        Layer(
+        Layer[tuple[ConflictSet, ...]](
             rdefault=(),
+            parse=values.parse_conflicts,
+            render=hooks.render_conflicts,
             label="array-of-tables(members,policy)",
         ),
         help="sets of groups and extras that cannot be selected together",
@@ -336,8 +402,10 @@ class ProjectKeys(
     )
 
     matrix = Key(
-        Layer(
+        Layer[MatrixConfig | None](
             rdefault=None,
+            parse=values.parse_matrix,
+            render=hooks.render_matrix,
             label="table(python,platforms)",
         ),
         help="the Python and platform axes a universal resolve covers",
@@ -349,14 +417,18 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
     """The four settings a user sets once, each also a ``NAB_*`` variable."""
 
     offline = Tri(
-        key=Layer(rdefault=False),
+        key=Layer[bool](
+            rdefault=False, parse=values.parse_bool, render=hooks.render_bool
+        ),
         env=True,
         help="never hit the network; resolve from the cache alone",
     )
 
     cache_dir = Value[Path | None](
-        key=Layer(
+        key=Layer[Path | None](
             rdefault=None,
+            parse=values.parse_path,
+            render=hooks.render_cache_dir,
             sample="nab-cache",
         ),
         env=True,
@@ -366,8 +438,10 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
     )
 
     http_backend = Value[HttpBackend | None](
-        key=Layer(
+        key=Layer[str](
             rdefault="urllib3",
+            parse=values.parse_http_backend,
+            render=hooks.render_text,
             # The one written label: the flag offers the alias's order and
             # ``nab config explain`` prints them alphabetically.
             label="enum(httpx|urllib3)",
@@ -377,8 +451,10 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
     )
 
     max_concurrency = Value[int | None](
-        key=Layer(
+        key=Layer[int](
             rdefault=8,
+            parse=values.parse_max_concurrency,
+            render=hooks.render_text,
             sample="4",
         ),
         env=True,

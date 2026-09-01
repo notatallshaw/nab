@@ -1,23 +1,19 @@
-"""The seam type, and the partition of ``NabProjectConfig`` behind it.
+"""The partition of ``ResolveInputs`` behind the build-requires resolve.
 
-Every config field is either a ``ResolveInputs`` slot or a name the host keeps.
+A slot reaches the build environment only by being forwarded, pinned or
+dropped, and the value it carries is checked against the resolve that
+environment runs.
 """
 
 from __future__ import annotations
 
-from dataclasses import fields
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import pytest
 
 from nab_project._build.env import _inner_resolve_inputs, _without_build_permission
-from nab_project.config import (
-    ConflictKind,
-    ConflictMember,
-    ConflictSet,
-    NabProjectConfig,
-)
+from nab_project.conflicts import ConflictKind, ConflictMember, ConflictSet
 from nab_project.inputs import ResolveInputs
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import (
@@ -71,28 +67,17 @@ _INNER_DROPS = frozenset(
     }
 )
 
-# The ``NabProjectConfig`` fields nothing outside ``config.py`` reads.
-_STAYS_IN_NAB = frozenset(
-    {
-        "environment",
-        "matrix",
-        "mode",
-        "requires_python_source",
-        "workspace",
-        "workspace_member_names",
-    }
-)
 
 _CUTOFF = datetime(2026, 5, 1, tzinfo=timezone.utc)
 
 
-def _config_off_every_slot_default(tmp_path: Path) -> NabProjectConfig:
-    """A project config with every seam slot set away from its default.
+def _inputs_off_every_default(tmp_path: Path) -> ResolveInputs:
+    """Settings with every slot set away from its default.
 
     A slot left at its default would make the checks below vacuous: a value
     that failed to cross would read back as the one it was meant to carry.
     """
-    return NabProjectConfig(
+    return ResolveInputs(
         archive_sources=(
             ArchiveSource("blob", "https://example.invalid/b-1.0.tar.gz"),
         ),
@@ -128,32 +113,8 @@ def _config_off_every_slot_default(tmp_path: Path) -> NabProjectConfig:
     )
 
 
-def _inputs_off_every_default(tmp_path: Path) -> ResolveInputs:
-    """The same settings, across the seam."""
-    return _config_off_every_slot_default(tmp_path).resolve_inputs()
-
-
 class TestSeamPartition:
-    """What crosses into nab-project, and what the build env may see."""
-
-    def test_every_config_field_crosses_the_seam_or_stays_in_nab(self) -> None:
-        """A new ``[tool.nab]`` setting is either a slot or named as the host's."""
-        names = {f.name for f in fields(NabProjectConfig)}
-
-        assert names == set(ResolveInputs.__slots__) | _STAYS_IN_NAB
-
-    def test_the_projection_carries_every_slot(self, tmp_path: Path) -> None:
-        """Every slot arrives holding what the project declared.
-
-        The name sets can agree while a value never crosses.
-        """
-        config = _config_off_every_slot_default(tmp_path)
-
-        inputs = config.resolve_inputs()
-
-        assert {name: getattr(inputs, name) for name in ResolveInputs.__slots__} == {
-            name: getattr(config, name) for name in ResolveInputs.__slots__
-        }
+    """What the build environment may see of the settings around it."""
 
     def test_every_slot_is_forwarded_pinned_or_dropped(self) -> None:
         """A setting reaches the build env only by being named.
@@ -211,15 +172,6 @@ class TestSeamPartition:
 
 class TestResolveInputs:
     """The value type itself."""
-
-    def test_a_bare_instance_takes_the_configs_defaults(self) -> None:
-        """What a project declaring no ``[tool.nab]`` resolves under."""
-        bare = ResolveInputs()
-        default = NabProjectConfig()
-
-        assert {name: getattr(bare, name) for name in ResolveInputs.__slots__} == {
-            name: getattr(default, name) for name in ResolveInputs.__slots__
-        }
 
     def test_replace_changes_the_named_slots_and_keeps_the_rest(
         self, tmp_path: Path
