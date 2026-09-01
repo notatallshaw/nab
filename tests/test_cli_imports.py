@@ -138,6 +138,18 @@ _INDEX_READER = (
     "zipfile",
 )
 
+# The on-disk cache and the stdlib modules its import pulls in.  Only
+# ``verify`` and ``clear`` open a cache.
+_CACHE_STORE = (
+    "nab_index.cache",
+    "hashlib",
+    "json",
+    "shutil",
+    "tempfile",
+    "bz2",
+    "lzma",
+)
+
 _PROJECT = '[project]\nname = "probe"\nversion = "0.1"\ndependencies = []\n'
 
 
@@ -251,3 +263,13 @@ def test_a_settings_command_loads_no_index_reader(
     (tmp_path / "pyproject.toml").write_text(_PROJECT, encoding="utf-8")
 
     assert _run(_HELD_PROBE, ",".join(_INDEX_READER), *line, cwd=tmp_path) == ""
+
+
+@pytest.mark.parametrize("line", [("cache", "dir"), ("config", "list")])
+def test_a_settings_command_loads_no_cache_store(
+    line: tuple[str, ...], tmp_path: Path
+) -> None:
+    """Probe G: neither command loads the cache store or the decoders behind it."""
+    (tmp_path / "pyproject.toml").write_text(_PROJECT, encoding="utf-8")
+
+    assert _run(_HELD_PROBE, ",".join(_CACHE_STORE), *line, cwd=tmp_path) == ""

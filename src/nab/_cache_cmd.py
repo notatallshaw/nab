@@ -8,14 +8,15 @@ bucket nab owns, including the cloned and extracted source trees.
 ``verify`` and ``clear`` descend only into the buckets nab owns, never
 follow a symlink out of the root, and refuse a root that holds foreign
 files.
+
+Only those two verbs need :mod:`nab_index.cache`, so they import it
+themselves and ``dir`` never loads it.
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-
-from nab_index.cache import OnDiskCache, is_recognized_bucket
 
 from ._run import _default_cache_dir, _fail_config, effective_config
 from .config.values import SourceConfigError
@@ -74,6 +75,8 @@ def _verify(root: Path) -> None:
     nothing, so the status is what a script reads to learn the cache is
     not clean.
     """
+    from nab_index.cache import OnDiskCache  # noqa: PLC0415
+
     _refuse_foreign_root(root)
     cache = OnDiskCache(root, "")
     corrupt = 0
@@ -88,6 +91,8 @@ def _verify(root: Path) -> None:
 
 
 def _clear(root: Path) -> None:
+    from nab_index.cache import OnDiskCache  # noqa: PLC0415
+
     _refuse_foreign_root(root)
     cache = OnDiskCache(root, "")
     removed = cache.clear_cache()
@@ -101,6 +106,8 @@ def _refuse_foreign_root(root: Path) -> None:
     cache, so a maintenance verb refuses it. A recognized name on a plain
     file does not make the root a cache. A missing or empty root passes.
     """
+    from nab_index.cache import is_recognized_bucket  # noqa: PLC0415
+
     if root.exists() and not root.is_dir():
         printer().error(f"{root} is not a directory")
         sys.exit(1)
