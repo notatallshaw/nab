@@ -42,11 +42,10 @@ pip install "nab-markersets[packaging]"
 pip install "nab-markersets[nab-vendored-packaging]"
 ```
 
-With both installed the fork wins, so a `Marker` built inside nab and the
-exception classes the algebra raises stay on one copy. A `Marker` from the
-other copy is refused, and `str(marker)` is the spelling that always works.
-With neither, importing `nab_markersets.markersets` fails and names both
-extras.
+The first copy at `packaging>=26.3` is bound, so with both installed the fork
+wins and a `Marker` built inside nab keeps the class the algebra tests against.
+A `Marker` from the other copy is accepted too. With nothing that new,
+importing `nab_markersets.markersets` fails and says what it found.
 
 ## When to use it
 

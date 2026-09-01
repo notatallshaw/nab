@@ -53,16 +53,61 @@ def _probe(source: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_the_first_installed_candidate_wins() -> None:
-    found = _packaging._import_backend(("nab_markersets", "packaging"))
+def _stale_packaging(root: Path, name: str, version: str) -> None:
+    """Write a packaging-shaped package at ``version``, for the probe to weigh."""
+    package = root / name
+    package.mkdir()
+    (package / "__init__.py").write_text(f'__version__ = "{version}"\n')
+    (package / "version.py").write_text(
+        "from packaging.version import InvalidVersion, Version\n"
+        "\n"
+        "__all__ = ['InvalidVersion', 'Version']\n"
+    )
 
-    assert found.__name__ == "nab_markersets"
+
+def test_the_first_candidate_over_the_floor_wins() -> None:
+    found = _packaging._import_backend(("packaging", ABSENT))
+
+    assert found.__name__ == "packaging"
 
 
 def test_a_candidate_that_is_not_installed_is_passed_over() -> None:
     found = _packaging._import_backend((ABSENT, "packaging"))
 
     assert found.__name__ == "packaging"
+
+
+def test_a_candidate_below_the_floor_is_passed_over(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A fork too old to run the algebra falls through to the released copy."""
+    _stale_packaging(tmp_path, "nab_markersets_stale_backend", "26.2")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    found = _packaging._import_backend(("nab_markersets_stale_backend", "packaging"))
+
+    assert found.__name__ == "packaging"
+
+
+def test_nothing_over_the_floor_names_what_it_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stale_packaging(tmp_path, "nab_markersets_only_stale", "26.2")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(ImportError, match=r"found nab_markersets_only_stale 26\.2"):
+        _packaging._import_backend(("nab_markersets_only_stale", ABSENT))
+
+
+def test_a_candidate_with_no_version_is_passed_over(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stale_packaging(tmp_path, "nab_markersets_unversioned", "26.9")
+    (tmp_path / "nab_markersets_unversioned" / "__init__.py").write_text("")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(ImportError, match="found nab_markersets_unversioned"):
+        _packaging._import_backend(("nab_markersets_unversioned", ABSENT))
 
 
 def test_a_candidate_that_breaks_on_import_is_not_passed_over(
@@ -84,22 +129,21 @@ def test_no_candidate_at_all_names_both_extras() -> None:
 
 
 @pytest.mark.parametrize("version", ["26.2", "0", "", "not-a-version"])
-def test_a_copy_below_the_floor_is_refused(version: str) -> None:
+def test_a_copy_below_the_floor_does_not_clear_it(version: str) -> None:
     """An install that names no extra declares no floor, so this is where it holds."""
-    with pytest.raises(ImportError, match=rf"packaging>={_packaging.MINIMUM}"):
-        _packaging._require_floor("packaging", version)
+    assert not _packaging._clears_floor("packaging", version)
 
 
 @pytest.mark.parametrize("version", ["26.3", "26.4.dev0", "27.0"])
-def test_a_copy_at_or_above_the_floor_passes(version: str) -> None:
-    assert _packaging._require_floor("packaging", version) is None
+def test_a_copy_at_or_above_the_floor_clears_it(version: str) -> None:
+    assert _packaging._clears_floor("packaging", version)
 
 
 def test_the_bound_copy_clears_the_floor() -> None:
     bound = _packaging._import_or_none(BACKEND)
 
     assert bound is not None
-    assert _packaging._require_floor(BACKEND, bound.__version__) is None
+    assert _packaging._clears_floor(BACKEND, bound.__version__)
 
 
 def test_every_bound_name_comes_from_the_bound_backend() -> None:

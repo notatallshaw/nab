@@ -2,12 +2,14 @@
 
 Two can be installed. nab vendors a fork at ``nab_provider._vendor.packaging``,
 and released ``packaging`` is on PyPI; each is an extra of this distribution.
-The fork wins when both are there, so a caller inside nab hands the algebra its
-own ``Marker`` objects and catches its own exception classes. With neither,
-importing this module raises rather than leaving it half bound.
+The first that clears :data:`MINIMUM` is bound, so the fork wins where it is
+new enough and an old one falls through to released packaging rather than
+failing. Inside nab that keeps the algebra on the same classes the provider
+builds ``Marker`` objects from. With nothing new enough, importing this module
+raises rather than leaving it half bound.
 
-The floor is checked here as well as declared, because an install that names
-no extra declares no dependency at all, and an older copy answers differently
+The floor is read here as well as declared, because an install that names no
+extra declares no dependency at all, and an older copy answers differently
 rather than failing. The ceiling is not: a release that moves the private names
 below fails loudly on its own, and a hard refusal in code could not be waived.
 """
@@ -27,12 +29,6 @@ BACKENDS = ("nab_provider._vendor.packaging", "packaging")
 #: extra declares the same floor.
 MINIMUM = "26.3"
 
-_MISSING = (
-    "nab-markersets needs a copy of packaging: install nab-markersets[packaging]"
-    " for the released one, or nab-markersets[nab-vendored-packaging] for the"
-    " fork nab vendors"
-)
-
 
 def _import_or_none(name: str) -> ModuleType | None:
     """Return the module ``name``, or ``None`` when it is not installed.
@@ -47,17 +43,45 @@ def _import_or_none(name: str) -> ModuleType | None:
         return None
 
 
+def _clears_floor(name: str, version: str) -> bool:
+    """Whether the packaging at ``name`` is at least :data:`MINIMUM`.
+
+    Judged by that copy's own :class:`Version`, since it is the one whose
+    ordering the release it belongs to was written against.
+    """
+    versions = import_module(f"{name}.version")
+    try:
+        return bool(versions.Version(version) >= versions.Version(MINIMUM))
+    except versions.InvalidVersion:
+        return False
+
+
+def _no_backend(rejected: Sequence[str]) -> str:
+    """Return the message for an import that found no packaging new enough."""
+    found = f", found {', '.join(rejected)}" if rejected else ""
+    return (
+        f"nab-markersets needs packaging>={MINIMUM}{found}: install"
+        " nab-markersets[packaging] for the released one, or"
+        " nab-markersets[nab-vendored-packaging] for the fork nab vendors"
+    )
+
+
 def _import_backend(candidates: Sequence[str]) -> ModuleType:
-    """Return the first candidate that imports.
+    """Return the first candidate that imports and clears the floor.
 
     Only the package is named, so a submodule that fails for a reason of its
     own raises where it failed rather than reading as a missing backend.
     """
+    rejected: list[str] = []
     for name in candidates:
         module = _import_or_none(name)
-        if module is not None:
+        if module is None:
+            continue
+        version = getattr(module, "__version__", "")
+        if _clears_floor(name, version):
             return module
-    raise ImportError(_MISSING)
+        rejected.append(f"{name} {version or 'unversioned'}")
+    raise ImportError(_no_backend(rejected))
 
 
 _backend = _import_backend(BACKENDS)
@@ -129,20 +153,3 @@ else:
 
     InvalidVersion = _version.InvalidVersion
     Version = _version.Version
-
-
-def _require_floor(backend: str, version: str) -> None:
-    """Refuse a packaging copy older than :data:`MINIMUM`, or one with no version."""
-    try:
-        too_old = Version(version) < Version(MINIMUM)
-    except InvalidVersion:
-        too_old = True
-    if too_old:
-        msg = (
-            f"{backend} is {version or 'unversioned'}; nab-markersets needs"
-            f" packaging>={MINIMUM}, which nab-markersets[packaging] installs"
-        )
-        raise ImportError(msg)
-
-
-_require_floor(BACKEND, getattr(_backend, "__version__", ""))
