@@ -9,17 +9,21 @@ top, for the shape the rest of the CLI derives from it.
 from __future__ import annotations
 
 import enum
+from pathlib import Path
 from typing import Any
 
 import pytest
+import tomli
 
 from nab import optiondefs
 from nab.config import hooks, values
-from nab.config.ladder import SourceKind
+from nab.config.ladder import SourceKind, docs_path, docs_url
 from nab.optiondefs import COMMANDS, GLOBAL, UNSET, Kind, Opt, Scope, VType
 from nab.optionrows import rows
 from nab.optiontable import ALL, TABLES
 from nab_provider import policy
+
+_PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
 # The declared rows, paired with the ``Opt`` each lowers to: ``table_rows``
 # lowers them in this order, so the two lists index each other.
@@ -190,6 +194,30 @@ class TestTheDeclaredTable:
 
     def test_every_row_keeps_the_page_it_was_written_with(self) -> None:
         assert tuple((row.name, row.docs) for row in ALL) == _PAGES
+
+    def test_a_row_names_its_page_on_the_published_site(self) -> None:
+        """What ``explain`` prints is the checked path, published.
+
+        The site is ``[project.urls].Documentation`` and the path under it
+        is the one ``tasks/gen_cli.py`` resolves against the checkout, so
+        a reader's page and the checked page cannot differ.  Sphinx builds
+        with ``-b html``, and a row names a page rather than a section, so
+        no URL carries a fragment.
+        """
+        urls = tomli.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]["urls"]
+        resolution = next(row for row in ALL if row.name == "resolution")
+
+        assert docs_url(resolution) == (
+            "https://nab.readthedocs.io/en/stable/reference/configuration.html"
+        )
+
+        for row in ALL:
+            url = docs_url(row)
+
+            assert url.startswith(urls["Documentation"]), row.name
+            assert url.endswith(f"/{row.docs.removesuffix('.md')}.html"), row.name
+            assert "#" not in url, row.name
+            assert docs_path(row) == f"docs/{row.docs}", row.name
 
     def test_the_written_type_labels_are_the_ones_the_rows_carry(self) -> None:
         """The 15 labels a row spells out, which nothing else reads back.

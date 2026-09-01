@@ -34,7 +34,7 @@ from nab._download import download
 from nab._lock import lock
 from nab._run import effective_config
 from nab.cli import run
-from nab.config.ladder import OPTIONS, Scope, SourceRoots
+from nab.config.ladder import OPTIONS, Scope, SourceRoots, docs_url
 from nab.config.values import SourceConfigError
 from nab_project.download import DownloadResult
 from nab_project.inputs import ResolveInputs
@@ -356,7 +356,7 @@ class TestConfigExplain:
         header, help_line, docs_line, first_rung = out.splitlines()[:4]
         assert header.startswith("resolution (")
         assert help_line == f"  {row.help}"
-        assert docs_line == f"  see docs/{row.docs}"
+        assert docs_line == f"  see {docs_url(row)}"
         assert first_rung.startswith(">")
 
     def test_explain_help_and_docs_never_carry_the_rung_gutter(

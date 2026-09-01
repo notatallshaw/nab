@@ -64,6 +64,7 @@ __all__ = [
     "config_search_roots",
     "discover_layers",
     "docs_path",
+    "docs_url",
     "orphan_rejections",
     "project_cli_override_notice",
     "project_cli_override_records",
@@ -745,6 +746,12 @@ _LIST_SCOPE_W = 9
 # Status column width for ``nab config explain`` (winner/shadowed/rejected).
 _EXPLAIN_STATUS_W = 9
 
+# Where the pages live in the checkout, and where they are published:
+# [project.urls].Documentation from pyproject.toml, at the released version
+# its bare URL redirects to.
+_DOCS_DIR = "docs/"
+_DOCS_SITE = "https://nab.readthedocs.io/en/stable/"
+
 
 def orphan_rejections(
     rejected: Iterable[RejectedLayer],
@@ -821,7 +828,7 @@ def render_explain(
     lines = [
         f"{key} ({ev.spec.scope_name}, {_type_label(ev.spec)})",
         f"  {ev.spec.help}",
-        f"  see {docs_path(ev.spec)}",
+        f"  see {docs_url(ev.spec)}",
     ]
     winner_index = len(ev.stack) - 1
     for i, (origin, value) in enumerate(ev.stack):
@@ -844,10 +851,24 @@ def render_explain(
 def docs_path(row: Opt) -> str:
     """Return the page ``row`` names, as a path from the repository root.
 
-    Shared with the generator's page check, so the string ``explain``
-    prints and the string that gets checked cannot differ.
+    ``tasks/gen_cli.py`` resolves this against the checkout and
+    :func:`docs_url` publishes it, so a row naming a page nobody wrote
+    fails the generator.
     """
-    return f"docs/{row.docs}"
+    return f"{_DOCS_DIR}{row.docs}"
+
+
+def docs_url(row: Opt) -> str:
+    """Return the published page ``row`` names, as a URL to open.
+
+    Built from :func:`docs_path`, so the page the generator checks on
+    disk is the page a reader is sent to.  The path alone names nothing
+    an installed nab has: the sdist ships ``src/nab`` and ``tests``.
+    Sphinx builds with ``-b html``, so each page is served under its own
+    name.
+    """
+    page = docs_path(row).removeprefix(_DOCS_DIR).removesuffix(".md")
+    return f"{_DOCS_SITE}{page}.html"
 
 
 def _type_label(row: Opt) -> str:

@@ -55,6 +55,10 @@ _LOCKFILE_REFERENCE = _DOCS / "reference" / "lockfile.md"
 _CONFLICTS_DOC = _DOCS / "explanation" / "conflicts.md"
 _README = Path(__file__).resolve().parents[1] / "README.md"
 
+# The published documentation, which is what ``nab config explain`` sends a
+# reader to and what the reference page tells them to expect.
+_DOCS_SITE = "https://nab.readthedocs.io/"
+
 _SUBCOMMANDS = ("lock", "download", "config", "cache")
 
 # The shortest line each subcommand accepts, so a case that only wants to
@@ -459,9 +463,11 @@ class TestConfigExplainReferenceDocs:
             ["explain", "resolution", "--path", str(hermetic_roots / "pyproject.toml")]
         )
 
+        docs_line = printed.splitlines()[2]
         section = _reference_section(_CLI_REFERENCE, "## `nab config`")
-        assert "see docs/" in printed
-        assert "`docs/`" in section
+
+        assert docs_line.startswith(f"  see {_DOCS_SITE}")
+        assert _DOCS_SITE in section
 
 
 class TestLockReferenceDocumentsProjectOverrides:
