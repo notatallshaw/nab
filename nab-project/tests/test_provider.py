@@ -1891,6 +1891,30 @@ class TestNoVersionsReasons:
             "no file the index served is one nab can read"
         )
 
+    def test_local_pep503_page_of_unreachable_links_names_the_links(
+        self, tmp_path: Path
+    ) -> None:
+        """The line names the links, not a missing package or a bad filename.
+
+        The index carries a page for ``foo`` naming a wheel, so sending the
+        reader to check the package name would be wrong.
+        """
+        package_dir = tmp_path / "foo"
+        package_dir.mkdir()
+        (package_dir / "index.html").write_text(
+            '<a href="ftp://mirror.example/foo-1.0-py3-none-any.whl">foo-1.0</a>',
+            encoding="utf-8",
+        )
+        with FetchCoordinator(
+            transport=Urllib3AsyncTransport(),
+            indexes=[IndexConfig("local", tmp_path.as_uri())],
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+        assert rendered_reason(provider, "foo") == (
+            "the index lists this package but nab cannot reach any of its links"
+        )
+
     def test_no_match_in_range_records_no_match_reason(self) -> None:
         """A non-empty listing with no in-range version surfaces a no-match reason."""
         coordinator = make_coordinator([make_wheel("1.0")], package="foo")

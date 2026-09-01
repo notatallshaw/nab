@@ -68,7 +68,13 @@ def test_scan_directory_without_index_html_returns_empty(tmp_path: Path) -> None
     # exercised directly here.
     package_dir = tmp_path / "foo"
     package_dir.mkdir()
-    assert _scan_pep503_directory(package_dir, "foo") == ([], False, False, frozenset())
+    scan = _scan_pep503_directory(package_dir, "foo")
+
+    assert scan.files == []
+    assert not scan.unreadable
+    assert not scan.unreachable
+    assert not scan.all_yanked
+    assert scan.zip_sdists == frozenset()
 
 
 def _anchor(filename: str, *, yanked: bool = False) -> str:
@@ -81,6 +87,7 @@ _YANKED_WHEEL = _anchor("foo-1.0-py3-none-any.whl", yanked=True)
 _YANKED_SDIST = _anchor("foo-2.0.tar.gz", yanked=True)
 _MISNAMED = _anchor("foo-1.0.zip")
 _READABLE = _anchor("foo-3.0-py3-none-any.whl")
+_UNREACHABLE = _anchor("ftp://mirror.example/foo-4.0-py3-none-any.whl")
 
 
 @pytest.mark.parametrize(
@@ -92,6 +99,7 @@ _READABLE = _anchor("foo-3.0-py3-none-any.whl")
         pytest.param(_MISNAMED, False, id="misnamed-link-alone"),
         pytest.param(_YANKED_WHEEL + _MISNAMED, False, id="one-link-stands"),
         pytest.param(_YANKED_WHEEL + _READABLE, False, id="one-link-admitted"),
+        pytest.param(_YANKED_WHEEL + _UNREACHABLE, False, id="one-link-unreachable"),
     ],
 )
 def test_the_all_yanked_flag_counts_the_yanked_links(
@@ -124,6 +132,68 @@ def test_a_page_of_yanked_misnamed_links_reads_as_yanked(tmp_path: Path) -> None
     assert scan.files == []
     assert not scan.unreadable
     assert scan.all_yanked
+
+
+def test_a_page_of_unreachable_links_is_not_an_absent_package(
+    tmp_path: Path,
+) -> None:
+    """An href naming a file nab cannot reach still says the page listed one.
+
+    Dropping it silently makes the listing identical to one for a package
+    the index does not carry.  The filename parses, so only the href fails
+    and the format flag stays clear.
+    """
+    package_dir = _make_index(tmp_path, _UNREACHABLE)
+
+    scan = _scan_pep503_directory(package_dir, "foo")
+
+    assert scan.files == []
+    assert scan.unreachable
+    assert not scan.unreadable
+
+    client = LocalIndexClient(tmp_path.as_uri())
+    assert run(client.get_files("foo")) == []
+    assert client.served_unreachable_only("foo")
+    assert not client.served_unreadable_only("foo")
+
+
+@pytest.mark.parametrize(
+    ("href", "expected"),
+    [
+        pytest.param(
+            "http://[bad/foo-1.0-py3-none-any.whl", True, id="wheel-behind-a-bad-host"
+        ),
+        pytest.param("http://[bad", False, id="bad-host-alone"),
+        pytest.param("mailto:admin@example.com", False, id="mailto"),
+    ],
+)
+def test_an_href_marks_the_page_only_when_it_names_a_release(
+    tmp_path: Path, href: str, expected: bool
+) -> None:
+    """All three hrefs are dropped; only the one naming a wheel loses a release.
+
+    An unterminated bracket and a ``mailto:`` offer nothing, so marking them
+    would report a package the index does not carry as one whose links nab
+    could not reach.
+    """
+    package_dir = _make_index(tmp_path, _anchor(href))
+
+    scan = _scan_pep503_directory(package_dir, "foo")
+
+    assert scan.files == []
+    assert scan.unreachable is expected
+
+
+def test_a_page_of_navigation_links_reads_as_an_empty_page(tmp_path: Path) -> None:
+    """An autoindex's own links name no file, so they mark nothing."""
+    body = '<a href="../">parent</a><a href="?C=N;O=D">sort</a>'
+    package_dir = _make_index(tmp_path, body)
+
+    scan = _scan_pep503_directory(package_dir, "foo")
+
+    assert scan.files == []
+    assert not scan.unreachable
+    assert not scan.unreadable
 
 
 def test_get_sdist_archive_returns_file_bytes(tmp_path: Path) -> None:

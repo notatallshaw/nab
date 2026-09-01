@@ -75,6 +75,9 @@ class _Stub:
     def served_unreadable_only(self, package: str) -> bool:
         return False
 
+    def served_unreachable_only(self, package: str) -> bool:
+        return False
+
     def served_all_yanked(self, package: str) -> bool:
         return False
 

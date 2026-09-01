@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     Kind: TypeAlias = Literal[
         "offline-miss",
         "unreadable-only",
+        "unreachable-only",
         "yanked-only",
         "absent",
         "pinned-absent",
@@ -129,6 +130,7 @@ class ReasonKind:
 
     OFFLINE_MISS: Final = "offline-miss"
     UNREADABLE_ONLY: Final = "unreadable-only"
+    UNREACHABLE_ONLY: Final = "unreachable-only"
     YANKED_ONLY: Final = "yanked-only"
     ABSENT: Final = "absent"
     PINNED_ABSENT: Final = "pinned-absent"
@@ -349,6 +351,7 @@ class NoVersionsReason:
 # record path allocates nothing for them.
 OFFLINE_MISS = NoVersionsReason(ReasonKind.OFFLINE_MISS)
 UNREADABLE_ONLY = NoVersionsReason(ReasonKind.UNREADABLE_ONLY)
+UNREACHABLE_ONLY = NoVersionsReason(ReasonKind.UNREACHABLE_ONLY)
 YANKED_ONLY = NoVersionsReason(ReasonKind.YANKED_ONLY)
 ABSENT = NoVersionsReason(ReasonKind.ABSENT)
 PINNED_ABSENT = NoVersionsReason(ReasonKind.PINNED_ABSENT)
@@ -358,9 +361,9 @@ EXTRA_BASE_EMPTY = NoVersionsReason(ReasonKind.EXTRA_BASE_EMPTY)
 
 NO_MATCH = Diagnostic("no version matches the requirement")
 
-# The four situations the index client answers on its own with a fixed line.
+# The five situations the index client answers on its own with a fixed line.
 # None of them is a walk, so only the two with something to add carry a ``-v``
-# body: for the other two, saying the same fact at more length is not detail.
+# body: for the others, saying the same fact at more length is not detail.
 FIXED_DIAGNOSTICS: dict[Kind, Diagnostic] = {
     ReasonKind.OFFLINE_MISS: Diagnostic(
         "offline mode skipped an index with no cached listing",
@@ -376,6 +379,9 @@ FIXED_DIAGNOSTICS: dict[Kind, Diagnostic] = {
     ReasonKind.UNREADABLE_ONLY: Diagnostic(
         "no file the index served is one nab can read",
         ("nab reads wheels and .tar.gz sdists whose name and version parse",),
+    ),
+    ReasonKind.UNREACHABLE_ONLY: Diagnostic(
+        "the index lists this package but nab cannot reach any of its links"
     ),
     ReasonKind.YANKED_ONLY: Diagnostic(
         "the index lists this package but every file is yanked"
