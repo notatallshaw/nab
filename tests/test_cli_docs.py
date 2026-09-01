@@ -418,7 +418,7 @@ class TestCliReferenceDocumentsOutputPolicy:
 
 
 class TestConfigExplainReferenceDocs:
-    """The CLI reference names every status ``explain`` prints."""
+    """The CLI reference describes what ``explain`` prints."""
 
     def test_reference_names_every_status(
         self, hermetic_roots: Path, tmp_path: Path
@@ -448,6 +448,20 @@ class TestConfigExplainReferenceDocs:
         for status in ("winner", "shadowed", "rejected"):
             assert status in printed, status
             assert f"`{status}`" in section, status
+
+    def test_reference_names_the_documentation_line(self, hermetic_roots: Path) -> None:
+        _write(
+            hermetic_roots / "pyproject.toml",
+            '[project]\nname = "x"\nversion = "0"\ndependencies = []\n',
+        )
+
+        printed = _run_config(
+            ["explain", "resolution", "--path", str(hermetic_roots / "pyproject.toml")]
+        )
+
+        section = _reference_section(_CLI_REFERENCE, "## `nab config`")
+        assert "see docs/" in printed
+        assert "`docs/`" in section
 
 
 class TestLockReferenceDocumentsProjectOverrides:

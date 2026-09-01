@@ -342,6 +342,43 @@ class TestConfigExplain:
         assert any(line.startswith(">") for line in out.splitlines())
         assert "shadowed" in out
 
+    def test_explain_prints_help_and_docs_under_the_header(
+        self, hermetic_roots: Path
+    ) -> None:
+        """The two lines the row itself carries sit between header and stack."""
+        _project(hermetic_roots)
+        row = next(spec for spec in OPTIONS if spec.key == "resolution")
+
+        out = _run_config(
+            ["explain", "resolution", "--path", str(hermetic_roots / "pyproject.toml")]
+        )
+
+        header, help_line, docs_line, first_rung = out.splitlines()[:4]
+        assert header.startswith("resolution (")
+        assert help_line == f"  {row.help}"
+        assert docs_line == f"  see docs/{row.docs}"
+        assert first_rung.startswith(">")
+
+    def test_explain_help_and_docs_never_carry_the_rung_gutter(
+        self, hermetic_roots: Path
+    ) -> None:
+        """A gutter would read the row's own prose as a source that set it."""
+        _project(hermetic_roots, 'resolution = "lowest"\n')
+        out = _run_config(
+            [
+                "explain",
+                "resolution",
+                "--path",
+                str(hermetic_roots / "pyproject.toml"),
+                "--project-resolution",
+                "highest",
+            ]
+        )
+
+        gutters = [line for line in out.splitlines() if line.startswith(">")]
+        assert len(gutters) == 1
+        assert "winner" in gutters[0]
+
     def test_explain_marks_a_deprecated_key(self, hermetic_roots: Path) -> None:
         """The header appends the row's own ``deprecated`` field."""
         _project(hermetic_roots)

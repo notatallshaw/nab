@@ -294,7 +294,7 @@ def test_the_generator_refuses_a_row_that_names_no_page(
         generator._check_pages()
 
     assert str(caught.value) == (
-        "probe names reference/nope.md, which is not a documentation page"
+        "probe names docs/reference/nope.md, which is not a documentation page"
     )
 
 
