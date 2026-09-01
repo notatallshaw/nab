@@ -306,6 +306,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     build_requirements: bool = False,
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressReporter | None = None,
+    max_concurrency: int,
 ) -> ResolveResult:
     """Run the resolver and translate every failure to an exit.
 
@@ -334,6 +335,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
                     build_requirements=build_requirements,
                     resolution_strategy=resolution_strategy,
                     progress=progress,
+                    max_concurrency=max_concurrency,
                 )
         finally:
             if progress is not None:

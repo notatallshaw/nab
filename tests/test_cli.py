@@ -59,7 +59,7 @@ from nab_index.transport import HttpError
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.download import DownloadError, DownloadResult
-from nab_project.fetch import FetchCoordinator
+from nab_project.fetch import DEFAULT_MAX_CONCURRENCY, FetchCoordinator
 from nab_project.lockfile import (
     ArchivePin,
     DisjointnessError,
@@ -5861,6 +5861,7 @@ class TestMain:
                 offline=False,
                 transport=MagicMock(),
                 failure_prefix="cannot lock",
+                max_concurrency=DEFAULT_MAX_CONCURRENCY,
             )
         assert result.success
 
@@ -5883,6 +5884,7 @@ class TestMain:
                 offline=False,
                 transport=MagicMock(),
                 failure_prefix="cannot lock",
+                max_concurrency=DEFAULT_MAX_CONCURRENCY,
             )
         assert enabled_during == [False]
         assert gc.isenabled()
@@ -5917,6 +5919,7 @@ class TestMain:
                 offline=False,
                 transport=MagicMock(),
                 failure_prefix="cannot lock",
+                max_concurrency=DEFAULT_MAX_CONCURRENCY,
             )
 
         # gc.get_objects allocates, and a collection it triggers would move the
@@ -5954,6 +5957,7 @@ class TestMain:
                 offline=False,
                 transport=MagicMock(),
                 failure_prefix="cannot lock",
+                max_concurrency=DEFAULT_MAX_CONCURRENCY,
             )
         assert gc.isenabled()
 
@@ -5976,6 +5980,7 @@ class TestMain:
                 offline=False,
                 transport=MagicMock(),
                 failure_prefix="cannot lock",
+                max_concurrency=DEFAULT_MAX_CONCURRENCY,
             )
         assert gc.isenabled()
 

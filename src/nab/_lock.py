@@ -344,6 +344,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         build_requirements=build_requirements,
         resolution_strategy=settings.resolution,
         progress=ProgressReporter(printer()),
+        max_concurrency=settings.max_concurrency,
     )
 
     lock_input = drop_workspace_pins(

@@ -142,6 +142,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
         extras=selected_extras,
         resolution_strategy=settings.resolution,
         progress=ProgressReporter(printer()),
+        max_concurrency=settings.max_concurrency,
     )
     lock_input = build_lock_input(
         result,
