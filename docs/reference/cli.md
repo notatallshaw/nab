@@ -287,8 +287,8 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 
 | Variable | Effect |
 | -------- | ------ |
-| `XDG_CACHE_HOME` | If set, `nab`'s default cache root is `$XDG_CACHE_HOME/nab` instead of `~/.cache/nab`. |
-| `XDG_CONFIG_HOME` | If set, the user `nab.toml` is read from `$XDG_CONFIG_HOME/nab/nab.toml` instead of `~/.config/nab/nab.toml`. |
+| `XDG_CACHE_HOME` | If set, `nab`'s default cache root is `$XDG_CACHE_HOME/nab` instead of `~/.cache/nab`. A relative value is ignored. |
+| `XDG_CONFIG_HOME` | If set, the user `nab.toml` is read from `$XDG_CONFIG_HOME/nab/nab.toml` instead of `~/.config/nab/nab.toml`. A relative value is ignored. |
 | `NAB_VERBOSITY` | Default verbosity when no `-v` / `-q` flag is given: one of `silent`, `quiet`, `normal`, `verbose`, `debug`. A `-v` / `-q` flag overrides it. An unrecognised value is rejected by any command that reads it; `--version` and `--help` do not read it, so they neither honour nor refuse it. |
 | `NAB_NO_PROGRESS` | If set to a non-empty value, suppress the live progress line, like `--no-progress`. |
 | `NO_COLOR` | Any non-empty value disables colour under `--color auto`. |

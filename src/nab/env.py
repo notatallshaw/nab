@@ -84,15 +84,25 @@ def progress_suppressed(environ: Mapping[str, str] | None = None) -> bool:
     return bool(current(environ).get(NAB_NO_PROGRESS))
 
 
-def cache_root(environ: Mapping[str, str] | None = None) -> str | None:
-    """Return ``XDG_CACHE_HOME`` as written, or ``None`` when it is unset.
+def _absolute_root(environ: Mapping[str, str] | None, name: str) -> str | None:
+    """Return ``name`` as written, or ``None`` when unset or relative.
 
-    The raw string, so this module needs no ``pathlib``; the caller builds
-    the path and picks the fallback.
+    The XDG base directory specification calls a relative value invalid.
     """
-    return current(environ).get(XDG_CACHE_HOME)
+    value = current(environ).get(name)
+
+    # Path.is_absolute would pull pathlib, 17 modules and about 5 ms, onto a
+    # startup that loads 52 and imports it nowhere else.
+    if value is None or not os.path.isabs(value):  # noqa: PTH117
+        return None
+    return value
+
+
+def cache_root(environ: Mapping[str, str] | None = None) -> str | None:
+    """Return ``XDG_CACHE_HOME`` when it names an absolute path."""
+    return _absolute_root(environ, XDG_CACHE_HOME)
 
 
 def config_root(environ: Mapping[str, str] | None = None) -> str | None:
-    """Return ``XDG_CONFIG_HOME`` as written, or ``None`` when it is unset."""
-    return current(environ).get(XDG_CONFIG_HOME)
+    """Return ``XDG_CONFIG_HOME`` when it names an absolute path."""
+    return _absolute_root(environ, XDG_CONFIG_HOME)
