@@ -10,8 +10,9 @@ raises rather than leaving it half bound.
 
 The floor is read here as well as declared, because an install that names no
 extra declares no dependency at all, and an older copy answers differently
-rather than failing. The ceiling is not: a release that moves the private names
-below fails loudly on its own, and a hard refusal in code could not be waived.
+rather than failing. There is no ceiling: the private names below can move in
+any release, and one that moves them fails loudly on its own, where a refusal
+written here could not be waived.
 """
 
 from __future__ import annotations

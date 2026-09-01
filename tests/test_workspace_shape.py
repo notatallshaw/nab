@@ -36,7 +36,7 @@ PACKAGING_BACKENDS = (
 
 # The released `packaging` each distribution declares, wherever it declares it.
 PACKAGING_REQUIREMENTS = {
-    "nab-markersets": "packaging>=26.3,<27",
+    "nab-markersets": "packaging>=26.3",
     "nab-index": "packaging>=24.0",
     "nab-project": "packaging>=24.0",
 }
@@ -435,7 +435,7 @@ def test_declared_packaging_ranges_are_the_ones_recorded_here() -> None:
 
     nab_markersets reads ``packaging._parser``, ``packaging._tokenizer`` and
     ``packaging.markers._eval_op``, none of which packaging promises, so its
-    range carries a ceiling the others do not need.
+    floor is higher than the others need.
     """
     declared = {
         name: requirement
@@ -472,7 +472,7 @@ def test_the_marker_algebra_holds_the_floor_it_declares() -> None:
     """The floor `_packaging` checks at import is the one the extra installs."""
     minimum = _literal(PACKAGING_BACKENDS, "MINIMUM")
 
-    assert PACKAGING_REQUIREMENTS["nab-markersets"].startswith(f"packaging>={minimum},")
+    assert PACKAGING_REQUIREMENTS["nab-markersets"] == f"packaging>={minimum}"
 
 
 def test_the_standalone_session_installs_the_algebra_alone() -> None:

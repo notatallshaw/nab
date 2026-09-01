@@ -20,15 +20,15 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-# Pick the copy of packaging to run on; `nab_markersets._packaging` prefers the
-# fork when both are installed. The released range stops at the major this
-# suite has been run against, because the engine reads `_parser.parse_marker`,
-# `_parser.Op`, `_parser.Variable`, `_parser.Value`,
-# `_tokenizer.ParserSyntaxError` and `markers._eval_op`, none of which packaging
-# publishes. Raise the ceiling after running the suite on the new major, not
-# before.
+# Pick the copy of packaging to run on; `nab_markersets._packaging` binds the
+# first of these at the floor. The floor is where the suite has been run, and
+# it is not open below: the engine reads `_parser.parse_marker`, `_parser.Op`,
+# `_parser.Variable`, `_parser.Value`, `_tokenizer.ParserSyntaxError` and
+# `markers._eval_op`, none of which packaging publishes, so a release may move
+# any of them and `test_the_private_packaging_names_the_engine_reaches` is what
+# says whether one did.
 [project.optional-dependencies]
-packaging = ["packaging>=26.3,<27"]
+packaging = ["packaging>=26.3"]
 nab-vendored-packaging = ["nab-provider==0.0.16.dev0"]
 
 [project.urls]

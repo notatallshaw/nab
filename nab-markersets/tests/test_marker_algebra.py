@@ -1762,10 +1762,9 @@ def test_serialise_absorbs_constant_false_atom() -> None:
 
 
 def test_the_private_packaging_names_the_engine_reaches() -> None:
-    # None of the six the manifest lists has a public replacement, which is why
-    # it caps packaging at the major this suite has run against. Renaming one,
-    # or reshaping the parse tree, breaks every import of nab_markersets, so
-    # raise the cap only once this passes on the new major.
+    # None of the six the manifest lists has a public replacement, so packaging
+    # may rename one or reshape the parse tree in any release. That breaks every
+    # import of nab_markersets, and this is where it shows.
     parsed = parse_marker('sys_platform == "linux"')
     lhs, op, rhs = parsed[0]
     assert isinstance(lhs, Variable)
