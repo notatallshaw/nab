@@ -1,11 +1,11 @@
 """The failures the algebra raises on its own, beside packaging's.
 
-A marker the grammar rejects still raises packaging's
-:class:`~packaging.markers.InvalidMarker` and an operator it cannot decide
-packaging's ``UndefinedComparison``, both :class:`ValueError`, and these two
-match. An environment missing a variable raises packaging's
-``UndefinedEnvironmentName``, which is a :class:`KeyError`. They come from
-whichever copy of packaging :mod:`nab_markersets._packaging` bound.
+A marker the grammar rejects still raises packaging's ``InvalidMarker`` and an
+operator it cannot decide packaging's ``UndefinedComparison``, both
+:class:`ValueError`, which the two below match. An environment missing a
+variable raises packaging's ``UndefinedEnvironmentName``, a :class:`KeyError`.
+Those three come from whichever copy :mod:`nab_markersets._packaging` bound, so
+catch :class:`ValueError` or :class:`KeyError` rather than naming a module.
 """
 
 from __future__ import annotations

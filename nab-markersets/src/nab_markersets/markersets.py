@@ -36,6 +36,10 @@ _MAX_WORK = 100_000_000
 
 __all__ = ["DecisionStore", "MarkerSet", "variable_names"]
 
+# Promised here rather than where it is written, so help() and a traceback name
+# the path the table gives it.
+variable_names.__module__ = __name__
+
 
 def __dir__() -> list[str]:
     return __all__
@@ -144,8 +148,9 @@ class MarkerSet:
         bound; ``str(marker)`` is the spelling that always works. A blank string
         is the absent marker and gives the full set, where packaging refuses it.
 
-        :raises InvalidMarker: packaging's, if ``marker`` is a string the
-            grammar rejects.
+        :raises ValueError: packaging's ``InvalidMarker`` if ``marker`` is a
+            string the grammar rejects, and its ``UndefinedComparison`` if an
+            operator has no meaning on the variable and literal it compares.
         :raises IntractableMarkerSet: if the marker nests past the stack, or a
             ``~=`` literal overruns the interpreter's integer-string limit.
             Under the other operators that surfaces on the first decision.
@@ -389,8 +394,8 @@ class MarkerSet:
         ... )
         True
 
-        :raises UndefinedEnvironmentName: packaging's, if the marker
-            references a variable ``env`` does not supply.
+        :raises KeyError: packaging's ``UndefinedEnvironmentName``, if the
+            marker references a variable ``env`` does not supply.
         :raises IntractableMarkerSet: if a version literal or value overruns the
             integer-string limit, or the marker nests past the stack.
         """

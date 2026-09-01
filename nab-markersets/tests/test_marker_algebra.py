@@ -9,7 +9,6 @@ pinning the private packaging names the engine imports.
 from __future__ import annotations
 
 import gc
-import re
 import sys
 import traceback
 import weakref
@@ -18,7 +17,6 @@ import pytest
 
 from nab_markersets import errors, markersets
 from nab_markersets._packaging import (
-    BACKEND,
     InvalidMarker,
     Marker,
     Op,
@@ -284,13 +282,9 @@ def test_from_marker_accepts_marker_object() -> None:
 
 
 def test_from_marker_rejects_other_types() -> None:
-    # A Marker from the copy of packaging that is not bound is a real caller
-    # mistake here, and both spell the class the same, so the message names the
-    # bound one in full.
     with pytest.raises(
         TypeError,
-        match=rf"expected str or {re.escape(BACKEND)}\.markers\.Marker, "
-        r"got builtins\.int",
+        match=r"expected str or packaging\.markers\.Marker, got builtins\.int",
     ):
         MarkerSet.from_marker(42)  # type: ignore[arg-type]
 
@@ -396,6 +390,9 @@ def test_all_and_dir_pin_the_public_surface() -> None:
     # completion in a REPL offers the supported surface and nothing else.
     assert dir(markersets) == sorted(markersets.__all__)
     assert dir(errors) == sorted(errors.__all__)
+
+    # Promised at markersets, so that is the module it reports.
+    assert markersets.variable_names.__module__ == "nab_markersets.markersets"
 
 
 # ----------------------------------------------------------------- algebra

@@ -224,10 +224,15 @@ def standalone(session: nox.Session) -> None:
 
     Every other session installs nab-provider, whose vendored fork
     ``nab_markersets`` binds in preference, so this is the only run that reaches
-    released packaging. It comes from the tests lock rather than from the
-    ``packaging`` extra, which ``--no-deps`` does not resolve.
+    released packaging.
     """
-    _install(session, TESTS_LOCK, ["nab-markersets"])
+    _install_lock(session, TESTS_LOCK)
+
+    # The extra, and without --no-deps, so the range nab-markersets declares is
+    # what pip resolves. The lock already pins a packaging inside that range,
+    # so nothing moves; a range that stopped covering it would fail here.
+    session.install("-e", "nab-markersets[packaging]")
+
     session.run("python", "-m", "pytest", "-n", "auto", "nab-markersets/tests")
 
 

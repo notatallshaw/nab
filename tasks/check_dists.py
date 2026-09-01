@@ -128,13 +128,19 @@ def _dist_info(names: list[str]) -> str:
     raise SystemExit(msg)
 
 
+# nab-markersets declares no required dependency, so the sdist install has to
+# name the extra a standalone user would.
+SDIST_EXTRAS = {"nab-markersets": "[packaging]"}
+
+
 def install_each_sdist(dist_root: Path, scratch: Path) -> None:
     """Install every sdist into its own venv, resolving siblings locally."""
     links = _find_links(dist_root)
     for package in PACKAGES:
         sdist = _sdist(dist_root, package)
         python = _make_venv(scratch / f"sdist-{package}")
-        _run([str(python), "-m", "pip", "install", *links, str(sdist)])
+        target = f"{sdist}{SDIST_EXTRAS.get(package, '')}"
+        _run([str(python), "-m", "pip", "install", *links, target])
 
 
 def _console_script(python: Path) -> str:

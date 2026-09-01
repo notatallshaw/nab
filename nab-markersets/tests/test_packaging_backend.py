@@ -11,11 +11,16 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
+from typing import TYPE_CHECKING
 
 import pytest
 
 from nab_markersets import _packaging
 from nab_markersets._packaging import BACKEND
+from nab_markersets.markersets import MarkerSet, variable_names
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 BOUND_NAMES = (
     "InvalidMarker",
@@ -60,6 +65,19 @@ def test_a_candidate_that_is_not_installed_is_passed_over() -> None:
     assert found.__name__ == "packaging"
 
 
+def test_a_candidate_that_breaks_on_import_is_not_passed_over(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A broken copy says so where it broke, rather than reading as absent."""
+    (tmp_path / "nab_markersets_broken_backend.py").write_text(
+        'raise ImportError("something inside is missing")\n'
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    with pytest.raises(ImportError, match="something inside is missing"):
+        _packaging._import_or_none("nab_markersets_broken_backend")
+
+
 def test_no_candidate_at_all_names_both_extras() -> None:
     with pytest.raises(ImportError, match=r"nab-markersets\[packaging\]"):
         _packaging._import_backend((ABSENT, f"{ABSENT}_either"))
@@ -90,6 +108,36 @@ def test_every_bound_name_comes_from_the_bound_backend() -> None:
 
     assert set(homes) == set(BOUND_NAMES)
     assert all(home.startswith(BACKEND) for home in homes.values()), homes
+
+
+def test_a_marker_from_either_copy_is_accepted() -> None:
+    """The copy that lost the probe still builds Marker objects callers pass in."""
+    other = next(name for name in _packaging.BACKENDS if name != BACKEND)
+    module = _packaging._import_or_none(f"{other}.markers")
+    if module is None:
+        pytest.skip(f"{other} is not installed")
+
+    text = 'sys_platform == "linux"'
+    from_other = MarkerSet.from_marker(module.Marker(text))
+
+    assert from_other.equivalent(MarkerSet.from_marker(text))
+    assert variable_names(module.Marker(text)) == frozenset({"sys_platform"})
+
+
+class Marker:
+    """Named like packaging's, from a module that is not a packaging.markers."""
+
+    def __str__(self) -> str:
+        """Return a marker string, so only the class check can refuse it."""
+        return 'sys_platform == "linux"'
+
+
+def test_a_class_named_marker_elsewhere_is_not_a_marker() -> None:
+    """The class is matched on its module too, not just its name."""
+    assert Marker.__qualname__ == "Marker"
+
+    with pytest.raises(TypeError, match="expected str or packaging"):
+        MarkerSet.from_marker(Marker())  # type: ignore[arg-type]
 
 
 def test_the_fork_wins_when_both_are_installed() -> None:

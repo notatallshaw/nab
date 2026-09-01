@@ -18,7 +18,6 @@ from itertools import pairwise, product
 from typing import TYPE_CHECKING, NamedTuple, cast
 
 from ._packaging import (
-    BACKEND,
     InvalidMarker,
     InvalidSpecifier,
     InvalidVersion,
@@ -466,16 +465,27 @@ def make_not(node: Formula) -> Formula:
 # ------------------------------------------------------------------- construction
 
 
+def _is_marker(source: object) -> bool:
+    """Whether ``source`` is a packaging ``Marker``, from either copy.
+
+    Matched on the class rather than by ``isinstance``, because testing against
+    the copy that lost the probe would mean importing its marker stack, which
+    is the second copy this package exists to leave unloaded.
+    """
+    kind = type(source)
+    return kind.__qualname__ == "Marker" and kind.__module__.endswith(
+        "packaging.markers"
+    )
+
+
 def _parse_ast(source: object) -> list[MarkerNode] | None:
     """Parse a marker with packaging; None for an empty marker."""
-    if isinstance(source, Marker):
+    if _is_marker(source):
         source = str(source)
     elif not isinstance(source, str):
-        # Naming the bound copy matters: with both installed, a Marker built by
-        # the other one lands here, and str(marker) is the way across.
         kind = type(source)
         msg = (
-            f"expected str or {BACKEND}.markers.Marker, got "
+            "expected str or packaging.markers.Marker, got "
             f"{kind.__module__}.{kind.__qualname__}"
         )
         raise TypeError(msg)

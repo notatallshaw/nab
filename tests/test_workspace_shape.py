@@ -145,24 +145,40 @@ def _packaging_requirement(name: str) -> str | None:
     return None
 
 
-def _session_editables(name: str) -> list[str]:
-    """The editable targets one noxfile.py session installs.
-
-    Its own list, outside the WORKSPACES table the other tests read.
-    """
-    session = next(
+def _session(name: str) -> ast.FunctionDef:
+    """One noxfile.py session, as its syntax tree."""
+    return next(
         node
         for node in ast.walk(ast.parse(NOXFILE.read_text(encoding="utf-8")))
         if isinstance(node, ast.FunctionDef) and node.name == name
     )
+
+
+def _session_editables(name: str) -> list[str]:
+    """The editable targets one session passes to ``_install``.
+
+    Its own list, outside the WORKSPACES table the other tests read.
+    """
     call = next(
         node
-        for node in ast.walk(session)
+        for node in ast.walk(_session(name))
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
         and node.func.id == "_install"
     )
     return ast.literal_eval(call.args[-1])
+
+
+def _session_installs(name: str) -> list[str]:
+    """The arguments one session passes to ``session.install`` directly."""
+    call = next(
+        node
+        for node in ast.walk(_session(name))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "install"
+    )
+    return [ast.literal_eval(arg) for arg in call.args]
 
 
 def _nox_workspaces() -> dict[str, tuple[list[str], list[str], list[str]]]:
@@ -414,8 +430,8 @@ def test_released_packaging_is_declared_wherever_it_is_imported() -> None:
     assert importing == set(PACKAGING_REQUIREMENTS)
 
 
-def test_declared_packaging_ranges_are_the_tested_ones() -> None:
-    """The declared ranges are the ones the suites have been run against.
+def test_declared_packaging_ranges_are_the_ones_recorded_here() -> None:
+    """The declared ranges are the ones this file records.
 
     nab_markersets reads ``packaging._parser``, ``packaging._tokenizer`` and
     ``packaging.markers._eval_op``, none of which packaging promises, so its
@@ -465,7 +481,7 @@ def test_the_standalone_session_installs_the_algebra_alone() -> None:
     That session is the only run where `nab_markersets` binds released
     packaging, and nothing about it would go red if it stopped doing so.
     """
-    assert _distributions(_session_editables("standalone")) == {"nab-markersets"}
+    assert _session_installs("standalone") == ["-e", "nab-markersets[packaging]"]
 
 
 def test_cli_log_handlers_reach_every_released_package() -> None:
