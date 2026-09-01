@@ -138,8 +138,9 @@ already present is printed to stderr.
 Inspect the effective layered configuration (read-only). Three
 actions:
 
-* `nab config list` prints every option with its value, scope, and
-  the source it came from.
+* `nab config list` prints every option with its value, the scope of
+  the source that won, and that source. `explain` heads with the
+  option's own scope instead.
 * `nab config get <key>` prints one effective value.
 * `nab config explain <key>` prints a header naming the key, its scope
   and its type, then the option's own help line and a link to the page
@@ -217,9 +218,11 @@ resolve tries the next candidate. A declared local, VCS, or archive
 source, or a workspace member, is the only candidate for its name, so
 the same refusal ends the run. See [Build policy](build-policy.md).
 
-`urllib3` is the only backend pulled in by the base install. The
-others surface a helpful `ImportError` if selected without the
-matching extra.
+`urllib3` is the only backend pulled in by the base install. Selecting
+another without its extra prints one of these and exits 1:
+
+    error: httpx is not installed; run `pip install nab[httpx]`
+    error: httpx is installed without HTTP/2 support; run `pip install nab[httpx]`
 
 A cache root nab cannot write to (read-only, full, over quota) does not
 stop an index fetch. The run warns once and carries on, serving what the
@@ -285,6 +288,7 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | Variable | Effect |
 | -------- | ------ |
 | `XDG_CACHE_HOME` | If set, `nab`'s default cache root is `$XDG_CACHE_HOME/nab` instead of `~/.cache/nab`. |
+| `XDG_CONFIG_HOME` | If set, the user `nab.toml` is read from `$XDG_CONFIG_HOME/nab/nab.toml` instead of `~/.config/nab/nab.toml`. |
 | `NAB_VERBOSITY` | Default verbosity when no `-v` / `-q` flag is given: one of `silent`, `quiet`, `normal`, `verbose`, `debug`. A `-v` / `-q` flag overrides it. An unrecognised value is rejected by any command that reads it; `--version` and `--help` do not read it, so they neither honour nor refuse it. |
 | `NAB_NO_PROGRESS` | If set to a non-empty value, suppress the live progress line, like `--no-progress`. |
 | `NO_COLOR` | If set to a non-empty value, disable colour under `--color auto`. |
@@ -296,7 +300,7 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | Code | Meaning |
 | ---- | ------- |
 | `0`  | Success. |
-| `1`  | Resolution failed, lockfile cannot be written (a missing hash, or text that is not valid UTF-8), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, or `--locked` found the lockfile out of date or missing. |
+| `1`  | Resolution failed, lockfile cannot be written (a missing hash, or text that is not valid UTF-8), download failed, missing `[project].dependencies`, a `--build-requirements` run whose project declares no `[build-system]`, invalid `[tool.nab]` configuration, an unrecognised `cache` or `config` action, or `--locked` found the lockfile out of date or missing. |
 | `2`  | Bad usage: an unrecognised flag or subcommand, or a malformed `--color` value or `NAB_VERBOSITY`. |
 | `120` | Output was lost: writing to stdout or stderr failed, `nab` wrote to one that was closed before it started, or flushing one of them at exit failed. |
 | `130` | Interrupted with Ctrl-C. `nab` prints `error: interrupted` and exits. |
