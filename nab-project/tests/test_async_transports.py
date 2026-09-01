@@ -85,6 +85,10 @@ UNPARSEABLE_RETRY_AFTERS = [
     pytest.param(f"Wed, {'9' * 400} Dec 2020 00:00:00 GMT", id="day-past-float"),
 ]
 
+# Literals, so dropping a status from RETRY_STATUSES fails a test instead of
+# quietly deleting its own cases.
+EXPECTED_RETRY_STATUSES = (408, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524, 527)
+
 
 class _StubIndex(ThreadingHTTPServer):
     """Loopback index that serves each queued status once, then 200.
@@ -376,11 +380,15 @@ def _assert_jittered_backoff_schedule(delays: list[float]) -> None:
 class TestRetryPolicy:
     """The retry policy both transports share."""
 
+    def test_retried_statuses_are_the_expected_set(self) -> None:
+        """The policy retries these statuses and no others."""
+        assert sorted(RETRY_STATUSES) == list(EXPECTED_RETRY_STATUSES)
+
     def test_transient_status_is_retried_without_retry_after(self) -> None:
         """A bare 5xx/429 is retried; urllib3's default only retries with Retry-After."""
         assert all(
             GET_RETRY.is_retry("GET", status, has_retry_after=False)
-            for status in RETRY_STATUSES
+            for status in EXPECTED_RETRY_STATUSES
         )
 
     def test_client_error_is_not_retried(self) -> None:
@@ -482,7 +490,7 @@ class TestRaiseForErrorStatus:
         with pytest.raises(UnserveableUrlError, match=f"HTTP {status} for"):
             raise_for_error_status(status, "https://example.com/pkg.metadata")
 
-    @pytest.mark.parametrize("status", sorted(RETRY_STATUSES))
+    @pytest.mark.parametrize("status", EXPECTED_RETRY_STATUSES)
     def test_retried_status_stays_a_bare_http_error(self, status: int) -> None:
         """A status the retry policy calls a blip must not read as a verdict.
 
@@ -766,11 +774,14 @@ class TestHttpxAsyncTransport:
         verify = cls.call_args.kwargs["verify"]
         assert isinstance(verify, truststore.SSLContext)
 
+    @pytest.mark.parametrize("status", [500, 502, 503, 504])
     @respx.mock
-    def test_get_retries_a_transient_status(self, slept: list[float]) -> None:
-        """A bare 503 is a blip, so ask again before believing it."""
+    def test_get_retries_a_transient_status(
+        self, status: int, slept: list[float]
+    ) -> None:
+        """A bare 5xx is a blip, so ask again before believing it."""
         route = respx.get("https://example.com/pkg").mock(
-            side_effect=[httpx.Response(503), httpx.Response(200, json={"ok": True})]
+            side_effect=[httpx.Response(status), httpx.Response(200, json={"ok": True})]
         )
 
         async def go() -> _HttpxResponse:
@@ -1321,9 +1332,10 @@ class TestUrllib3AsyncTransport:
         asyncio.run(go())
         assert pool.request.call_args.kwargs["timeout"] == 1.5
 
-    def test_get_retries_a_bare_transient_status(self) -> None:
-        """One 503 with no Retry-After must not read as the index's answer."""
-        with _stub_index([503]) as index:
+    @pytest.mark.parametrize("status", [500, 502, 503, 504])
+    def test_get_retries_a_bare_transient_status(self, status: int) -> None:
+        """One 5xx with no Retry-After must not read as the index's answer."""
+        with _stub_index([status]) as index:
             url = f"http://127.0.0.1:{index.server_port}/pkg/pkg-1.0.whl.metadata"
 
             async def go() -> _Urllib3Response:
