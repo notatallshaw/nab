@@ -395,7 +395,7 @@ class TestDerivedSpellings:
             "matrix",
             scope=Scope.PROJECT,
             rdefault=None,
-            parse=values.parse_matrix,
+            parse=hooks.parse_matrix,
             render=hooks.render_matrix,
             help="the axes",
             docs="reference/cli.md",

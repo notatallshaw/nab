@@ -5472,7 +5472,7 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="must be a PEP 440 specifier"):
             read_pyproject_config(write(tmp_path, body))
 
-    def test_a_patch_python_axis_sends_a_file_user_to_the_table(
+    def test_a_patch_python_axis_sends_a_pyproject_user_to_the_table(
         self, tmp_path: Path
     ) -> None:
         """The refusal names the table to write, not the file it read."""
@@ -5485,6 +5485,34 @@ class TestMatrix:
         message = str(caught.value)
         assert "Put patch versions in [tool.nab.matrix.python-patches]." in message
         assert f"in {path}" not in message
+
+    def test_a_patch_python_axis_sends_a_nab_toml_user_to_its_own_table(
+        self, tmp_path: Path
+    ) -> None:
+        """A nab.toml holds nab's keys at the top level, so the header drops the prefix.
+
+        The header it names is then written into that file and accepted.
+        """
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        nab_toml = tmp_path / "nab.toml"
+        head = 'mode = "universal"\n[matrix]\nplatforms = ["linux_x86_64"]\n'
+        nab_toml.write_text(head + 'python = ">=3.11.4,<3.13"\n', encoding="utf-8")
+
+        with pytest.raises(ConfigError) as caught:
+            read_pyproject_config(path, discover_workspace=False)
+
+        message = str(caught.value)
+        assert "Put patch versions in [matrix.python-patches]." in message
+        assert "tool.nab" not in message
+
+        repaired = head + (
+            'python = ">=3.11,<3.13"\n[matrix.python-patches]\n"3.11" = "3.11.4"\n'
+        )
+        nab_toml.write_text(repaired, encoding="utf-8")
+
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.matrix is not None
+        assert config.matrix.python_patches == {"3.11": "3.11.4"}
 
     def test_python_patches_must_be_table(self, tmp_path: Path) -> None:
         path = write(

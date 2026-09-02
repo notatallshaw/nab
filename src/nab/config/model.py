@@ -67,6 +67,7 @@ from .ladder import (
     SourceRoots,
     build_cli_layer,
     discover_layers,
+    project_key_path,
     pyproject_registry_keys,
     read_env_layer,
     reject_user_keys_in_pyproject,
@@ -1143,7 +1144,7 @@ def _environment_from_effective(
     if marker_environment:
         file_origin = _environment_file_origin(entry)
         if file_origin is not None:
-            environment_table = _project_key_path("environment", file_origin.kind)
+            environment_table = project_key_path("environment", file_origin.kind)
             marker_table = _declared_table(effective["marker-environment"])
             msg = (
                 f"[{environment_table}] and the deprecated [{marker_table}]"
@@ -1168,7 +1169,7 @@ def _environment_from_effective(
         origin = _environment_file_origin(entry)
         if origin is None:
             origin = _environment_source(effective).origin
-        table = _project_key_path("environment", origin.kind)
+        table = project_key_path("environment", origin.kind)
 
         valid = sorted(PLATFORM_MARKERS)
         msg = (
@@ -1235,16 +1236,7 @@ def _environment_source(
 
 def _declared_table(value: EffectiveValue) -> str:
     """Return the table path the file that declared ``value`` writes for its key."""
-    return _project_key_path(value.spec.name, value.origin.kind)
-
-
-def _project_key_path(key: str, kind: SourceKind) -> str:
-    """Return the table path a project file of ``kind`` gives ``key``.
-
-    A project-dir nab.toml takes nab's keys at the top level; a
-    pyproject.toml takes them under ``[tool.nab]``.
-    """
-    return key if kind is SourceKind.PROJECT_TOML else f"tool.nab.{key}"
+    return project_key_path(value.spec.name, value.origin.kind)
 
 
 def _reject_vcs_sources_under_block(
@@ -1279,8 +1271,8 @@ def _reject_vcs_sources_under_block(
         if vcs.origin.kind is SourceKind.DEFAULT
         else vcs.origin.kind
     )
-    sources_table = _project_key_path("vcs-sources", vcs_sources.origin.kind)
-    vcs_table = _project_key_path("vcs", policy_kind)
+    sources_table = project_key_path("vcs-sources", vcs_sources.origin.kind)
+    vcs_table = project_key_path("vcs", policy_kind)
 
     msg = (
         f"[[{sources_table}]] is declared but [{vcs_table}].policy is"

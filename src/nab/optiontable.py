@@ -412,7 +412,7 @@ class ProjectKeys(
     matrix = Key(
         Layer[MatrixConfig | None](
             rdefault=None,
-            parse=values.parse_matrix,
+            parse=hooks.parse_matrix,
             render=hooks.render_matrix,
             label="table(python,platforms)",
         ),

@@ -1750,19 +1750,20 @@ def _parse_conflict_member(item: object, where: str) -> ConflictMember:
 _MINOR_RELEASE_PARTS = 2
 
 
-def _patches_spelling(where: str) -> str:
+def _patches_spelling(where: str, table: str) -> str:
     """Spell python-patches the way the source behind ``where`` writes it.
 
     A CLI label ends in the ``*`` its sub-flags fill, so the key takes the
     star's place and the sentence names a flag the user can type.  Every
-    other source is a file, which writes the table.
+    other source is a file, and ``table`` is the matrix header as that file
+    writes it.
     """
     if where.endswith("*"):
         return f"{where[:-1]}python-patches"
-    return "[tool.nab.matrix.python-patches]"
+    return f"[{table}.python-patches]"
 
 
-def _validate_matrix_python(spec: str, where: str) -> None:
+def _validate_matrix_python(spec: str, where: str, table: str) -> None:
     """Reject a python axis finer than major.minor.
 
     The axis lists language (minor) Python versions; patch pins belong in
@@ -1792,7 +1793,7 @@ def _validate_matrix_python(spec: str, where: str) -> None:
             msg = (
                 f"{where}.python axis is a language (minor) version only; "
                 f"{clause} is finer than major.minor. Put patch versions in "
-                f"{_patches_spelling(where)}."
+                f"{_patches_spelling(where, table)}."
             )
             raise SourceConfigError(msg)
 
@@ -1961,8 +1962,16 @@ _MATRIX_KEYS = frozenset(
 )
 
 
-def parse_matrix(value: object, where: str) -> MatrixConfig:
-    """Read ``[tool.nab.matrix]`` into its five axes."""
+def parse_matrix(
+    value: object, where: str, *, table: str = "tool.nab.matrix"
+) -> MatrixConfig:
+    """Read a matrix table into its five axes.
+
+    ``table`` is the matrix header the declaring file writes, which a
+    standalone nab.toml puts at the top level as ``matrix``, so an error
+    naming a sub-table spells it the same way.  The default is the
+    pyproject header, for a caller that read no file.
+    """
     if not isinstance(value, dict):
         msg = f"{where} must be a table, got {type(value).__name__}"
         raise SourceConfigError(msg)
@@ -1981,7 +1990,7 @@ def parse_matrix(value: object, where: str) -> MatrixConfig:
     if not isinstance(python, str):
         msg = f"{where}.python must be a string PEP 440 specifier"
         raise SourceConfigError(msg)
-    _validate_matrix_python(python, where)
+    _validate_matrix_python(python, where, table)
     platforms = _parse_matrix_platforms(platforms_raw, where)
     if not platforms:
         msg = f"{where}.platforms must list at least one platform id"
