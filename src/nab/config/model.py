@@ -114,17 +114,9 @@ _DEFAULT_VCS = VcsConfig()
 
 
 class EnvironmentConfig(ValueType):
-    """The single environment ``[tool.nab.environment]`` declares.
+    """The axes declared by ``[tool.nab.environment]``.
 
-    The axes a target is made of, the same ones a matrix entry carries.
-    An unset axis takes the host's value, so an empty table is the host
-    and a table naming only ``python`` is the host machine running
-    another Python.
-
-    ``platform`` is the same :class:`~nab_provider.tags.PlatformSpec` a
-    ``matrix.platforms`` entry parses to, so the wheel-tag knobs (the libc
-    family, the libc and macOS the lock must run on, the kernel
-    marker values, the free-threaded build) are declarable here too.
+    Unset axes use the host. ``platform`` accepts a matrix ``PlatformSpec``.
     """
 
     __slots__ = __match_args__ = ("python", "platform", "implementation")
@@ -526,13 +518,7 @@ def _specific_mode_message(matrix_value: EffectiveValue) -> str:
 def _matrix_environment_message(
     matrix_value: EffectiveValue, environment_value: EffectiveValue
 ) -> str:
-    """Say why a matrix and a declared environment cannot both stand.
-
-    ``environment_value`` is the surface the environment came from, so the
-    deprecated overlay is named as the overlay.  Each file side is named the
-    way the file that declared it writes it, since a matrix in a
-    ``pyproject.toml`` can sit beside an environment in a ``nab.toml``.
-    """
+    """Explain why matrix and environment declarations conflict."""
     matrix_flags = _declared_by(matrix_value)
     environment_flags = _declared_by(environment_value)
     matrix = " and ".join(matrix_flags) or f"[{_declared_table(matrix_value)}]"
@@ -1174,7 +1160,7 @@ def _reject_duplicate_source_names(
     """
     seen: dict[str, str] = {}
     # The three types share only SlottedValue, which declares no name, so the
-    # joined tuple needs the element type spelling out.
+    # joined tuple needs an explicit element union.
     declared: tuple[LocalSource | VcsSource | ArchiveSource, ...] = (
         *local_sources,
         *vcs_sources,
@@ -1220,10 +1206,10 @@ def _reject_vcs_sources_under_block(
     it. The two project files share a precedence rank, so a policy written
     into the other one conflicts instead of overriding.
 
-    ``policy = "allow"`` opens the gate but does not on its own admit a
+    ``policy = "allow"`` permits checks but does not on its own admit a
     URL: ``allowed-schemes`` and ``allowed-repos`` are empty by default
     and each denies every URL until an entry is added, so the message
-    points at the whole gate rather than promising that one key is enough.
+    names all settings instead of promising that one key is enough.
     """
     sources: tuple[VcsSource, ...] = vcs_sources.value
     config: VcsConfig = vcs.value
@@ -1243,8 +1229,9 @@ def _reject_vcs_sources_under_block(
     msg = (
         f"[[{sources_table}]] is declared but [{vcs_table}].policy is"
         f" {config.policy.value!r}, which refuses every clone; remove"
-        f' the sources, or set [{vcs_table}].policy = "allow" and open the'
-        " rest of the gate (vcs.allowed-schemes and vcs.allowed-repos are"
+        f' the sources, or set [{vcs_table}].policy = "allow" and'
+        " configure the remaining VCS filters (vcs.allowed-schemes and"
+        " vcs.allowed-repos are"
         " empty by default and each denies every URL)"
     )
     raise ConfigError(msg)

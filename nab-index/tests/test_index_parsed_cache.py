@@ -646,7 +646,7 @@ class TestReadPathRebuild:
     ) -> None:
         cache = _cache(tmp_path)
         files, _ = _warm_bound(cache)
-        # Rebind the blob to a foreign body digest so the gate fails.
+        # Rebind the blob to a foreign body digest so validation fails.
         cache.put_simple_parsed("pkg", encode(files, "f" * 64))
         transport = _FakeTransport([])
         client = CachedAsyncSimpleClient(transport, cache, _INDEX)

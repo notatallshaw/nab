@@ -409,7 +409,7 @@ def _declared_environments(
             "A marker in this resolve consults %s, which names the resolving"
             " machine's kernel build; the lockfile cannot declare it, so an"
             " installer whose value differs will still accept this lock and"
-            " miss the dependencies that marker gates.",
+            " miss the dependencies that marker selects.",
             ", ".join(unboundable),
         )
 
@@ -426,7 +426,7 @@ def _declared_environments(
                 " level, not the interpreter's release, so the lockfile leaves"
                 " that axis open and an installer whose value differs will"
                 " still accept this lock and miss the dependencies that marker"
-                " gates."
+                " selects."
             )
             break
 
@@ -645,7 +645,7 @@ def _selector_requirements(
 ) -> dict[tuple[str, str], tuple[Requirement, ...]]:
     """Split a fork's active extras and groups into one requirement list each.
 
-    The lock writer gates each package on the selectors that reach it, so a
+    The lock writer records the selectors that reach each package, so a
     package two active selections share has to name both or an install of
     one alone misses it.  The fork's own ``selection`` is a selector like
     any other.

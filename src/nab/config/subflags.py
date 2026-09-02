@@ -1,19 +1,7 @@
-"""The flags that spell one configuration table, and how they assemble.
+"""Assemble CLI flags that set individual configuration table keys.
 
-A table key such as ``matrix`` carries no flag of its own.  Its rows are
-declared ``under`` it (:mod:`nab.optiontable`), so each spells one key of
-the table and the command line writes ``--project-matrix-python`` rather
-than a table.  They reach this module through the generated
-:mod:`nab.config.registry`, as the keyed rows do.
-
-:func:`build_cli_tables` reads those parameters back into a
-:class:`CliTable`: the keys the line set, each with the flag that set it
-and the tokens as typed.  :func:`fold_cli_table` lays them over the table
-the project files declare, so one merged table reaches the key's own parse
-hook and a key no flag named keeps the file's value.
-
-A row's ``tokens`` field says how its own tokens read: one value, a list
-of values, a list of tables, one table, or a table of ``KEY=VALUE`` pairs.
+``build_cli_tables`` records the keys written on the command line.
+``fold_cli_table`` overlays them on a table from the project files.
 """
 
 from __future__ import annotations
@@ -37,30 +25,26 @@ __all__ = [
     "render_cli_table",
 ]
 
-# The rows that spell one key each of a table key, grouped by that key,
-# in declaration order.
+# Sub-rows grouped by their parent table, in declaration order.
 BY_PARENT: dict[str, tuple[Opt, ...]] = {
     parent: tuple(row for row in SUB_ROWS if row.under == parent)
     for parent in dict.fromkeys(row.under for row in SUB_ROWS)
 }
 
-# The two words TOML reads as booleans, so a knob reaches its hook as the
-# type a file would have given it.
 _BOOLEANS = frozenset({"true", "false"})
 
-# No parameter is spelled by a flag other than its row's own.
 _NO_FLAG_ALIASES: Mapping[str, str] = {}
 
 
 class CliKey:
-    """One table key the command line set: the flag, its tokens, its value."""
+    """One configuration table key set on the command line."""
 
     __slots__ = ("flag", "key", "tokens", "value")
 
     def __init__(
         self, key: str, flag: str, tokens: tuple[str, ...], value: Any
     ) -> None:
-        """Record what one sub-flag wrote."""
+        """Record a CLI table key."""
         self.key = key
         self.flag = flag
         self.tokens = tokens
@@ -68,34 +52,31 @@ class CliKey:
 
     @property
     def written(self) -> str:
-        """The tokens as typed, for a record a reader retypes."""
+        """Return the tokens as typed."""
         return " ".join(self.tokens)
 
 
 class CliTable:
-    """The keys of one table key the command line set, in declaration order."""
+    """Table keys set on the command line, in declaration order."""
 
     __slots__ = ("keys",)
 
     def __init__(self, keys: tuple[CliKey, ...]) -> None:
-        """Record the keys the line wrote."""
+        """Record the keys set on the command line."""
         self.keys = keys
 
     @property
     def overlay(self) -> dict[str, Any]:
-        """The keys as a table, ready to lay over the one a file declares."""
+        """Return the keys as a configuration table."""
         return {key.key: key.value for key in self.keys}
 
 
 def build_cli_tables(
     locals_by_param: Mapping[str, Any], flags: Mapping[str, str] = _NO_FLAG_ALIASES
 ) -> dict[str, CliTable]:
-    """Assemble each table key's sub-flag values into the keys they wrote.
+    """Collect written sub-flags by parent table.
 
-    Returns ``{key: table}`` for a key whose sub-flags the line set, and
-    nothing for one it did not.  ``flags`` names the flag a parameter was
-    spelled by where that is not the row's own: ``--python`` writes the
-    environment's ``python`` axis.
+    ``flags`` supplies aliases such as ``--python`` for environment.python.
     """
     out: dict[str, CliTable] = {}
     for parent, sub_rows in BY_PARENT.items():
@@ -132,12 +113,9 @@ def _cli_keys(
 def fold_cli_table(
     parent: Opt, table: CliTable, file_raw: Mapping[str, Any] | None
 ) -> dict[str, Any]:
-    """Lay the keys the command line set over the table the files declare.
+    """Overlay CLI keys on the file table.
 
-    A key the line did not name keeps the file's value, and a list key the
-    line did name is replaced whole; nothing appends.  With no file table
-    there is nothing to fall back on, so every ``needs`` key has to be on
-    the command line.
+    Without a file table, all required keys must appear on the command line.
     """
     if file_raw is None:
         _check_needed(parent, table)
@@ -146,11 +124,7 @@ def fold_cli_table(
 
 
 def cli_table_label(parent: Opt) -> str:
-    """Name the flag family a table key is spelled by.
-
-    Read off a sub-row's own flag, so the label cannot drift from the
-    flags it stands for.
-    """
+    """Return the flag family for a table key."""
     row = BY_PARENT[parent.name][0]
     return str(row.cli_flag).removesuffix(row.name) + "*"
 
@@ -161,7 +135,7 @@ def render_cli_table(table: CliTable) -> str:
 
 
 def _written(row: Opt, raw: Any) -> bool:
-    """Whether the command line wrote this sub-flag.
+    """Return whether the command line wrote this sub-flag.
 
     A token run with no token stores the empty tuple, which is what an
     absent flag stores too, so it counts as unwritten.
@@ -172,7 +146,7 @@ def _written(row: Opt, raw: Any) -> bool:
 
 
 def _check_needed(parent: Opt, table: CliTable) -> None:
-    """Refuse a table missing a key the command line has to give with the rest."""
+    """Reject a CLI table missing required keys and a file fallback."""
     needed = [row for row in BY_PARENT[parent.name] if row.needed]
     named = {key.key for key in table.keys}
     missing = [row for row in needed if row.name not in named]
@@ -182,8 +156,7 @@ def _check_needed(parent: Opt, table: CliTable) -> None:
     written = [key.flag for key in table.keys]
     missing_flags = [str(row.cli_flag) for row in missing]
 
-    # "both" reads only when the two flags it stands for are the two the
-    # sentence has already named.
+    # "both" applies only when the written and missing flags are the required pair.
     required = (
         "both"
         if len(written) + len(missing) == len(needed)
@@ -199,7 +172,7 @@ def _check_needed(parent: Opt, table: CliTable) -> None:
 
 
 def _flag_names(flags: Sequence[str]) -> str:
-    """Join flags as a sentence names them: ``--a and --b``."""
+    """Join flag names with ``and``."""
     return " and ".join(flags)
 
 
@@ -273,7 +246,7 @@ def _pairs(row: Opt, tokens: Sequence[str]) -> dict[str, Any]:
 
 
 def _scalar(text: str) -> object:
-    """Read a value token: TOML's own booleans, else the text."""
+    """Read TOML booleans and leave other tokens as text."""
     if text in _BOOLEANS:
         return text == "true"
     return text

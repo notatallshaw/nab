@@ -29,7 +29,7 @@ _PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 # lowers them in this order, so the two lists index each other.
 _DECLARED = [row for table in TABLES for row in rows(table)]
 
-# The bool-valued kinds, which are the ones a ``--no-`` spelling negates.
+# The bool-valued kinds, which a ``--no-`` form negates.
 _BOOL_KINDS = frozenset({Kind.FLAG, Kind.TRI})
 
 _LOCK_ONLY = (("lock", "nab._lock", "lock"),)
@@ -174,7 +174,7 @@ class TestTheDeclaredTable:
         optiondefs.validate(ALL)
 
     def test_the_table_is_the_three_groups_it_is_built_from(self) -> None:
-        """64 rows: 7 at the root, 44 on a command, 13 in a file alone."""
+        """Keep the 64 rows split into their declared groups."""
         root = [row for row in ALL if row.is_global]
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
@@ -277,7 +277,7 @@ class TestTheDeclaredTable:
             row.unknown = 1  # type: ignore[attr-defined]
 
     def test_a_boolean_flag_is_negatable_unless_it_is_already_a_negation(self) -> None:
-        """``--no-no-emit-workspace`` is the spelling this drops.
+        """``--no-no-emit-workspace`` is the form this drops.
 
         A row named ``no-`` cannot be negatable, because the negation is
         built off the flag rather than off a second name.
@@ -346,7 +346,7 @@ class TestTheEnumBackedChoiceRows:
 
 
 class TestDerivedSpellings:
-    """The four members a spelling is read off rather than written down."""
+    """The four members from which a flag form is derived."""
 
     def test_a_project_row_takes_its_prefix_from_its_scope(self) -> None:
         assert _row("mode", scope=Scope.PROJECT, sample="x").cli_flag == (
@@ -427,7 +427,7 @@ class TestTheCategoryGate:
     """Which TOML sources a row's scope lets set it.
 
     Driven with the live ``SourceKind`` rather than a stand-in, because
-    the gate matches on the member's value and a renamed value would
+    the check matches on the member's value and a renamed value would
     otherwise pass here and refuse the source in the config layer.
     """
 

@@ -1,16 +1,9 @@
-"""What a command invocation is allowed to import.
+"""Import boundaries for command invocations.
 
-The declaration builds 64 rows and imports the policy enums to do it, and no
-command reads it.  ``nab.optiondefs`` is the option model, and the
-configuration ladder reaches it through the generated ``nab.config.registry``.
-``nab lock`` and ``nab config`` ask for the ladder and the parser does not.
-``nab.optiontable`` is where the rows are written, and only the generators and
-the tests read it.  The four command modules resolve their ``Literal``
-annotations through ``get_type_hints``, so they need the aliases at run time
-and nothing else, which is why those sit in ``nab.flagtypes`` on their own.
-
-The probes run in a subprocess: the test session has already imported most
-of nab, so an in-process check would pass whatever the import graph is.
+Runtime code imports ``optiondefs`` through the generated configuration
+registry and never imports ``optiontable``. Commands resolve their ``Literal``
+aliases from ``flagtypes``. Fresh subprocesses keep earlier test imports from
+masking dependencies.
 """
 
 from __future__ import annotations

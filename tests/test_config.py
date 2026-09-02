@@ -1307,8 +1307,8 @@ class TestDefaultGroups:
             read_pyproject_config(path)
 
     def test_doc_describes_resolve_activation(self) -> None:
-        # default-groups activates the groups for the resolve, not just records
-        # them in the lockfile, so the reference has to say so.
+        # default-groups activates the groups during resolution. The reference
+        # must describe that behavior.
         comment = top_level_doc_comment("default-groups").lower()
         assert any(word in comment for word in ("resolve", "activat")), comment
 
@@ -1329,7 +1329,7 @@ class TestMainGroup:
     def test_base_group_names_every_declaration_it_collides_with(
         self, tmp_path: Path
     ) -> None:
-        """Two spellings of one group name, so the message reads in order."""
+        """Two forms of one group name appear in order in the message."""
         path = write(
             tmp_path,
             "[dependency-groups]\nDefault = []\nDEFAULT = []\n"
@@ -1565,8 +1565,8 @@ class TestRequiresPython:
     def test_excluding_the_resolve_target_is_an_error(self, tmp_path: Path) -> None:
         """It names its own table and the knobs that move the target.
 
-        ``requires-python`` is a key of both tables, so the message says
-        which one it read, as the ``[project]`` case below does.
+        ``requires-python`` is a key of both tables, so the message names the
+        table it read. The ``[project]`` case below follows the same rule.
         """
         path = write(
             tmp_path,
@@ -2040,7 +2040,7 @@ class TestPolicies:
 
     @pytest.mark.parametrize("value", ["-1", "true", '"1"'])
     def test_invalid_build_requires_depth(self, tmp_path: Path, value: str) -> None:
-        """A count of nested builds: not negative, not a bool, not a string."""
+        """A nested-build count must be a nonnegative integer."""
         path = write(tmp_path, f"[tool.nab]\nbuild-requires-depth = {value}\n")
         with pytest.raises(ConfigError, match="must be a non-negative integer"):
             read_pyproject_config(path)
@@ -3033,7 +3033,7 @@ class TestMarkerEnvironmentDeprecation:
             read_pyproject_config(path)
 
     def test_accepted_variables_are_the_ones_packaging_defines(self) -> None:
-        """Every variable packaging defines is accepted, and nothing else is.
+        """Only variables defined by packaging are accepted.
 
         A variable packaging adds fails here rather than reading as a
         misspelling in a user's config.
@@ -3607,7 +3607,7 @@ class TestVcsSources:
         )
 
     def test_policy_named_in_the_file_that_set_it(self, tmp_path: Path) -> None:
-        """The repair goes where the policy is, not where the sources are.
+        """The policy's source file owns the repair.
 
         Both project files sit at the same precedence rank, so writing the
         policy into nab.toml as well would conflict rather than override.
@@ -4515,8 +4515,8 @@ class TestPackageOverrideDependencies:
         assert rendered == ["numpy>=1.8.1", 'six>=1.11.0; python_version < "3"']
 
     def test_empty_list_stored_as_empty_tuple(self, tmp_path: Path) -> None:
-        # An empty list is a first-class value (replace with zero deps),
-        # distinct from the key being absent, and lifts the empty-body gate.
+        # An empty list means replace with zero dependencies. It differs from
+        # an absent key and satisfies the body check.
         path = write(tmp_path, "[tool.nab.packages.broken]\ndependencies = []\n")
         (override,) = read_pyproject_config(
             path, discover_workspace=False
@@ -4690,7 +4690,7 @@ class TestPackageOverrideProvidesExtra:
     """The ``provides-extra`` metadata override replaces the declared extras."""
 
     def test_parses_and_normalises(self, tmp_path: Path) -> None:
-        # PEP 685: the names normalise, so spelling does not matter.
+        # PEP 685 normalises equivalent extra names.
         path = write(
             tmp_path,
             '[tool.nab.packages.flask]\nprovides-extra = ["Dot_Env", "async"]\n',
@@ -4701,8 +4701,8 @@ class TestPackageOverrideProvidesExtra:
         assert override.provides_extra == ("dot-env", "async")
 
     def test_empty_list_stored_as_empty_tuple(self, tmp_path: Path) -> None:
-        # A present-but-empty list declares no extras, distinct from absent,
-        # and lifts the empty-body gate.
+        # A present empty list declares no extras. It differs from an absent
+        # key and satisfies the body check.
         path = write(tmp_path, "[tool.nab.packages.flask]\nprovides-extra = []\n")
         (override,) = read_pyproject_config(
             path, discover_workspace=False
@@ -4789,7 +4789,7 @@ class TestIndexOverrides:
         assert config.index_overrides["internal"].dist_policy is DistPolicy.WHEEL_ONLY
 
     def test_inline_form(self, tmp_path: Path) -> None:
-        # The inline map spelling parses to the same dict as the header form.
+        # The inline map form parses to the same dict as the header form.
         path = write(
             tmp_path,
             self._two_indexes()
@@ -6306,10 +6306,10 @@ class TestProjectNabTomlConfiguresResolve:
 
 
 class TestProjectNabTomlGateAndConflict:
-    """The category gate and the cross-file conflict fire on the resolve path."""
+    """The category check and cross-file conflict run on the resolve path."""
 
     def test_user_key_in_pyproject_still_rejected(self, tmp_path: Path) -> None:
-        # A USER-scope key in pyproject [tool.nab] is the category gate; it
+        # A USER-scope key in pyproject [tool.nab] fails the category check. It
         # must still error when a project nab.toml is present.
         path = tmp_path / "pyproject.toml"
         path.write_text(

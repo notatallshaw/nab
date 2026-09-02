@@ -110,7 +110,7 @@ def _run_config(args: list[str], *, status: int = 0) -> str:
 
 
 def _flag_forms(flag: str, *, wildcard: str) -> list[str]:
-    """The spellings a page may use for ``flag``: itself or its ``--no-`` form.
+    """Return the forms a page may use for ``flag``.
 
     A ``--project-`` flag is also covered by ``wildcard``, the placeholder a
     page writes when it stands for the whole family rather than one member.
@@ -412,8 +412,8 @@ class TestConfigExplainReferenceDocs:
     def test_reference_names_every_status(
         self, hermetic_roots: Path, tmp_path: Path
     ) -> None:
-        # One source per status: the user file rejected (project-scope key),
-        # the pyproject binding shadowed, the CLI winning.
+        # Exercise a rejected user file, shadowed pyproject binding, and
+        # winning CLI source.
         _write(
             hermetic_roots / "pyproject.toml",
             '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
@@ -874,7 +874,7 @@ class TestLockFormatSummaries:
 
 
 class TestCliReferenceMatchesTheseFourBehaviours:
-    """Four claims on the CLI page, each checked against what the code does."""
+    """Check four CLI-page claims against the implementation."""
 
     @staticmethod
     def _rows(heading: str) -> dict[str, str]:

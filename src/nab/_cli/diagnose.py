@@ -32,7 +32,7 @@ def _paint(text: str, code: str, *, color: bool) -> str:
 
 
 def suggest(token: str, candidates: tuple[str, ...]) -> tuple[str, ...]:
-    """Offer the spellings ``token`` might have meant, best first, at most two.
+    """Offer up to two likely option names for ``token``, best first.
 
     Matching runs on the names with their dashes stripped, because a
     leading ``--`` adds two matching characters to every ratio and pushes
@@ -79,8 +79,8 @@ def diagnose(error: UsageError, *, color: bool = False) -> str:
 def _suggestion(named: tuple[str, ...], *, color: bool) -> str:
     """Word the did-you-mean line, singular or plural.
 
-    The quotes stay plain, so the spellings are still marked off when the
-    colour is stripped.
+    The quotes stay plain, so the names remain distinct when colour is
+    stripped.
     """
     quoted = ", ".join(f"'{_paint(name, _CYAN, color=color)}'" for name in named)
     if len(named) == 1:

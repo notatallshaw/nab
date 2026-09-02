@@ -107,24 +107,11 @@ __all__ = [
 
 
 class SourceConfigError(ConfigError):
-    """A configuration source set a value nab refused.
-
-    Raised for a value's own grammar by the parsers here, and by the ladder
-    for the category gate over them (a project-scope option in a user
-    ``nab.toml``, a user-scope option in ``pyproject.toml`` ``[tool.nab]``).
-    A subclass of :class:`ConfigError`, so a caller catching the broad config
-    error catches these too, while ``except SourceConfigError`` still narrows
-    to what a source declared.
-    """
+    """A configuration source supplied an invalid or disallowed value."""
 
 
 class CliTableError(SourceConfigError):
-    """A ``--project-<table>-<key>`` line nab refused.
-
-    It came from the command line, not a file, so it prints without the
-    ``config error:`` prefix.  A refusal from the merged-table parse keeps
-    that hook's wording and names the key.
-    """
+    """A CLI table-key override that omits the ``config error:`` prefix."""
 
 
 DURATION_PATTERN = re.compile(r"^P(\d+)D$")
@@ -549,7 +536,7 @@ def parse_resolution(value: object, where: str) -> ResolutionStrategy:
 def parse_build_policy(value: object, where: str) -> BuildPolicy:
     """Read ``build-policy``: when nab may build an sdist.
 
-    The plain last-wins value only.  The host-build gate that forces never
+    The plain last-wins value only. The host-build rule forcing never
     for a declared target runs over the merged config, not here.
     """
     return parse_enum(value, where, BuildPolicy, BuildPolicy.BUILD_LOCAL)
@@ -812,8 +799,8 @@ def parse_packages_sugar(
 
     Each key is a PEP 508 requirement (a bare name, or a name plus a
     version specifier in a quoted key such as ``"numpy <= 1.21"``) and the
-    sub-table is the override body.  The key is the whole selector, so the
-    sugar form carries no inner selector key.
+    sub-table is the override body. The key itself is the selector. The
+    sugar form has no inner selector key.
     """
     if isinstance(value, list):
         msg = (
@@ -1062,9 +1049,9 @@ def _reject_deferred(
 ) -> None:
     """Reject override-body keys that are not supported.
 
-    ``flat_metadata_advice`` gates the package-surface hint to set metadata
-    via the flat body keys; the index surface passes ``False`` since those
-    keys are rejected there too.
+    ``flat_metadata_advice`` controls the package-surface hint to set
+    metadata via flat body keys. The index passes ``False`` because it
+    rejects those keys.
     """
     deferred = sorted(set(entry) & _OVERRIDE_DEFERRED_KEYS)
     if deferred:
@@ -1310,7 +1297,7 @@ def _parse_override_provides_extra(value: object, where: str) -> tuple[str, ...]
     """Parse the ``provides-extra`` body: the extras the override declares.
 
     A TOML array of extra names, each normalised per PEP 685 like a parsed
-    ``Provides-Extra``, so an extra compares equal regardless of spelling. A
+    ``Provides-Extra``, so equivalent extra names compare equal. A
     present-but-empty list is stored as ``()`` (declares no extras), distinct
     from the key being absent (``None``).
     """
@@ -1749,13 +1736,7 @@ _MINOR_RELEASE_PARTS = 2
 
 
 def _patches_spelling(where: str, table: str) -> str:
-    """Spell python-patches the way the source behind ``where`` writes it.
-
-    A CLI label ends in the ``*`` its sub-flags fill, so the key takes the
-    star's place and the sentence names a flag the user can type.  Every
-    other source is a file, and ``table`` is the matrix header as that file
-    writes it.
-    """
+    """Return the source label for python-patches."""
     if where.endswith("*"):
         return f"{where[:-1]}python-patches"
     return f"[{table}.python-patches]"
@@ -1963,12 +1944,9 @@ _MATRIX_KEYS = frozenset(
 def parse_matrix(
     value: object, where: str, *, table: str = "tool.nab.matrix"
 ) -> MatrixConfig:
-    """Read a matrix table into its five axes.
+    """Parse a matrix table.
 
-    ``table`` is the matrix header the declaring file writes, which a
-    standalone nab.toml puts at the top level as ``matrix``, so an error
-    naming a sub-table spells it the same way.  The default is the
-    pyproject header, for a caller that read no file.
+    ``table`` supplies the header used in sub-table errors.
     """
     if not isinstance(value, dict):
         msg = f"{where} must be a table, got {type(value).__name__}"

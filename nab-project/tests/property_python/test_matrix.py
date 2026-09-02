@@ -43,8 +43,7 @@ def python_specs_admitting_some_minor(draw: st.DrawFn) -> str:
     """Generate a PEP 440 spec admitting at least one known minor.
 
     Random specifiers can intersect to empty; we constrain to bounded
-    ranges that include at least one ``KNOWN_PYTHON_MINORS`` value
-    so that expansion is non-trivial.
+    ranges that include at least one ``KNOWN_PYTHON_MINORS`` value.
     """
     lo_minor_index = draw(
         st.integers(min_value=0, max_value=len(KNOWN_PYTHON_MINORS) - 1)
@@ -182,22 +181,10 @@ class TestPythonOrderingFlip:
 
 
 class TestPythonsInRange:
-    """The helper that maps a PEP 440 specifier to known minor strings.
+    """Map a PEP 440 specifier to known minor strings in canonical order.
 
-    ``_pythons_in_range`` underpins :meth:`Matrix.expand`'s Python
-    axis.  Three guarantees are load-bearing:
-
-    1. Every output is an ``M.N`` minor string drawn from
-       :data:`KNOWN_PYTHON_MINORS`.  Downstream consumers
-       (marker evaluation, wheel-tag selection) depend on this
-       shape; emitting ``M.N.P`` patch strings would break tag
-       generation.
-    2. The list is ascending and unique.  Duplicate or out-of-order
-       entries would inflate the matrix and silently change
-       cross-tuple alignment ordering.
-    3. Output order matches the canonical ascending order in
-       :data:`KNOWN_PYTHON_MINORS`.  Callers rely on this to keep
-       lockfile output diff-friendly.
+    Matrix expansion uses the unique ``M.N`` values for marker evaluation and
+    wheel tags. Patch-version strings are invalid here.
     """
 
     @given(spec=python_specs_admitting_some_minor())

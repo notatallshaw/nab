@@ -63,8 +63,8 @@ installer given neither leaves it out; see
 * Only the static list is read. Neither this flag nor `build-group`
   invokes the project's own backend, so whatever that backend would add
   from `get_requires_for_build_wheel` is not covered.
-* `[tool.nab].build-group` gates its packages on a marker, and the two
-  requirements formats have nowhere to put one, so they render the build
+* `[tool.nab].build-group` adds a selection marker to its packages. The
+  two requirements formats cannot carry it, so they render build
   requirements as ordinary pins. Use `pylock` output, or this flag, when
   the two sets have to stay apart.
 
@@ -78,8 +78,8 @@ See [Lock a workspace](../how-to/workspaces.md).
   the run resolves the named project alone.
 * `--no-emit-workspace` drops the workspace members' own `[[packages]]`
   entries from the emitted lockfile, along with the dependency edges
-  and membership gates that reference them; the resolver still uses the
-  members during the resolve. It is off by default.
+  and membership markers that reference them. The resolver still uses
+  the members during the resolve. It is off by default.
 
   Use it for hashed requirements because pip's `--require-hashes` mode
   rejects member directory pins. Install those members separately with

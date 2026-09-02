@@ -126,7 +126,7 @@ class TestDependencyMarkerHoldsUnevaluableClause:
         ],
     )
     def test_unevaluable_clause_names_the_marker(self, marker_text: str) -> None:
-        """The error quotes the whole marker, not just the failing operand."""
+        """The error quotes the whole marker and its failing operand."""
         with pytest.raises(UnevaluableMarkerError) as excinfo:
             dependency_marker_holds(Marker(marker_text), _ENV)
         assert marker_text in str(excinfo.value)

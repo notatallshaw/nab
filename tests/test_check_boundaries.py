@@ -33,7 +33,7 @@ class FakeWorkspace:
     """A tmp tree the checker reads as if it were the repo and its release list."""
 
     def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Point the checker at ``root``, with no packages and no tables yet."""
+        """Point the checker at an empty ``root`` workspace."""
         self.root = root
         self._monkeypatch = monkeypatch
         self._names: list[str] = []
@@ -91,7 +91,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeWorkspace:
 
 
 def test_packages_are_the_ones_the_release_builds() -> None:
-    """The checked set is the real release set, not a second list beside it."""
+    """The checked set comes from the release package list."""
     checked = {package.dist_name for package in check_boundaries.packages()}
 
     assert checked == set(check_boundaries.build_dists.PACKAGES)
@@ -184,7 +184,7 @@ def test_import_off_the_supported_path_is_reported(
 def test_supported_path_row_naming_a_missing_module_is_reported(
     workspace: FakeWorkspace, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A row is read against its own package, not only when a sibling imports it."""
+    """A row is read against its own package without a sibling import."""
     workspace.add("pkg-a", docstring=SUPPORTED_TABLE)
     workspace.publishes_supported_paths("pkg_a")
 

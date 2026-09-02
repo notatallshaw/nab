@@ -105,22 +105,12 @@ BY_KEY: dict[str, Opt] = {row.name: row for row in OPTIONS}
 
 
 def project_key_path(key: str, kind: SourceKind) -> str:
-    """Return the table path a project file of ``kind`` gives ``key``.
-
-    A project-dir nab.toml takes nab's keys at the top level; a
-    pyproject.toml takes them under ``[tool.nab]``.
-    """
+    """Return a project's TOML path for ``key``."""
     return key if kind is SourceKind.PROJECT_TOML else f"tool.nab.{key}"
 
 
 def pyproject_registry_keys() -> frozenset[str]:
-    """Registry keys a pyproject ``[tool.nab]`` table may legitimately carry.
-
-    Only PROJECT-scope registry options are allowed in pyproject; the
-    single-environment parser (:mod:`nab.config.model`) folds this set
-    into its own known-keys so a registry key is not double-reported as
-    an unknown ``[tool.nab]`` key.
-    """
+    """Return registry keys allowed in pyproject ``[tool.nab]``."""
     return frozenset(
         spec.name for spec in OPTIONS if spec.allowed_in_toml(SourceKind.PYPROJECT)
     )
@@ -141,31 +131,16 @@ class Origin(ValueType):
 
     @property
     def scope(self) -> str:
-        """The provenance scope name shown by ``nab config``.
-
-        Mirrors the source kind's value for every kind except
-        ``PYPROJECT``, which reports "project" (it sits at the project
-        precedence level alongside the project-dir nab.toml).
-        """
+        """Return the provenance scope shown by ``nab config``."""
         return scope_label(self.kind)
 
     def outranks(self, other: Origin) -> bool:
-        """Whether this origin sits at a strictly higher precedence level.
-
-        A tie is not an outranking: ``PYPROJECT`` and ``PROJECT_TOML``
-        share a rank, so neither overrides the other here.
-        """
+        """Return whether this origin has strictly higher precedence."""
         return PRECEDENCE[self.kind] > PRECEDENCE[other.kind]
 
 
 def scope_label(kind: SourceKind) -> str:
-    """Return the scope name ``nab config`` reports for a source kind.
-
-    Distinct from Scope (PROJECT/USER, the gate axis): provenance reports
-    the source, so a project nab.toml reports "project", env reports
-    "env", etc.  Every kind reports its own value except PYPROJECT, which
-    shares the project precedence level and so reports "project".
-    """
+    """Return the source scope reported by ``nab config``."""
     return "project" if kind is SourceKind.PYPROJECT else kind.value
 
 
@@ -174,12 +149,9 @@ _NO_RAW: Mapping[str, Any] = {}
 
 
 class Layer(ValueType):
-    """A set of (key -> value) bindings discovered from one source.
+    """Bindings discovered from one configuration source.
 
-    ``raw`` carries, for a key that sub-rows spell, the table as the
-    source wrote it: unparsed for a file source, and the
-    :class:`~nab.config.subflags.CliTable` for the CLI layer.  The fold
-    lays one over the other and parses the merged table.
+    ``raw`` retains tables that must be folded before parsing.
     """
 
     __slots__ = __match_args__ = ("origin", "values", "raw")
@@ -201,13 +173,7 @@ class Layer(ValueType):
 
 
 class RejectedLayer(ValueType):
-    """A source refused by the registry: a key outside its scope, or unknown.
-
-    Captured (not raised) by :func:`discover_layers` for the TOML sources and
-    :func:`read_env_layer` for the ``NAB_*`` ones, only when the caller asks
-    to collect rejections for ``nab config --include-rejected``.  The normal
-    load path raises :class:`SourceConfigError` for TOML and warns for env.
-    """
+    """A source binding rejected for its key or scope."""
 
     __slots__ = __match_args__ = ("origin", "key", "reason")
 
@@ -237,11 +203,10 @@ class EffectiveValue(ValueType):
     spec: Opt
     value: Any
     origin: Origin
-    # Every binding for this key in precedence order (low -> high),
-    # the last of which is the winner.
+    # Bindings in ascending precedence; the final binding wins.
     stack: tuple[tuple[Origin, Any], ...]
     rejected: tuple[RejectedLayer, ...]
-    # The keys the command line set, on a table key it folded into.
+    # CLI keys folded into a table option.
     cli_table: CliTable | None
 
     def __init__(
@@ -263,17 +228,9 @@ class EffectiveValue(ValueType):
 
 
 class SourceRoots(ValueType):
-    """Injectable search roots so config discovery is hermetic in tests.
+    """Injectable roots for configuration discovery.
 
-    ``system_toml`` and ``user_toml`` point at the system/user
-    ``nab.toml`` files.  ``project_dir`` is the directory holding the
-    pyproject; the project ``nab.toml`` is looked up beside it.
-    ``pyproject`` names the pyproject file itself when the user pointed at
-    a non-default name; left ``None`` it defaults to
-    ``project_dir / "pyproject.toml"`` so the registry reads the same file
-    the rest of nab does.  Any field may be ``None`` to skip that source.
-    There is no walk-up: the project source is the directory of the
-    pyproject only.
+    A ``None`` field skips that source. Project discovery does not walk upward.
     """
 
     __slots__ = __match_args__ = (
@@ -305,20 +262,9 @@ class SourceRoots(ValueType):
 def build_cli_overrides(
     locals_by_param: Mapping[str, Any], flags: Mapping[str, str]
 ) -> dict[str, Any]:
-    """Map ``{cli_param: value}`` to a registry-keyed override dict.
+    """Return registry-keyed overrides for CLI parameters the user set.
 
-    Iterates :data:`OPTIONS`, reads each row's ``cli_param`` out of
-    ``locals_by_param``, and keeps only the keys the user actually set.
-    An unset scalar flag is ``None`` and an unset repeatable flag is an
-    empty tuple (the append-action default); both are omitted so they do not
-    shadow the file ladder.  A file-only row (``cli_param`` is ``None``)
-    has no CLI flag; a table key is spelled by its sub-rows instead, and
-    :func:`nab.config.subflags.build_cli_tables` collects the keys the
-    line set for it.  ``flags`` names the flag a parameter was spelled by
-    when that is not the row's own flag, and is empty for a line with no
-    such parameter.  Both the run subcommands and ``nab config`` build
-    their override dict through this single helper, keyed off the registry
-    rather than a per-option if-chain.
+    Table sub-flags are collected by :func:`build_cli_tables`.
     """
     out: dict[str, Any] = {}
     for spec in OPTIONS:
@@ -347,18 +293,7 @@ def tool_nab_section(data: Mapping[str, Any]) -> Any:
 
 
 def reject_user_keys_in_pyproject(raw: Mapping[str, Any]) -> None:
-    """Raise the category error for any USER registry key in ``[tool.nab]``.
-
-    The parser fold: a USER-scope option (e.g. ``offline``,
-    ``cache-dir``) set in pyproject ``[tool.nab]`` must surface the
-    registry category error (``pyproject [tool.nab]`` is project-scope
-    only) rather than the generic unknown-key error the pyproject
-    parser would otherwise raise.  PROJECT keys and keys the registry
-    does not own are left for the pyproject parser to handle.
-
-    Each message quotes the key and names the table it refuses, so the
-    caller adds no prefix of its own.
-    """
+    """Reject user-scope registry keys in pyproject ``[tool.nab]``."""
     for key in raw:
         spec = BY_KEY.get(key)
         if spec is None:
@@ -373,22 +308,12 @@ def _load_toml_layer(
     *,
     rejections: list[RejectedLayer] | None = None,
 ) -> Layer:
-    """Read one TOML source into a :class:`Layer`, gating by category.
-
-    ``kind`` selects how the file is read: a ``PYPROJECT`` source reads
-    ``[tool.nab]``; the standalone ``nab.toml`` sources read top-level
-    keys.  Every registry key is parsed by its row.  A key that names an
-    option not allowed in ``kind`` (the category gate) raises
-    :class:`SourceConfigError`, unless ``rejections`` is supplied, in which
-    case it is appended there and skipped (for ``--include-rejected``).
-    """
+    """Read a TOML source, collecting or raising scope errors."""
     raw = _read_raw_table(path, kind)
     origin = Origin(kind, str(path))
     values: dict[str, Any] = {}
     raw_tables: dict[str, Any] = {}
-    # Carry the declaring file's directory and matrix header structurally: a
-    # relative local-source path resolves against the directory, and the
-    # patch-table refusal names the header this file writes.
+    # Bind file-specific state used by parse hooks.
     with declaring_dir(path.parent), matrix_table(project_key_path("matrix", kind)):
         for key, value in raw.items():
             spec = BY_KEY.get(key)
@@ -490,7 +415,7 @@ def _warn_unknown_env(
 ) -> None:
     """Warn about any ``NAB_*`` var that is neither a known nor renamed name.
 
-    The env half of the category gate: a typo'd or made-up ``NAB_<KEY>``
+    For environment sources, a typo'd or made-up ``NAB_<KEY>``
     (e.g. ``NAB_OFLINE``) is ignored with a warning naming the variable,
     never applied and never fatal.  Renamed PROJECT names are left for
     :func:`_warn_renamed_env`, which gives the more specific
@@ -609,7 +534,7 @@ def discover_layers(
 
     ``read_pyproject=False`` drops the pyproject layer while keeping the
     project-dir ``nab.toml``, for a caller reading a USER-scope option
-    the category gate bars pyproject from setting.
+    that pyproject cannot set.
     """
     if roots.project_dir is None or not read_pyproject:
         pyproject_path = None
@@ -658,7 +583,7 @@ def resolve_config(
     :data:`PRECEDENCE`).  ``env_layer`` and ``cli_layer`` are the env
     and CLI bindings.  Returns a ``key -> EffectiveValue`` map covering
     every registry row, each carrying its winner ``(scope, origin)`` and
-    the full shadowed stack.  ``rejected`` (category-gate casualties) is
+    the full shadowed stack.  ``rejected`` (source-scope rejections) is
     attached per key for ``explain --include-rejected``.
 
     Whatever the row's type, the highest source that binds the key
@@ -694,13 +619,7 @@ def resolve_config(
 def _folded(
     spec: Opt, table: CliTable, all_layers: Sequence[Layer]
 ) -> tuple[Origin, Any]:
-    """Parse the table the command line wrote over the one the files declare.
-
-    The parse hook sees the merged table, so a knob the file declared and a
-    platform the flag named are checked against each other.  The file table
-    is parsed alone as well, when its layer is read, so a cross-key rule the
-    flag would have satisfied can still refuse there.
-    """
+    """Parse CLI table keys over the table declared by project files."""
     merged = fold_cli_table(spec, table, _file_raw(spec, all_layers))
     try:
         value = spec.parse(merged, cli_table_label(spec))
@@ -710,12 +629,7 @@ def _folded(
 
 
 def _file_raw(spec: Opt, all_layers: Iterable[Layer]) -> Any | None:
-    """Return the unparsed table the files declared, or ``None`` for none.
-
-    Only the two project files can declare a table a sub-flag spells, and
-    ``_stack_for`` has already refused them declaring it differently, so the
-    fold reads the same table whichever of them ranks highest.
-    """
+    """Return the highest-precedence unparsed project table, if any."""
     found = [
         (layer.origin, layer.raw[spec.name])
         for layer in all_layers
@@ -744,11 +658,7 @@ def _stack_for(spec: Opt, all_layers: Iterable[Layer]) -> list[tuple[Origin, Any
 
 
 def _rank(binding: tuple[Origin, Any]) -> tuple[int, bool]:
-    """Sort key for one binding: source precedence, then the rank-3 tie.
-
-    The pyproject/project-dir tie is broken so the project-dir nab.toml
-    (``False < True``) sorts last and wins.
-    """
+    """Sort a binding by precedence, with project nab.toml winning its tie."""
     origin, _value = binding
     return (PRECEDENCE[origin.kind], origin.kind is SourceKind.PROJECT_TOML)
 
@@ -756,17 +666,7 @@ def _rank(binding: tuple[Origin, Any]) -> tuple[int, bool]:
 def _check_project_file_conflict(
     spec: Opt, found: Sequence[tuple[Origin, Any]]
 ) -> None:
-    """Reject one key set differently in pyproject and the project nab.toml.
-
-    Co-presence is allowed; setting the same key to different values
-    across the two same-precedence project files is a hard
-    :class:`SourceConfigError`, not a silent last-wins.  Identical values
-    are fine.
-
-    Every row is compared as one whole value, lists and tables included,
-    so two project files declaring different constraints or different
-    sub-keys of one table conflict rather than combining.
-    """
+    """Reject a key set differently in both project files."""
     by_kind = {origin.kind: value for origin, value in found}
     if SourceKind.PYPROJECT not in by_kind or SourceKind.PROJECT_TOML not in by_kind:
         return
@@ -785,19 +685,9 @@ def _check_project_file_conflict(
 
 
 def build_cli_layer(values: Mapping[str, Any]) -> Layer:
-    """Build the CLI layer from a ``{key: value}`` map of set overrides.
+    """Build a CLI layer from registry-keyed overrides.
 
-    ``values`` holds only keys the user actually set on the CLI (an
-    unset flag is omitted, so it does not shadow lower layers).  Each
-    value is normalised through its registry row so the effective value
-    carries the typed form regardless of how the flag was spelled.
-
-    A row with no command line is set from a file alone, so a value for
-    one is the caller's mistake and raises ``ValueError`` rather than the
-    user-facing ``SourceConfigError``.  A table key's value is a
-    :class:`~nab.config.subflags.CliTable`, carried unparsed:
-    :func:`resolve_config` parses it once, folded over whatever the
-    project files declared.
+    Table keys remain unparsed until :func:`resolve_config` folds them.
     """
     parsed: dict[str, Any] = {}
     raw_tables: dict[str, Any] = {}
@@ -810,8 +700,7 @@ def build_cli_layer(values: Mapping[str, Any]) -> Layer:
             msg = f"{key} takes no command line, so no CLI layer can set it"
             raise ValueError(msg)
 
-        # A repeatable flag arrives as a tuple; the parse hooks expect a
-        # TOML list, so normalise it here.
+        # Parse hooks expect repeatable flags in their TOML list form.
         raw_value = list(value) if isinstance(value, tuple) else value
         parsed[key] = spec.parse(raw_value, str(spec.cli_flag))
     return Layer(Origin(SourceKind.CLI, "cli"), parsed, raw_tables)
@@ -821,18 +710,14 @@ def _ordered(effective: Mapping[str, EffectiveValue]) -> list[EffectiveValue]:
     return [effective[spec.name] for spec in OPTIONS]
 
 
-# Column widths for the ``nab config list`` table, shared by the header
-# and every row so the two cannot drift.  The trailing ``origin`` column
-# is unpadded (last field).
+# Column widths for ``nab config list``. The final origin column is unpadded.
 _LIST_KEY_W = 20
 _LIST_VALUE_W = 20
 _LIST_SCOPE_W = 9
 # Status column width for ``nab config explain`` (winner/shadowed/rejected).
 _EXPLAIN_STATUS_W = 9
 
-# Where the pages live in the checkout, and where they are published:
-# [project.urls].Documentation from pyproject.toml, at the released version
-# its bare URL redirects to.
+# Documentation paths in the checkout and published site.
 _DOCS_DIR = "docs/"
 _DOCS_SITE = "https://nab.readthedocs.io/en/stable/"
 
@@ -840,14 +725,7 @@ _DOCS_SITE = "https://nab.readthedocs.io/en/stable/"
 def orphan_rejections(
     rejected: Iterable[RejectedLayer],
 ) -> tuple[RejectedLayer, ...]:
-    """Rejections that name no registry option, so attach to no key.
-
-    An unknown standalone ``nab.toml`` key or an unknown ``NAB_*`` var is
-    recorded with ``key`` set to the offending name, which matches no
-    registry key, so :func:`resolve_config` attaches it to no
-    :class:`EffectiveValue` and no ``explain <key>`` reaches it.  These
-    orphans are surfaced by :func:`render_list` instead.
-    """
+    """Return rejections that name no registry option."""
     return tuple(rej for rej in rejected if rej.key not in BY_KEY)
 
 
@@ -856,14 +734,7 @@ def render_list(
     *,
     rejected: Iterable[RejectedLayer] = (),
 ) -> str:
-    """Render every effective option: value, scope, origin.
-
-    ``rejected`` (when collecting for ``--include-rejected``) adds a
-    trailing section listing every rejected source: a key set outside its
-    scope, and an unknown key or ``NAB_*`` var.  ``explain`` reaches the
-    former (it attaches to the named option) but not the latter (it names
-    no option), so ``list`` is the one place that shows both together.
-    """
+    """Render effective options and any rejected sources."""
     header = (
         f"{'key':<{_LIST_KEY_W}} {'value':<{_LIST_VALUE_W}}"
         f" {'scope':<{_LIST_SCOPE_W}} origin"
@@ -899,17 +770,9 @@ def render_explain(
     *,
     include_rejected: bool = False,
 ) -> str:
-    """Render the row's help, its documentation page and its shadowed stack.
+    """Render an option's help, documentation, and source stack.
 
-    The header names the key, its scope and its type, and ends with the
-    effective value; under it come the row's own help line and the page
-    that documents it.  The highest source is the ``winner`` and carries a
-    ``>`` gutter; every source it beats is ``shadowed``.  A
-    ``--project-<table>-<key>`` flag replaces one key of the table below
-    it, so that source is ``merged`` rather than shadowed: it supplied the
-    rest of the value.  With ``include_rejected`` the category-rejected
-    sources (a source that tried to set ``key`` but was not allowed) are
-    listed too, labelled ``rejected``.
+    Sources are ``winner``, ``shadowed``, ``merged``, or ``rejected``.
     """
     ev = _require_key(effective, key)
     header = f"{key} ({ev.spec.scope_name}, {_type_label(ev.spec)})"
@@ -942,11 +805,9 @@ def render_explain(
 
 
 def _explain_status(ev: EffectiveValue, index: int, winner_index: int) -> str:
-    """Name one rung's standing: it won, the fold read it, or it lost.
+    """Return whether one source won, supplied the fold base, or lost.
 
-    Only the winner's immediate predecessor can be ``merged``: that is the
-    binding the command line's keys were laid over.  A second source at the
-    same rank lost the tie, so it contributed nothing.
+    Only the winner's predecessor can supply keys omitted from a CLI table.
     """
     if index == winner_index:
         return "winner"
@@ -956,24 +817,12 @@ def _explain_status(ev: EffectiveValue, index: int, winner_index: int) -> str:
 
 
 def docs_path(row: Opt) -> str:
-    """Return the page ``row`` names, as a path from the repository root.
-
-    ``tasks/gen_cli.py`` resolves this against the checkout and
-    :func:`docs_url` publishes it, so a row naming a page nobody wrote
-    fails the generator.
-    """
+    """Return the repository path of the page named by ``row``."""
     return f"{_DOCS_DIR}{row.docs}"
 
 
 def docs_url(row: Opt) -> str:
-    """Return the published page ``row`` names, as a URL to open.
-
-    Built from :func:`docs_path`, so the page the generator checks on
-    disk is the page a reader is sent to.  The path alone names nothing
-    an installed nab has: the sdist ships ``src/nab`` and ``tests``.
-    Sphinx builds with ``-b html``, so each page is served under its own
-    name.
-    """
+    """Return the published URL of the page named by ``row``."""
     page = docs_path(row).removeprefix(_DOCS_DIR).removesuffix(".md")
     return f"{_DOCS_SITE}{page}.html"
 

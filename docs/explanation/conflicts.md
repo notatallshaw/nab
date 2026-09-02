@@ -57,8 +57,8 @@ group in two sets is refused when the config is read, whether both sets
 sit in one file or one comes from `pyproject.toml` and the other from a
 project-directory `nab.toml`.
 
-Extra and group names are normalised (PEP 685 / PEP 735), so the
-spelling here does not have to match the table key exactly.
+Extra and group names are normalised (PEP 685 / PEP 735), so the name
+here does not have to match the table key exactly.
 
 In a workspace, `conflicts` is scoped to the pyproject being locked.
 Declaring conflicts in the workspace root does not propagate to a
@@ -236,7 +236,7 @@ fires where one of its own dependencies would not.
 An exclusive set forks only over the members the selection activates.
 The rest of its declared members are absent from the lock's `extras` and
 `dependency-groups` arrays and from every marker, so a set with an
-unselected member gates an entry exactly as one without it would.
+unselected member excludes an entry exactly as one without it would.
 
 A dependency a member shares with a selection outside the set names
 both in its marker (`"cpu" in extras or "docs" in extras`), so

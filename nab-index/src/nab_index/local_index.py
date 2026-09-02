@@ -400,8 +400,8 @@ def _listing_bases(base_url: str) -> list[str] | None:
     if scheme != "file" or not path.startswith("/"):
         return None
 
-    # Every segment of the directory is bracketed by slashes, so these three
-    # substrings are the whole of the empty and dot segment test.
+    # Slashes bracket each directory segment. These substrings detect
+    # empty, current, and parent segments without splitting the path.
     directory = path[: path.rindex("/") + 1]
     if "//" in directory or "/./" in directory or "/../" in directory:
         return None

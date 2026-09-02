@@ -1,12 +1,7 @@
 """The declaration and the code that reads it say the same thing.
 
-``nab/optiontable.py`` names every flag and ``nab/_lock.py`` and its three
-siblings name every parameter, and nothing in the language ties the two
-together.  These cases do, along with four that hold a whole table: the
-verbs a command body offers, the ``--project-*`` spellings a committed
-lockfile carries, the parse hook every configuration key's flag hands its
-walked value to, and the seven root rows, whose reader is the generated
-parser rather than any command signature.
+``nab/optiontable.py`` names every flag, while each command module names its
+parameters. These tests keep the declarations and readers in sync.
 """
 
 from __future__ import annotations
@@ -207,7 +202,7 @@ class TestVerbSets:
 
 
 class TestLockfileFlagStability:
-    """The spellings a committed lockfile carries do not move quietly."""
+    """Keep the flag names recorded by committed lockfiles stable."""
 
     def test_the_project_flags_are_the_recorded_spellings(self) -> None:
         declared = [
@@ -220,7 +215,7 @@ class TestLockfileFlagStability:
         assert declared == recorded
 
     def test_a_repeatable_project_flag_is_singular(self) -> None:
-        """The two spellings a plural key would otherwise have derived."""
+        """A plural key still derives one singular flag name."""
         by_key = {row.key: row for row in ALL if row.key}
 
         assert by_key["constraints"].cli_flag == "--project-constraint"
@@ -238,8 +233,7 @@ def test_the_implementation_alias_holds_the_tokens_its_parser_offers() -> None:
     assert get_args(ImplementationFlag) == values.IMPLEMENTATIONS
 
 
-# The sixteen rows a configuration source and a flag both reach, so every
-# one of them has a spelling to drive and a hook to hand the result to.
+# The sixteen rows reached by both a configuration source and a flag.
 _SETTABLE = [row for row in ALL if row.key and row.cli_flag]
 
 _BOOL_TOKENS = ("True", "False")

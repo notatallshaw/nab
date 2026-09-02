@@ -16,7 +16,7 @@ __all__ = ["is_file_url", "parse_file_url"]
 
 
 def is_file_url(url: str) -> bool:
-    """Return True when ``url`` is a ``file:`` URL in either RFC 8089 spelling.
+    """Return True for either RFC 8089 form of a ``file:`` URL.
 
     An authority :func:`urlsplit` cannot parse, such as an unterminated IPv6
     bracket, is not one.

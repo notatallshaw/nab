@@ -94,7 +94,7 @@ GRID = _grid()
 
 # A twin such as implementation_version dispatches as a version yet may carry a
 # non-version string; pin environments that hold one so the differential covers
-# the twin's string branch, not only its version-shaped default.
+# both the twin's string branch and its version-shaped default.
 GRID = [
     *GRID,
     {**GRID[0], "implementation_version": "pypy"},

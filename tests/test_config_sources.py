@@ -1,12 +1,8 @@
 """Tests for the layered config registry (:mod:`nab.config.ladder`).
 
-The registry drives the toml loader, env reader, merge, category gate,
-and the ``nab config`` renderers.  These tests exercise the full
-precedence ladder for each option, every category-gate error, the
-pyproject-vs-project-nab.toml conflict rule, the NAB_ env layer and the
-renamed-env gate, the parser-fold helpers, and the list/get/explain
-renderers.  Search roots are injected so nothing reads the real
-``~/.config``.
+The registry drives each config source and the ``nab config`` renderers. These
+tests cover the precedence ladder, category checks, and cross-file conflicts.
+Injected search roots keep reads away from the real ``~/.config``.
 """
 
 from __future__ import annotations
@@ -1520,7 +1516,7 @@ class TestParserFoldHelpers:
 
     def test_unknown_key_ignored(self) -> None:
         # A PROJECT-scope registry key (mode) is legitimate in pyproject,
-        # so the USER-key gate leaves it for the pyproject parser.
+        # so the USER-key check leaves it for the pyproject parser.
         reject_user_keys_in_pyproject({"mode": "universal"})
 
     def test_unowned_key_ignored(self) -> None:
@@ -1529,7 +1525,7 @@ class TestParserFoldHelpers:
 
 
 class TestRegistryShape:
-    """The registry rows themselves: invariants the conformance gate relies on."""
+    """The registry invariants used by the conformance checks."""
 
     def test_keys_unique(self) -> None:
         keys = [spec.key for spec in OPTIONS]
@@ -1588,7 +1584,7 @@ class TestScalarProjectOptions:
     """The scalar PROJECT options: mode, requires-python, uploaded-prior-to,
     dist-policy, build-policy.  Each reuses the single-environment parser,
     so the value and validation messages match the pyproject path; the new
-    surface is the project-dir nab.toml home, the category gate, the
+    surface is the project-dir nab.toml home, the category check, the
     cross-file conflict check, and nab config visibility.
     """
 
@@ -2223,8 +2219,7 @@ class TestArrayProjectOptions:
         assert stack_kinds == [SourceKind.PYPROJECT, SourceKind.PROJECT_TOML]
 
     def test_array_cli_flag_replaces_the_file_list(self, tmp_path: Path) -> None:
-        # The CLI is the highest rung, so its list is the whole value; the
-        # file's list is shadowed rather than appended to.
+        # The CLI is the highest rung, so its list replaces the file's list.
         _project(tmp_path, 'constraints = ["urllib3<2"]\n')
         eff = _resolve(
             SourceRoots(project_dir=tmp_path), cli={"constraints": ("certifi>=2024",)}
@@ -2643,8 +2638,8 @@ class TestOverrideTables:
             _resolve(SourceRoots(project_dir=tmp_path))
 
     def test_packages_identical_across_files_ok(self, tmp_path: Path) -> None:
-        # One file's table is the whole value, so the two entries never
-        # land in the same overlap check.
+        # The higher-precedence file replaces the packages table before the
+        # overlap check runs.
         _project(tmp_path, '[tool.nab.packages.lxml]\ndist-policy = "sdist-only"\n')
         _write(
             tmp_path / "nab.toml",

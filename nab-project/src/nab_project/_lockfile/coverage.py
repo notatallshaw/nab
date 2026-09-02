@@ -4,16 +4,16 @@ A conformant PEP 751 consumer refuses a lock unless one of its declared
 ``environments`` markers matches the installing interpreter.  A
 non-covering lock declares no row for an interpreter its own resolve
 produced pins for, so the installer refuses it there.  This is the
-completeness dual of the disjointness gate: that one forbids two same-name
-entries firing under one context, this one forbids a resolved context with
-no entry.
+dual of the disjointness check. That check forbids same-name
+entries firing under one context; this check forbids a resolved context
+with no entry.
 
 The universe is not expressible as a single PEP 508 marker, so the check
 runs through the marker algebra.  For each target the resolve ran it asks
 whether the union of the emitted rows admits the whole range the target
 stands for: a minor-interval target stands for its whole minor, a whole
 target for one micro.  A point in that range no row admits is returned as a
-witness, and the gate fires naming the uncovered interpreter.
+witness, and validation names the uncovered interpreter.
 """
 
 from __future__ import annotations

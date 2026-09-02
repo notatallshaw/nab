@@ -1,7 +1,7 @@
 name: Release
 
-# Publishing a GitHub release (against a v* tag created by the release PR) is the
-# trigger and the human gate. Nothing publishes until you click Publish there.
+# Publishing a GitHub release against a v* tag from the release PR
+# triggers this workflow. Nothing publishes until you click Publish.
 on:
   release:
     types: [published]

@@ -217,7 +217,7 @@ def conflict_forks(
 
     Names compare and emit canonicalised; the extra and group loaders
     normalise on lookup, so a canonical active set resolves the same
-    requirements the user's spelling would.
+    requirements as the user's names.
     """
     base_extras = [canonicalize_name(e) for e in selected_extras]
     base_groups = [canonicalize_name(g) for g in selected_groups]

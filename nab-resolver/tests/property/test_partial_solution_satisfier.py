@@ -85,7 +85,7 @@ def _apply(ps: PartialSolution[str, int], op: Op) -> None:
 def _effective(
     cum_pos: RangeProtocol[int] | None, cum_neg: RangeProtocol[int] | None
 ) -> RangeProtocol[int] | None:
-    """Combine accumulated positive and negative ranges, as ``get`` does."""
+    """Combine ranges using the same accumulation as ``get``."""
     if cum_pos is None and cum_neg is None:
         return None
     if cum_pos is None:

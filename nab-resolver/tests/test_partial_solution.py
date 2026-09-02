@@ -162,7 +162,7 @@ class TestMultipleDerivations:
         assert ps.get("bar") is None
 
     def test_backtrack_rebuilds_positive_cache(self) -> None:
-        """Backtracking correctly rebuilds the positive range cache."""
+        """Backtracking rebuilds the positive range cache."""
         ps = PartialSolution()
         inc = Incompatibility([], cause=IncompatibilityCause.ROOT)
         # Level 0: two positive derivations that survive backtracking
@@ -179,7 +179,7 @@ class TestMultipleDerivations:
         assert 10 not in r  # at or above 10
 
     def test_backtrack_rebuilds_negative_cache(self) -> None:
-        """Backtracking correctly rebuilds the negative range cache."""
+        """Backtracking rebuilds the negative range cache."""
         ps = PartialSolution()
         inc = Incompatibility([], cause=IncompatibilityCause.ROOT)
         # Level 0: negative derivation survives
@@ -253,7 +253,7 @@ class TestMultipleDerivations:
         assert s is ps.assignments_for("foo")[-1]
 
     def test_satisfier_with_negative_derivation(self) -> None:
-        """satisfier handles negative derivations correctly."""
+        """satisfier handles negative derivations."""
         ps = PartialSolution()
         inc = Incompatibility([], cause=IncompatibilityCause.ROOT)
         ps.derive("foo", Range.singleton(5), positive=False, cause=inc)

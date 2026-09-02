@@ -742,10 +742,10 @@ def dropped_release_in_range(
 
     Callers ask only when no surviving version falls in the range, so a
     dropped one that does is the release the requirement asked for.  A
-    dropped version equal to a surviving one survived under another
-    spelling instead: :func:`filter_distributions` collapses equal
-    versions onto one representative, and ``===`` compares its string
-    form.  Filtering through ``version_range`` keeps the pre-release
+    dropped version equal to a survivor is represented by that survivor:
+    :func:`filter_distributions` collapses equal versions onto one
+    representative. ``===`` compares its string form. Filtering through
+    ``version_range`` keeps the pre-release
     semantics candidate selection uses.
     """
     files = provider.coordinator.index.get_listing(normalized)
@@ -815,7 +815,7 @@ def _canonicalize_equal_versions(
             representative[version] = version
         elif chosen is not version:
             # The listing interns its versions, so two distinct objects that
-            # compare equal are two spellings of one release.
+            # compare equal are two representations of one release.
             needs_rebuild = True
             if (len(version.release), str(version)) < (
                 len(chosen.release),
@@ -875,7 +875,7 @@ def excluded_by_python(
 
 
 def upload_time_cause(dist: DistFile, cutoff: datetime | None) -> Cause | None:
-    """Return which upload-time rule refuses ``dist``, or None when none does.
+    """Return the upload-time rule that refuses ``dist``, if any.
 
     ``cutoff`` is the effective upload-time cutoff for the package, already
     resolved through the overrides and the global ``uploaded-prior-to``
@@ -1099,7 +1099,7 @@ def parse_prefetched_metadata(
         # as dependency-free.
         return
     if from_sdist:
-        # sdist PKG-INFO: caching it here would skip the PEP 643 gate.
+        # sdist PKG-INFO: caching it here would skip the PEP 643 check.
         return
 
     try:

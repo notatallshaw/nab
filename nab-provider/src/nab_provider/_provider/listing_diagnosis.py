@@ -681,7 +681,7 @@ def in_range_diagnostic(
     Returns ``None`` when the walk explains every drop and none of them
     falls inside the range, which is the caller's signal that the
     requirement asks for a version the index never published.  A refused
-    version equal to one in ``kept`` survived under another spelling and
+    version equal to one in ``kept`` survived under another form. It
     does not count.
     """
     named = [
@@ -955,7 +955,7 @@ def _newest(records: Sequence[DroppedFile]) -> DroppedFile:
 
 
 def _version_of(record: DroppedFile) -> Version:
-    """Return a record's version, which every cause but INVALID_VERSION has."""
+    """Return a record's version; INVALID_VERSION records have none."""
     assert record.version is not None
     return record.version
 
@@ -1344,12 +1344,12 @@ def metadata_diagnostic(
     return Diagnostic(_METADATA_REJECTED, tuple(block.message for block in blocks))
 
 
-# The bullet already names the proxy, so these say "the extra" rather than
-# spelling it out again, and only the narrowed line names the base package.
+# The bullet names the proxy, so these say "the extra" instead of
+# repeating it, and only the narrowed line names the base package.
 _EXTRA_SHORT: dict[Kind, str] = {
     ReasonKind.EXTRA_UNDECLARED: "no version of {base} declares this extra",
-    # nab never read the metadata that would say which versions declare the
-    # extra, so this line cannot claim any version does.
+    # Metadata was not read, so the message cannot name a version that
+    # declares the extra.
     ReasonKind.EXTRA_METADATA: _METADATA_REJECTED,
     ReasonKind.EXTRA_NARROWED: (
         "another requirement holds {base} where this extra is undeclared"

@@ -2189,7 +2189,7 @@ class TestNoReuseListings:
     """A listing the origin bars from unvalidated reuse is checked every read.
 
     RFC 9111 5.2.2.4 for ``no-cache`` and 5.2.2.5 for ``no-store``. The
-    responses here carry no max-age and no Expires, the case the heuristic
+    responses here omit both max-age and Expires, the case the heuristic
     window would otherwise cover.
     """
 
@@ -4994,7 +4994,7 @@ def _debug_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
 
 
 class TestAssumeFreshFloor:
-    """Read-time freshness floor: extend, never shorten, and never rewrite disk."""
+    """A read-time floor extends freshness without shortening it or writing disk."""
 
     def test_stale_positive_within_floor_serves_cached_no_transport(
         self,

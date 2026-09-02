@@ -1,7 +1,7 @@
 """Conflict resolution and backtracking for the PubGrub resolver.
 
 Owns the conflict-resolution loop, the most-recent-satisfier
-search, the always-learn force-resolution gate, the targeted
+search, the always-learn force-resolution check, the targeted
 backtrack queue, and the catastrophic restart handler.
 
 Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#conflict-resolution
@@ -40,7 +40,7 @@ __all__ = [
 ]
 
 
-# Soundness gate for try_force_resolution_step: a single-term
+# Soundness check for try_force_resolution_step: a single-term
 # incompatibility must resolve to >= 2 terms to keep the eliminated
 # package's conditioning.
 _SINGLE_TERM = 1
@@ -321,7 +321,7 @@ def try_force_resolution_step(
     satisfier: Assignment[Any, Any],
     satisfier_term: Term[Any, Any],
 ) -> Incompatibility[Any, Any] | None:
-    """Resolve a single-term NO_VERSIONS clause once with a soundness gate.
+    """Resolve a single-term NO_VERSIONS clause after a soundness check.
 
     Standard PubGrub backjumps to root for single-term clauses, losing the
     supporting decisions; resolving once with the satisfier's cause exposes
@@ -447,10 +447,10 @@ def is_terminal_incompatibility(incompatibility: Incompatibility[Any, Any]) -> b
 
 
 def maybe_targeted_backtrack(resolver: Resolver[Any, Any]) -> Any | None:
-    """Run :func:`apply_targeted_backtrack` if the gate is open.
+    """Run :func:`apply_targeted_backtrack` when its conditions hold.
 
-    Gate: pending non-empty AND total conflicts past
-    ``TARGETED_BT_MIN_CONFLICTS``.  Pending culprits are kept across rounds.
+    Pending must be non-empty and total conflicts must reach
+    ``TARGETED_BT_MIN_CONFLICTS``. Pending culprits persist.
     """
     if (
         resolver.pending_targeted_backtrack
@@ -493,7 +493,7 @@ def maybe_restart(
 def force_targeted_backtrack(
     resolver: Resolver[Any, Any], packages: list[Any]
 ) -> Any | None:
-    """Apply a targeted back-track without waiting for the normal gate.
+    """Apply a targeted back-track before the normal threshold.
 
     Used when the provider supplies direct evidence that the named
     packages are culprits. Bumps each package's culprit count past the

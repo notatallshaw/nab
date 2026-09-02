@@ -173,8 +173,9 @@ def _oversized_numeric(text: str) -> bool:
 # ---------------------------------------------------------------------------- atoms
 
 
-# Weak, so an entry lives only while its atom does. The lock stops two threads
-# minting rival atoms for one key, which the algebra would read as two leaves.
+# Weak references drop entries with collected atoms. The lock prevents
+# two threads from minting rival atoms for one key, which the algebra
+# would read as two leaves.
 _INTERNED: weakref.WeakValueDictionary[
     tuple[str, str, str, str, str, bool, bool, bool], Atom
 ] = weakref.WeakValueDictionary()
@@ -519,7 +520,7 @@ def parse(source: str | MarkerLike) -> Formula:
 
 
 def variable_names(source: str | MarkerLike) -> frozenset[str]:
-    """Return every marker variable ``source`` names, in the parser's spelling.
+    """Return every marker variable ``source`` names, as parsed.
 
     Builds no atoms, so a marker the algebra rejects still yields its names.
     """
@@ -891,8 +892,8 @@ def _between(vlow: Version, low: str, vhigh: Version, memo: Memo) -> str | None:
     The plain release comes first because an exclusive ordered comparison
     excludes its own bound's post, local, pre and dev variants, so a band whose
     two ends share a release is the only one the suffixed candidates can fill.
-    Where the ends differ, only a version whose release differs from both is
-    admitted, and no suffix of ``vlow`` is.
+    Where the ends differ, a candidate must have a release distinct from
+    both ends; suffixes of ``vlow`` are rejected.
     """
     for candidate in (
         _release_between(vlow, vhigh),

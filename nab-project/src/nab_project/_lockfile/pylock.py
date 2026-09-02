@@ -93,7 +93,7 @@ class _ForkAxes:
     indexes every target by its environment and its selection, which is how
     :func:`_project_fork` walks one set's members with the other sets
     held fixed.  ``markers`` is each fork's unprojected selection marker,
-    which does not vary by package, and ``gates`` each fork's
+    which does not vary by package. The next mapping records each fork's
     :attr:`~nab_project.lockfile.TargetLock.package_gates` as sets.
     ``env_rows`` is the values the declared environments pin, or ``None``
     when the factoring has no table to read (:func:`_emission_scope`).
@@ -110,9 +110,9 @@ class _ForkAxes:
 
 @dataclass(frozen=True, slots=True)
 class _GatedMarker:
-    """The environments one gate selects a package in.
+    """The environments paired with one package selection condition.
 
-    ``marker`` is ``None`` when the gate holds on all of them.
+    ``marker`` is ``None`` when the condition holds in all of them.
     """
 
     marker: Marker | None
@@ -123,8 +123,8 @@ class _GatedMarker:
 class _Projection:
     """One package's marker shape at one fork.
 
-    ``dropped`` are the selection members whose clauses fall away, and
-    ``gate`` is the membership gate that stands in for the fork's own
+    ``dropped`` are the selection members whose clauses fall away. The
+    membership condition stands in for the fork's own clauses
     once they do (:func:`_merged_fork_gate`).
     """
 
@@ -289,7 +289,7 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
     base = (lock_dir if lock_dir is not None else Path.cwd()).resolve()
     exclusion_groups = conflict_exclusion_groups(lock_input.conflicts)
     store = DecisionStore()
-    # The universe and the coverage gate share these rows, so build them once.
+    # Build once for the universe and coverage check.
     environment_rows = [
         MarkerSet.from_marker(marker) for marker in lock_input.environments
     ]
@@ -342,15 +342,14 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
 
 
 def _name_base_group(lock_input: LockInput) -> LockInput:
-    """Return ``lock_input`` with the base member named, or cut from every gate.
+    """Name the base member or remove its membership conditions.
 
     The builder records :data:`~nab_project.lockfile.BASE_MEMBER` on every
     package the project's own dependencies reach.  With ``base-group``
-    unset there is no name to give it, so those packages lose their gate
-    and stay unconditional.
+    unset, those packages lose that condition and stay unconditional.
     """
     name = lock_input.base_group
-    # Unnamed, the base gates are cut below, so nothing is renamed.
+    # An unnamed base is removed below, so nothing is renamed.
     member = BASE_MEMBER if name is None else (KIND_GROUP, name)
     targets = {
         label: replace(
@@ -627,8 +626,8 @@ def _finalize_marker(
     answer ships ``raw`` instead: :class:`IntractableMarkerSet` when a decision
     overruns the cell budget or the marker nests past the stack, and
     :class:`UnserializableMarkerSet` when the simplified set has no marker
-    spelling, which is what a marker selecting nothing inside ``within``
-    collapses to.
+    representation. A marker selecting nothing in ``within`` collapses
+    to that case.
     """
     if raw is None:
         return None
@@ -664,7 +663,7 @@ def _finalize_cached(
 
     ``within`` is fixed for a whole build, so two packages carrying the same raw
     marker have the same shortest form, and a universal lock repeats one
-    platform or python gate across many packages.
+    platform or Python condition across many packages.
     """
     if raw is None:
         return None
@@ -698,7 +697,7 @@ def _build_packages(
     Each emitted marker is finalised to its shortest form equivalent over
     the declared environments (:func:`_finalize_marker`).
 
-    A package carries the gate of every install context that reaches it,
+    A package carries every install-context condition that reaches it,
     which with ``[tool.nab].base-group`` set includes the project's own
     dependencies.  See :func:`_build_marker`.
 
@@ -1014,7 +1013,7 @@ def _build_marker(
     axes: _ForkAxes,
     projections: Mapping[tuple[str, str], _Projection],
 ) -> tuple[_GatedMarker, ...]:
-    """Return the marker selecting ``labels``, split by gate.
+    """Return markers for ``labels``, split by membership condition.
 
     For each environment the package appears in, the contribution is
     the membership-free env-only marker when the package is present in
@@ -1028,8 +1027,8 @@ def _build_marker(
     A dep required by every member of an ``at-most-one`` set but not
     by the base is absent from ``env_base_names``, so it keeps the
     membership OR and does not install when no member is selected.
-    An environment with no base-name set (no conflict fork ran) leaves
-    the gate open.
+    An environment with no base-name set (no conflict fork ran) adds no
+    membership condition.
 
     A membership contribution carries the fork's positive selection AND
     the negation of every co-member of the conflict sets it selects from
@@ -1045,18 +1044,17 @@ def _build_marker(
     :func:`_fork_projections`.  The projection makes several forks render
     the same contribution, which is emitted once.
 
-    A package carries the gate of every install context that reaches it
+    A package carries selectors from every install context reaching it
     (see :attr:`~nab_project.lockfile.TargetLock.package_gates`), joined
-    by ``and`` onto each contribution.  A fork whose gate names
-    its own selection needs no gate: its marker already asserts that
-    member.  An env collapses only when its forks agree on the rest of
-    the gate, and the collapsed entry carries their union, so a package
-    one fork reaches through its own member and another through a
-    non-conflicting extra installs for either.  When the package covers
-    every target, every env collapsed, and every env gates it the same
-    way, the env clauses are dropped and the gate stands alone: a
+    by ``and`` onto each contribution. No extra condition is needed when
+    the fork marker already asserts a selector. An env collapses only
+    when its forks agree on the rest. The collapsed entry carries their
+    union, so a package reached through its own member in one fork and a
+    non-conflicting extra in another installs for either. When it covers
+    every target, every env collapsed, and every env selects it the same
+    way, the env clauses are dropped and the selection stands alone: a
     selection is a property of the install context, not of the platform,
-    so ``"cli" in extras`` is the whole marker.
+    so ``"cli" in extras`` needs no platform clause.
     """
     targets = axes.targets
     by_env: defaultdict[tuple[tuple[str, str], ...], list[str]] = defaultdict(list)
@@ -1087,7 +1085,7 @@ def _build_marker(
             by_gate[merged].append(head.environment_marker_string)
             continue
 
-        # Forks that disagree on the gate still agree on what they share,
+        # Forks with different conditions agree on what they share,
         # and a base dep is present in all of them, so the shared part
         # holds whichever fork the install context picks, including none.
         if collapses:
@@ -1111,8 +1109,7 @@ def _build_marker(
         return parts
 
     # Every env collapsed at full coverage: the environment is not what
-    # selects this package, so only the gate can, and only when every
-    # env agrees on it.
+    # selects this package. Only an agreed membership condition can.
     if set(by_gate) == {()}:
         return (_GatedMarker(None, ()),)
     if len(by_gate) == 1:
@@ -1290,19 +1287,19 @@ def _merged_fork_gate(
     peers: Sequence[str],
     erased: _Members,
 ) -> _Members | None:
-    """Return the gate the sub-cube's forks share, or ``None`` when they do not.
+    """Return the shared selector set, or ``None`` when forks disagree.
 
-    Dropping a set replaces the fork's own gate with one that holds at
+    Dropping a set replaces the fork's own condition with one holding at
     every point of the sub-cube: the part naming nothing in the dropped
     sets, plus every dropped member that reaches the package in the forks
-    that select it.  The forks share such a gate only when each one's is
-    exactly that, so a member that reaches the package under one fork of
+    that select it. Forks share it only when each carries exactly that
+    set, so a member that reaches the package under one fork of
     the other dropped sets but not another refuses the drop rather than
     guessing which way the projected entry should fire.
     """
     gates = {peer: axes.gates.get((name, peer), _NO_MEMBERS) for peer in peers}
 
-    # An empty gate means that fork installs the package whichever of its
+    # An empty condition installs the package whichever of its
     # members are selected (:func:`_merge_gates`), which no clause stands
     # in for, so a sub-cube mixing the two does not project.
     if len({bool(gate) for gate in gates.values()}) != 1:
@@ -1338,10 +1335,10 @@ def _is_base(
 def _shared_gate(
     lock: TargetLock, gate: tuple[tuple[str, str], ...]
 ) -> tuple[tuple[str, str], ...]:
-    """Return the part of a gate the fork's own selection does not supply.
+    """Return the selectors the fork's own selection does not supply.
 
-    Two forks of one environment gate a package the same way when these
-    agree; each fork's own member necessarily differs, and
+    Two forks of one environment share a condition when these selectors
+    agree. Each fork's own member necessarily differs, and
     :func:`_merge_gates` folds it back in.
     """
     return tuple(sorted(set(gate) - set(lock.target.selection)))
@@ -1350,11 +1347,11 @@ def _shared_gate(
 def _fork_gate(
     kept: AbstractSet[tuple[str, str]], gate: AbstractSet[tuple[str, str]]
 ) -> tuple[tuple[str, str], ...]:
-    """Return the gate to conjoin onto one fork's own membership marker.
+    """Return selectors to conjoin onto one fork's membership marker.
 
-    A gate that names a member the fork's marker still asserts is already
-    satisfied there, so it drops whole rather than narrowing the fork's
-    marker to the gate's other selections.  A member whose clause the
+    A condition naming a member still asserted by the fork is already
+    satisfied there. The whole condition is omitted instead of narrowing
+    marker to its other selections. A member whose clause the
     projection dropped asserts nothing, so it does not count.
     """
     if gate & kept:
@@ -1365,11 +1362,10 @@ def _fork_gate(
 def _common_gate(
     gates: Iterable[tuple[tuple[str, str], ...]],
 ) -> tuple[tuple[str, str], ...]:
-    """Return the members every fork of one environment gates a package on.
+    """Return selectors shared by every fork of one environment.
 
-    A gate is a disjunction, so a member every fork names implies every
-    fork's gate: the package is reached under that member whichever fork
-    the install context selects.
+    Each condition is a disjunction. A member shared by all conditions
+    reaches the package whichever fork the install context selects.
     """
     common: set[tuple[str, str]] | None = None
     for gate in gates:
@@ -1380,10 +1376,10 @@ def _common_gate(
 def _merge_gates(
     gates: Iterable[tuple[tuple[str, str], ...]],
 ) -> tuple[tuple[str, str], ...]:
-    """OR the per-fork gates of one collapsing environment into one gate.
+    """OR the per-fork selector sets for one collapsing environment.
 
-    A fork with an empty gate installs the package whenever its own
-    member is selected, so the merged gate is empty too.
+    A fork with an empty set installs the package whenever its own
+    member is selected, so the merged set is empty too.
     """
     merged: set[tuple[str, str]] = set()
     for gate in gates:
@@ -1432,7 +1428,7 @@ def _selection_marker(
 
 
 def _gate_clause(gate: Sequence[tuple[str, str]]) -> str:
-    """Render a package's membership gate as a PEP 508 clause.
+    """Render a package's membership condition as a PEP 508 clause.
 
     Each ``(kind, name)`` member becomes ``'name' in extras`` or
     ``'name' in dependency_groups``; a package two selections reach
@@ -1450,10 +1446,10 @@ def _finalize_parts(
     memo: dict[str, Marker | None],
     store: DecisionStore,
 ) -> Marker | None:
-    """Simplify each gate's environments, then the marker they assemble into.
+    """Simplify each condition's environments, then assemble the marker.
 
     Simplifying the whole marker in one pass walks a cell space the
-    membership variables multiply.  Each gate's environments carry no
+    membership variables multiply. The condition environments carry no
     membership variable, so they shrink first, and the marker they
     assemble into is small by the time the second pass canonicalises it.
     """
@@ -1474,9 +1470,9 @@ def _finalize_parts(
 
 
 def _gated_marker(marker: Marker | None, gate: Sequence[tuple[str, str]]) -> Marker:
-    """Conjoin a gate onto the simplified environments it selects in.
+    """Conjoin a membership condition with its simplified environments.
 
-    With no environments the gate is the whole marker.  Otherwise they
+    With no environments the condition is the marker. Otherwise they
     are parenthesised, since they may disjoin and ``and`` binds tighter.
     """
     if marker is None:
@@ -1485,7 +1481,7 @@ def _gated_marker(marker: Marker | None, gate: Sequence[tuple[str, str]]) -> Mar
 
 
 def _with_gate(marker: str, gate: Sequence[tuple[str, str]]) -> str:
-    """AND a package's membership gate onto the marker of one target."""
+    """AND a package's membership condition onto one target marker."""
     if not gate:
         return marker
     clause = _gate_clause(gate)

@@ -1654,7 +1654,7 @@ class TestUrllib3AsyncTransport:
         assert _Urllib3Response(fake, b"", _REQUESTED_URL).url == _REQUESTED_URL
 
     def test_url_resolves_a_relative_location_against_its_own_hop(self) -> None:
-        """Each Location is verbatim, so the chain is walked, not just the first hop."""
+        """Relative locations resolve against each hop in the redirect chain."""
         fake = _redirected_response(
             200,
             [

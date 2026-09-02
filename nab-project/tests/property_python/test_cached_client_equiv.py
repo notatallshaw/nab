@@ -163,7 +163,7 @@ hex_chars = "0123456789abcdefABCDEF"
 
 @st.composite
 def file_entries(draw: st.DrawFn, package: str) -> dict[str, Any]:
-    """One PEP 691 file entry: wheel, sdist, or junk, with optional fields."""
+    """Generate a PEP 691 wheel, sdist, or invalid file entry."""
     kind = draw(st.integers(min_value=0, max_value=4))
     version = draw(versions)
     name = package if kind < 3 else draw(pkg_names)

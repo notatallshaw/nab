@@ -624,8 +624,8 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         on=("lock",),
     )
 
-    # The one bool flag that is not negatable: its name already spells the
-    # negation, so --no-no-emit-workspace is not a spelling the table offers.
+    # This bool is not negatable because its name already states the
+    # negation, so the table does not offer --no-no-emit-workspace.
     no_emit_workspace = Switch(
         default=False,
         help=(

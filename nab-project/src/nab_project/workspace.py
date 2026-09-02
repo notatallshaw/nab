@@ -9,7 +9,7 @@ resolves against its in-tree source instead of being fetched from the
 index.
 
 A project that declares no workspace of its own walks up to an ancestor
-project file that does, in either spelling, so ``nab lock`` invoked
+project file that does, in either table. Thus ``nab lock`` invoked
 against a member still resolves against the root's members.
 
 Members are listed literally; globs are refused with an error.  Users
@@ -234,8 +234,8 @@ def workspace_local_sources(
 def read_workspace_members(root_file: Path) -> tuple[LocalSource, ...]:
     """Synthesise :class:`LocalSource` entries from a workspace root.
 
-    Reads the members ``root_file`` declares, in the spelling its name
-    calls for, and resolves each member path against the root's
+    Reads the members ``root_file`` declares from its required table and
+    resolves each member path against the root's
     directory.  This is the path taken for a root the ancestor walk
     found, which is read off disk rather than through the config
     registry.

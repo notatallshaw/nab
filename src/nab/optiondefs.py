@@ -17,11 +17,11 @@ if TYPE_CHECKING:
     from typing_extensions import Protocol
 
     class _SourceKind(Protocol):
-        """A configuration source, as the config layer's ``SourceKind`` spells it."""
+        """A configuration source, as the config layer names it."""
 
         @property
         def value(self) -> str:
-            """The source's name, which the category gate matches on."""
+            """The source name used to enforce option scope."""
             ...
 
 
@@ -112,7 +112,7 @@ _VALUE_KINDS = frozenset(
 # BOOL row's are True and False.
 _SAMPLED_VTYPES = frozenset({VType.STR, VType.PATH, VType.INT})
 
-# The category gate: which TOML sources may set a row of each scope, by the
+# The TOML sources that may set a row of each scope, by the
 # value of the SourceKind member naming them.
 _ALLOWED_TOML_SOURCES = {
     Scope.PROJECT: frozenset({"pyproject", "project"}),
@@ -277,11 +277,11 @@ class Opt:
 
     @property
     def cli_flag(self) -> str | None:
-        """The long spelling, or ``None`` on a row that has no flag.
+        """The long flag, or ``None`` on a row that has no flag.
 
-        The scope decides the prefix, and a repeatable option is spelled
-        in the singular because one occurrence contributes one value.  A
-        row ``under`` a key carries that key between the two.
+        The scope decides the prefix. A repeatable option is singular
+        because one occurrence contributes one value. A row under a table
+        key includes that key.
         """
         if not self.commands or self.is_positional:
             return None
@@ -311,7 +311,7 @@ class Opt:
     def allowed_in_toml(self, kind: _SourceKind) -> bool:
         """Whether a TOML source of ``kind`` may set this row.
 
-        The four TOML kinds are matched by value, so the gate needs no
+        The four TOML kinds are matched by value, so this check needs no
         name from the config layer.  A row with no key is set by no
         source, TOML included.
         """
@@ -495,7 +495,7 @@ def _check_parents(rows: Sequence[Opt]) -> None:
 
 
 def _check_unique(table: Sequence[Opt], where: str) -> None:
-    """Check that no spelling is declared twice inside one table."""
+    """Check that no flag name is declared twice inside one table."""
     seen_flags: set[str] = set()
     seen_shorts: set[str] = set()
     for row in table:
@@ -516,7 +516,7 @@ def _check_unique(table: Sequence[Opt], where: str) -> None:
 def _check_root_collisions(
     table: Sequence[Opt], root: Sequence[Opt], name: str
 ) -> None:
-    """Check that a command's own spellings never shadow the root's."""
+    """Check that a command's option names never shadow the root's."""
     flags = {row.cli_flag for row in root}
     shorts = {row.short for row in root if row.short}
     for row in table:
@@ -529,7 +529,7 @@ def _check_root_collisions(
 
 
 def _check_negations(table: Sequence[Opt], name: str) -> None:
-    """Check that a generated ``--no-X`` never lands on a declared spelling.
+    """Check that a generated ``--no-X`` never lands on a declared flag.
 
     The negation is built from the flag, so it carries the scope prefix and
     the repeatable singular that the flag does.

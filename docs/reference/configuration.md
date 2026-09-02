@@ -156,13 +156,14 @@ A bare id sets no system floor and accepts wheels of any level. Declare
 `runs-on-macos` to set the oldest supported macOS; wheels needing a
 newer one are dropped.
 
-PEP 508 markers gate dependencies, while PEP 425 tags gate wheels. A
+PEP 508 markers condition dependencies; PEP 425 tags filter wheels. A
 version with only incompatible wheels and no sdist is not a candidate
 (`pywin32` on Linux). The lockfile records only wheels the target can
 install.
 
-Tags gate wheels only, so a `.tar.gz` sdist keeps a version alive for any
-target.  nab drops every other sdist format when it parses the listing,
+Tags filter wheels only, so a `.tar.gz` sdist keeps a version alive for
+any target. nab drops every other sdist format when it parses the
+listing,
 so a version whose only sdist is a `.zip` and which ships no wheel is not
 a candidate either (`pyreadline==2.1`).
 
@@ -375,7 +376,7 @@ dependencies = ["numpy>=1.8.1", "scipy>=0.13.0", "six>=1.11.0"]
 [tool.nab.packages."broken-pkg <= 1.0"]
 dependencies = ["requests>=2"]
 
-# The many-packages spelling.
+# The many-package form.
 [[tool.nab.package-rules]]
 match = ["some-pkg <= 2.0"]
 dependencies = ["requests>=2"]
@@ -435,7 +436,8 @@ check enforces.
 ##### `provides-extra`
 
 `provides-extra` is the list of extra names the package declares for the
-selected versions, normalised per PEP 685 (so spelling does not matter).
+selected versions, normalised per PEP 685 (so the exact form does not
+matter).
 
 ```toml
 [tool.nab.packages.flask]
@@ -635,16 +637,16 @@ project.  Both answers can satisfy every requirement.
 
 ## VCS policy
 
-`[tool.nab.vcs]` is the gate a VCS URL passes before nab clones it.
-Default posture is fully restrictive.  The form that resolves is a
+`[tool.nab.vcs]` controls whether nab clones a VCS URL.  It blocks cloning
+by default.  The form that resolves is a
 `[[tool.nab.vcs-sources]]` entry, described under "Pinned VCS sources"
 below.
 
 A direct-URL requirement (`pkg @ git+https://...`) at the project root
-or in a dependency's metadata passes the same gate, then fails the
+or in a dependency's metadata passes the same policy checks, then fails the
 resolve, because nab has no resolver path for that form.  A requirement
 whose marker excludes it, or one behind an extra the resolve never
-requests, never reaches the gate.  See
+requests, never reaches those checks.  See
 [Add a VCS dependency](../how-to/vcs.md).
 
 ```toml
@@ -684,7 +686,7 @@ as empty.
 while `vcs.policy` is left at its default `block` is a contradiction and
 is rejected when the config is read, before any resolve starts.
 
-Each URL passes the same `[tool.nab.vcs]` gate as a direct-URL
+Each URL must satisfy the same `[tool.nab.vcs]` policy as a direct-URL
 requirement. Beyond `vcs.policy = "allow"`, its scheme must be in
 `vcs.allowed-schemes`, its repository in `vcs.allowed-repos`, and it
 must pin a 40-char commit hash unless `vcs.require-pin = false`.  Both
@@ -892,23 +894,19 @@ nab lock --project-mode universal \
   --project-matrix-python-patches 3.11=3.11.4
 ```
 
-`--project-matrix-platforms` takes every token up to the next flag.  A bare
-token is a platform id, `id=VALUE` is the same thing written out, and any
-other `KEY=VALUE` sets a tag knob on the platform before it.  A knob value
-`true` or `false` is the boolean.  `--project-matrix-python-patches` takes
-`MINOR=FULL` tokens and `--project-matrix-implementations` takes bare names.
+`--project-matrix-platforms` takes platform ids and `KEY=VALUE` tag settings
+up to the next flag. `true` and `false` are booleans.
+`--project-matrix-python-patches` takes `MINOR=FULL` tokens, while
+`--project-matrix-implementations` takes names.
 
-Each flag replaces the key it names inside the table the project files
-declare and leaves the other keys alone, so a universal project narrows one
-axis with one flag:
+Each flag replaces one table key and leaves the others in place:
 
 ```bash
 nab lock --project-matrix-platforms macos_arm64
 ```
 
-With no file matrix there is nothing to narrow, so `--project-matrix-python`
-and `--project-matrix-platforms` are both required and the other three take
-the table's documented defaults when left out.
+Without a file matrix, `--project-matrix-python` and
+`--project-matrix-platforms` are required. Other keys use their defaults.
 
 ### Declaring the environment on the command line
 
@@ -918,11 +916,8 @@ nab lock --project-environment-python 3.12 \
   --project-environment-implementation cpython
 ```
 
-`--project-environment-platform` reads its tokens the way
-`--project-matrix-platforms` does, except that the environment holds one
-machine: a second bare id is an error rather than a second platform.  An
-axis no flag names keeps the value `[tool.nab.environment]` declares, or
-the host's where no file declares one.
+`--project-environment-platform` accepts one platform id and its tag settings;
+a second id is an error. Unspecified axes keep their file values or use the host.
 
 ## CLI overrides
 
@@ -981,11 +976,11 @@ Winning is all-or-nothing. Whatever the key's type, the highest source
 that sets it supplies the whole value and nothing from a lower source
 survives.
 
-A `constraints` list on the CLI is the entire constraint set for that
-run, and an `[environment]` table in a file is the entire environment.
-No source adds to the one beneath it. To extend a list, edit the file
-that declares it. A `--project-<table>-<key>` flag instead replaces one
-key in the file's table.
+A CLI `constraints` list replaces every lower-precedence constraint.
+An `[environment]` table replaces every lower-precedence environment.
+No source adds to the one beneath it; to extend a list, edit the file
+that declares it. A `--project-<table>-<key>` flag replaces only its
+named key in the file's table.
 
 The two project files share one rank. They may set the same key only to
 identical whole values; a difference is an error naming both files.

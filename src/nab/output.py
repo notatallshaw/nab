@@ -136,13 +136,13 @@ def logging_level_for(verbosity: Verbosity) -> int:
 
 
 class Printer:
-    """The single output seam: stream routing, level gating, and colour.
+    """Route streams, filter by level, and apply colour.
 
     ``data`` is the stdout channel and always prints, even under ``--quiet``,
     because it is the output the user ran the command to get.  ``error``,
-    ``warning``, ``note`` and ``done`` write to stderr, gated on the verbosity
-    level, with only the leading token coloured; ``stderr_line`` takes the
-    same gate without a token, for text that brings its own.
+    ``warning``, ``note`` and ``done`` write to stderr at the configured
+    verbosity. Only the leading token is coloured. ``stderr_line`` uses
+    the same threshold without a token, for text that brings its own.
     """
 
     def __init__(

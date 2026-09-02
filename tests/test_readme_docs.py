@@ -76,7 +76,7 @@ _STABLE_DOCS_ROOT = "https://nab.readthedocs.io/en/stable/"
 _STABLE_DOCS_LINK = re.compile(rf"{re.escape(_STABLE_DOCS_ROOT)}[^)\s>]*")
 _WHY_DOCS_TARGETS = {
     f"{_STABLE_DOCS_ROOT}reference/build-policy.html",
-    f"{_STABLE_DOCS_ROOT}reference/configuration.html#archive-sources",
+    f"{_STABLE_DOCS_ROOT}how-to/archive-sources.html",
     f"{_STABLE_DOCS_ROOT}reference/configuration.html#the-resolve-environment",
     f"{_STABLE_DOCS_ROOT}reference/lockfile.html",
     f"{_STABLE_DOCS_ROOT}reference/lockfile.html#checking-the-lock-in-ci",
@@ -254,7 +254,7 @@ def admitted_additions(
 def test_build_policy_sections_name_each_source_route_the_level_adds(
     admitted_additions: dict[BuildPolicy, frozenset[str]],
 ) -> None:
-    """The documented route additions match the real build gate."""
+    """The documented route additions match the build-policy behavior."""
     expected = {
         policy: frozenset(
             phrase for phrase, kind in BUILD_ROUTE_PHRASES.items() if kind in kinds
@@ -277,7 +277,7 @@ def test_every_source_table_the_registry_defines_is_documented() -> None:
 def test_workspace_member_takes_its_documented_build_route(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Workspace discovery reaches the local-source build gate."""
+    """Workspace discovery reaches the local-source build policy."""
     root = tmp_path / "pyproject.toml"
     root.write_text(
         '[project]\nname = "root"\n[tool.nab.workspace]\nmembers = ["member"]\n',

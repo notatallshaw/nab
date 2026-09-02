@@ -131,7 +131,8 @@ A group named in `[tool.nab].default-groups` still installs by
 default, because PEP 751 seeds `dependency_groups` from
 `default-groups` when the installer is given no group selection.
 
-The gate is a property of the install context, not of the platform.
+The selection condition belongs to the install context, not the
+platform.
 A matrix folds the selection into every target, so an extra that
 reaches a package on every target gives it the bare membership
 clause; one that reaches it on only some targets gets that clause
@@ -154,8 +155,8 @@ be asked for one group alone. Naming them fixes that:
 base-group = "base"
 ```
 
-The lock carries that name in both group arrays and gates those packages
-on it:
+The lock carries that name in both group arrays and adds it to those
+packages' membership markers:
 
 ```toml
 dependency-groups = ["base", "dev"]

@@ -107,7 +107,7 @@ class TestCacheDir:
     ) -> None:
         """stdout is the artefact, so ``-qq`` does not suppress it.
 
-        The path is the whole point of the verb; quieting it would leave
+        The verb returns the path on stdout. Quieting it would leave
         ``$(nab cache dir -qq)`` empty.
         """
         monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xc"))

@@ -51,8 +51,8 @@ def _cache_root(cache_dir: Path | None) -> Path:
     ``--cache-dir`` is answered without reading any config, so the
     maintenance verbs still work when a project file is broken.
     Otherwise ``cache-dir`` comes off the ladder rooted at the current
-    directory, minus the pyproject layer: the key is USER scope, which
-    the category gate bars pyproject from setting.
+    directory, minus the pyproject layer: the key is USER scope, so
+    pyproject cannot set it.
     """
     if cache_dir is not None:
         return cache_dir

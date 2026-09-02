@@ -77,11 +77,9 @@ an offline wheelhouse, and the limits of each path.
 
 ## Where to next
 
-* [Configuration](../reference/configuration.md): set indexes, sources,
-  policies, and target environments.
+* [Configuration](../reference/configuration.md): configure the resolve.
 * [Resolution failures](../reference/diagnostics.md): read an error and
   its recovery hints.
 * [Universal resolution](../explanation/universal.md): lock for several
   Python and platform targets.
-* [CLI](../reference/cli.md): look up commands, flags, environment
-  variables, and exit codes.
+* [CLI](../reference/cli.md): look up commands and flags.

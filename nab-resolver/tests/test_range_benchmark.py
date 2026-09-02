@@ -213,8 +213,8 @@ def test_scenario_pins_its_search_and_membership_profile(
 ) -> None:
     """Hold each scenario to the workload the report says it measured.
 
-    The regime assertions pass on any graph that merely conflicts or merely
-    fans out, and most of the membership tests come from ``GraphProvider``
+    The regime assertions also pass on graphs that conflict or fan out alone.
+    Most membership tests come from ``GraphProvider``
     scanning a release list once per sort key the decision scan asks for. An
     edit that leaves the answer correct can still move what a comparison
     between two ``Range`` implementations is read off, so these numbers change

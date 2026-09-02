@@ -361,7 +361,7 @@ def _requirement_over_listing(
 
     Bounds ``selected`` on each side ``constraint`` is bounded, then excludes
     by name every other listed version those bounds admit.  Built out of
-    specifiers, so it has a spelling to render.
+    specifiers, so it has a text form to render.
 
     ``None`` when a bound carries a local segment, which an ordering specifier
     does not accept, when the span holds more than ``_MAX_EXCLUSIONS`` versions
@@ -407,7 +407,7 @@ class Provider:
     port the host supplies; nab's own implementation submits them to a
     background asyncio loop, so transitive deps land during resolution.
 
-    ``target`` is the environment the resolve is for: its markers gate
+    ``target`` is the environment the resolve is for: its markers filter
     every dependency, its Python filters candidates by Requires-Python,
     and its wheel tags filter candidates by PEP 425 compatibility, so a
     version whose only wheels the target cannot install is a version the
@@ -1785,7 +1785,7 @@ class Provider:
             ]
 
             # The blocker is decided, so the record keeps that version rather
-            # than a singleton range, which has no specifier spelling.
+            # than a singleton range, which has no specifier form.
             out.append(
                 _diagnosis.Blocker(
                     _diagnosis.BlockerKind.DECIDED,
@@ -2344,10 +2344,10 @@ class Provider:
         """Map a possibly-widened ``constraint`` back onto listed versions.
 
         Returns a requirement admitting the same listed versions as
-        ``constraint``, built out of specifiers so :meth:`format_range` has a
-        spelling to print.  Where no short requirement states those versions,
-        ``constraint`` stands if it spells, and is snapped onto the listing if
-        it does not.
+        ``constraint``, built from specifiers for :meth:`format_range`.
+        Where no short requirement states those versions, ``constraint``
+        stands if it has a specifier form. Otherwise, it is snapped onto
+        the listing.
 
         A constraint containing every listed version becomes the full range,
         so it reads as "any version".  One containing none is returned
@@ -2389,8 +2389,8 @@ class Provider:
 
         An unconstrained range renders as nothing, leaving the package name to
         carry the line, and the empty range gets a phrase rather than the
-        ``<0`` a specifier set spells it with.  A range with no specifier
-        spelling, such as a disjunction, keeps the range's own rendering.
+        ``<0`` from a specifier set. A range without a specifier-set
+        form, such as a disjunction, keeps the range's own rendering.
         """
         assert isinstance(constraint, VersionRange)
         if constraint.is_empty:

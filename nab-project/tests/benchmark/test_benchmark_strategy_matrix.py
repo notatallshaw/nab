@@ -2981,7 +2981,7 @@ def test_standard_runner_applies_root_extra_constraints(
 def test_resolve_scenario_reports_the_counters_a_real_resolve_raised(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Pin the counters a real resolve raises; they move when the calls do."""
+    """Pin the counters raised by a resolve to their call counts."""
     result = _resolve_dropped_extra(monkeypatch, "aaa==2.0")
 
     stats = dict(result["stats"])

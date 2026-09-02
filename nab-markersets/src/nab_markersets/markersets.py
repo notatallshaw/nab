@@ -90,9 +90,9 @@ class MarkerSet:
     can refuse, both at the marker-grammar boundary. ``==`` is structural;
     :meth:`equivalent` is semantic.
 
-    The decision procedures partition each axis a set names into cells on which
-    every atom is constant, and read the set once per cell. That is exact except
-    on one construction, where the set reads larger than it is.
+    The procedures partition each named axis into cells. Every atom is
+    constant within a cell, and the set is read once per cell. The
+    substring construction below is the one over-approximation.
 
     A substring test on a version-dispatch variable (``python_version``,
     ``python_full_version``, ``platform_release``, ``implementation_version``)
@@ -220,8 +220,9 @@ class MarkerSet:
         ... )
         True
 
-        Two spellings of one set do not: ``a & b`` is unequal to ``b & a``, and
-        ``a | ~a`` to :meth:`full`. :meth:`equivalent` is the semantic test.
+        Equal sets can have unequal trees: ``a & b`` differs
+        from ``b & a``, and ``a | ~a`` from :meth:`full`. Use
+        :meth:`equivalent` for semantics.
         """
         if not isinstance(other, MarkerSet):
             return NotImplemented

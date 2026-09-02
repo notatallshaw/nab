@@ -507,7 +507,7 @@ class _EngineSettings:
     # target per fork and again in the base pass warns once.
     warned_dropped_markers: set[tuple[str, str]] = field(default_factory=set)
 
-    # The lock artifacts built so far, so targets pinning the same file share one.
+    # Lock artifacts shared by the targets of one resolve.
     artifacts: ArtifactMemo = field(default_factory=ArtifactMemo)
 
 
@@ -674,8 +674,8 @@ def _install_context_roots(
 ) -> tuple[frozenset[str] | None, dict[tuple[str, str], frozenset[str]] | None]:
     """Return the lock writer's install-context roots for one target.
 
-    ``(None, None)`` gates nothing: no selection to name, and no name for
-    the project's own dependencies.  A requirement whose marker fails this
+    ``(None, None)`` adds no conditions because no selection or
+    project name exists. A requirement whose marker fails this
     target's environment is dropped, as the resolve dropped it.
     """
     if contexts is None or not (contexts.selectors or contexts.name_project):

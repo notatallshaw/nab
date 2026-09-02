@@ -1,8 +1,8 @@
 """Flow tests for the fast-fail tier in ``nab lock --locked``.
 
 Each case drives the real CLI against a committed pylock on disk.  Most mock
-``nab._resolve.resolve_for_targets``, so whether the resolver was called shows
-whether the tier fired: a disqualifier never calls it, a fall-through does.
+``nab._resolve.resolve_for_targets``. A disqualifier skips the resolver, while
+a fall-through calls it.
 The invalid-invocation cases keep the real resolve, to pin the error it
 reports when the tier defers.
 """
@@ -274,7 +274,7 @@ def test_a_tightened_build_requirement_fires_with_a_build_group(
 def test_a_renamed_build_group_is_out_of_date(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Renaming it renames a marker on every package it gates."""
+    """Renaming it renames a marker on every package it selects."""
     body = (
         '[project]\nname = "proj"\ndependencies = ["foo"]\n'
         '[build-system]\nrequires = ["foo"]\n'

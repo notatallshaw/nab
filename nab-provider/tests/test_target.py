@@ -1441,7 +1441,7 @@ class TestMicroBoundarySplitting:
     def test_a_before_literal_post_release_splits_at_the_next_micro(self) -> None:
         """A post release sorts above its release, so the exclusive-upper
         ``< "3.12.4.post1"`` pushes its boundary to the next real micro and
-        tiles cleanly, cutting at 3.12.5 like ``<= "3.12.4"``."""
+        tiles at 3.12.5 like ``<= "3.12.4"``."""
         found = micro_boundary_points(
             self._target(), [Marker('python_full_version < "3.12.4.post1"')]
         )

@@ -430,9 +430,8 @@ class TestDropWorkspacePins:
     def test_a_surviving_package_keeps_its_whole_gate(self) -> None:
         """Dropping a member cannot narrow what still installs.
 
-        A gate names install contexts, never packages, so nothing a
-        dropped member reached can leave a gate behind that no longer
-        resolves.
+        A selection marker names install contexts. Dropping a member cannot
+        leave a marker whose packages no longer resolve.
         """
         lock_input = _lock_input(
             {"foo": _pin("foo", "1.0"), "alpha": _pin("alpha", "2.0")},

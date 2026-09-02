@@ -5,8 +5,8 @@ off ``typing`` through its own ``_compat`` shim.  The dependency stays
 declared for ``Self`` and ``Protocol``, which a checker reads and the
 interpreter never loads.
 
-The probe runs in a subprocess: this suite imports most of nab before any
-test runs, so an in-process check would pass whatever the import graph is.
+The probe runs in a fresh subprocess so earlier test imports cannot mask a
+dependency.
 """
 
 from __future__ import annotations

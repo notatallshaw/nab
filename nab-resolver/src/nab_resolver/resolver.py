@@ -256,7 +256,7 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         Drained after every ``choose_version`` call.  When non-empty AND
         ``choose_version`` returned None, the resolver suppresses the default
         ``NO_VERSIONS`` clause (which would persist across backjumps) so the
-        provider's context-aware clauses become the source of truth.
+        provider's context-aware clauses replace it.
         """
         ...
 
@@ -267,7 +267,7 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         the resolver bumps each package's culprit count past the
         demote threshold, queues it, and fires
         ``apply_targeted_backtrack`` without waiting for the normal
-        conflict-count gate.
+        conflict-count threshold.
 
         Providers without a force-backtrack signal return an empty list.
         """

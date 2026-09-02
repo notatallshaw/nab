@@ -30,9 +30,8 @@ _BOLD = "\033[1m"
 _CYAN = "\033[36m"
 _RESET = "\033[0m"
 
-# One entry as the layout sees it: the spelling it measures, the spelling it
-# writes, and the help beside them.  The two spellings differ by escapes,
-# which occupy no cell and so cannot be measured.
+# One entry holds measured text, displayed coloured text, and help.
+# The display form has escapes, which occupy no cell.
 _Entry = tuple[str, str, str]
 
 
@@ -179,7 +178,7 @@ def _option_entries(
 def _operand_entries(table: Table, texts: tuple[str, ...]) -> list[_Entry]:
     """One entry per operand slot, in the order it binds.
 
-    An operand names a placeholder rather than a spelling to type, so it
+    An operand names a placeholder rather than an option to type, so it
     takes no colour and its two forms are the same string.
     """
     entries = []
@@ -193,7 +192,7 @@ def _operand_entries(table: Table, texts: tuple[str, ...]) -> list[_Entry]:
 def _spelling(row: Row, negation: str, *, color: bool) -> str:
     """How one option is written: its names, its value, then its negation.
 
-    The names and the negation are spellings a reader can type; the metavar
+    The names and the negation are literal options; the metavar
     stands in for a value, so it stays the terminal's own foreground.
     """
     names = [f"-{row.short}", row.long] if row.short else [row.long]
@@ -243,7 +242,7 @@ def _metavar(row: Row) -> str:
     if row.kind == "star":
         return f"{name} ..."
     # A tri reads its value only when one is written, so the bare flag is
-    # a spelling too and the brackets are the page's way of saying so.
+    # valid too and the brackets are the page's way of saying so.
     return f"[{name}]" if row.kind == "tri" else name
 
 
@@ -256,7 +255,7 @@ def _layout(
     *,
     color: bool,
 ) -> str:
-    """Lay the page out around one spelling column, wrapping every help line."""
+    """Lay out one option column and wrap every help line."""
     lines = [usage]
     if summary:
         lines.append("")
@@ -279,9 +278,9 @@ def _layout(
 
 
 def _column(sections: list[tuple[str, list[_Entry]]], width: int) -> int:
-    """Where the help text starts: past the widest spelling that fits half the page.
+    """Start help after the widest option that fits in half the page.
 
-    A spelling wider than half the width takes its own line instead of
+    A wider option takes its own line instead of
     pushing every help line into the right margin.
     """
     limit = width // 2
@@ -295,7 +294,7 @@ def _column(sections: list[tuple[str, list[_Entry]]], width: int) -> int:
 
 
 def _entry(plain: str, painted: str, text: str, column: int, width: int) -> list[str]:
-    """One entry: the spelling, then its help, hanging under the column.
+    """Write one option and hang its help under the column.
 
     The padding is measured off ``plain`` and written with ``painted``, so a
     page keeps one column whether or not it carries escapes.

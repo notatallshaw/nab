@@ -705,7 +705,7 @@ class TestPrepareClone:
 
 
 def _deny_below(monkeypatch: pytest.MonkeyPatch, ancestor: Path) -> None:
-    """Refuse every stat and mkdir below ``ancestor``, as a missing search bit does.
+    """Simulate a missing search bit below ``ancestor``.
 
     Both calls need denying: ``Path.is_file`` re-raises the stat's EACCES up to
     Python 3.13 but reports it as absent from 3.14, which leaves the mkdir as
@@ -1200,9 +1200,8 @@ class TestOfflineClone:
     ) -> None:
         """An authority does not make a ``file://`` repo a network fetch.
 
-        git drops it on POSIX and reads a UNC path on Windows, both
-        filesystem calls.  Offline gates the requests nab issues, not
-        what the mount behind a path happens to do.
+        git drops it on POSIX and reads a UNC path on Windows, both filesystem
+        calls. Offline blocks network requests issued by nab.
         """
         sha = "f" * 40
         commands: list[str] = []
@@ -1248,7 +1247,7 @@ class TestProviderVcsIntegration:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Offline gates a declared VCS source, as it already gates archives.
+        """Offline blocks a declared VCS source and remote archives.
 
         Uses a real coordinator so the run's own ``offline`` setting
         drives the check rather than a mock attribute.

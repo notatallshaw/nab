@@ -1,19 +1,36 @@
 # Benchmarks
 
-nab ships two live-index benchmark suites that exercise single-environment and universal resolves against real-world scenarios. It also includes a small, deterministic offline smoke suite for repeatable correctness and performance checks.
+nab ships two live-index benchmark suites that exercise
+single-environment and universal resolves against real-world scenarios.
+It also includes a small, deterministic offline smoke suite for
+repeatable correctness and performance checks.
 
 ## Deterministic offline smoke suite
 
-`deterministic_smoke.py` materializes a content-addressed local Simple index and runs seven semantic cases plus four scaled performance cases. Every successful resolve is checked for exact target pins, PEP 751 lock projection, fixture sources, wheel hashes, and dependency edges. Unsatisfiable cases must return a proof-bearing resolution error without pins or a lock.
+`deterministic_smoke.py` materializes a content-addressed local Simple
+index and runs seven semantic cases plus four scaled performance cases.
+Every successful resolve is checked for exact target pins, PEP 751 lock
+projection, fixture sources, wheel hashes, and dependency edges.
+Unsatisfiable cases must return a proof-bearing resolution error without
+pins or a lock.
 
-Each performance case also pins its exact search counters. `pip-deep-backtracking` measures the volume of backtracking; its conflicts each name the decision one level up, so `deep-backjump` supplies the case where the culprit sits several levels below the conflict and the decision order matters. Between them a change that reaches the right answer along a different path moves a recorded number.
+Each performance case pins its exact search counters.
+`pip-deep-backtracking` measures backtracking whose conflicts name the
+decision one level up. `deep-backjump` supplies the case where the
+culprit sits several levels below the conflict, where decision order
+matters.
+
+Together they detect a change that reaches the right answer by a
+different path.
 
 ```bash
 python nab-project/benchmarks/deterministic_smoke.py --lane semantic
 python nab-project/benchmarks/deterministic_smoke.py --lane performance --runs 5
 ```
 
-The scenarios use Nab's default highest resolution strategy and default cross-target alignment. `strategy-lowest`, `strategy-lowest-direct`, and `universal-independent` declare the only exceptions.
+The scenarios use Nab's default highest resolution strategy and default
+cross-target alignment. `strategy-lowest`, `strategy-lowest-direct`,
+and `universal-independent` declare the only exceptions.
 
 Each resolve gets a fresh coordinator against the same prebuilt offline
 fixture. It prefetches only the listings its requirements and
@@ -41,9 +58,17 @@ pip-tools.  Scenario TOML files live under
 python nab-project/benchmarks/scenarios.py
 ```
 
-The runner records wall-clock, decision-count, and round-count metrics in one JSON result per scenario under `nab-project/benchmarks/results/<commit>/`.
+The runner records wall-clock, decision-count, and round-count metrics
+in one JSON result per scenario under
+`nab-project/benchmarks/results/<commit>/`.
 
-The standard corpus contains one definition per scenario. A normal run resolves each supported definition once with the default `highest` strategy. An explicit strategy-matrix run expands that same corpus over `highest`, `lowest`, and `lowest-direct`; strategies never have separate TOML copies. Repeat `--toml` to select one or more canonical files:
+The standard corpus contains one definition per scenario. A normal run
+resolves each supported definition once with the default `highest`
+strategy. A strategy-matrix run expands that corpus over `highest`,
+`lowest`, and `lowest-direct`; strategies never have separate TOML
+copies.
+
+Repeat `--toml` to select one or more canonical files:
 
 ```bash
 python nab-project/benchmarks/scenarios.py --strategy-matrix
@@ -53,7 +78,10 @@ python nab-project/benchmarks/_profile_runner.py \
     pip:cburroughs-v3 --resolution lowest
 ```
 
-`strategy_sweep.py` is a compatibility alias for `scenarios.py --strategy-matrix`; it does not implement another resolver or result format. Retired selections such as `--toml pip-lowest` fail with the canonical replacement command.
+`strategy_sweep.py` is a compatibility alias for
+`scenarios.py --strategy-matrix`; it does not implement another resolver
+or result format. Retired selections such as `--toml pip-lowest` fail
+with the canonical replacement command.
 
 Each run initializes `_standard_manifest.json` as incomplete before
 resolving anything. It becomes complete only when every applicable
@@ -73,7 +101,7 @@ results and top-level provenance.
 
 ### Canary subset
 
-`canary.py` runs the small hard-case subset used by the local verification gate.
+`canary.py` runs the small hard-case subset used by local verification.
 
 `canary.toml` selects canonical scenario definitions and declares each
 case's strategy. Manual selections may use an explicit suffix such as
@@ -100,13 +128,21 @@ python nab-project/benchmarks/universal_scenarios.py --scenario marker-heavy
 python nab-project/benchmarks/universal_summary.py
 ```
 
-`universal_summary.py` walks the latest results directory and prints a markdown table.
+`universal_summary.py` walks the latest results directory and prints a
+markdown table.
 
-Each result retains its per-target solutions and merged target-label pin projection. The runner exits nonzero after an unexpected resolution, timeout, lock-emission failure, or projection failure.
+Each result retains its per-target solutions and merged target-label pin
+projection. The runner exits nonzero after an unexpected resolution,
+timeout, lock-emission failure, or projection failure.
 
 The result schema and source identity invalidate stale caches.
 
-A full run writes `_manifest.json` with the current scenario set; the summary follows that set, ignores removed result files, and accepts only complete runs from a clean source tree. Selected diagnostics are isolated under `universal-selected/` and are never treated as a full-suite baseline.
+A full run writes `_manifest.json` with the current scenario set. The
+summary follows that set, ignores removed result files, and accepts only
+complete runs from a clean source tree.
+
+Selected diagnostics are isolated under `universal-selected/` and are
+never treated as a full-suite baseline.
 
 Benchmark outputs are local run artifacts rather than repository
 baselines. Generate both sides of a comparison on the same machine, with
@@ -119,7 +155,10 @@ provenance, and toolchain metadata to support a performance claim.
 
 ## Scenario shape
 
-Each single-environment scenario is a top-level TOML table keyed by name, with at least `requirements` and a fixed `datetime` (used as the `uploaded-prior-to` cutoff). Optional single-environment knobs include constraints, marker overlays, distribution policy, and build policy.
+Each single-environment scenario is a top-level TOML table keyed by
+name. It requires `requirements` and a fixed `datetime`, used as the
+`uploaded-prior-to` cutoff. Optional settings include constraints,
+marker overlays, distribution policy, and build policy.
 
 `marker_environment` and the `platform_system` shorthand define the
 resolver target without restricting the host. Set
@@ -130,7 +169,10 @@ values so its wheel tags remain faithful.
 and implementation markers narrow the match. A nonmatching host records
 the scenario as inapplicable.
 
-Universal scenarios require `python`, `platforms`, and `requirements`. They may also set constraints, a cutoff, Python ordering, alignment, resolution strategy, an explanatory reason, and expected-failure handling.
+Universal scenarios require `python`, `platforms`, and `requirements`.
+They may also set constraints, a cutoff, Python ordering, alignment,
+resolution strategy, an explanatory reason, and expected-failure
+handling.
 
 ## What the suites cover
 
@@ -140,4 +182,5 @@ Universal scenarios require `python`, `platforms`, and `requirements`. They may 
 * Universal-mode fork-explosion cases (xinference, vllm,
   ultralytics, copick).
 
-The suites are opt-in diagnostic harnesses. Wall time is noisy, so prefer decision and round counts when comparing resolver search.
+The suites are opt-in diagnostic harnesses. Wall time is noisy, so
+prefer decision and round counts when comparing resolver search.

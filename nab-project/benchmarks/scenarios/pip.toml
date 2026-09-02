@@ -170,7 +170,7 @@ requirements = ["trustllm"]
 [metagpt]
 # https://github.com/FoundationAgents/MetaGPT/issues/1825
 # ResolutionImpossible (not too-deep), kept as a regression check.
-# Impossible by design: metagpt pins faiss-cpu==1.7.4, whose newest wheel is
+# Unsatisfiable: metagpt pins faiss-cpu==1.7.4, whose newest wheel is
 # cp311, and it publishes no sdist, so 3.12 cannot install it.
 python_version = "3.12"
 platform_system = "Linux"

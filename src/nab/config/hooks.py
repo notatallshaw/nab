@@ -71,7 +71,7 @@ _RESOLVE_ANCHOR: ContextVar[datetime | None] = ContextVar(
 # rather than re-derived by splitting a human-facing ``where`` label.
 _DECLARING_DIR: ContextVar[Path | None] = ContextVar("_DECLARING_DIR", default=None)
 
-# The matrix header spelling for the file being parsed.
+# The matrix table name for the file being parsed.
 _MATRIX_TABLE: ContextVar[str] = ContextVar("_MATRIX_TABLE", default="tool.nab.matrix")
 
 # One timestamp per inspector pass keeps equal relative values equal across files.
@@ -127,13 +127,7 @@ def declaring_dir(directory: Path) -> Iterator[None]:
 
 @contextmanager
 def matrix_table(table: str) -> Iterator[None]:
-    """Bind the matrix header of the file being read.
-
-    The ladder wraps each TOML source's parse in this, so
-    :func:`parse_matrix` names the python-patches table the way the
-    declaring file writes it: ``[tool.nab.matrix.python-patches]`` in a
-    pyproject.toml, ``[matrix.python-patches]`` in a nab.toml.
-    """
+    """Bind the matrix table name for one file read."""
     token = _MATRIX_TABLE.set(table)
     try:
         yield
@@ -145,8 +139,8 @@ def parse_uploaded_prior_to(value: Any, where: str) -> Any:
     """Parse ``uploaded-prior-to`` without re-anchoring relative durations.
 
     A ``P<n>D`` duration anchors to the lockfile at resolve time, and the
-    registry merely gates and displays the key, so it must not silently
-    re-anchor one to ``now``.  A relative duration is carried as its raw
+    registry only validates and displays the key. It must not silently
+    re-anchor one to ``now``. A relative duration is carried as its raw
     string (the cross-file conflict check compares raw strings, so identical
     durations match and different ones conflict), and only an absolute
     datetime is normalised through the shared parser.
@@ -371,7 +365,7 @@ def render_dist_policy(value: Any) -> str:
 
 
 def render_enum_value(value: Any) -> str:
-    """Render an enum-valued row as the spelling its members carry."""
+    """Render an enum-valued row as its member value."""
     return str(value.value)
 
 

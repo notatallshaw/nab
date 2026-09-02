@@ -693,7 +693,7 @@ class TestClauseText:
 
         Report order is :data:`DropCause.REPORT_ORDER` and is deliberately
         not the order the filter asks the questions in.  This is also the
-        whole shape of the message: lead, clauses, sdist tail, then the note.
+        message places its lead before the clauses, sdist tail, and note.
         """
         assert reason_for(
             [wheel("1.0", requires_python=">=3.99"), wheel("2.0", upload_time=AFTER)],
@@ -1526,7 +1526,7 @@ class TestTheInRangeLead:
         The host drops the sdist that carries the release, so the version
         the requirement spells is missing from ``versions_cache`` and the
         walk is asked for a sentence.  The wheel it refused on tags is that
-        same release under another spelling, and the walk kept it, so the
+        same release under another filename form, and the walk kept it, so the
         line must not blame the tags for a drop the host made.
         """
 
@@ -2015,12 +2015,7 @@ def every_shape() -> dict[str, Diagnostic]:
 
 
 class TestTheTwoDepths:
-    """What ``-v`` owes the line it deepens, over every entry the report has.
-
-    The three rules are that it never drops what the default line carried,
-    never says the same thing again, and never reaches for the resolver's
-    own vocabulary.  Where a shape has no more to say, it says nothing.
-    """
+    """``-v`` adds detail without repeating or removing default report text."""
 
     @pytest.mark.parametrize("name", list(every_shape()))
     def test_a_try_line_always_has_its_note_behind_it(self, name: str) -> None:

@@ -226,8 +226,8 @@ requirements = [
 datetime = "2025-06-01 00:00:00"
 
 # ---------------------------------------------------------------------------
-# Maximalist case: 5 Pythons * 5 platforms = 25 tuples on a non-trivial
-# requirement.  Stresses our combinatorial bound.
+# Maximalist case: 5 Pythons * 5 platforms = 25 tuples over dask's
+# dependency graph. Stresses our combinatorial bound.
 # ---------------------------------------------------------------------------
 [max-25-tuples]
 reason = "25-tuple matrix on dask"

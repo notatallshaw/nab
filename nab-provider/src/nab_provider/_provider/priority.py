@@ -74,8 +74,8 @@ def compute_matching(
     whole decision scan.
 
     Under :attr:`~nab_provider.provider.DecisionOrder.STABLE` it waits for the
-    listing instead, so the count is the real one and this sentinel is only
-    reached by a package with no listing to count.
+    listing. It returns that listing's match count when present and
+    :data:`_NO_LISTING_PRIOR` when absent.
     """
     per_pkg = provider.matching_cache.get(normalized)
     if per_pkg is not None:

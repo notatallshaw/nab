@@ -508,7 +508,7 @@ class TestAdversarialGraphShapes:
     @given(graph=deep_chain_graphs())
     @PROPERTY_SETTINGS
     def test_deep_chains(self, graph: dict) -> None:
-        """Deep linear chains resolve or fail cleanly without stack overflow."""
+        """Deep linear chains finish without stack overflow."""
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
         try:
@@ -521,7 +521,7 @@ class TestAdversarialGraphShapes:
     @given(graph=pinning_cascade_graphs())
     @PROPERTY_SETTINGS
     def test_pinning_cascades(self, graph: dict) -> None:
-        """Version-pinning cascades (the boto3 pattern) resolve correctly."""
+        """Version-pinning cascades resolve under the boto3 pattern."""
         provider = FuzzProvider(graph)
         resolver = Resolver(provider, max_iterations=1000)
         try:
@@ -576,7 +576,7 @@ class TestAdversarialGraphShapes:
     @given(graph=wide_fan_in_graphs())
     @PROPERTY_SETTINGS
     def test_wide_fan_in(self, graph: dict) -> None:
-        """Wide-fan-in graphs (many parents constrain a bottleneck) resolve correctly."""
+        """Wide-fan-in graphs resolve when many parents constrain a bottleneck."""
         provider = FuzzProvider(graph)
         requirements = {"root": Range.singleton(1)}
         resolver = Resolver(provider, max_iterations=1000)

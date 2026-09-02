@@ -93,7 +93,8 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     ``--groups`` / ``--all-groups`` and ``--extras`` / ``--all-extras``
     mirror ``nab lock``: a project declaring an ``exactly-one`` or
     ``at-least-one`` conflict needs at least one member selected for
-    the resolve to start, so these flags also gate the download.
+    the resolve to start, so these flags also determine what is
+    downloaded.
 
     ``--python X.Y`` resolves for that Python on this machine instead of
     the running interpreter, as on ``nab lock``.  It is the short form of

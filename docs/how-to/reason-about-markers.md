@@ -46,9 +46,9 @@ True
 False
 ```
 
-## Compare two spellings of one marker
+## Compare two forms of one marker
 
-`==` is structural, over the tree a set was built from, so two spellings
+`==` is structural, over the tree a set was built from, so two forms
 of one set compare unequal. `equivalent` is the semantic test.
 
 ```pycon
@@ -67,7 +67,7 @@ pre-release the long one excludes.
 '3.11.dev0'
 ```
 
-## Restrict to what you already know
+## Restrict known variables
 
 `restrict` substitutes the variables you name and leaves the rest.
 
@@ -104,7 +104,7 @@ marker whose clauses are all needed comes back expanded.
 `to_marker_string` returns `None` for the full set and raises for the
 empty set and for a complement PEP 508 cannot spell. `simplify` raises
 the same way: factoring pushes complements down to the leaves first,
-and that is the step with no spelling.
+and that step cannot always be represented in PEP 508.
 
 ```pycon
 >>> MarkerSet.full().to_marker_string() is None
@@ -190,8 +190,8 @@ Every decision runs under a cell budget and raises rather than hanging.
 too wide to decide
 ```
 
-`restrict` the variables you already know before deciding: a substituted
-axis leaves the cell product.
+`restrict` variables fixed before deciding: a substituted axis leaves
+the cell product.
 
 ## What the decisions do not decide
 

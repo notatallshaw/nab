@@ -213,7 +213,7 @@ def extract_source_metadata(
     build_config: ResolveInputs | None,
     persistent_root: Path | None = None,
 ) -> WheelMetadata:
-    """Read metadata from a directory; gates the backend path on ``policy``.
+    """Read directory metadata under the backend ``policy``.
 
     ``kind`` is ``"local"`` for :class:`LocalSource` directories (admitted at
     :attr:`BuildPolicy.BUILD_LOCAL` and above); ``"vcs"`` for :class:`VcsSource`

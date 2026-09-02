@@ -33,7 +33,7 @@ from .strategies import DEEP_SETTINGS
 
 pytestmark = pytest.mark.property
 
-# Name-ish components: ASCII word chars, dots, non-ASCII letters, empties.
+# Name components include ASCII, dots, non-ASCII letters, and empty strings.
 name_chars = st.sampled_from(
     [*string.ascii_letters, *string.digits, ".", "_", "é", "ß", "京"]
 )

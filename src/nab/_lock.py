@@ -412,8 +412,8 @@ def _default_output_path(
     """Return the file this run writes when ``--output`` is not given.
 
     A build-requirements lock gets a name of its own so it cannot
-    overwrite the project's runtime lock.  ``pylock.build.toml`` is the
-    PEP 751 ``pylock.<name>.toml`` spelling.
+    overwrite the project's runtime lock.  ``pylock.build.toml`` follows
+    the PEP 751 ``pylock.<name>.toml`` filename form.
     """
     names = _BUILD_DEFAULT_OUTPUT if build_requirements else _DEFAULT_OUTPUT
     return Path(names[format])

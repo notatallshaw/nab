@@ -1,11 +1,8 @@
 """Property tests for the :mod:`nab_index.multi_index` routing contract.
 
-Contract (module docstring): walk the ordered index list left-to-right,
-stop at the first index whose listing is non-empty; an override pins a
-package to exactly one named index.  Listings from different indexes are
-never mixed.  ``route_for`` reports the serving index after ``get_files``,
-and follow-up metadata calls hit that same index whatever PEP 503
-spelling they use.
+The first non-empty listing selects the serving index. An override selects one
+named index. Follow-up metadata calls use the same route for equivalent PEP 503
+name forms.
 """
 
 from __future__ import annotations
@@ -186,7 +183,7 @@ def test_metadata_follows_listing_route(
 def test_route_stable_across_spellings(
     data: Universe, package: str, respell: Callable[[str], str]
 ) -> None:
-    """A second ``get_files`` under another PEP 503 spelling keeps the route."""
+    """A second ``get_files`` under another PEP 503 form keeps the route."""
     router, _stubs, _overrides = data
     first = run(router.get_files(package))
     route_first = router.route_for(package)

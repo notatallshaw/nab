@@ -44,7 +44,7 @@ own data file, so combine before reporting:
 .venv/bin/python -m coverage report       # fails below 100 percent
 ```
 
-CI gates each workspace's coverage on its own tests through nox (see
+CI checks each workspace's coverage from its own tests through nox (see
 `noxfile.py`). Reproduce a single workspace, or all of them, with:
 
 ```bash
@@ -119,12 +119,14 @@ package: `nab_resolver`, `nab_markersets`, `nab_provider`,
 
 The full local suite under `coverage run -m pytest` checks all six
 together. Nox splits them per workspace in CI and runs each suite once,
-appending to one coverage data file, so a workspace gates on its own
-suites plus every suite run before it. `nab_index` and `nab_provider`
-are gated in the `project` workspace, since reaching every line of both
-takes `nab-project/tests` as well as `nab-provider/tests`. The `provider`
+appending to one coverage data file. Its result includes the workspace's
+own suites plus every suite run before it.
+
+`nab_index` and `nab_provider` are checked in the `project` workspace;
+reaching every line of both takes
+`nab-project/tests` as well as `nab-provider/tests`. The `provider`
 workspace runs `nab-markersets/tests` and `nab-provider/tests` without
-`nab-index` installed, and gates `nab_markersets`.
+`nab-index` installed, and checks `nab_markersets`.
 
 When code is unreachable from the default suite, prefer:
 
@@ -135,4 +137,4 @@ When code is unreachable from the default suite, prefer:
   pattern in `[tool.coverage.report].exclude_also`.
 
 Code under `_build/env.py` and the CLI typically mocks subprocesses,
-network calls, and venv creation rather than skipping the gate.
+network calls, and venv creation rather than lowering coverage.

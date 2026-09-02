@@ -56,8 +56,8 @@ python -m pip install -r pylock.toml
 ```
 
 The second command needs pip 26.1 or newer. pip's `pylock.toml` support
-is experimental; see [Lockfiles][lockfiles] for its selection limits and
-a hashed-requirements alternative.
+is experimental; [Use a lock][use-lock] explains its selection limits
+and a hashed-requirements alternative.
 
 `--format requirements` writes index requirements with recorded hashes.
 `--format requirements-without-hashes` writes index pins without their
@@ -72,9 +72,8 @@ nab publishes five component libraries for other tools:
 * `nab-markersets`: a PEP 508 marker algebra.
 * `nab-provider`: Python packaging policy and resolution logic without
   I/O.
-* `nab-index`: index, archive, VCS, and cache clients.
-* `nab-project`: nab's host, with resolve orchestration, workspace
-  discovery, the build path, lockfile emitter, and downloader.
+* `nab-index`: package-index and source clients with caching.
+* `nab-project`: resolve orchestration plus lock and download workflows.
 
 `nab-resolver` has stable public module paths. The other component APIs
 are experimental. See [how the distributions fit together][packages].
@@ -84,7 +83,7 @@ are experimental. See [how the distributions fit together][packages].
 nab is under active development. See the [status summary][status] for
 supported inputs and experimental features.
 
-[archive-sources]: https://nab.readthedocs.io/en/stable/reference/configuration.html#archive-sources
+[archive-sources]: https://nab.readthedocs.io/en/stable/how-to/archive-sources.html
 [build-policy]: https://nab.readthedocs.io/en/stable/reference/build-policy.html
 [check-lock]: https://nab.readthedocs.io/en/stable/reference/lockfile.html#checking-the-lock-in-ci
 [lockfiles]: https://nab.readthedocs.io/en/stable/reference/lockfile.html
@@ -92,3 +91,4 @@ supported inputs and experimental features.
 [packages]: https://nab.readthedocs.io/en/stable/explanation/packages.html
 [resolve-environment]: https://nab.readthedocs.io/en/stable/reference/configuration.html#the-resolve-environment
 [status]: https://nab.readthedocs.io/en/stable/#status
+[use-lock]: https://nab.readthedocs.io/en/stable/how-to/use-the-lock.html

@@ -94,7 +94,7 @@ def test_overlapping_root_markers_cover_each_python_partition() -> None:
     """Exercise every root-marker partition with a finite Python witness.
 
     Python 3.12, 3.13, and 3.14 cover the three marker partitions. The package
-    retains its ``Requires-Python >=3.12`` gate and uses wheels only because
+    retains its ``Requires-Python >=3.12`` condition and uses wheels only because
     artifact choice is outside the marker invariant.
     """
     versions = ("1.0.0", "1.1.0", "1.2.0")

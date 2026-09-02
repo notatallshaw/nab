@@ -1,10 +1,11 @@
 # Benchmarks
 
-`range_scenarios.py` resolves three graph shapes through `nab_resolver.Resolver` with every
-constructor argument left at its default, so the range type under test is this package's
-`Range`. nab-project's benchmark suites all pass packaging's `VersionRange`, which leaves
-`Range` unmeasured everywhere else even though it is what a consumer that supplies no
-`range_type` gets.
+`range_scenarios.py` resolves three graph shapes through
+`nab_resolver.Resolver` with every constructor argument left at its
+default, so the range type under test is this package's `Range`.
+nab-project's benchmark suites all pass packaging's `VersionRange`,
+which leaves `Range` unmeasured everywhere else even though it is what a
+consumer that supplies no `range_type` gets.
 
 ```bash
 python nab-resolver/benchmarks/range_scenarios.py
@@ -12,13 +13,14 @@ python nab-resolver/benchmarks/range_scenarios.py --scenario conflict-free-fanou
 python nab-resolver/benchmarks/range_scenarios.py --repeats 9 --json out.json
 ```
 
-`wrong-package-backtracking` builds 64 releases of a graph whose roots pin disagreeing
-versions of one shared package. It backtracks, so it drives the set predicates and the
-differences and intersections that fragment a range.
+`wrong-package-backtracking` builds 64 releases of a graph whose roots
+pin disagreeing versions of one shared package. It backtracks, so it
+drives the set predicates and the differences and intersections that
+fragment a range.
 
-`conflict-free-fanout` builds one root over 120 leaf packages of 50 releases each. Nothing
-conflicts, no range ever gains a second interval, and nearly all the work is membership
-tests during prioritization.
+`conflict-free-fanout` builds one root over 120 leaf packages of 50
+releases each. Nothing conflicts, no range ever gains a second interval,
+and nearly all the work is membership tests during prioritization.
 
 `satisfied-ceiling-fanin` builds one root over 1000 packages that all
 cap the same hub, one of them below the rest.
@@ -58,7 +60,8 @@ release lists. A provider that indexed or cached its candidates would
 show almost none. These scenarios compare `Range` implementations on a
 fixed workload; they do not size `Range`'s share of a real resolve.
 
-Versions here are `int`, so a comparison inside `Range` costs a C-level int compare, while a
-consumer holding packaging `Version` objects pays a Python-level `__lt__`. A change that
-spends allocations to save comparisons is worth at least what it measures here, and more to
-that consumer.
+Versions here are `int`, so a comparison inside `Range` costs a C-level
+int compare. A consumer holding packaging `Version` objects pays a
+Python-level `__lt__`. A change that spends allocations to save
+comparisons is worth at least what it measures here, and more to that
+consumer.

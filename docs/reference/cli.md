@@ -60,13 +60,12 @@ error. Universal mode rejects it because the matrix declares Python.
 
 ### Project overrides
 
-A project option can be overridden for one run with a
-`--project-<key>` flag: `--project-resolution`, `--project-mode`,
-`--project-requires-python`,
+Scalar and list project options have individual flags. They are
+`--project-resolution`, `--project-mode`, `--project-requires-python`,
 `--project-uploaded-prior-to`, `--project-dist-policy`,
 `--project-build-policy`, `--project-build-requires-depth`,
 `--project-decision-order`, `--project-base-group`,
-`--project-build-group`, and the repeatable `--project-constraint` and
+`--project-build-group`, `--project-constraint`, and
 `--project-default-group`.
 
 Each replaces the file value. Repeating `--project-constraint` builds
@@ -74,11 +73,13 @@ that run's whole constraint list rather than adding to the declared
 one. An override prints a reproducibility notice on stderr, which `-q`
 drops, and is recorded in the lockfile's `[tool.nab]` block.
 
-`[tool.nab.matrix]` and `[tool.nab.environment]` are set key by key:
-`--project-matrix-python`, `--project-matrix-platforms`,
-`--project-matrix-implementations`, `--project-matrix-python-order`,
-`--project-matrix-python-patches`, `--project-environment-python`,
-`--project-environment-platform` and `--project-environment-implementation`.
+`[tool.nab.matrix]` and `[tool.nab.environment]` are set key by key through
+the `--project-matrix-*` and `--project-environment-*` flags. The matrix flags
+are `--project-matrix-python`, `--project-matrix-platforms`,
+`--project-matrix-implementations`, `--project-matrix-python-order`, and
+`--project-matrix-python-patches`. The environment flags are
+`--project-environment-python`, `--project-environment-platform`, and
+`--project-environment-implementation`.
 Each replaces the key it names inside the table the project files declare and
 leaves the rest alone; a list flag replaces its list whole. With no file
 table, `--project-matrix-python` and `--project-matrix-platforms` are both
@@ -159,9 +160,8 @@ actions:
 * `nab config get <key>` prints one effective value.
 * `nab config explain <key>` prints a header naming the key, its scope,
   type, effective value, help, documentation link, and source stack. The
-  winning row has a `>` gutter; beaten sources are `shadowed`. A file
-  table used by a CLI table-key override is `merged` because it supplies
-  the remaining keys.
+  sources are labelled `winner`, `shadowed`, `merged`, or `rejected`, and
+  the documentation link points to <https://nab.readthedocs.io/>.
 
 `--include-rejected` is a flag on `nab config` itself, so every action
 takes it.

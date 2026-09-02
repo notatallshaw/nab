@@ -134,7 +134,7 @@ def _packaging_requirement(name: str) -> str | None:
     """The ``packaging`` requirement a distribution declares, or None.
 
     An extra counts: nab-markersets runs on either copy and declares one under
-    each, so the released spelling is optional there rather than absent.
+    each, so either released requirement is optional rather than absent.
     """
     manifest = _toml(RELEASED_DIRS[name] / "pyproject.toml")["project"]
     extras = manifest.get("optional-dependencies", {}).values()
@@ -271,7 +271,7 @@ def _suite_owners(paths: list[str]) -> set[str]:
 
 
 def test_nox_workspaces_install_what_they_run_and_gate() -> None:
-    """Each nox workspace installs what its suites and gates need, exactly.
+    """Each nox workspace installs what its suites and coverage checks need.
 
     Held one entry at a time, since a package dropped from one entry's
     editables is still installed by another.
@@ -300,7 +300,7 @@ def test_benchmarks_session_installs_every_member() -> None:
 
     pytest imports every module under the paths it is given before the
     ``benchmark`` marker deselects anything, so a member missing here fails
-    collection in a job no coverage gate or workspace table watches.
+    collection in a job no coverage check or workspace table watches.
     """
     assert _distributions(_session_editables("benchmarks")) == set(MEMBERS)
 
@@ -308,7 +308,7 @@ def test_benchmarks_session_installs_every_member() -> None:
 def test_umbrella_workspace_installs_every_released_package() -> None:
     """The umbrella entry installs every released package.
 
-    No coverage gate pins this list.
+    No coverage check pins this list.
     """
     editables, _, _ = _nox_workspaces()["umbrella"]
 
@@ -327,7 +327,7 @@ def test_nox_gates_every_released_package_at_full_coverage() -> None:
 def test_ci_runs_every_nox_workspace() -> None:
     """CI runs ``nox -s tests`` unfiltered, which runs every workspace.
 
-    A filtered run still passes, leaving the packages the others gate
+    A filtered run still passes, leaving the packages the other checks cover
     unmeasured.
     """
     text = TEST_WORKFLOW.read_text(encoding="utf-8")
@@ -346,7 +346,7 @@ def test_coverage_paths_remap_every_released_package() -> None:
     """Each distribution's installed copy remaps onto its source tree.
 
     The workspaces install editable and run under coverage's parallel mode, so a
-    package with no remap reports as two half-covered trees and misses the gate.
+    package with no remap reports as two half-covered trees and fails coverage.
     """
     expected = {
         module: [_repo_relative(name, f"src/{module}"), f"*/{module}"]
@@ -488,8 +488,8 @@ def test_cli_log_handlers_reach_every_released_package() -> None:
     """nab's log handler is attached per package, by top-level import name.
 
     A package missing from the tuple gets no handler, so its records fall
-    through to the root logger: unformatted, not gated by ``-v``/``-q``, and
-    outside the writer that clears the progress line.
+    through to the root logger without formatting, verbosity filtering, or
+    progress-line cleanup.
     """
     loggers = _literal(CLI_OUTPUT, "_NAB_LOGGERS")
 

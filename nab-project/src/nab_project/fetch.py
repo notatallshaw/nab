@@ -814,7 +814,7 @@ class FetchCoordinator:
     ) -> CachedAsyncSimpleClient | LocalIndexClient:
         """Build a single index client for ``cfg``.
 
-        A ``file:`` URL in either RFC 8089 spelling goes to
+        Either RFC 8089 form of a ``file:`` URL goes to
         :class:`LocalIndexClient` (no caching; the filesystem is the
         cache).  Everything else goes to :class:`CachedAsyncSimpleClient`
         with a per-URL :class:`OnDiskCache` when ``cache_dir`` is set.

@@ -210,7 +210,7 @@ def _value(parsed: Parsed, dest: str) -> object:
 
 
 def _ids(cases: tuple[tuple[Any, ...], ...]) -> list[str]:
-    """One id per case: its rule, then which case of that rule it is."""
+    """Build each case id from its rule and ordinal."""
     seen: dict[str, int] = {}
     ids = []
     for case in cases:
@@ -301,12 +301,12 @@ _PARSES: tuple[tuple[str, list[str], dict[str, object]], ...] = (
     ),
     ("unset-boolean-is-not-false", ["lock"], {"offline": None}),
     (
-        "no-prefix-spelling-sets-the-boolean-false",
+        "no-prefix-form-sets-the-boolean-false",
         ["lock", "--upgrade"],
         {"upgrade": True},
     ),
     (
-        "no-prefix-spelling-sets-the-boolean-false",
+        "no-prefix-form-sets-the-boolean-false",
         ["lock", "--no-upgrade"],
         {"upgrade": False},
     ),
@@ -347,12 +347,12 @@ _PARSES: tuple[tuple[str, list[str], dict[str, object]], ...] = (
         {"offline": False, "paths": ("True",)},
     ),
     (
-        "last-boolean-spelling-wins",
+        "last-boolean-form-wins",
         ["lock", "--upgrade", "--no-upgrade"],
         {"upgrade": False},
     ),
     (
-        "last-boolean-spelling-wins",
+        "last-boolean-form-wins",
         ["lock", "--no-upgrade", "--upgrade"],
         {"upgrade": True},
     ),
@@ -794,8 +794,8 @@ class TestEagerOptions:
     @pytest.mark.parametrize(
         ("rule", "argv", "eager", "command"),
         [
-            ("both-help-spellings-print-the-page", ["--help"], "help", ""),
-            ("both-help-spellings-print-the-page", ["-h"], "help", ""),
+            ("both-help-forms-print-the-page", ["--help"], "help", ""),
+            ("both-help-forms-print-the-page", ["-h"], "help", ""),
             (
                 "innermost-command-owns-the-help-page",
                 ["lock", "--help"],
@@ -943,7 +943,7 @@ class TestTheShippedTable:
     def test_a_positive_typo_is_never_offered_the_negation_of_what_it_meant(
         self,
     ) -> None:
-        """The filter does this, not the cap: only one spelling resembles it."""
+        """The similarity filter leaves one matching form before the cap."""
         with pytest.raises(UsageError) as caught:
             _shipped(["lock", "--upgrad"])
 
@@ -963,7 +963,7 @@ class TestTheShippedTable:
         assert parsed.values["upgrade"] is True
 
     def test_an_attached_star_value_still_swallows_the_words_after_it(self) -> None:
-        """Both spellings take the same words, so a line cannot change meaning."""
+        """Attached and separate forms consume the same words."""
         attached = _shipped(["lock", "--groups=dev", "docs"])
 
         assert attached.values["groups"] == ("dev", "docs")
@@ -1018,7 +1018,7 @@ _DISPATCH = {
 # A page reads the summary alone, so a fixture needs no module or function.
 _DISPATCH_PROBE = {"probe": ("", "", "a table written by a test")}
 
-# The widest spelling nab declares, at 87 characters with its five choices.
+# The widest option form nab declares: 87 characters with five choices.
 _WIDEST_SPELLING = (
     "  --project-dist-policy "
     "{wheel-only,prefer-wheel,wheel-or-sdist,sdist-only,sdist-install}"
@@ -1103,7 +1103,7 @@ class TestHelpPages:
     def test_a_spelling_wider_than_half_the_page_takes_its_own_line(self) -> None:
         """The row the rule exists for: five choices, 87 characters.
 
-        At 100 columns the spelling fits the page and still may not set
+        At 100 columns the option fits the page and still may not set
         the column, which is what half rather than all of the width buys.
         """
         assert _WIDEST_SPELLING in _shipped_page("lock", 100).splitlines()
@@ -1116,7 +1116,7 @@ class TestHelpPages:
         assert "  --project-matrix-python-order {asc,desc}" in text
 
     def test_the_spelling_that_sets_the_column_keeps_its_help_beside_it(self) -> None:
-        """The widest spelling inside the limit sits on its help's line."""
+        """The widest option inside the limit stays beside its help."""
         commands = {
             "probe": (_option("--wide-option-name", "wide"), _option("--x", "x"))
         }
@@ -1158,8 +1158,8 @@ class TestPaintedPages:
     def test_painting_changes_nothing_but_the_escapes(self) -> None:
         """The layout is measured on plain text, so stripping gives it back.
 
-        An escape occupies no cell, so a column measured over a painted
-        spelling would push every help line right by the nine characters
+        An escape occupies no cell, so a column measured over painted option
+        text would push every help line right by the nine characters
         the colour and the reset take.
         """
         for command in ("", *spec.COMMANDS):
@@ -1423,7 +1423,7 @@ class TestDispatch:
     def test_a_line_the_printer_refuses_never_resumes(
         self, command: types.ModuleType, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Nothing was imported, so the caller is left as it was."""
+        """A printer refusal leaves the caller state unchanged."""
         monkeypatch.setenv("NAB_VERBOSITY", "loud")
         resumed: list[int] = []
 
@@ -1481,7 +1481,7 @@ _REFUSED_LINES: tuple[tuple[str, list[str], str], ...] = (
 def test_a_refused_line_writes_to_stderr_alone_and_exits_two(
     rule: str, argv: list[str], expected: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """One status and one stream, for every refusal there is."""
+    """Every refusal exits 2 using stderr alone."""
     status = run(tuple(argv))
 
     captured = capsys.readouterr()
@@ -1536,7 +1536,7 @@ def test_a_message_dispatch_returns_leaves_through_the_one_stderr_write(
 
 
 class _RefusingStream(io.StringIO):
-    """A stream that refuses every write, the way a full disk does."""
+    """Simulate a full disk by refusing every write."""
 
     def write(self, text: str, /) -> int:
         raise OSError(errno.ENOSPC, "No space left on device")
@@ -1609,7 +1609,7 @@ _CASE_RULES = frozenset(
         "negation-has-no-short-form",
         "option-order-does-not-matter",
         "command-names-never-start-with-dash",
-        "both-help-spellings-print-the-page",
+        "both-help-forms-print-the-page",
         "innermost-command-owns-the-help-page",
         "version-answers-at-any-level",
         "help-ignores-what-comes-after",
@@ -1677,10 +1677,10 @@ _ALL_RULES = frozenset(
         "values-convert-after-the-line-parses",
         "the-word-none-is-an-ordinary-value",
         "unset-boolean-is-not-false",
-        "no-prefix-spelling-sets-the-boolean-false",
+        "no-prefix-form-sets-the-boolean-false",
         "absent-boolean-defers-to-config",
         "only-a-tri-state-boolean-takes-a-value",
-        "last-boolean-spelling-wins",
+        "last-boolean-form-wins",
         "double-negation-is-an-unknown-option",
         "a-defaulted-boolean-reads-as-given",
         "negation-has-no-short-form",
@@ -1702,7 +1702,7 @@ _ALL_RULES = frozenset(
         "option-value-takes-the-command-word",
         "nested-commands-follow-the-same-rules",
         "command-names-never-start-with-dash",
-        "both-help-spellings-print-the-page",
+        "both-help-forms-print-the-page",
         "innermost-command-owns-the-help-page",
         "version-answers-at-any-level",
         "help-ignores-what-comes-after",

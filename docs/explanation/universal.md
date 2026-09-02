@@ -108,13 +108,10 @@ nab lock --project-mode universal \
   --project-matrix-platforms linux_x86_64 macos_arm64
 ```
 
-The project declares no matrix here, so there is nothing to narrow:
-`--project-matrix-python` and `--project-matrix-platforms` are both
-required and the other three take their defaults. The flags declare the
-matrix and not the mode, so `--project-mode universal` goes with them.
+Without a file matrix, the Python and platform flags are required. Omitted
+keys use their defaults, and `--project-mode universal` selects matrix mode.
 
-A project that declares a matrix narrows one key with one flag, and its
-file already sets the mode:
+A project that declares a matrix can replace one key:
 
 ```bash
 nab lock --project-matrix-platforms macos_arm64

@@ -94,9 +94,9 @@ class ForeignMetadataError(MetadataError):
 class IncompatiblePythonError(MetadataError):
     """An index candidate's METADATA Requires-Python excludes the resolve target.
 
-    The Simple-API ``requires-python`` hint is optional, so the listing gate
-    admits a version whose listing omits it; the fetched wheel METADATA (or
-    sdist PKG-INFO) carries the authoritative value.
+    The optional Simple-API ``requires-python`` hint filters listings. A
+    version omitting it reaches wheel METADATA (or sdist PKG-INFO),
+    which carries the authoritative value.
     """
 
 

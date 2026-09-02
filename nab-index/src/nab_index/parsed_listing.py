@@ -182,7 +182,7 @@ def corruption_reason(blob: bytes) -> str | None:
     warns only on the former. Every check past the build cells runs only once
     the header names this exact build, since a foreign build may have written a
     shape this one never did; checking earlier would misreport version skew as
-    corruption. This is a second pass used only to gate that warning;
+    corruption. This second pass decides whether to emit that warning;
     :func:`decode` returns ``None`` for every miss reason alike.
     """
     try:

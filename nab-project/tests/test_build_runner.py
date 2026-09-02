@@ -2,9 +2,8 @@
 
 The unit tests use a hand-rolled in-tree backend (an
 ``nab_test_backend.py`` file plus
-``[build-system].backend-path = ["."]``).  ``[build-system].requires``
-is empty so the venv install step is a no-op; everything stays
-offline, no network, no PyPI roundtrip.
+``[build-system].backend-path = ["."]``). ``[build-system].requires`` is empty.
+The venv install step is a no-op, and the unit tests stay offline.
 
 The end-to-end test against a real source distribution is marked
 ``network`` and is deselected by default; run with
@@ -563,8 +562,8 @@ class TestRunBuildBackend:
         ``build_wheel``, mirroring uv's documented quirk.
 
         The build_wheel hook returns a wheel with name "fake-dyn";
-        if prepare had been used we would get "fake-pkg".  The skip
-        gate is a runtime predicate, monkeypatched here to fire
+        if prepare had been used we would get "fake-pkg". The skip
+        condition is a runtime predicate, monkeypatched here to fire
         unconditionally so the fake backend does not need to live
         under the literal ``hatchling.`` namespace.
         """
@@ -1420,9 +1419,10 @@ class TestRunBuildBackendCorruptBuiltWheel:
         kind: str,
         skip_prepare: bool,
     ) -> None:
-        """The wheel opens and lists cleanly, so the failure lands on the
-        dist-info member's own read: ``zlib.error`` for a corrupt deflate
-        payload, ``lzma.LZMAError`` for a corrupt LZMA one, and
+        """The wheel opens and lists before its dist-info member read fails.
+
+        The member read raises ``zlib.error`` for a corrupt deflate payload,
+        ``lzma.LZMAError`` for a corrupt LZMA one, and
         ``NotImplementedError`` for a method zipfile cannot decompress.
         """
         self._pyproject(tmp_path)
@@ -2645,8 +2645,8 @@ class TestBuildEnvInstallsOnePreferredWheel:
     def _index(root: Path, order: tuple[str, ...]) -> None:
         """Serve demo 1.0 as two wheels the host accepts, in ``order``.
 
-        One carries the host's most specific tag and one its most
-        generic, and each records in its ``__init__`` which it is.
+        One carries the host's most specific tag and one carries its most
+        generic tag. Each records its kind in ``__init__``.
         """
         tags = ResolveTarget.for_host().tags
         by_mark = {"specific": tags.ordered[0], "generic": tags.ordered[-1]}

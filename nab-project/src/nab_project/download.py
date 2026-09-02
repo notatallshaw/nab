@@ -159,7 +159,8 @@ def _coalesce_download_targets(
 ) -> list[DownloadEntry]:
     """Coalesce casefold-equivalent names sharing ``(hash_algo, digest)``.
 
-    The first spelling wins; a different identity raises :class:`DownloadError`.
+    The first filename wins. A different identity raises
+    :class:`DownloadError`.
     """
     by_name: dict[str, DownloadEntry] = {}
     unique: list[DownloadEntry] = []

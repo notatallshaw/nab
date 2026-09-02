@@ -405,8 +405,8 @@ def prior_cause(
         result.append(cause_shared)
 
     # Remaining packages: intersect when in both sides, else keep as-is.
-    # Dict merge keeps insertion order; a set union would iterate in hash
-    # order, making learned-clause term order vary across processes.
+    # Dict merge keeps insertion order. Set union would make
+    # learned-clause term order depend on process hash order.
     all_packages = {**incompat_terms, **cause_terms}
     for package in all_packages:
         incompat_term = incompat_terms.get(package)

@@ -1,6 +1,6 @@
 """Check each README's claims against the packages that implement them.
 
-``project.readme`` is the whole of a distribution's page on PyPI.  A capability
+PyPI renders ``project.readme`` as the distribution page. A capability
 the page credits to a library has to be implemented in that library, and one a
 library's own page promises has to arrive with an install of it.
 """

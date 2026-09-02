@@ -221,7 +221,7 @@ class TestPublicSurfaceUpholdsTheInvariant:
 
     This is what lets ``__init__`` state a precondition and check nothing.  It
     is also the answer to whether an inclusive infinity bound needs a runtime
-    guard: no constructor and no operator emits one.
+    guard: the public constructors and operators never emit one.
     """
 
     def test_the_pool_reaches_the_shapes_the_invariant_is_about(self) -> None:
@@ -386,7 +386,7 @@ class TestNormalizeIntervals:
         )
 
     def test_merging_two_positive_infinities_drops_the_flag(self) -> None:
-        """The merge arm rebuilds the upper bound, which is the one place it is fixed."""
+        """The merge branch rebuilds the upper bound where the flag is fixed."""
         assert _normalize_intervals(
             [(1, True, POSITIVE_INFINITY, True), (2, True, POSITIVE_INFINITY, True)]
         ) == ((1, True, POSITIVE_INFINITY, False),)

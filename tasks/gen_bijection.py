@@ -91,7 +91,7 @@ def _module_text() -> str:
 
 
 def _row_names() -> list[tuple[str, Opt]]:
-    """Pair each declared row's spelling in the generated module with its Opt."""
+    """Pair each generated row name with its Opt."""
     return [
         (f"{table.__name__}.{row.name.replace('-', '_')}", lower(row))
         for table in TABLES
