@@ -115,9 +115,12 @@ def _compact_table(table: dict[object, object]) -> object:
     served as.
     """
     if len(table) == 1:
+        # Looking sha256 up directly skips building the items view.
+        sha256 = table.get("sha256")
+        if type(sha256) is str:
+            return sha256
+
         ((algo, digest),) = table.items()
-        if algo == "sha256" and type(digest) is str:
-            return digest
         if type(algo) is str:
             return (sys.intern(algo), digest)
     return table
@@ -132,9 +135,11 @@ def _compact_shared_table(table: dict[object, object]) -> object:
     nothing here.
     """
     if len(table) == 1:
+        sha256 = table.get("sha256")
+        if type(sha256) is str:
+            return sha256
+
         ((algo, digest),) = table.items()
-        if algo == "sha256" and type(digest) is str:
-            return digest
         if type(algo) is str:
             return (algo, digest)
     return table
