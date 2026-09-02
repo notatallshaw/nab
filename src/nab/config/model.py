@@ -389,8 +389,9 @@ def _config_from_effective(
     vcs_sources = effective["vcs-sources"].value
     archive_sources = effective["archive-sources"].value
     _reject_duplicate_source_names(local_sources, vcs_sources, archive_sources)
+
     vcs_config = effective["vcs"].value
-    _reject_vcs_sources_under_block(vcs_sources, vcs_config)
+    _reject_vcs_sources_under_block(effective["vcs-sources"], effective["vcs"])
 
     del pyproject_dir  # paths were resolved per-layer by the registry.
     return NabProjectConfig(
@@ -1079,38 +1080,66 @@ def _reject_duplicate_source_names(
         canonical = canonicalize_name(source.name)
         if canonical in seen:
             msg = (
-                "[tool.nab] local-sources/vcs-sources/archive-sources declare"
-                f" duplicate canonical name {canonical!r} via {seen[canonical]!r}"
+                "local-sources/vcs-sources/archive-sources declare duplicate"
+                f" canonical name {canonical!r} via {seen[canonical]!r}"
                 f" and {source.name!r}"
             )
             raise ConfigError(msg)
         seen[canonical] = source.name
 
 
+def _project_key_path(key: str, kind: SourceKind) -> str:
+    """Return the table path a project file of ``kind`` gives ``key``.
+
+    A project-dir nab.toml takes nab's keys at the top level; a
+    pyproject.toml takes them under ``[tool.nab]``.
+    """
+    return key if kind is SourceKind.PROJECT_TOML else f"tool.nab.{key}"
+
+
 def _reject_vcs_sources_under_block(
-    vcs_sources: tuple[VcsSource, ...],
-    vcs_config: VcsConfig,
+    vcs_sources: EffectiveValue,
+    vcs: EffectiveValue,
 ) -> None:
     """Reject vcs-sources declared while the VCS policy blocks cloning.
 
-    Cloning is opt-in, so a ``[[tool.nab.vcs-sources]]`` entry under the
-    default ``policy = "block"`` is contradictory. Raising ConfigError here
-    fails at parse time and names the token to set.
+    Cloning is opt-in, so a declared source under the default
+    ``policy = "block"`` is contradictory. Raising ConfigError here fails
+    at parse time and names the token to set.
+
+    Each table is named for the file that has to carry the repair: the
+    sources for the file declaring them, the policy for the file that set
+    it. The two project files share a precedence rank, so a policy written
+    into the other one conflicts instead of overriding.
 
     ``policy = "allow"`` opens the gate but does not on its own admit a
     URL: ``allowed-schemes`` and ``allowed-repos`` are empty by default
     and each denies every URL until an entry is added, so the message
     points at the whole gate rather than promising that one key is enough.
     """
-    if vcs_sources and vcs_config.policy is VcsPolicy.BLOCK:
-        msg = (
-            "[[tool.nab.vcs-sources]] is declared but [tool.nab.vcs].policy is"
-            f" {vcs_config.policy.value!r}, which refuses every clone; remove"
-            ' the sources, or set [tool.nab.vcs].policy = "allow" and open the'
-            " rest of the gate (vcs.allowed-schemes and vcs.allowed-repos are"
-            " empty by default and each denies every URL)"
-        )
-        raise ConfigError(msg)
+    sources: tuple[VcsSource, ...] = vcs_sources.value
+    config: VcsConfig = vcs.value
+    if not sources or config.policy is not VcsPolicy.BLOCK:
+        return
+
+    # The default policy sits in no file, so its repair goes in the one that
+    # declared the sources.
+    policy_kind = (
+        vcs_sources.origin.kind
+        if vcs.origin.kind is SourceKind.DEFAULT
+        else vcs.origin.kind
+    )
+    sources_table = _project_key_path("vcs-sources", vcs_sources.origin.kind)
+    vcs_table = _project_key_path("vcs", policy_kind)
+
+    msg = (
+        f"[[{sources_table}]] is declared but [{vcs_table}].policy is"
+        f" {config.policy.value!r}, which refuses every clone; remove"
+        f' the sources, or set [{vcs_table}].policy = "allow" and open the'
+        " rest of the gate (vcs.allowed-schemes and vcs.allowed-repos are"
+        " empty by default and each denies every URL)"
+    )
+    raise ConfigError(msg)
 
 
 def _validate_default_groups_against_conflicts(
