@@ -1,14 +1,14 @@
 """The generated files, against the declaration they were generated from.
 
-``src/nab/_cli/spec.py`` and the global-flag block of
-``docs/reference/cli.md`` are written by ``tasks/gen_cli.py`` and
-committed, because the sdist ships ``src/nab`` while ``tasks/`` and
-``docs/`` stay out of it: an installed nab has no generator to run and no
-page to check.
+``src/nab/_cli/spec.py``, ``src/nab/config/registry.py`` and the
+global-flag block of ``docs/reference/cli.md`` are written by
+``tasks/gen_cli.py`` and committed, because the sdist ships ``src/nab``
+while ``tasks/`` and ``docs/`` stay out of it: an installed nab has no
+generator to run and no page to check.
 
-``--check`` alone only proves that the file agrees with the generator, so
+``--check`` alone only proves that a file agrees with the generator, so
 it passes on a generator that maps the declaration wrongly.  The cases
-below restate the mapping and compare the shipped table against
+below restate the mapping and compare the shipped tables against
 :mod:`nab.optiondefs` directly, which is what makes a wrong literal in
 ``gen_cli.py`` visible.
 """
@@ -29,11 +29,14 @@ from nab import optiondefs
 from nab._cli import parse as parse_module
 from nab._cli import spec
 from nab._cli.parse import Row, build
-from nab.config import hooks, values
+from nab.config import hooks, registry, values
 from nab.optiontable import ALL
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from types import ModuleType
+
+    from nab.optiondefs import Opt
 
 _ROOT = Path(__file__).resolve().parents[1]
 _GENERATOR = _ROOT / "tasks" / "gen_cli.py"
@@ -269,6 +272,23 @@ def test_the_shipped_table_says_what_the_declaration_says(command: str) -> None:
     assert rows == []
 
 
+def _same_rows(shipped: Sequence[Opt], declared: Sequence[Opt]) -> None:
+    """Compare a generated tuple field by field against the rows behind it."""
+    for row, option in zip(shipped, declared, strict=True):
+        for field in optiondefs.Opt.__slots__:
+            assert getattr(row, field) == getattr(option, field), (option.name, field)
+
+
+def test_the_shipped_registry_says_what_the_declaration_says() -> None:
+    """A generator that spells a field wrongly fails here, where --check cannot."""
+    _same_rows(registry.OPTIONS, [option for option in ALL if option.key is not None])
+
+
+def test_the_shipped_sub_rows_say_what_the_declaration_says() -> None:
+    """The rows under a table key are generated too, and pinned the same way."""
+    _same_rows(registry.SUB_ROWS, [option for option in ALL if option.under])
+
+
 def test_every_path_a_command_takes_is_listed_for_coercion() -> None:
     """The other direction: a Path parameter left off the list is handed a str."""
     for command, (module_name, function, _summary) in spec.DISPATCH.items():
@@ -296,6 +316,28 @@ def test_the_generator_refuses_a_row_that_names_no_page(
     assert str(caught.value) == (
         "probe names docs/reference/nope.md, which is not a documentation page"
     )
+
+
+def test_the_generator_refuses_a_rung_zero_it_cannot_spell(
+    generator: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rung 0 with no source spelling is a refusal naming the row."""
+    unspellable = optiondefs.Opt(
+        "probe",
+        scope=optiondefs.Scope.PROJECT,
+        rdefault=object(),
+        parse=values.parse_bool,
+        render=hooks.render_bool,
+        help="a row written by a test",
+        docs="reference/cli.md",
+    )
+    monkeypatch.setattr(generator, "ALL", (unspellable,))
+
+    with pytest.raises(SystemExit) as caught:
+        generator._registry_text()
+
+    assert str(caught.value).startswith("probe holds <object object at ")
+    assert str(caught.value).endswith("which the generator cannot spell")
 
 
 def test_the_generator_refuses_a_row_with_no_kind(generator: ModuleType) -> None:

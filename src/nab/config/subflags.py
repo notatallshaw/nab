@@ -3,7 +3,8 @@
 A table key such as ``matrix`` carries no flag of its own.  Its rows are
 declared ``under`` it (:mod:`nab.optiontable`), so each spells one key of
 the table and the command line writes ``--project-matrix-python`` rather
-than a table.
+than a table.  They reach this module through the generated
+:mod:`nab.config.registry`, as the keyed rows do.
 
 :func:`build_cli_tables` reads those parameters back into a
 :class:`CliTable`: the keys the line set, each with the flag that set it
@@ -20,7 +21,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..optiondefs import Opt, Tokens
-from ..optiontable import ALL
+from .registry import SUB_ROWS
 from .values import CliTableError
 
 if TYPE_CHECKING:
@@ -39,8 +40,8 @@ __all__ = [
 # The rows that spell one key each of a table key, grouped by that key,
 # in declaration order.
 BY_PARENT: dict[str, tuple[Opt, ...]] = {
-    parent: tuple(row for row in ALL if row.under == parent)
-    for parent in dict.fromkeys(row.under for row in ALL if row.under)
+    parent: tuple(row for row in SUB_ROWS if row.under == parent)
+    for parent in dict.fromkeys(row.under for row in SUB_ROWS)
 }
 
 # The two words TOML reads as booleans, so a knob reaches its hook as the
