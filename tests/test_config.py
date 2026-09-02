@@ -3035,6 +3035,57 @@ class TestVcsSources:
         with pytest.raises(ConfigError, match=r'\[tool\.nab\.vcs\]\.policy = "allow"'):
             read_pyproject_config(path)
 
+    def test_nab_toml_sources_under_block_named_at_top_level(
+        self, tmp_path: Path
+    ) -> None:
+        """The error names top-level keys when nab.toml declares the sources."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        nab_toml = tmp_path / "nab.toml"
+        sources = (
+            '[[vcs-sources]]\nname = "pkg"\n'
+            'url = "git+https://github.com/org/pkg.git@abc"\n'
+        )
+        nab_toml.write_text(sources, encoding="utf-8")
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+
+        message = str(excinfo.value)
+        assert "[[vcs-sources]] is declared" in message
+        assert '[vcs].policy = "allow"' in message
+        assert "tool.nab" not in message
+
+        nab_toml.write_text(sources + '[vcs]\npolicy = "allow"\n', encoding="utf-8")
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.vcs_sources == (
+            VcsSource(name="pkg", url="git+https://github.com/org/pkg.git@abc"),
+        )
+
+    def test_policy_named_in_the_file_that_set_it(self, tmp_path: Path) -> None:
+        """The repair goes where the policy is, not where the sources are.
+
+        Both project files sit at the same precedence rank, so writing the
+        policy into nab.toml as well would conflict rather than override.
+        """
+        pyproject = '[project]\nname = "x"\nversion = "0"\n[tool.nab.vcs]\npolicy = '
+        path = write(tmp_path, pyproject + '"block"\n')
+        (tmp_path / "nab.toml").write_text(
+            '[[vcs-sources]]\nname = "pkg"\n'
+            'url = "git+https://github.com/org/pkg.git@abc"\n',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+
+        message = str(excinfo.value)
+        assert "[[vcs-sources]] is declared" in message
+        assert '[tool.nab.vcs].policy = "allow"' in message
+
+        write(tmp_path, pyproject + '"allow"\n')
+        config = read_pyproject_config(path, discover_workspace=False)
+        assert config.vcs.policy is VcsPolicy.ALLOW
+
     def test_must_be_array(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nvcs-sources = "x"\n')
         with pytest.raises(ConfigError, match="vcs-sources must be an array"):
@@ -3093,6 +3144,23 @@ class TestVcsSources:
         )
         with pytest.raises(ConfigError, match="duplicate canonical name"):
             read_pyproject_config(path)
+
+    def test_duplicate_name_message_names_no_table(self, tmp_path: Path) -> None:
+        """The three key names read the same in both project files."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        (tmp_path / "nab.toml").write_text(
+            '[[local-sources]]\nname = "Foo-Bar"\npath = "../a"\n'
+            '[[vcs-sources]]\nname = "foo_bar"\n'
+            'url = "git+https://github.com/me/b.git@abc"\n',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+
+        message = str(excinfo.value)
+        assert "local-sources/vcs-sources/archive-sources declare" in message
+        assert "tool.nab" not in message
 
 
 class TestArchiveSources:
