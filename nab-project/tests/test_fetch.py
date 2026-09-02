@@ -188,6 +188,15 @@ class TestInMemoryIndex:
         assert idx.get_metadata("foo", "1.0") == "Name: foo\nVersion: 1.0\n\n"
         assert idx.metadata_from_sdist("foo", "1.0")
 
+    def test_sdist_metadata_slot_drops_the_folded_description(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_sdist_metadata(
+            "foo",
+            "1.0",
+            "Name: foo\nDescription: Foo\n        A long description.\nVersion: 1.0\n",
+        )
+        assert idx.get_metadata("foo", "1.0") == "Name: foo\nVersion: 1.0\n"
+
     def test_store_metadata_none(self) -> None:
         idx = InMemoryIndex()
         idx.store_metadata("foo", "1.0", None)
