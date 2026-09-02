@@ -24,6 +24,7 @@ from nab.config.ladder import (
     SourceKind,
     SourceRoots,
 )
+from nab.config.model import EnvironmentConfig, NabProjectConfig
 from nab.config.subflags import CliKey, CliTable
 from nab.config.values import MatrixConfig
 from nab.optiondefs import Kind, Opt, Scope, VType
@@ -46,6 +47,7 @@ from nab_project.lockfile import (
     WheelArtifact,
 )
 from nab_project.value import ValueType
+from nab_project.workspace import WorkspaceConfig
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.policy import (
@@ -55,6 +57,7 @@ from nab_provider.policy import (
     DistPolicy,
     LocalSource,
     ResolutionStrategy,
+    ResolveMode,
     VcsSource,
 )
 from nab_provider.records import IndexConfig
@@ -128,6 +131,8 @@ WHEEL = WheelArtifact(
 SDIST = SdistArtifact(
     "acme-1.0.tar.gz", "https://acme.test/acme-1.0.tar.gz", (("sha256", "b" * 64),)
 )
+MATRIX = MatrixConfig("3.12", (PlatformSpec("linux_x86_64"),))
+ENVIRONMENT = EnvironmentConfig(python="3.12", platform=PlatformSpec("macos_arm64"))
 
 
 class Case(NamedTuple):
@@ -296,6 +301,82 @@ CASES = [
             "uploaded_prior_to": None,
             "vcs": VcsConfig(policy=VcsPolicy.BLOCK),
             "vcs_sources": (VcsSource("beta", "git+https://beta.test/gamma"),),
+        },
+        hashable=False,
+        positional=False,
+    ),
+    Case(
+        EnvironmentConfig,
+        {
+            "python": "3.12",
+            "platform": PlatformSpec("linux_x86_64"),
+            "implementation": "cpython",
+        },
+        {
+            "python": "3.13",
+            "platform": PlatformSpec("macos_arm64"),
+            "implementation": "pypy",
+        },
+    ),
+    Case(
+        NabProjectConfig,
+        {
+            "mode": ResolveMode.SPECIFIC,
+            "constraints": ("pip<26",),
+            "default_groups": ("dev",),
+            "base_group": "project",
+            "build_group": "build",
+            "requires_python": ">=3.10",
+            "requires_python_source": "[tool.nab] requires-python",
+            "uploaded_prior_to": LOCKED_AT,
+            "dist_policy": DistPolicy.WHEEL_ONLY,
+            "build_policy": BuildPolicy.BUILD_REMOTE,
+            "build_requires_depth": 1,
+            "trust_unverified_sdist_deps": True,
+            "environment": ENVIRONMENT,
+            "indexes": (IndexConfig("private", "https://private.test/simple/"),),
+            "vcs": VcsConfig(policy=VcsPolicy.ALLOW),
+            "local_sources": (LocalSource("alpha", "alpha"),),
+            "vcs_sources": (VcsSource("beta", "git+https://beta.test/beta"),),
+            "archive_sources": (ArchiveSource("acme", "https://acme.test/a-1.zip"),),
+            "matrix": None,
+            "resolution": ResolutionStrategy.LOWEST,
+            "decision_order": DecisionOrder.STABLE,
+            "workspace": WorkspaceConfig(("packages/*",)),
+            "conflicts": (ConflictSet((ConflictMember(ConflictKind.EXTRA, "cpu"),)),),
+            "package_overrides": (),
+            "index_overrides": {
+                "private": IndexOverride(build_policy=BuildPolicy.NEVER)
+            },
+            "workspace_member_names": frozenset({"alpha"}),
+        },
+        {
+            "mode": ResolveMode.UNIVERSAL,
+            "constraints": ("pip<25",),
+            "default_groups": ("docs",),
+            "base_group": "runtime",
+            "build_group": "buildreqs",
+            "requires_python": ">=3.11",
+            "requires_python_source": "[project] requires-python",
+            "uploaded_prior_to": None,
+            "dist_policy": DistPolicy.SDIST_ONLY,
+            "build_policy": BuildPolicy.NEVER,
+            "build_requires_depth": 2,
+            "trust_unverified_sdist_deps": False,
+            "environment": None,
+            "indexes": (IndexConfig("public", "https://public.test/simple/"),),
+            "vcs": VcsConfig(policy=VcsPolicy.BLOCK),
+            "local_sources": (LocalSource("beta", "beta"),),
+            "vcs_sources": (VcsSource("beta", "git+https://beta.test/gamma"),),
+            "archive_sources": (ArchiveSource("acme", "https://acme.test/a-2.zip"),),
+            "matrix": MATRIX,
+            "resolution": ResolutionStrategy.HIGHEST,
+            "decision_order": DecisionOrder.ARRIVAL,
+            "workspace": None,
+            "conflicts": (ConflictSet((ConflictMember(ConflictKind.GROUP, "cpu"),)),),
+            "package_overrides": (PACKAGE_OVERRIDE,),
+            "index_overrides": {"private": IndexOverride(build_policy=None)},
+            "workspace_member_names": frozenset(),
         },
         hashable=False,
         positional=False,
@@ -471,6 +552,43 @@ DEFAULTS = [
         },
     ),
     (ConflictSet, {"members": ()}, {"policy": ConflictPolicy.AT_MOST_ONE}),
+    (
+        EnvironmentConfig,
+        {},
+        {"python": None, "platform": None, "implementation": None},
+    ),
+    (
+        NabProjectConfig,
+        {},
+        {
+            "mode": ResolveMode.SPECIFIC,
+            "constraints": (),
+            "default_groups": (),
+            "base_group": None,
+            "build_group": None,
+            "requires_python": None,
+            "requires_python_source": "[tool.nab] requires-python",
+            "uploaded_prior_to": None,
+            "dist_policy": DistPolicy.WHEEL_OR_SDIST,
+            "build_policy": BuildPolicy.BUILD_LOCAL,
+            "build_requires_depth": 0,
+            "trust_unverified_sdist_deps": False,
+            "environment": None,
+            "indexes": (IndexConfig("pypi", "https://pypi.org/simple/"),),
+            "vcs": VcsConfig(),
+            "local_sources": (),
+            "vcs_sources": (),
+            "archive_sources": (),
+            "matrix": None,
+            "resolution": ResolutionStrategy.HIGHEST,
+            "decision_order": DecisionOrder.ARRIVAL,
+            "workspace": None,
+            "conflicts": (),
+            "package_overrides": (),
+            "index_overrides": {},
+            "workspace_member_names": frozenset(),
+        },
+    ),
     (
         ConflictFork,
         {"selection": (), "active_extras": (), "active_groups": ()},

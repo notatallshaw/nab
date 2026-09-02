@@ -9,8 +9,8 @@ module owns the project side.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import tomli
@@ -26,6 +26,7 @@ from nab_project.conflicts import (
 )
 from nab_project.inputs import ResolveInputs
 from nab_project.paths import realpath
+from nab_project.value import ValueType
 from nab_project.workspace import (
     WorkspaceConfig,
     discover_workspace_root,
@@ -105,8 +106,12 @@ _TOOL_NAB_REQUIRES_PYTHON = "[tool.nab] requires-python"
 _PROJECT_REQUIRES_PYTHON = "[project] requires-python"
 
 
-@dataclass(frozen=True, slots=True)
-class EnvironmentConfig:
+_DEFAULT_INDEXES = (IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),)
+_NO_INDEX_OVERRIDES: Mapping[str, IndexOverride] = MappingProxyType({})
+_DEFAULT_VCS = VcsConfig()
+
+
+class EnvironmentConfig(ValueType):
     """The single environment ``[tool.nab.environment]`` declares.
 
     The axes a target is made of, the same ones a matrix entry carries.
@@ -120,65 +125,170 @@ class EnvironmentConfig:
     marker values, the free-threaded build) are declarable here too.
     """
 
-    python: str | None = None
-    platform: PlatformSpec | None = None
-    implementation: str | None = None
+    __slots__ = __match_args__ = ("python", "platform", "implementation")
+
+    python: str | None
+    platform: PlatformSpec | None
+    implementation: str | None
+
+    def __init__(
+        self,
+        python: str | None = None,
+        platform: PlatformSpec | None = None,
+        implementation: str | None = None,
+    ) -> None:
+        """Record the axes the table sets; an unset one is ``None``."""
+        self.python = python
+        self.platform = platform
+        self.implementation = implementation
 
 
-@dataclass(frozen=True, slots=True)
-class NabProjectConfig:
+class NabProjectConfig(ValueType):
     """Everything ``[tool.nab]`` says about how to resolve this project."""
 
-    mode: ResolveMode = ResolveMode.SPECIFIC
-    constraints: tuple[str, ...] = ()
-    default_groups: tuple[str, ...] = ()
-    base_group: str | None = None
-    build_group: str | None = None
+    __slots__ = __match_args__ = (
+        "mode",
+        "constraints",
+        "default_groups",
+        "base_group",
+        "build_group",
+        "requires_python",
+        "requires_python_source",
+        "uploaded_prior_to",
+        "dist_policy",
+        "build_policy",
+        "build_requires_depth",
+        "trust_unverified_sdist_deps",
+        "environment",
+        "indexes",
+        "vcs",
+        "local_sources",
+        "vcs_sources",
+        "archive_sources",
+        "matrix",
+        "resolution",
+        "decision_order",
+        "workspace",
+        "conflicts",
+        "package_overrides",
+        "index_overrides",
+        "workspace_member_names",
+    )
+
+    mode: ResolveMode
+    constraints: tuple[str, ...]
+    default_groups: tuple[str, ...]
+    base_group: str | None
+    build_group: str | None
     # The project's declared Python support range: recorded as the lock's
     # top-level ``requires-python`` and checked against the resolve target.
     # It does not choose the target; ``environment`` does.
-    requires_python: str | None = None
+    requires_python: str | None
     # The surface ``requires_python`` was read from, named by the error when
     # the declaration excludes a target.
-    requires_python_source: str = _TOOL_NAB_REQUIRES_PYTHON
-    uploaded_prior_to: datetime | None = None
-    dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST
-    build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL
+    requires_python_source: str
+    uploaded_prior_to: datetime | None
+    dist_policy: DistPolicy
+    build_policy: BuildPolicy
     # How many build environments may be opened beneath the first one, to
     # build a build requirement that publishes no wheel this host installs.
-    build_requires_depth: int = 0
-    trust_unverified_sdist_deps: bool = False
+    build_requires_depth: int
+    trust_unverified_sdist_deps: bool
     # The declared resolve environment from ``[tool.nab.environment]``, or
     # ``None`` for the host.  Mutually exclusive with ``matrix``.
-    environment: EnvironmentConfig | None = None
-    indexes: tuple[IndexConfig, ...] = (
-        IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),
-    )
-    vcs: VcsConfig = field(default_factory=VcsConfig)
-    local_sources: tuple[LocalSource, ...] = ()
-    vcs_sources: tuple[VcsSource, ...] = ()
-    archive_sources: tuple[ArchiveSource, ...] = ()
-    matrix: MatrixConfig | None = None
-    resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST
-    decision_order: DecisionOrder = DecisionOrder.ARRIVAL
-    workspace: WorkspaceConfig | None = None
-    conflicts: tuple[ConflictSet, ...] = ()
+    environment: EnvironmentConfig | None
+    indexes: tuple[IndexConfig, ...]
+    vcs: VcsConfig
+    local_sources: tuple[LocalSource, ...]
+    vcs_sources: tuple[VcsSource, ...]
+    archive_sources: tuple[ArchiveSource, ...]
+    matrix: MatrixConfig | None
+    resolution: ResolutionStrategy
+    decision_order: DecisionOrder
+    workspace: WorkspaceConfig | None
+    conflicts: tuple[ConflictSet, ...]
     # Per-package overrides from ``[tool.nab.packages.<name>]`` and
     # ``[[tool.nab.package-rules]]``, one per requirement, in declared
     # order.  Version-scoped: a policy field applies only to candidate
     # versions inside its requirement's range.  Routing entries (those
     # that set ``index``) are also projected into coordinator routes by
     # ``nab_project.fetch.index_routes``.
-    package_overrides: tuple[PackageOverride, ...] = ()
+    package_overrides: tuple[PackageOverride, ...]
     # Per-index overrides from ``[tool.nab.index.<name>]``, keyed by
     # declared index name.  Each applies to every package served from
     # that index; no routing, no version scope.
-    index_overrides: Mapping[str, IndexOverride] = field(default_factory=dict)
+    index_overrides: Mapping[str, IndexOverride]
     # Canonical names of workspace members. Populated by
     # _apply_workspace_discovery; empty otherwise. Distinct from
     # ``local_sources``, which also carries explicit
     # ``[[tool.nab.local-sources]]`` entries.
-    workspace_member_names: frozenset[str] = field(default_factory=frozenset)
+    workspace_member_names: frozenset[str]
+
+    def __init__(  # noqa: PLR0913 - one keyword per [tool.nab] key
+        self,
+        *,
+        mode: ResolveMode = ResolveMode.SPECIFIC,
+        constraints: tuple[str, ...] = (),
+        default_groups: tuple[str, ...] = (),
+        base_group: str | None = None,
+        build_group: str | None = None,
+        requires_python: str | None = None,
+        requires_python_source: str = _TOOL_NAB_REQUIRES_PYTHON,
+        uploaded_prior_to: datetime | None = None,
+        dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
+        build_policy: BuildPolicy = BuildPolicy.BUILD_LOCAL,
+        build_requires_depth: int = 0,
+        trust_unverified_sdist_deps: bool = False,
+        environment: EnvironmentConfig | None = None,
+        indexes: tuple[IndexConfig, ...] = _DEFAULT_INDEXES,
+        vcs: VcsConfig = _DEFAULT_VCS,
+        local_sources: tuple[LocalSource, ...] = (),
+        vcs_sources: tuple[VcsSource, ...] = (),
+        archive_sources: tuple[ArchiveSource, ...] = (),
+        matrix: MatrixConfig | None = None,
+        resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST,
+        decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
+        workspace: WorkspaceConfig | None = None,
+        conflicts: tuple[ConflictSet, ...] = (),
+        package_overrides: tuple[PackageOverride, ...] = (),
+        index_overrides: Mapping[str, IndexOverride] = _NO_INDEX_OVERRIDES,
+        workspace_member_names: frozenset[str] = frozenset(),
+    ) -> None:
+        """Record the settings, each defaulting to what a bare project gets."""
+        self.mode = mode
+        self.constraints = constraints
+        self.default_groups = default_groups
+        self.base_group = base_group
+        self.build_group = build_group
+        self.requires_python = requires_python
+        self.requires_python_source = requires_python_source
+        self.uploaded_prior_to = uploaded_prior_to
+        self.dist_policy = dist_policy
+        self.build_policy = build_policy
+        self.build_requires_depth = build_requires_depth
+        self.trust_unverified_sdist_deps = trust_unverified_sdist_deps
+        self.environment = environment
+        self.indexes = indexes
+        self.vcs = vcs
+        self.local_sources = local_sources
+        self.vcs_sources = vcs_sources
+        self.archive_sources = archive_sources
+        self.matrix = matrix
+        self.resolution = resolution
+        self.decision_order = decision_order
+        self.workspace = workspace
+        self.conflicts = conflicts
+        self.package_overrides = package_overrides
+        self.index_overrides = index_overrides
+        self.workspace_member_names = workspace_member_names
+
+    def replace(self, **changes: object) -> NabProjectConfig:
+        """Return a copy with ``changes`` applied, as ``dataclasses.replace`` would."""
+        kept: dict[str, Any] = {
+            name: getattr(self, name) for name in self.__match_args__
+        }
+        kept.update(changes)
+        return NabProjectConfig(**kept)
 
     def resolve_inputs(self) -> ResolveInputs:
         """Return the settings nab-project resolves this project under."""
@@ -540,8 +650,7 @@ def _apply_workspace_discovery(
     merged = merge_workspace_local_sources(config.local_sources, discovered)
     _reject_duplicate_source_names(merged, config.vcs_sources, config.archive_sources)
     explicit_names = {canonicalize_name(src.name) for src in config.local_sources}
-    return replace(
-        config,
+    return config.replace(
         local_sources=merged,
         workspace_member_names=frozenset(
             canonicalize_name(src.name)

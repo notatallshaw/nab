@@ -6234,7 +6234,7 @@ class TestSeamPartition:
 
     def test_every_config_field_crosses_the_seam_or_stays_in_nab(self) -> None:
         """A new ``[tool.nab]`` setting is either a slot or named as the host's."""
-        names = {f.name for f in fields(NabProjectConfig)}
+        names = set(NabProjectConfig.__match_args__)
 
         assert names == set(ResolveInputs.__slots__) | _STAYS_IN_NAB
 
