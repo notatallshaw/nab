@@ -1,14 +1,7 @@
-"""The parse and render hooks a row needs the ladder's own state for.
+"""Parse and render configuration values that need ladder-owned state.
 
-Every row of :data:`nab.config.ladder.OPTIONS` names one ``parse`` and one
-``render``.  Most rows name a parser in :mod:`nab.config.values` directly;
-the ones here either render a merged value back to a line of ``nab config``,
-or need a piece of parse state that varies per pass and cannot travel in the
-fixed ``(value, where)`` pair.  Four such pieces ride on context variables
-the ladder binds around a read: the resolve anchor a ``P<n>D`` duration is
-measured from, the one ``now`` an inspector pass shares, the directory a
-relative path in the file being read resolves against, and the matrix
-header that file writes.
+Context variables supply time, path, and table-name state to fixed-arity
+parser hooks.
 """
 
 from __future__ import annotations

@@ -1,13 +1,7 @@
-"""Turn a refused command line into the text that goes to stderr.
+"""Render a refused command line for stderr without writing it.
 
-Loaded only from the branch that already has a :class:`UsageError`, so
-:mod:`difflib` reaches the process only on a line that was refused.  The
-text is returned rather than written, so the caller keeps the one write
-site per stream.
-
-:class:`UsageError` is imported at runtime rather than behind a
-``TYPE_CHECKING`` block, because that block is itself an ``import
-typing`` and this module is on the path of every mistyped command.
+The runtime ``UsageError`` import avoids a ``TYPE_CHECKING`` block, which would
+import :mod:`typing` on this error-only path.
 """
 
 from __future__ import annotations
@@ -26,12 +20,7 @@ _CUTOFF = 0.6
 # --all-extras, --extras and --all-groups, and the third is noise.
 _SUGGESTIONS = 2
 
-# Red opens a refusal, as it does for :meth:`nab.output.Printer.error`, and
-# cyan marks a spelling the reader can type.  Neither is combined with bold,
-# because bold plus a colour selects the bright slot, which a theme may map
-# to a grey with less contrast than the plain hue.  The codes are written
-# here rather than taken from :mod:`nab.output`, whose import would put the
-# whole output layer on the path of every mistyped command.
+# Match ``nab.output`` without importing the output layer on this error-only path.
 _RED = "\033[31m"
 _CYAN = "\033[36m"
 _RESET = "\033[0m"
@@ -70,11 +59,10 @@ def suggest(token: str, candidates: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def diagnose(error: UsageError, *, color: bool = False) -> str:
-    """Write out ``error``: what is wrong, and then what to try.
+    """Format an error, suggestions, and help hint for the caller to write.
 
-    Three lines at most, and no option list: a page of spellings is what
-    the user asks for with ``--help``.  ``color`` is the caller's decision,
-    already made against the stream the text is written to.
+    The result has at most three lines and no option list. ``color`` is
+    the caller's decision for the output stream.
     """
     opener = _paint(f"{error.prog}:", _RED, color=color)
     lines = [f"{opener} {error.message}"]

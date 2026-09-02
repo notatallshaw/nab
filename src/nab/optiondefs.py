@@ -1,29 +1,6 @@
-"""The option model: what a row is, and the rules a table is judged by.
+"""Define lowered CLI options and validate option tables.
 
-:class:`Opt` is one option, and everything nab derives from a row hangs off
-it: an option's flag, command parameter and ``NAB_*`` variable come from its
-name and its scope rather than being written down, so the three cannot drift
-apart.  A row a configuration source can set also names the hooks that
-parse and render its value, and :data:`nab.config.ladder.OPTIONS` is
-those rows.  :mod:`nab.optiontable` is where the rows themselves are
-declared, and :mod:`nab.optionlower` builds each ``Opt`` from one.
-
-``Opt`` judges each row as it builds one, and :func:`validate` judges a
-whole table at once.  Most mistakes raise as the row is built and the
-message names the rule the row broke; these six are worth knowing before
-writing one:
-
-- a PROJECT row's flag is ``--project-`` and its name, so a name that
-  writes the prefix itself derives it twice;
-- a row ``under`` a key spells one key of that key's table, so its flag
-  carries the parent name and it holds no configuration key of its own;
-- a repeatable row's flag is its name with the final ``s`` dropped, so the
-  name has to be plural;
-- a ``NAB_*`` variable belongs to a keyed USER row and to no other;
-- a keyed row names the hooks the ladder reads a source with and prints
-  the winner with, so it declares both;
-- every row names a line of help and a page under ``docs/``, and
-  ``tests/test_cli_docs.py`` holds the page to one that exists.
+``Opt`` validates one row; :func:`validate` checks relationships across the table.
 """
 
 from __future__ import annotations

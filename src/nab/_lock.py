@@ -201,10 +201,10 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     still using them during resolution. Use it for hashed requirements, then
     install those members separately from pip's ``--require-hashes`` run.
 
-    Universal requirements output needs a template containing
-    ``{python_version}``, ``{platform_id}``, or ``{selection}`` when several
-    targets would otherwise share a path. Use pylock when none of those
-    variables separates the targets.
+    Universal requirements output needs a template that renders to a distinct
+    path for every target. It may contain ``{python_version}``,
+    ``{platform_id}``, and ``{selection}``; use pylock when those values cannot
+    separate the targets.
 
     ``--python X.Y`` targets that Python on this machine. It is the short
     form of ``--project-environment-python`` and is not valid in universal

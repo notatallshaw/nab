@@ -73,9 +73,8 @@ def _load(name: str) -> types.ModuleType:
 def run(argv: tuple[str, ...], resume: Callable[[], None] = _nothing) -> int:
     """Run one command line and report the status it ends with.
 
-    Both writes a run makes are here, one per stream. A stream that
-    refuses one replaces the status with 120, which is what makes a page
-    redirected to a full disk an exit code rather than a traceback.
+    Write the returned stdout and stderr payloads once each. A failed
+    payload write returns status 120 instead of raising.
 
     ``resume`` runs when the line reaches a command module, and not at
     all on a page or a refusal.

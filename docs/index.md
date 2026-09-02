@@ -39,7 +39,7 @@ feature pages carry their own stability warnings.
 | Sources | Simple indexes, local checkouts, declared git sources, hash-pinned `.tar.gz` archives, and workspace members. Project-root `name @ git+...` requirements are not resolved yet. |
 | Output | PEP 751 `pylock.toml`, requirements with recorded index hashes, and requirements without those hashes. |
 | Experimental features | Universal locks, multiple indexes, and workspaces. Their feature pages state the current boundary. |
-| Embedding | `nab-resolver` and `nab-markersets` have documented public APIs. `nab-markersets` and the other component APIs remain experimental. |
+| Embedding | `nab-resolver` has a path-stable public API. `nab-markersets` documents its supported surface but remains experimental; the other component APIs are experimental. |
 
 ```{toctree}
 :maxdepth: 1

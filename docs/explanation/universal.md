@@ -26,9 +26,10 @@ The targets share one fetcher, so a package's listing is read once for
 the whole matrix rather than once per target. Metadata is shared per
 wheel rather than per package, so a release publishing one wheel per
 interpreter or per platform costs one read for each wheel the matrix
-picks (see Where a version's metadata comes from below). An sdist's
-`PKG-INFO` stands for the whole version, so one read serves every
-target that picks it.
+picks (see Where a version's metadata comes from below).
+
+An sdist's `PKG-INFO` stands for the whole version, so one read serves
+every target that picks it.
 
 After a target resolves, its pins flow forward as preferences for the
 next, giving best-effort alignment across targets.
@@ -82,10 +83,10 @@ other is a config error.
 `python` is a PEP 440 specifier expanded into one target per
 minor version. `platforms` is a list of platform ids
 (`linux_x86_64`, `linux_aarch64`, `linux_i686`, `linux_armv7l`,
-`macos_x86_64`, `macos_arm64`, `windows_amd64`, `windows_arm64`), each
-optionally written as a table to declare its
-wheel-tag knobs (libc family, the libc and macOS the lock must run
-on, free-threaded build).  See
+`macos_x86_64`, `macos_arm64`, `windows_amd64`, `windows_arm64`).
+
+Each platform may be a table declaring its wheel-tag knobs: libc
+family, minimum libc or macOS, and free-threaded builds. See
 [Configuration](../reference/configuration.md).
 
 `python-order` selects the resolution direction:
@@ -233,11 +234,13 @@ until a pass finds no new one.
 
 Every comparison that names an interval cuts a minor: the ordered
 operators (`<`, `<=`, `>`, `>=`) and the ones naming a region (`==`,
-`!=`, `~=`, `== V.*`). A `python_full_version` marker nab cannot turn
-into an interval is a loud error rather than a silent guess: a
-membership test (`in`, `not in`), a verbatim `===`, a non-version
-comparison, a comparison against another marker variable, or certain
-pre- or post-release literals strictly inside the minor.
+`!=`, `~=`, `== V.*`).
+
+A `python_full_version` marker nab cannot turn into an interval is a
+loud error rather than a silent guess: a membership test (`in`, `not
+in`), a verbatim `===`, a non-version comparison, a comparison against
+another marker variable, or certain pre- or post-release literals
+strictly inside the minor.
 
 To resolve a minor as one real release rather than split it, name the
 patch you deploy on:

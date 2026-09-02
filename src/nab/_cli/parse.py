@@ -1,19 +1,7 @@
-"""One left-to-right walk over ``argv``, with the tables passed in.
+"""Parse ``argv`` from generated option tables without writing or exiting.
 
-:func:`build` reduces a table of generated rows to what the walk reads and
-returns a fresh mapping, so building a second table cannot disturb one
-already built.  :func:`parse` takes the root rows and the per-command rows
-as arguments, which is what lets a construction rule be proved against a
-fixture table and keeps every branch here reachable from a test.
-
-The walk stores every occurrence and reduces once at the end, so last-wins,
-accumulate, count and negation are four reductions over one list rather
-than four paths through the loop.  Conversion runs after the whole line
-parses, so an eager ``--help`` short-circuits a line whose values would
-not convert, while a word the walk itself refused raises where it stands.
-
-Nothing here writes or exits: a bad line raises :class:`UsageError` and
-:mod:`nab._cli.diagnose` turns it into text.
+Occurrences are reduced and converted after the walk, so eager options can skip
+conversion.
 """
 
 from __future__ import annotations

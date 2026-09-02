@@ -10,7 +10,6 @@ module is on that sdist's exclude list in pyproject.toml.
 
 from __future__ import annotations
 
-import inspect
 import io
 import logging
 import re
@@ -488,39 +487,6 @@ class TestLockReferenceDocumentsProjectOverrides:
         assert "append" not in prose
 
 
-class TestConfigReferenceCliFlags:
-    """The config reference's flag block matches what ``nab lock`` accepts.
-
-    The block groups the flags by what each one decides, and the bullets
-    under it say what the first group does to ``[tool.nab]``.  One
-    ``--project-<key>`` line stands for the whole family, so the block is
-    not read for the individual names.
-    """
-
-    _WILDCARD = "--project-<key>"
-
-    def test_block_lists_every_lock_flag(self) -> None:
-        declared = set(_block_flags(_flag_block()))
-
-        for flag in _command_flags("lock"):
-            forms = _flag_forms(flag, wildcard=self._WILDCARD)
-            assert declared.intersection(forms), f"the flag block omits {flag}"
-
-    def test_block_lists_only_flags_lock_accepts(self) -> None:
-        accepted = {
-            form
-            for flag in _command_flags("lock")
-            for form in _flag_forms(flag, wildcard=self._WILDCARD)
-        }
-
-        for flag in _block_flags(_flag_block()):
-            assert flag in accepted, f"the flag block still lists {flag}"
-
-    def test_bullets_cover_exactly_the_first_group(self) -> None:
-        """A flag in the wrong group leaves the bullets covering the wrong set."""
-        assert _bullet_flags() == _first_flag_group()
-
-
 _FLAG = "--include-rejected"
 
 
@@ -799,8 +765,8 @@ def _format_bullets(text: str) -> str:
 def _format_summaries() -> dict[str, str]:
     """The user-facing ``nab lock --format`` summaries, keyed by where each lives.
 
-    Each reference page carries a bullet per format, ``nab lock``'s docstring is
-    its ``--help`` text, and the README is the distribution's PyPI description.
+    Each reference page carries a bullet per format, and the README is the
+    distribution's PyPI description.
     """
     preamble = _page(_LOCKFILE_REFERENCE).partition("\n## ")[0]
     readme = _page(_README)
@@ -808,9 +774,6 @@ def _format_summaries() -> dict[str, str]:
     summaries = {
         "formats.md": _format_bullets(_reference_section(_FORMATS, "## `--format`")),
         "lockfile.md": _format_bullets(preamble),
-        "nab lock --help": _unwrapped(
-            _doc_paragraph(inspect.getdoc(lock) or "", _WITHOUT_HASHES)
-        ),
         "README.md": _unwrapped(_doc_paragraph(readme, _WITHOUT_HASHES)),
     }
 

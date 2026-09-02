@@ -283,7 +283,7 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     progress: ProgressReporter | None = None,
     max_concurrency: int,
 ) -> ResolveResult:
-    """Run the resolver and translate every failure to an exit.
+    """Run the resolver and map known user-facing failures to process exits.
 
     A returned result is always fully successful: a target that did not
     resolve is reported (one line for a single environment, a per-tuple

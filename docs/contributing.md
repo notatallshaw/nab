@@ -17,18 +17,18 @@ nab --version
 
 That shell runs in the check-out's `.venv`, with all six distributions
 installed editable plus the `tests` and `nox` dependency-groups. The
-commands below run its tools by path, so they work outside the shell too.
+commands below run tools by path, so they work outside the shell too.
 
-Ruff and the docs toolchain live in their own hatch environments, reached
-through `hatch run`.
+Ruff and the docs toolchain live in their own hatch environments,
+reached through `hatch run`.
 
 [hatch]: https://hatch.pypa.io/
 
 ## Running the tests
 
-The default suite is fast (under a minute) and covers every module
-under `nab_resolver`, `nab_markersets`, `nab_provider`, `nab_project`,
-`nab_index`, and `nab`:
+The default suite covers every module under `nab_resolver`,
+`nab_markersets`, `nab_provider`, `nab_project`, `nab_index`, and
+`nab`:
 
 ```bash
 .venv/bin/python -m pytest                # default selection (no markers)
@@ -53,9 +53,9 @@ CI gates each workspace's coverage on its own tests through nox (see
 .venv/bin/nox -s standalone               # nab-markersets on released packaging
 ```
 
-`standalone` is the only run without `nab-provider` installed, so it is the
-only one where `nab_markersets` binds released `packaging` rather than the
-vendored fork.
+`standalone` is the only run without `nab-provider` installed, so
+`nab_markersets` binds released `packaging` rather than the vendored
+fork.
 
 Property-based tests are opt-in via marker:
 
@@ -82,17 +82,16 @@ fail the matrix; the trees are `TYPED_TREES` in `noxfile.py`.
 
 ## The build backend
 
-nab builds its distributions with `--no-isolation`, so the backend has to be
-installed rather than fetched during the build. It is locked from
-`[build-system].requires`: `tasks/refresh-locks.sh` writes
-`.github/requirements/pylock.build.toml` with `nab lock --build-requirements`,
-and every path that builds installs it: the `dists` nox session, the release
-workflow and `hatch run release:build`.
+nab builds its distributions with `--no-isolation`, so the backend must
+be installed before the build. `tasks/refresh-locks.sh` locks
+`[build-system].requires` into
+`.github/requirements/pylock.build.toml` with
+`nab lock --build-requirements`. The `dists` nox session, release
+workflow, and `hatch run release:build` install that lock.
 
-One lock serves all six packages, which holds only while they declare the
-same `[build-system]`. The refresh script checks that before it writes
-anything, and checks afterwards that the locks sharing an environment agree on
-the packages they share.
+One lock serves all six packages while they declare the same
+`[build-system]`. The refresh script checks that before writing, then
+checks that locks sharing an environment agree on shared packages.
 
 ## Building the docs
 
@@ -101,17 +100,15 @@ hatch run docs:build     # sphinx-build -W, warnings are errors
 hatch run docs:serve     # live-reloading preview
 ```
 
-The `docs` dependency-group in `pyproject.toml` is the one place the doc
-tooling is declared. nab locks it into
-`.github/requirements/pylock.docs.toml` (`tasks/refresh-locks.sh`), and both
-CI and Read the Docs install from that lock, so a published build resolves
-nothing. After changing the group, re-run the refresh script and commit the
-lock.
+The `docs` dependency-group in `pyproject.toml` declares the doc
+tooling. `tasks/refresh-locks.sh` writes it to
+`.github/requirements/pylock.docs.toml`; CI and Read the Docs install
+that lock. After changing the group, refresh and commit the lock.
 
-Unlike the other groups, that lock is a single resolution for Python 3.13,
-the one version Read the Docs and the CI docs job build with. nab runs on
-3.10 and newer, but locking the toolchain across that range would hold it
-to whatever still supports the floor.
+Unlike the other groups, that lock is resolved only for Python 3.13,
+which Read the Docs and the CI docs job use. nab runs on 3.10 and newer,
+but locking the toolchain across that range would hold it to packages
+that still support the floor.
 
 ## Coverage policy
 

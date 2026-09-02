@@ -1,7 +1,7 @@
-"""Declared conflicts, and the forks a selection engages.
+"""Declared selection constraints and the forks they engage.
 
-``[tool.nab].conflicts`` names sets of extras and dependency groups that
-cannot be installed together.
+``[tool.nab].conflicts`` constrains how many members of an extra or
+dependency-group set may be selected.
 """
 
 from __future__ import annotations
@@ -38,15 +38,14 @@ __all__ = [
 
 
 class ConflictPolicy(enum.Enum):
-    """How exclusive the members of a :class:`ConflictSet` are.
+    """Which selected-member counts a :class:`ConflictSet` permits.
 
     Mirrors Gentoo's ``REQUIRED_USE`` group operators.  ``AT_MOST_ONE``
     (``??``) is the default for a bare uv-style set: the members are
     mutually exclusive but selecting none is fine, which suits opt-in
     extras.  ``EXACTLY_ONE`` (``^^``) additionally requires one to be
     chosen.  ``AT_LEAST_ONE`` (``||``) only forbids the empty
-    selection; it is rarely useful for extras and is included for
-    completeness.
+    selection.
     """
 
     AT_MOST_ONE = "at-most-one"
@@ -87,7 +86,7 @@ class ConflictMember(ValueType):
 
 
 class ConflictSet(ValueType):
-    """A set of mutually-exclusive members with an exclusivity policy."""
+    """A set of members constrained by a selection policy."""
 
     __slots__ = __match_args__ = ("members", "policy")
 
@@ -99,7 +98,7 @@ class ConflictSet(ValueType):
         members: tuple[ConflictMember, ...],
         policy: ConflictPolicy = ConflictPolicy.AT_MOST_ONE,
     ) -> None:
-        """Record the members ``policy`` makes exclusive."""
+        """Record members constrained by ``policy``."""
         self.members = members
         self.policy = policy
 

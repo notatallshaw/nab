@@ -1654,34 +1654,13 @@ class Provider:
         metadata: tuple[_diagnosis.MetadataBlock, ...] = (),
         version_range: VersionRange | None = None,
     ) -> None:
-        """Record why ``choose_version`` returned ``None`` for ``package``.
+        """Store deferred failure evidence for ``package``.
 
-        An empty result is ordinary during backtracking, so this stores a marker
-        and defers rendering until the resolve fails.
-
-        ``blockers`` and ``metadata`` record candidates rejected by look-ahead.
-        ``version_range`` lets the later renderer distinguish a filtered release
-        from a range with no match. An empty post-filter ``all_versions`` uses the
-        stored listing diagnosis.
-
-        ``version_range`` is passed only when no surviving version fell
-        inside it.  A version the listing filter dropped that does fall
-        inside it is the release the requirement asked for, so the reason
-        names the filters that dropped it rather than reporting no match.
-        The marker carries the range; which filters fired is decided later.
-
-        ``all_versions`` is post-filter, so an empty one means either the
-        index served no files or every file it served was dropped by one of
-        the listing filter's rungs.  The stored listing tells absence from
-        incompatibility apart, except that it is also empty for an index
-        skipped offline and for a page that named files nab could not use.
-        Both are marked when stored, so the reason names what happened
-        instead of absence.
-
-        A look-ahead rejection emits a clause that removes the rejected
-        versions from the range, so the resolver asks again over a range
-        nothing falls in.  That second ask has no blockers of its own, so
-        its no-match reason must not overwrite the one naming the blocker.
+        ``blockers`` and ``metadata`` are look-ahead rejection causes.
+        ``version_range`` separates a filtered release from no match. An
+        empty post-filter listing reuses its stored diagnosis, including
+        offline-skipped and unusable-file pages. A later generic miss
+        does not replace an earlier blocker.
         """
         if not all_versions:
             _, _, normalized = self.split_and_normalize(package)

@@ -32,11 +32,9 @@ MINIMUM = "26.3"
 
 
 def _import_or_none(name: str) -> ModuleType | None:
-    """Return the module ``name``, or ``None`` when it is not installed.
+    """Return the named module.
 
-    Narrower than ``ImportError`` on purpose: a copy that is present but
-    raises on its way up is a broken install, and it should say so where it
-    broke rather than read as absent and send the caller to install it again.
+    Return ``None`` when importing it raises ``ModuleNotFoundError``.
     """
     try:
         return import_module(name)

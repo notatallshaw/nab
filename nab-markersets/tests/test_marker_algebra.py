@@ -9,6 +9,7 @@ pinning the private packaging names the engine imports.
 from __future__ import annotations
 
 import gc
+import pickle
 import sys
 import traceback
 import weakref
@@ -302,6 +303,14 @@ def test_direct_construction_is_refused() -> None:
     # The op-tree is private; a set is built only through the factories.
     with pytest.raises(TypeError, match="from_marker"):
         MarkerSet()  # type: ignore[call-arg]
+
+
+def test_pickle_writes_but_load_is_refused() -> None:
+    payload = pickle.dumps(MarkerSet.full())
+    assert payload
+
+    with pytest.raises(TypeError, match="from_marker"):
+        pickle.loads(payload)  # noqa: S301 - exercise the documented load failure
 
 
 # ---------------------------------------------------------------- interning

@@ -27,6 +27,7 @@ An `sdist-v1/` record is read when `sdist-v2/` misses, rewritten into
 keeps its records instead of downloading each archive again.
 
 Record buckets are keyed per index, so two indexes never share an entry.
+
 A listing body is stored as PEP 691 JSON; when the index answers in PEP
 503 HTML the stored body is nab's own JSON rendering of the page. An
 index pinned to one `serialization` gets its own listing directories,
@@ -42,7 +43,9 @@ fills a bucket of its own:
 
 Both hold upstream files rather than nab records and are not keyed per
 index. Their bucket versions let nab retire trees whose reuse rules have
-changed. Resolves ignore the older unversioned `vcs/` and `archive/`
+changed.
+
+Resolves ignore the older unversioned `vcs/` and `archive/`
 buckets, while `nab cache clear` continues to remove them. Under
 `--no-cache` there is no root to write to, so the run materialises source
 trees in a temporary directory and discards them at the end.
@@ -50,7 +53,9 @@ trees in a temporary directory and discards them at the end.
 ## Freshness
 
 A listing follows a small subset of RFC 9111. The `.policy` sidecar
-records when the body was fetched and its `max-age`. A fresh entry is
+records when the body was fetched and its `max-age`.
+
+A fresh entry is
 served directly; a stale one is revalidated with `If-None-Match`, and a
 `304 Not Modified` slides the window forward without refetching the body.
 A listing the index marks `no-cache` or `no-store` gets no window at
@@ -67,7 +72,9 @@ again while offline still answers from the record.
 
 Turning a listing body into records means a JSON decode plus wheel and
 sdist filename parsing, which a warm resolve would otherwise repeat on
-every run. The `simple-parsed-v0/` bucket stores those records so a warm
+every run.
+
+The `simple-parsed-v0/` bucket stores those records so a warm
 hit rehydrates them and never reads the large raw body. A stale entry is
 served the same way once the index answers `304 Not Modified`, since that
 confirms the body the blob is bound to.
@@ -95,7 +102,9 @@ formats nab cannot read.
 
 `nab cache verify` walks the record buckets read-only and lists on stdout
 every entry that will not parse, including a parsed blob that is not
-decodable, exiting 1 when the listing is not empty. It checks structure
+decodable, exiting 1 when the listing is not empty.
+
+It checks structure
 only, not freshness: a stale-but-valid parsed blob is not corrupt, since
 the digest binding retires it at read time. Clones and extracted archives
 hold no nab records, so `verify` skips them.

@@ -1,30 +1,7 @@
-"""The vocabulary a declaration is written in: one class per option kind.
+"""Define the typed row classes used by :mod:`nab.optiontable`.
 
-A row is an instance of one of the classes below, bound to a name in a
-:class:`Table` body.  The class says how the parser reads the option and the
-type parameter says what the value is, so ``kind``, ``vtype``, ``choices``,
-``nullable`` and most of ``type_label`` are read off the declaration instead
-of written into it::
-
-    class Root(Table, on=GLOBAL, docs="reference/cli.md"):
-        verbose = Count(short="v", help="raise verbosity")
-        color = Value[ColorChoice](help="when to colour stderr")
-
-Only the fields a kind allows appear in its signature, so a short name on an
-operand and a default on a counter are checker errors rather than rules that
-raise once the module is imported.
-
-The row classes carry ``__get__`` under :data:`typing.TYPE_CHECKING` alone,
-so a checker reads ``Root.color`` as ``ColorChoice`` while
-``nab.optionlower``, reading ``Root.__dict__``, gets the row.  Defining it
-for real would hide the rows from the lowering and cost a descriptor call
-per read.
-
-The imports here are ``enum``, ``typing`` and :mod:`nab._compat`, so the
-module reads a declaration without the rest of nab loaded.  It is not
-neutral of nab for all that: :class:`Scope` is nab's configuration model
-and every field of :class:`Layer` is a rung of nab's ladder.
-:mod:`nab.optionlower` is where the rows meet :class:`nab.optiondefs.Opt`.
+Descriptor overloads exist only during type checking. Runtime lowering still sees
+the row objects on each table class.
 """
 
 from __future__ import annotations

@@ -1,15 +1,4 @@
-"""The token types the four command signatures annotate a choice flag with.
-
-Each alias is the choice set of the row that feeds it, so the parameter a
-command declares refuses a token the flag would not have accepted.  They
-stay hand-written because a checker reads a ``Literal`` only where its
-members are written out, and ``mirrors=`` on the row that carries one holds
-it to the enum the tokens came from.
-
-They sit here rather than in ``nab.cli`` because :mod:`nab.optiontable`
-reads them, and a declaration that imported the CLI would pull the whole
-command surface in behind it.
-"""
+"""Literal choice types shared by command signatures and option rows."""
 
 from __future__ import annotations
 

@@ -653,8 +653,7 @@ class TestRejectedCollection:
 class TestLoadTomlLayerDirect:
     def test_unknown_key_in_nab_toml_errors(self, tmp_path: Path) -> None:
         # A standalone nab.toml has no other parser, so a typo'd top-level
-        # key must crash naming the file, the same way an unknown NAB_*
-        # env var does, rather than be silently dropped.
+        # key must fail here rather than be silently dropped.
         path = _write(tmp_path / "nab.toml", 'resolutionn = "lowest"\n')
         with pytest.raises(SourceConfigError, match="resolutionn.*not a valid"):
             _load_toml_layer(path, SourceKind.USER_TOML)
@@ -981,7 +980,7 @@ class TestRenderers:
 
 
 class TestReproducibilityNotice:
-    """A CLI PROJECT override is never silent; the lock can be reproduced."""
+    """Build notice text for CLI PROJECT overrides."""
 
     def test_notice_lists_cli_project_overrides(self, tmp_path: Path) -> None:
         _project(tmp_path)

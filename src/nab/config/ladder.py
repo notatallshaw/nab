@@ -1,31 +1,11 @@
-"""The layered options, the sources that bind them, and how they print.
+"""Resolve layered configuration and render ``nab config`` reports.
 
-:data:`OPTIONS` is the keyed half of :data:`nab.optiontable.ALL`: the rows a
-configuration source may set, in the order ``nab config list`` prints them.
-``tasks/gen_cli.py`` writes them as literals into :mod:`nab.config.registry`,
-which is where this module reads them.  An option's key, scope, hooks, rung 0,
-``NAB_*`` name and CLI flag are all declared in the table, so every row here
-carries a key and ``name`` is that key.
+:data:`OPTIONS` is the keyed subset of :data:`nab.optiontable.ALL` in display
+order. Sources bind whole values by rank; the two project files share a rank.
+CLI table-key flags replace only the keys they name.
 
-A run reads seven sources at six ranks, low precedence to high: the built-in
-defaults, a system ``nab.toml``, a user ``nab.toml``, then ``pyproject.toml``'s
-``[tool.nab]`` and a project-dir ``nab.toml`` sharing one rank, then ``NAB_*``
-and finally the CLI.  Each is read into a :class:`Layer` of typed values, and
-:func:`resolve_config` gives every row, bar a table key the CLI sub-flags
-fold over the table the files declare, the whole value the highest source that
-bound it supplied.  The category gate runs while a source is read: a
-project-scope option in a user ``nab.toml``, or a user-scope option in
-``[tool.nab]``, is a :class:`~nab.config.values.SourceConfigError` rather than
-a value.  ``nab config --include-rejected`` collects those refusals instead of
-raising, which is what the ``rejections`` parameter threaded through the
-readers is for.
-
-The renderers close the loop.  ``list`` prints every row with the value that
-won and where it came from, ``get`` prints one row's value alone, and
-``explain`` prints one row's help, the page documenting it and its whole
-stack, with the winner marked.  All three read what :func:`resolve_config`
-returns, so what is printed is what the run would use, and a rejected source
-reaches them only as a :class:`RejectedLayer`.
+Reports show configured winners. With ``--include-rejected``, ``list`` and
+``explain`` also show refused sources.
 """
 
 from __future__ import annotations
@@ -413,12 +393,9 @@ def _load_toml_layer(
         for key, value in raw.items():
             spec = BY_KEY.get(key)
             if spec is None:
-                # An unknown key (a typo) crashes naming the file rather than
-                # being dropped, the same way an unknown NAB_* var does.  On
-                # the resolve path read_pyproject_config rejects an unknown
-                # pyproject [tool.nab] key before this loader runs; the
-                # inspector reaches here, so it reports the typo too instead
-                # of silently ignoring it.
+                # The resolve path rejects an unknown pyproject key
+                # before this loader runs. The inspector reaches here
+                # and reports the typo instead of silently ignoring it.
                 valid = sorted(BY_KEY)
                 msg = (
                     f"{path}: {key!r} is not a valid nab setting; the known"

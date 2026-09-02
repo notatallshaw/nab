@@ -20,35 +20,43 @@ differences and intersections that fragment a range.
 conflicts, no range ever gains a second interval, and nearly all the work is membership
 tests during prioritization.
 
-`satisfied-ceiling-fanin` builds one root over 1000 packages that all cap the same hub, one
-of them below the rest. That one is decided first, so every other requirement already holds
-when the resolver reaches it: all 1005 `relation` calls answer SUBSET, against a hub range
-the yanked releases leave in six intervals. The other two scenarios answer SUBSET 201 and 3
-times, so this is the one to read for a change that treats subset and disjoint differently.
+`satisfied-ceiling-fanin` builds one root over 1000 packages that all
+cap the same hub, one of them below the rest.
 
-A change to `Range` can win on one of those and lose on another, so compare all three. Each
-scenario prints its Range call counts, `hash_misses` for the calls that found the hash memo
-empty, `intervals_max` and `intervals_mean` over the intervals per range that membership was
-tested against, a digest of the solution it reached, and process CPU.
+That package is decided first, so every later requirement already holds:
+all 1005 `relation` calls answer SUBSET against a hub range the yanked
+releases leave in six intervals.
 
-Everything but the `__hash__` count and timing survives a change of machine. `__hash__`
-follows how often CPython's dicts ask a key for its hash and so differs between versions,
-which is why `hash_misses` is reported beside it.
+The other scenarios answer SUBSET 201 and 3 times; use this one when
+subset and disjoint need different paths.
 
-Quote a CPU number only from a serialized run. Two runs whose digests differ answer
-different questions and cannot be compared.
+A change to `Range` can win on one scenario and lose on another, so
+compare all three.
 
-The digest identifies the solution, not the workload. `wrong-package-backtracking` always
-resolves to the same four pins, so its search counters and interval census separate runs.
+Each prints its `Range` call counts, `hash_misses` for calls that found
+the hash memo empty, `intervals_max` and `intervals_mean` over the
+intervals tested, a solution digest, and process CPU.
 
-The interval census reflects the scenario's shape, not a sample. On the two fanned
-scenarios `intervals_max` is fixed by construction; on `wrong-package-backtracking` it is
-the size.
+Everything but the `__hash__` count and timing survives a change of
+machine. `__hash__` follows how often CPython's dicts ask a key for its
+hash and so differs between versions, which is why `hash_misses` is
+reported beside it.
 
-Every membership test comes from `GraphProvider` scanning its own release lists. A provider
-that indexed or cached its candidates would show almost none. These scenarios compare
-`Range` implementations on a fixed workload; they do not size `Range`'s share of a real
-resolve.
+Quote a CPU number only from a serialized run. Two runs whose digests
+differ answer different questions and cannot be compared.
+
+The digest identifies the solution, not the workload.
+`wrong-package-backtracking` always resolves to the same four pins, so
+its search counters and interval census separate runs.
+
+The interval census reflects the scenario's shape, not a sample. On the
+two fanned scenarios `intervals_max` is fixed by construction; on
+`wrong-package-backtracking` it is the size.
+
+Every membership test comes from `GraphProvider` scanning its own
+release lists. A provider that indexed or cached its candidates would
+show almost none. These scenarios compare `Range` implementations on a
+fixed workload; they do not size `Range`'s share of a real resolve.
 
 Versions here are `int`, so a comparison inside `Range` costs a C-level int compare, while a
 consumer holding packaging `Version` objects pays a Python-level `__lt__`. A change that

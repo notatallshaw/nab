@@ -1,12 +1,7 @@
-"""Run the command a parsed line names.
+"""Return a parsed command's status and optional ``SystemExit`` message.
 
-Loaded only once a command name has parsed, which is also the condition
-for starting the run's output, so this is where :mod:`nab.output` and
-:mod:`pathlib` first reach the process.
-
-Nothing here writes or exits: a status, and sometimes a message, go back to
-the caller, which owns both write sites.  The dispatch table is a parameter
-rather than a module global so a fixture table can drive both failure paths.
+Command output remains owned by :mod:`nab.output`. Command imports are
+deferred until after parsing.
 """
 
 from __future__ import annotations

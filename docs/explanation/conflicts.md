@@ -12,10 +12,10 @@ Declaring the conflict tells nab to keep them apart.
 ## Declaring a conflict
 
 Conflicts live in `[tool.nab].conflicts`. Each entry is a set of
-members that are mutually exclusive with each other. A member is an
-extra, a dependency group, or one of the groups `[tool.nab]` names
-itself: `base-group` for the project's own dependencies and
-`build-group` for its `[build-system].requires`.
+members and a policy constraining how many may or must be active. A
+member is an extra, a dependency group, or one of the groups
+`[tool.nab]` names itself: `base-group` for the project's own
+dependencies and `build-group` for its `[build-system].requires`.
 
 ```toml
 [tool.nab]
@@ -63,8 +63,8 @@ spelling here does not have to match the table key exactly.
 In a workspace, `conflicts` is scoped to the pyproject being locked.
 Declaring conflicts in the workspace root does not propagate to a
 `nab lock packages/<member>/pyproject.toml`; each member declares
-its own. See [Lock a workspace](../how-to/workspaces.md) for the full
-list of keys that flow vs stay local.
+its own. See [Lock a workspace](../how-to/workspaces.md) for the
+workspace scoping rules.
 
 ## Conflicting the build requirements
 

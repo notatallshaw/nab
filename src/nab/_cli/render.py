@@ -1,13 +1,6 @@
-"""Build a help page out of the same table the walk reads.
+"""Render help from the parser's option tables without writing it.
 
-The page is returned as a string, so the caller owns the one write site
-and a page that cannot be written is one status rather than a traceback.
-Help is wrapped rather than truncated, at the terminal's width, by a
-greedy wrapper here rather than by :mod:`textwrap`, which the design's
-import rule keeps off this path along with the :mod:`re` it pulls in.
-
-Colour is handed in as a flag rather than decided here, so the width is
-the only environment this module reads.
+The caller supplies the colour decision. Only terminal width comes from the environment.
 """
 
 from __future__ import annotations
@@ -31,11 +24,8 @@ _GAP = 2
 # The metavar each value type prints when the row declares no choices.
 _METAVARS = {"path": "PATH", "int": "INT", "str": "STR"}
 
-# Bold marks structure and cyan marks a token the reader can type.  The two
-# are never combined: bold plus a colour selects the bright slot, which a
-# theme may map to a grey with less contrast than the plain hue.
-# :mod:`nab.output` holds nab's other SGR table, and importing it would pull
-# the whole output layer onto a path that writes one page.
+# Keep bold and cyan separate because some themes give their combined bright
+# colour too little contrast. Local codes keep ``nab.output`` off this path.
 _BOLD = "\033[1m"
 _CYAN = "\033[36m"
 _RESET = "\033[0m"
@@ -76,10 +66,9 @@ def terminal_width(environ: dict[str, str] | None = None) -> int:
 
 
 def wrap(text: str, width: int) -> list[str]:
-    """Break ``text`` into lines of at most ``width``, never cutting a word.
+    """Wrap ``text`` without splitting words.
 
-    A word longer than ``width`` takes its own line and overruns, which is
-    what every wrapper does with an unbreakable token.
+    A word longer than ``width`` occupies one over-width line.
     """
     lines: list[str] = []
     line = ""

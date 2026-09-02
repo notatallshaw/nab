@@ -62,10 +62,11 @@ whose canonical name matches.
 
 Each member is recorded as an editable install by default, matching
 uv. Its pin renders as a PEP 660 editable entry: `editable = true`
-in `pylock.toml`, and `-e file://...` in the two requirements
-formats. An explicit `[[tool.nab.local-sources]]` entry defaults the
-other way, non-editable, and becomes editable only when its
-`editable` key is set to `true`.
+in `pylock.toml`, and `-e file://...` in the two requirements formats.
+
+An explicit `[[tool.nab.local-sources]]` entry defaults the other way,
+non-editable, and becomes editable only when its `editable` key is set
+to `true`.
 
 ## Interaction with `[[tool.nab.local-sources]]`
 
@@ -90,26 +91,19 @@ lock a workspace with no backend invocations.
 
 ## Scope of `[tool.nab]` keys
 
-Workspace discovery flows these from the root into the file being
-locked: the workspace `members`, merged into `local-sources`. Everything
-else under `[tool.nab]` is scoped to the pyproject being locked: `conflicts`,
-`default-groups`, `constraints`, `matrix`, `mode`, `requires-python`,
-`uploaded-prior-to`, `build-policy` itself, `dist-policy`, `vcs`,
-`indexes`, `base-group`, `build-group`, and `environment`. Locking a member with `nab lock
-packages/core/pyproject.toml` reads only that file's keys; the
-root's are ignored.
+Only the discovered workspace members flow from an ancestor root; nab
+adds them to the locked project's `local-sources`. Every other
+`[tool.nab]` setting stays local to the pyproject being locked. Thus
+`nab lock packages/core/pyproject.toml` ignores the root's settings.
 
 Declare conflicts and default-groups on each member that needs them.
 The same applies to constraints: a root-level constraint table does
 not constrain a member resolve.
 
-`base-group` follows the same rule: the root's setting names the root's
-own dependencies in the root's lock, and a member's lock is unaffected.
-Members are ordinary packages there, so the gate covers everything the
-root's `[project.dependencies]` pull in, members and other local sources
-alike. An install asked for `dev` alone no longer gets them, and one
-that wants both asks for both. A root that declares members but has no
-dependencies of its own has nothing to name.
+`base-group` follows the same rule. It names the locked project's own
+dependencies and everything they pull in, including workspace members
+and other local sources. A project with no dependencies has nothing to
+name.
 
 ## Example layout
 

@@ -269,7 +269,6 @@ class FetchCoordinator:
 
         ``build_config`` is the settings a :pep:`517` build runs under;
         a caller that resolves without building leaves it ``None``.
-
         """
         if indexes is None:
             indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
@@ -936,7 +935,7 @@ class FetchCoordinator:
         req: FetchRequest,
         sem: asyncio.Semaphore,
     ) -> None:
-        """Run one limited request and record any failure for its waiter."""
+        """Run one limited request and record fetch failures for its waiter."""
         async with sem:
             try:
                 if req.kind is FetchKind.LISTING:

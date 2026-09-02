@@ -70,13 +70,14 @@ nab publishes five component libraries for other tools:
 
 * `nab-resolver`: a generic PubGrub resolver.
 * `nab-markersets`: a PEP 508 marker algebra.
-* `nab-provider`: Python packaging policy and resolution logic, without I/O.
+* `nab-provider`: Python packaging policy and resolution logic without
+  I/O.
 * `nab-index`: index, archive, VCS, and cache clients.
-* `nab-project`: nab's host, with resolve orchestration, workspace discovery,
-  the build path, lockfile emitter, and downloader.
+* `nab-project`: nab's host, with resolve orchestration, workspace
+  discovery, the build path, lockfile emitter, and downloader.
 
-`nab-resolver` has stable public module paths. The other component APIs are
-experimental. See [how the distributions fit together](https://nab.readthedocs.io/en/stable/explanation/packages.html).
+`nab-resolver` has stable public module paths. The other component APIs
+are experimental. See [how the distributions fit together][packages].
 
 ## Project status
 
@@ -88,5 +89,6 @@ supported inputs and experimental features.
 [check-lock]: https://nab.readthedocs.io/en/stable/reference/lockfile.html#checking-the-lock-in-ci
 [lockfiles]: https://nab.readthedocs.io/en/stable/reference/lockfile.html
 [output-formats]: https://nab.readthedocs.io/en/stable/reference/formats.html
+[packages]: https://nab.readthedocs.io/en/stable/explanation/packages.html
 [resolve-environment]: https://nab.readthedocs.io/en/stable/reference/configuration.html#the-resolve-environment
 [status]: https://nab.readthedocs.io/en/stable/#status

@@ -27,12 +27,12 @@ The commands themselves are on the [CLI](cli.md) page.
 
 ## One resolve or several
 
-Both `--groups` and `--extras` produce a single union resolve, unless
-two or more members of a mutually exclusive `[tool.nab].conflicts` set
-are active, either because the selection names them or because they are
-the groups `base-group` and `build-group` name, which are active on
-every run. The run then forks into one resolve per choice of member;
-see [Conflicting extras and groups](../explanation/conflicts.md).
+`--groups` and `--extras` normally produce a single union resolve. A
+mutually exclusive `[tool.nab].conflicts` set engages when two or more
+members are active through the selection, `base-group`, or
+`build-group`. An engaged set forks the run once per allowed member
+combination; see
+[Conflicting extras and groups](../explanation/conflicts.md).
 
 A package that only a selected extra or group reaches is emitted with
 a `'X' in extras` or `'X' in dependency_groups` marker, so an
@@ -54,13 +54,12 @@ installer given neither leaves it out; see
   `--project-build-group` are all rejected, and `[tool.nab].default-groups`,
   `[tool.nab].base-group`, `[tool.nab].build-group` and
   `[tool.nab].conflicts` declared in the project's files do not apply.
-* A project that declares no `[build-system]` is an error. nab does not
-  fall back to the PEP 517 default backend, because pinning an implied
-  `setuptools` would put a build requirement in the lock that the project
-  never declared. `[tool.nab].build-group`, which carries the build
-  requirements in the project's own lock instead of a separate one, is
-  the same, and it requires `[tool.nab].base-group` so the two sets can
-  be asked for separately.
+* A project with no `[build-system]` is an error. nab does not invent
+  the PEP 517 default backend or pin an undeclared `setuptools`.
+
+  `[tool.nab].build-group` has the same requirement. It also requires
+  `[tool.nab].base-group` so consumers can select runtime and build pins
+  separately.
 * Only the static list is read. Neither this flag nor `build-group`
   invokes the project's own backend, so whatever that backend would add
   from `get_requires_for_build_wheel` is not covered.

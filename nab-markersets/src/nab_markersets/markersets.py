@@ -1,10 +1,9 @@
-"""A PEP 508 marker as the set of environments it selects.
+"""PEP 508 markers represented as sets of environments.
 
-:class:`MarkerSet` is the marker-side counterpart of
-:class:`packaging.ranges.VersionRange`. It holds the states a marker string
-cannot: the full set of an absent marker, the empty set of a contradiction, and
-complements the grammar cannot spell. :meth:`~MarkerSet.to_marker_string` is the
-way back, and it is partial.
+:class:`MarkerSet` normalizes tautologies and contradictions to full and
+empty sets and can represent complements PEP 508 cannot spell.
+:meth:`~MarkerSet.to_marker_string` serializes representable non-empty
+sets and returns ``None`` for full.
 
 Build a set with :meth:`MarkerSet.from_marker`, :meth:`MarkerSet.full` or
 :meth:`MarkerSet.empty`; combine with ``&``, ``|``, ``~`` and ``-``; and query

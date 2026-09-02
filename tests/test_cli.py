@@ -5858,6 +5858,27 @@ class TestHelpText:
         assert "--no-no-emit-workspace" not in help_text
         assert "--no-emit-workspace " in help_text
 
+    def test_lock_help_explains_output_defaults_and_universal_templates(self) -> None:
+        help_text = " ".join(_command_help("lock").split())
+        assert "defaults to pylock.toml or requirements.txt" in help_text
+        for variable in ("{python_version}", "{platform_id}", "{selection}"):
+            assert variable in help_text
+        assert "must render uniquely for every target" in help_text
+
+    def test_lock_help_distinguishes_requirements_hash_lines(self) -> None:
+        help_text = " ".join(_command_help("lock").split())
+        assert "requirements with index-pin hash lines" in help_text
+        assert "requirements without them" in help_text
+
+    def test_lock_help_explains_build_requirements_output(self) -> None:
+        help_text = " ".join(_command_help("lock").split())
+        assert "defaults to pylock.build.toml or build-requirements.txt" in help_text
+
+    def test_lock_help_explains_omitted_workspace_pins(self) -> None:
+        help_text = " ".join(_command_help("lock").split())
+        assert "omit workspace pins but keep members in resolution" in help_text
+        assert "outside a hashed-requirements run" in help_text
+
     def test_download_cache_flag_has_no_double_negative(self) -> None:
         help_text = _command_help("download")
         assert "--no-no-cache" not in help_text

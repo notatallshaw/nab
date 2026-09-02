@@ -1,12 +1,8 @@
-"""``nab config`` subcommand: inspect the layered config registry.
+"""Read-only ``nab config`` commands for layered settings.
 
-Read-only v1.  ``list`` shows every effective option with its value,
-scope and origin; ``get`` prints one effective value; ``explain`` prints
-the full shadowed stack for one key, the winner marked with a ``>``
-gutter.  All three are derived from the registry in
-:mod:`nab.config.ladder`; this module only discovers the layers and prints
-what the renderers return.  There is no set/unset/edit: v1 never writes
-config.
+``list`` shows every effective option, ``get`` prints one value, and
+``explain`` shows one option's source stack. The registry owns their
+rendering; these commands discover the layers and print the result.
 """
 
 from __future__ import annotations
@@ -132,9 +128,6 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
     except SourceConfigError as exc:
         _fail_config(exc)
 
-    # Reproducibility: a PROJECT option set on the CLI changes the
-    # resolved set, so it is never silent.  This inspector produces no
-    # lock, so the notice is worded for inspection (produces_lock=False).
     notice = project_cli_override_notice(effective, produces_lock=False)
     if notice is not None:
         printer().stderr_line(notice)

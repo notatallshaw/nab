@@ -21,8 +21,8 @@ which leaves five to write:
 
 `has_satisfying_version`
 : Answer whether `choose_version` would pick a version in the range you
-  are handed. Asked only to attribute a failure, so leave no state
-  behind.
+  are handed. It attributes failures, so restore decision-affecting
+  state; diagnostic-only evidence may remain.
 
 `get_dependencies`
 : Report what a version depends on, as a range per dependency.
@@ -32,13 +32,11 @@ which leaves five to write:
   goes first.
 
 `widen_decision`
-: Return a range that may stand in for a decided version in the clauses
-  the resolver records, or `None` to record the version alone. Its
-  docstring carries the soundness contract, and `Range.full()` breaks it
-  as soon as two versions differ: it claims every version depends on
-  what this one does, turning a solvable graph into a failure report. A
-  widening provider overrides `narrow_for_display` too, or its reports
-  name widened ranges instead of versions it knows.
+: Return a range that may replace a decided version in clauses,
+  or `None` for the version alone. `Range.full()` is unsound when two
+  versions differ: it assigns one version's dependencies to every
+  version and can make a solvable graph fail. A widening provider also
+  overrides `narrow_for_display`; otherwise reports name widened ranges.
 
 `ResolverProvider` in `nab_resolver.resolver` documents all eleven, and
 its docstrings are the full contract. Subclassing is optional: the
@@ -185,13 +183,13 @@ unsatisfiable.
 ## Bringing your own range type
 
 `Range` orders whatever it is handed, so integers suit a toy graph and
-`packaging.version.Version` suits a real Python one. A host with its own
-range algebra replaces `Range` outright: pass `Resolver` a `range_type`
-satisfying `RangeProtocol`, a `root_version` to decide the virtual root
-at, which `range_type.singleton()` has to accept, and a `format_range`
-unless
-that type's `str` already reads as a constraint. nab drives the resolver
-this way, with a PEP 440 range type.
+`packaging.version.Version` suits a real Python one.
+
+A host with its own range algebra replaces `Range` outright: pass
+`Resolver` a `range_type` satisfying `RangeProtocol`, a `root_version`
+to decide the virtual root at, which `range_type.singleton()` has to
+accept, and a `format_range` unless that type's `str` already reads as a
+constraint. nab drives the resolver this way, with a PEP 440 range type.
 
 ## The supported API
 

@@ -1,7 +1,7 @@
-"""``enforce_build_policy_for_targets``: what a declared target may build.
+"""Build policy for host and declared-platform targets.
 
-A target naming another machine forbids host builds; one that moves only the
-python axis warns instead.
+A declared platform or implementation forbids host builds. Changing only
+Python warns instead.
 """
 
 from __future__ import annotations

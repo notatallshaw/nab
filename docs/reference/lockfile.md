@@ -105,7 +105,8 @@ extra and the `dev` group together, and records the selection in the
 top-level `extras` and `dependency-groups` keys. PEP 751 has an
 installer read those keys as what the lock offers, and install with
 no extras and only the `default-groups` unless it is asked for more.
-So a package that only `cli` or only `dev` reaches is emitted with a
+
+A package that only `cli` or only `dev` reaches is emitted with a
 marker naming the selection that brought it in:
 
 ```toml
@@ -125,6 +126,7 @@ package the project's own dependencies pull in is unconditional even
 when a selected extra also asks for it, and a package that two
 selections reach disjoins both
 (`"cli" in extras or "dev" in dependency_groups`).
+
 A group named in `[tool.nab].default-groups` still installs by
 default, because PEP 751 seeds `dependency_groups` from
 `default-groups` when the installer is given no group selection.
@@ -167,7 +169,9 @@ marker = "\"base\" in dependency_groups"
 
 An installer given no group selection still gets them, because PEP 751
 seeds `dependency_groups` from `default-groups`. One asked for `dev`
-alone gets that group and nothing else. One that asks for an empty group
+alone gets that group and nothing else.
+
+One that asks for an empty group
 list gets no group at all, not even the project's own. A package both
 they and a group reach names both.
 
@@ -177,7 +181,9 @@ selection rather than extending it, so a project that wants its
 dependencies installed alongside a group names them there too:
 `default-groups = ["dev", "base"]`.
 
-Unset, which is the default, they carry no marker. The name must not be
+Unset, which is the default, they carry no marker.
+
+The name must not be
 one the project already declares in `[dependency-groups]`, since a
 marker naming it could not mean both. It is a name for the lock's
 consumers rather than a group of the project's own, so `--groups` does

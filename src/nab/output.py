@@ -1,14 +1,8 @@
-"""nab's output policy in one place: stream, level, format, and colour.
+"""Apply nab's output stream, verbosity, progress, and colour policy.
 
-stdout carries only the requested, machine-readable output (a lockfile, a
-requirements list, a config dump).  stderr carries everything a human reads:
-the run summary, notes, warnings, errors, progress, and logs.  The verbosity
-level and the colour decision are resolved once by :func:`begin` and shared
-through a single :class:`Printer`, so no command re-invents the policy.
-
-The design follows uv: a small printer with a level, a data channel that
-survives ``--quiet``, and colour applied only to a message's leading token so
-the body stays legible with colour stripped.
+Requested command output goes to stdout. Diagnostics, status, progress,
+and logs go to stderr. :func:`begin` resolves verbosity and colour once
+per run.
 """
 
 from __future__ import annotations
@@ -164,9 +158,9 @@ class Printer:
         """Build a printer from the resolved run knobs.
 
         ``stdout`` / ``stderr`` / ``env`` default to the process streams and
-        environment; tests inject their own.  ``progress`` is the
-        ``--no-progress`` switch (with ``NAB_NO_PROGRESS``); animated progress
-        is additionally gated on the normal level and an stderr terminal.
+        environment; tests inject their own. ``progress`` enables the
+        live line; ``NAB_NO_PROGRESS``, verbosity, and a non-terminal
+        stderr may still suppress it.
         """
         self.verbosity = verbosity
         self._out = stdout if stdout is not None else sys.stdout
@@ -263,10 +257,7 @@ class Printer:
                 self._progress_drawn = False
 
     def flush_stderr(self) -> None:
-        """Flush stderr for a caller writing through :meth:`stderr_write`.
-
-        The stream stays private, so nothing can write around the printer.
-        """
+        """Flush the printer's stderr stream."""
         self._err.flush()
 
 
@@ -403,17 +394,10 @@ _PROGRESS_MIN_INTERVAL = 0.05
 
 
 class ProgressReporter:
-    """The live ``Resolving... N fetched, M pinned`` line on stderr (#35).
+    """Report live resolve progress on stderr.
 
-    Driven from two threads: the fetcher bumps ``on_fetch`` as listings
-    arrive, the resolver bumps ``on_pin`` as it decides packages.  Rendering
-    is gated on :attr:`Printer.progress_allowed` (normal level, an stderr
-    terminal, progress not switched off), throttled to keep off the hot path,
-    and guarded by a lock since the two callers run on different threads.
-    When it is not allowed every method is a cheap no-op, so a piped, quiet,
-    or verbose run pays nothing and stdout stays clean.  The line is painted
-    through :meth:`Printer.progress_line`, so a mid-resolve diagnostic wipes
-    it instead of landing on it.
+    Fetch and pin callbacks may run on different threads. Rendering is
+    locked, throttled, and enabled only when progress is allowed.
     """
 
     def __init__(

@@ -151,18 +151,15 @@ python = "3.13"
 platform = { id = "macos_arm64", runs-on-macos = "14.0" }
 ```
 
-The knobs, their defaults and their rules are the ones the matrix's
-"Platform tag knobs" section below lists.  A bare id names no system, so
-a wheel of any level is accepted; declare `runs-on-macos` to name a macOS
-the lock must run on: the target then accepts that macOS and every older
-tag and drops a wheel that needs a newer one.
+The "Platform tag knobs" section below gives their defaults and rules.
+A bare id sets no system floor and accepts wheels of any level. Declare
+`runs-on-macos` to set the oldest supported macOS; wheels needing a
+newer one are dropped.
 
-The target declares both halves of the environment: its PEP 508 markers
-gate every dependency, and its PEP 425 wheel tags gate every candidate.
-A version whose only wheels the target cannot install, and which ships no
-sdist, is not a candidate: the resolve fails on it rather than pinning a
-wheel that will not install (`pywin32` on Linux).  The lockfile records
-only the wheels the target can install.
+PEP 508 markers gate dependencies, while PEP 425 tags gate wheels. A
+version with only incompatible wheels and no sdist is not a candidate
+(`pywin32` on Linux). The lockfile records only wheels the target can
+install.
 
 Tags gate wheels only, so a `.tar.gz` sdist keeps a version alive for any
 target.  nab drops every other sdist format when it parses the listing,
@@ -181,13 +178,10 @@ however each was declared, in a file or by a flag.
 
 ### `[tool.nab.marker-environment]` (deprecated)
 
-The old overlay set PEP 508 marker variables one at a time, so a partial
-declaration (`sys_platform` alone) left the rest of the machine on the
-host and resolved for a machine that does not exist.  It is translated
-to `[tool.nab.environment]` with a warning, and a key that names no
-environment axis, or a `(sys_platform, platform_machine)` pair that names
-no platform nab models, is a config error.  Declare the environment
-instead.
+The old overlay could combine one declared marker with the rest of the
+host, producing a machine that does not exist. It is translated to
+`[tool.nab.environment]` with a warning. An unknown axis or unmapped
+`(sys_platform, platform_machine)` pair is a config error.
 
 `platform_release` and `platform_version` are knobs of the machine the
 pair names, so they translate into the platform table
@@ -227,12 +221,9 @@ PEP 691 HTML listing and PEP 503 `text/html`, and decodes whichever one
 the index serves.  `serialization` pins a single choice, for an index
 that does not answer both reliably.
 
-The pin covers the `Accept` header and the decoder together.  A pinned
-index that answers in the other serialization is an error: reading it
-anyway would hide the behaviour the pin was set to stop.  An index that
-holds only the other serialization and negotiates strictly answers 406,
-which fails the same way.  Either error ends the resolve rather than
-falling through to the next index in the list.
+The pin covers the `Accept` header and decoder together. The wrong
+serialization, including a strict 406 response, is an error. The resolve
+ends rather than falling through to the next index.
 
 Listings fetched under one setting are not reused under another: a
 pinned index keeps its own listing cache.
@@ -356,14 +347,11 @@ one route.
 
 #### Overriding a package's metadata
 
-`dependencies`, `requires-python`, and `provides-extra` substitute for
-what nab would otherwise read from a distribution's metadata, scoped to
-the selected version range.  Together they mirror uv's
-`dependency-metadata`: you state a package's metadata directly instead of
-fetching or building it.  Use them when a package's published metadata is
-wrong, absent, dynamic, or unbuildable on your target.  You take
-responsibility for correctness: nab trusts the values as written and does
-not verify them against the artifact.
+`dependencies`, `requires-python`, and `provides-extra` replace
+published metadata for the selected versions, like uv's
+`dependency-metadata`. Use them when metadata is wrong, absent, dynamic,
+or unbuildable. nab trusts the replacement and does not verify it
+against the artifact.
 
 Each field replaces its own field independently, so a `dependencies`
 override on one range and a `requires-python` override on another
@@ -510,13 +498,10 @@ packages, so a single dependency list, Python requirement, or extra set
 for all of them is meaningless.  Writing any of them under
 `[tool.nab.index.<name>]` is rejected.
 
-A metadata override annotates versions the resolve already reaches; it
-never introduces a version.  An override scoped to a version no candidate
-has, or a package the resolve never visits, does nothing.  Local-path,
-VCS, and archive sources have no listing and their version is not known
-until the source is materialised, so a metadata override governs a source
-only when it uses a bare-name selector (full range); a version-scoped
-override does not match a source.
+A metadata override annotates versions already reached; it never
+introduces one. An unmatched version or unvisited package does nothing.
+Local, VCS, and archive sources need a bare-name override because their
+version is unknown until materialisation.
 
 ### Per-index overrides
 
@@ -538,12 +523,9 @@ uploaded-prior-to = "2026-05-01T00:00:00Z"
 assume-fresh-seconds = 3600
 ```
 
-`assume-fresh-seconds` treats a cached package listing from this index as
-fresh for at least that many seconds, skipping the revalidation a
-short-lived server `max-age` would otherwise force.  It only extends
-freshness, never shortens it, and reaches only the mutable listing: a
-release published inside the window stays hidden until it lapses.  It
-never affects the metadata and artifacts nab caches by hash.
+`assume-fresh-seconds` extends a cached listing's freshness window. A
+release published inside that window stays hidden until it lapses. The
+setting never affects metadata or artifacts cached by hash.
 
 ### Conflicts across the two surfaces
 
@@ -615,12 +597,9 @@ The same five values are accepted.  Package names are canonicalised, so
 `[tool.nab].decision-order` controls whether the listings that have
 arrived so far may steer which package the resolver decides next.
 
-nab fetches listings on a background thread while it resolves, and the
-decision scan prefers packages whose listing has already landed so the
-search keeps moving while the rest are in flight.  Which ones have
-landed depends on what the HTTP cache held, so one project resolved
-twice against one index can search differently, and on some inputs
-settle on a different valid answer.
+nab fetches listings on a background thread. The default decision scan
+prefers listings that have landed, so cache warmth can change the search
+and, on some inputs, the valid answer selected.
 
 | Value | Behaviour |
 |---|---|
@@ -687,13 +666,11 @@ name = "my-fork"
 path = "../my-fork"
 ```
 
-Two optional keys are accepted.  `editable` (boolean, default
-`false`) records a PEP 660 editable install in the lockfile.  This
-default is specific to `[[tool.nab.local-sources]]`; workspace
-members discovered from `[tool.nab.workspace]` are recorded as
-editable by default (see [Lock a workspace](../how-to/workspaces.md)).
-`subdirectory` locates the package below `path`, for monorepo
-layouts.
+`editable` defaults to `false`; set it to `true` to record a PEP 660
+editable install.
+Discovered workspace members instead default to editable; see
+[Lock a workspace](../how-to/workspaces.md). `subdirectory` locates the
+package below `path` in a monorepo.
 
 Reading static metadata from a local pyproject.toml works at every
 `build-policy` level.  When the static read comes up empty, nab builds
@@ -737,29 +714,21 @@ name = "my-fork"
 url  = "https://example.com/my-fork-1.0.tar.gz#sha256=<hex>"
 ```
 
-Only `.tar.gz` source archives are supported; a wheel or other
-format is refused at parse.  A `&subdirectory=` fragment locates the
-package below the archive root, for monorepo layouts.  Reading static
-metadata works at any `build-policy`.  Building an extracted tree whose
-static read comes up empty needs `build-policy = "build-remote"`, like a
-remote sdist; see [Build policy](build-policy.md).
+Only `.tar.gz` source archives are supported; other formats are refused.
+A `&subdirectory=` fragment selects a package below the archive root.
+Static metadata works at every policy, but a backend needs
+`build-policy = "build-remote"`; see [Build policy](build-policy.md).
 
-The URL is read by its own scheme, whatever the configured indexes use:
-a `file://` archive is read from disk, and any other archive is fetched
-over HTTP.  The extracted tree is cached alongside the hashes it was
-verified against, so a later resolve that declares those same hashes
-reuses it and downloads nothing, `--offline` included.  Declaring a hash
-the cached tree was not checked against downloads the archive again.
+The URL's own scheme applies: `file://` reads from disk and every other
+archive uses HTTP. The extracted tree is cached with its verified hashes
+and can be reused offline. A new hash triggers another download.
 
 ## Universal mode
 
-Universal resolution resolves one target per declared
-`(python, platform, implementation)` point, on the same engine a
-single-environment resolve uses.  The targets share one fetcher: a
-package's listing is read once for the whole matrix, a version's wheel
-metadata once per wheel the targets pick, and an sdist's PKG-INFO once
-for the version.  The multi-target lockfile format it produces is
-experimental and may change without notice.
+Universal mode resolves each `(python, platform, implementation)` point
+with the same engine as a single target. Targets share one fetcher: one
+listing per package, metadata once per selected wheel, and PKG-INFO once
+per sdist version. The multi-target lockfile format is experimental.
 
 ```toml
 [tool.nab]
@@ -843,12 +812,10 @@ something newer than the declared system, so a higher `runs-on-libc`
 accepts more wheels, not fewer.  Newer systems are always fine: a lock
 that runs on glibc 2.28 runs on anything newer (the same holds for macOS).
 
-`runs-on-macos` reads the same way: `runs-on-macos = "14.0"` means the
-lock must run on macOS 14.0, so a `macosx_10_9` or `macosx_14_0` wheel is
-accepted and a `macosx_15_0` wheel is dropped.  It borrows Apple's
-`MACOSX_DEPLOYMENT_TARGET`, a machine minimum.  Below the oldest macOS the
-architecture ever ran (10.4 on x86_64, 11.0 on Apple Silicon) there is
-no machine to model and no tag to name, so that is a config error.
+`runs-on-macos = "14.0"` sets the minimum machine to macOS 14. It
+accepts `macosx_10_9` and `macosx_14_0` wheels but drops
+`macosx_15_0`. A value below the architecture's oldest macOS, 10.4 on
+x86_64 or 11.0 on Apple Silicon, is a config error.
 
 A knob belongs to its platform.  `libc` and `runs-on-libc` are Linux
 knobs and `runs-on-macos` is a macOS one, so declaring one on a platform
@@ -861,21 +828,14 @@ every comparison against them evaluates False, so a dependency gated on
 `platform_release >= "5.10"` (or on any other comparison) is dropped.  A
 target that does run that kernel has to say so.
 
-`free-threaded` picks the `cp3XXt` ABI, so the target takes the
-free-threaded wheels and neither the ordinary `cp3XX` ones nor `abi3`
-(a free-threaded interpreter cannot load either).  It needs CPython
-3.13 or newer, the first release with a free-threaded build; a matrix
-whose `python` admits an older minor, or whose `implementations` names
-anything but `cpython`, is a config error, and so is a
-`[tool.nab.environment]` whose `python` or `implementation` says the
-same.
+`free-threaded` selects the `cp3XXt` ABI, excluding ordinary `cp3XX` and
+`abi3` wheels. It requires CPython 3.13 or newer. An older Python range
+or another implementation is a config error in either a matrix or
+`[tool.nab.environment]`.
 
-An id may appear once.  A lockfile entry is selected by a PEP 508
-marker, and PEP 508 has no variable for the libc family or the
-free-threaded build, so two targets sharing an id would render the same
-marker and the lock could not tell their pins apart.  Locking a second
-libc family, or a free-threaded build alongside the GIL one, is a
-second lock run with its own config and output file.
+Each platform id may appear once. PEP 508 cannot distinguish libc
+families or free-threaded builds, so duplicate ids would render the same
+lock marker. Lock another libc family or ABI in a separate run and file.
 
 Each target impersonates a platform, so universal mode cannot build on
 the host: `build-policy` defaults to `never` and cannot be raised.  An
@@ -1027,13 +987,10 @@ No source adds to the one beneath it. To extend a list, edit the file
 that declares it. A `--project-<table>-<key>` flag instead replaces one
 key in the file's table.
 
-Rung 4 is two files at one precedence, so neither can win. Setting one
-key in both is allowed only if the two values are identical; different
-values are a hard error naming both files. That applies to every key:
-two `constraints` lists, two `[[indexes]]` arrays, and `python` under
-`[tool.nab.environment]` against `platform` under `[environment]` in the
-project `nab.toml` are all the same conflict, one key set twice. Set the
-key in one of the two files.
+The two project files share one rank. They may set the same key only to
+identical whole values; a difference is an error naming both files.
+This applies equally to lists, arrays of tables, and an `environment`
+table whose files set different subkeys.
 
 The standalone `nab.toml` files use the same key names as
 `[tool.nab]`, but at the top level (no `[tool.nab]` table):
@@ -1060,12 +1017,10 @@ url = "https://pypi.example.com/simple/"
 Project-directory discovery is the directory of the `pyproject.toml`
 only; there is no walk-up.
 
-`nab config` reports the *configured* value for each key. Two keys take
-a value derived from other config at resolve time, so the resolved
-value can differ from what `nab config` shows: `build-policy` is forced
-to `never` under `mode = "universal"`, and `local-sources` gains the
-workspace members found by discovery. `nab config` shows the value as
-written, like `git config` reporting configured rather than derived state.
+`nab config` reports configured rather than derived values.
+`build-policy` is forced to `never` in universal mode, and
+`local-sources` gains discovered workspace members only during a
+resolve.
 
 ### Environment variables
 
@@ -1076,9 +1031,7 @@ written, like `git config` reporting configured rather than derived state.
 | `NAB_HTTP_BACKEND` | `http-backend` | `urllib3` or `httpx`. |
 | `NAB_MAX_CONCURRENCY` | `max-concurrency` | Parallel HTTP fetches, for the resolve as well as the downloads (at least `1`). |
 
-A `NAB_*` name that is not one of these (a typo, or `NAB_RESOLUTION`
-for a project-scope option) is ignored with a warning naming the
-variable; `-qq` and `NAB_VERBOSITY=silent` turn it off along with
-every other warning. `NAB_VERBOSITY` and `NAB_NO_PROGRESS` belong to the
-[output layer](cli.md) and pass through silently. Run
-`nab config list` to see every effective value and where it came from.
+An unknown `NAB_*` name is ignored with a warning; `-qq` and
+`NAB_VERBOSITY=silent` suppress it. `NAB_VERBOSITY` and
+`NAB_NO_PROGRESS` belong to the [output layer](cli.md) and pass through.
+Run `nab config list` to see each effective value and source.
