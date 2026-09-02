@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import errno
 import re
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+import tomli
 
 from nab.config.ladder import (
     OPTIONS,
@@ -80,6 +81,7 @@ from nab_provider.serialization import SimpleSerialization
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget, declared_range_marker, host_environment
 from nab_provider.testing import pkg_override
+from nab_provider.vcs_admission import admit_vcs_url
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -137,18 +139,23 @@ def universal_mode_section() -> str:
     return match.group(0)
 
 
-def indexes_doc_example() -> str:
-    """Return the first fenced TOML block of the config reference's Indexes section.
+def section_doc_example(heading: str) -> str:
+    """Return the first TOML example under ``## <heading>`` in the config reference.
 
     ``first_tool_nab_example`` only returns blocks that open with ``[tool.nab]``.
     """
     text = DOCS_CONFIGURATION.read_text()
-    section = re.search(r"^## Indexes.*?(?=^## )", text, flags=re.DOTALL | re.MULTILINE)
+    section = re.search(
+        rf"^## {re.escape(heading)}\n.*?(?=^## )", text, flags=re.DOTALL | re.MULTILINE
+    )
     if section is None:
-        raise AssertionError("no indexes section in configuration.md")
+        msg = f"no {heading} section in configuration.md"
+        raise AssertionError(msg)
+
     blocks = re.findall(r"```toml\n(.*?)```", section.group(0), re.DOTALL)
     if not blocks:
-        raise AssertionError("no TOML example in configuration.md's indexes section")
+        msg = f"no TOML example in configuration.md's {heading} section"
+        raise AssertionError(msg)
     return blocks[0]
 
 
@@ -2747,7 +2754,7 @@ class TestIndexSerialization:
         assert positional.serialization is SimpleSerialization.NEGOTIATE
 
     def test_reference_example_parses(self, tmp_path: Path) -> None:
-        path = write(tmp_path, indexes_doc_example())
+        path = write(tmp_path, section_doc_example("Indexes"))
         pins = {i.name: i.serialization for i in read_pyproject_config(path).indexes}
         assert pins["pypi"] is SimpleSerialization.NEGOTIATE
         assert pins["internal"] is SimpleSerialization.HTML
@@ -2825,6 +2832,23 @@ class TestVcs:
         )
         vcs = read_pyproject_config(path).vcs
         assert vcs.allowed_repos == ("https://[2001:db8::1]:7999/org/repo",)
+
+
+class TestVcsDocExample:
+    """The config reference's ``[tool.nab.vcs]`` example is a working allowlist."""
+
+    def test_example_shows_every_key(self) -> None:
+        """The example names each key ``[tool.nab.vcs]`` accepts."""
+        example = tomli.loads(section_doc_example("VCS policy"))
+        shown = set(example["tool"]["nab"]["vcs"])
+        assert shown == {f.name.replace("_", "-") for f in fields(VcsConfig)}
+
+    def test_allowlists_admit_the_repo_they_name(self, tmp_path: Path) -> None:
+        """Opened to ``allow``, the example admits a pinned URL to its own repo."""
+        path = write(tmp_path, section_doc_example("VCS policy"))
+        opened = replace(read_pyproject_config(path).vcs, policy=VcsPolicy.ALLOW)
+        pinned = f"git+https://github.com/me/x@{'a' * 40}"
+        assert admit_vcs_url(pinned, opened) == "git+https"
 
 
 class TestLocalSources:
