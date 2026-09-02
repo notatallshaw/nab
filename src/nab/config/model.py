@@ -61,6 +61,7 @@ from nab_provider.vcs_admission import VcsConfig, VcsPolicy
 from .hooks import resolve_anchor
 from .ladder import (
     EffectiveValue,
+    Origin,
     SourceKind,
     SourceRoots,
     build_cli_layer,
@@ -345,7 +346,7 @@ def _config_from_effective(
     environment = _environment_from_effective(effective)
     if matrix is not None and environment is not None:
         raise ConfigError(
-            _matrix_environment_message(matrix_value, effective["environment"])
+            _matrix_environment_message(matrix_value, _environment_source(effective))
         )
 
     targets = _plan_targets(matrix, environment)
@@ -448,17 +449,25 @@ def _specific_mode_message(matrix_value: EffectiveValue) -> str:
 def _matrix_environment_message(
     matrix_value: EffectiveValue, environment_value: EffectiveValue
 ) -> str:
-    """Say why a matrix and a declared environment cannot both stand."""
+    """Say why a matrix and a declared environment cannot both stand.
+
+    ``environment_value`` is the surface the environment came from, so the
+    deprecated overlay is named as the overlay.  Each file side is named the
+    way the file that declared it writes it, since a matrix in a
+    ``pyproject.toml`` can sit beside an environment in a ``nab.toml``.
+    """
     matrix_flags = _declared_by(matrix_value)
     environment_flags = _declared_by(environment_value)
+    matrix = " and ".join(matrix_flags) or f"[{_declared_table(matrix_value)}]"
+    environment = (
+        " and ".join(environment_flags) or f"[{_declared_table(environment_value)}]"
+    )
     if not matrix_flags and not environment_flags:
         return (
-            "[tool.nab.matrix] and [tool.nab.environment] cannot both be set:"
+            f"{matrix} and {environment} cannot both be set:"
             " the matrix declares one environment per tuple, so a single"
             " declared environment would contradict it.  Drop one."
         )
-    matrix = " and ".join(matrix_flags) or "[tool.nab.matrix]"
-    environment = " and ".join(environment_flags) or "[tool.nab.environment]"
     return (
         f"{matrix} {_declares(matrix_flags)} a matrix and"
         f" {environment} {_declares(environment_flags)} one environment;"
@@ -1023,11 +1032,13 @@ def _environment_from_effective(
     declared: Mapping[str, Any] = entry.value
     marker_environment: Mapping[str, str] = effective["marker-environment"].value
     if marker_environment:
-        if _file_declares_environment(entry):
+        file_origin = _environment_file_origin(entry)
+        if file_origin is not None:
+            environment_table = _project_key_path("environment", file_origin.kind)
+            marker_table = _declared_table(effective["marker-environment"])
             msg = (
-                "[tool.nab.environment] and the deprecated"
-                " [tool.nab.marker-environment] are both set; drop the"
-                " marker-environment table."
+                f"[{environment_table}] and the deprecated [{marker_table}]"
+                " are both set; drop the marker-environment table."
             )
             raise ConfigError(msg)
         declared = {
@@ -1043,26 +1054,35 @@ def _environment_from_effective(
         implementation=declared.get("implementation"),
     )
     if environment.implementation is not None and environment.platform is None:
+        # The message asks for environment.platform, so name that table even
+        # when the deprecated overlay is what declared it.
+        origin = _environment_file_origin(entry)
+        if origin is None:
+            origin = _environment_source(effective).origin
+        table = _project_key_path("environment", origin.kind)
+
         valid = sorted(PLATFORM_MARKERS)
         msg = (
-            "[tool.nab.environment].implementation needs a platform: an"
-            " interpreter is modelled on a declared machine, not on the host's."
+            f"[{table}].implementation needs a platform: an interpreter is"
+            " modelled on a declared machine, not on the host's."
             f"  Add platform = one of {valid!r}."
         )
         raise ConfigError(msg)
     return environment
 
 
-def _file_declares_environment(entry: EffectiveValue) -> bool:
-    """Whether a configuration file declared ``[tool.nab.environment]``.
+def _environment_file_origin(entry: EffectiveValue) -> Origin | None:
+    """Return the file layer that declared ``[tool.nab.environment]``, if any.
 
     Read off the stack rather than the effective value: the command line
     folds its keys into the same key, and a flag narrowing the deprecated
-    overlay is not a second declaration of the table.
+    overlay is not a second declaration of the table.  The origin rather than
+    a bare yes, so a message can name the table the way that file writes it.
     """
-    return any(
-        value for origin, value in entry.stack if origin.kind is not SourceKind.CLI
-    )
+    for origin, value in reversed(entry.stack):
+        if value and origin.kind is not SourceKind.CLI:
+            return origin
+    return None
 
 
 def _reject_duplicate_source_names(
@@ -1094,6 +1114,19 @@ def _reject_duplicate_source_names(
             )
             raise ConfigError(msg)
         seen[canonical] = source.name
+
+
+def _environment_source(
+    effective: Mapping[str, EffectiveValue],
+) -> EffectiveValue:
+    """Return the surface the environment came from, table or deprecated overlay."""
+    environment = effective["environment"]
+    return environment if environment.value else effective["marker-environment"]
+
+
+def _declared_table(value: EffectiveValue) -> str:
+    """Return the table path the file that declared ``value`` writes for its key."""
+    return _project_key_path(value.spec.name, value.origin.kind)
 
 
 def _project_key_path(key: str, kind: SourceKind) -> str:
