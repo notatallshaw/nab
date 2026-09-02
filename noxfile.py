@@ -181,6 +181,8 @@ def _run_workspace(session: nox.Session, step: _Step, paths: list[str]) -> bool:
                 "pytest",
                 "-n",
                 "auto",
+                "--dist",
+                "worksteal",
                 "--cov",
                 "--cov-append",
                 "--cov-report=",

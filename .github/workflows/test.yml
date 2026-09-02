@@ -127,7 +127,7 @@ jobs:
       - name: Run property-based tests
         # CrossHair tests run in the dedicated crosshair-tests job; the
         # crosshair backend is not installed here, so skip that file.
-        run: python -m pytest -n auto -m property --ignore=nab-resolver/tests/property/test_crosshair_ranges.py
+        run: python -m pytest -n auto --dist worksteal -m property --ignore=nab-resolver/tests/property/test_crosshair_ranges.py
 
   crosshair-tests:
     name: CrossHair property tests
