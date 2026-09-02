@@ -3,10 +3,10 @@
 Three hypothesis profiles, selectable via the ``HYPOTHESIS_PROFILE`` env var:
 
 - ``dev`` (default): low ``max_examples`` (20) for fast feedback.
-- ``ci``: more thorough (200 examples) plus ``derandomize=True`` so
-  failures are reproducible from the seed printed in the assertion;
-  ``deadline=None`` so a slow CI machine doesn't fail tests on
-  the basis of wall time alone.
+- ``ci``: more thorough (200 examples), drawn fresh each run so the
+  runs together search more of the space than any one could; a failure
+  prints the ``@reproduce_failure`` blob that replays it. ``deadline=None``
+  so a slow CI machine doesn't fail tests on the basis of wall time alone.
 - ``deep``: 2000 examples; for nightly counter-example hunts.
 
 Loading a profile only changes the default settings; tests that
@@ -48,7 +48,7 @@ settings.register_profile(
     "ci",
     max_examples=200,
     deadline=None,
-    derandomize=True,
+    print_blob=True,
     suppress_health_check=[HealthCheck.too_slow],
 )
 settings.register_profile(
