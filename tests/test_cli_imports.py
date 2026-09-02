@@ -11,8 +11,8 @@ the heavier stdlib modules the rest of nab uses.  ``nab._cli.dispatch``,
 sanctioned exemptions, and each is loaded only by a line that asked for it.
 
 The last cases ban what a command holds after it has dispatched: a line
-that only reads settings loads nothing a resolve needs, and a line that
-locks holds no part of ``email``.
+that only reads settings loads nothing a resolve needs and no platform
+table; a line that locks holds no part of ``email``.
 """
 
 from __future__ import annotations
@@ -266,3 +266,30 @@ def test_a_lock_command_holds_no_email_module(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(_PROJECT, encoding="utf-8")
 
     assert _run(_HELD_PROBE, "email", "lock", "--offline", cwd=tmp_path) == ""
+
+
+# The platform vocabulary the matrix and environment tables are written in.
+# ``nab_provider.target`` pulls ``nab_provider.marker_holds`` and
+# ``nab_markersets`` in behind it.
+_MATRIX_VOCABULARY = (
+    "nab_provider.tags",
+    "nab_provider.target",
+    "nab_provider.marker_holds",
+    "nab_markersets",
+)
+
+
+@pytest.mark.parametrize("line", [("cache", "dir"), ("config", "list")])
+def test_a_settings_command_loads_no_platform_vocabulary(
+    line: tuple[str, ...], tmp_path: Path
+) -> None:
+    """Probe H: a project declaring no matrix builds no platform tag table.
+
+    :mod:`nab.config.values` is on the import path of every line that
+    reads the configuration ladder, and it names these modules only in
+    the parsers a ``[tool.nab.matrix]`` or ``[tool.nab.environment]``
+    table reaches.
+    """
+    (tmp_path / "pyproject.toml").write_text(_PROJECT, encoding="utf-8")
+
+    assert _run(_HELD_PROBE, ",".join(_MATRIX_VOCABULARY), *line, cwd=tmp_path) == ""

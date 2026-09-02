@@ -48,14 +48,6 @@ from nab_provider.policy import (
 from nab_provider.records import IndexConfig
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.subdir import subdirectory_escapes
-from nab_provider.tags import (
-    DEFAULT_LIBC,
-    LIBC_MAJOR,
-    Libc,
-    PlatformSpec,
-    platform_kind,
-)
-from nab_provider.target import PLATFORM_MARKERS, Matrix
 from nab_provider.vcs_admission import VcsConfig, VcsPolicy, known_vcs_schemes
 
 if TYPE_CHECKING:
@@ -63,6 +55,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
     from nab_provider._vendor.packaging.requirements import Requirement
+    from nab_provider.tags import Libc, PlatformSpec
+    from nab_provider.target import Matrix
 
 
 __all__ = [
@@ -174,6 +168,9 @@ class MatrixConfig(ValueType):
 
 def matrix_from_config(matrix: MatrixConfig) -> Matrix:
     """Build the expandable :class:`Matrix` from its parsed config table."""
+    # Deferred to keep nab_provider.target off the CLI's import path.
+    from nab_provider.target import Matrix  # noqa: PLC0415
+
     return Matrix(
         python=matrix.python,
         platforms=matrix.platforms,
@@ -639,6 +636,9 @@ def validate_environment_values(environment: Mapping[str, Any]) -> None:
             raise SourceConfigError(msg) from exc
     platform = environment.get("platform")
     if platform is not None:
+        # Deferred to keep nab_provider.target off the CLI's import path.
+        from nab_provider.target import PLATFORM_MARKERS  # noqa: PLC0415
+
         platform_id = environment_platform_spec(platform).platform_id
         if platform_id not in PLATFORM_MARKERS:
             valid = sorted(PLATFORM_MARKERS)
@@ -1819,6 +1819,9 @@ def _parse_matrix_platforms(value: object, label: str) -> tuple[PlatformSpec, ..
 
 def _platform_spec(where: str, **knobs: Any) -> PlatformSpec:
     """Build a :class:`PlatformSpec`, reporting its knob check as a config error."""
+    # Deferred to keep nab_provider.tags off the CLI's import path.
+    from nab_provider.tags import PlatformSpec  # noqa: PLC0415
+
     try:
         return PlatformSpec(**knobs)
     except ValueError as exc:
@@ -1873,6 +1876,9 @@ def _reject_foreign_knobs(where: str, value: dict[str, Any], platform_id: str) -
     unknown ``platform_id`` is left to the matrix, which names the whole
     unknown set at once.
     """
+    # Deferred to keep nab_provider.tags off the CLI's import path.
+    from nab_provider.tags import platform_kind  # noqa: PLC0415
+
     kind = platform_kind(platform_id)
     if kind is None:
         return
@@ -1890,6 +1896,9 @@ def _reject_foreign_knobs(where: str, value: dict[str, Any], platform_id: str) -
 
 def _parse_libc(key: str, value: object) -> Libc:
     """Parse a libc family name; an absent key takes the default family."""
+    # Deferred to keep nab_provider.tags off the CLI's import path.
+    from nab_provider.tags import DEFAULT_LIBC, LIBC_MAJOR  # noqa: PLC0415
+
     if value is None:
         return DEFAULT_LIBC
     text = _parse_string_value(key, value)
