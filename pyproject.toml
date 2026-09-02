@@ -188,7 +188,10 @@ addopts = [
     "--showlocals",
     "-m",
     "not property and not crosshair and not network and not benchmark",
+    "--durations=15",
 ]
+# A hung test fails here with a traceback instead of at the job's limit.
+timeout = 300
 testpaths = [
     "nab-resolver/tests",
     "nab-markersets/tests",
@@ -417,10 +420,14 @@ include = [
     "nab-resolver/src",
     "nab-resolver/tests",
     "nab-markersets/src",
+    "nab-provider/src",
+    "nab-project/src",
     "nab-index/src",
     "src",
     "tests/cli_bijection.py",
 ]
+# The vendored packaging tree is rebuilt from upstream, so no checker holds it.
+exclude = ["**/_vendor"]
 # Editable installs hide the workspace packages from pyright's auto-detection;
 # point it at the source trees directly so cross-package imports resolve.
 extraPaths = [
@@ -434,7 +441,19 @@ extraPaths = [
 
 # https://pyrefly.org/en/docs/configuration/
 [tool.pyrefly]
-project-includes = ["nab-resolver/src", "nab-markersets/src", "nab-index/src", "src"]
+project-includes = [
+    "nab-resolver/src",
+    "nab-markersets/src",
+    "nab-provider/src",
+    "nab-project/src",
+    "nab-index/src",
+    "src",
+]
+project-excludes = ["**/_vendor/**"]
+
+# https://docs.astral.sh/ty/reference/configuration/
+[tool.ty.src]
+exclude = ["**/_vendor"]
 
 # https://mypy.readthedocs.io/en/stable/config_file.html#using-a-pyproject-toml-file
 [tool.mypy]
@@ -445,7 +464,14 @@ explicit_package_bases = true
 # Each checked tree is a package base. Without "src" the umbrella resolves
 # under two module names ("nab._version" and "src.nab._version") and mypy
 # stops before checking anything.
-mypy_path = ["nab-resolver/src", "nab-markersets/src", "nab-index/src", "src"]
+mypy_path = [
+    "nab-resolver/src",
+    "nab-markersets/src",
+    "nab-provider/src",
+    "nab-project/src",
+    "nab-index/src",
+    "src",
+]
 enable_error_code = [
     "redundant-expr",
     "truthy-bool",
@@ -453,3 +479,13 @@ enable_error_code = [
     "explicit-override",
     "mutable-override",
 ]
+
+[[tool.mypy.overrides]]
+module = "nab_provider._vendor.*"
+ignore_errors = true
+
+# zuban reads [tool.mypy] and turns this on where mypy leaves it off. The
+# guards it calls dead sit after exhaustive isinstance chains and are reached
+# by tests with objects outside the declared type.
+[tool.zuban]
+warn_unreachable = false

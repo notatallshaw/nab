@@ -12,12 +12,14 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
+from ._compat import override
 from .digest import is_hex_digest
 from .serialization import SimpleSerialization
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
+    from types import MemberDescriptorType
 
 __all__ = [
     "ACCEPTED_HASH_ALGORITHMS",
@@ -201,6 +203,7 @@ class _WheelIntegrity(_DeferredIntegrity, _MetadataUrlMemo):
 
     _raw_metadata: object
 
+    @override
     def __getattr__(self, name: str) -> object:
         if name != "metadata_hash":
             return super().__getattr__(name)
@@ -255,7 +258,8 @@ def _slot_writer(cls: type, name: str) -> Callable[[object, object], None]:
     fills its slots through these instead, leaving ``__setattr__`` frozen for
     callers.
     """
-    return cls.__dict__[name].__set__
+    slot: MemberDescriptorType = cls.__dict__[name]
+    return slot.__set__
 
 
 @dataclass(frozen=True, slots=True, init=False)

@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
     from nab_provider._vendor.packaging.version import Version
+    from nab_resolver.types import RangeProtocol
 
     from ..provider import Provider
 
@@ -169,9 +170,12 @@ def _blocked_by_solution(
     return True
 
 
+# The two range builders below are typed as the resolver's range rather than
+# the VersionRange they build: solved from VersionRange alone, ty reads the
+# terms they feed as ``Term[str, Version | str]``.
 def _widen_or_singleton(
     provider: Provider, package: str, version: Version
-) -> VersionRange:
+) -> RangeProtocol[Version]:
     """Return ``version``'s widened neighbor gap, or its singleton without one.
 
     Look-ahead needs the gap rather than a ``widen_decision`` span: the gap
@@ -184,7 +188,7 @@ def _widen_or_singleton(
 
 def _candidate_union(
     provider: Provider, package: str, versions: Iterable[Version]
-) -> VersionRange:
+) -> RangeProtocol[Version]:
     """Return the widened union of one group's rejected candidate versions."""
     union = VersionRange.empty()
     for version in versions:
@@ -334,15 +338,15 @@ def flush_pending_blocks(provider: Provider) -> None:
 
     # Permanent rejections: a root requirement is fixed for the whole resolve,
     # and a version whose metadata will not read is unusable in every state.
-    unusable: defaultdict[str, VersionRange] = defaultdict(VersionRange.empty)
+    unusable: defaultdict[str, RangeProtocol[Version]] = defaultdict(VersionRange.empty)
 
     for (candidate_pkg, *_), versions in provider.pending_root_blocks.items():
         unusable[candidate_pkg] |= _candidate_union(provider, candidate_pkg, versions)
 
-    for candidate_pkg, versions in provider.pending_metadata_blocks.items():
-        unusable[candidate_pkg] |= _candidate_union(provider, candidate_pkg, versions)
+    for candidate_pkg, blocks in provider.pending_metadata_blocks.items():
+        unusable[candidate_pkg] |= _candidate_union(provider, candidate_pkg, blocks)
         # The ban outlives this flush, so its reason has to as well.
-        provider.record_metadata_ban(candidate_pkg, versions)
+        provider.record_metadata_ban(candidate_pkg, blocks)
 
     for candidate_pkg, rejected in unusable.items():
         provider.pending_clauses.append(

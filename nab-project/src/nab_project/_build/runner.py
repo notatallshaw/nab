@@ -170,7 +170,7 @@ def _metadata_output_dir(backend: str) -> tempfile.TemporaryDirectory[str]:
 @contextmanager
 def _prepared_project(
     source_dir: Path,
-    data: dict,
+    data: dict[str, Any],
     *,
     config: ResolveInputs,
     offline: bool,
@@ -251,7 +251,7 @@ def _validate_extra_requires(extra: list[Any], *, backend: str) -> None:
             raise BuildBackendError(msg) from exc
 
 
-def _read_pyproject(source_dir: Path) -> dict:
+def _read_pyproject(source_dir: Path) -> dict[str, Any]:
     """Return the parsed ``pyproject.toml``, or ``{}`` for a legacy setup.py tree."""
     pyproject = source_dir / "pyproject.toml"
     state = path_state(pyproject)
@@ -277,7 +277,7 @@ def _read_pyproject(source_dir: Path) -> dict:
 
 
 def _read_build_system(
-    data: dict,
+    data: dict[str, Any],
 ) -> tuple[str, tuple[str, ...], tuple[str, ...] | None]:
     """Return ``(backend, requires, backend_path)`` per PEP 517 / 518.
 
@@ -361,7 +361,7 @@ def _validate_backend_path(
             raise BuildBackendError(msg)
 
 
-def _should_skip_prepare(backend: str, data: dict) -> bool:
+def _should_skip_prepare(backend: str, data: dict[str, Any]) -> bool:
     """Skip ``prepare_metadata_for_build_wheel`` when it would lie.
 
     uv documents one specific quirk: hatchling's prepare-metadata

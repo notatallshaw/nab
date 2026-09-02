@@ -350,7 +350,8 @@ def _name_base_group(lock_input: LockInput) -> LockInput:
     and stay unconditional.
     """
     name = lock_input.base_group
-    member = (KIND_GROUP, name)
+    # Unnamed, the base gates are cut below, so nothing is renamed.
+    member = BASE_MEMBER if name is None else (KIND_GROUP, name)
     targets = {
         label: replace(
             lock,
@@ -802,7 +803,7 @@ def _group_pins_by_pin(
     Walked in sorted label order so the output is independent of dict
     insertion order.
     """
-    by_key: dict[tuple, tuple[list[PinShape], list[str]]] = {}
+    by_key: dict[tuple[object, ...], tuple[list[PinShape], list[str]]] = {}
     for label in sorted(per_target):
         pin = per_target[label]
         key = _pin_discriminator(pin)
@@ -813,7 +814,7 @@ def _group_pins_by_pin(
     return list(by_key.values())
 
 
-def _pin_discriminator(pin: PinShape) -> tuple:
+def _pin_discriminator(pin: PinShape) -> tuple[object, ...]:
     """Return a hashable key that identifies the source + version of ``pin``."""
     from ..lockfile import ArchivePin, IndexPin, LocalPin, VcsPin
 
@@ -1224,7 +1225,7 @@ def _project_fork(
     name: str,
     label: str,
     limit: _Members,
-    same_pin: AbstractSet[str],
+    same_pin: frozenset[str],
     *,
     is_base: bool,
 ) -> _Projection:

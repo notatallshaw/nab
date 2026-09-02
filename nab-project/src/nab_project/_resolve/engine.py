@@ -15,7 +15,7 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -27,6 +27,7 @@ from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver, ResolverObserver
 from nab_resolver.types import IncompatibilityCause
 
+from .._compat import override
 from ..lockfile import build_target_lock
 
 if TYPE_CHECKING:
@@ -79,11 +80,13 @@ class _ResolveObserver(ResolverObserver[str, "Version"]):
     def __init__(self, sink: ProgressSink | None) -> None:
         self._sink = sink
 
+    @override
     def on_decision(self, package: str, version: Version, level: int) -> None:
         _logger.debug("pinned %s %s", package, version)
         if self._sink is not None:
             self._sink.on_pin(level)
 
+    @override
     def on_backjump(self, from_level: int, to_level: int) -> None:
         _logger.debug("backjumped from level %d to %d", from_level, to_level)
         if self._sink is not None:
@@ -716,9 +719,18 @@ def _consulted_markers(
     return frozenset(consulted)
 
 
-def _target_stats(
-    resolver: Resolver[str, Version], provider: Provider
-) -> dict[str, int]:
+class _TargetStats(TypedDict):
+    """The counters a :class:`TargetResult` carries."""
+
+    rounds: int
+    decisions: int
+    conflicts: int
+    backjumps: int
+    metadata_fetched: int
+    distributions_seen: int
+
+
+def _target_stats(resolver: Resolver[str, Version], provider: Provider) -> _TargetStats:
     """Return the resolver and provider counters for a :class:`TargetResult`."""
     return {
         "rounds": resolver.stats.rounds,

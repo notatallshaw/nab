@@ -173,37 +173,46 @@ sha256 = "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
 
 [[packages]]
 name = "charset-normalizer"
-version = "3.4.9"
+version = "3.5.1"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "charset_normalizer-3.4.9.tar.gz"
-upload-time = 2026-07-07 14:34:58.454748+00:00
-url = "https://files.pythonhosted.org/packages/bd/2a/23f34ec9d04624958e137efdc394888716353190e75f25dd22c7a2c7a8aa/charset_normalizer-3.4.9.tar.gz"
-size = 152439
+name = "charset_normalizer-3.5.1.tar.gz"
+upload-time = 2026-08-15 08:20:44.807628+00:00
+url = "https://files.pythonhosted.org/packages/e5/3f/143b048436775b0f76ac3eec145c019e8173ccc2885c8f20319b996d5e83/charset_normalizer-3.5.1.tar.gz"
+size = 171764
 
 [packages.sdist.hashes]
-sha256 = "673611bbd43f0810bec0b0f028ddeaaa501190339cac411f347ac76917c3ae7b"
+sha256 = "6117b84ea48435e5356dc737f5121485c30920ba43375fa7b434fd753df0eac3"
 
 [[packages.wheels]]
-name = "charset_normalizer-3.4.9-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2026-07-07 14:33:41.631371+00:00
-url = "https://files.pythonhosted.org/packages/ea/f8/72eb13dcabe7257035cea8aefd922caad2f110d252bf9f67c4c2ca763aee/charset_normalizer-3.4.9-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 223149
+name = "charset_normalizer-3.5.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2026-08-15 08:17:46.496792+00:00
+url = "https://files.pythonhosted.org/packages/fb/af/63240b0c0248c075c2535a1f1bd992821d8251b9f173abc13329661d09e4/charset_normalizer-3.5.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 250638
 
 [packages.wheels.hashes]
-sha256 = "84fd18bcc17526fc2b3c1af7d2b9217d32c9c04448c16ec693b9b4f1985c3d33"
+sha256 = "62b55f6722735a6c472f88361cde6640608773d9443cebdbb51abf436a1fcdd3"
 
 [[packages.wheels]]
-name = "charset_normalizer-3.4.9-py3-none-any.whl"
-upload-time = 2026-07-07 14:34:56.993397+00:00
-url = "https://files.pythonhosted.org/packages/98/2b/f97f1c193fb855c345d678f5077d6926034db0722df74c8f057020e05a25/charset_normalizer-3.4.9-py3-none-any.whl"
-size = 64538
+name = "charset_normalizer-3.5.1-cp37-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+upload-time = 2026-08-15 08:19:52.654163+00:00
+url = "https://files.pythonhosted.org/packages/9f/2f/fe3f187327aac18e2d54e9d2b08e15d27bf9b642d9e51c219f130fc34d1a/charset_normalizer-3.5.1-cp37-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+size = 253057
 
 [packages.wheels.hashes]
-sha256 = "68e5f26a1ad57ded6d1cfb85331d1c1a195314756471d97758c48498bb4dcdf5"
+sha256 = "a6dac12ff6b846103483683f60c5f8fee205121adc58ffd87e90a90a3af69e99"
+
+[[packages.wheels]]
+name = "charset_normalizer-3.5.1-py3-none-any.whl"
+upload-time = 2026-08-15 08:20:43.306209+00:00
+url = "https://files.pythonhosted.org/packages/cc/61/d01fc49b8dea277640b55a9e15960dbca9fdc8c9fde18e572d39c59f4019/charset_normalizer-3.5.1-py3-none-any.whl"
+size = 68658
+
+[packages.wheels.hashes]
+sha256 = "6df0ec430f9a831772c23ca5a224cba36517a58a84bb32c32bb59a9fa67c47f6"
 
 [[packages]]
 name = "docutils"
@@ -264,53 +273,53 @@ sha256 = "bb0ead5309f9500130665a26bee87693c41ce4dbdff864dbfb6b0dae4673d24f"
 
 [[packages]]
 name = "idna"
-version = "3.18"
+version = "3.19"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "idna-3.18.tar.gz"
-upload-time = 2026-06-02 14:34:07.794523+00:00
-url = "https://files.pythonhosted.org/packages/cd/63/9496c57188a2ee585e0f1db071d75089a11e98aa86eb99d9d7618fc1edce/idna-3.18.tar.gz"
-size = 196711
+name = "idna-3.19.tar.gz"
+upload-time = 2026-08-18 05:14:24.270231+00:00
+url = "https://files.pythonhosted.org/packages/5f/f7/abb373e5757eaec4b922b92f97ec8d6d7e057cf06778247604fbc4e7c3f3/idna-3.19.tar.gz"
+size = 215237
 
 [packages.sdist.hashes]
-sha256 = "ffb385a7e039654cef1ab9ef32c6fafe283c0c0467bba1d9029738ce4a14a848"
+sha256 = "5e0811a4383b21dc5838069f801c4fb62113b7447663d2530d2bd6e77b49bf15"
 
 [[packages.wheels]]
-name = "idna-3.18-py3-none-any.whl"
-upload-time = 2026-06-02 14:34:06.319954+00:00
-url = "https://files.pythonhosted.org/packages/1e/5e/d4e9f1a599fb8e573b7b87160658329fbf28d19eac2718f51fc3def3aa5a/idna-3.18-py3-none-any.whl"
-size = 65455
+name = "idna-3.19-py3-none-any.whl"
+upload-time = 2026-08-18 05:14:22.343598+00:00
+url = "https://files.pythonhosted.org/packages/57/b0/0e52c878c53f245edd3a11020f20979b3f490f245af532c7cae3027754b5/idna-3.19-py3-none-any.whl"
+size = 68550
 
 [packages.wheels.hashes]
-sha256 = "7f952cbe720b688055e3f87de14f5c3e5fdaa8bc3928985c4077ca689de849a2"
+sha256 = "815e7be7a7806d54abb586dc943addc79e8b2ee16915059658cbeff4b1b43bf4"
 
 [[packages]]
 name = "imagesize"
-version = "2.0.0"
+version = "2.0.1"
 marker = "\"docs\" in dependency_groups"
-requires-python = "<3.15,>=3.10"
+requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "imagesize-2.0.0.tar.gz"
-upload-time = 2026-03-03 14:18:29.941652+00:00
-url = "https://files.pythonhosted.org/packages/6c/e6/7bf14eeb8f8b7251141944835abd42eb20a658d89084b7e1f3e5fe394090/imagesize-2.0.0.tar.gz"
-size = 1773045
+name = "imagesize-2.0.1.tar.gz"
+upload-time = 2026-08-24 12:35:19.130667+00:00
+url = "https://files.pythonhosted.org/packages/fb/5e/513ff06670c84e7b9887c1fdf61b2d42b4f574a831f2f1d2222023049d8a/imagesize-2.0.1.tar.gz"
+size = 1883774
 
 [packages.sdist.hashes]
-sha256 = "8e8358c4a05c304f1fccf7ff96f036e7243a189e9e42e90851993c558cfe9ee3"
+sha256 = "b2ba6a4dea487a7ebcd53248d3476aca449d30db12a2dde5e0c5ca9624fd77e5"
 
 [[packages.wheels]]
-name = "imagesize-2.0.0-py2.py3-none-any.whl"
-upload-time = 2026-03-03 14:18:27.892459+00:00
-url = "https://files.pythonhosted.org/packages/5f/53/fb7122b71361a0d121b669dcf3d31244ef75badbbb724af388948de543e2/imagesize-2.0.0-py2.py3-none-any.whl"
-size = 9441
+name = "imagesize-2.0.1-py3-none-any.whl"
+upload-time = 2026-08-24 12:35:12.548956+00:00
+url = "https://files.pythonhosted.org/packages/01/f9/575c8d760eae1fc99651b7cc5efd96ad5379ca4d6b53750b0fb4fe983f34/imagesize-2.0.1-py3-none-any.whl"
+size = 14794
 
 [packages.wheels.hashes]
-sha256 = "5667c5bbb57ab3f1fa4bc366f4fbc971db3d5ed011fd2715fd8001f782718d96"
+sha256 = "ea0c9a0384df69ed86a943a15cde37d0360b82491b3910dc2215e202e62b5b02"
 
 [[packages]]
 name = "installer"
@@ -366,7 +375,7 @@ sha256 = "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67"
 
 [[packages]]
 name = "linkify-it-py"
-version = "2.1.0"
+version = "2.1.1"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.10"
 dependencies = [
@@ -375,22 +384,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "linkify_it_py-2.1.0.tar.gz"
-upload-time = 2026-03-01 07:48:47.683141+00:00
-url = "https://files.pythonhosted.org/packages/2e/c9/06ea13676ef354f0af6169587ae292d3e2406e212876a413bf9eece4eb23/linkify_it_py-2.1.0.tar.gz"
-size = 29158
+name = "linkify_it_py-2.1.1.tar.gz"
+upload-time = 2026-08-24 17:16:57.028452+00:00
+url = "https://files.pythonhosted.org/packages/53/3e/79f35b8c31a1881893b7e62be80b2573f06e38db47c33065749293ee1b97/linkify_it_py-2.1.1.tar.gz"
+size = 30889
 
 [packages.sdist.hashes]
-sha256 = "43360231720999c10e9328dc3691160e27a718e280673d444c38d7d3aaa3b98b"
+sha256 = "a78f40fee177eb912e9d2375074108378523c38d3fde5d3ee804f465b6cfbfee"
 
 [[packages.wheels]]
-name = "linkify_it_py-2.1.0-py3-none-any.whl"
-upload-time = 2026-03-01 07:48:46.098014+00:00
-url = "https://files.pythonhosted.org/packages/b4/de/88b3be5c31b22333b3ca2f6ff1de4e863d8fe45aaea7485f591970ec1d3e/linkify_it_py-2.1.0-py3-none-any.whl"
-size = 19878
+name = "linkify_it_py-2.1.1-py3-none-any.whl"
+upload-time = 2026-08-24 17:16:55.965173+00:00
+url = "https://files.pythonhosted.org/packages/eb/3d/e34b19cd144071c583317268c4feb2c59c03ac57eef69753410c7abb11c0/linkify_it_py-2.1.1-py3-none-any.whl"
+size = 20532
 
 [packages.wheels.hashes]
-sha256 = "0d252c1594ecba2ecedc444053db5d3a9b7ec1b0dd929c8f1d74dce89f86c05e"
+sha256 = "8539a6b470efce90ba9b69e39b848e5b15b7ad89f7f98ca17d3532c243f987dc"
 
 [[packages]]
 name = "markdown-it-py"
@@ -557,28 +566,28 @@ sha256 = "d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c"
 
 [[packages]]
 name = "pygments"
-version = "2.20.0"
+version = "2.21.0"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "pygments-2.20.0.tar.gz"
-upload-time = 2026-03-29 13:29:33.898791+00:00
-url = "https://files.pythonhosted.org/packages/c3/b2/bc9c9196916376152d655522fdcebac55e66de6603a76a02bca1b6414f6c/pygments-2.20.0.tar.gz"
-size = 4955991
+name = "pygments-2.21.0.tar.gz"
+upload-time = 2026-08-17 08:02:48.824391+00:00
+url = "https://files.pythonhosted.org/packages/49/2e/ced460408999b33da6b31b0021b0f37d329e202d4169aeb164493778f25b/pygments-2.21.0.tar.gz"
+size = 5005329
 
 [packages.sdist.hashes]
-sha256 = "6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f"
+sha256 = "610ca751c9bc2492b38eb9a38a7fbc93edbbb2d7182edaf34e66ae493dee5c8c"
 
 [[packages.wheels]]
-name = "pygments-2.20.0-py3-none-any.whl"
-upload-time = 2026-03-29 13:29:30.038266+00:00
-url = "https://files.pythonhosted.org/packages/f4/7e/a72dd26f3b0f4f2bf1dd8923c85f7ceb43172af56d63c7383eb62b332364/pygments-2.20.0-py3-none-any.whl"
-size = 1231151
+name = "pygments-2.21.0-py3-none-any.whl"
+upload-time = 2026-08-17 08:02:44.912148+00:00
+url = "https://files.pythonhosted.org/packages/71/46/17f022dd3e953bf20a04a028a21ec746d942f8d2af30fa0f124fa0e6a684/pygments-2.21.0-py3-none-any.whl"
+size = 1250147
 
 [packages.wheels.hashes]
-sha256 = "81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176"
+sha256 = "2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9"
 
 [[packages]]
 name = "pyproject-hooks"
@@ -712,28 +721,28 @@ sha256 = "7e207fa178741da09cdee59d3ecec3827ad5f92b1fc5c9ff3755b639f71f5752"
 
 [[packages]]
 name = "soupsieve"
-version = "2.9.1"
+version = "2.9.2"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "soupsieve-2.9.1.tar.gz"
-upload-time = 2026-07-21 16:57:17.452293+00:00
-url = "https://files.pythonhosted.org/packages/d9/38/e12680bbe6b4f8f3d17adcaf38d26850aa756c85cf4a80e79fc12a018fe8/soupsieve-2.9.1.tar.gz"
-size = 122261
+name = "soupsieve-2.9.2.tar.gz"
+upload-time = 2026-08-07 00:57:24.801188+00:00
+url = "https://files.pythonhosted.org/packages/69/99/a6ca3beb3ccacb41fb3321d8a60e5566f9e6467601ef8eba6a17e1b89778/soupsieve-2.9.2.tar.gz"
+size = 122445
 
 [packages.sdist.hashes]
-sha256 = "c33e6605bbc71dd628b00c632d58ae607c22bade247e52553928f83bbb75b4ba"
+sha256 = "4a55d8cf158a9c2e587fa4922f1bbb91d68ac829e2d6f25403a85747c71daf74"
 
 [[packages.wheels]]
-name = "soupsieve-2.9.1-py3-none-any.whl"
-upload-time = 2026-07-21 16:57:16.421373+00:00
-url = "https://files.pythonhosted.org/packages/0f/2c/437fe806897c2d6cfdc3ee43a18da8bf8e568530a4ae9bac781541ca9896/soupsieve-2.9.1-py3-none-any.whl"
-size = 37404
+name = "soupsieve-2.9.2-py3-none-any.whl"
+upload-time = 2026-08-07 00:57:23.524076+00:00
+url = "https://files.pythonhosted.org/packages/eb/dc/ad025c1ee131eba60c69f4dd5779b18fcf1e6b21a343e2162a84d5d133c7/soupsieve-2.9.2-py3-none-any.whl"
+size = 37370
 
 [packages.wheels.hashes]
-sha256 = "4f4477399246b7a0c720a88ca2454b11cd6bb9ae4c9d170140786e916776c14c"
+sha256 = "8089a26fd974ca7a1f30276d3d8492ab266ab15af581642dfe8aa162e0c1c823"
 
 [[packages]]
 name = "sphinx"
@@ -1168,7 +1177,7 @@ sha256 = "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
 
 [tool.nab]
 nab-version = "0.0.16.dev0"
-created-at = 2026-08-12 13:49:36.513520+00:00
+created-at = 2026-09-02 00:02:56.540498+00:00
 command-line = [
     "nab",
     "lock",
@@ -1183,6 +1192,7 @@ command-line = [
     "specific",
     "--python",
     "3.13",
+    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "specific"

@@ -35,3 +35,8 @@ updates:
         patterns: ["*"]
     cooldown:
       default-days: 7
+    ignore:
+      # typos also tags its sub-crates (varcon-core-v5.0.7 sits on the v1.44.0
+      # release), and the higher number reads as an upgrade.
+      - dependency-name: "https://github.com/crate-ci/typos"
+        versions: [">=2"]

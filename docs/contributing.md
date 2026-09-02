@@ -121,11 +121,13 @@ package: `nab_resolver`, `nab_markersets`, `nab_provider`,
 `nab_project`, `nab_index`, and `nab`.
 
 The full local suite under `coverage run -m pytest` checks all six
-together. Nox splits them per workspace in CI, with `nab_index` and
-`nab_provider` gated in the `project` workspace, whose tests are the
-only ones that reach every line of both. The `provider` workspace runs
-`nab-markersets/tests` and `nab-provider/tests` without `nab-index`
-installed, and gates `nab_markersets`.
+together. Nox splits them per workspace in CI and runs each suite once,
+appending to one coverage data file, so a workspace gates on its own
+suites plus every suite run before it. `nab_index` and `nab_provider`
+are gated in the `project` workspace, since reaching every line of both
+takes `nab-project/tests` as well as `nab-provider/tests`. The `provider`
+workspace runs `nab-markersets/tests` and `nab-provider/tests` without
+`nab-index` installed, and gates `nab_markersets`.
 
 When code is unreachable from the default suite, prefer:
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Literal, NamedTuple, TypeGuard
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeGuard
 from urllib.parse import urlsplit
 
 from nab_provider._vendor.packaging.ranges import VersionRange
@@ -19,6 +19,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
+from .._compat import override
 from ..errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
@@ -462,7 +463,9 @@ def pick_dist(
     else:
         # Sidecars first: ``pick`` keeps input order among wheels it ranks equally.
         installed = tags.pick(sorted(wheels, key=lambda w: not w.has_metadata))
-    return installed or next((w for w in wheels if w.has_metadata), wheels[0])
+    if installed is not None:
+        return installed
+    return next((w for w in wheels if w.has_metadata), wheels[0])
 
 
 def _sdist_deps_need_dynamic(
@@ -507,7 +510,9 @@ def resolve_dynamic_sdist(
     version_str = str(version)
     index = provider.coordinator.index
 
-    cached = index.get_resolved_sdist_metadata(canonical, version_str)
+    cached: WheelMetadata | None = index.get_resolved_sdist_metadata(
+        canonical, version_str
+    )
     if cached is not None:
         return cached
 
@@ -584,7 +589,9 @@ def augment_from_pyproject(
     )
 
 
-def extend_with_extras(requires_dist: list[Requirement], optional: dict) -> list[str]:
+def extend_with_extras(
+    requires_dist: list[Requirement], optional: dict[str, Any]
+) -> list[str]:
     """Append extras-gated requirements and return Provides-Extra names.
 
     A per-extra value that is not an array of strings, or a per-extra entry
@@ -602,7 +609,7 @@ def extend_with_extras(requires_dist: list[Requirement], optional: dict) -> list
     return provides_extra
 
 
-def parse_pyproject_deps(deps: list) -> list[Requirement]:
+def parse_pyproject_deps(deps: list[str]) -> list[Requirement]:
     """Parse a ``project.dependencies`` list, raising on a malformed entry.
 
     Entries are already validated as strings by :func:`require_string_list`;
@@ -983,6 +990,7 @@ class ExtraDepsMap(Mapping[tuple[str, Version], dict[str, dict[str, VersionRange
         self._provider = provider
         self._extra_deps = extra_deps
 
+    @override
     def __getitem__(
         self, cache_key: tuple[str, Version]
     ) -> dict[str, dict[str, VersionRange]]:
@@ -993,12 +1001,15 @@ class ExtraDepsMap(Mapping[tuple[str, Version], dict[str, dict[str, VersionRange
             )
         return built
 
+    @override
     def __contains__(self, cache_key: object) -> bool:
         return cache_key in self._extra_deps
 
+    @override
     def __iter__(self) -> Iterator[tuple[str, Version]]:
         return iter(self._extra_deps)
 
+    @override
     def __len__(self) -> int:
         return len(self._extra_deps)
 
@@ -1126,7 +1137,7 @@ def target_dep_signature(
             continue
         if req.url is not None:
             entry = (canonicalize_name(req.name), frozenset(req.extras), req.url)
-            for key in req_extras or {None}:
+            for key in req_extras or (None,):
                 url_buckets.setdefault(key, set()).add(entry)
             continue
         add_classified_dep(

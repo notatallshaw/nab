@@ -64,7 +64,9 @@ def build_remote_sdist(
     event.wait()
 
     # The port raises on failure, so a request that returned left the metadata.
-    built = provider.coordinator.index.get_built_metadata(canonical, ver_str)
+    built: WheelMetadata | None = provider.coordinator.index.get_built_metadata(
+        canonical, ver_str
+    )
     assert built is not None
 
     target = provider.target

@@ -25,8 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
     from collections.abc import Set as AbstractSet
 
-    from ._markersets import Formula
-    from ._packaging import Marker
+    from ._markersets import Formula, MarkerLike
 
 # Resource caps, not semantic parameters: no answer depends on their value, so
 # neither reaches the public surface. `_MAX_CELLS` bounds one decision and
@@ -141,12 +140,12 @@ class MarkerSet:
 
     @classmethod
     @_bounded
-    def from_marker(cls, marker: str | Marker) -> MarkerSet:
+    def from_marker(cls, marker: str | MarkerLike) -> MarkerSet:
         """Return the set of environments a marker denotes.
 
-        A ``Marker`` argument has to come from the copy of packaging the algebra
-        bound; ``str(marker)`` is the spelling that always works. A blank string
-        is the absent marker and gives the full set, where packaging refuses it.
+        A ``Marker`` from either copy of packaging is read through ``str()``. A
+        blank string is the absent marker and gives the full set, where
+        packaging refuses it.
 
         :raises ValueError: packaging's ``InvalidMarker`` if ``marker`` is a
             string the grammar rejects, and its ``UndefinedComparison`` if an
