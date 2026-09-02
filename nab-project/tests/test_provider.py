@@ -58,6 +58,7 @@ from nab_provider._provider.metadata_resolver import (
     add_classified_dep,
     cache_deps_from_metadata,
     classify_requirement,
+    dists_at_version,
     pick_dist_for_metadata,
     target_dep_signature,
 )
@@ -92,7 +93,7 @@ from nab_provider.provider import (
     VcsPolicy,
     VcsSource,
 )
-from nab_provider.records import rehydrated_wheel
+from nab_provider.records import DistFile, rehydrated_wheel
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import pkg_override
@@ -204,6 +205,60 @@ def make_sdist(
         local_path=local_path,
         hashes=hashes,
     )
+
+
+class _CountingVersion(Version):
+    """A version that counts every comparison it takes part in.
+
+    Python tries a subclass's reflected comparison first, so a listing entry
+    compared as ``entry == version`` counts here too. Every operator is
+    defined so the count does not depend on which one the caller reaches for.
+    """
+
+    def __init__(self, version: str) -> None:
+        super().__init__(version)
+        self.comparisons = 0
+
+    def __lt__(self, other: Version) -> bool:
+        self.comparisons += 1
+        return super().__lt__(other)
+
+    def __le__(self, other: Version) -> bool:
+        self.comparisons += 1
+        return super().__le__(other)
+
+    def __eq__(self, other: object) -> bool:
+        self.comparisons += 1
+        return super().__eq__(other)
+
+    def __ne__(self, other: object) -> bool:
+        self.comparisons += 1
+        return super().__ne__(other)
+
+    def __gt__(self, other: Version) -> bool:
+        self.comparisons += 1
+        return super().__gt__(other)
+
+    def __ge__(self, other: Version) -> bool:
+        self.comparisons += 1
+        return super().__ge__(other)
+
+    # Defining ``__eq__`` would otherwise drop the inherited hash.
+    __hash__ = Version.__hash__
+
+
+def _one_wheel_releases(count: int) -> list[tuple[Version, DistFile]]:
+    """A newest-first listing of ``count`` releases, one wheel each."""
+    return [(V(f"{n}.0"), make_wheel(f"{n}.0")) for n in range(count, 0, -1)]
+
+
+def _wheel_and_sdist_releases(count: int) -> list[tuple[Version, DistFile]]:
+    """A newest-first listing of ``count`` releases, a wheel then an sdist each."""
+    listing: list[tuple[Version, DistFile]] = []
+    for n in range(count, 0, -1):
+        listing.append((V(f"{n}.0"), make_wheel(f"{n}.0")))
+        listing.append((V(f"{n}.0"), make_sdist(f"{n}.0")))
+    return listing
 
 
 def _blocker_reason(
@@ -10397,6 +10452,25 @@ class TestSharedSlotProvenance:
                 assert "wheel-dep" in provider.get_dependencies("pkg", V("1.0"))
 
 
+class TestDistsAtVersion:
+    @pytest.mark.parametrize(("version", "start"), [("3.0", 0), ("2.0", 2), ("1.0", 4)])
+    def test_yields_the_release_run_in_listing_order(
+        self, version: str, start: int
+    ) -> None:
+        """The head, an interior release and the tail each yield wheel then sdist."""
+        listing = _wheel_and_sdist_releases(3)
+        expected = [dist for _, dist in listing[start : start + 2]]
+        assert dists_at_version(listing, V(version)) == expected
+
+    @pytest.mark.parametrize("version", ["4.0", "2.5", "0.5"])
+    def test_an_unlisted_version_yields_nothing(self, version: str) -> None:
+        """Above the head, between two releases, and below the tail."""
+        assert dists_at_version(_wheel_and_sdist_releases(3), V(version)) == []
+
+    def test_an_empty_listing_yields_nothing(self) -> None:
+        assert dists_at_version([], V("1.0")) == []
+
+
 class TestPickDistForMetadata:
     def test_prefers_wheel_with_metadata_when_sdist_first(self) -> None:
         """A wheel-with-meta wins over an earlier sdist at the same version."""
@@ -10430,6 +10504,15 @@ class TestPickDistForMetadata:
         """No matching version yields ``None``."""
         versions = [(V("2.0"), make_wheel("2.0"))]
         assert pick_dist_for_metadata(versions, V("1.0"), None) is None
+
+    def test_bisects_the_newest_first_listing(self) -> None:
+        """A 256-entry listing costs about ten comparisons, not 256."""
+        listing = _one_wheel_releases(256)
+        mid_version, mid_dist = listing[127]
+        version = _CountingVersion(str(mid_version))
+
+        assert pick_dist_for_metadata(listing, version, None) is mid_dist
+        assert version.comparisons < 20
 
     def test_prefers_the_wheel_the_tags_rank_most_specific(self) -> None:
         """The tags rank the siblings; listing order does not.
@@ -11794,6 +11877,18 @@ class TestPublicAccessors:
         coordinator = make_coordinator(package="pkg")
         provider = Provider(coordinator, target=_PY312)
         assert provider.dist_files_for("unknown", V("1.0")) == []
+
+    def test_dist_files_for_bisects_the_listing(self) -> None:
+        """The accessor bisects too: about ten comparisons over 256 entries."""
+        provider = Provider(make_coordinator(package="pkg"), target=_PY312)
+        listing = _one_wheel_releases(256)
+        provider.versions_cache["pkg"] = listing
+
+        mid_version, mid_dist = listing[127]
+        version = _CountingVersion(str(mid_version))
+
+        assert provider.dist_files_for("pkg", version) == [mid_dist]
+        assert version.comparisons < 20
 
 
 class TestComputeTier:
