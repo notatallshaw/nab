@@ -161,30 +161,32 @@ def _test_steps(session: nox.Session, selected: set[str]) -> list[_Step]:
     return steps[: last + 1]
 
 
-def _run_workspace(session: nox.Session, step: _Step) -> bool:
-    """Run one workspace's suites and coverage gates; True when they all passed.
+def _run_workspace(session: nox.Session, step: _Step, paths: list[str]) -> bool:
+    """Run ``paths`` under coverage, then gate the workspace; True when both passed.
 
+    ``paths`` is the workspace's suites less any an earlier workspace already
+    ran; the coverage they recorded is still in the session's data file.
     Returns instead of raising so the caller can go on to the workspaces after
     this one. Within a workspace the first failure stops the rest.
     """
     try:
-        session.run("coverage", "erase")
-
         # pytest-cov measures the xdist workers, which a bare `coverage run`
         # cannot see, and combines their data files at the end. Its own gate is
         # off because it scores every source package at once, and a workspace
         # only imports the ones it owns.
-        session.run(
-            "python",
-            "-m",
-            "pytest",
-            "-n",
-            "auto",
-            "--cov",
-            "--cov-report=",
-            "--cov-fail-under=0",
-            *step.paths,
-        )
+        if paths:
+            session.run(
+                "python",
+                "-m",
+                "pytest",
+                "-n",
+                "auto",
+                "--cov",
+                "--cov-append",
+                "--cov-report=",
+                "--cov-fail-under=0",
+                *paths,
+            )
 
         for package in step.gated:
             session.run("coverage", "report", f"--include=*/{package}/*")
@@ -206,6 +208,10 @@ def tests(session: nox.Session) -> None:
     exactly the packages it declares. A reused environment would already hold
     what the last run installed, so this session never reuses one.
 
+    One coverage data file serves them all too. A suite runs once, in the first
+    selected workspace that lists it, and a later workspace gates on what every
+    suite before it recorded.
+
     A failing workspace does not stop the others, so one run reports them all.
     """
     selected = set(session.posargs) or set(WORKSPACES)
@@ -215,11 +221,18 @@ def tests(session: nox.Session) -> None:
 
     steps = _test_steps(session, selected)
     _install_lock(session, TESTS_LOCK)
+    session.run("coverage", "erase")
 
+    ran: set[str] = set()
     failed: list[str] = []
     for step in steps:
         _install_editable(session, step.adds)
-        if step.selected and not _run_workspace(session, step):
+        if not step.selected:
+            continue
+
+        paths = [path for path in step.paths if path not in ran]
+        ran.update(paths)
+        if not _run_workspace(session, step, paths):
             failed.append(step.workspace)
 
     if failed:
