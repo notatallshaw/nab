@@ -884,6 +884,33 @@ class TestFetchCoordinator:
             )
         ]
 
+    def test_prefetch_after_listing_skips_a_wheel_released_mid_walk(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A release clears the URL first, so the walk finds none to request."""
+        half_released = WheelFile(
+            filename="pkg-1.0-py3-none-any.whl",
+            url="",
+            version="1.0",
+            requires_python=None,
+            has_metadata=True,
+            upload_time=None,
+            metadata_hash=("sha256", "h1"),
+        )
+        calls: list[tuple[object, ...]] = []
+
+        def _spy(*args: object, **kwargs: object) -> threading.Event:
+            calls.append(args)
+            done = threading.Event()
+            done.set()
+            return done
+
+        coord = _coord()
+        monkeypatch.setattr(coord, "request_metadata", _spy)
+        coord._prefetch_metadata_after_listing("pkg", [half_released])
+
+        assert calls == []
+
     @respx.mock
     def test_listing_entry_with_unsplittable_url_is_dropped(self) -> None:
         """Only the entry whose URL urllib cannot split is dropped."""

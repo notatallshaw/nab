@@ -1091,6 +1091,10 @@ class FetchCoordinator:
         One wheel per version: the first with a sidecar is the one the provider
         picks for that version's metadata. The backwards walk assigns
         unconditionally, so that first wheel is the one left in place.
+
+        The resolver thread filters these same records while this walk
+        runs, so a wheel it releases mid-walk answers no metadata URL and
+        is skipped (:func:`~nab_provider.records.release_wheel_payload`).
         """
         wanted = self.PREFETCH_METADATA_COUNT
         newest: dict[str, WheelFile] = {}
@@ -1102,9 +1106,14 @@ class FetchCoordinator:
             newest[f.version] = f
 
         for w in reversed(newest.values()):
+            # A release clears the URL first, so a URL read after the hash
+            # means the release had not begun when the hash was read.
+            metadata_hash = w.metadata_hash
             url = w.metadata_url
-            assert url is not None
-            self.request_metadata(package, w.version, url, w.metadata_hash)
+            if url is None:
+                continue
+
+            self.request_metadata(package, w.version, url, metadata_hash)
 
     def _run_listing_tail(
         self, package: str, records: Sequence[WheelFile | SdistFile]

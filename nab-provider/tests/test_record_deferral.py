@@ -13,6 +13,7 @@ from nab_provider.records import (
     defer_hashes,
     defer_sidecar_hash,
     rehydrated_wheel,
+    release_wheel_payload,
 )
 
 DIGEST = "a" * 64
@@ -244,3 +245,57 @@ def test_deferral_does_not_answer_for_an_unknown_attribute() -> None:
 
     with pytest.raises(AttributeError, match="no_such_field"):
         wheel.no_such_field  # noqa: B018
+
+
+def test_releasing_a_wheel_drops_the_tables_it_deferred() -> None:
+    """The listing filter releases a refused wheel; the raw tables go with it."""
+    wheel = _deferred_wheel({"sha256": DIGEST}, sidecar={"sha256": DIGEST})
+
+    release_wheel_payload(wheel)
+
+    assert wheel.raw_hashes() is None
+    assert wheel.raw_sidecar() is None
+    assert wheel.hashes == ()
+    assert wheel.metadata_hash is None
+
+
+def test_releasing_a_wheel_clears_what_a_fetch_would_have_read() -> None:
+    wheel = _deferred_wheel({"sha256": DIGEST}, sidecar={"sha256": DIGEST})
+
+    release_wheel_payload(wheel)
+
+    assert wheel.url == ""
+    assert wheel.has_metadata is False
+    assert wheel.metadata_url is None
+
+
+def test_releasing_a_wheel_that_deferred_nothing_keeps_its_parsed_values() -> None:
+    """Only the raw tables go, and a record built from parsed values holds none."""
+    wheel = WheelFile(
+        filename="pkg-1.0-py3-none-any.whl",
+        url="https://files.example/pkg-1.0-py3-none-any.whl",
+        version="1.0",
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+        hashes=((SHA256, DIGEST),),
+        metadata_hash=(SHA256, DIGEST),
+    )
+
+    release_wheel_payload(wheel)
+
+    assert wheel.url == ""
+    assert wheel.hashes == ((SHA256, DIGEST),)
+    assert wheel.metadata_hash == (SHA256, DIGEST)
+
+
+def test_releasing_a_wheel_leaves_the_rest_of_the_record_readable() -> None:
+    """The version tallies and the diagnosis walk still read the record."""
+    wheel = _deferred_wheel({"sha256": DIGEST}, sidecar={"sha256": DIGEST})
+
+    release_wheel_payload(wheel)
+
+    assert wheel.filename == "pkg-1.0-py3-none-any.whl"
+    assert wheel.version == "1.0"
+    assert wheel.upload_time is None
+    assert wheel.requires_python is None

@@ -92,6 +92,7 @@ from nab_provider.provider import (
     VcsPolicy,
     VcsSource,
 )
+from nab_provider.records import rehydrated_wheel
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import pkg_override
@@ -117,6 +118,10 @@ _PY312 = ResolveTarget.for_host_python("3.12.0")
 # A declared linux/3.11 target: host-independent tags for the tie tests.
 _LINUX311 = ResolveTarget.for_declared(
     python_version="3.11", spec=PlatformSpec("linux_x86_64")
+)
+
+_WINDOWS311 = ResolveTarget.for_declared(
+    python_version="3.11", spec=PlatformSpec("windows_amd64")
 )
 
 
@@ -12033,6 +12038,123 @@ class TestConsultedMarkers:
         provider = Provider(self._coordinator("bar"), target=_PY312)
         provider.get_dependencies("foo", V("1.0"))
         assert provider.consulted_markers == set()
+
+
+class TestTagRefusedWheelPayload:
+    """A refused wheel keeps its record; the caller says whether it keeps more."""
+
+    LINUX_URL = "https://example.com/foo-1.0-cp311-manylinux.whl"
+    WINDOWS_URL = "https://example.com/foo-1.0-cp311-win_amd64.whl"
+
+    def _wheels(self) -> list[WheelFile]:
+        """One wheel a linux cp311 target installs and one it cannot.
+
+        Both hold the index's tables unparsed, the form a listing's records
+        take and the one the release drops.
+        """
+        return [
+            rehydrated_wheel(
+                filename="foo-1.0-cp311-cp311-manylinux_2_17_x86_64.whl",
+                url=self.LINUX_URL,
+                version="1.0",
+                requires_python=None,
+                has_metadata=True,
+                upload_time="2024-01-01T00:00:00Z",
+                hashes={"sha256": "ab"},
+                size=None,
+                metadata_hash={"sha256": "cd"},
+            ),
+            rehydrated_wheel(
+                filename="foo-1.0-cp311-cp311-win_amd64.whl",
+                url=self.WINDOWS_URL,
+                version="1.0",
+                requires_python=None,
+                has_metadata=True,
+                upload_time="2024-01-01T00:00:00Z",
+                hashes={"sha256": "ef"},
+                size=None,
+                metadata_hash={"sha256": "01"},
+            ),
+        ]
+
+    def _filtered(self, *, release_refused_wheels: bool) -> list[WheelFile]:
+        """Both wheels, after a linux cp311 target has filtered the listing."""
+        files = self._wheels()
+        provider = Provider(
+            make_coordinator(files, package="foo"),
+            target=_LINUX311,
+            release_refused_wheels=release_refused_wheels,
+        )
+        kept = [dist for _, dist in provider.fetch_versions("foo")]
+        assert [w.filename for w in kept] == [files[0].filename]
+        return files
+
+    def _resolved(
+        self, targets: Sequence[ResolveTarget], *, release_refused_wheels: bool
+    ) -> list[WheelFile]:
+        """Both wheels, after ``targets`` have resolved over one coordinator."""
+        files = self._wheels()
+        result = resolve_with_coordinator(
+            make_coordinator(files, package="foo", auto_metadata=True),
+            targets,
+            [Requirement("foo")],
+            inputs=ResolveInputs(build_policy=BuildPolicy.NEVER),
+            release_refused_wheels=release_refused_wheels,
+        )
+        assert result.success
+        return files
+
+    def test_the_only_reader_releases_the_refused_wheel(self) -> None:
+        """Nothing reads a refused wheel's URL, hashes or sidecar again."""
+        _, refused = self._filtered(release_refused_wheels=True)
+
+        assert refused.url == ""
+        assert refused.has_metadata is False
+        assert refused.metadata_url is None
+        assert refused.raw_hashes() is None
+        assert refused.raw_sidecar() is None
+
+    def test_the_only_reader_leaves_the_installable_wheel_whole(self) -> None:
+        """Only the refused wheel is released; the kept one is untouched."""
+        kept, _ = self._filtered(release_refused_wheels=True)
+
+        assert kept.url == self.LINUX_URL
+        assert kept.hashes == (("sha256", "ab"),)
+        assert kept.metadata_hash == ("sha256", "cd")
+
+    def test_a_shared_listing_keeps_the_refused_wheel(self) -> None:
+        """Another target over the same coordinator still reads the record."""
+        _, refused = self._filtered(release_refused_wheels=False)
+
+        assert refused.url == self.WINDOWS_URL
+        assert refused.hashes == (("sha256", "ef"),)
+        assert refused.metadata_hash == ("sha256", "01")
+
+    def test_a_one_target_resolve_releases_the_refused_wheel(self) -> None:
+        """``resolve_with_coordinator`` passes the flag down to the provider."""
+        _, refused = self._resolved([_LINUX311], release_refused_wheels=True)
+
+        assert refused.url == ""
+        assert refused.hashes == ()
+        assert refused.metadata_hash is None
+
+    def test_a_resolve_that_does_not_ask_keeps_the_refused_wheel(self) -> None:
+        """One target is not enough on its own: the caller has to ask."""
+        _, refused = self._resolved([_LINUX311], release_refused_wheels=False)
+
+        assert refused.url == self.WINDOWS_URL
+        assert refused.hashes == (("sha256", "ef"),)
+        assert refused.metadata_hash == ("sha256", "01")
+
+    def test_a_matrix_keeps_a_wheel_its_other_target_installs(self) -> None:
+        """One target's refusal is the next target's pick, so nothing is released."""
+        _, windows = self._resolved(
+            [_LINUX311, _WINDOWS311], release_refused_wheels=True
+        )
+
+        assert windows.url == self.WINDOWS_URL
+        assert windows.hashes == (("sha256", "ef"),)
+        assert windows.metadata_hash == ("sha256", "01")
 
 
 class TestPrereleaseHostTarget:

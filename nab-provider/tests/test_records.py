@@ -17,11 +17,13 @@ WHEEL_URL = "https://pypi.example/pkg-1.0-py3-none-any.whl"
 HAND_WRITTEN_INIT_RECORDS = [WheelFile, SdistFile]
 
 
-def make_wheel(*, has_metadata: bool = True) -> WheelFile:
-    """A wheel whose URL carries a PEP 503 hash fragment."""
+def make_wheel(
+    *, has_metadata: bool = True, url: str = f"{WHEEL_URL}#sha256=ab"
+) -> WheelFile:
+    """A wheel whose URL carries a PEP 503 hash fragment by default."""
     return WheelFile(
         filename="pkg-1.0-py3-none-any.whl",
-        url=f"{WHEEL_URL}#sha256=ab",
+        url=url,
         version="1.0",
         requires_python=None,
         has_metadata=has_metadata,
@@ -42,6 +44,11 @@ def test_metadata_url_appends_suffix_to_path() -> None:
 def test_metadata_url_none_without_sidecar() -> None:
     """A wheel the index advertised no sidecar for has no metadata URL."""
     assert make_wheel(has_metadata=False).metadata_url is None
+
+
+def test_metadata_url_none_without_a_url() -> None:
+    """A released record has no URL for the suffix to go on."""
+    assert make_wheel(url="").metadata_url is None
 
 
 def test_metadata_url_reuses_first_result() -> None:

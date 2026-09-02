@@ -433,6 +433,13 @@ class Provider:
     ``decision_order`` chooses whether the decision scan may rank a
     package on whether its listing has landed yet.  See
     :meth:`settled_listing`.
+
+    ``release_refused_wheels`` lets the wheel-tag filter drop the payload
+    of the wheels it refuses
+    (:func:`nab_provider.records.release_wheel_payload`).  Only the caller
+    that builds the providers knows whether that is safe: pass it when no
+    other reader of this coordinator's listings needs the URL, hashes or
+    sidecar of a wheel these tags refuse.
     """
 
     # Declared in ``_provider.listing``; the scan reads it off the instance.
@@ -505,6 +512,7 @@ class Provider:
         constraints: Mapping[str, VersionRange] | None = None,
         trust_unverified_sdist_deps: bool = False,
         decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
+        release_refused_wheels: bool = False,
     ) -> None:
         """Construct the provider; see the class docstring for parameters."""
         if isinstance(resolution_strategy, str):
@@ -524,6 +532,8 @@ class Provider:
         # The pre-tag half of the listing filter, shared with the other
         # targets of this resolve.  ``None`` computes it here instead.
         self.listing_filter_cache = listing_filter_cache
+
+        self.release_refused_wheels = release_refused_wheels
 
         self.extras_mode = extras_mode
         self.root_extras = root_extras or set()

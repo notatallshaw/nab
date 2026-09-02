@@ -499,6 +499,10 @@ class _EngineSettings:
     # of the listing filter reads are fixed for the run.
     listing_filter_cache: ListingFilterCache = field(default_factory=ListingFilterCache)
 
+    # Whether the wheel-tag filter may release what it refuses; see
+    # ``resolve_with_coordinator``.
+    release_refused_wheels: bool = False
+
     # The (kind, text) pairs already reported, so an entry read once per
     # target per fork and again in the base pass warns once.
     warned_dropped_markers: set[tuple[str, str]] = field(default_factory=set)
@@ -601,6 +605,7 @@ def _resolve_one_target(
         ),
         preferences=dict(preferences),
         listing_filter_cache=settings.listing_filter_cache,
+        release_refused_wheels=settings.release_refused_wheels,
     )
 
     observer = _ResolveObserver(settings.progress)
