@@ -6,7 +6,7 @@ Declared here rather than by the host because nab-project may not import ``nab``
 from __future__ import annotations
 
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nab_provider.policy import (
     BuildPolicy,
@@ -131,5 +131,8 @@ class ResolveInputs(ValueType):
 
     def replace(self, **changes: object) -> ResolveInputs:
         """Return a copy with ``changes`` applied, as ``dataclasses.replace`` would."""
-        kept = {name: getattr(self, name) for name in self.__match_args__}
-        return ResolveInputs(**{**kept, **changes})
+        kept: dict[str, Any] = {
+            name: getattr(self, name) for name in self.__match_args__
+        }
+        kept.update(changes)
+        return ResolveInputs(**kept)

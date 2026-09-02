@@ -58,6 +58,7 @@ if TYPE_CHECKING:
         "offline-miss",
         "unreadable-only",
         "unreachable-only",
+        "none-usable",
         "yanked-only",
         "absent",
         "pinned-absent",
@@ -172,6 +173,10 @@ class Remedy:
 
     __slots__ = ("covers", "field", "label", "layer", "selector")
 
+    # Declared, or a checker widens the assigned literal to ``str``.
+    field: Field
+    layer: Layer
+
     def __init__(
         self,
         field: Field,
@@ -204,6 +209,8 @@ class DroppedFile:
         "raw_version",
         "version",
     )
+
+    cause: Cause
 
     def __init__(
         self,
@@ -278,6 +285,8 @@ class Blocker:
 
     __slots__ = ("declared", "held", "kind", "package")
 
+    kind: Blocked
+
     def __init__(
         self,
         kind: Blocked,
@@ -319,6 +328,8 @@ class NoVersionsReason:
     """What the resolve recorded when a package ran out of candidates."""
 
     __slots__ = ("blockers", "declaring_version", "kind", "metadata", "version_range")
+
+    kind: Kind
 
     def __init__(
         self,

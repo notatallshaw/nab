@@ -35,6 +35,7 @@ from .groups import BASE_MEMBER
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
+    from nab_provider._vendor.packaging.utils import NormalizedName
     from nab_provider._vendor.packaging.version import Version
     from nab_provider.policy import ArchiveSource, LocalSource, VcsSource
     from nab_provider.records import IndexConfig
@@ -92,8 +93,10 @@ class LockInputProvider(Protocol):
     may supply a stub without inheriting the full Provider class.
     """
 
-    deps_cache: Mapping[tuple[str, Version], Mapping[str, object]]
-    """Direct dependencies per ``(canonical name, version)``."""
+    @property
+    def deps_cache(self) -> Mapping[tuple[str, Version], Mapping[str, object]]:
+        """Direct dependencies per ``(canonical name, version)``."""
+        ...
 
     @property
     def extra_deps_map(
@@ -400,7 +403,7 @@ def _membership_gates(
 
 def _reachable_names(
     provider: LockInputProvider,
-    pinned: Mapping[str, Version],
+    pinned: Mapping[NormalizedName, Version],
     roots: Iterable[str],
 ) -> set[str]:
     """Return the pinned names reachable from ``roots`` at their pinned versions.

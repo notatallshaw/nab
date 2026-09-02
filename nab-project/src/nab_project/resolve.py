@@ -649,6 +649,7 @@ def _selector_requirements(
     """
     selectors: dict[tuple[str, str], tuple[Requirement, ...]] = {}
     for context in contexts:
+        assert context.name is not None  # _carried_by keeps only named contexts
         selectors[(ConflictKind.GROUP.value, context.name)] = context.requirements
     for extra in fork.active_extras:
         member = (ConflictKind.EXTRA.value, str(canonicalize_name(extra)))

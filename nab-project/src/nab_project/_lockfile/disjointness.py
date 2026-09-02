@@ -238,7 +238,7 @@ def _conflict_respecting_selections(
             msg = f"conflict-respecting selections exceed {_MAX_SELECTIONS}"
             raise IntractableMarkerSet(msg)
 
-    group_options = [
+    group_options: list[list[frozenset[tuple[str, str]]]] = [
         [frozenset()] + [frozenset({member}) for member in choice]
         for choice in conflict_choices
     ]

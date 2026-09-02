@@ -276,8 +276,11 @@ class IndexPin(ValueType):
 
     def replace(self, **changes: object) -> IndexPin:
         """Return a copy with ``changes`` applied, as ``dataclasses.replace`` would."""
-        kept = {name: getattr(self, name) for name in self.__match_args__}
-        return IndexPin(**{**kept, **changes})
+        kept: dict[str, Any] = {
+            name: getattr(self, name) for name in self.__match_args__
+        }
+        kept.update(changes)
+        return IndexPin(**kept)
 
 
 class LocalPin(ValueType):

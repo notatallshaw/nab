@@ -40,7 +40,6 @@ from installer import install as installer_install
 from installer.destinations import SchemeDictionaryDestination
 from installer.sources import WheelFile
 from installer.utils import get_launcher_kind
-
 from nab_index.client import extract_sdist_archive
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_provider._vendor.packaging.requirements import InvalidRequirement
@@ -61,6 +60,7 @@ from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_provider.target import ResolveTarget, host_environment
 from nab_provider.vcs_admission import UnsupportedVcsError
 
+from .._compat import override
 from ..download import DownloadError, download_lock
 from ..inputs import ResolveInputs
 from ..lockfile import IndexPin, strip_userinfo
@@ -106,11 +106,13 @@ class _FastSchemeDictionaryDestination(SchemeDictionaryDestination):
         default_factory=list, init=False, repr=False
     )
 
+    @override
     def _compile_bytecode(self, scheme: Scheme, record: RecordEntry) -> None:
         if not self.bytecode_optimization_levels:
             return
         super()._compile_bytecode(scheme, record)
 
+    @override
     def finalize_installation(
         self,
         scheme: Scheme,

@@ -15,13 +15,12 @@ import threading
 import weakref
 from functools import lru_cache
 from itertools import pairwise, product
-from typing import TYPE_CHECKING, NamedTuple, cast
+from typing import TYPE_CHECKING, Literal, NamedTuple, Protocol, cast
 
 from ._packaging import (
     InvalidMarker,
     InvalidSpecifier,
     InvalidVersion,
-    Marker,
     Op,
     ParserSyntaxError,
     Specifier,
@@ -38,6 +37,7 @@ from .errors import IntractableMarkerSet, UnserializableMarkerSet
 
 if TYPE_CHECKING:
     from collections.abc import Container, Iterable, Iterator, Mapping, Sequence
+    from collections.abc import Set as AbstractSet
     from typing import TypeAlias
 
     # packaging's parse tree, narrowed to what ``parse_marker`` builds. Its own
@@ -465,6 +465,20 @@ def make_not(node: Formula) -> Formula:
 # ------------------------------------------------------------------- construction
 
 
+class MarkerLike(Protocol):
+    """A packaging ``Marker`` from either copy: released, or the fork nab vendors.
+
+    Structural, so a checker admits a ``Marker`` built by the copy the algebra
+    did not bind; :func:`_is_marker` is the same test at runtime.
+    """
+
+    def evaluate(
+        self,
+        environment: Mapping[str, str | AbstractSet[str]] | None = None,
+        context: Literal["metadata", "lock_file", "requirement"] = "metadata",
+    ) -> bool: ...
+
+
 def _is_marker(source: object) -> bool:
     """Whether ``source`` is a packaging ``Marker``, from either copy.
 
@@ -498,13 +512,13 @@ def _parse_ast(source: object) -> list[MarkerNode] | None:
         raise InvalidMarker(str(exc)) from exc
 
 
-def parse(source: str | Marker) -> Formula:
+def parse(source: str | MarkerLike) -> Formula:
     """Parse a marker into the normalised op-tree."""
     parsed = _parse_ast(source)
     return TRUE if parsed is None else _convert(parsed)
 
 
-def variable_names(source: str | Marker) -> frozenset[str]:
+def variable_names(source: str | MarkerLike) -> frozenset[str]:
     """Return every marker variable ``source`` names, in the parser's spelling.
 
     Builds no atoms, so a marker the algebra rejects still yields its names.

@@ -705,7 +705,7 @@ class Provider:
         self._widened_ranges: dict[tuple[str, Version], VersionRange] = {}
         self._gap_widened_ranges: dict[tuple[str, Version], VersionRange] = {}
 
-        self.solution_ranges: Mapping[str, RangeProtocol[Version]] = {}
+        self.solution_ranges: Mapping[str, VersionRange] = {}
         self.solution_decisions: Mapping[str, Version] = {}
         self.pending_clauses: list[Incompatibility[str, Version]] = []
         self.pending_blocks: defaultdict[tuple[str, str, Version], list[Version]] = (
@@ -737,8 +737,7 @@ class Provider:
         # Root-requirement rejections, keyed by (candidate, blocker, the
         # candidate's dependency range, the blocker's root range).
         self.pending_root_blocks: defaultdict[
-            tuple[str, str, RangeProtocol[Version], RangeProtocol[Version]],
-            list[Version],
+            tuple[str, str, VersionRange, VersionRange], list[Version]
         ] = defaultdict(list)
 
         # Metadata-error rejections, carrying the message so the failure can
@@ -2221,9 +2220,11 @@ class Provider:
         derivations because backjumping a decision also undoes its derivations.
 
         Both maps are read-only and pinned to the moment the caller took them,
-        so storing the references is enough.
+        so storing the references is enough. The resolver builds its ranges
+        from the :class:`VersionRange` values this provider hands it, which
+        the cast records.
         """
-        self.solution_ranges = positive_ranges
+        self.solution_ranges = cast("Mapping[str, VersionRange]", positive_ranges)
         self.solution_decisions = decisions
 
     def _look_ahead_ok(

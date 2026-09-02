@@ -19,7 +19,7 @@ keywords cannot express, and read the calls back with
 from __future__ import annotations
 
 import threading
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
 
 from ._vendor.packaging.utils import canonicalize_name
 from .errors import IndexAccessError
@@ -30,10 +30,14 @@ from .store import InMemoryIndex
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from datetime import datetime
     from pathlib import Path
 
+    from typing_extensions import Unpack
+
+    from ._vendor.packaging.requirements import Requirement
     from .metadata import WheelMetadata
-    from .policy import SourceMaterialization, SourceRequest
+    from .policy import BuildPolicy, DistPolicy, SourceMaterialization, SourceRequest
     from .records import RangeMetadataResult, SdistFile, WheelFile
 
 __all__ = ["REQUESTS", "FakeFetchPort", "make_coordinator", "pkg_override"]
@@ -69,14 +73,30 @@ def _done_event() -> threading.Event:
     return ev
 
 
-def pkg_override(req_str: str, **body: object) -> PackageOverride:
+class _OverrideBody(TypedDict, total=False):
+    """The body of a :class:`~nab_provider.overrides.PackageOverride`."""
+
+    dist_policy: DistPolicy | None
+    dist_trust_unverified_deps: bool | None
+    build_policy: BuildPolicy | None
+    uploaded_prior_to: datetime | None
+    uploaded_prior_to_disabled: bool
+    index: str | None
+    dependencies: tuple[Requirement, ...] | None
+    requires_python: str | None
+    provides_extra: tuple[str, ...] | None
+    name_keyed: bool
+    source_label: str
+
+
+def pkg_override(req_str: str, **body: Unpack[_OverrideBody]) -> PackageOverride:
     """Build a :class:`~nab_provider.overrides.PackageOverride` from a requirement."""
     requirement = parse_requirement(req_str)
     return PackageOverride(
         requirement=requirement,
         name=canonicalize_name(requirement.name),
         version_range=requirement.specifier.to_range(),
-        **body,  # type: ignore[arg-type]
+        **body,
     )
 
 
@@ -257,7 +277,7 @@ class FakeFetchPort:
     ) -> _T:
         """Record the call to ``name``, then run its override or ``default``."""
         self._calls[name].append(args)
-        handler = self._overrides.get(name, default)
+        handler: Callable[..., _T] = self._overrides.get(name, default)
         return handler(*args)
 
     def request_listing(

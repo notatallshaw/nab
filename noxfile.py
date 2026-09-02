@@ -71,10 +71,16 @@ WORKSPACES = {
     ),
 }
 
-# nab-provider and nab-project are left out: neither is held to the strict
-# checker configs yet, and nab-provider carries the vendored packaging tree,
-# which is rebuilt from upstream and cannot be edited to satisfy a checker.
-TYPED_TREES = ["nab-resolver/src", "nab-markersets/src", "nab-index/src", "src"]
+# Every shipped tree. The vendored packaging tree under nab-provider is rebuilt
+# from upstream, so each checker's config in pyproject.toml leaves it out.
+TYPED_TREES = [
+    "nab-resolver/src",
+    "nab-markersets/src",
+    "nab-provider/src",
+    "nab-project/src",
+    "nab-index/src",
+    "src",
+]
 
 # The generated bijection goes to every checker, not to pyright alone: it
 # exists to be read by one, and a row typed wrong for its parameter is an
@@ -82,12 +88,14 @@ TYPED_TREES = ["nab-resolver/src", "nab-markersets/src", "nab-index/src", "src"]
 CHECKED = [*TYPED_TREES, "tests/cli_bijection.py"]
 
 # checker -> command; pyright reads its targets from [tool.pyright] in
-# pyproject.toml, the rest take them on the command line.
+# pyproject.toml, the rest take them on the command line. Paths on pyrefly's
+# command line switch off the excludes in its config, so the vendored tree is
+# excluded again here.
 TYPE_CHECKERS = {
     "mypy": ["mypy", *CHECKED],
     "pyright": ["pyright"],
     "ty": ["ty", "check", *CHECKED],
-    "pyrefly": ["pyrefly", "check", *CHECKED],
+    "pyrefly": ["pyrefly", "check", "--project-excludes", "**/_vendor/**", *CHECKED],
     "zuban": ["zuban", "check", *CHECKED],
 }
 

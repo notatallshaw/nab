@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from nab_index.parsed_listing import ParsedListing
+    from nab_provider.overrides import IndexOverride, PackageOverride
 
 __all__ = [
     "DEFAULT_INDEX_NAME",
@@ -174,7 +175,10 @@ def _builds_remote_sdists(inputs: ResolveInputs | None) -> bool:
         return False
     if inputs.build_policy is BuildPolicy.BUILD_REMOTE:
         return True
-    overrides = (*inputs.package_overrides, *inputs.index_overrides.values())
+    overrides: tuple[PackageOverride | IndexOverride, ...] = (
+        *inputs.package_overrides,
+        *inputs.index_overrides.values(),
+    )
     return any(o.build_policy is BuildPolicy.BUILD_REMOTE for o in overrides)
 
 
@@ -862,7 +866,7 @@ class FetchCoordinator:
 
         queue: asyncio.Queue[_QueueItem] = asyncio.Queue()
         sem = asyncio.Semaphore(self._max_concurrency)
-        tasks: set[asyncio.Task] = set()
+        tasks: set[asyncio.Task[None]] = set()
 
         try:
             client = self._build_client()
@@ -917,7 +921,7 @@ class FetchCoordinator:
         item: FetchRequest | list[FetchRequest],
         client: CachedAsyncSimpleClient | LocalIndexClient | MultiIndexClient,
         sem: asyncio.Semaphore,
-        tasks: set[asyncio.Task],
+        tasks: set[asyncio.Task[None]],
     ) -> None:
         """Create async tasks for a single request or a batch."""
         if isinstance(item, list):

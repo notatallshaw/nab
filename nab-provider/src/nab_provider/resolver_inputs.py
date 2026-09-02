@@ -18,6 +18,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_resolver.errors import ResolutionError
 from nab_resolver.types import RootRequirement
 
+from ._compat import override
 from .conflict_kind import (
     KIND_EXTRA,
     MARKER_VARIABLE_FOR_KIND,
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
 
     from nab_provider._vendor.packaging.markers import Marker
     from nab_provider._vendor.packaging.requirements import Requirement
+    from nab_provider._vendor.packaging.version import Version
+    from nab_resolver.types import RangeProtocol
 
     from .vcs_admission import VcsConfig
 
@@ -124,10 +127,21 @@ def _warn_dropped_membership_marker(
     )
 
 
+def _root(
+    package: str, constraint: RangeProtocol[Version], origin: str
+) -> RootRequirement[str, Version]:
+    """Build a root requirement on the resolver's version type.
+
+    Solved from ``VersionRange`` alone, ty reads that type as ``Version | str``,
+    which the parameter here pins to ``Version``.
+    """
+    return RootRequirement(package, constraint, origin)
+
+
 class _ResolverInputs(NamedTuple):
     """What one requirement set gives the resolver and the provider."""
 
-    roots: list[RootRequirement[str, VersionRange]]
+    roots: list[RootRequirement[str, Version]]
     ranges: dict[str, VersionRange]
     extras: set[tuple[str, str]]
 
@@ -161,7 +175,7 @@ def build_resolver_inputs(
     callers sharing one set warn once between them, a caller that omits it
     warns per call.
     """
-    roots: list[RootRequirement[str, VersionRange]] = []
+    roots: list[RootRequirement[str, Version]] = []
     resolver_requirements: dict[str, VersionRange] = {}
     root_extras: set[tuple[str, str]] = set()
     already_warned: set[tuple[str, str]] = set() if warned is None else warned
@@ -191,7 +205,7 @@ def build_resolver_inputs(
             else VersionRange.full(admit_arbitrary=False)
         )
         resolver_requirements[name] = previous & term
-        roots.append(RootRequirement(name, term, str(req)))
+        roots.append(_root(name, term, str(req)))
 
         for extra in sorted(req.extras):
             extra_key = join_extra(name, extra)
@@ -201,7 +215,7 @@ def build_resolver_inputs(
             if extra_key not in resolver_requirements:
                 proxy = VersionRange.full(admit_arbitrary=False)
                 resolver_requirements[extra_key] = proxy
-                roots.append(RootRequirement(extra_key, proxy, str(req)))
+                roots.append(_root(extra_key, proxy, str(req)))
 
             _, normalized_extra = split_extra(extra_key)
             assert normalized_extra is not None  # join_extra always sets one
@@ -228,14 +242,17 @@ class ProxyConstraints(Mapping[str, VersionRange]):
         """Wrap the per-package ranges the user's constraints folded to."""
         self._ranges = ranges
 
+    @override
     def __getitem__(self, package: str) -> VersionRange:
         """Answer with the base's bound; a proxy has no bound of its own."""
         return self._ranges[split_extra(package)[0]]
 
+    @override
     def __iter__(self) -> Iterator[str]:
         """Enumerate only the keys the user wrote."""
         return iter(self._ranges)
 
+    @override
     def __len__(self) -> int:
         """Count the keys the user wrote."""
         return len(self._ranges)

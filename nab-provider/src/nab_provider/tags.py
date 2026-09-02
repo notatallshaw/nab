@@ -21,12 +21,13 @@ interpreter and abi, which is what pip's ``--python-version`` does.
 
 from __future__ import annotations
 
+import enum
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from functools import cache, cached_property, lru_cache
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeVar
 
 from nab_provider._vendor.packaging import tags as ptags
 from nab_provider._vendor.packaging.version import Version
@@ -542,9 +543,15 @@ _WheelT = TypeVar("_WheelT", bound=_NamedWheel)
 # platform axis multiplies it.
 _AxisEntry = tuple[str, str, str | None]
 
+
 # Stands in for "not looked up yet" in ``TagSet._placed``, which holds a real
-# None for a tag set the target accepts nothing from.
-_UNPLACED = object()
+# None for a tag set the target accepts nothing from. An enum member, so a
+# checker narrows the lookup's result once the sentinel is ruled out.
+class _Unplaced(enum.Enum):
+    TOKEN = enum.auto()
+
+
+_UNPLACED: Final = _Unplaced.TOKEN
 
 
 @dataclass(frozen=True)

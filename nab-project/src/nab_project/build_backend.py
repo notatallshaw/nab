@@ -11,7 +11,7 @@ settings a resolve runs under.
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import tomli
 
@@ -114,7 +114,7 @@ def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
     return _project_to_metadata(project)
 
 
-def _project_to_metadata(project: dict) -> WheelMetadata | None:
+def _project_to_metadata(project: dict[str, Any]) -> WheelMetadata | None:
     """Convert a static ``[project]`` table to :class:`WheelMetadata`."""
     name = project.get("name")
     version_raw = project.get("version")
@@ -170,7 +170,7 @@ def _static_requires_python(raw: object) -> SpecifierSet | None:
     return specifier_set
 
 
-def _collect_requires_dist(project: dict) -> list[Requirement]:
+def _collect_requires_dist(project: dict[str, Any]) -> list[Requirement]:
     """Concatenate PEP 631 ``dependencies`` + ``optional-dependencies``.
 
     Optional-dependencies entries get an ``; extra == "name"`` marker
@@ -212,7 +212,7 @@ def _extend_with_dep_strings(
     )
 
 
-def _require_optional_dependencies(project: dict) -> dict:
+def _require_optional_dependencies(project: dict[str, Any]) -> dict[str, Any]:
     """Return ``[project.optional-dependencies]`` as a table, or raise."""
     optional = project.get("optional-dependencies", {})
     if not isinstance(optional, dict):
@@ -221,7 +221,7 @@ def _require_optional_dependencies(project: dict) -> dict:
     return optional
 
 
-def _collect_provides_extra(project: dict) -> set[str]:
+def _collect_provides_extra(project: dict[str, Any]) -> set[str]:
     return {
         canonicalize_name(str(extra))
         for extra in _require_optional_dependencies(project)
