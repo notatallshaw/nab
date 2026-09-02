@@ -523,7 +523,7 @@ sha256 = "25ad4e16390cd314347dd8f1de67a2ac538ae658ed4ab9db16029c07c188e97f"
 
 [tool.nab]
 nab-version = "0.0.16.dev0"
-created-at = 2026-08-12 13:49:38.756512+00:00
+created-at = 2026-09-02 00:02:58.160460+00:00
 command-line = [
     "nab",
     "lock",
@@ -534,6 +534,7 @@ command-line = [
     "--no-emit-workspace",
     "--output",
     ".github/requirements/pylock.dists.toml",
+    "--upgrade",
 ]
 input-path = "pyproject.toml"
 mode = "universal"
