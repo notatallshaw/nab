@@ -13,9 +13,9 @@ from __future__ import annotations
 import random
 
 import urllib3
-from typing_extensions import override
 from urllib3.exceptions import InvalidHeader
 
+from ._compat import override
 from .retry_limits import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES
 
 __all__ = [

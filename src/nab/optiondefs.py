@@ -28,8 +28,7 @@ from __future__ import annotations
 import enum
 from typing import TYPE_CHECKING, Any
 
-from typing_extensions import override
-
+from ._compat import override
 from .optionrows import Scope
 
 if TYPE_CHECKING:

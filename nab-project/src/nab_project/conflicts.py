@@ -10,12 +10,11 @@ import enum
 import itertools
 from typing import TYPE_CHECKING
 
-from typing_extensions import override
-
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP
 from nab_provider.errors import ConfigError
 
+from ._compat import override
 from .value import ValueType
 
 if TYPE_CHECKING:

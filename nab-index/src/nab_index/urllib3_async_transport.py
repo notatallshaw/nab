@@ -20,8 +20,8 @@ from urllib.parse import urljoin
 import truststore
 import urllib3
 import urllib3.connection
-from typing_extensions import override
 
+from ._compat import override
 from .retry import GET_RETRY, next_delay
 from .retry_limits import MAX_RETRIES
 from .transport import (

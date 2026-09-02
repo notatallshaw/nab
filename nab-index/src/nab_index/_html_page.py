@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html.parser import HTMLParser
 
-from typing_extensions import override
+from ._compat import override
 
 __all__ = [
     "Anchor",

@@ -8,7 +8,7 @@ share live here; each type declares its own fields and constructor.
 
 from __future__ import annotations
 
-from typing_extensions import override
+from ._compat import override
 
 __all__ = ["SlottedValue"]
 

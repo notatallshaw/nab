@@ -21,8 +21,7 @@ import time
 from dataclasses import dataclass
 from typing import IO, TYPE_CHECKING
 
-from typing_extensions import override
-
+from ._compat import override
 from .env import (
     NAB_VERBOSITY,
     color_enabled,
