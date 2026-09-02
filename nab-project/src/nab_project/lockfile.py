@@ -22,6 +22,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 
 from ._lockfile.builder import (
+    ArtifactMemo,
     MissingHashError,
     MissingSdistError,
     MissingVcsCommitError,
@@ -69,6 +70,7 @@ __all__ = [
     "BASE_MEMBER",
     "LOCK_VERSION",
     "ArchivePin",
+    "ArtifactMemo",
     "DisjointnessError",
     "DivergentBaseDependencyError",
     "IndexPin",

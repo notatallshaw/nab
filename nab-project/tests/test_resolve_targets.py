@@ -2856,6 +2856,27 @@ class TestSharedListingFilter:
         assert len(result.target_results) == 2
         assert calls == ["pkg@3.11.0"]
 
+    def test_platform_targets_share_one_wheel_artifact(self) -> None:
+        """Two targets pinning the same wheel hold one lock artifact between them."""
+        result = resolve_with_coordinator(
+            self._coordinator([self._wheel("1.0"), self._wheel("2.0")]),
+            self._targets("==3.11"),
+            _reqs("pkg"),
+            inputs=_no_build(),
+        )
+
+        assert result.success
+        first, second = (tr.lock for tr in result.target_results)
+        assert first is not None
+        assert second is not None
+
+        first_pin, second_pin = first.pins["pkg"], second.pins["pkg"]
+        assert isinstance(first_pin, IndexPin)
+        assert isinstance(second_pin, IndexPin)
+
+        assert first_pin.version == "2.0"
+        assert second_pin.wheels[0] is first_pin.wheels[0]
+
     def test_shared_filter_runs_before_the_wheel_tag_pass(self) -> None:
         """Only the pre-tag list is shared: a linux-only wheel stays off Windows."""
         wheels = [

@@ -28,7 +28,7 @@ from nab_resolver.resolver import Resolver, ResolverObserver
 from nab_resolver.types import IncompatibilityCause
 
 from .._compat import override
-from ..lockfile import build_target_lock
+from ..lockfile import ArtifactMemo, build_target_lock
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -507,6 +507,9 @@ class _EngineSettings:
     # target per fork and again in the base pass warns once.
     warned_dropped_markers: set[tuple[str, str]] = field(default_factory=set)
 
+    # The lock artifacts built so far, so targets pinning the same file share one.
+    artifacts: ArtifactMemo = field(default_factory=ArtifactMemo)
+
 
 def _threaded_preferences(
     accumulated: dict[str, Version],
@@ -657,6 +660,7 @@ def _resolve_one_target(
             resolved_keys=raw,
             base_roots=base_roots,
             selector_roots=selector_roots,
+            artifacts=settings.artifacts,
         ),
         wall_time=elapsed,
         **_target_stats(resolver, provider),
