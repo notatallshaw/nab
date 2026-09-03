@@ -4140,3 +4140,19 @@ class TestSdistArchiveHolding:
         coord.shutdown()
 
         assert hold.take("pkg", "1.0") is None
+
+    def test_the_hold_is_as_wide_as_the_fetcher(self) -> None:
+        """A run's hold is sized by ``max_concurrency``, not by its own default."""
+        config = ResolveInputs(build_policy=BuildPolicy.BUILD_REMOTE)
+
+        with _coord(build_config=config, max_concurrency=3) as coord:
+            hold = coord._sdist_archive_hold
+            assert hold is not None
+
+            for minor in range(4):
+                hold.put("pkg", f"1.{minor}", b"archive bytes")
+
+            assert hold.take("pkg", "1.0") is None
+
+            for minor in (1, 2, 3):
+                assert hold.take("pkg", f"1.{minor}") == b"archive bytes"
