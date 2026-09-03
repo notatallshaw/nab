@@ -973,6 +973,26 @@ class TestTheShippedTable:
     def test_an_attached_star_value_alone_is_one_word(self) -> None:
         assert _shipped(["lock", "--groups=dev"]).values["groups"] == ("dev",)
 
+    def test_the_matrix_platform_flag_takes_its_knobs(self) -> None:
+        """The star grammar reaches the shipped table with no parser change."""
+        parsed = _shipped(
+            [
+                "lock",
+                "--project-matrix-platforms",
+                "windows_amd64",
+                "linux_x86_64",
+                "libc=musl",
+                "--upgrade",
+            ]
+        )
+
+        assert parsed.values["project_matrix_platforms"] == (
+            "windows_amd64",
+            "linux_x86_64",
+            "libc=musl",
+        )
+        assert parsed.values["upgrade"] is True
+
     def test_every_command_binds_its_own_defaults(self) -> None:
         parsed = _shipped(["download"])
 
@@ -1087,6 +1107,13 @@ class TestHelpPages:
         the column, which is what half rather than all of the width buys.
         """
         assert _WIDEST_SPELLING in _shipped_page("lock", 100).splitlines()
+
+    def test_the_matrix_flags_print_the_metavar_each_kind_gives_them(self) -> None:
+        """A star prints ``STR ...`` and the choice row prints its two tokens."""
+        text = _shipped_page("lock", 100)
+
+        assert "  --project-matrix-platforms STR ..." in text
+        assert "  --project-matrix-python-order {asc,desc}" in text
 
     def test_the_spelling_that_sets_the_column_keeps_its_help_beside_it(self) -> None:
         """The widest spelling inside the limit sits on its help's line."""

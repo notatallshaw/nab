@@ -17,6 +17,8 @@ from nab._lock import lock
 from nab.optiontable import (
     CacheWords,
     ConfigWords,
+    EnvironmentKeys,
+    MatrixKeys,
     ProjectKeys,
     RunFlags,
     UserKeys,
@@ -32,7 +34,7 @@ def _cache_command() -> None:
 
 
 def _config_command() -> None:
-    """``nab config``: 20 parameters."""
+    """``nab config``: 28 parameters."""
     config_command(
         ConfigWords.action,
         ConfigWords.key,
@@ -48,6 +50,14 @@ def _config_command() -> None:
         project_dist_policy=ProjectKeys.dist_policy,
         project_build_policy=ProjectKeys.build_policy,
         project_build_requires_depth=ProjectKeys.build_requires_depth,
+        project_matrix_python=MatrixKeys.python,
+        project_matrix_platforms=MatrixKeys.platforms,
+        project_matrix_implementations=MatrixKeys.implementations,
+        project_matrix_python_order=MatrixKeys.python_order,
+        project_matrix_python_patches=MatrixKeys.python_patches,
+        project_environment_python=EnvironmentKeys.python,
+        project_environment_platform=EnvironmentKeys.platform,
+        project_environment_implementation=EnvironmentKeys.implementation,
         offline=UserKeys.offline,
         cache_dir=UserKeys.cache_dir,
         http_backend=UserKeys.http_backend,
@@ -58,7 +68,7 @@ def _config_command() -> None:
 
 
 def _lock() -> None:
-    """``nab lock``: 29 parameters."""
+    """``nab lock``: 37 parameters."""
     lock(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -73,6 +83,14 @@ def _lock() -> None:
         project_dist_policy=ProjectKeys.dist_policy,
         project_build_policy=ProjectKeys.build_policy,
         project_build_requires_depth=ProjectKeys.build_requires_depth,
+        project_matrix_python=MatrixKeys.python,
+        project_matrix_platforms=MatrixKeys.platforms,
+        project_matrix_implementations=MatrixKeys.implementations,
+        project_matrix_python_order=MatrixKeys.python_order,
+        project_matrix_python_patches=MatrixKeys.python_patches,
+        project_environment_python=EnvironmentKeys.python,
+        project_environment_platform=EnvironmentKeys.platform,
+        project_environment_implementation=EnvironmentKeys.implementation,
         offline=UserKeys.offline,
         cache_dir=UserKeys.cache_dir,
         http_backend=UserKeys.http_backend,
@@ -93,7 +111,7 @@ def _lock() -> None:
 
 
 def _download() -> None:
-    """``nab download``: 25 parameters."""
+    """``nab download``: 33 parameters."""
     download(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -108,6 +126,14 @@ def _download() -> None:
         project_dist_policy=ProjectKeys.dist_policy,
         project_build_policy=ProjectKeys.build_policy,
         project_build_requires_depth=ProjectKeys.build_requires_depth,
+        project_matrix_python=MatrixKeys.python,
+        project_matrix_platforms=MatrixKeys.platforms,
+        project_matrix_implementations=MatrixKeys.implementations,
+        project_matrix_python_order=MatrixKeys.python_order,
+        project_matrix_python_patches=MatrixKeys.python_patches,
+        project_environment_python=EnvironmentKeys.python,
+        project_environment_platform=EnvironmentKeys.platform,
+        project_environment_implementation=EnvironmentKeys.implementation,
         offline=UserKeys.offline,
         cache_dir=UserKeys.cache_dir,
         http_backend=UserKeys.http_backend,

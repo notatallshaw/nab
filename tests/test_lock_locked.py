@@ -1302,7 +1302,6 @@ def test_remedy_carries_every_run_shaping_flag(
     refresh = [
         str(pyproject),
         *["--output", str(out)],
-        *["--python", "3.12"],
         *["--groups", "dev", "test"],
         *["--extras", "cpu", "gpu"],
         *["--offline", "True"],
@@ -1312,6 +1311,7 @@ def test_remedy_carries_every_run_shaping_flag(
         *["--project-constraint", "foo<2"],
         *["--project-constraint", "bar<3"],
         *["--project-requires-python", ">=3.9"],
+        *["--python", "3.12"],
         "--upgrade",
     ]
 

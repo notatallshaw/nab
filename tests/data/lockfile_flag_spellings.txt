@@ -10,3 +10,11 @@
 --project-dist-policy
 --project-build-policy
 --project-build-requires-depth
+--project-matrix-python
+--project-matrix-platforms
+--project-matrix-implementations
+--project-matrix-python-order
+--project-matrix-python-patches
+--project-environment-python
+--project-environment-platform
+--project-environment-implementation

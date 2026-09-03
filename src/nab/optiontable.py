@@ -1,6 +1,6 @@
 """Every nab option, declared once.
 
-Seven root rows, thirty-six behind a command's parameters, and thirteen
+Seven root rows, forty-four behind a command's parameters, and thirteen
 configuration keys with no flag.
 
 A row is a call in a table body.  The class says how the parser reads it and
@@ -10,7 +10,7 @@ rather than written into it.  :mod:`nab.optionrows` is the vocabulary and
 :mod:`nab.optionlower` turns each row into the :class:`nab.optiondefs.Opt`
 the generator and the tests read.
 
-The ten classes a row is written with, and how each is read:
+The thirteen classes a row is written with, and how each is read:
 
 - ``Count``: how many times the flag was written.
 - ``Switch``: stores a constant.
@@ -19,6 +19,9 @@ The ten classes a row is written with, and how each is read:
 - ``Value``: reads one token.
 - ``Many``: repeatable, and one occurrence contributes one value.
 - ``Star``: takes every token up to the next flag.
+- ``Items``: a token run read as a list of tables, one opened per id.
+- ``Item``: a token run read as the one table its key holds.
+- ``Pairs``: a token run read as a table of ``KEY=VALUE``.
 - ``Operand``: a positional word.
 - ``Verb``: a required positional word out of a fixed set.
 - ``Key``: a configuration key with no command line at all.
@@ -31,9 +34,10 @@ once, and ``include-rejected`` prints last.  Those four sit in a table whose
 command set they do not share, and each table's docstring names its own.
 
 Adding an option is a row here, a parameter on the command function that
-takes it, and ``python tasks/gen_bijection.py --write``.  A row with a
-configuration key needs two more: an entry in ``nab._run._cli_overrides``,
-and the page its ``docs=`` names.  The censuses in ``tests/test_cli_table.py``,
+takes it, and ``python tasks/gen_bijection.py --write``.  A row a
+configuration source reaches, whether it holds the key or sits ``under``
+one, needs two more: an entry in ``nab._run._cli_overrides``, and the page
+its ``docs=`` names.  The censuses in ``tests/test_cli_table.py``,
 ``tests/test_cli_docs.py`` and ``tests/test_config_cmd.py`` are written out
 rather than derived, so a new row moves those too.
 """
@@ -68,7 +72,9 @@ from .flagtypes import (
     DecisionOrderFlag,
     DistPolicyFlag,
     HttpBackend,
+    ImplementationFlag,
     LockFormat,
+    MatrixOrderFlag,
     ModeFlag,
     ResolutionFlag,
 )
@@ -77,10 +83,13 @@ from .optionlower import table_rows
 from .optionrows import (
     Count,
     Eager,
+    Item,
+    Items,
     Key,
     Layer,
     Many,
     Operand,
+    Pairs,
     Scope,
     Star,
     Switch,
@@ -412,6 +421,72 @@ class ProjectKeys(
     )
 
 
+class MatrixKeys(
+    Table,
+    on=_LAYERED,
+    scope=Scope.PROJECT,
+    under="matrix",
+    needs=("python", "platforms"),
+    docs="explanation/universal.md",
+):
+    """``[tool.nab.matrix]``'s five keys, as the flags that set them.
+
+    These rows carry no configuration key of their own: ``under`` names the
+    one they spell, and :mod:`nab.config.subflags` assembles what they read
+    into the value ``matrix`` takes.  A key the command line leaves out keeps
+    the file's; ``needs`` is the pair a command line has to give when no file
+    declares the table.
+    """
+
+    python = Value[Specifier | None](
+        help="the Python range a universal resolve covers, as a specifier",
+    )
+
+    platforms = Items[str](
+        opened_by="id",
+        help="the platforms to model: an id, then any KEY=VALUE tag knobs",
+    )
+
+    implementations = Star[str](
+        help="the interpreter implementations to model",
+    )
+
+    python_order = Value[MatrixOrderFlag | None](
+        help="the direction the python axis aligns across targets",
+    )
+
+    python_patches = Pairs[str](
+        help="pin a Python minor to one patch release, as MINOR=FULL",
+    )
+
+
+class EnvironmentKeys(
+    Table,
+    on=_LAYERED,
+    scope=Scope.PROJECT,
+    under="environment",
+    docs="reference/configuration.md",
+):
+    """``[tool.nab.environment]``'s three axes, as the flags that set them.
+
+    No ``needs``: an axis the command line leaves out keeps the file's, and
+    an axis no source sets is the host's.
+    """
+
+    python = Value[str | None](
+        help="the Python version the resolve targets, as a version not a specifier",
+    )
+
+    platform = Item[str](
+        opened_by="id",
+        help="the machine to model: an id, then any KEY=VALUE tag knobs",
+    )
+
+    implementation = Value[ImplementationFlag | None](
+        help="the interpreter implementation the resolve targets",
+    )
+
+
 class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
     """The four settings a user sets once, each also a ``NAB_*`` variable."""
 
@@ -610,6 +685,8 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
 TABLES = (
     Root,
     ProjectKeys,
+    MatrixKeys,
+    EnvironmentKeys,
     UserKeys,
     ConfigWords,
     CacheWords,

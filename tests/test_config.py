@@ -32,8 +32,8 @@ from nab.config.model import (
     _option_label,
     plan_targets,
     read_pyproject_config,
-    with_python_override,
 )
+from nab.config.subflags import CliTable, build_cli_tables
 from nab.config.values import (
     _MATRIX_KEYS,
     _PEP508_MARKER_VARIABLES,
@@ -84,6 +84,40 @@ from nab_provider.testing import pkg_override
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractContextManager
+
+
+# Every sub-flag parameter the assembler reads, none of them written.
+_TABLE_PARAMS: dict[str, object] = {
+    "project_matrix_python": None,
+    "project_matrix_platforms": (),
+    "project_matrix_implementations": (),
+    "project_matrix_python_order": None,
+    "project_matrix_python_patches": (),
+    "project_environment_python": None,
+    "project_environment_platform": (),
+    "project_environment_implementation": None,
+}
+
+
+def _cli_table(parent: str, prefix: str, written: dict[str, object]) -> CliTable:
+    """Assemble the table a ``--project-<parent>-*`` line writes.
+
+    Built through the assembler rather than by hand so a case carries the
+    flags and tokens the fold and every message read off it.
+    """
+    params = {**_TABLE_PARAMS}
+    params.update({f"{prefix}{key}": value for key, value in written.items()})
+    return build_cli_tables(params)[parent]
+
+
+def _cli_matrix(**written: object) -> CliTable:
+    """The ``matrix`` table the named ``--project-matrix-*`` flags write."""
+    return _cli_table("matrix", "project_matrix_", written)
+
+
+def _cli_environment(**written: object) -> CliTable:
+    """The ``environment`` table the named environment flags write."""
+    return _cli_table("environment", "project_environment_", written)
 
 
 def write(tmp_path: Path, body: str) -> Path:
@@ -224,9 +258,10 @@ class TestCliOverridesFold:
                 path, discover_workspace=False, cli_overrides={"mode": "universal"}
             )
         message = str(excinfo.value)
-        assert "there is no --project-matrix" in message
+        assert "pass --project-matrix-python and --project-matrix-platforms" in message
         assert "[tool.nab.matrix] to the project's pyproject.toml" in message
         assert "top-level [matrix] table to the project's nab.toml" in message
+        assert "there is no --project-matrix" not in message
 
     def test_cli_mode_universal_satisfied_by_nab_toml_matrix(
         self, tmp_path: Path
@@ -244,6 +279,29 @@ class TestCliOverridesFold:
         assert config.matrix is not None
         assert config.matrix.platforms == (PlatformSpec("linux_x86_64"),)
 
+    def test_a_cli_matrix_narrows_the_file_matrix(self, tmp_path: Path) -> None:
+        """A key no flag names keeps the value the project file declared."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            '[tool.nab.matrix]\npython = ">=3.11,<3.13"\n'
+            'platforms = ["windows_amd64"]\n'
+            'implementations = ["cpython", "pypy"]\n',
+        )
+
+        config = read_pyproject_config(
+            path,
+            discover_workspace=False,
+            cli_overrides={
+                "matrix": _cli_matrix(python="==3.11", platforms=("linux_x86_64",))
+            },
+        )
+
+        assert config.matrix is not None
+        assert config.matrix.implementations == ("cpython", "pypy")
+        assert config.matrix.platforms == (PlatformSpec("linux_x86_64"),)
+        assert config.matrix.python == "==3.11"
+
     def test_cli_mode_specific_shadows_declared_matrix(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
@@ -256,6 +314,61 @@ class TestCliOverridesFold:
         )
         assert config.mode is ResolveMode.SPECIFIC
         assert config.matrix is None
+
+    def test_a_complete_cli_matrix_takes_the_documented_defaults(
+        self, tmp_path: Path
+    ) -> None:
+        """Flags with no file table get the documented defaults for the axes they omit."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+
+        config = read_pyproject_config(
+            path,
+            discover_workspace=False,
+            cli_overrides={
+                "mode": "universal",
+                "matrix": _cli_matrix(
+                    python=">=3.11,<3.13", platforms=("linux_x86_64",)
+                ),
+            },
+        )
+
+        assert config.matrix is not None
+        assert config.matrix.python_order == "asc"
+        assert config.matrix.implementations == ("cpython",)
+        assert not config.matrix.python_patches
+
+    def test_a_python_flag_folds_onto_a_declared_platform(self, tmp_path: Path) -> None:
+        """The python axis moves and the declared machine stays."""
+        path = write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n'
+            '[tool.nab.environment]\nplatform = "macos_arm64"\n',
+        )
+
+        config = read_pyproject_config(
+            path,
+            discover_workspace=False,
+            cli_overrides={"environment": _cli_environment(python="3.12")},
+        )
+
+        assert config.environment is not None
+        assert config.environment.python == "3.12"
+        assert config.environment.platform == PlatformSpec("macos_arm64")
+
+    def test_an_environment_python_flag_names_the_key_not_the_flag(
+        self, tmp_path: Path
+    ) -> None:
+        """The merged table is checked by the same hook a file table is."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+
+        with pytest.raises(
+            ConfigError, match="environment.python must be a version like"
+        ):
+            read_pyproject_config(
+                path,
+                discover_workspace=False,
+                cli_overrides={"environment": _cli_environment(python="3.12.x")},
+            )
 
 
 class TestDefaults:
@@ -308,6 +421,194 @@ class TestMode:
         assert "requires a top-level [matrix] table in nab.toml" in message
         assert "[tool.nab.matrix]" not in message
         assert "pyproject.toml" not in message
+
+    def test_a_cli_matrix_under_specific_mode_names_the_flags(
+        self, tmp_path: Path
+    ) -> None:
+        """A CLI matrix is refused by the flags that set it, not by a file table.
+
+        Mode left at rung 0 and ``--project-mode specific`` beside the
+        matrix reach the same refusal: neither outranks the CLI matrix.
+        """
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        matrix = _cli_matrix(python="==3.11", platforms=("linux_x86_64",))
+
+        for overrides in ({"matrix": matrix}, {"matrix": matrix, "mode": "specific"}):
+            with pytest.raises(ConfigError) as excinfo:
+                read_pyproject_config(
+                    path, discover_workspace=False, cli_overrides=overrides
+                )
+
+            assert str(excinfo.value) == (
+                "--project-matrix-python and --project-matrix-platforms declare"
+                " a matrix but mode is 'specific'; pass --project-mode universal"
+                " as well, or drop the matrix flags."
+            )
+
+    def test_a_cli_matrix_over_a_file_environment_names_the_flags_written(
+        self, tmp_path: Path
+    ) -> None:
+        """The refusal names the flags on the line, not a fixed family pair."""
+        path = write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n'
+            '[tool.nab.environment]\npython = "3.12"\n'
+            'platform = "linux_x86_64"\n',
+        )
+        tail = (
+            " declares one environment; the matrix declares one environment"
+            " per tuple, so the two contradict.  Drop one."
+        )
+
+        for written, flags in (
+            (
+                {"python": ">=3.12,<3.13", "platforms": ("macos_arm64",)},
+                "--project-matrix-python and --project-matrix-platforms",
+            ),
+            (
+                {
+                    "python": ">=3.12,<3.13",
+                    "platforms": ("macos_arm64",),
+                    "implementations": ("cpython",),
+                },
+                (
+                    "--project-matrix-python and --project-matrix-platforms"
+                    " and --project-matrix-implementations"
+                ),
+            ),
+        ):
+            overrides = {
+                "mode": "universal",
+                "matrix": _cli_matrix(**written),
+            }
+
+            with pytest.raises(ConfigError) as excinfo:
+                read_pyproject_config(
+                    path, discover_workspace=False, cli_overrides=overrides
+                )
+
+            assert str(excinfo.value) == (
+                f"{flags} declare a matrix and [tool.nab.environment]{tail}"
+            )
+
+    def test_a_cli_environment_key_under_a_file_matrix_names_the_flag(
+        self, tmp_path: Path
+    ) -> None:
+        """The droppable half is the one flag, so the refusal names it."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            '[tool.nab.matrix]\npython = ">=3.12,<3.13"\n'
+            'platforms = ["linux_x86_64"]\n',
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(
+                path,
+                discover_workspace=False,
+                cli_overrides={
+                    "environment": _cli_environment(platform=("macos_arm64",))
+                },
+            )
+
+        assert str(excinfo.value) == (
+            "[tool.nab.matrix] declares a matrix and"
+            " --project-environment-platform declares one environment; the"
+            " matrix declares one environment per tuple, so the two"
+            " contradict.  Drop one."
+        )
+
+    def test_both_tables_from_the_cli_still_contradict(self, tmp_path: Path) -> None:
+        """Neither half is a file, so each half names its flags and agrees its verb."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+
+        for environment, named in (
+            (
+                _cli_environment(platform=("macos_arm64",)),
+                "--project-environment-platform declares one",
+            ),
+            (
+                _cli_environment(python="3.12", platform=("macos_arm64",)),
+                (
+                    "--project-environment-python and"
+                    " --project-environment-platform declare one"
+                ),
+            ),
+        ):
+            with pytest.raises(ConfigError) as excinfo:
+                read_pyproject_config(
+                    path,
+                    discover_workspace=False,
+                    cli_overrides={
+                        "mode": "universal",
+                        "matrix": _cli_matrix(
+                            python=">=3.12,<3.13", platforms=("linux_x86_64",)
+                        ),
+                        "environment": environment,
+                    },
+                )
+
+            assert str(excinfo.value) == (
+                "--project-matrix-python and --project-matrix-platforms declare"
+                f" a matrix and {named} environment; the matrix declares one"
+                " environment per tuple, so the two contradict.  Drop one."
+            )
+
+    def test_the_specific_mode_message_names_the_flags_written(
+        self, tmp_path: Path
+    ) -> None:
+        """One narrowing flag is what the reader can drop, so it is what is named."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            '[tool.nab.matrix]\npython = ">=3.12,<3.13"\n'
+            'platforms = ["linux_x86_64", "macos_arm64"]\n',
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(
+                path,
+                discover_workspace=False,
+                cli_overrides={
+                    "mode": "specific",
+                    "matrix": _cli_matrix(platforms=("macos_arm64",)),
+                },
+            )
+
+        assert str(excinfo.value) == (
+            "--project-matrix-platforms declares a matrix but mode is"
+            " 'specific'; pass --project-mode universal as well, or drop the"
+            " matrix flags."
+        )
+
+    def test_a_declared_matrix_under_a_cli_mode_still_names_the_tables(
+        self, tmp_path: Path
+    ) -> None:
+        """The matrix's own origin picks the wording, not the mode's.
+
+        Only ``--project-mode`` comes from the command line here, so a
+        refusal naming the flags would send the reader to a matrix they
+        never wrote.
+        """
+        path = write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n'
+            '[tool.nab.matrix]\npython = ">=3.12,<3.13"\n'
+            'platforms = ["macos_arm64"]\n'
+            '[tool.nab.environment]\npython = "3.12"\n'
+            'platform = "linux_x86_64"\n',
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(
+                path, discover_workspace=False, cli_overrides={"mode": "universal"}
+            )
+
+        assert str(excinfo.value) == (
+            "[tool.nab.matrix] and [tool.nab.environment] cannot both be set:"
+            " the matrix declares one environment per tuple, so a single"
+            " declared environment would contradict it.  Drop one."
+        )
 
     def test_matrix_without_universal_mode_rejected(self, tmp_path: Path) -> None:
         path = write(
@@ -1291,29 +1592,6 @@ class TestRequiresPython:
         ):
             plan_targets(config)
 
-    def test_python_override_error_names_the_flag(self, tmp_path: Path) -> None:
-        """The override is the flag's value, so the error names --python."""
-        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
-        config = read_pyproject_config(path)
-        with pytest.raises(
-            ConfigError,
-            match=r"--python must be a version like '3\.12' or '3\.12\.4',"
-            r" got '3\.12\.x'",
-        ):
-            with_python_override(config, "3.12.x")
-
-    def test_python_cannot_retarget_a_matrix(self, tmp_path: Path) -> None:
-        """The matrix names the python axis of every target it declares."""
-        path = write(
-            tmp_path,
-            '[tool.nab]\nmode = "universal"\n'
-            '[tool.nab.matrix]\npython = ">=3.12,<3.13"\n'
-            'platforms = ["linux_x86_64"]\n',
-        )
-        config = read_pyproject_config(path)
-        with pytest.raises(ConfigError, match="cannot retarget a resolve"):
-            with_python_override(config, "3.11")
-
     def test_a_matrix_the_declaration_admits_plans(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
@@ -1365,7 +1643,10 @@ class TestRequiresPython:
         with pytest.raises(ConfigError, match="excludes the resolve target"):
             plan_targets(config)
 
-        (target,) = plan_targets(with_python_override(config, "3.9"))
+        retargeted = read_pyproject_config(
+            path, cli_overrides={"environment": _cli_environment(python="3.9")}
+        )
+        (target,) = plan_targets(retargeted)
         assert target.python_version == "3.9"
 
     def test_project_table_is_the_fallback_source(self, tmp_path: Path) -> None:
@@ -2029,8 +2310,10 @@ class TestEnvironment:
             'platform = "linux_x86_64"\n'
             '[tool.nab]\nbuild-policy = "never"\n',
         )
-        config = read_pyproject_config(path)
-        (target,) = plan_targets(with_python_override(config, "3.14rc1"))
+        config = read_pyproject_config(
+            path, cli_overrides={"environment": _cli_environment(python="3.14rc1")}
+        )
+        (target,) = plan_targets(config)
 
         assert target.python_full_version == "3.14.0rc1"
         assert not target.is_minor_interval
@@ -2249,8 +2532,10 @@ class TestEnvironment:
         """The floor is checked against the python ``--python`` picked."""
         _host_python(monkeypatch, "3.12.11")
         path = write(tmp_path, _FREE_THREADED_NO_PYTHON)
-        config = read_pyproject_config(path)
-        (target,) = plan_targets(with_python_override(config, "3.14"))
+        config = read_pyproject_config(
+            path, cli_overrides={"environment": _cli_environment(python="3.14")}
+        )
+        (target,) = plan_targets(config)
 
         assert target.python_version == "3.14"
         assert target.tags.accepts("somepkg-1.0-cp314-cp314t-manylinux_2_28_x86_64.whl")
@@ -2268,12 +2553,30 @@ class TestEnvironment:
     def test_free_threaded_rejects_an_old_python_override(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``--python`` is held to the same floor a declared python is."""
+        """A python set for one run is held to the same floor a declared one is."""
         _host_python(monkeypatch, "3.14.0")
         path = write(tmp_path, _FREE_THREADED_NO_PYTHON)
-        config = read_pyproject_config(path)
         with pytest.raises(ConfigError, match="needs CPython 3.13 or newer"):
-            with_python_override(config, "3.12")
+            read_pyproject_config(
+                path,
+                cli_overrides={"environment": _cli_environment(python="3.12")},
+            )
+
+    def test_an_implementation_flag_alone_still_needs_a_platform(
+        self, tmp_path: Path
+    ) -> None:
+        """The file rule applies to the merged table however it was written."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+
+        with pytest.raises(
+            ConfigError,
+            match=r"\[tool\.nab\.environment\]\.implementation needs a platform",
+        ):
+            read_pyproject_config(
+                path,
+                discover_workspace=False,
+                cli_overrides={"environment": _cli_environment(implementation="pypy")},
+            )
 
     def test_must_be_table(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nenvironment = "no"\n')
@@ -2499,6 +2802,62 @@ class TestMarkerEnvironmentDeprecation:
         )
         with pytest.raises(ConfigError, match="are both set"):
             read_pyproject_config(path)
+
+    def test_both_surfaces_rejected_under_a_cli_key(self, tmp_path: Path) -> None:
+        """A file table beside the overlay still refuses, flag or no flag."""
+        path = write(
+            tmp_path,
+            '[tool.nab.environment]\npython = "3.12"\n'
+            "[tool.nab.marker-environment]\n"
+            'python_version = "3.11"\n',
+        )
+        with pytest.raises(ConfigError, match="are both set"):
+            read_pyproject_config(
+                path,
+                discover_workspace=False,
+                cli_overrides={"environment": _cli_environment(python="3.12")},
+            )
+
+    def test_a_cli_python_key_folds_onto_the_overlay(self, tmp_path: Path) -> None:
+        """The flag sets its axis over the translation, as it does over a table."""
+        path = write(
+            tmp_path,
+            "[tool.nab.marker-environment]\n"
+            'sys_platform = "darwin"\n'
+            'platform_machine = "arm64"\n',
+        )
+
+        config = read_pyproject_config(
+            path,
+            discover_workspace=False,
+            cli_overrides={"environment": _cli_environment(python="3.12")},
+        )
+
+        assert config.environment == EnvironmentConfig(
+            python="3.12", platform=PlatformSpec("macos_arm64")
+        )
+
+    def test_a_cli_implementation_key_folds_onto_the_overlay(
+        self, tmp_path: Path
+    ) -> None:
+        """The translated platform is the machine the implementation is modelled on."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nbuild-policy = "never"\n'
+            "[tool.nab.marker-environment]\n"
+            'sys_platform = "darwin"\n'
+            'platform_machine = "arm64"\n',
+        )
+
+        config = read_pyproject_config(
+            path,
+            discover_workspace=False,
+            cli_overrides={"environment": _cli_environment(implementation="pypy")},
+        )
+
+        assert config.environment == EnvironmentConfig(
+            platform=PlatformSpec("macos_arm64"), implementation="pypy"
+        )
 
     def test_must_be_table(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nmarker-environment = "no"\n')
@@ -4927,6 +5286,20 @@ class TestMatrix:
         with pytest.raises(ConfigError, match="must be a PEP 440 specifier"):
             read_pyproject_config(write(tmp_path, body))
 
+    def test_a_patch_python_axis_sends_a_file_user_to_the_table(
+        self, tmp_path: Path
+    ) -> None:
+        """The refusal names the table to write, not the file it read."""
+        body = self._matrix_body().replace('">=3.11,<3.14"', '"==3.11.4"')
+        path = write(tmp_path, body)
+
+        with pytest.raises(ConfigError) as caught:
+            read_pyproject_config(path)
+
+        message = str(caught.value)
+        assert "Put patch versions in [tool.nab.matrix.python-patches]." in message
+        assert f"in {path}" not in message
+
     def test_python_patches_must_be_table(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
@@ -5041,10 +5414,18 @@ class TestDigitRunPastIntLimit:
         ):
             read_pyproject_config(path)
 
-    def test_python_override(self, tmp_path: Path) -> None:
-        config = read_pyproject_config(write(tmp_path, "[tool.nab]\n"))
-        with pytest.raises(ConfigError, match="--python must be a version like"):
-            with_python_override(config, f"3.{_PAST_INT_LIMIT}")
+    def test_environment_python_flag(self, tmp_path: Path) -> None:
+        """The long form lands in the table, so its refusal names the key."""
+        path = write(tmp_path, "[tool.nab]\n")
+        with pytest.raises(
+            ConfigError, match="environment.python must be a version like"
+        ):
+            read_pyproject_config(
+                path,
+                cli_overrides={
+                    "environment": _cli_environment(python=f"3.{_PAST_INT_LIMIT}")
+                },
+            )
 
     def test_matrix_python_clause(self, tmp_path: Path) -> None:
         path = write(

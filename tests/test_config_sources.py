@@ -16,12 +16,14 @@ import logging
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 from nab.config.hooks import inspector_anchor
 from nab.config.ladder import (
+    BY_KEY,
     OPTIONS,
     EffectiveValue,
     Layer,
@@ -46,7 +48,20 @@ from nab.config.ladder import (
     render_list,
     resolve_config,
 )
-from nab.config.values import _INDEX_KEYS, MatrixConfig, SourceConfigError
+from nab.config.model import read_pyproject_config
+from nab.config.subflags import (
+    CliTable,
+    build_cli_tables,
+    cli_table_label,
+    fold_cli_table,
+)
+from nab.config.values import (
+    _INDEX_KEYS,
+    CliTableError,
+    MatrixConfig,
+    SourceConfigError,
+    parse_matrix,
+)
 from nab_index.multi_index import IndexConfig
 from nab_project.conflicts import (
     ConflictKind,
@@ -109,6 +124,56 @@ def _project(tmp_path: Path, tool_nab: str = "") -> Path:
     if tool_nab:
         body += f"[tool.nab]\n{tool_nab}"
     return _write(tmp_path / "pyproject.toml", body)
+
+
+# Every sub-flag parameter the assembler reads, none of them written.  A
+# case names the ones it sets and takes the rest from here.
+_TABLE_PARAMS: dict[str, Any] = {
+    "project_matrix_python": None,
+    "project_matrix_platforms": (),
+    "project_matrix_implementations": (),
+    "project_matrix_python_order": None,
+    "project_matrix_python_patches": (),
+    "project_environment_python": None,
+    "project_environment_platform": (),
+    "project_environment_implementation": None,
+}
+
+# The middle of every partial-matrix refusal.  Each case writes the ending
+# itself, since that is where the message names what has to be given.
+_NO_FILE_TABLE = (
+    " the project declares no [tool.nab.matrix] for the command line to narrow, so"
+)
+
+# A whole ``[tool.nab.matrix]`` as a file declares it, unparsed, which is
+# what the fold lays the command line's keys over.
+_FILE_MATRIX: dict[str, Any] = {
+    "python": ">=3.11,<3.14",
+    "platforms": [{"id": "linux_x86_64"}, {"id": "macos_arm64"}],
+    "implementations": ["cpython", "pypy"],
+    "python-order": "desc",
+    "python-patches": {"3.11": "3.11.4"},
+}
+
+
+def _table_params(**written: Any) -> dict[str, Any]:
+    """The sub-flag parameter map, with ``written`` replacing what a case sets."""
+    return {**_TABLE_PARAMS, **written}
+
+
+def _matrix_table(**written: Any) -> CliTable:
+    """The ``matrix`` table the named ``--project-matrix-*`` flags write."""
+    return build_cli_tables(_table_params(**written))["matrix"]
+
+
+def _overlay(**written: Any) -> dict[str, Any]:
+    """The ``matrix`` keys the named flags write, as a table to lay over a file's."""
+    return _matrix_table(**written).overlay
+
+
+def _fold(**written: Any) -> dict[str, Any]:
+    """Fold the named matrix flags over a project that declares no matrix."""
+    return fold_cli_table(BY_KEY["matrix"], _matrix_table(**written), None)
 
 
 class TestDefaults:
@@ -725,6 +790,18 @@ class TestDiscoverAndMissing:
 class TestCliLayerPreconditions:
     """``build_cli_layer`` only ever carries rows a command line can set."""
 
+    def test_a_table_key_never_reaches_the_cli_layer_parse(self) -> None:
+        """The fold parses the merged table, so the layer only carries it."""
+        table = _matrix_table(
+            project_matrix_python="==3.11",
+            project_matrix_platforms=("linux_x86_64",),
+        )
+
+        layer = build_cli_layer({"matrix": table})
+
+        assert layer.raw["matrix"] is table
+        assert dict(layer.values) == {}
+
     def test_file_only_key_is_refused(self) -> None:
         spec = next(s for s in OPTIONS if s.key == "vcs")
         assert spec.commands == ()
@@ -875,19 +952,30 @@ class TestRenderers:
 
     def test_render_explain_docstring_names_every_status(self, tmp_path: Path) -> None:
         # One source per status: the user file is rejected (project-scope
-        # key), the pyproject binding is shadowed, and the CLI wins.
-        _project(tmp_path, 'resolution = "lowest"\n')
+        # key), the pyproject binding is shadowed, the CLI wins, and a
+        # narrowed matrix marks the file table it was laid over.
+        _project(
+            tmp_path,
+            'resolution = "lowest"\nmode = "universal"\n'
+            '[tool.nab.matrix]\npython = ">=3.11,<3.14"\n'
+            'platforms = ["linux_x86_64", "macos_arm64"]\n',
+        )
         user = _write(tmp_path / "usr" / "nab.toml", 'resolution = "highest"\n')
 
         eff = _resolve(
             SourceRoots(user_toml=user, project_dir=tmp_path),
-            cli={"resolution": "highest"},
+            cli={
+                "resolution": "highest",
+                "matrix": _matrix_table(project_matrix_platforms=("macos_arm64",)),
+            },
             collect_rejected=True,
         )
-        printed = render_explain(eff, "resolution", include_rejected=True)
+        printed = render_explain(
+            eff, "resolution", include_rejected=True
+        ) + render_explain(eff, "matrix")
 
         doc = render_explain.__doc__ or ""
-        for status in ("winner", "shadowed", "rejected"):
+        for status in ("winner", "shadowed", "rejected", "merged"):
             assert status in printed, status
             assert f"``{status}``" in doc, status
 
@@ -959,7 +1047,9 @@ class TestReproducibilityNotice:
                 "project_build_group": None,
                 "project_constraint": (),
                 "project_default_group": ("dev",),
-            }
+                **_TABLE_PARAMS,
+            },
+            flags={},
         )
         assert overrides == {
             "resolution": "lowest",
@@ -968,6 +1058,419 @@ class TestReproducibilityNotice:
             "dist-policy": "sdist-only",
             "default-groups": ("dev",),
         }
+
+
+class TestBuildCliTables:
+    """The sub-flags of one table assemble into the keys they wrote."""
+
+    def test_a_cli_key_records_the_flag_that_wrote_it(self) -> None:
+        """Nothing else knows how to spell a sub-flag, so the key carries it."""
+        table = build_cli_tables(
+            _table_params(project_matrix_platforms=("linux_x86_64",))
+        )["matrix"]
+
+        assert isinstance(table, CliTable)
+        (key,) = table.keys
+        assert key.key == "platforms"
+        assert key.flag == "--project-matrix-platforms"
+        assert key.tokens == ("linux_x86_64",)
+        assert key.written == "linux_x86_64"
+
+    def test_a_flag_alias_names_the_short_form(self) -> None:
+        """``--python`` writes the environment's python axis under its own name."""
+        table = build_cli_tables(
+            _table_params(project_environment_python="3.12"),
+            flags={"project_environment_python": "--python"},
+        )["environment"]
+
+        (key,) = table.keys
+        assert key.key == "python"
+        assert key.flag == "--python"
+        assert key.written == "3.12"
+
+    def test_a_platform_flag_reads_one_item_with_its_knobs(self) -> None:
+        """The environment holds one machine, so its tokens read as one table."""
+        table = build_cli_tables(
+            _table_params(
+                project_environment_platform=("macos_arm64", "runs-on-macos=14.0")
+            )
+        )["environment"]
+
+        assert table.overlay == {
+            "platform": {"id": "macos_arm64", "runs-on-macos": "14.0"}
+        }
+
+    def test_a_second_platform_id_is_refused(self) -> None:
+        """A second bare token opens a second item on a key that holds one."""
+        with pytest.raises(CliTableError) as caught:
+            build_cli_tables(
+                _table_params(
+                    project_environment_platform=("macos_arm64", "linux_x86_64")
+                )
+            )
+
+        assert str(caught.value) == (
+            "--project-environment-platform takes one platform, and"
+            " 'linux_x86_64' opens a second"
+        )
+
+    def test_a_knob_before_the_platform_is_refused_the_same_way(self) -> None:
+        """One item or many, the knob grammar is the same code."""
+        with pytest.raises(SourceConfigError) as caught:
+            build_cli_tables(
+                _table_params(project_environment_platform=("runs-on-macos=14.0",))
+            )
+
+        assert str(caught.value) == (
+            "--project-environment-platform reads 'runs-on-macos=14.0' as a"
+            " key on the item before it, and no item is open; write the id"
+            " first"
+        )
+
+    def test_platform_tokens_group_into_items(self) -> None:
+        """A bare token and an ``id=`` token both open an item; the rest attach."""
+        assembled = _overlay(
+            project_matrix_python="==3.11",
+            project_matrix_platforms=(
+                "windows_amd64",
+                "linux_x86_64",
+                "libc=musl",
+                "runs-on-libc=1.2",
+                "id=macos_arm64",
+                "runs-on-macos=14.0",
+            ),
+        )
+
+        assert assembled == {
+            "python": "==3.11",
+            "platforms": [
+                {"id": "windows_amd64"},
+                {"id": "linux_x86_64", "libc": "musl", "runs-on-libc": "1.2"},
+                {"id": "macos_arm64", "runs-on-macos": "14.0"},
+            ],
+        }
+
+    def test_a_true_token_is_the_toml_boolean(self) -> None:
+        """A knob reaching its hook as a string would be refused as not a bool."""
+        table = _overlay(
+            project_matrix_python="==3.13",
+            project_matrix_platforms=(
+                "linux_x86_64",
+                "free-threaded=true",
+                "platform-release=true5",
+                "id=macos_arm64",
+                "free-threaded=false",
+            ),
+        )
+
+        assert table["platforms"] == [
+            {
+                "id": "linux_x86_64",
+                "free-threaded": True,
+                "platform-release": "true5",
+            },
+            {"id": "macos_arm64", "free-threaded": False},
+        ]
+        assert parse_matrix(table, "--project-matrix-*").python == "==3.13"
+
+    def test_patches_and_implementations_read_as_a_table_and_a_list(self) -> None:
+        assembled = _overlay(
+            project_matrix_python="==3.11",
+            project_matrix_platforms=("linux_x86_64",),
+            project_matrix_implementations=("cpython", "pypy"),
+            project_matrix_python_order="desc",
+            project_matrix_python_patches=("3.11=3.11.4",),
+        )
+
+        assert assembled == {
+            "python": "==3.11",
+            "platforms": [{"id": "linux_x86_64"}],
+            "implementations": ["cpython", "pypy"],
+            "python-order": "desc",
+            "python-patches": {"3.11": "3.11.4"},
+        }
+
+    def test_no_matrix_flag_leaves_no_matrix_key(self) -> None:
+        """A key no sub-flag set keeps whatever the file ladder resolved."""
+        assert build_cli_tables(_table_params()) == {}
+
+    def test_a_flag_with_no_tokens_counts_as_unwritten(self) -> None:
+        """The walk stores ``()`` for a star with no token, as for an absent one."""
+        table = _overlay(
+            project_matrix_python="==3.11",
+            project_matrix_platforms=("linux_x86_64",),
+            project_matrix_implementations=(),
+        )
+
+        assert "implementations" not in table
+
+    def test_a_knob_before_any_platform_is_refused(self) -> None:
+        with pytest.raises(SourceConfigError) as caught:
+            build_cli_tables(
+                _table_params(
+                    project_matrix_python="==3.11",
+                    project_matrix_platforms=("libc=musl",),
+                )
+            )
+
+        assert str(caught.value) == (
+            "--project-matrix-platforms reads 'libc=musl' as a key on the item"
+            " before it, and no item is open; write the id first"
+        )
+
+    def test_a_pair_token_needs_an_equals(self) -> None:
+        with pytest.raises(SourceConfigError) as caught:
+            build_cli_tables(
+                _table_params(
+                    project_matrix_python="==3.11",
+                    project_matrix_platforms=("linux_x86_64",),
+                    project_matrix_python_patches=("3.11",),
+                )
+            )
+
+        assert str(caught.value) == (
+            "--project-matrix-python-patches takes KEY=VALUE tokens, and '3.11'"
+            " has no '='"
+        )
+
+    def test_a_pair_key_is_written_once(self) -> None:
+        """TOML refuses a key written twice, and so does the flag that spells it."""
+        with pytest.raises(SourceConfigError) as caught:
+            build_cli_tables(
+                _table_params(
+                    project_matrix_python="==3.11",
+                    project_matrix_platforms=("linux_x86_64",),
+                    project_matrix_python_patches=("3.11=3.11.4", "3.11=3.11.9"),
+                )
+            )
+
+        assert str(caught.value) == (
+            "--project-matrix-python-patches sets '3.11' twice"
+        )
+
+    def test_an_item_key_is_written_once(self) -> None:
+        """TOML refuses a repeated inline-table key, and so does the item form."""
+        with pytest.raises(SourceConfigError) as caught:
+            build_cli_tables(
+                _table_params(
+                    project_matrix_python="==3.11",
+                    project_matrix_platforms=(
+                        "linux_x86_64",
+                        "libc=glibc",
+                        "libc=musl",
+                    ),
+                )
+            )
+
+        assert str(caught.value) == (
+            "--project-matrix-platforms sets 'libc' twice on 'linux_x86_64'"
+        )
+
+    def test_a_patch_python_axis_sends_a_cli_user_to_the_flag(self) -> None:
+        """The refusal names a flag the user can type, not a table they have not."""
+        table = _overlay(
+            project_matrix_python=">=3.11.4",
+            project_matrix_platforms=("linux_x86_64",),
+        )
+
+        with pytest.raises(SourceConfigError) as caught:
+            parse_matrix(table, "--project-matrix-*")
+
+        message = str(caught.value)
+        assert "--project-matrix-*.python axis is a language" in message
+        assert "Put patch versions in --project-matrix-python-patches." in message
+        assert "[tool.nab." not in message
+
+    def test_a_table_key_is_labelled_by_its_flag_family(self) -> None:
+        """The label the fold parses each merged table under."""
+        assert cli_table_label(BY_KEY["matrix"]) == "--project-matrix-*"
+        assert cli_table_label(BY_KEY["environment"]) == "--project-environment-*"
+
+
+class TestFoldCliTable:
+    """The command line's keys, laid over the table the project files declare."""
+
+    def test_a_flag_replaces_only_the_key_it_names(self) -> None:
+        """A key the line left out keeps the file's value."""
+        merged = fold_cli_table(
+            BY_KEY["matrix"],
+            _matrix_table(project_matrix_platforms=("macos_arm64",)),
+            _FILE_MATRIX,
+        )
+
+        assert merged == {
+            **_FILE_MATRIX,
+            "platforms": [{"id": "macos_arm64"}],
+        }
+
+    def test_a_list_flag_replaces_the_files_list_whole(self) -> None:
+        """Nothing appends: the flag's one platform replaces the file's two."""
+        merged = fold_cli_table(
+            BY_KEY["matrix"],
+            _matrix_table(project_matrix_platforms=("macos_arm64",)),
+            _FILE_MATRIX,
+        )
+
+        assert merged["platforms"] == [{"id": "macos_arm64"}]
+
+    def test_no_file_table_requires_every_needed_key(self) -> None:
+        """A declared but empty table is still a table, so only ``None`` refuses."""
+        table = _matrix_table(project_matrix_platforms=("linux_x86_64",))
+
+        with pytest.raises(CliTableError) as caught:
+            fold_cli_table(BY_KEY["matrix"], table, None)
+
+        assert str(caught.value) == (
+            "--project-matrix-platforms is set but --project-matrix-python is"
+            f" not;{_NO_FILE_TABLE} both are required."
+        )
+        assert fold_cli_table(BY_KEY["matrix"], table, {}) == {
+            "platforms": [{"id": "linux_x86_64"}]
+        }
+
+    def test_a_file_table_lifts_the_needed_check(self) -> None:
+        """One flag narrows a declared matrix; the pair is not required."""
+        merged = fold_cli_table(
+            BY_KEY["matrix"],
+            _matrix_table(project_matrix_python_order="asc"),
+            _FILE_MATRIX,
+        )
+
+        assert merged["python-order"] == "asc"
+        assert merged["python"] == _FILE_MATRIX["python"]
+
+    def test_a_partial_matrix_names_the_flag_that_is_missing(self) -> None:
+        with pytest.raises(CliTableError) as platforms_only:
+            _fold(project_matrix_platforms=("linux_x86_64",))
+
+        assert str(platforms_only.value) == (
+            "--project-matrix-platforms is set but --project-matrix-python is"
+            f" not;{_NO_FILE_TABLE} both are required."
+        )
+
+        with pytest.raises(CliTableError) as python_only:
+            _fold(project_matrix_python="==3.11")
+
+        assert str(python_only.value) == (
+            "--project-matrix-python is set but --project-matrix-platforms is"
+            f" not;{_NO_FILE_TABLE} both are required."
+        )
+
+    def test_a_partial_matrix_names_every_flag_on_both_sides(self) -> None:
+        """Two written and two missing: both lists take the plural verb."""
+        with pytest.raises(CliTableError) as caught:
+            _fold(
+                project_matrix_implementations=("cpython",),
+                project_matrix_python_order="asc",
+            )
+
+        assert str(caught.value) == (
+            "--project-matrix-implementations and --project-matrix-python-order"
+            " are set but --project-matrix-python and"
+            f" --project-matrix-platforms are not;{_NO_FILE_TABLE}"
+            " --project-matrix-python and --project-matrix-platforms are"
+            " required."
+        )
+
+    def test_a_partial_matrix_names_the_required_pair_not_the_flags_it_lists(
+        self,
+    ) -> None:
+        """A flag that is not required is named as written, never as required."""
+        with pytest.raises(CliTableError) as caught:
+            _fold(
+                project_matrix_python="==3.11",
+                project_matrix_implementations=("cpython",),
+            )
+
+        assert str(caught.value) == (
+            "--project-matrix-python and --project-matrix-implementations are"
+            " set but --project-matrix-platforms is"
+            f" not;{_NO_FILE_TABLE} --project-matrix-python and"
+            " --project-matrix-platforms are required."
+        )
+
+
+class TestTheFoldOnTheLadder:
+    """The CLI keys are laid over the file table while the ladder resolves."""
+
+    _MATRIX = 'python = ">=3.11,<3.14"\nplatforms = ["linux_x86_64", "macos_arm64"]\n'
+
+    def _both_project_files(self, tmp_path: Path, nab_toml_matrix: str) -> None:
+        """Declare a matrix in pyproject and the project-dir nab.toml alike."""
+        _project(
+            tmp_path,
+            'mode = "universal"\n[tool.nab.matrix]\n'
+            f'{self._MATRIX}implementations = ["cpython"]\n',
+        )
+        _write(
+            tmp_path / "nab.toml",
+            f'mode = "universal"\n[matrix]\n{nab_toml_matrix}',
+        )
+
+    def test_the_file_matrix_table_is_the_fold_base(self, tmp_path: Path) -> None:
+        """A key the flags leave unnamed keeps the value the file declared."""
+        self._both_project_files(tmp_path, self._MATRIX)
+
+        ev = _resolve(
+            SourceRoots(project_dir=tmp_path),
+            cli={"matrix": _matrix_table(project_matrix_python_order="desc")},
+        )["matrix"]
+
+        assert ev.origin.kind is SourceKind.CLI
+        assert ev.value.python_order == "desc"
+        assert ev.value.python == ">=3.11,<3.14"
+        assert [p.platform_id for p in ev.value.platforms] == [
+            "linux_x86_64",
+            "macos_arm64",
+        ]
+
+    def test_conflicting_project_tables_are_refused_before_the_fold(
+        self, tmp_path: Path
+    ) -> None:
+        """The rank-3 tie is decided first, so no fold reads a disputed table."""
+        self._both_project_files(
+            tmp_path, 'python = ">=3.11,<3.14"\nplatforms = ["macos_arm64"]\n'
+        )
+
+        with pytest.raises(SourceConfigError) as caught:
+            _resolve(
+                SourceRoots(project_dir=tmp_path),
+                cli={"matrix": _matrix_table(project_matrix_python_order="desc")},
+            )
+
+        assert "conflicting values" in str(caught.value)
+
+    def test_a_fold_refusal_carries_the_flag_family(self, tmp_path: Path) -> None:
+        """The merged table is parsed under the family, not under a null flag."""
+        _project(tmp_path, f'mode = "universal"\n[tool.nab.matrix]\n{self._MATRIX}')
+
+        with pytest.raises(CliTableError) as caught:
+            _resolve(
+                SourceRoots(project_dir=tmp_path),
+                cli={
+                    "matrix": _matrix_table(
+                        project_matrix_platforms=("linux_x86_64", "linux_x86_64")
+                    )
+                },
+            )
+
+        assert str(caught.value).startswith("--project-matrix-*.platforms")
+
+    def test_the_inspector_and_the_resolve_fold_alike(self, tmp_path: Path) -> None:
+        """One fold, so the inspector cannot report a value no resolve sees."""
+        path = _project(
+            tmp_path, f'mode = "universal"\n[tool.nab.matrix]\n{self._MATRIX}'
+        )
+        table = _matrix_table(project_matrix_platforms=("macos_arm64",))
+
+        inspected = _resolve(SourceRoots(project_dir=tmp_path), cli={"matrix": table})[
+            "matrix"
+        ].value
+        resolved = read_pyproject_config(
+            path, discover_workspace=False, cli_overrides={"matrix": table}
+        ).matrix
+
+        assert inspected == resolved
 
 
 class TestParserFoldHelpers:

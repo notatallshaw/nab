@@ -9,7 +9,8 @@ A run reads seven sources at six ranks, low precedence to high: the built-in
 defaults, a system ``nab.toml``, a user ``nab.toml``, then ``pyproject.toml``'s
 ``[tool.nab]`` and a project-dir ``nab.toml`` sharing one rank, then ``NAB_*``
 and finally the CLI.  Each is read into a :class:`Layer` of typed values, and
-:func:`resolve_config` gives every row the whole value the highest source that
+:func:`resolve_config` gives every row, bar a table key the CLI sub-flags
+fold over the table the files declare, the whole value the highest source that
 bound it supplied.  The category gate runs while a source is read: a
 project-scope option in a user ``nab.toml``, or a user-scope option in
 ``[tool.nab]``, is a :class:`~nab.config.values.SourceConfigError` rather than
@@ -42,7 +43,15 @@ from .. import env
 from ..optiondefs import Opt, Scope
 from ..optiontable import ALL
 from .hooks import declaring_dir
-from .values import SourceConfigError
+from .subflags import (
+    BY_PARENT,
+    CliTable,
+    build_cli_tables,
+    cli_table_label,
+    fold_cli_table,
+    render_cli_table,
+)
+from .values import CliTableError, SourceConfigError
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -172,18 +181,35 @@ def scope_label(kind: SourceKind) -> str:
     return "project" if kind is SourceKind.PYPROJECT else kind.value
 
 
-class Layer(ValueType):
-    """A set of (key -> value) bindings discovered from one source."""
+# A source that declared no table a sub-flag spells.
+_NO_RAW: Mapping[str, Any] = {}
 
-    __slots__ = __match_args__ = ("origin", "values")
+
+class Layer(ValueType):
+    """A set of (key -> value) bindings discovered from one source.
+
+    ``raw`` carries, for a key that sub-rows spell, the table as the
+    source wrote it: unparsed for a file source, and the
+    :class:`~nab.config.subflags.CliTable` for the CLI layer.  The fold
+    lays one over the other and parses the merged table.
+    """
+
+    __slots__ = __match_args__ = ("origin", "values", "raw")
 
     origin: Origin
     values: Mapping[str, Any]
+    raw: Mapping[str, Any]
 
-    def __init__(self, origin: Origin, values: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        origin: Origin,
+        values: Mapping[str, Any],
+        raw: Mapping[str, Any] = _NO_RAW,
+    ) -> None:
         """Record the bindings ``origin`` supplied."""
         self.origin = origin
         self.values = values
+        self.raw = raw
 
 
 class RejectedLayer(ValueType):
@@ -211,7 +237,14 @@ class RejectedLayer(ValueType):
 class EffectiveValue(ValueType):
     """One option's winning value plus its full shadowed stack."""
 
-    __slots__ = __match_args__ = ("spec", "value", "origin", "stack", "rejected")
+    __slots__ = __match_args__ = (
+        "spec",
+        "value",
+        "origin",
+        "stack",
+        "rejected",
+        "cli_table",
+    )
 
     spec: Opt
     value: Any
@@ -220,6 +253,8 @@ class EffectiveValue(ValueType):
     # the last of which is the winner.
     stack: tuple[tuple[Origin, Any], ...]
     rejected: tuple[RejectedLayer, ...]
+    # The keys the command line set, on a table key it folded into.
+    cli_table: CliTable | None
 
     def __init__(
         self,
@@ -228,6 +263,7 @@ class EffectiveValue(ValueType):
         origin: Origin,
         stack: tuple[tuple[Origin, Any], ...],
         rejected: tuple[RejectedLayer, ...] = (),
+        cli_table: CliTable | None = None,
     ) -> None:
         """Record the value ``origin`` bound for ``spec``."""
         self.spec = spec
@@ -235,6 +271,7 @@ class EffectiveValue(ValueType):
         self.origin = origin
         self.stack = stack
         self.rejected = rejected
+        self.cli_table = cli_table
 
 
 class SourceRoots(ValueType):
@@ -277,7 +314,9 @@ class SourceRoots(ValueType):
         self.pyproject = pyproject
 
 
-def build_cli_overrides(locals_by_param: Mapping[str, Any]) -> dict[str, Any]:
+def build_cli_overrides(
+    locals_by_param: Mapping[str, Any], flags: Mapping[str, str]
+) -> dict[str, Any]:
     """Map ``{cli_param: value}`` to a registry-keyed override dict.
 
     Iterates :data:`OPTIONS`, reads each row's ``cli_param`` out of
@@ -285,9 +324,13 @@ def build_cli_overrides(locals_by_param: Mapping[str, Any]) -> dict[str, Any]:
     An unset scalar flag is ``None`` and an unset repeatable flag is an
     empty tuple (the append-action default); both are omitted so they do not
     shadow the file ladder.  A file-only row (``cli_param`` is ``None``)
-    has no CLI flag, so it is skipped entirely.  Both the run subcommands
-    and ``nab config`` build their override dict through this single
-    helper, keyed off the registry rather than a per-option if-chain.
+    has no CLI flag; a table key is spelled by its sub-rows instead, and
+    :func:`nab.config.subflags.build_cli_tables` collects the keys the
+    line set for it.  ``flags`` names the flag a parameter was spelled by
+    when that is not the row's own flag, and is empty for a line with no
+    such parameter.  Both the run subcommands and ``nab config`` build
+    their override dict through this single helper, keyed off the registry
+    rather than a per-option if-chain.
     """
     out: dict[str, Any] = {}
     for spec in OPTIONS:
@@ -297,6 +340,7 @@ def build_cli_overrides(locals_by_param: Mapping[str, Any]) -> dict[str, Any]:
         if value is None or (isinstance(value, tuple) and not value):
             continue
         out[spec.name] = value
+    out.update(build_cli_tables(locals_by_param, flags))
     return out
 
 
@@ -353,6 +397,7 @@ def _load_toml_layer(
     raw = _read_raw_table(path, kind)
     origin = Origin(kind, str(path))
     values: dict[str, Any] = {}
+    raw_tables: dict[str, Any] = {}
     # Carry the declaring file's directory structurally so a relative
     # local-source path resolves against it.
     with declaring_dir(path.parent):
@@ -383,7 +428,9 @@ def _load_toml_layer(
                 msg = f"{path}: {reason}"
                 raise SourceConfigError(msg)
             values[key] = spec.parse(value, where)
-    return Layer(origin, values)
+            if key in BY_PARENT:
+                raw_tables[key] = value
+    return Layer(origin, values, raw_tables)
 
 
 def _gate_reason(spec: Opt, kind: SourceKind) -> str:
@@ -630,12 +677,18 @@ def resolve_config(
 
     Whatever the row's type, the highest source that binds the key
     supplies the whole value: a list or table from a higher source
-    replaces the one below rather than adding to it.
+    replaces the one below rather than adding to it.  The command line is
+    the one exception, and only on a key its sub-flags spell: those keys
+    are laid over the table the files declare and the merged table goes
+    to the key's parse hook.
     """
     all_layers = [*layers, env_layer, cli_layer]
     out: dict[str, EffectiveValue] = {}
     for spec in OPTIONS:
         stack = _stack_for(spec, all_layers)
+        cli_table = cli_layer.raw.get(spec.name)
+        if cli_table is not None:
+            stack = [*stack, _folded(spec, cli_table, all_layers)]
         rejected_for_key = tuple(r for r in rejected if r.key == spec.name)
         if stack:
             origin, value = stack[-1]
@@ -647,8 +700,43 @@ def resolve_config(
             origin=origin,
             stack=tuple(stack) if stack else ((origin, value),),
             rejected=rejected_for_key,
+            cli_table=cli_table,
         )
     return out
+
+
+def _folded(
+    spec: Opt, table: CliTable, all_layers: Sequence[Layer]
+) -> tuple[Origin, Any]:
+    """Parse the table the command line wrote over the one the files declare.
+
+    The parse hook sees the merged table, so a knob the file declared and a
+    platform the flag named are checked against each other.  The file table
+    is parsed alone as well, when its layer is read, so a cross-key rule the
+    flag would have satisfied can still refuse there.
+    """
+    merged = fold_cli_table(spec, table, _file_raw(spec, all_layers))
+    try:
+        value = spec.parse(merged, cli_table_label(spec))
+    except SourceConfigError as exc:
+        raise CliTableError(str(exc)) from exc
+    return Origin(SourceKind.CLI, "cli"), value
+
+
+def _file_raw(spec: Opt, all_layers: Iterable[Layer]) -> Any | None:
+    """Return the unparsed table the files declared, or ``None`` for none.
+
+    Only the two project files can declare a table a sub-flag spells, and
+    ``_stack_for`` has already refused them declaring it differently, so the
+    fold reads the same table whichever of them ranks highest.
+    """
+    found = [
+        (layer.origin, layer.raw[spec.name])
+        for layer in all_layers
+        if spec.name in layer.raw and layer.origin.kind is not SourceKind.CLI
+    ]
+    found.sort(key=_rank)
+    return found[-1][1] if found else None
 
 
 def _stack_for(spec: Opt, all_layers: Iterable[Layer]) -> list[tuple[Origin, Any]]:
@@ -664,16 +752,19 @@ def _stack_for(spec: Opt, all_layers: Iterable[Layer]) -> list[tuple[Origin, Any
         for layer in all_layers
         if spec.name in layer.values
     ]
-    # Sort by precedence; break the pyproject/project-dir rank-3 tie so
-    # the project-dir nab.toml (False < True) sorts last and wins.
-    found.sort(
-        key=lambda item: (
-            PRECEDENCE[item[0].kind],
-            item[0].kind is SourceKind.PROJECT_TOML,
-        )
-    )
+    found.sort(key=_rank)
     _check_project_file_conflict(spec, found)
     return found
+
+
+def _rank(binding: tuple[Origin, Any]) -> tuple[int, bool]:
+    """Sort key for one binding: source precedence, then the rank-3 tie.
+
+    The pyproject/project-dir tie is broken so the project-dir nab.toml
+    (``False < True``) sorts last and wins.
+    """
+    origin, _value = binding
+    return (PRECEDENCE[origin.kind], origin.kind is SourceKind.PROJECT_TOML)
 
 
 def _check_project_file_conflict(
@@ -715,22 +806,29 @@ def build_cli_layer(values: Mapping[str, Any]) -> Layer:
     value is normalised through its registry row so the effective value
     carries the typed form regardless of how the flag was spelled.
 
-    A row that declares no command (``commands`` is empty) is set from a
-    file alone, so a value for one is the caller's mistake and raises
-    ``ValueError`` rather than the user-facing ``SourceConfigError``.
+    A row with no command line is set from a file alone, so a value for
+    one is the caller's mistake and raises ``ValueError`` rather than the
+    user-facing ``SourceConfigError``.  A table key's value is a
+    :class:`~nab.config.subflags.CliTable`, carried unparsed:
+    :func:`resolve_config` parses it once, folded over whatever the
+    project files declared.
     """
     parsed: dict[str, Any] = {}
+    raw_tables: dict[str, Any] = {}
     for key, value in values.items():
         spec = BY_KEY[key]
+        if isinstance(value, CliTable):
+            raw_tables[key] = value
+            continue
         if not spec.commands:
             msg = f"{key} takes no command line, so no CLI layer can set it"
             raise ValueError(msg)
 
         # A repeatable flag arrives as a tuple; the parse hooks expect a
         # TOML list, so normalise it here.
-        raw = list(value) if isinstance(value, tuple) else value
-        parsed[key] = spec.parse(raw, str(spec.cli_flag))
-    return Layer(Origin(SourceKind.CLI, "cli"), parsed)
+        raw_value = list(value) if isinstance(value, tuple) else value
+        parsed[key] = spec.parse(raw_value, str(spec.cli_flag))
+    return Layer(Origin(SourceKind.CLI, "cli"), parsed, raw_tables)
 
 
 def _ordered(effective: Mapping[str, EffectiveValue]) -> list[EffectiveValue]:
@@ -817,24 +915,33 @@ def render_explain(
 ) -> str:
     """Render the row's help, its documentation page and its shadowed stack.
 
-    The header names the key, its scope and its type; under it come the
-    row's own help line and the page that documents it.  The highest
-    source is the ``winner`` and carries a ``>`` gutter; every source it
-    beats is ``shadowed``.  With ``include_rejected`` the
-    category-rejected sources (a source that tried to set ``key`` but was
-    not allowed) are listed too, labelled ``rejected``.
+    The header names the key, its scope and its type, and ends with the
+    effective value; under it come the row's own help line and the page
+    that documents it.  The highest source is the ``winner`` and carries a
+    ``>`` gutter; every source it beats is ``shadowed``.  A
+    ``--project-<table>-<key>`` flag replaces one key of the table below
+    it, so that source is ``merged`` rather than shadowed: it supplied the
+    rest of the value.  With ``include_rejected`` the category-rejected
+    sources (a source that tried to set ``key`` but was not allowed) are
+    listed too, labelled ``rejected``.
     """
     ev = _require_key(effective, key)
+    header = f"{key} ({ev.spec.scope_name}, {_type_label(ev.spec)})"
     lines = [
-        f"{key} ({ev.spec.scope_name}, {_type_label(ev.spec)})",
+        f"{header} = {ev.spec.render(ev.value)}",
         f"  {ev.spec.help}",
         f"  see {docs_url(ev.spec)}",
     ]
     winner_index = len(ev.stack) - 1
     for i, (origin, value) in enumerate(ev.stack):
-        gutter = ">" if i == winner_index else " "
-        status = "winner" if i == winner_index else "shadowed"
-        rendered = ev.spec.render(value)
+        winner = i == winner_index
+        gutter = ">" if winner else " "
+        status = _explain_status(ev, i, winner_index)
+        rendered = (
+            render_cli_table(ev.cli_table)
+            if winner and ev.cli_table is not None
+            else ev.spec.render(value)
+        )
         lines.append(
             f"{gutter} {origin.scope:<{_LIST_SCOPE_W}} {rendered:<{_LIST_VALUE_W}}"
             f" {status:<{_EXPLAIN_STATUS_W}} {origin.label}"
@@ -846,6 +953,20 @@ def render_explain(
             for rej in ev.rejected
         )
     return "\n".join(lines) + "\n"
+
+
+def _explain_status(ev: EffectiveValue, index: int, winner_index: int) -> str:
+    """Name one rung's standing: it won, the fold read it, or it lost.
+
+    Only the winner's immediate predecessor can be ``merged``: that is the
+    binding the command line's keys were laid over.  A second source at the
+    same rank lost the tie, so it contributed nothing.
+    """
+    if index == winner_index:
+        return "winner"
+    if ev.cli_table is not None and index == winner_index - 1:
+        return "merged"
+    return "shadowed"
 
 
 def docs_path(row: Opt) -> str:
@@ -893,14 +1014,18 @@ def project_cli_override_records(
     A PROJECT option changes the resolved set, so a CLI override means the
     result no longer derives from the committed files alone.  These pairs
     drive both the reproducibility notice and the auditable record written
-    into the lockfile provenance.  A file-only row (``cli_flag`` is ``None``)
-    is never CLI-settable, so it cannot appear.
+    into the lockfile provenance.  A table key is recorded flag by flag,
+    each with the tokens that flag was given; a row with no flag at all is
+    set from a file alone and cannot appear.
     """
     records: list[tuple[str, str]] = []
     for spec in OPTIONS:
         if spec.scope is not Scope.PROJECT:
             continue
         ev = effective[spec.name]
+        if ev.cli_table is not None:
+            records.extend((key.flag, key.written) for key in ev.cli_table.keys)
+            continue
         if ev.origin.kind is not SourceKind.CLI or spec.cli_flag is None:
             continue
         records.append((spec.cli_flag, spec.render(ev.value)))

@@ -21,6 +21,8 @@ import tomli
 
 from nab_project import toml_io
 from nab_project.paths import PathState, path_state
+from nab_provider._vendor.packaging.version import Version
+from nab_provider.policy import ResolveMode
 
 from . import env
 from .config.hooks import inspector_anchor
@@ -39,7 +41,8 @@ from .config.ladder import (
     read_env_layer,
     resolve_config,
 )
-from .config.values import SourceConfigError
+from .config.subflags import CliTable
+from .config.values import CliTableError, SourceConfigError
 from .output import printer
 
 if TYPE_CHECKING:
@@ -183,6 +186,12 @@ class RunSettings:
     cli_project_overrides: tuple[tuple[str, str], ...]
 
 
+_BOTH_PYTHON_AXES = (
+    "--python and --project-environment-python both set the python axis;"
+    " pass one of them."
+)
+
+
 def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a registry key
     *,
     cli_resolution: str | None,
@@ -201,6 +210,15 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
     cli_default_group: tuple[str, ...] = (),
     cli_base_group: str | None = None,
     cli_build_group: str | None = None,
+    cli_matrix_python: str | None = None,
+    cli_matrix_platforms: tuple[str, ...] = (),
+    cli_matrix_implementations: tuple[str, ...] = (),
+    cli_matrix_python_order: str | None = None,
+    cli_matrix_python_patches: tuple[str, ...] = (),
+    cli_python: str | None = None,
+    cli_environment_python: str | None = None,
+    cli_environment_platform: tuple[str, ...] = (),
+    cli_environment_implementation: str | None = None,
 ) -> dict[str, object]:
     """Build the registry-keyed CLI override dict from the named flags.
 
@@ -208,29 +226,79 @@ def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a reg
     subcommands and ``nab config`` route their flag values through here so
     the literal lives once.  ``build_cli_overrides`` then keeps only the
     keys the user actually set.  USER options and the ``--project-*``
-    overrides for the scalar and array PROJECT options pass through; the
-    structured PROJECT tables stay file-only.
+    overrides for the scalar and array PROJECT options pass through; a
+    structured table has no flag of its own, so the ``--project-matrix-*``
+    and ``--project-environment-*`` flags spell one key each of ``matrix``
+    and ``environment``.  ``--python`` is the short form of
+    ``--project-environment-python``, recorded under its own name; writing
+    both is refused.  A refusal assembling a table exits 1 rather than
+    raising.
     """
-    return build_cli_overrides(
-        {
-            "project_resolution": cli_resolution,
-            "offline": cli_offline,
-            "cache_dir": cli_cache_dir,
-            "http_backend": cli_http_backend,
-            "max_concurrency": cli_max_concurrency,
-            "project_mode": cli_mode,
-            "project_requires_python": cli_requires_python,
-            "project_uploaded_prior_to": cli_uploaded_prior_to,
-            "project_dist_policy": cli_dist_policy,
-            "project_build_policy": cli_build_policy,
-            "project_build_requires_depth": cli_build_requires_depth,
-            "project_decision_order": cli_decision_order,
-            "project_constraint": cli_constraint,
-            "project_default_group": cli_default_group,
-            "project_base_group": cli_base_group,
-            "project_build_group": cli_build_group,
-        }
-    )
+    values: dict[str, object] = {
+        "project_resolution": cli_resolution,
+        "offline": cli_offline,
+        "cache_dir": cli_cache_dir,
+        "http_backend": cli_http_backend,
+        "max_concurrency": cli_max_concurrency,
+        "project_mode": cli_mode,
+        "project_requires_python": cli_requires_python,
+        "project_uploaded_prior_to": cli_uploaded_prior_to,
+        "project_dist_policy": cli_dist_policy,
+        "project_build_policy": cli_build_policy,
+        "project_build_requires_depth": cli_build_requires_depth,
+        "project_decision_order": cli_decision_order,
+        "project_constraint": cli_constraint,
+        "project_default_group": cli_default_group,
+        "project_base_group": cli_base_group,
+        "project_build_group": cli_build_group,
+        "project_matrix_python": cli_matrix_python,
+        "project_matrix_platforms": cli_matrix_platforms,
+        "project_matrix_implementations": cli_matrix_implementations,
+        "project_matrix_python_order": cli_matrix_python_order,
+        "project_matrix_python_patches": cli_matrix_python_patches,
+        "project_environment_python": cli_environment_python,
+        "project_environment_platform": cli_environment_platform,
+        "project_environment_implementation": cli_environment_implementation,
+    }
+
+    flags: dict[str, str] = {}
+    if cli_python is not None:
+        if cli_environment_python is not None:
+            _fail_cli(SourceConfigError(_BOTH_PYTHON_AXES))
+        _check_python_flag(cli_python)
+        values["project_environment_python"] = cli_python
+        flags["project_environment_python"] = "--python"
+
+    try:
+        return build_cli_overrides(values, flags)
+    except SourceConfigError as exc:
+        _fail_cli(exc)
+
+
+def _check_python_flag(python: str) -> None:
+    """Read ``--python`` as a version here, so a bad value names the flag."""
+    try:
+        Version(python)
+    except ValueError:
+        msg = f"--python must be a version like '3.12' or '3.12.4', got {python!r}"
+        _fail_cli(SourceConfigError(msg))
+
+
+def _reject_python_flag_in_universal(ladder: ConfigLadder, python: str | None) -> None:
+    """Exit 1 when ``--python`` is written for a resolve a matrix targets.
+
+    Read off the ladder rather than the parsed config: the flag folds into
+    the environment table, and a matrix beside an environment is refused
+    as the config is assembled, before a config-shaped check could run.
+    """
+    if python is None or isinstance(ladder, SourceConfigError):
+        return
+    if ladder["mode"].value is ResolveMode.UNIVERSAL:
+        printer().error(
+            "--python is not supported in universal mode;"
+            " [tool.nab.matrix].python declares the Python axis."
+        )
+        sys.exit(1)
 
 
 def project_config_overrides(
@@ -257,15 +325,20 @@ def project_override_arguments(cli_overrides: Mapping[str, object]) -> list[str]
 
     Takes the raw map :func:`_cli_overrides` built, not the config subset, so
     ``resolution`` is carried too: it shapes the resolve without entering the
-    merged config.  A repeatable flag is emitted once per element.
+    merged config.  A repeatable flag is emitted once per element, and a
+    table key is re-spelled flag by flag with the tokens the user typed.
     """
     arguments: list[str] = []
     for spec in OPTIONS:
-        flag = spec.cli_flag
-        if spec.scope is not Scope.PROJECT or flag is None:
+        if spec.scope is not Scope.PROJECT:
             continue
         value = cli_overrides.get(spec.name)
-        if value is None:
+        if isinstance(value, CliTable):
+            for key in value.keys:
+                arguments += [key.flag, *key.tokens]
+            continue
+        flag = spec.cli_flag
+        if flag is None or value is None:
             continue
         items = value if isinstance(value, tuple) else (value,)
         for item in items:
@@ -315,8 +388,20 @@ def _layered_run_settings_or_exit(
 
 
 def _fail_config(exc: SourceConfigError) -> NoReturn:
-    """Map a layered config error to the shared ``error: config error:`` exit."""
+    """Map a layered config error to the shared ``error: config error:`` exit.
+
+    A ``CliTableError`` came from the command line, not a file, so it is
+    printed as it stands.
+    """
+    if isinstance(exc, CliTableError):
+        _fail_cli(exc)
     printer().error(f"config error: {exc}")
+    sys.exit(1)
+
+
+def _fail_cli(exc: SourceConfigError) -> NoReturn:
+    """Exit 1 on a command-line value, with no ``config error:`` prefix."""
+    printer().error(str(exc))
     sys.exit(1)
 
 
@@ -347,5 +432,4 @@ def _project_cli_overrides_or_exit(project_overrides: Mapping[str, object]) -> N
         try:
             build_cli_layer({spec.name: project_overrides[spec.name]})
         except SourceConfigError as exc:
-            printer().error(str(exc))
-            sys.exit(1)
+            _fail_cli(exc)

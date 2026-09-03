@@ -35,6 +35,7 @@ from nab._lock import lock
 from nab._run import effective_config
 from nab.cli import run
 from nab.config.ladder import OPTIONS, Scope, SourceRoots, docs_url
+from nab.config.subflags import BY_PARENT
 from nab.config.values import SourceConfigError
 from nab_project.download import DownloadResult
 from nab_project.inputs import ResolveInputs
@@ -158,6 +159,11 @@ def _stub_resolve_result() -> ResolveResult:
 def _cli(*arguments: str, status: int = 0) -> None:
     """Drive the CLI the way ``main`` does, asserting how it ended."""
     assert run(arguments) == status
+
+
+def _status(rung: str) -> str:
+    """The status word of one ``explain`` rung."""
+    return rung.split()[-2]
 
 
 def _run_config(args: list[str], *, status: int = 0) -> str:
@@ -337,7 +343,7 @@ class TestConfigExplain:
             ]
         )
         assert out.splitlines()[0] == (
-            "resolution (project, enum(highest|lowest|lowest-direct))"
+            "resolution (project, enum(highest|lowest|lowest-direct)) = highest"
         )
         assert any(line.startswith(">") for line in out.splitlines())
         assert "shadowed" in out
@@ -392,8 +398,20 @@ class TestConfigExplain:
         )
 
         assert out.splitlines()[0] == (
-            "marker-environment (project, table(marker-var=str) [deprecated])"
+            "marker-environment (project, table(marker-var=str) [deprecated]) = <none>"
         )
+
+    def test_the_explain_header_carries_the_effective_value(
+        self, hermetic_roots: Path
+    ) -> None:
+        """The header and ``get`` print one value, so neither can drift."""
+        _project(hermetic_roots, 'resolution = "lowest"\n')
+        base = ["--path", str(hermetic_roots / "pyproject.toml")]
+
+        header = _run_config(["explain", "resolution", *base]).splitlines()[0]
+        printed = _run_config(["get", "resolution", *base]).strip()
+
+        assert header.endswith(f" = {printed}")
 
     def test_explain_requires_key(self, hermetic_roots: Path) -> None:
         _project(hermetic_roots)
@@ -595,7 +613,7 @@ _STRUCTURED_PROJECT_TABLES = frozenset(
 
 
 def test_only_structured_tables_lack_a_project_flag() -> None:
-    """The configuration reference's rule: only the tables stay file-only.
+    """The tables carry no flag of their own, and two of them are spelled by rows.
 
     The keys are listed rather than derived from ``type_label`` so that a
     new file-only option has to be added here deliberately.
@@ -606,6 +624,169 @@ def test_only_structured_tables_lack_a_project_flag() -> None:
         if spec.scope is Scope.PROJECT and spec.cli_flag is None
     }
     assert file_only == _STRUCTURED_PROJECT_TABLES
+    assert set(BY_PARENT) == {"matrix", "environment"}
+
+
+class TestMatrixFlags:
+    """``[tool.nab.matrix]`` set from the command line, through the inspector."""
+
+    _ARGV = (
+        "--project-mode",
+        "universal",
+        "--project-matrix-python",
+        "==3.11",
+        "--project-matrix-platforms",
+        "linux_x86_64",
+    )
+
+    def test_config_reports_the_cli_matrix_as_the_winner(
+        self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A project with no ``[tool.nab]`` at all: the flags are the only source."""
+        _project(hermetic_roots)
+        base = ["--path", str(hermetic_roots / "pyproject.toml"), *self._ARGV]
+
+        assert _run_config(["get", "matrix", *base]) == (
+            "python===3.11, platforms=['linux_x86_64']\n"
+        )
+
+        explained = _run_config(["explain", "matrix", *base]).splitlines()
+        (winner,) = [line for line in explained if line.startswith(">")]
+        assert "winner" in winner
+        assert winner.split()[-1] == "cli"
+
+        listed = _run_config(["list", *base]).splitlines()
+        (row,) = [line for line in listed if line.startswith("matrix ")]
+        assert row.split()[-1] == "cli"
+
+        err = capsys.readouterr().err
+        assert "--project-matrix-python -> ==3.11" in err
+        assert "--project-matrix-platforms -> linux_x86_64" in err
+
+
+class TestTheFoldThroughTheInspector:
+    """``nab config`` reports the merge, not the flags or the file alone."""
+
+    _MATRIX = (
+        'mode = "universal"\n'
+        "[tool.nab.matrix]\n"
+        'python = ">=3.11,<3.14"\n'
+        'platforms = ["linux_x86_64", "macos_arm64"]\n'
+    )
+
+    def _narrowed(self, hermetic_roots: Path, action: str, *extra: str) -> list[str]:
+        """Run one inspector action over a file matrix narrowed by one flag."""
+        _project(hermetic_roots, self._MATRIX)
+        return _run_config(
+            [
+                action,
+                *extra,
+                "--path",
+                str(hermetic_roots / "pyproject.toml"),
+                "--project-matrix-platforms",
+                "macos_arm64",
+            ]
+        ).splitlines()
+
+    def test_explain_shows_the_merged_value_and_marks_the_file_merged(
+        self, hermetic_roots: Path
+    ) -> None:
+        """The file row supplied the rest of the table, so it is not shadowed."""
+        lines = self._narrowed(hermetic_roots, "explain", "matrix")
+
+        assert lines[0].endswith("= python=>=3.11,<3.14, platforms=['macos_arm64']")
+        (winner,) = [line for line in lines if line.startswith(">")]
+        assert winner.split()[-1] == "cli"
+        (file_row,) = [line for line in lines if line.endswith("pyproject.toml")]
+        assert "merged" in file_row
+        assert "shadowed" not in file_row
+
+    def test_explain_shows_only_the_keys_the_line_set_on_the_cli_row(
+        self, hermetic_roots: Path
+    ) -> None:
+        """The winning row is what the user typed, not the merged whole."""
+        lines = self._narrowed(hermetic_roots, "explain", "matrix")
+
+        (winner,) = [line for line in lines if line.startswith(">")]
+        assert "platforms=macos_arm64" in winner
+        assert "python=" not in winner
+
+    def test_explain_environment_with_no_file_table_has_one_row(
+        self, hermetic_roots: Path
+    ) -> None:
+        """Nothing was laid over, so no row is marked ``merged``."""
+        _project(hermetic_roots)
+        lines = _run_config(
+            [
+                "explain",
+                "environment",
+                "--path",
+                str(hermetic_roots / "pyproject.toml"),
+                "--project-environment-python",
+                "3.12",
+            ]
+        ).splitlines()
+
+        rungs = [line for line in lines[3:] if line.strip()]
+        assert len(rungs) == 1
+        assert rungs[0].startswith(">")
+        assert "winner" in rungs[0]
+        assert "merged" not in "\n".join(lines)
+
+    def test_explain_marks_only_the_row_the_fold_read(
+        self, hermetic_roots: Path
+    ) -> None:
+        """A second project file at the same rank lost the tie, so it shadowed."""
+        _project(hermetic_roots, self._MATRIX)
+        _write(
+            hermetic_roots / "nab.toml",
+            'mode = "universal"\n[matrix]\n'
+            'python = ">=3.11,<3.14"\n'
+            'platforms = ["linux_x86_64", "macos_arm64"]\n',
+        )
+
+        lines = _run_config(
+            [
+                "explain",
+                "matrix",
+                "--path",
+                str(hermetic_roots / "pyproject.toml"),
+                "--project-matrix-platforms",
+                "macos_arm64",
+            ]
+        ).splitlines()
+
+        rungs = [line for line in lines[3:] if line.strip()]
+        assert [_status(line) for line in rungs] == ["shadowed", "merged", "winner"]
+
+    def test_list_shows_the_merged_value_under_cli(self, hermetic_roots: Path) -> None:
+        """``list`` prints what the resolve sees, with the source that decided it."""
+        lines = self._narrowed(hermetic_roots, "list")
+
+        (row,) = [line for line in lines if line.startswith("matrix ")]
+        assert "macos_arm64" in row
+        assert row.split()[-1] == "cli"
+
+    def test_a_partial_matrix_reads_bare_through_the_inspector(
+        self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The message names a flag, so a ``config error:`` prefix would misread."""
+        _project(hermetic_roots)
+
+        _run_config(
+            [
+                "list",
+                "--path",
+                str(hermetic_roots / "pyproject.toml"),
+                "--project-matrix-platforms",
+                "linux_x86_64",
+            ],
+            status=1,
+        )
+
+        err = capsys.readouterr().err
+        assert "--project-matrix-platforms is set but" in err
+        assert "config error:" not in err
 
 
 class TestConfigErrors:
@@ -1147,7 +1328,8 @@ class TestProjectCliOverrides:
         )
 
         err = capsys.readouterr().err
-        assert "--project-mode universal needs a matrix table" in err
+        assert "--project-mode universal needs a matrix:" in err
+        assert "pass --project-matrix-python and --project-matrix-platforms" in err
         assert "a top-level [matrix] table to the project's nab.toml" in err
 
     def test_project_decision_order_reaches_resolve(self, hermetic_roots: Path) -> None:
@@ -1411,6 +1593,30 @@ class TestDownloadCliOverrides:
 
         (target,) = kwargs["targets"]
         assert target.python_version == "3.13"
+
+    def test_a_cli_matrix_reaches_the_download_resolve(
+        self, hermetic_roots: Path
+    ) -> None:
+        """The matrix flags reach ``download``'s override call, not just lock's."""
+        proj = _project(hermetic_roots)
+
+        kwargs = self._resolve_kwargs(
+            proj,
+            [
+                "--project-mode",
+                "universal",
+                "--project-matrix-python",
+                "==3.11",
+                "--project-matrix-platforms",
+                "linux_x86_64",
+                "macos_arm64",
+            ],
+        )
+
+        assert [target.platform_id for target in kwargs["targets"]] == [
+            "linux_x86_64",
+            "macos_arm64",
+        ]
 
     def test_cache_dir_flag_reaches_the_resolve(self, hermetic_roots: Path) -> None:
         proj = _project(hermetic_roots)

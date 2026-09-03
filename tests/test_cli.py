@@ -2215,6 +2215,25 @@ class TestPythonFlag:
 
         assert mock_resolve.call_args.kwargs["targets"] == (ResolveTarget.for_host(),)
 
+    def test_narrows_the_deprecated_marker_overlay(self, tmp_path: Path) -> None:
+        """The overlay translates, and the flag moves only its python axis."""
+        pyproject = _make_pyproject(
+            tmp_path,
+            '[project]\ndependencies = ["foo"]\n'
+            "[tool.nab.marker-environment]\n"
+            'sys_platform = "darwin"\n'
+            'platform_machine = "arm64"\n',
+        )
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
+        ) as mock_resolve:
+            lock(pyproject, output=out, python="3.11")
+
+        (target,) = mock_resolve.call_args.kwargs["targets"]
+        assert target.python_version == "3.11"
+        assert target.platform_id == "macos_arm64"
+
     def test_invalid_value_is_a_flag_error(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -2298,6 +2317,87 @@ class TestPythonFlag:
 
         (target,) = mock_resolve.call_args.kwargs["targets"]
         assert target.python_version == "3.14"
+
+    def test_rejected_beside_a_cli_matrix(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A matrix set by the flags is universal mode too, file or no file."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(
+                pyproject,
+                output=out,
+                python="3.12",
+                project_mode="universal",
+                project_matrix_python="==3.11",
+                project_matrix_platforms=("linux_x86_64",),
+            )
+        assert exc.value.code == 1
+        assert "--python is not supported in universal mode" in capsys.readouterr().err
+        assert not out.exists()
+
+    def test_the_short_form_and_the_long_form_agree(self, tmp_path: Path) -> None:
+        """One path and one resulting configuration, whichever flag was typed."""
+        pyproject = _make_pyproject(tmp_path)
+
+        seen = []
+        for keywords in (
+            {"python": "3.11"},
+            {"project_environment_python": "3.11"},
+        ):
+            with patch(
+                "nab._resolve.resolve_for_targets",
+                return_value=_stub_resolve_result(),
+            ) as mock_resolve:
+                lock(pyproject, output=tmp_path / "pylock.toml", **keywords)
+            seen.append(mock_resolve.call_args.kwargs)
+
+        short, long = seen
+        assert short["targets"] == long["targets"]
+        assert short["inputs"] == long["inputs"]
+
+    def test_writing_both_is_refused(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--python and --project-environment-python together: the run refuses."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with (
+            patch(
+                "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
+            ) as mock_resolve,
+            pytest.raises(SystemExit) as exc,
+        ):
+            lock(
+                pyproject,
+                output=out,
+                python="3.12",
+                project_environment_python="3.12",
+            )
+
+        assert exc.value.code == 1
+        assert (
+            "error: --python and --project-environment-python both set the"
+            " python axis; pass one of them." in capsys.readouterr().err
+        )
+        assert not out.exists()
+        mock_resolve.assert_not_called()
+
+    def test_the_python_flag_is_recorded_and_noticed(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The flag changes the resolved set, so it is a recorded project override."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab._resolve.resolve_for_targets", return_value=_stub_resolve_result()
+        ):
+            lock(pyproject, output=out, python="3.12")
+
+        assert "--python -> 3.12" in capsys.readouterr().err
+        block = tomli.loads(out.read_text())["tool"]["nab"]
+        assert block["cli-project-overrides"] == ["--python=3.12"]
 
     def test_download_rejects_it_in_universal_mode(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -2397,6 +2497,69 @@ class TestProjectFlagErrors:
         assert exc.value.code == 1
         assert "error: --project-build-group '-no-'" in capsys.readouterr().err
 
+    def test_an_unknown_platform_knob_names_the_flag_family(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A table key has no flag of its own, so the family label is the ``where``."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(
+                pyproject,
+                output=out,
+                project_mode="universal",
+                project_matrix_python="==3.11",
+                project_matrix_platforms=("linux_x86_64", "libcc=musl"),
+            )
+        assert exc.value.code == 1
+        err = capsys.readouterr().err
+        assert (
+            "error: --project-matrix-*.platforms[0] has unknown keys: ['libcc']" in err
+        )
+        assert "[tool.nab]" not in err
+        assert not out.exists()
+
+    def test_a_partial_cli_matrix_exits_naming_the_missing_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The project declares no matrix table, so the fold refuses the lone flag."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(
+                pyproject,
+                output=out,
+                project_mode="universal",
+                project_matrix_platforms=("linux_x86_64",),
+            )
+
+        assert exc.value.code == 1
+        assert (
+            "error: --project-matrix-platforms is set but"
+            " --project-matrix-python is not;" in capsys.readouterr().err
+        )
+        assert not out.exists()
+
+    def test_an_unreadable_table_token_exits_naming_its_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The tokens are read before any file is, so the flag is what is named."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(
+                pyproject,
+                output=out,
+                project_environment_platform=("runs-on-macos=14.0",),
+            )
+
+        assert exc.value.code == 1
+        assert (
+            "error: --project-environment-platform reads 'runs-on-macos=14.0'"
+            " as a key on the item before it" in capsys.readouterr().err
+        )
+        assert not out.exists()
+
     def test_valid_override_threads_through(self, tmp_path: Path) -> None:
         """The value has to admit the host: the run plans its target first."""
         pyproject = _make_pyproject(tmp_path)
@@ -2425,8 +2588,177 @@ class TestProjectFlagErrors:
         assert f"error: {pyproject}: requires-python must be a PEP 440" in err
 
 
+class TestTableFlagsEndToEnd:
+    """A ``--project-<table>-<key>`` flag narrows the table the project declares."""
+
+    _NARROW = (
+        '[project]\ndependencies = ["foo"]\n'
+        "[tool.nab]\n"
+        'mode = "universal"\n'
+        "[tool.nab.matrix]\n"
+        'python = "==3.11"\n'
+        'platforms = ["linux_x86_64", "macos_arm64"]\n'
+    )
+
+    @staticmethod
+    def _resolve_the_targets(*_args: object, **kwargs: object) -> ResolveResult:
+        """Resolve whatever targets the run planned, so the lock matches them."""
+        targets = kwargs["targets"]
+        assert isinstance(targets, tuple)
+        return ResolveResult(
+            targets=targets,
+            target_results=[_resolved(t, {"foo": V("1.0")}) for t in targets],
+        )
+
+    def test_a_file_matrix_narrowed_by_one_flag_locks_that_platform(
+        self, tmp_path: Path
+    ) -> None:
+        """The file already sets the mode, so the command line is one flag."""
+        pyproject = _make_pyproject(tmp_path, self._NARROW)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab._resolve.resolve_for_targets", side_effect=self._resolve_the_targets
+        ) as mock_resolve:
+            lock(pyproject, output=out, project_matrix_platforms=("macos_arm64",))
+
+        assert [
+            target.platform_id for target in mock_resolve.call_args.kwargs["targets"]
+        ] == ["macos_arm64"]
+        assert tomli.loads(out.read_text())["tool"]["nab"]["platforms"] == [
+            "macos_arm64"
+        ]
+
+    def test_the_same_narrowing_works_for_download(self, tmp_path: Path) -> None:
+        pyproject = _make_pyproject(tmp_path, self._NARROW)
+        out = tmp_path / "wheels"
+        with (
+            patch(
+                "nab._resolve.resolve_for_targets",
+                side_effect=self._resolve_the_targets,
+            ) as mock_resolve,
+            patch(
+                "nab._download.download_lock",
+                return_value=DownloadResult(written=(out / "x.whl",), skipped=()),
+            ),
+        ):
+            download(pyproject, output=out, project_matrix_platforms=("macos_arm64",))
+
+        assert [
+            target.platform_id for target in mock_resolve.call_args.kwargs["targets"]
+        ] == ["macos_arm64"]
+
+    def test_an_environment_platform_flag_locks_a_declared_target(
+        self, tmp_path: Path
+    ) -> None:
+        """One item, its knobs, and a declared machine the host is not."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab._resolve.resolve_for_targets", side_effect=self._resolve_the_targets
+        ) as mock_resolve:
+            lock(
+                pyproject,
+                output=out,
+                project_environment_platform=("macos_arm64",),
+                project_build_policy="never",
+            )
+
+        (target,) = mock_resolve.call_args.kwargs["targets"]
+        assert target.marker_env["sys_platform"] == "darwin"
+        block = tomli.loads(out.read_text())["tool"]["nab"]
+        assert (
+            "--project-environment-platform=macos_arm64"
+            in block["cli-project-overrides"]
+        )
+
+    def test_the_locked_refresh_line_respells_a_table_flag(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The tokens come back as typed, so the printed command re-runs."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(
+                pyproject,
+                output=out,
+                locked=True,
+                project_environment_platform=("macos_arm64", "runs-on-macos=14.0"),
+                project_build_policy="never",
+            )
+
+        assert exc.value.code == 1
+        assert (
+            "--project-environment-platform macos_arm64 runs-on-macos=14.0"
+            in capsys.readouterr().err
+        )
+
+    def test_the_refresh_line_carries_python_once(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``--python`` is a project override now, so nothing else emits it."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with pytest.raises(SystemExit) as exc:
+            lock(pyproject, output=out, locked=True, python="3.12")
+
+        assert exc.value.code == 1
+        assert capsys.readouterr().err.count("--python 3.12") == 1
+
+
 class TestLockCommandUniversal:
     """Tests for `nab lock` in universal mode."""
+
+    def test_a_cli_matrix_locks_without_a_file_matrix(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The flags declare the matrix a project carrying no ``[tool.nab]`` lacks."""
+        pyproject = _make_pyproject(tmp_path)
+        with patch(
+            "nab._resolve.resolve_for_targets",
+            return_value=_universal_result(success=True),
+        ) as mock_resolve:
+            lock(
+                pyproject,
+                output=Path("-"),
+                format="requirements-without-hashes",
+                project_mode="universal",
+                project_matrix_python="==3.11",
+                project_matrix_platforms=("linux_x86_64", "macos_arm64"),
+            )
+
+        captured = capsys.readouterr()
+        assert captured.out == "foo==1.0\n"
+        assert [
+            target.platform_id for target in mock_resolve.call_args.kwargs["targets"]
+        ] == ["linux_x86_64", "macos_arm64"]
+        assert "experimental" in captured.err
+        assert "--project-matrix-python -> ==3.11" in captured.err
+        assert "--project-matrix-platforms -> linux_x86_64 macos_arm64" in captured.err
+
+    def test_the_lockfile_records_the_cli_matrix(self, tmp_path: Path) -> None:
+        """Each flag is recorded by its own name with the value it set."""
+        pyproject = _make_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with patch(
+            "nab._resolve.resolve_for_targets",
+            return_value=_universal_result(success=True),
+        ):
+            lock(
+                pyproject,
+                output=out,
+                project_mode="universal",
+                project_matrix_python="==3.11",
+                project_matrix_platforms=("linux_x86_64",),
+            )
+
+        block = tomli.loads(out.read_text())["tool"]["nab"]
+        assert block["cli-project-overrides"] == [
+            "--project-mode=universal",
+            "--project-matrix-python===3.11",
+            "--project-matrix-platforms=linux_x86_64",
+        ]
+        assert block["python-specifier"] == "==3.11"
+        assert block["platforms"] == ["linux_x86_64"]
 
     def test_invalid_requirement_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
