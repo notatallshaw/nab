@@ -53,6 +53,7 @@ from nab_project.lockfile import (
     BASE_MEMBER,
     LOCK_VERSION,
     ArchivePin,
+    ArtifactMemo,
     DisjointnessError,
     DivergentBaseDependencyError,
     IndexPin,
@@ -3232,6 +3233,38 @@ class TestBuildTargetLock:
         assert len(pin.wheels) == 1
         assert pin.wheels[0].hashes == (("sha256", "a" * 64),)
         assert lock.target is _HOST
+
+    def test_shared_memo_builds_each_file_once(self) -> None:
+        """A repeated file reuses its artifact; a different file gets its own."""
+        provider = _FakeProvider(
+            listings={
+                "foo": [
+                    (Version("1.0"), _wheel_file(version="1.0")),
+                    (Version("1.0"), _sdist_file(version="1.0")),
+                    (Version("2.0"), _wheel_file(version="2.0")),
+                ]
+            }
+        )
+        memo = ArtifactMemo()
+
+        pins = [
+            build_target_lock(
+                provider, _HOST, {"foo": Version(version)}, artifacts=memo
+            ).pins["foo"]
+            for version in ("1.0", "2.0", "1.0")
+        ]
+
+        first, other, again = pins
+        assert isinstance(first, IndexPin)
+        assert isinstance(other, IndexPin)
+        assert isinstance(again, IndexPin)
+
+        assert again.wheels[0] is first.wheels[0]
+        assert again.sdist is first.sdist
+        assert other.wheels[0] != first.wheels[0]
+
+        assert len(memo.wheels) == 2
+        assert len(memo.sdists) == 1
 
     def test_index_pin_requires_python_override_scoped_to_selected_versions(
         self,
