@@ -119,7 +119,8 @@ implementation = "cpython"  # "cpython" (default) or "pypy"
 
 * `python` alone keeps the host machine and moves only the interpreter,
   which is what pip's `--python-version` does.  `nab lock --python 3.10`
-  is the same thing for one run.
+  does it for one run, as does
+  `nab lock --project-environment-python 3.10`.
 * `platform` (with or without `implementation`) declares the machine, so
   the PEP 508 markers are synthesized from the platform id rather than
   read off the host.  `implementation` needs a `platform`: an interpreter
@@ -162,7 +163,8 @@ refuses it elsewhere.  To lock for several machines at once, use
 `mode = "universal"`.
 
 `[tool.nab.environment]` and `[tool.nab.matrix]` cannot both be set: the
-matrix already declares one environment per target.
+matrix already declares one environment per target.  The rule holds
+however each was declared, in a file or by a flag.
 
 ### `[tool.nab.marker-environment]` (deprecated)
 
@@ -876,8 +878,8 @@ error.  See [Build policy](build-policy.md).
   matrix target, since neither `--python` nor `[tool.nab.environment]` is
   allowed alongside a matrix.
 * `[tool.nab.environment].python`: the Python to resolve for, defaulting
-  to the host's.  A single version, not a specifier.  `--python X.Y`
-  overrides it for one run.
+  to the host's.  A single version, not a specifier.  `--python X.Y` and
+  `--project-environment-python X.Y` set it for one run.
 * `[tool.nab.matrix].python`: a range like `>=3.11,<3.14`, expanded into
   one target per minor version.  Used only by universal mode.  Pair with
   `[tool.nab.matrix].platforms`, `[tool.nab.matrix].implementations` and
@@ -897,6 +899,47 @@ single-environment lock without editing its `pyproject.toml`:
 ```bash
 nab lock --project-mode specific --python 3.13
 ```
+
+### Declaring the matrix on the command line
+
+```bash
+nab lock --project-mode universal \
+  --project-matrix-python '>=3.11,<3.14' \
+  --project-matrix-platforms windows_amd64 linux_x86_64 libc=musl runs-on-libc=1.2 \
+  --project-matrix-python-patches 3.11=3.11.4
+```
+
+`--project-matrix-platforms` takes every token up to the next flag.  A bare
+token is a platform id, `id=VALUE` is the same thing written out, and any
+other `KEY=VALUE` sets a tag knob on the platform before it.  A knob value
+`true` or `false` is the boolean.  `--project-matrix-python-patches` takes
+`MINOR=FULL` tokens and `--project-matrix-implementations` takes bare names.
+
+Each flag replaces the key it names inside the table the project files
+declare and leaves the other keys alone, so a universal project narrows one
+axis with one flag:
+
+```bash
+nab lock --project-matrix-platforms macos_arm64
+```
+
+With no file matrix there is nothing to narrow, so `--project-matrix-python`
+and `--project-matrix-platforms` are both required and the other three take
+the table's documented defaults when left out.
+
+### Declaring the environment on the command line
+
+```bash
+nab lock --project-environment-python 3.12 \
+  --project-environment-platform macos_arm64 runs-on-macos=14.0 \
+  --project-environment-implementation cpython
+```
+
+`--project-environment-platform` reads its tokens the way
+`--project-matrix-platforms` does, except that the environment holds one
+machine: a second bare id is an error rather than a second platform.  An
+axis no flag names keeps the value `[tool.nab.environment]` declares, or
+the host's where no file declares one.
 
 ## CLI flags
 
@@ -929,7 +972,7 @@ nab lock [PATH]
 What each flag in the first group does to `[tool.nab]`:
 
 * `--project-<key>` replaces the key it names.
-* `--python` overrides `[tool.nab.environment].python`.
+* `--python` sets `[tool.nab.environment].python` for the run.
 * `--build-requirements` clears `conflicts`, `default-groups`,
   `base-group` and `build-group` for the run.
 * `--no-workspace-discovery` skips `[tool.nab.workspace]`, the project's
@@ -942,8 +985,10 @@ What each flag in the first group does to `[tool.nab]`:
 A project option can be overridden for a single run with a
 `--project-<key>` flag (for example `--project-resolution`,
 `--project-dist-policy`, or the repeatable `--project-constraint`); the
-structured table options stay file-only. The flag replaces the file
-value, list flags included: passing `--project-constraint` twice
+structured table options stay file-only, except `matrix` and
+`environment`, which the `--project-<table>-<key>` flags set one key at a
+time. The flag replaces the file value, list flags included: passing
+`--project-constraint` twice
 resolves against exactly those two constraints, whatever `constraints`
 the files declare. A `--project-*` override changes the resolved set, so
 it prints a notice and is recorded in the lockfile.
@@ -965,7 +1010,9 @@ scope that fixes where it may come from:
   `nab.toml`. They are never read from a user/system file or an
   environment variable. Each project option with a scalar or list form
   also takes a CLI override under a `--project-` prefix (for example
-  `--project-resolution`); the structured table options stay file-only.
+  `--project-resolution`); the structured table options stay file-only,
+  except `matrix` and `environment`, which the `--project-<table>-<key>`
+  flags set one key at a time.
 * User-scope options (`offline`, `cache-dir`, `http-backend`,
   `max-concurrency`) describe how a run executes on this machine, so they
   may come from a system, user, or project `nab.toml`, a `NAB_*`
@@ -989,7 +1036,9 @@ survives: a `constraints` list on the CLI is the entire constraint set
 for that run, and an `[environment]` table in a file is the entire
 environment. No source adds to the one beneath it, so the value the
 resolve uses is the one you can read in a single place. To extend a
-list, edit the file that declares it.
+list, edit the file that declares it. The one exception is a
+`--project-<table>-<key>` flag, which replaces that key inside the table
+the files declare and leaves the rest of it standing.
 
 Rung 4 is two files at one precedence, so neither can win. Setting one
 key in both is allowed only if the two values are identical; different

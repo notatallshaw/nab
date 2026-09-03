@@ -10,10 +10,13 @@ declared, and :mod:`nab.optionlower` builds each ``Opt`` from one.
 
 ``Opt`` judges each row as it builds one, and :func:`validate` judges a
 whole table at once.  Most mistakes raise as the row is built and the
-message is the whole rule; these five are worth knowing before writing one:
+message names the rule the row broke; these six are worth knowing before
+writing one:
 
 - a PROJECT row's flag is ``--project-`` and its name, so a name that
   writes the prefix itself derives it twice;
+- a row ``under`` a key spells one key of that key's table, so its flag
+  carries the parent name and it holds no configuration key of its own;
 - a repeatable row's flag is its name with the final ``s`` dropped, so the
   name has to be plural;
 - a ``NAB_*`` variable belongs to a keyed USER row and to no other;
@@ -52,6 +55,7 @@ __all__ = [
     "Kind",
     "Opt",
     "Scope",
+    "Tokens",
     "VType",
     "validate",
 ]
@@ -83,6 +87,16 @@ class VType(enum.Enum):
     INT = "int"
     CHOICE = "choice"
     BOOL = "bool"
+
+
+class Tokens(enum.Enum):
+    """How the assembler reads a sub-row's tokens into its key's value."""
+
+    SCALAR = "scalar"
+    LIST = "list"
+    ITEM = "item"
+    ITEMS = "items"
+    PAIRS = "pairs"
 
 
 class _Unset:
@@ -152,8 +166,10 @@ class Opt:
         "help",
         "kind",
         "name",
+        "needed",
         "negatable",
         "nullable",
+        "opened_by",
         "parse",
         "rdefault",
         "render",
@@ -161,7 +177,9 @@ class Opt:
         "sample",
         "scope",
         "short",
+        "tokens",
         "type_label",
+        "under",
         "vtype",
     )
 
@@ -183,6 +201,10 @@ class Opt:
     short: str
     help: str
     docs: str
+    under: str
+    needed: bool
+    tokens: Tokens | None
+    opened_by: str
 
     def __init__(  # noqa: PLR0913 - the type's own fields, in its own order
         self,
@@ -207,6 +229,10 @@ class Opt:
         short: str = "",
         help: str = "",  # noqa: A002 - the row's own field name
         docs: str = "",
+        under: str = "",
+        needed: bool = False,
+        tokens: Tokens | None = None,
+        opened_by: str = "",
     ) -> None:
         """Record one option and run the rules a single row can be judged by."""
         self.name = name
@@ -233,6 +259,10 @@ class Opt:
         self.short = short
         self.help = help
         self.docs = docs
+        self.under = under
+        self.needed = needed
+        self.tokens = tokens
+        self.opened_by = opened_by
 
         self._check()
 
@@ -243,8 +273,12 @@ class Opt:
 
     @property
     def key(self) -> str | None:
-        """The configuration key, or ``None`` on a row no source can set."""
-        return self.name if self.scope is not None else None
+        """The configuration key, or ``None`` on a row no source can set.
+
+        A row ``under`` a key spells one key of that key's table, so the
+        parent holds the registry key and this row holds none.
+        """
+        return None if self.scope is None or self.under else self.name
 
     @property
     def scope_name(self) -> str:
@@ -269,12 +303,15 @@ class Opt:
         """The long spelling, or ``None`` on a row that has no flag.
 
         The scope decides the prefix, and a repeatable option is spelled
-        in the singular because one occurrence contributes one value.
+        in the singular because one occurrence contributes one value.  A
+        row ``under`` a key carries that key between the two.
         """
         if not self.commands or self.is_positional:
             return None
         prefix = "--project-" if self.scope is Scope.PROJECT else "--"
         stem = self.name[:-1] if self.kind is Kind.APPEND else self.name
+        if self.under:
+            stem = f"{self.under}-{stem}"
         return prefix + stem
 
     @property
@@ -301,7 +338,7 @@ class Opt:
         name from the config layer.  A row with no key is set by no
         source, TOML included.
         """
-        if self.scope is None:
+        if self.scope is None or self.under:
             return False
         return kind.value in _ALLOWED_TOML_SOURCES[self.scope]
 
@@ -324,6 +361,7 @@ class Opt:
             raise ValueError(msg)
 
         self._check_derivation()
+        self._check_sub_row()
 
         if self.env and self.scope is not Scope.USER:
             msg = f"{self.name} is not a USER key, so it takes no NAB_ name"
@@ -353,6 +391,31 @@ class Opt:
             msg = f"{self.name} is repeatable, so its name has to be plural"
             raise ValueError(msg)
 
+        if self.under and self.name.startswith(f"{self.under}-"):
+            msg = f"{self.name} takes its {self.under}- prefix from the key it is under"
+            raise ValueError(msg)
+
+    def _check_sub_row(self) -> None:
+        """Check a row that spells one key of a table key, not a key of its own."""
+        if not self.under:
+            return
+
+        if self.scope is None:
+            msg = f"{self.name} is under {self.under!r}, so it needs a scope"
+            raise ValueError(msg)
+
+        if not self.commands:
+            msg = f"{self.name} is under {self.under!r}, so it needs a command line"
+            raise ValueError(msg)
+
+        if self.is_positional:
+            msg = f"{self.name} is under {self.under!r}, so it cannot be an operand"
+            raise ValueError(msg)
+
+        if self.rdefault is not UNSET or self.parse is not _no_hook or self.env:
+            msg = f"{self.name} is under {self.under!r}, so it takes no key of its own"
+            raise ValueError(msg)
+
     def _check_file_only(self) -> None:
         """Check a row with no command line, which is a configuration key alone."""
         if self.commands:
@@ -379,6 +442,7 @@ def validate(
     names = _command_names(entries)
     _check_command_cover(rows, names)
     _check_root_operands(rows)
+    _check_parents(rows)
 
     root = [row for row in rows if row.is_global]
     _check_unique(root, "the root table")
@@ -423,6 +487,33 @@ def _check_root_operands(rows: Sequence[Opt]) -> None:
     for row in rows:
         if row.is_global and row.is_positional:
             msg = f"{row.name} is a root operand, and the command holds that slot"
+            raise ValueError(msg)
+
+
+def _check_parents(rows: Sequence[Opt]) -> None:
+    """Check every sub-row names a keyed row of its own scope and with no flag."""
+    keyed = {row.name: row for row in rows if row.key is not None}
+    for row in rows:
+        if not row.under:
+            continue
+
+        parent = keyed.get(row.under)
+        if parent is None:
+            msg = f"{row.name} is under {row.under!r}, which no row declares as a key"
+            raise ValueError(msg)
+
+        if parent.scope is not row.scope:
+            msg = (
+                f"{row.name} is {row.scope_name}-scope under {row.under!r},"
+                f" which is {parent.scope_name}-scope"
+            )
+            raise ValueError(msg)
+
+        if parent.commands:
+            msg = (
+                f"{row.under!r} takes a flag of its own, so {row.name} cannot"
+                " spell it as well"
+            )
             raise ValueError(msg)
 
 

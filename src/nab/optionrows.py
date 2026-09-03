@@ -109,11 +109,14 @@ class Row:
         "key",
         "mirrors",
         "name",
+        "needed",
         "negatable",
         "on",
+        "opened_by",
         "required",
         "scope",
         "short",
+        "under",
     )
 
     def __init__(  # noqa: PLR0913 - the row's own fields, in its own order
@@ -146,6 +149,9 @@ class Row:
 
         self.name = ""
         self.scope: Scope | None = None
+        self.opened_by = ""
+        self.under = ""
+        self.needed = False
 
     def __set_name__(self, owner: type, name: str) -> None:
         """Take the row's long name from the attribute it is bound to."""
@@ -339,6 +345,46 @@ class Star(Row, Generic[T]):
         super().__init__(help=help, docs=docs, on=on, default=())
 
 
+class Items(Star[T]):
+    """A token run read as a list of tables: a bare token opens one.
+
+    ``opened_by`` is the item's identifying key, so a bare token is
+    shorthand for ``<opened_by>=<token>``; writing that key out opens an
+    item too, which is how an id containing ``=`` is given.  Every other
+    ``KEY=VALUE`` token sets a key on the item before it.
+    """
+
+    __slots__ = ()
+
+    def __init__(
+        self,
+        *,
+        help: str,  # noqa: A002
+        opened_by: str,
+        docs: str = "",
+        on: tuple[str, ...] = (),
+    ) -> None:
+        """Record one row; the table names it and fills its defaults."""
+        super().__init__(help=help, docs=docs, on=on)
+        self.opened_by = opened_by
+
+
+class Item(Items[T]):
+    """A token run read as one table rather than a list of them.
+
+    A second bare token would open a second item on a key that holds one,
+    so it is refused rather than dropped.
+    """
+
+    __slots__ = ()
+
+
+class Pairs(Star[T]):
+    """A token run read as one free-key table: every token is ``KEY=VALUE``."""
+
+    __slots__ = ()
+
+
 class Operand(Row, Generic[T]):
     """A positional word.  It has no flag, so it takes no short name."""
 
@@ -436,6 +482,9 @@ class Table(metaclass=_TableMeta):
 
     The class keywords are the table's defaults, and a row overrides the
     command set with ``on=`` or the page with ``docs=`` where it differs.
+    ``under`` names the configuration key the rows spell one key each of,
+    and ``needs`` the ones a command line has to give when it spells any
+    and no file declares the table.
     """
 
     _on: tuple[str, ...] = ()
@@ -449,12 +498,24 @@ class Table(metaclass=_TableMeta):
         on: tuple[str, ...] = (),
         scope: Scope | None = None,
         docs: str = "",
+        under: str = "",
+        needs: tuple[str, ...] = (),
     ) -> None:
-        """Apply the table's command set, scope and page to its rows."""
+        """Apply the table's command set, scope, page and parent key to its rows."""
         super().__init_subclass__()
         cls._on = on
         cls._scope = scope
         cls._docs = docs
+
+        if needs and not under:
+            msg = f"{cls.__name__} declares needs without under"
+            raise ValueError(msg)
+
+        declared = {row.name for row in cls.__dict__.values() if isinstance(row, Row)}
+        unknown = [name for name in needs if name not in declared]
+        if unknown:
+            msg = f"{cls.__name__} needs {unknown[0]!r}, which it does not declare"
+            raise ValueError(msg)
 
         for row in cls.__dict__.values():
             if isinstance(row, Row):
@@ -463,6 +524,8 @@ class Table(metaclass=_TableMeta):
                     row.on = row.on or on
                 row.scope = scope
                 row.docs = row.docs or docs
+                row.under = under
+                row.needed = row.name in needs
 
 
 def rows(table: type[Table]) -> list[Row]:

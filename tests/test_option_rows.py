@@ -16,15 +16,18 @@ from typing import Literal, NewType
 
 import pytest
 
-from nab.optiondefs import GLOBAL, Kind, Scope, VType
+from nab.optiondefs import GLOBAL, Kind, Scope, Tokens, VType
 from nab.optionlower import lower, table_rows
 from nab.optionrows import (
     Count,
     Eager,
+    Item,
+    Items,
     Key,
     Layer,
     Many,
     Operand,
+    Pairs,
     Row,
     Star,
     Switch,
@@ -63,6 +66,28 @@ class Strategy(enum.Enum):
 StrategyFlag = Literal["highest", "lowest", "lowest-direct"]
 
 Requirement = NewType("Requirement", str)
+
+
+def _matrix_fixture() -> type[Table]:
+    """A table whose five rows spell one key each of ``matrix``."""
+
+    class Fixture(
+        Table,
+        on=("lock",),
+        scope=Scope.PROJECT,
+        docs="explanation/universal.md",
+        under="matrix",
+        needs=("python", "platforms"),
+    ):
+        """One row of each token grammar, under one table key."""
+
+        python = Value[str | None](help="the python range")
+        platforms = Items[str](opened_by="id", help="the platforms to model")
+        platform = Item[str](opened_by="id", help="the one machine to model")
+        implementations = Star[str](help="the interpreters to model")
+        python_patches = Pairs[str](help="pin a minor to one patch release")
+
+    return Fixture
 
 
 def _only(table: type[Table]) -> Row:
@@ -306,3 +331,77 @@ def test_lowering_one_row_needs_no_table_of_its_own() -> None:
         verbose = Count(short="v", help="louder")
 
     assert lower(_only(Fixture)).cli_flag == "--verbose"
+
+
+@pytest.mark.parametrize(
+    ("name", "tokens"),
+    [
+        ("python", Tokens.SCALAR),
+        ("platforms", Tokens.ITEMS),
+        ("platform", Tokens.ITEM),
+        ("implementations", Tokens.LIST),
+        ("python-patches", Tokens.PAIRS),
+    ],
+)
+def test_the_row_class_says_how_its_tokens_read(name: str, tokens: Tokens) -> None:
+    """Each row's class is what says how the assembler reads its tokens."""
+    lowered = {row.name: row for row in table_rows(_matrix_fixture())}
+
+    assert lowered[name].tokens is tokens
+    assert lowered[name].under == "matrix"
+
+
+def test_the_table_says_which_of_its_rows_a_command_line_has_to_give() -> None:
+    lowered = {row.name: row for row in table_rows(_matrix_fixture())}
+
+    assert lowered["platforms"].opened_by == "id"
+    assert [name for name, row in lowered.items() if row.needed] == [
+        "python",
+        "platforms",
+    ]
+
+
+def test_a_row_under_no_key_reads_its_tokens_as_nothing() -> None:
+    """``tokens`` is the assembler's field, so a row it never sees has none."""
+
+    class Fixture(Table, on=GLOBAL, docs="reference/cli.md"):
+        """A star row naming a key of its own."""
+
+        groups = Star[str](help="the groups")
+
+    assert lower(_only(Fixture)).tokens is None
+
+
+def test_a_table_refuses_needs_without_under() -> None:
+    """``needs`` names the keys of a table, so there has to be one."""
+    with pytest.raises(ValueError, match="Fixture declares needs without under"):
+
+        class Fixture(
+            Table,
+            on=("lock",),
+            scope=Scope.PROJECT,
+            docs="reference/cli.md",
+            needs=("python",),
+        ):
+            """A table naming a needed key without an ``under``."""
+
+            python = Value[str | None](help="the python range")
+
+
+def test_a_table_refuses_needs_it_does_not_declare() -> None:
+    """``needs`` takes the hyphenated name, which is the one the row carries."""
+    with pytest.raises(
+        ValueError, match="Fixture needs 'python_order', which it does not declare"
+    ):
+
+        class Fixture(
+            Table,
+            on=("lock",),
+            scope=Scope.PROJECT,
+            docs="reference/cli.md",
+            under="matrix",
+            needs=("python_order",),
+        ):
+            """A table naming a needed key with underscores, not the hyphenated name."""
+
+            python_order = Value[str | None](help="the direction the axis aligns")

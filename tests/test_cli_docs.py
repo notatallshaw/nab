@@ -72,7 +72,7 @@ _SUBCOMMAND_LINES = {
 
 # The flag counts lock and download carry.  The other two commands have no
 # documented flag list, so nothing here derives theirs.
-_FLAG_COUNTS = {"lock": 28, "download": 24}
+_FLAG_COUNTS = {"lock": 36, "download": 32}
 
 # A ``--flag`` opening a code span, so prose naming one is matched and a
 # ``--hash=`` inside a fenced example is not.
@@ -456,7 +456,9 @@ class TestConfigExplainReferenceDocs:
         _write(
             hermetic_roots / "pyproject.toml",
             '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
-            '[tool.nab]\nresolution = "lowest"\n',
+            '[tool.nab]\nresolution = "lowest"\nmode = "universal"\n'
+            '[tool.nab.matrix]\npython = ">=3.11,<3.14"\n'
+            'platforms = ["linux_x86_64", "macos_arm64"]\n',
         )
         _write(tmp_path / "usr" / "nab.toml", 'resolution = "highest"\n')
 
@@ -470,10 +472,20 @@ class TestConfigExplainReferenceDocs:
                 "--path",
                 str(hermetic_roots / "pyproject.toml"),
             ]
+        ) + _run_config(
+            [
+                "explain",
+                "matrix",
+                "--project-matrix-platforms",
+                "macos_arm64",
+                "--include-rejected",
+                "--path",
+                str(hermetic_roots / "pyproject.toml"),
+            ]
         )
 
         section = _reference_section(_CLI_REFERENCE, "## `nab config`")
-        for status in ("winner", "shadowed", "rejected"):
+        for status in ("winner", "shadowed", "rejected", "merged"):
             assert status in printed, status
             assert f"`{status}`" in section, status
 

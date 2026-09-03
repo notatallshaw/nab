@@ -24,3 +24,5 @@ DistPolicyFlag = Literal[
 ]
 BuildPolicyFlag = Literal["never", "build-local", "build-remote"]
 DecisionOrderFlag = Literal["arrival", "stable"]
+MatrixOrderFlag = Literal["asc", "desc"]
+ImplementationFlag = Literal["cpython", "pypy"]

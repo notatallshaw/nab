@@ -53,7 +53,9 @@ Resolve and emit a lockfile or pin list.
 `--python X.Y` resolves for that Python on this machine instead of the
 running interpreter, like pip's `--python-version`; it moves only the
 python axis, so a declared `[tool.nab.environment].platform` stays. It is
-rejected in universal mode, where the matrix declares the Python axis.
+the short form of `--project-environment-python`, and writing both is
+refused. It is rejected in universal mode, where the matrix declares the
+Python axis.
 
 ### Project overrides
 
@@ -70,6 +72,16 @@ declared one. Each changes what the run writes, so passing one prints a
 reproducibility notice on stderr, which `-q` drops, and records the
 override in the lockfile's `[tool.nab]` block, since the lock no longer
 derives from the committed files alone.
+
+`[tool.nab.matrix]` and `[tool.nab.environment]` are set key by key:
+`--project-matrix-python`, `--project-matrix-platforms`,
+`--project-matrix-implementations`, `--project-matrix-python-order`,
+`--project-matrix-python-patches`, `--project-environment-python`,
+`--project-environment-platform` and `--project-environment-implementation`.
+Each replaces the key it names inside the table the project files declare and
+leaves the rest alone; a list flag replaces its list whole. With no file
+table, `--project-matrix-python` and `--project-matrix-platforms` are both
+required, and the environment needs nothing.
 
 ### Checking and refreshing a lock
 
@@ -111,8 +123,9 @@ wheel shared across tuples is fetched once.
   they do on `nab lock` (see [Selecting what to lock](selection.md)), so
   they decide which artefacts are downloaded.
 * `--python X.Y` resolves for that Python on this machine instead of
-  the running interpreter, as on `nab lock`. It is rejected in
-  universal mode, where the matrix declares the Python axis.
+  the running interpreter, as on `nab lock`. It is the short form of
+  `--project-environment-python`, and writing both is refused. It is
+  rejected in universal mode, where the matrix declares the Python axis.
 * `--workspace-discovery` (default) mirrors `nab lock`: it finds a
   `[tool.nab.workspace]` root and resolves against the in-tree
   members. `--no-workspace-discovery` turns that off. See
@@ -142,12 +155,14 @@ actions:
   the source that won, and that source. `explain` heads with the
   option's own scope instead.
 * `nab config get <key>` prints one effective value.
-* `nab config explain <key>` prints a header naming the key, its scope
-  and its type, then the option's own help line and a link to the page
-  documenting it on <https://nab.readthedocs.io/>, then the full source
-  stack. The winning row carries a `>` gutter and the status `winner`,
-  and every source it beats is `shadowed`. A shadowed source contributes
-  nothing to the value, whatever the key's type.
+* `nab config explain <key>` prints a header naming the key, its scope,
+  its type and its effective value, then the option's own help line and a
+  link to the page documenting it on <https://nab.readthedocs.io/>, then
+  the full source stack. The winning row carries a `>` gutter and the
+  status `winner`, and every source it beats is `shadowed`. A shadowed
+  source contributes nothing to the value, whatever the key's type. A
+  `--project-<table>-<key>` flag replaces one key of the table beneath it,
+  so that source is `merged`: it supplied the rest of the value.
 
 `--include-rejected` is a flag on `nab config` itself, so every action
 takes it. Without it, a config file that sets an unknown key or a key

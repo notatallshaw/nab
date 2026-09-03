@@ -97,6 +97,28 @@ on, free-threaded build).  See
   Pythons diverge only when the new pin is incompatible.
   Mirrors uv's `fork-strategy=requires-python`.
 
+### On the command line
+
+The same matrix, on a project that declares none:
+
+```bash
+nab lock --project-mode universal \
+  --project-matrix-python '>=3.11,<3.14' \
+  --project-matrix-platforms linux_x86_64 macos_arm64
+```
+
+The project declares no matrix here, so there is nothing to narrow:
+`--project-matrix-python` and `--project-matrix-platforms` are both
+required and the other three take their defaults. The flags declare the
+matrix and not the mode, so `--project-mode universal` goes with them.
+
+A project that declares a matrix narrows one key with one flag, and its
+file already sets the mode:
+
+```bash
+nab lock --project-matrix-platforms macos_arm64
+```
+
 ## Run
 
 ```bash

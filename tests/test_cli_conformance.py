@@ -21,7 +21,9 @@ import pytest
 from nab._cli import spec as cli_spec
 from nab._cli.parse import UsageError, parse
 from nab.cli import run
+from nab.config import values
 from nab.config.ladder import build_cli_layer
+from nab.flagtypes import ImplementationFlag, MatrixOrderFlag
 from nab.optiondefs import COMMANDS, UNSET, Kind, Opt, Scope, VType
 from nab.optiontable import ALL
 
@@ -224,6 +226,16 @@ class TestLockfileFlagStability:
         assert by_key["constraints"].cli_flag == "--project-constraint"
         assert by_key["default-groups"].cli_flag == "--project-default-group"
         assert by_key["constraints"].kind is Kind.APPEND
+
+
+def test_the_python_order_alias_holds_the_tokens_its_parser_offers() -> None:
+    """No enum backs this row, so the parser's own tuple ties the alias to it."""
+    assert get_args(MatrixOrderFlag) == values.PYTHON_ORDERS
+
+
+def test_the_implementation_alias_holds_the_tokens_its_parser_offers() -> None:
+    """The same tuple both the environment parse and the flag read."""
+    assert get_args(ImplementationFlag) == values.IMPLEMENTATIONS
 
 
 # The sixteen rows a configuration source and a flag both reach, so every

@@ -68,6 +68,9 @@ if TYPE_CHECKING:
 __all__ = [
     "DURATION_PATTERN",
     "ENVIRONMENT_KEYS",
+    "IMPLEMENTATIONS",
+    "PYTHON_ORDERS",
+    "CliTableError",
     "MatrixConfig",
     "SourceConfigError",
     "check_package_override_overlap",
@@ -112,6 +115,15 @@ class SourceConfigError(ConfigError):
     A subclass of :class:`ConfigError`, so a caller catching the broad config
     error catches these too, while ``except SourceConfigError`` still narrows
     to what a source declared.
+    """
+
+
+class CliTableError(SourceConfigError):
+    """A ``--project-<table>-<key>`` line nab refused.
+
+    It came from the command line, not a file, so it prints without the
+    ``config error:`` prefix.  A refusal from the merged-table parse keeps
+    that hook's wording and names the key.
     """
 
 
@@ -648,8 +660,8 @@ def validate_environment_values(environment: Mapping[str, Any]) -> None:
             )
             raise SourceConfigError(msg)
     implementation = environment.get("implementation")
-    if implementation is not None and implementation not in _KNOWN_IMPLEMENTATIONS:
-        valid = list(_KNOWN_IMPLEMENTATIONS)
+    if implementation is not None and implementation not in IMPLEMENTATIONS:
+        valid = list(IMPLEMENTATIONS)
         msg = (
             f"unknown environment.implementation {implementation!r};"
             f" expected one of {valid!r}"
@@ -1738,22 +1750,34 @@ def _parse_conflict_member(item: object, where: str) -> ConflictMember:
 _MINOR_RELEASE_PARTS = 2
 
 
-def _validate_matrix_python(spec: str) -> None:
-    """Reject a matrix.python axis finer than major.minor.
+def _patches_spelling(where: str) -> str:
+    """Spell python-patches the way the source behind ``where`` writes it.
+
+    A CLI label ends in the ``*`` its sub-flags fill, so the key takes the
+    star's place and the sentence names a flag the user can type.  Every
+    other source is a file, which writes the table.
+    """
+    if where.endswith("*"):
+        return f"{where[:-1]}python-patches"
+    return "[tool.nab.matrix.python-patches]"
+
+
+def _validate_matrix_python(spec: str, where: str) -> None:
+    """Reject a python axis finer than major.minor.
 
     The axis lists language (minor) Python versions; patch pins belong in
-    [tool.nab.matrix.python-patches].
+    the python-patches key.
     """
     try:
         specifier_set = SpecifierSet(spec)
     except InvalidSpecifier as exc:
-        msg = f"matrix.python must be a PEP 440 specifier, got {spec!r}"
+        msg = f"{where}.python must be a PEP 440 specifier, got {spec!r}"
         raise SourceConfigError(msg) from exc
     for clause in specifier_set:
         try:
             version = Version(clause.version.removesuffix(".*"))
         except ValueError as exc:
-            msg = f"matrix.python clause {clause} is not a valid version"
+            msg = f"{where}.python clause {clause} is not a valid version"
             raise SourceConfigError(msg) from exc
 
         # Reject pre/post/dev/local qualifiers and patch-level release tuples.
@@ -1766,9 +1790,9 @@ def _validate_matrix_python(spec: str) -> None:
         )
         if len(version.release) > _MINOR_RELEASE_PARTS or any(finer):
             msg = (
-                "matrix.python axis is a language (minor) version only; "
+                f"{where}.python axis is a language (minor) version only; "
                 f"{clause} is finer than major.minor. Put patch versions in "
-                "[tool.nab.matrix.python-patches]."
+                f"{_patches_spelling(where)}."
             )
             raise SourceConfigError(msg)
 
@@ -1919,6 +1943,13 @@ def _parse_major_minor(key: str, value: object) -> tuple[int, int] | None:
     return (release[0], release[1])
 
 
+# The two tokens matrix.python-order takes; ``nab.flagtypes`` spells the
+# same pair as a Literal.
+PYTHON_ORDERS = ("asc", "desc")
+
+# The interpreter implementations both the matrix and the environment model.
+IMPLEMENTATIONS = ("cpython", "pypy")
+
 _MATRIX_KEYS = frozenset(
     {
         "python",
@@ -1950,7 +1981,7 @@ def parse_matrix(value: object, where: str) -> MatrixConfig:
     if not isinstance(python, str):
         msg = f"{where}.python must be a string PEP 440 specifier"
         raise SourceConfigError(msg)
-    _validate_matrix_python(python)
+    _validate_matrix_python(python, where)
     platforms = _parse_matrix_platforms(platforms_raw, where)
     if not platforms:
         msg = f"{where}.platforms must list at least one platform id"
@@ -1962,7 +1993,7 @@ def parse_matrix(value: object, where: str) -> MatrixConfig:
     python_order = _parse_string_value(
         f"{where}.python-order", value.get("python-order", "asc")
     )
-    if python_order not in {"asc", "desc"}:
+    if python_order not in PYTHON_ORDERS:
         msg = f"{where}.python-order must be 'asc' or 'desc', got {python_order!r}"
         raise SourceConfigError(msg)
     patches = _parse_python_patches(value.get("python-patches"), where)
@@ -1988,9 +2019,6 @@ def _validate_matrix_axes(config: MatrixConfig, where: str) -> None:
         raise SourceConfigError(msg) from exc
 
 
-_KNOWN_IMPLEMENTATIONS = ("cpython", "pypy")
-
-
 def _parse_implementations(value: object, where: str) -> tuple[str, ...]:
     if value is None:
         return ("cpython",)
@@ -2000,11 +2028,11 @@ def _parse_implementations(value: object, where: str) -> tuple[str, ...]:
         msg = f"{label} must list at least one implementation"
         raise SourceConfigError(msg)
     _reject_duplicates(label, impls)
-    unknown = sorted(set(impls) - set(_KNOWN_IMPLEMENTATIONS))
+    unknown = sorted(set(impls) - set(IMPLEMENTATIONS))
     if unknown:
         msg = (
             f"{label} has unknown entries: {unknown!r}; "
-            f"expected {list(_KNOWN_IMPLEMENTATIONS)!r}"
+            f"expected {list(IMPLEMENTATIONS)!r}"
         )
         raise SourceConfigError(msg)
     return impls

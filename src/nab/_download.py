@@ -19,9 +19,9 @@ from nab_project.download import DownloadError, download_lock
 from nab_project.resolve import build_lock_input
 
 from ._resolve import (
+    _check_targets_or_exit,
     _load_config,
     _make_transport,
-    _reject_python_override_in_universal,
     _resolve,
     resolve_extra_selection,
     resolve_group_selection,
@@ -30,6 +30,7 @@ from ._run import (
     _cli_overrides,
     _layered_run_settings_or_exit,
     _project_cli_overrides_or_exit,
+    _reject_python_flag_in_universal,
     _resolve_effective_cache_dir,
     project_config_overrides,
     read_config_ladder,
@@ -39,6 +40,8 @@ from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runti
     DecisionOrderFlag,
     DistPolicyFlag,
     HttpBackend,
+    ImplementationFlag,
+    MatrixOrderFlag,
     ModeFlag,
     ResolutionFlag,
 )
@@ -72,6 +75,14 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_default_group: tuple[str, ...] = (),
     project_base_group: str | None = None,
     project_build_group: str | None = None,
+    project_matrix_python: str | None = None,
+    project_matrix_platforms: tuple[str, ...] = (),
+    project_matrix_implementations: tuple[str, ...] = (),
+    project_matrix_python_order: MatrixOrderFlag | None = None,
+    project_matrix_python_patches: tuple[str, ...] = (),
+    project_environment_python: str | None = None,
+    project_environment_platform: tuple[str, ...] = (),
+    project_environment_implementation: ImplementationFlag | None = None,
 ) -> None:
     """Resolve and download every wheel, sdist, and direct-URL archive.
 
@@ -85,7 +96,8 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     the resolve to start, so these flags also gate the download.
 
     ``--python X.Y`` resolves for that Python on this machine instead of
-    the running interpreter, as on ``nab lock``.
+    the running interpreter, as on ``nab lock``.  It is the short form of
+    ``--project-environment-python`` and writing both is refused.
 
     ``--offline``, ``--cache-dir``, ``--http-backend``,
     ``--max-concurrency`` and ``--project-resolution`` flow through the
@@ -117,18 +129,28 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_default_group=project_default_group,
         cli_base_group=project_base_group,
         cli_build_group=project_build_group,
+        cli_matrix_python=project_matrix_python,
+        cli_matrix_platforms=project_matrix_platforms,
+        cli_matrix_implementations=project_matrix_implementations,
+        cli_matrix_python_order=project_matrix_python_order,
+        cli_matrix_python_patches=project_matrix_python_patches,
+        cli_python=python,
+        cli_environment_python=project_environment_python,
+        cli_environment_platform=project_environment_platform,
+        cli_environment_implementation=project_environment_implementation,
     )
     project_overrides = project_config_overrides(overrides)
     _project_cli_overrides_or_exit(project_overrides)
+    ladder = read_config_ladder(path, overrides)
+    _reject_python_flag_in_universal(ladder, python)
     config = _load_config(
         path,
         discover_workspace=workspace_discovery,
         cli_overrides=project_overrides,
     )
-    ladder = read_config_ladder(path, overrides)
     settings = _layered_run_settings_or_exit(ladder, produces_lock=False)
     effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
-    _reject_python_override_in_universal(config, python)
+    _check_targets_or_exit(config)
     transport = _make_transport(settings.http_backend)
     result = _resolve(
         path,
@@ -137,7 +159,6 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
         offline=settings.offline,
         transport=transport,
         failure_prefix="cannot download",
-        python=python,
         groups=selected_groups,
         extras=selected_extras,
         resolution_strategy=settings.resolution,

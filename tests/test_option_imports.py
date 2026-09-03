@@ -1,6 +1,6 @@
 """What a command invocation is allowed to import.
 
-The declaration builds 56 rows and imports the policy enums to do it, and
+The declaration builds 64 rows and imports the policy enums to do it, and
 the command line never reads it: ``nab.optiondefs`` is the option model and
 ``nab.optiontable`` is where the rows are written, and the only path to
 either is the configuration ladder, which ``nab lock`` and ``nab config``
@@ -43,7 +43,7 @@ def _after_importing(module: str) -> list[str]:
 
 
 def test_a_command_invocation_imports_neither_the_model_nor_the_table() -> None:
-    """Only the generators and the tests build the 56 rows."""
+    """Only the generators and the tests build the 64 rows."""
     assert _after_importing("nab.cli")[0] == "clean"
 
 

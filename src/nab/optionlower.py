@@ -21,12 +21,33 @@ import enum
 from pathlib import Path
 from typing import Any
 
-from .optiondefs import UNSET, Kind, Opt, VType
-from .optionrows import OMITTED, Many, Row, Table, Tri, Verb, rows
+from .optiondefs import UNSET, Kind, Opt, Tokens, VType
+from .optionrows import (
+    OMITTED,
+    Item,
+    Items,
+    Many,
+    Pairs,
+    Row,
+    Star,
+    Table,
+    Tri,
+    Verb,
+    rows,
+)
 from .optiontypes import Shape, shape, type_argument
 
 # What a row with no value at all reads as: a flag, a counter or a key.
 _NO_VALUE = Shape("", (), "", nullable=False)
+
+# The token grammar each row class reads, on a row under a table key.  A
+# class listed nowhere here reads its tokens as one value.
+_TOKENS: dict[type[Row], Tokens] = {
+    Item: Tokens.ITEM,
+    Items: Tokens.ITEMS,
+    Pairs: Tokens.PAIRS,
+    Star: Tokens.LIST,
+}
 
 
 def lower(row: Row) -> Opt:
@@ -50,6 +71,10 @@ def lower(row: Row) -> Opt:
         "short": row.short,
         "help": row.help,
         "docs": row.docs,
+        "under": row.under,
+        "needed": row.needed,
+        "tokens": _tokens(row),
+        "opened_by": row.opened_by,
     }
 
     layer = row.key
@@ -63,6 +88,13 @@ def lower(row: Row) -> Opt:
         )
 
     return Opt(row.name, **fields)
+
+
+def _tokens(row: Row) -> Tokens | None:
+    """How a row's tokens read, and ``None`` on a row under no table key."""
+    if not row.under:
+        return None
+    return _TOKENS.get(type(row), Tokens.SCALAR)
 
 
 def table_rows(*tables: type[Table]) -> tuple[Opt, ...]:

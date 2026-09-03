@@ -1,8 +1,9 @@
 """Read ``[tool.nab]`` from a ``pyproject.toml`` into a typed config.
 
 ``[tool.nab]`` holds the keys that decide what a project resolves.  A
-``--project-<key>`` flag overrides a scalar or list key for one run; the
-table-valued keys stay file-only.  This module owns the project side.
+``--project-<key>`` flag overrides a scalar or list key for one run, and a
+``--project-<table>-<key>`` flag replaces one key inside a table.  This
+module owns the project side.
 """
 
 from __future__ import annotations
@@ -95,7 +96,6 @@ __all__ = [
     "ResolveMode",
     "plan_targets",
     "read_pyproject_config",
-    "with_python_override",
 ]
 
 
@@ -232,8 +232,10 @@ def read_pyproject_config(
     ``cli_overrides`` carries the ``--project-*`` overrides for the
     PROJECT options that take a CLI flag, keyed by registry key.  They
     layer as the highest-precedence source, so a flag wins over both
-    project files and an array flag appends after them.  ``None`` (the
-    default) is a file-only resolve, byte-identical to before.
+    project files; a table key arrives as a
+    :class:`~nab.config.subflags.CliTable` and replaces the keys it names
+    inside whatever table the files declared.  ``None`` (the default) is a
+    file-only resolve, byte-identical to before.
     """
     if anchor is None:
         anchor = datetime.now(timezone.utc)
@@ -302,11 +304,11 @@ def _config_from_effective(
     if mode is ResolveMode.UNIVERSAL and matrix is None:
         if mode_value.origin.kind is SourceKind.CLI:
             msg = (
-                "--project-mode universal needs a matrix table, but a matrix"
-                " can only be declared in a project file (there is no"
-                " --project-matrix flag). Add [tool.nab.matrix] to the"
-                " project's pyproject.toml, or a top-level [matrix] table to"
-                " the project's nab.toml, or drop --project-mode universal."
+                "--project-mode universal needs a matrix: pass"
+                " --project-matrix-python and --project-matrix-platforms, add"
+                " [tool.nab.matrix] to the project's pyproject.toml, or a"
+                " top-level [matrix] table to the project's nab.toml, or drop"
+                " --project-mode universal."
             )
         else:
             # PROJECT_TOML is the project-dir nab.toml, whose keys are top-level.
@@ -321,18 +323,7 @@ def _config_from_effective(
         raise ConfigError(msg)
     if mode is ResolveMode.SPECIFIC and matrix is not None:
         if not mode_value.origin.outranks(matrix_value.origin):
-            declared_table = (
-                "[matrix] in nab.toml"
-                if matrix_value.origin.kind is SourceKind.PROJECT_TOML
-                else "[tool.nab.matrix] in pyproject.toml"
-            )
-            msg = (
-                f"{declared_table} is set but mode is 'specific'; set"
-                " mode = 'universal' to resolve for every target the matrix"
-                " declares, or remove the table. The multi-target lockfile"
-                " format universal mode produces is experimental."
-            )
-            raise ConfigError(msg)
+            raise ConfigError(_specific_mode_message(matrix_value))
         # A higher-precedence source (--project-mode) selected a
         # single-environment resolve, so the matrix it shadows does not apply.
         matrix = None
@@ -353,12 +344,9 @@ def _config_from_effective(
 
     environment = _environment_from_effective(effective)
     if matrix is not None and environment is not None:
-        msg = (
-            "[tool.nab.matrix] and [tool.nab.environment] cannot both be set:"
-            " the matrix declares one environment per tuple, so a single"
-            " declared environment would contradict it.  Drop one."
+        raise ConfigError(
+            _matrix_environment_message(matrix_value, effective["environment"])
         )
-        raise ConfigError(msg)
 
     targets = _plan_targets(matrix, environment)
     build_policy = enforce_build_policy_for_targets(
@@ -420,6 +408,62 @@ def _config_from_effective(
         conflicts=conflicts,
         package_overrides=package_overrides,
         index_overrides=index_overrides,
+    )
+
+
+def _declared_by(ev: EffectiveValue) -> tuple[str, ...]:
+    """Return the flags that declared this key, empty for a file source."""
+    if ev.cli_table is None:
+        return ()
+    return tuple(key.flag for key in ev.cli_table.keys)
+
+
+def _declares(flags: tuple[str, ...]) -> str:
+    """Agree the verb with the subject: several flags declare, one name declares."""
+    return "declare" if len(flags) > 1 else "declares"
+
+
+def _specific_mode_message(matrix_value: EffectiveValue) -> str:
+    """Say why a declared matrix is refused while mode is 'specific'."""
+    flags = _declared_by(matrix_value)
+    if flags:
+        named = " and ".join(flags)
+        return (
+            f"{named} {_declares(flags)} a matrix but mode is 'specific';"
+            " pass --project-mode universal as well, or drop the matrix flags."
+        )
+    declared = (
+        "[matrix] in nab.toml"
+        if matrix_value.origin.kind is SourceKind.PROJECT_TOML
+        else "[tool.nab.matrix] in pyproject.toml"
+    )
+    return (
+        f"{declared} is set but mode is 'specific'; set mode = 'universal' to"
+        " resolve for every target the matrix declares, or remove the table."
+        " The multi-target lockfile format universal mode produces is"
+        " experimental."
+    )
+
+
+def _matrix_environment_message(
+    matrix_value: EffectiveValue, environment_value: EffectiveValue
+) -> str:
+    """Say why a matrix and a declared environment cannot both stand."""
+    matrix_flags = _declared_by(matrix_value)
+    environment_flags = _declared_by(environment_value)
+    if not matrix_flags and not environment_flags:
+        return (
+            "[tool.nab.matrix] and [tool.nab.environment] cannot both be set:"
+            " the matrix declares one environment per tuple, so a single"
+            " declared environment would contradict it.  Drop one."
+        )
+    matrix = " and ".join(matrix_flags) or "[tool.nab.matrix]"
+    environment = " and ".join(environment_flags) or "[tool.nab.environment]"
+    return (
+        f"{matrix} {_declares(matrix_flags)} a matrix and"
+        f" {environment} {_declares(environment_flags)} one environment;"
+        " the matrix declares one environment per tuple, so the two"
+        " contradict.  Drop one."
     )
 
 
@@ -635,10 +679,9 @@ def _check_free_threaded_environment(
 ) -> None:
     """Hold ``[tool.nab.environment]`` to the free-threaded interpreter floor.
 
-    ``python_versions`` is empty for a table that names no python, since
-    ``--python`` can still move that axis after the parse.  The parse then
-    checks only the implementation, and :func:`plan_targets` checks the
-    python the target ended up on.
+    ``python_versions`` is empty for a table that names no python, so the
+    parse checks only the implementation and :func:`plan_targets` checks
+    the python the target ended up on.
     """
     if environment.platform is None:
         return
@@ -651,58 +694,6 @@ def _check_free_threaded_environment(
     except ValueError as exc:
         msg = f"invalid [tool.nab.environment]: {exc}"
         raise ConfigError(msg) from exc
-
-
-def with_python_override(
-    config: NabProjectConfig, python: str | None
-) -> NabProjectConfig:
-    """Return ``config`` with its resolve target moved onto ``python``.
-
-    The ``--python`` flag retargets the python axis for one run, leaving
-    any declared platform in place.  The build-policy guard runs again over
-    the new plan, so a runtime retarget is held to the same rule as a
-    declared one.  ``None`` is a no-op.
-
-    A matrix already declares the python axis for every target it names, so
-    retargeting one of them would resolve for a python the matrix does not
-    model and record it under that target's label.
-    """
-    if python is None:
-        return config
-    if config.matrix is not None:
-        msg = (
-            "--python cannot retarget a resolve that declares"
-            " [tool.nab.matrix]: the matrix names the python axis of every"
-            " target.  Narrow matrix.python instead."
-        )
-        raise ConfigError(msg)
-
-    try:
-        Version(python)
-    except ValueError as exc:
-        msg = f"--python must be a version like '3.12' or '3.12.4', got {python!r}"
-        raise ConfigError(msg) from exc
-
-    environment = (
-        EnvironmentConfig(python=python)
-        if config.environment is None
-        else replace(config.environment, python=python)
-    )
-
-    build_policy = enforce_build_policy_for_targets(
-        targets=_plan_targets(config.matrix, environment),
-        build_policy=config.build_policy,
-        # The policy here is the effective one, so any non-``never`` value
-        # that survived the parse is an explicit host-build request.
-        build_policy_set=True,
-        package_overrides=config.package_overrides,
-        index_overrides=config.index_overrides,
-    )
-
-    retargeted = replace(config, environment=environment, build_policy=build_policy)
-    # Called for the check it runs: the declaration must admit the moved target.
-    plan_targets(retargeted)
-    return retargeted
 
 
 def _check_requires_python_admits_target(
@@ -754,9 +745,8 @@ def _check_requires_python_admits_target(
 def _option_label(value: EffectiveValue) -> str:
     """Name an option by its CLI flag when the CLI set it, else by its config key.
 
-    Every CLI-settable row carries a flag, since ``build_cli_overrides``
-    skips the rest, so a CLI origin on a flagless row is a bug and not a
-    value to label by its config key.
+    ``base-group`` and ``build-group`` are the only values that reach here
+    and both carry a flag, so a CLI origin on a flagless row is a bug.
     """
     if value.origin.kind is not SourceKind.CLI:
         return value.spec.name
@@ -1022,22 +1012,28 @@ def _environment_from_effective(
 
     ``[tool.nab.environment]`` is the surface;
     ``[tool.nab.marker-environment]`` is its deprecated predecessor and is
-    translated into it.  Declaring both is an error: the two would have to
-    agree, and a silent precedence between them is exactly the ambiguity the
-    replacement removes.  Returns ``None`` when neither is declared, which
-    is the host.
+    translated into it.  Declaring both in a file is an error: the two would
+    have to agree, and a silent precedence between them is exactly the
+    ambiguity the replacement removes.  The command line writes keys of the
+    one environment rather than a second table, so its keys lay over the
+    translation the way they lay over a declared table.  Returns ``None``
+    when neither is declared, which is the host.
     """
-    declared: Mapping[str, Any] = effective["environment"].value
+    entry = effective["environment"]
+    declared: Mapping[str, Any] = entry.value
     marker_environment: Mapping[str, str] = effective["marker-environment"].value
     if marker_environment:
-        if declared:
+        if _file_declares_environment(entry):
             msg = (
                 "[tool.nab.environment] and the deprecated"
                 " [tool.nab.marker-environment] are both set; drop the"
                 " marker-environment table."
             )
             raise ConfigError(msg)
-        declared = _environment_from_marker_environment(marker_environment)
+        declared = {
+            **_environment_from_marker_environment(marker_environment),
+            **declared,
+        }
     if not declared:
         return None
     platform = declared.get("platform")
@@ -1055,6 +1051,18 @@ def _environment_from_effective(
         )
         raise ConfigError(msg)
     return environment
+
+
+def _file_declares_environment(entry: EffectiveValue) -> bool:
+    """Whether a configuration file declared ``[tool.nab.environment]``.
+
+    Read off the stack rather than the effective value: the command line
+    folds its keys into the same key, and a flag narrowing the deprecated
+    overlay is not a second declaration of the table.
+    """
+    return any(
+        value for origin, value in entry.stack if origin.kind is not SourceKind.CLI
+    )
 
 
 def _reject_duplicate_source_names(

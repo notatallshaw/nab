@@ -24,6 +24,7 @@ from nab.config.ladder import (
     SourceKind,
     SourceRoots,
 )
+from nab.config.subflags import CliKey, CliTable
 from nab.config.values import MatrixConfig
 from nab.optiondefs import Kind, Opt, Scope, VType
 from nab_project import conflicts, inputs, lockfile
@@ -103,6 +104,18 @@ PACKAGE_OVERRIDE = PackageOverride(
 ORIGIN = Origin(SourceKind.PYPROJECT, "/p/pyproject.toml")
 OTHER_ORIGIN = Origin(SourceKind.USER_TOML, "/u/nab.toml")
 SPEC = _option("mode")
+
+# One key a ``--project-matrix-*`` line set, as the fold records it.
+CLI_TABLE = CliTable(
+    (
+        CliKey(
+            key="platforms",
+            flag="--project-matrix-platforms",
+            tokens=("linux_x86_64",),
+            value=[{"id": "linux_x86_64"}],
+        ),
+    )
+)
 
 LOCKED_AT = datetime(2026, 1, 1, tzinfo=timezone.utc)
 LATER = datetime(2026, 2, 1, tzinfo=timezone.utc)
@@ -198,8 +211,16 @@ CASES = [
     ),
     Case(
         Layer,
-        {"origin": ORIGIN, "values": {"mode": "specific"}},
-        {"origin": OTHER_ORIGIN, "values": {"mode": "universal"}},
+        {
+            "origin": ORIGIN,
+            "values": {"mode": "specific"},
+            "raw": {"matrix": {"python": "==3.11"}},
+        },
+        {
+            "origin": OTHER_ORIGIN,
+            "values": {"mode": "universal"},
+            "raw": {},
+        },
         hashable=False,
     ),
     Case(
@@ -215,6 +236,7 @@ CASES = [
             "origin": ORIGIN,
             "stack": ((ORIGIN, "specific"),),
             "rejected": (RejectedLayer(ORIGIN, "mode", "unknown"),),
+            "cli_table": None,
         },
         {
             "spec": _option("resolution"),
@@ -222,6 +244,7 @@ CASES = [
             "origin": OTHER_ORIGIN,
             "stack": (),
             "rejected": (),
+            "cli_table": CLI_TABLE,
         },
     ),
     Case(
@@ -454,9 +477,14 @@ DEFAULTS = [
         {"active_configured": ()},
     ),
     (
+        Layer,
+        {"origin": ORIGIN, "values": {}},
+        {"raw": {}},
+    ),
+    (
         EffectiveValue,
         {"spec": SPEC, "value": 1, "origin": ORIGIN, "stack": ()},
-        {"rejected": ()},
+        {"rejected": (), "cli_table": None},
     ),
     (
         SourceRoots,

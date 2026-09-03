@@ -33,6 +33,8 @@ from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runti
     DecisionOrderFlag,
     DistPolicyFlag,
     HttpBackend,
+    ImplementationFlag,
+    MatrixOrderFlag,
     ModeFlag,
     ResolutionFlag,
 )
@@ -63,6 +65,14 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
     project_default_group: tuple[str, ...] = (),
     project_base_group: str | None = None,
     project_build_group: str | None = None,
+    project_matrix_python: str | None = None,
+    project_matrix_platforms: tuple[str, ...] = (),
+    project_matrix_implementations: tuple[str, ...] = (),
+    project_matrix_python_order: MatrixOrderFlag | None = None,
+    project_matrix_python_patches: tuple[str, ...] = (),
+    project_environment_python: str | None = None,
+    project_environment_platform: tuple[str, ...] = (),
+    project_environment_implementation: ImplementationFlag | None = None,
     include_rejected: bool = False,
 ) -> None:
     """Inspect the effective layered configuration.
@@ -113,6 +123,14 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
         cli_default_group=project_default_group,
         cli_base_group=project_base_group,
         cli_build_group=project_build_group,
+        cli_matrix_python=project_matrix_python,
+        cli_matrix_platforms=project_matrix_platforms,
+        cli_matrix_implementations=project_matrix_implementations,
+        cli_matrix_python_order=project_matrix_python_order,
+        cli_matrix_python_patches=project_matrix_python_patches,
+        cli_environment_python=project_environment_python,
+        cli_environment_platform=project_environment_platform,
+        cli_environment_implementation=project_environment_implementation,
     )
 
     rejected: list[RejectedLayer] = []

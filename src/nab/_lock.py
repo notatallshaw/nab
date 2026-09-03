@@ -72,10 +72,9 @@ from nab_provider.requirements_file import (
 from nab_provider.target import IntractableMarkerError, UnevaluableMarkerError
 
 from ._resolve import (
+    _check_targets_or_exit,
     _load_config,
     _make_resolve_transport,
-    _python_override_or_exit,
-    _reject_python_override_in_universal,
     _resolve,
     resolve_extra_selection,
     resolve_group_selection,
@@ -85,24 +84,22 @@ from ._run import (
     _cli_overrides,
     _layered_run_settings_or_exit,
     _project_cli_overrides_or_exit,
+    _reject_python_flag_in_universal,
     _resolve_effective_cache_dir,
     lock_anchor,
     project_config_overrides,
     project_override_arguments,
     read_config_ladder,
 )
-from .config.model import (
-    ConfigError,
-    NabProjectConfig,
-    ResolveMode,
-    plan_targets,
-)
+from .config.model import NabProjectConfig, ResolveMode, plan_targets
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
     DecisionOrderFlag,
     DistPolicyFlag,
     HttpBackend,
+    ImplementationFlag,
     LockFormat,
+    MatrixOrderFlag,
     ModeFlag,
     ResolutionFlag,
 )
@@ -177,6 +174,14 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     project_default_group: tuple[str, ...] = (),
     project_base_group: str | None = None,
     project_build_group: str | None = None,
+    project_matrix_python: str | None = None,
+    project_matrix_platforms: tuple[str, ...] = (),
+    project_matrix_implementations: tuple[str, ...] = (),
+    project_matrix_python_order: MatrixOrderFlag | None = None,
+    project_matrix_python_patches: tuple[str, ...] = (),
+    project_environment_python: str | None = None,
+    project_environment_platform: tuple[str, ...] = (),
+    project_environment_implementation: ImplementationFlag | None = None,
     upgrade: bool = False,
     locked: bool = False,
 ) -> None:
@@ -217,8 +222,10 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     refuse directory entries because they cannot be hashed.
 
     ``--python X.Y`` resolves for that Python on this machine instead of
-    the running interpreter, like pip's ``--python-version``.  It is
-    rejected in universal mode, where the matrix declares the Python axis.
+    the running interpreter, like pip's ``--python-version``.  It is the
+    short form of ``--project-environment-python`` and writing both is
+    refused.  It is rejected in universal mode, where the matrix declares
+    the Python axis.
 
     ``--project-resolution`` overrides ``[tool.nab].resolution`` for this
     run (a PROJECT-scope override, so it is layered through the config
@@ -262,10 +269,20 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         cli_default_group=project_default_group,
         cli_base_group=project_base_group,
         cli_build_group=project_build_group,
+        cli_matrix_python=project_matrix_python,
+        cli_matrix_platforms=project_matrix_platforms,
+        cli_matrix_implementations=project_matrix_implementations,
+        cli_matrix_python_order=project_matrix_python_order,
+        cli_matrix_python_patches=project_matrix_python_patches,
+        cli_python=python,
+        cli_environment_python=project_environment_python,
+        cli_environment_platform=project_environment_platform,
+        cli_environment_implementation=project_environment_implementation,
     )
     project_overrides = project_config_overrides(overrides)
     _project_cli_overrides_or_exit(project_overrides)
     ladder = read_config_ladder(path, overrides)
+    _reject_python_flag_in_universal(ladder, python)
     anchor = _determine_lock_anchor(
         ladder,
         output=output,
@@ -285,7 +302,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     if locked and config.mode is ResolveMode.UNIVERSAL:
         printer().error("--locked is not supported in universal mode.")
         sys.exit(1)
-    _reject_python_override_in_universal(config, python)
+    _check_targets_or_exit(config)
     settings = _layered_run_settings_or_exit(ladder)
     effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
     provenance = _build_provenance(
@@ -314,7 +331,6 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     run = _LockRun(
         path=path,
         output=output,
-        python=python,
         groups=selected_groups,
         extras=selected_extras,
         offline=offline,
@@ -338,7 +354,6 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         offline=settings.offline,
         transport=transport,
         failure_prefix="cannot lock",
-        python=python,
         groups=selected_groups,
         extras=selected_extras,
         build_requirements=build_requirements,
@@ -503,7 +518,6 @@ class _LockRun:
 
     path: Path
     output: Path | None
-    python: str | None
     groups: tuple[str, ...]
     extras: tuple[str, ...]
     offline: bool | None
@@ -531,8 +545,6 @@ class _LockRun:
     def _content_arguments(self) -> list[str]:
         """Return the flags that decide what the rewritten lock holds."""
         arguments: list[str] = []
-        if self.python is not None:
-            arguments += ["--python", self.python]
         if self.groups:
             arguments += ["--groups", *self.groups]
         if self.extras:
@@ -576,13 +588,7 @@ def _fast_fail_locked(
     ``config`` says which environment the checks evaluate markers against
     and ``inputs`` carries the settings the lock records, already narrowed
     for a build-requirements run.
-
-    ``--python`` is applied first so a rejected value reports as the flag
-    error: reporting a stale lock instead would point at a refresh command
-    carrying the same rejected value.
     """
-    retargeted = _python_override_or_exit(config, run.python)
-
     target = _locked_target_path(run)
     refresh = run.refresh_command()
 
@@ -615,7 +621,9 @@ def _fast_fail_locked(
         )
         sys.exit(1)
 
-    resolve_target = _locked_resolve_target(retargeted)
+    # ``--locked`` is refused in universal mode, so the plan holds one
+    # target, and _check_targets_or_exit has already admitted it.
+    resolve_target = plan_targets(config)[0]
 
     try:
         disqualification = check_locked(
@@ -653,21 +661,6 @@ def _fast_fail_locked(
         f" re-run `{refresh}` to update it."
     )
     sys.exit(1)
-
-
-def _locked_resolve_target(config: NabProjectConfig) -> ResolveTarget | None:
-    """Return the target the validity checks evaluate markers against.
-
-    ``config`` arrives retargeted onto any ``--python``.  ``None`` when the
-    declaration excludes this run's target, which leaves the validity checks
-    to the full resolve.  The envelope checks still run.  The checks read the
-    target's marker environment; the target itself says which markers its
-    micro slices decide instead.
-    """
-    try:
-        return plan_targets(config)[0]
-    except ConfigError:
-        return None
 
 
 def _active_root_requirements(

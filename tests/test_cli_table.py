@@ -70,6 +70,14 @@ _PAGES = (
     ("index", "how-to/multi-index.md"),
     ("conflicts", "explanation/conflicts.md"),
     ("matrix", "explanation/universal.md"),
+    ("python", "explanation/universal.md"),
+    ("platforms", "explanation/universal.md"),
+    ("implementations", "explanation/universal.md"),
+    ("python-order", "explanation/universal.md"),
+    ("python-patches", "explanation/universal.md"),
+    ("python", "reference/configuration.md"),
+    ("platform", "reference/configuration.md"),
+    ("implementation", "reference/configuration.md"),
     ("offline", "reference/cli.md"),
     ("cache-dir", "reference/cache.md"),
     ("http-backend", "reference/cli.md"),
@@ -131,6 +139,20 @@ def _row(name: str, **fields: Any) -> Opt:
     return Opt(name, **{**declared, **fields})
 
 
+def _sub_row(name: str = "python", **fields: Any) -> Opt:
+    """A row that spells one key of ``matrix`` and carries none of its own."""
+    declared: dict[str, Any] = {
+        "scope": Scope.PROJECT,
+        "under": "matrix",
+        "kind": Kind.VALUE,
+        "vtype": VType.STR,
+        "default": None,
+        "parse": None,
+        "render": None,
+    }
+    return _row(name, **{**declared, **fields})
+
+
 def _refused(rows: tuple[Opt, ...], commands: Any = _LOCK_ONLY) -> str:
     """The message ``validate`` raises on ``rows``."""
     with pytest.raises(ValueError) as caught:  # noqa: PT011 - the message is the check
@@ -152,18 +174,31 @@ class TestTheDeclaredTable:
         optiondefs.validate(ALL)
 
     def test_the_table_is_the_three_groups_it_is_built_from(self) -> None:
-        """56 rows: 7 at the root, 36 on a command, 13 in a file alone."""
+        """64 rows: 7 at the root, 44 on a command, 13 in a file alone."""
         root = [row for row in ALL if row.is_global]
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 36, 13)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 56
+        assert (len(root), len(command), len(file_only)) == (7, 44, 13)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 64
 
         keyed = [row for row in ALL if row.key]
         assert len(keyed) == 29
         assert sum(1 for row in keyed if row.cli_flag) == 16
         assert sum(1 for row in keyed if not row.commands) == 13
+
+    def test_the_sub_rows_are_the_eight_that_spell_the_two_tables(self) -> None:
+        """A sub-row carries no key, so only ``under`` says which one it spells."""
+        assert [(row.name, row.under) for row in ALL if row.under] == [
+            ("python", "matrix"),
+            ("platforms", "matrix"),
+            ("implementations", "matrix"),
+            ("python-order", "matrix"),
+            ("python-patches", "matrix"),
+            ("python", "environment"),
+            ("platform", "environment"),
+            ("implementation", "environment"),
+        ]
 
     def test_every_command_is_declared_once_in_help_order(self) -> None:
         assert [name for name, _module, _function in COMMANDS] == [
@@ -333,6 +368,15 @@ class TestDerivedSpellings:
 
         assert row.cli_flag == "--project-constraint"
         assert row.dest == "project_constraint"
+
+    def test_a_sub_row_takes_the_key_it_is_under_into_its_flag(self) -> None:
+        """The flag carries the parent key; the registry keeps one key for both."""
+        row = _sub_row()
+
+        assert row.cli_flag == "--project-matrix-python"
+        assert row.dest == "project_matrix_python"
+        assert row.key is None
+        assert row.allowed_in_toml(SourceKind.PYPROJECT) is False
 
     def test_the_parameter_is_the_flag_without_its_dashes(self) -> None:
         row = _row("cache-dir", scope=Scope.USER, vtype=VType.PATH, sample="c")
@@ -515,6 +559,83 @@ class TestPerRowRules:
             "matrix has no command line, so it takes no CLI fields"
         )
 
+    def test_refuses_a_sub_row_with_no_scope(self) -> None:
+        assert (
+            _construction_error(
+                "python",
+                under="matrix",
+                kind=Kind.VALUE,
+                vtype=VType.STR,
+                default=None,
+                parse=None,
+                render=None,
+            )
+            == "python is under 'matrix', so it needs a scope"
+        )
+
+    def test_refuses_a_sub_row_with_no_command_line(self) -> None:
+        assert (
+            _construction_error(
+                "python",
+                scope=Scope.PROJECT,
+                under="matrix",
+                kind=Kind.VALUE,
+                vtype=VType.STR,
+                commands=(),
+                default=UNSET,
+                parse=None,
+                render=None,
+            )
+            == "python is under 'matrix', so it needs a command line"
+        )
+
+    def test_refuses_a_sub_row_that_binds_an_operand(self) -> None:
+        assert (
+            _construction_error(
+                "python",
+                scope=Scope.PROJECT,
+                under="matrix",
+                kind=Kind.POSITIONAL,
+                vtype=VType.STR,
+                default="",
+                parse=None,
+                render=None,
+            )
+            == "python is under 'matrix', so it cannot be an operand"
+        )
+
+    def test_refuses_a_sub_row_carrying_a_key_of_its_own(self) -> None:
+        """One registry key per table: a sub-row declares no rung 0 or hook."""
+        assert (
+            _construction_error(
+                "python",
+                scope=Scope.PROJECT,
+                under="matrix",
+                kind=Kind.VALUE,
+                vtype=VType.STR,
+                default=None,
+                rdefault=None,
+                parse=None,
+                render=None,
+            )
+            == "python is under 'matrix', so it takes no key of its own"
+        )
+
+    def test_refuses_a_sub_row_that_repeats_the_key_it_is_under(self) -> None:
+        assert (
+            _construction_error(
+                "matrix-python",
+                scope=Scope.PROJECT,
+                under="matrix",
+                kind=Kind.VALUE,
+                vtype=VType.STR,
+                default=None,
+                parse=None,
+                render=None,
+            )
+            == "matrix-python takes its matrix- prefix from the key it is under"
+        )
+
     def test_refuses_a_layered_free_form_row_with_no_sample(self) -> None:
         assert (
             _construction_error(
@@ -639,6 +760,29 @@ class TestCrossRowRules:
         """Passing no entries means none, rather than the declared four."""
         assert _refused((_row("upgrade"),), ()) == (
             "upgrade names the undeclared command 'lock'"
+        )
+
+    def test_refuses_a_sub_row_under_a_key_no_row_declares(self) -> None:
+        assert _refused((_sub_row(),)) == (
+            "python is under 'matrix', which no row declares as a key"
+        )
+
+    def test_refuses_a_sub_row_scoped_apart_from_its_parent(self) -> None:
+        rows = (
+            _row("matrix", scope=Scope.USER, commands=(), default=UNSET, rdefault=None),
+            _sub_row(),
+        )
+
+        assert _refused(rows) == (
+            "python is project-scope under 'matrix', which is user-scope"
+        )
+
+    def test_refuses_a_sub_row_whose_parent_carries_a_flag(self) -> None:
+        """Either the key takes a flag or its sub-rows do, never both."""
+        rows = (_row("matrix", scope=Scope.PROJECT, sample="x"), _sub_row())
+
+        assert _refused(rows) == (
+            "'matrix' takes a flag of its own, so python cannot spell it as well"
         )
 
     def test_refuses_a_command_no_row_reaches(self) -> None:

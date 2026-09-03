@@ -53,10 +53,8 @@ from ._run import require_pyproject_file
 from .config.model import (
     ConfigError,
     NabProjectConfig,
-    ResolveMode,
     plan_targets,
     read_pyproject_config,
-    with_python_override,
 )
 from .output import Verbosity, printer
 
@@ -235,35 +233,16 @@ def _load_config(
         sys.exit(1)
 
 
-def _reject_python_override_in_universal(
-    config: NabProjectConfig, python: str | None
-) -> None:
-    """Exit 1 when ``--python`` is passed to a matrix-declaring project.
+def _check_targets_or_exit(config: NabProjectConfig) -> None:
+    """Exit 1 when the declaration admits no target, before anything else reads it.
 
-    The matrix declares the python axis itself, so a single Python for the
-    run has nowhere to land; silently ignoring the flag would lock a set
-    the user did not ask for.
-    """
-    if python is not None and config.mode is ResolveMode.UNIVERSAL:
-        printer().error(
-            "--python is not supported in universal mode;"
-            " [tool.nab.matrix].python declares the Python axis."
-        )
-        sys.exit(1)
-
-
-def _python_override_or_exit(
-    config: NabProjectConfig, python: str | None
-) -> NabProjectConfig:
-    """Retarget ``config`` onto the ``--python`` value, exiting 1 on a bad one.
-
-    Applied here rather than forwarded to the resolve, so the error reads
-    as a flag error, not a ``[tool.nab]`` one.
+    ``nab lock --locked`` would otherwise report a stale lock and print a
+    refresh command carrying the value that was refused.
     """
     try:
-        return with_python_override(config, python)
-    except ConfigError as e:
-        printer().error(str(e))
+        plan_targets(config)
+    except ConfigError as exc:
+        printer().error(str(exc))
         sys.exit(1)
 
 
@@ -300,7 +279,6 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     offline: bool,
     transport: AsyncHttpTransport,
     failure_prefix: str,
-    python: str | None = None,
     groups: tuple[str, ...] = (),
     extras: tuple[str, ...] = (),
     build_requirements: bool = False,
@@ -318,7 +296,6 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     runs; it is cleared before any summary or error is written, so the two
     never collide.
     """
-    config = _python_override_or_exit(config, python)
     try:
         try:
             targets = plan_targets(config)
