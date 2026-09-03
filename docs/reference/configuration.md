@@ -646,15 +646,23 @@ both satisfy every requirement.
 
 ## VCS policy
 
-`[tool.nab.vcs]` controls whether direct-URL VCS requirements
-(`pkg @ git+https://...`) are honored.  Default posture is fully
-restrictive.
+`[tool.nab.vcs]` is the gate a VCS URL passes before nab clones it.
+Default posture is fully restrictive.  The form that resolves is a
+`[[tool.nab.vcs-sources]]` entry, described under "Pinned VCS sources"
+below.
+
+A direct-URL requirement (`pkg @ git+https://...`) at the project root
+or in a dependency's metadata passes the same gate, then fails the
+resolve, because nab has no resolver path for that form.  A requirement
+whose marker excludes it, or one behind an extra the resolve never
+requests, never reaches the gate.  See
+[Add a VCS dependency](../how-to/vcs.md).
 
 ```toml
 [tool.nab.vcs]
 policy = "block"                # "block" | "allow"
 allowed-schemes = ["git+https"]
-allowed-repos = ["github.com/me/x"]
+allowed-repos = ["https://github.com/me/x"]
 require-pin = true
 ```
 
