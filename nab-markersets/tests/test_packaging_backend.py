@@ -147,10 +147,15 @@ def test_the_bound_copy_clears_the_floor() -> None:
 
 
 def test_every_bound_name_comes_from_the_bound_backend() -> None:
-    """No name is left over from the copy that lost the probe."""
+    """No name is left over from the copy that lost the probe.
+
+    ``BOUND_NAMES`` is pinned to ``__all__`` first, so a name added to the
+    module fails here until the census covers it too.
+    """
+    assert set(BOUND_NAMES) == set(_packaging.__all__) - {"BACKEND"}
+
     homes = {name: getattr(_packaging, name).__module__ for name in BOUND_NAMES}
 
-    assert set(homes) == set(BOUND_NAMES)
     assert all(home.startswith(BACKEND) for home in homes.values()), homes
 
 
