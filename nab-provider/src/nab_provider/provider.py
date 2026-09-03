@@ -2739,7 +2739,7 @@ class Provider:
         """
         normalized = canonicalize_name(canonical_name)
         listing = self.versions_cache.get(normalized, [])
-        return [dist for v, dist in listing if v == version]
+        return _metadata_resolver.dists_at_version(listing, version)
 
     def tag_excluded_wheel_count(self, canonical_name: str, version: Version) -> int:
         """Return how many wheels the tag filter dropped at ``version`` (0 if none)."""

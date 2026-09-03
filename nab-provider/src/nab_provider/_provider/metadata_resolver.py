@@ -358,6 +358,32 @@ def _record_range_outcome(
         provider.stats.wheel_metadata_range_missing += 1
 
 
+def dists_at_version(
+    versions: Sequence[tuple[Version, DistFile]], version: Version
+) -> list[DistFile]:
+    """Every dist listed at ``version``, in listing order.
+
+    ``versions`` is the newest-first listing
+    :func:`~nab_provider._provider.listing.filter_distributions` emits, where a
+    release's dists sit together, so bisection finds them. :mod:`bisect`
+    searches ascending sequences only, hence the loop.
+    """
+    low, high = 0, len(versions)
+    while low < high:
+        mid = (low + high) // 2
+        # Newest first, so a smaller ``version`` lies to the right of ``mid``.
+        if version < versions[mid][0]:
+            low = mid + 1
+        else:
+            high = mid
+
+    stop = low
+    while stop < len(versions) and versions[stop][0] == version:
+        stop += 1
+
+    return [dist for _, dist in versions[low:stop]]
+
+
 def pick_dist_for_metadata(
     versions: Sequence[tuple[Version, DistFile]],
     version: Version,
@@ -365,7 +391,7 @@ def pick_dist_for_metadata(
     target: ResolveTarget | None = None,
 ) -> DistFile | None:
     """Pick the dist whose metadata answers for ``version``. See :func:`pick_dist`."""
-    dists = [d for v, d in versions if v == version]
+    dists = dists_at_version(versions, version)
     return pick_dist(dists, tags, target) if dists else None
 
 
