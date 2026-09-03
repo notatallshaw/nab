@@ -783,11 +783,10 @@ def parse_and_cache_metadata(
     :class:`UnsupportedSdistError` under :class:`BuildPolicy.NEVER`.
 
     The parsed :class:`WheelMetadata` is shared via the
-    :class:`~nab_provider.store.InMemoryIndex` so that universal-mode
-    resolves only run :func:`parse_metadata` once per
-    ``(package, version)`` regardless of how many tuples ask for it.  The
-    cache is keyed on ``metadata_text`` as well, so a tuple holding another
-    artifact's text for that version parses it itself.
+    :class:`~nab_provider.store.InMemoryIndex`, keyed by the text it was
+    parsed from, so a universal-mode resolve runs :func:`parse_metadata`
+    once per distinct text, however many tuples read it.
+
     Per-tuple classification (marker evaluation, extras admission)
     still runs locally in :func:`cache_deps_from_metadata`.  The
     sdist-dynamic-deps reconciliation in

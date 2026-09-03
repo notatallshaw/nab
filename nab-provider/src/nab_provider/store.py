@@ -108,9 +108,10 @@ class InMemoryIndex:
         # the provider's tier accounting.
         self._range_outcomes: dict[tuple[str, str, str], RangeOutcome] = {}
 
-        # A parse is a pure function of its text, so ``(source_text, parsed)``
-        # entries are shared across the per-target providers of one resolve.
-        self._parsed_metadata: dict[tuple[str, str], tuple[str, Any]] = {}
+        # A parse is a pure function of its text, so a version's
+        # ``(source_text, parsed)`` entries are shared across the per-target
+        # providers of one resolve.
+        self._parsed_metadata: dict[tuple[str, str], tuple[tuple[str, Any], ...]] = {}
 
         # Sdist metadata after PEP 643 dynamic deps have been resolved from the
         # bundled pyproject.toml or a PEP 517 backend.  Shared across targets so
@@ -570,21 +571,27 @@ class InMemoryIndex:
     ) -> Any | None:
         """Return the cached parse of ``source_text``, or ``None``.
 
-        A parse of any other text is a miss: wheel METADATA and sdist PKG-INFO
-        share one ``(package, version)`` slot, so a key-only hit could hand
-        back another artifact's deps.
+        A version's entries are matched by text: wheel METADATA, sdist
+        PKG-INFO and per-platform wheels all parse under one ``(package,
+        version)``, so a key-only hit could hand back another artifact's deps.
         """
-        entry = self._parsed_metadata.get((package, version))
-        if entry is None or entry[0] != source_text:
-            return None
-        return entry[1]
+        for text, metadata in self._parsed_metadata.get((package, version), ()):
+            if text == source_text:
+                return metadata
+        return None
 
     def store_parsed_metadata(
         self, package: str, version: str, metadata: Any, source_text: str
     ) -> None:
-        """Cache the parse of ``source_text``."""
+        """Cache the parse of ``source_text`` beside the version's other parses.
+
+        The entries are a tuple replaced whole, so a read without the lock
+        never sees a half-built one.
+        """
+        key = (package, version)
         with self._lock:
-            self._parsed_metadata[(package, version)] = (source_text, metadata)
+            entries = self._parsed_metadata.get(key, ())
+            self._parsed_metadata[key] = (*entries, (source_text, metadata))
 
     def get_resolved_sdist_metadata(self, package: str, version: str) -> Any | None:
         """Return cached post-reconciliation sdist metadata or ``None``.

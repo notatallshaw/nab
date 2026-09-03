@@ -61,12 +61,14 @@ from nab_project.resolve import (
     resolve_with_coordinator,
 )
 from nab_provider._provider import listing as listing_mod
+from nab_provider._provider import metadata_resolver
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.provider import (
     ArchiveSource,
@@ -1147,6 +1149,57 @@ class TestMatrixMetadataReadGranularity:
         self._resolve_three_targets(coordinator)
 
         assert len(coordinator.calls_to("request_sdist")) == 1
+
+    def test_a_wheel_text_is_parsed_once_across_pythons(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two platforms across two Pythons parse two texts, not four.
+
+        The targets alternate platforms, so each wheel's text is read again
+        after the other platform's.
+        """
+        linux = self._wheel("py3-none-manylinux_2_17_x86_64")
+        windows = self._wheel("py3-none-win_amd64")
+        assert linux.metadata_url is not None
+        assert windows.metadata_url is not None
+
+        coordinator = make_coordinator(
+            listings={"pkg": [linux, windows]},
+            metadata_by_url={
+                linux.metadata_url: "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n",
+                windows.metadata_url: (
+                    "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
+                    "Requires-Python: >=3.8\n"
+                ),
+            },
+        )
+
+        parsed: list[str] = []
+        real_parse = metadata_resolver.parse_metadata
+
+        def counting_parse(text: str) -> WheelMetadata:
+            parsed.append(text)
+            return real_parse(text)
+
+        monkeypatch.setattr(metadata_resolver, "parse_metadata", counting_parse)
+
+        targets = Matrix(
+            python=">=3.11,<3.13",
+            platforms=(PlatformSpec("linux_x86_64"), PlatformSpec("windows_amd64")),
+        ).expand()
+        assert [t.label for t in targets] == [
+            "py311-linux_x86_64",
+            "py311-windows_amd64",
+            "py312-linux_x86_64",
+            "py312-windows_amd64",
+        ]
+
+        result = resolve_with_coordinator(
+            coordinator, targets, _reqs("pkg"), inputs=_no_build()
+        )
+
+        assert result.success
+        assert len(parsed) == len(set(parsed)) == 2
 
 
 _FORTY_SHA = "0123456789abcdef0123456789abcdef01234567"

@@ -473,6 +473,14 @@ class TestInMemoryIndex:
         assert idx.get_parsed_metadata("foo", "1.0", "TEXT-1") == "v1"
         assert idx.get_parsed_metadata("foo", "2.0", "TEXT-2") == "v2"
 
+    def test_parsed_metadata_keeps_every_text_of_a_version(self) -> None:
+        """Each text of one ``(package, version)`` keeps its own parse."""
+        idx = InMemoryIndex()
+        idx.store_parsed_metadata("foo", "1.0", "linux-parse", "LINUX-METADATA")
+        idx.store_parsed_metadata("foo", "1.0", "win-parse", "WIN-METADATA")
+        assert idx.get_parsed_metadata("foo", "1.0", "LINUX-METADATA") == "linux-parse"
+        assert idx.get_parsed_metadata("foo", "1.0", "WIN-METADATA") == "win-parse"
+
     def test_parsed_metadata_answers_only_for_its_own_text(self) -> None:
         """The sdist's parse is not served to a reader holding wheel METADATA.
 
