@@ -8,10 +8,12 @@ import io
 import struct
 import sys
 import tarfile
+import urllib.request
 import zipfile
 import zlib
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
+from urllib.parse import unquote, urlsplit
 
 import pytest
 
@@ -364,6 +366,46 @@ class TestErrorHierarchy:
         assert issubclass(HttpError, IndexAccessError)
 
 
+def _url2pathname_with_authority(url: str) -> str:
+    """``url2pathname`` as Python 3.14 defines it off Windows.
+
+    It resolves an authority out of its argument and rejects a non-local one.
+    """
+    _, authority, path = urlsplit("file:" + url)[:3]
+    if authority not in ("", "localhost"):
+        msg = f"file:// scheme is supported only on localhost: {authority!r}"
+        raise OSError(msg)
+    return unquote(path)
+
+
+def _url2pathname_on_windows(url: str) -> str:
+    """Python 3.14's Windows ``url2pathname``, cut down to the drive rule.
+
+    It reads the authority of ``//C:/tmp`` as a drive rather than a host.
+    No other clause is modelled, since only this one is under test.
+    """
+    _, authority, path = urlsplit("file:" + url)[:3]
+    if authority[1:2] == ":":
+        path = authority + path
+    return unquote(path.replace("/", "\\"))
+
+
+@pytest.fixture(params=["stdlib", "authority"])
+def url2pathname_contract(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run the test against the installed ``url2pathname`` and against 3.14's.
+
+    What ``url2pathname`` does with an authority in its argument changed in
+    3.12 and again in 3.14, so one interpreter's version does not stand in
+    for the rest.
+    """
+    if request.param == "authority":
+        monkeypatch.setattr(
+            urllib.request, "url2pathname", _url2pathname_with_authority
+        )
+
+
 class TestParseFileUrl:
     def test_absolute_path(self, tmp_path: Path) -> None:
         url = tmp_path.as_uri()
@@ -390,6 +432,54 @@ class TestParseFileUrl:
         # RFC 8089: a "localhost" authority resolves like an empty one.
         with_host = tmp_path.as_uri().replace("file://", "file://localhost", 1)
         assert parse_file_url(with_host) == tmp_path
+
+    def test_double_slash_root_survives_an_empty_authority(
+        self, url2pathname_contract: None
+    ) -> None:
+        # pathlib keeps a "//" root on POSIX, and Path.as_uri writes four slashes.
+        url = "file:////srv/wheels/foo-1.0-py3-none-any.whl"
+        assert parse_file_url(url) == Path("//srv/wheels/foo-1.0-py3-none-any.whl")
+
+    def test_double_slash_root_keeps_a_localhost_first_segment(
+        self, url2pathname_contract: None
+    ) -> None:
+        url = "file:////localhost/srv/wheels"
+        assert parse_file_url(url) == Path("//localhost/srv/wheels")
+
+    def test_localhost_authority_keeps_a_double_slash_root(
+        self, url2pathname_contract: None
+    ) -> None:
+        url = "file://localhost//srv/wheels"
+        assert parse_file_url(url) == Path("//srv/wheels")
+
+    def test_drive_root_stays_a_drive_on_windows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Windows reads ``C:`` in a ``//C:`` root as a drive, so it is not escaped."""
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(urllib.request, "url2pathname", _url2pathname_on_windows)
+        assert parse_file_url("file:////C:/tmp/x.whl") == Path("C:\\tmp\\x.whl")
+
+    def test_drive_shaped_root_is_a_root_off_windows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Off Windows ``C:`` is an ordinary first segment, not a drive."""
+        monkeypatch.setattr(sys, "platform", "linux")
+        monkeypatch.setattr(
+            urllib.request, "url2pathname", _url2pathname_with_authority
+        )
+        assert parse_file_url("file:////C:/tmp/x.whl") == Path("//C:/tmp/x.whl")
+
+    def test_url2pathname_failure_is_a_value_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def reject(_url: str) -> str:
+            msg = "Bad URL"
+            raise OSError(msg)
+
+        monkeypatch.setattr(urllib.request, "url2pathname", reject)
+        with pytest.raises(ValueError, match="does not name a path"):
+            parse_file_url("file:///srv/wheels")
 
     def test_remote_authority_rejected_off_windows(
         self, monkeypatch: pytest.MonkeyPatch
@@ -998,6 +1088,19 @@ class TestPep503Directory:
         assert result[0].url.endswith("foo-1.0-py3-none-any.whl")
         assert (
             result[0].local_path == package_dir.resolve() / "foo-1.0-py3-none-any.whl"
+        )
+
+    def test_network_path_href_keeps_its_double_slash_root(
+        self, tmp_path: Path
+    ) -> None:
+        """The record's local path names the file its URL names."""
+        body = '<a href="////localhost/packages/foo-1.0-py3-none-any.whl">foo</a>'
+        self._make_index(tmp_path, body)
+        client = LocalIndexClient(tmp_path.as_uri())
+        result = run(client.get_files("foo"))
+        assert result[0].url == "file:////localhost/packages/foo-1.0-py3-none-any.whl"
+        assert result[0].local_path == Path(
+            "//localhost/packages/foo-1.0-py3-none-any.whl"
         )
 
     def test_relative_href_resolves_outside_package_dir(self, tmp_path: Path) -> None:

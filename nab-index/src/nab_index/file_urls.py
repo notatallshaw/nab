@@ -35,8 +35,8 @@ def parse_file_url(url: str) -> Path:
     local machine; any other host becomes a UNC share on Windows and is
     rejected elsewhere.
 
-    :mod:`pathlib` accepts a decoded null character, which cannot name a file,
-    so this function raises :class:`ValueError` instead.
+    Raise :class:`ValueError` for decoded null characters or paths rejected by
+    :func:`urllib.request.url2pathname`.
     """
     return _parsed_file_url_path(urlparse(url), url)
 
@@ -54,17 +54,38 @@ def _parsed_file_url_path(parsed: ParseResult, url: str) -> Path:
     from urllib.request import url2pathname  # noqa: PLC0415
 
     netloc = parsed.netloc
+    url_path = parsed.path
+
     if not netloc or netloc == "localhost":
         netloc = ""
+        if url_path.startswith("//") and not _is_windows_drive_root(url_path):
+            # Preserve the path root through url2pathname's authority parsing.
+            url_path = "/%2F" + url_path[2:]
     elif sys.platform == "win32":
         netloc = "\\\\" + netloc
     else:
         msg = f"non-local file:// URL is not supported on this platform: {url!r}"
         raise ValueError(msg)
 
-    path = url2pathname(netloc + parsed.path)
+    try:
+        path = url2pathname(netloc + url_path)
+    except OSError as exc:
+        msg = f"file:// URL {url!r} does not name a path: {exc}"
+        raise ValueError(msg) from exc
+
     if "\x00" in path:
         msg = f"file:// URL decodes to a path containing a null character: {url!r}"
         raise ValueError(msg)
 
     return Path(path)
+
+
+def _is_windows_drive_root(url_path: str) -> bool:
+    """Check the drive prefix of a ``//``-rooted Windows path."""
+    letter, colon = url_path[2:3], url_path[3:4]
+    return (
+        sys.platform == "win32"
+        and colon == ":"
+        and letter.isascii()
+        and letter.isalpha()
+    )
