@@ -32,7 +32,7 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.multi_index import IndexConfig
 from nab_index.transport import HttpError
 from nab_project import _sources as sources
-from nab_project._sources import _fetch_archive_bytes
+from nab_project._sources import _fetch_archive_bytes, _SourceCopyError
 from nab_project._testing.coordinator_fake import make_coordinator
 from nab_project.download import (
     DownloadEntry,
@@ -751,6 +751,47 @@ class TestArchiveMaterialize:
         assert expected in message
         assert "simulated copy failure" in message
         assert provider.coordinator.calls_to("request_direct_archive") == []
+
+    def test_cached_tree_too_deep_to_copy_names_archive_source(
+        self, tmp_path: Path
+    ) -> None:
+        """A tree too deep to copy is refused, not an uncaught RecursionError.
+
+        ``shutil.copytree`` recurses per directory level and the extraction
+        that wrote the tree does not, so a cache entry can be deeper than the
+        copy can walk.  Lowering the limit reaches that depth without a path
+        long enough to break Windows.
+        """
+        digest = "a" * 64
+        source = ArchiveSource(
+            name="foo", url=f"https://ex.com/foo-1.0.0.tar.gz#sha256={digest}"
+        )
+        cache = tmp_path / "arch"
+        tree = _warm_dynamic_archive_tree(cache, digest)
+        tree.joinpath(*["d"] * 25).mkdir(parents=True)
+
+        provider = _provider([source], cache, build_policy=BuildPolicy.BUILD_REMOTE)
+
+        original = sys.getrecursionlimit()
+        try:
+            # The copy takes two frames per level, so 25 levels overrun a limit
+            # set just above the current stack depth.
+            sys.setrecursionlimit(len(traceback.extract_stack()) + 40)
+            with pytest.raises(UnsupportedSdistError) as excinfo:
+                provider.fetch_versions("foo")
+        finally:
+            sys.setrecursionlimit(original)
+
+        message = str(excinfo.value)
+        assert "archive source 'foo'" in message
+        assert "could not copy cached source tree" in message
+        assert "nested too deeply to copy" in message
+
+        assert provider.coordinator.calls_to("request_direct_archive") == []
+
+        copy_failure = excinfo.value.__cause__
+        assert isinstance(copy_failure, _SourceCopyError)
+        assert isinstance(copy_failure.__cause__, RecursionError)
 
     @requires_data_filter
     def test_every_verified_hash_is_recorded_for_reuse(self, tmp_path: Path) -> None:

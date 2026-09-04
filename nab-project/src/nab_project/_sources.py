@@ -100,8 +100,14 @@ def _source_for_build(path: Path, persistent_root: Path | None) -> Iterator[Path
                 symlinks=True,
                 copy_function=_CopyWithHardlinks(),
             )
-        except OSError as exc:
-            msg = f"could not copy cached source tree at {persistent_root}: {exc}"
+        except (OSError, RecursionError) as exc:
+            # copytree recurses per directory level, so a deep tree exhausts the stack.
+            detail = (
+                "nested too deeply to copy"
+                if isinstance(exc, RecursionError)
+                else str(exc)
+            )
+            msg = f"could not copy cached source tree at {persistent_root}: {detail}"
             raise _SourceCopyError(msg) from exc
         yield build_root / relative_path
 
