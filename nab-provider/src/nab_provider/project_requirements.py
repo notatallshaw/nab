@@ -28,17 +28,9 @@ class InvalidProjectRequirementError(ValueError):
 
 
 def add_extra_marker(dep_str: str, extra_name: str) -> str:
-    """Append ``extra == "name"`` to a :pep:`508` dep string.
+    """Append an extra marker, preserving semicolons inside direct-reference URLs.
 
-    Parses with :class:`Requirement` rather than splitting on the first
-    ``;`` so a semicolon inside a direct-reference URL is not mistaken
-    for the marker separator; an existing marker is combined with ``and``.
-
-    ``extra_name`` is a table key interpolated into the quoted marker, so
-    it is canonicalised with ``validate=True`` (PEP 685). A key that is
-    not a valid name (say one containing a quote) then raises
-    :class:`InvalidName` instead of producing a marker for the wrong
-    dependency.
+    Validate and normalize the extra name according to PEP 685.
     """
     req = parse_requirement(dep_str)
     canonical_extra = canonicalize_name(extra_name, validate=True)
@@ -54,14 +46,7 @@ def add_extra_marker(dep_str: str, extra_name: str) -> str:
 def parse_project_requirement(
     dep_str: str, source: str, *, extra: str | None = None
 ) -> Requirement:
-    """Parse one PEP 508 dependency string, raising if it is malformed.
-
-    An ``extra`` name is folded in as an ``extra == "name"`` marker. A string
-    that is not valid PEP 508, or one whose specifier carries a version that
-    will not convert, raises :class:`InvalidProjectRequirementError`, so a
-    candidate declaring one malformed dependency is rejected whole rather
-    than resolved with the dependency silently dropped.
-    """
+    """Parse a dependency and its optional extra marker, rejecting invalid versions."""
     try:
         text = add_extra_marker(dep_str, extra) if extra is not None else dep_str
         req = parse_requirement(text)
@@ -78,12 +63,7 @@ def parse_requirements(strings: Sequence[str], source: str) -> list[Requirement]
 
 
 def require_string_list(value: object, source: str) -> list[str]:
-    """Validate that a PEP 621 dependency value is an array of strings.
-
-    A bare string passes the type checker as ``Sequence[str]`` but
-    iterates character by character, so ``dependencies = "requests"``
-    would parse as eight single-character requirements rather than fail.
-    """
+    """Return a list of dependency strings, rejecting scalar and non-string values."""
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
         msg = f"{source} must be an array of strings"
         raise InvalidProjectRequirementError(msg)

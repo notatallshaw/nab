@@ -19,7 +19,7 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import InvalidName
 from nab_provider.marker_holds import IntractableMarkerError, UnevaluableMarkerError
-from nab_provider.project_requirements import add_extra_marker as _add_extra_marker
+from nab_provider.project_requirements import add_extra_marker
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
@@ -40,24 +40,24 @@ _OVERSIZED = _AT_LIMIT + "1"
 class TestAddExtraMarker:
     def test_no_existing_marker(self) -> None:
         """A bare requirement gets a fresh ``extra ==`` marker."""
-        out = _add_extra_marker("numpy>=1.0", "foo")
+        out = add_extra_marker("numpy>=1.0", "foo")
         assert out == 'numpy>=1.0 ; extra == "foo"'
 
     def test_with_existing_marker(self) -> None:
         """An existing marker is wrapped and combined with ``and``."""
-        out = _add_extra_marker("numpy>=1.0 ; python_version >= '3.10'", "foo")
+        out = add_extra_marker("numpy>=1.0 ; python_version >= '3.10'", "foo")
         assert out == 'numpy>=1.0 ; (python_version >= "3.10") and extra == "foo"'
 
     def test_semicolon_in_direct_url_kept(self) -> None:
         """A ``;`` in a direct-URL is part of the URL, not the marker."""
-        out = _add_extra_marker("foo @ https://h/a;b/p.tar.gz", "bar")
+        out = add_extra_marker("foo @ https://h/a;b/p.tar.gz", "bar")
         req = Requirement(out)
         assert req.url == "https://h/a;b/p.tar.gz"
         assert str(req.marker) == 'extra == "bar"'
 
     def test_semicolon_in_direct_url_with_marker_kept(self) -> None:
         """The URL ``;`` survives and the existing marker is kept with extra."""
-        out = _add_extra_marker(
+        out = add_extra_marker(
             "foo @ https://h/a;b/p.tar.gz ; python_version >= '3.10'", "bar"
         )
         req = Requirement(out)
@@ -70,7 +70,7 @@ class TestAddExtraMarker:
         The dep needs ``python_version < "3.10"``, so on 3.12 it stays inactive
         only if the or group cannot leak past the and condition.
         """
-        out = _add_extra_marker(
+        out = add_extra_marker(
             'pkg ; python_version < "3.10" '
             'and ((sys_platform == "linux" or sys_platform == "darwin"))',
             "cli",
@@ -82,7 +82,7 @@ class TestAddExtraMarker:
 
     def test_non_canonical_extra_name_normalized(self) -> None:
         """A marker condition normalises a non-canonical extra name per PEP 685."""
-        out = _add_extra_marker("numpy", "My.Extra")
+        out = add_extra_marker("numpy", "My.Extra")
         assert out == 'numpy ; extra == "my-extra"'
 
     def test_extra_name_with_marker_syntax_rejected(self) -> None:
@@ -93,7 +93,7 @@ class TestAddExtraMarker:
         the dependency conditioned on a marker that is always true.
         """
         with pytest.raises(InvalidName):
-            _add_extra_marker("pkg", 'a" or os_name != "x')
+            add_extra_marker("pkg", 'a" or os_name != "x')
 
     def test_invalid_extra_name_rejected_as_project_requirement(self) -> None:
         """An invalid extra name is rejected by the synthesis path, not
