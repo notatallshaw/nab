@@ -24,7 +24,6 @@ import errno
 import os
 import re
 import stat
-import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import unquote, urljoin, urlparse, urlsplit
@@ -581,6 +580,9 @@ def _read_wheel_requires_python(wheel_path: Path, expected: str) -> str | None:
     one bad file does not fail the listing that carries the package's other
     versions.
     """
+    # Deferred so importing this module does not load zipfile.
+    import zipfile  # noqa: PLC0415
+
     try:
         with zipfile.ZipFile(wheel_path) as archive:
             member = wheel_metadata_member(archive.namelist(), expected)
@@ -663,6 +665,10 @@ def read_wheel_metadata(wheel_path: Path) -> str | None:
     parsed = _parse_wheel_filename(wheel_path.name)
     if parsed is None:
         return None
+
+    # Deferred so importing this module does not load zipfile.
+    import zipfile  # noqa: PLC0415
+
     try:
         with zipfile.ZipFile(wheel_path) as zf:
             member = wheel_metadata_member(zf.namelist(), parsed[0])

@@ -27,7 +27,6 @@ import hashlib
 import io
 import os
 import re
-import zipfile
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -40,6 +39,8 @@ from .local_index import UnsupportedWheelError, wheel_metadata_member
 from .transport import IDENTITY_HEADERS
 
 if TYPE_CHECKING:
+    import zipfile
+
     from packaging.utils import NormalizedName
 
     from .transport import AsyncHttpTransport, HttpResponse
@@ -477,6 +478,9 @@ def _try_open(sparse: _SparseFile) -> zipfile.ZipFile | None:
     member name, offsets outside the file), so it marks the wheel unreadable
     rather than the window short.
     """
+    # Deferred so importing this module does not load zipfile.
+    import zipfile  # noqa: PLC0415
+
     try:
         return zipfile.ZipFile(sparse)
     except zipfile.BadZipFile:
@@ -590,6 +594,9 @@ def _verify_full_body(body: bytes, wheel_hash: tuple[str, str] | None) -> None:
 
 def _read_full_body(body: bytes, canonical_name: NormalizedName) -> bytes | None:
     """Read the METADATA member out of a complete in-memory wheel, or ``None``."""
+    # Deferred so importing this module does not load zipfile.
+    import zipfile  # noqa: PLC0415
+
     try:
         zip_file = zipfile.ZipFile(io.BytesIO(body))
         member = wheel_metadata_member(zip_file.namelist(), canonical_name)

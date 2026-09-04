@@ -12,7 +12,6 @@ import hashlib
 import io
 import re
 import sys
-import tarfile
 import zlib
 from collections.abc import Mapping
 from functools import lru_cache
@@ -77,7 +76,9 @@ _FileEntry = Mapping[Any, object]
 # The tar ``data`` filter (PEP 706) landed in 3.12 and was backported to
 # 3.10.12 / 3.11.4; sdist extraction requires it (see extract_sdist_archive).
 # data_filter appears with the same change, so its presence detects support.
-_SUPPORTS_DATA_FILTER = hasattr(tarfile, "data_filter")
+# ``None`` leaves that check to extract_sdist_archive, which imports tarfile;
+# a bool overrides it.
+_SUPPORTS_DATA_FILTER: bool | None = None
 
 
 # Mirrors packaging.utils._build_tag_regex: PEP 427 build numbers start with a digit.
@@ -780,6 +781,9 @@ def _extract_sdist_files_if_readable(
     answer freezes that choice of root, so changing it means bumping
     ``CACHE_VERSION_SDIST``.
     """
+    # Deferred so importing this module does not load tarfile.
+    import tarfile  # noqa: PLC0415
+
     try:
         return _read_tar_sdist_files(data)
     except (
@@ -799,6 +803,9 @@ def _extract_sdist_files_if_readable(
 
 
 def _read_tar_sdist_files(data: bytes) -> tuple[str | None, str | None]:
+    # Deferred so importing this module does not load tarfile.
+    import tarfile  # noqa: PLC0415
+
     pkg_infos: dict[str, str] = {}
     pyprojects: dict[str, str] = {}
 
@@ -879,7 +886,13 @@ def extract_sdist_archive(
     The data filter is required; a Python that lacks it (before 3.10.12 /
     3.11.4 / 3.12) is unsupported and extraction raises.
     """
-    if not _SUPPORTS_DATA_FILTER:
+    # Deferred so importing this module does not load tarfile.
+    import tarfile  # noqa: PLC0415
+
+    supports_data_filter = _SUPPORTS_DATA_FILTER
+    if supports_data_filter is None:
+        supports_data_filter = hasattr(tarfile, "data_filter")
+    if not supports_data_filter:
         msg = (
             "extracting an sdist archive requires the tar data filter;"
             " upgrade to Python 3.10.12+ / 3.11.4+ / 3.12+"
