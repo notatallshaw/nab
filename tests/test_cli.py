@@ -5760,9 +5760,13 @@ class TestEmitHelpers:
 class TestCacheFlags:
     """Tests for --cache-dir, --no-cache, --offline."""
 
-    def test_default_cache_dir_passed_through(self, tmp_path: Path) -> None:
-        """No flags: cache_dir defaults to a real path, offline is False."""
-        pyproject = _make_pyproject(tmp_path)
+    def test_default_cache_dir_passed_through(
+        self, hermetic_roots: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No flags: cache_dir is the default root, offline is False."""
+        default_root = tmp_path / "xdg"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(default_root))
+        pyproject = _make_pyproject(hermetic_roots)
         with (
             patch(
                 "nab._resolve.resolve_for_targets",
@@ -5772,7 +5776,7 @@ class TestCacheFlags:
         ):
             lock(pyproject, output=tmp_path / "pylock.toml")
         kwargs = mock_resolve.call_args.kwargs
-        assert kwargs["cache_dir"] is not None
+        assert kwargs["cache_dir"] == default_root / "nab"
         assert kwargs["offline"] is False
 
     def test_explicit_cache_dir_passed_through(self, tmp_path: Path) -> None:
@@ -7250,6 +7254,20 @@ class TestDownloadCommand:
         assert second.splitlines() == [
             f"Downloaded 0 files, 3 already present, into {out}"
         ]
+
+    def test_default_cache_dir_roots_the_index_cache(
+        self, hermetic_roots: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no cache directory configured, the download uses the default root."""
+        default_root = tmp_path / "xdg"
+        monkeypatch.setenv("XDG_CACHE_HOME", str(default_root))
+        pyproject = _make_pyproject(hermetic_roots)
+
+        transport = _SidecarTransport(_foo_index_bodies())
+        with patch("nab._download._make_transport", return_value=transport):
+            download(pyproject, output=tmp_path / "vendor")
+
+        assert _cached_listings(default_root / "nab") == ["foo"]
 
     def test_cache_dir_flag_roots_the_index_cache(
         self, hermetic_roots: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
