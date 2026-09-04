@@ -329,8 +329,13 @@ class Specifier(BaseSpecifier):
         )
         """
 
+    # The grammar above with re.VERBOSE's whitespace and comments removed, which re's
+    # parser would otherwise walk at every import. Edit both: a corpus differential in
+    # nab-provider/tests/test_vendor_specifier_pattern_shared.py compares the two.
+    _condensed_regex_str = r"(?:(?:===\s*[^\s;)]*)|(?:(?:==|!=)\s*v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*(?:\.\*|(?a:[-_\.]?(alpha|beta|preview|pre|a|b|c|rc)[-_\.]?[0-9]*)?(?a:(?:-[0-9]+)|(?:[-_\.]?(post|rev|r)[-_\.]?[0-9]*))?(?a:[-_\.]?dev[-_\.]?[0-9]*)?(?a:\+[a-z0-9]+(?:[-_\.][a-z0-9]+)*)?)?)|(?:(?:~=)\s*v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)+(?:[-_\.]?(alpha|beta|preview|pre|a|b|c|rc)[-_\.]?[0-9]*)?(?:(?:-[0-9]+)|(?:[-_\.]?(post|rev|r)[-_\.]?[0-9]*))?(?:[-_\.]?dev[-_\.]?[0-9]*)?)|(?:(?:<=|>=|<|>)\s*v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*(?a:[-_\.]?(alpha|beta|preview|pre|a|b|c|rc)[-_\.]?[0-9]*)?(?a:(?:-[0-9]+)|(?:[-_\.]?(post|rev|r)[-_\.]?[0-9]*))?(?a:[-_\.]?dev[-_\.]?[0-9]*)?))"
+
     # No surrounding \s*, so _tokenizer can share this object; __init__ strips first.
-    _regex = re.compile(_specifier_regex_str, re.VERBOSE | re.IGNORECASE)
+    _regex = re.compile(_condensed_regex_str, re.IGNORECASE)
 
     # Legacy unused attribute, kept for backward compatibility
     _operators: Final = {
