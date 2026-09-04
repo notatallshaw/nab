@@ -2,8 +2,10 @@
 
 :data:`OPTIONS` is the keyed half of :data:`nab.optiontable.ALL`: the rows a
 configuration source may set, in the order ``nab config list`` prints them.
-An option's key, scope, hooks, rung 0, ``NAB_*`` name and CLI flag are all
-written there, so every row here carries a key and ``name`` is that key.
+``tasks/gen_cli.py`` writes them as literals into :mod:`nab.config.registry`,
+which is where this module reads them.  An option's key, scope, hooks, rung 0,
+``NAB_*`` name and CLI flag are all declared in the table, so every row here
+carries a key and ``name`` is that key.
 
 A run reads seven sources at six ranks, low precedence to high: the built-in
 defaults, a system ``nab.toml``, a user ``nab.toml``, then ``pyproject.toml``'s
@@ -41,8 +43,8 @@ from nab_project.value import ValueType
 
 from .. import env
 from ..optiondefs import Opt, Scope
-from ..optiontable import ALL
 from .hooks import declaring_dir
+from .registry import OPTIONS
 from .subflags import (
     BY_PARENT,
     CliTable,
@@ -117,10 +119,6 @@ PRECEDENCE: dict[SourceKind, int] = {
     SourceKind.ENV: 4,
     SourceKind.CLI: 5,
 }
-
-# The registry: every declared row a configuration source may set.  A root
-# flag or a command-local row carries no key, so the filter drops it.
-OPTIONS: tuple[Opt, ...] = tuple(row for row in ALL if row.key)
 
 BY_KEY: dict[str, Opt] = {row.name: row for row in OPTIONS}
 

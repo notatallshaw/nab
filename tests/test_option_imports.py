@@ -1,13 +1,13 @@
 """What a command invocation is allowed to import.
 
-The declaration builds 64 rows and imports the policy enums to do it, and
-the command line never reads it: ``nab.optiondefs`` is the option model and
-``nab.optiontable`` is where the rows are written, and the only path to
-either is the configuration ladder, which ``nab lock`` and ``nab config``
-ask for and the parser does not.  The four command modules resolve their
-``Literal`` annotations through ``get_type_hints``, so they need the aliases
-at run time and nothing else, which is why those sit in ``nab.flagtypes`` on
-their own.
+The declaration builds 64 rows and imports the policy enums to do it, and no
+command reads it.  ``nab.optiondefs`` is the option model, and the
+configuration ladder reaches it through the generated ``nab.config.registry``.
+``nab lock`` and ``nab config`` ask for the ladder and the parser does not.
+``nab.optiontable`` is where the rows are written, and only the generators and
+the tests read it.  The four command modules resolve their ``Literal``
+annotations through ``get_type_hints``, so they need the aliases at run time
+and nothing else, which is why those sit in ``nab.flagtypes`` on their own.
 
 The probes run in a subprocess: the test session has already imported most
 of nab, so an in-process check would pass whatever the import graph is.
@@ -45,6 +45,16 @@ def _after_importing(module: str) -> list[str]:
 def test_a_command_invocation_imports_neither_the_model_nor_the_table() -> None:
     """Only the generators and the tests build the 64 rows."""
     assert _after_importing("nab.cli")[0] == "clean"
+
+
+def test_a_run_reads_the_registry_and_never_the_declaration() -> None:
+    """The ladder's rows come from the generated module, so the tables stay unbuilt."""
+    loaded = _probe(
+        "import sys\n"
+        "import nab._lock\n"
+        "print(sorted(n for n in sys.modules if n.startswith('nab.option')))\n"
+    )
+    assert loaded == ["['nab.optiondefs', 'nab.optionrows']"]
 
 
 def test_the_command_signatures_reach_their_aliases_through_a_leaf() -> None:

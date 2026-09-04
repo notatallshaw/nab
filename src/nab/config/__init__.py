@@ -1,15 +1,16 @@
 """nab's configuration layer: what a run is configured with, and from where.
 
-Four modules, each importing only the ones above it.  :mod:`nab.optiondefs`
-sits between the second and the third: it declares every option and names the
-parse and render each one uses, and the ladder's ``OPTIONS`` is the half of
-that declaration a configuration source may set.
+Six modules, each importing only the ones above it.
 
 * :mod:`~nab.config.values` parses the value a key carries.
 * :mod:`~nab.config.hooks` renders a merged value back, and parses the few
   rows that need parse state a ``(value, where)`` pair cannot carry.
-* :mod:`~nab.config.ladder` holds the rows, finds the sources that bind
-  them, merges them, and prints the result for ``nab config``.
+* :mod:`~nab.config.registry` holds the rows the layer reads, written by
+  ``tasks/gen_cli.py`` from the declaration in :mod:`nab.optiontable`.
+* :mod:`~nab.config.subflags` assembles the flags that spell one key each
+  of a configuration table.
+* :mod:`~nab.config.ladder` finds the sources that bind those rows, merges
+  them, and prints the result for ``nab config``.
 * :mod:`~nab.config.model` reads ``[tool.nab]`` into the project config the
   commands hand to nab-project.
 
