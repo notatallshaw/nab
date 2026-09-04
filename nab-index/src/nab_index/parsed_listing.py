@@ -4,7 +4,8 @@ The UTF-8 JSON wire form is ``[header, rows]``. The header carries format,
 codec, sort-key scheme, source-body digest, and dropped zip-sdist versions.
 An incompatible header or digest is a cache miss.
 
-Rows preserve source order and tag each flat record as a wheel or sdist. Decode
+Rows preserve source order and tag each flat record as a wheel or sdist. A
+version cell is ``null`` where the row above carries the same version. Decode
 checks every field and restores interned strings. Integrity cells retain either
 the index table or parsed pairs so hash parsing stays deferred.
 
@@ -38,7 +39,7 @@ __all__ = ["ParsedListing", "corruption_reason", "decode", "encode"]
 # blob surfacing under the current bucket. Bump it when the header or row shape
 # changes, or when the same body parses to different records: ``body_digest``
 # pins only the input.
-FORMAT_VERSION = 4
+FORMAT_VERSION = 5
 # Serialization variant that wrote the rows, so a future codec switch
 # self-heals rather than misdecodes.
 CODEC = 1
@@ -106,14 +107,19 @@ def encode(
     is a derived property, so neither rides the wire.
     """
     rows: list[list[object]] = []
+    previous_version: str | None = None
     for record in files:
+        version = record.version
+        version_cell = None if version == previous_version else version
+        previous_version = version
+
         if isinstance(record, WheelFile):
             rows.append(
                 [
                     _TAG_WHEEL,
                     record.filename,
                     record.url,
-                    record.version,
+                    version_cell,
                     record.requires_python,
                     record.has_metadata,
                     record.upload_time,
@@ -128,7 +134,7 @@ def encode(
                     _TAG_SDIST,
                     record.filename,
                     record.url,
-                    record.version,
+                    version_cell,
                     record.requires_python,
                     record.upload_time,
                     _hashes_cell(record),
@@ -246,10 +252,16 @@ def _decode_rows(rows: object) -> list[WheelFile | SdistFile]:
     """Rehydrate every row, raising :class:`_BadRowError` on the first bad one."""
     if not isinstance(rows, list):
         raise _BadRowError
-    return [_decode_row(row) for row in rows]
+    decoded: list[WheelFile | SdistFile] = []
+    previous_version: str | None = None
+    for row in rows:
+        record = _decode_row(row, previous_version)
+        previous_version = record.version
+        decoded.append(record)
+    return decoded
 
 
-def _decode_row(row: object) -> WheelFile | SdistFile:
+def _decode_row(row: object, previous_version: str | None) -> WheelFile | SdistFile:
     """Rehydrate one row, dispatching on the tag its first element carries."""
     if not isinstance(row, list) or not row:
         raise _BadRowError
@@ -258,14 +270,17 @@ def _decode_row(row: object) -> WheelFile | SdistFile:
     if type(tag) is not int:
         raise _BadRowError
     if tag == _TAG_WHEEL:
-        return _decode_wheel(row)
+        return _decode_wheel(row, previous_version)
     if tag == _TAG_SDIST:
-        return _decode_sdist(row)
+        return _decode_sdist(row, previous_version)
     raise _BadRowError
 
 
-def _decode_wheel(row: Sequence[object]) -> WheelFile:
-    """Rehydrate a wheel row.
+def _decode_wheel(row: Sequence[object], previous_version: str | None) -> WheelFile:
+    """Rehydrate a wheel row, whose ``null`` version means ``previous_version``.
+
+    A ``null`` on the first row leaves the version ``None``, which the field
+    check rejects.
 
     An integrity cell holding the index's own table passes through unparsed,
     for the record to parse on first read; any other form is parsed here.
@@ -282,6 +297,9 @@ def _decode_wheel(row: Sequence[object]) -> WheelFile:
         size,
         metadata_hash,
     ) = row
+
+    if version is None:
+        version = previous_version
 
     # ``type() is`` rather than ``isinstance``: bool is a subclass of int, so
     # ``True`` would pass as a size.
@@ -311,9 +329,12 @@ def _decode_wheel(row: Sequence[object]) -> WheelFile:
     )
 
 
-def _decode_sdist(row: Sequence[object]) -> SdistFile:
+def _decode_sdist(row: Sequence[object], previous_version: str | None) -> SdistFile:
     """Rehydrate a source-distribution row; see :func:`_decode_wheel`."""
     _, filename, url, version, requires_python, upload_time, hashes, size = row
+
+    if version is None:
+        version = previous_version
 
     if (
         type(filename) is not str
