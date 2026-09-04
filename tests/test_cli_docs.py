@@ -11,6 +11,7 @@ module is on that sdist's exclude list in pyproject.toml.
 from __future__ import annotations
 
 import io
+import itertools
 import logging
 import re
 from collections.abc import Iterable
@@ -25,7 +26,7 @@ from nab._lock import lock
 from nab.cli import run
 from nab.config.ladder import OPTIONS
 from nab.optiontable import ALL
-from nab.output import ColorChoice, Verbosity
+from nab.output import ColorChoice, Printer, ProgressReporter, Verbosity
 from nab_project.lockfile import (
     ArchivePin,
     IndexPin,
@@ -73,6 +74,11 @@ _FLAG_COUNTS = {"lock": 36, "download": 32}
 # A ``--flag`` opening a code span, so prose naming one is matched and a
 # ``--hash=`` inside a fenced example is not.
 _CODE_FLAG = re.compile(r"`(--[a-z][\w-]*)")
+
+# Carriage return plus "erase to end of line": the prefix of every repaint.
+_CLEAR_LINE = "\r\033[K"
+
+_MAX_SPINNER_FRAMES = 64
 
 
 def _page(path: Path) -> str:
@@ -207,6 +213,48 @@ def _emitted_labels(
 
     printed = capsys.readouterr().out
     return [line for line in printed.splitlines() if line.startswith("# ")]
+
+
+class _Tty(io.StringIO):
+    """Capture output as a terminal stream."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+def _documented_progress_line() -> str:
+    """The progress line the CLI reference shows in its fenced example."""
+    section = _reference_section(_CLI_REFERENCE, "## Output control")
+    block = re.search(r"```\n(.*?)\n```", section, re.DOTALL)
+    if block is None:
+        msg = "no fenced progress example under ## Output control"
+        raise AssertionError(msg)
+    return block.group(1)
+
+
+def _painted_progress_lines(fetched: int, pinned: int) -> set[str]:
+    """Return one spinner cycle at the requested counts."""
+    err = _Tty()
+    printer = Printer(
+        stderr=err, verbosity=Verbosity.NORMAL, color=ColorChoice.NEVER, env={}
+    )
+
+    # Advance past the repaint throttle on each clock read.
+    ticks = itertools.count(0.0, 1.0)
+    reporter = ProgressReporter(printer, clock=lambda: next(ticks))
+    for _ in range(fetched):
+        reporter.on_fetch()
+
+    painted: set[str] = set()
+    for _ in range(_MAX_SPINNER_FRAMES):
+        reporter.on_pin(pinned)
+        line = err.getvalue().rpartition(_CLEAR_LINE)[2]
+        if line in painted:
+            return painted
+        painted.add(line)
+
+    msg = f"the spinner does not cycle within {_MAX_SPINNER_FRAMES} repaints"
+    raise AssertionError(msg)
 
 
 class TestEveryRowNamesAPage:
@@ -366,6 +414,15 @@ class TestCliReferenceDocumentsOutputPolicy:
         text = _page(_CLI_REFERENCE)
         assert "`--no-progress`" in text
         assert "Resolving" in text
+
+    def test_documented_progress_line_is_one_the_reporter_paints(self) -> None:
+        """The fenced example is a real repaint, spinner frame included."""
+        documented = _documented_progress_line()
+        counts = re.search(r"(\d+) fetched, (\d+) pinned", documented)
+        assert counts is not None, f"no counts in progress line {documented!r}"
+
+        fetched, pinned = (int(group) for group in counts.groups())
+        assert documented in _painted_progress_lines(fetched, pinned)
 
     def test_output_env_vars_documented(self) -> None:
         text = _page(_CLI_REFERENCE)

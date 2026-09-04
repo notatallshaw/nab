@@ -299,7 +299,7 @@ While `nab lock` or `nab download` resolves, a live line repaints on
 stderr, counting package listings fetched and packages pinned:
 
 ```
-Resolving... 12 fetched, 5 pinned
+⠹ Resolving... 12 fetched, 5 pinned
 ```
 
 It shows only at normal verbosity on an stderr terminal; `--no-progress`
