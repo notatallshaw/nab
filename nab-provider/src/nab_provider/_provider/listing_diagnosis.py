@@ -305,6 +305,16 @@ class Blocker:
         self.held = held
 
 
+class RootBan:
+    """Versions permanently excluded by a root requirement."""
+
+    __slots__ = ("blocker", "versions")
+
+    def __init__(self, blocker: Blocker, versions: tuple[Version, ...]) -> None:
+        self.blocker = blocker
+        self.versions = versions
+
+
 class MetadataBlock:
     """One version whose metadata no rung of the ladder could read.
 
@@ -880,12 +890,14 @@ _CLAUSE_TEMPLATES: dict[Cause | None, str] = {
 _ALTERNATIVES = r"\[([^|\]]*)\|([^\]]*)\]"
 
 
+def _pick_forms(template: str, count: int) -> str:
+    """Take ``template``'s singular alternatives when ``count`` is 1."""
+    return re.sub(_ALTERNATIVES, r"\1" if count == 1 else r"\2", template)
+
+
 def _render(cause: Cause | None, count: int, **fields: object) -> str:
     """Fill ``cause``'s template, taking the singular form when ``count`` is 1."""
-    template = re.sub(
-        _ALTERNATIVES, r"\1" if count == 1 else r"\2", _CLAUSE_TEMPLATES[cause]
-    )
-    return template.format(n=count, **fields)
+    return _pick_forms(_CLAUSE_TEMPLATES[cause], count).format(n=count, **fields)
 
 
 # The fields a cause's template states of every file it counts, rather
@@ -1235,13 +1247,15 @@ def filtered_sdist_diagnostic(
 # behind ``-v``, so both depths say the same thing.
 _BLOCKER_CLAUSES: dict[Blocked, str] = {
     BlockerKind.DECIDED: (
-        "needs {package} in {declared}, but the resolve chose {package} {held}"
+        "[needs|need] {package} in {declared}, but the resolve chose {package} {held}"
     ),
     BlockerKind.HELD: (
-        "needs {package} in {declared}, but the resolve holds {package} in {held}"
+        "[needs|need] {package} in {declared},"
+        " but the resolve holds {package} in {held}"
     ),
     BlockerKind.ROOT: (
-        "needs {package} in {declared}, but your project requires {package} {held}"
+        "[needs|need] {package} in {declared},"
+        " but your project requires {package} {held}"
     ),
 }
 
@@ -1281,10 +1295,10 @@ def blockers_diagnostic(
     return Diagnostic(_several_blockers_short(blockers, metadata), tuple(detail))
 
 
-def _blocker_clause(provider: Provider, blocker: Blocker) -> str:
-    """Say what one rejection wanted and what stands in its way."""
+def _blocker_clause(provider: Provider, blocker: Blocker, count: int = 1) -> str:
+    """Format a blocker clause with a verb agreeing with the version count."""
     declared, held = _render_blocker(provider, blocker)
-    return _BLOCKER_CLAUSES[blocker.kind].format(
+    return _pick_forms(_BLOCKER_CLAUSES[blocker.kind], count).format(
         package=blocker.package, declared=declared, held=held
     )
 
@@ -1346,6 +1360,48 @@ def metadata_diagnostic(
             if named is not None:
                 return named
     return Diagnostic(_METADATA_REJECTED, tuple(block.message for block in blocks))
+
+
+def ban_diagnostic(
+    provider: Provider,
+    normalized: str,
+    bans: Sequence[RootBan],
+    metadata: Sequence[MetadataBlock],
+) -> Diagnostic:
+    """Explain versions rejected by root constraints or metadata failures."""
+    if not bans:
+        return metadata_diagnostic(provider, normalized, metadata)
+
+    clauses = [_root_ban_clause(provider, ban) for ban in bans]
+    if metadata:
+        rejected = metadata_diagnostic(provider, normalized, metadata)
+        return Diagnostic(
+            _several_bans_short(bans, metadata),
+            (*clauses, *rejected.detail),
+            rejected.remedy,
+        )
+    if len(clauses) == 1:
+        return Diagnostic(clauses[0])
+    return Diagnostic(_several_bans_short(bans, metadata), tuple(clauses))
+
+
+def _root_ban_clause(provider: Provider, ban: RootBan) -> str:
+    """Format the versions rejected by one root requirement."""
+    versions = [str(version) for version in ban.versions]
+    clause = _blocker_clause(provider, ban.blocker, len(versions))
+    return f"{_named_or_counted(versions, 'versions')} {clause}"
+
+
+def _several_bans_short(
+    bans: Sequence[RootBan], metadata: Sequence[MetadataBlock]
+) -> str:
+    """Summarize the blocking packages and any metadata rejections."""
+    names = _named_or_counted(
+        list(dict.fromkeys(ban.blocker.package for ban in bans)), "packages"
+    )
+    if not metadata:
+        return f"some versions are blocked by {names}"
+    return f"some versions are blocked by {names} or rejected on their metadata"
 
 
 # The bullet names the proxy, so these say "the extra" instead of
