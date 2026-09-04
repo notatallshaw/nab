@@ -24,6 +24,7 @@ from .resolver_inputs import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from types import CodeType
 
     from nab_provider._vendor.packaging.requirements import Requirement
 
@@ -40,6 +41,8 @@ __all__ = [
     "resolve_groups_to_requirements",
     "self_extra_markers",
 ]
+
+_GROUP_LOADER_FILE = resolve_dependency_groups.__code__.co_filename
 
 
 class InvalidProjectTableError(TypeError):
@@ -324,27 +327,45 @@ def expand_group_includes(
     return out
 
 
+def _too_deep_error(exc: RecursionError) -> InvalidProjectRequirementError:
+    """Distinguish repeated include frames from recursive requirement parsing."""
+    # Include traversal can exhaust the stack inside a non-recursive ABC check.
+    seen: set[CodeType] = set()
+    tb = exc.__traceback__
+    while tb is not None:
+        code = tb.tb_frame.f_code
+        if code.co_filename != _GROUP_LOADER_FILE:
+            if code in seen:
+                msg = (
+                    "invalid requirement in [dependency-groups]: "
+                    f"{NESTED_MARKER_MESSAGE}"
+                )
+                return InvalidProjectRequirementError(msg)
+            seen.add(code)
+        tb = tb.tb_next
+
+    msg = (
+        "invalid [dependency-groups]: "
+        "include-group chain is nested too deeply to resolve"
+    )
+    return InvalidProjectRequirementError(msg)
+
+
 def resolve_groups_to_requirements(
     groups: Mapping[str, Sequence[str | Mapping[str, str]]],
     selected: Sequence[str],
 ) -> list[Requirement]:
-    """Resolve PEP 735 group includes and return the union of requirements.
+    """Resolve selected PEP 735 groups and return their combined requirements.
 
-    ``selected`` names the groups whose requirements should be
-    expanded.  An unknown group name surfaces as :class:`LookupError`;
-    a malformed requirement string, cyclic include, or duplicate group
-    name surfaces as :class:`InvalidProjectRequirementError`.  Returns
-    an empty list when ``selected`` is empty.
+    Unknown groups raise LookupError. Invalid group data or excessive nesting
+    raises InvalidProjectRequirementError.
     """
     if not selected:
         return []
     try:
         resolved = resolve_dependency_groups(groups, *selected)
     except RecursionError as exc:
-        # The vendored loader parses each entry itself, so an over-nested
-        # marker never reaches the guarded parse below.
-        msg = f"invalid requirement in [dependency-groups]: {NESTED_MARKER_MESSAGE}"
-        raise InvalidProjectRequirementError(msg) from exc
+        raise _too_deep_error(exc) from exc
     except ExceptionGroup as group:
         detail = "; ".join(str(e) for e in group.exceptions)
         if all(isinstance(e, LookupError) for e in group.exceptions):

@@ -37,6 +37,45 @@ _AT_LIMIT = "1" * sys.get_int_max_str_digits()
 _OVERSIZED = _AT_LIMIT + "1"
 
 
+def _include_chain(depth: int, leaf: str) -> dict[str, list[str | dict[str, str]]]:
+    """Return an include chain ending with ``leaf`` at ``g{depth}``."""
+    groups: dict[str, list[str | dict[str, str]]] = {
+        f"g{step}": [{"include-group": f"g{step + 1}"}] for step in range(depth)
+    }
+    groups[f"g{depth}"] = [leaf]
+    return groups
+
+
+def _boundary_marker_message() -> str:
+    """Probe the first marker-depth failure from the current caller's stack."""
+    depth = 0
+    while True:
+        depth += 1
+        nested = "(" * depth + "os_name == 'posix'" + ")" * depth
+        try:
+            resolve_groups_to_requirements({"probe": [f"foo ; {nested}"]}, ("probe",))
+        except InvalidProjectRequirementError as caught:
+            return str(caught)
+
+
+def _boundary_include_message() -> str:
+    """Locate the first failing include depth for the current caller."""
+    lower, upper = 0, sys.getrecursionlimit()
+    message: str | None = None
+    while upper - lower > 1:
+        depth = (lower + upper) // 2
+        try:
+            resolve_groups_to_requirements(_include_chain(depth, "pytest"), ("g0",))
+        except InvalidProjectRequirementError as caught:
+            upper = depth
+            message = str(caught)
+        else:
+            lower = depth
+
+    assert message is not None, "the include chain did not reach the recursion limit"
+    return message
+
+
 class TestAddExtraMarker:
     def test_no_existing_marker(self) -> None:
         """A bare requirement gets a fresh ``extra ==`` marker."""
@@ -414,13 +453,50 @@ class TestResolveGroupsToRequirements:
 
     def test_over_nested_marker_raises(self, over_nested_marker: str) -> None:
         """An over-nested marker fails inside the loader, before the guarded parse."""
-        with pytest.raises(
-            InvalidProjectRequirementError,
-            match=r"\[dependency-groups\]: .*nested too deeply",
-        ):
+        with pytest.raises(InvalidProjectRequirementError) as caught:
             resolve_groups_to_requirements(
                 {"dev": [f"foo ; {over_nested_marker}"]}, ("dev",)
             )
+
+        assert str(caught.value) == (
+            "invalid requirement in [dependency-groups]: "
+            "marker is nested too deeply to parse"
+        )
+
+    def test_marker_at_the_stack_boundary_names_the_marker(self) -> None:
+        """The first marker-depth failure retains the marker diagnostic."""
+        assert _boundary_marker_message() == (
+            "invalid requirement in [dependency-groups]: "
+            "marker is nested too deeply to parse"
+        )
+
+    def test_over_deep_include_chain_names_the_chain(self) -> None:
+        """An include chain beyond the recursion limit reports the include depth."""
+        chain = _include_chain(sys.getrecursionlimit(), leaf="pytest")
+        with pytest.raises(InvalidProjectRequirementError) as caught:
+            resolve_groups_to_requirements(chain, ("g0",))
+
+        assert str(caught.value) == (
+            "invalid [dependency-groups]: "
+            "include-group chain is nested too deeply to resolve"
+        )
+
+    def test_include_chain_at_the_stack_boundary_reports_the_chain(self) -> None:
+        """Parsing a plain requirement at the depth limit is still an include error."""
+        assert _boundary_include_message() == (
+            "invalid [dependency-groups]: "
+            "include-group chain is nested too deeply to resolve"
+        )
+
+    def test_unreached_malformed_requirement_names_the_chain(self) -> None:
+        """The chain is reported even when a group holds a malformed string."""
+        chain = _include_chain(sys.getrecursionlimit(), leaf="pytest >= bad junk")
+        with pytest.raises(InvalidProjectRequirementError) as caught:
+            resolve_groups_to_requirements(chain, ("g0",))
+
+        message = str(caught.value)
+        assert "include-group chain" in message
+        assert "marker" not in message
 
     @pytest.mark.parametrize("operator", ["==", "==="])
     def test_oversized_specifier_version_raises(self, operator: str) -> None:
