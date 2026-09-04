@@ -143,12 +143,21 @@ def _decoded(blob: bytes | None, policy: CachePolicy) -> list[WheelFile | SdistF
     return parsed.files
 
 
+# A sha256 hex, the only body_digest shape _decode_policy keeps.
+_BODY_DIGEST = hashlib.sha256(b"body").hexdigest()
+
+# Sha256 length but not hex, the case only is_hex_digest rejects.
+_NOT_HEX_DIGEST = "z" * 64
+
+
 class TestBodyDigestPolicy:
     def test_default_is_none(self) -> None:
         assert CachePolicy(fetched_at=0, max_age=1, etag=None).body_digest is None
 
     def test_round_trip_with_body_digest(self) -> None:
-        policy = CachePolicy(fetched_at=10, max_age=20, etag="x", body_digest="abc123")
+        policy = CachePolicy(
+            fetched_at=10, max_age=20, etag="x", body_digest=_BODY_DIGEST
+        )
         assert _decode_policy(_encode_policy(policy)) == policy
 
     def test_encode_omits_absent_body_digest(self) -> None:
@@ -164,6 +173,32 @@ class TestBodyDigestPolicy:
         decoded = _decode_policy(raw)
         assert decoded is not None
         assert decoded.body_digest is None
+
+    @pytest.mark.parametrize(
+        "cell",
+        [
+            "NaN",
+            "5",
+            "[1, 2]",
+            '"not hex"',
+            '""',
+            '"00ff"',
+            pytest.param(json.dumps(_NOT_HEX_DIGEST), id="right-length-not-hex"),
+        ],
+    )
+    def test_decode_drops_non_sha256_hex_body_digest(self, cell: str) -> None:
+        raw = f'{{"fetched_at": 1, "max_age": 2, "body_digest": {cell}}}'.encode()
+        decoded = _decode_policy(raw)
+        assert decoded is not None
+        assert decoded.body_digest is None
+
+    def test_decode_keeps_sha256_hex_body_digest(self) -> None:
+        raw = json.dumps(
+            {"fetched_at": 1, "max_age": 2, "body_digest": _BODY_DIGEST}
+        ).encode("utf-8")
+        decoded = _decode_policy(raw)
+        assert decoded is not None
+        assert decoded.body_digest == _BODY_DIGEST
 
 
 class TestGetSimpleParsedBucket:
@@ -562,6 +597,7 @@ class TestSurrogateInListingString:
 _PARSED = _parse_files(json.loads(_LISTING_BYTES), _INDEX_NORM, "pkg")
 
 _JSON_PATH_PARTS = (_SIMPLE_BUCKET, "pypi", "pkg.json")
+_POLICY_PATH_PARTS = (_SIMPLE_BUCKET, "pypi", "pkg.policy")
 
 
 def _warm_bound(
@@ -589,6 +625,14 @@ def _tamper_header(blob: bytes, index: int, value: object) -> bytes:
 def _tamper_rows(blob: bytes, value: object) -> bytes:
     header, _rows = json.loads(blob)
     return json.dumps([header, value]).encode()
+
+
+def _tamper_policy_digest(root: Path, value: object) -> None:
+    """Rewrite the stored policy's ``body_digest`` cell to ``value`` on disk."""
+    path = root.joinpath(*_POLICY_PATH_PARTS)
+    doc = json.loads(path.read_bytes())
+    doc["body_digest"] = value
+    path.write_bytes(json.dumps(doc).encode("utf-8"))
 
 
 class TestReadPathParsedHit:
@@ -800,6 +844,42 @@ class TestReadPathRebuild:
         assert got_policy is not None
         assert got_policy.body_digest == digest
         assert _decoded(cache.get_simple_parsed("pkg"), got_policy) == _PARSED
+
+    @pytest.mark.parametrize(
+        "cell",
+        [
+            float("nan"),
+            5,
+            [1, 2],
+            "not hex",
+            "00ff",
+            pytest.param(_NOT_HEX_DIGEST, id="right-length-not-hex"),
+        ],
+    )
+    def test_non_sha256_hex_policy_digest_self_heals(
+        self, tmp_path: Path, cell: object
+    ) -> None:
+        """A stored digest of the wrong shape is dropped, then rewritten."""
+        cache = _cache(tmp_path)
+        files, digest = _warm_bound(cache)
+        _tamper_policy_digest(tmp_path, cell)
+        stats = ParsedCacheStats()
+        client = CachedAsyncSimpleClient(
+            _FakeTransport([]), cache, _INDEX, parsed_stats=stats
+        )
+
+        # The first call rebuilds after the digest is dropped, the second hits.
+        first = _run(client.get_files("pkg"))
+        second = _run(client.get_files("pkg"))
+
+        assert first == files
+        assert second == files
+        assert (stats.hit, stats.miss, stats.rebuild) == (1, 0, 1)
+
+        got_policy = cache.get_simple_policy("pkg")
+        assert got_policy is not None
+        assert got_policy.body_digest == digest
+        assert _decoded(cache.get_simple_parsed("pkg"), got_policy) == files
 
 
 class TestReadPathCorruptBody:

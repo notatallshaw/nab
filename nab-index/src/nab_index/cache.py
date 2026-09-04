@@ -52,6 +52,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from nab_provider.digest import is_hex_digest
 from nab_provider.serialization import SimpleSerialization
 
 from ._json_decode import decode_json
@@ -126,7 +127,8 @@ class CachePolicy:
 
     ``body_digest`` is the sha256 hex of the raw body this policy governs, and
     binds a parsed-listing blob to that body. It is ``None`` for an older
-    policy or a bodyless negative entry.
+    policy or a bodyless negative entry. A stored value that is not 64 hex
+    characters is dropped.
     """
 
     fetched_at: int
@@ -783,6 +785,16 @@ def _policy_etag(value: object) -> str | None:
     return value if isinstance(value, str) and is_sendable_etag(value) else None
 
 
+_SHA256_HEX_LEN = 64
+
+
+def _policy_body_digest(value: object) -> str | None:
+    """Body digest from a policy, or None when it is not 64 hex characters."""
+    if not isinstance(value, str):
+        return None
+    return value if len(value) == _SHA256_HEX_LEN and is_hex_digest(value) else None
+
+
 def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
     """Decode stored policy bytes, or ``None`` when they are not a policy.
 
@@ -797,7 +809,7 @@ def _decode_policy(policy_bytes: bytes) -> CachePolicy | None:
             max_age=int(doc["max_age"]),
             etag=_policy_etag(doc.get("etag")),
             page_url=_policy_page_url(doc.get("page_url")),
-            body_digest=doc.get("body_digest"),
+            body_digest=_policy_body_digest(doc.get("body_digest")),
         )
     except (ValueError, KeyError, TypeError, OverflowError):
         return None
