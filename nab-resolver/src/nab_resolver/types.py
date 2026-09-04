@@ -377,6 +377,9 @@ class IncompatibilityCause(enum.Enum):
     See: https://github.com/dart-lang/pub/blob/master/doc/solver.md#conflict-resolution
     """
 
+    CONTEXTUAL_NO_VERSIONS = enum.auto()
+    """No candidate exists while the decisions after the first term remain selected."""
+
 
 class Incompatibility(Generic[PackageType, VersionType]):
     """A set of terms that cannot all be true simultaneously.
@@ -433,6 +436,13 @@ class Incompatibility(Generic[PackageType, VersionType]):
         self.constraint_range = constraint_range
         self.origin = origin
         self.dependency_range = dependency_range
+
+    @property
+    def unavailable_package(self) -> PackageType | None:
+        """The package whose availability a contextual absence clause describes."""
+        if self.cause is IncompatibilityCause.CONTEXTUAL_NO_VERSIONS:
+            return self.terms[0].package
+        return None
 
     @override
     def __repr__(self) -> str:
