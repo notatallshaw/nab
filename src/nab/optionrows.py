@@ -6,13 +6,15 @@ the row objects on each table class.
 
 from __future__ import annotations
 
-import enum
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from ._compat import override
 
 if TYPE_CHECKING:
+    import enum
     from collections.abc import Callable
+
+    from .optiondefs import Scope
 
 T = TypeVar("T")
 C = TypeVar("C")
@@ -21,13 +23,6 @@ C = TypeVar("C")
 # omitted default checks against any T while a written one is checked;
 # nab.optionlower turns it into the Opt sentinel or into None.
 OMITTED: Any = object()
-
-
-class Scope(enum.Enum):
-    """Whether an option configures the project or the user's environment."""
-
-    PROJECT = "project"
-    USER = "user"
 
 
 class Layer(Generic[C]):

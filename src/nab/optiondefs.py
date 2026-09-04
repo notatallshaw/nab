@@ -9,7 +9,6 @@ import enum
 from typing import TYPE_CHECKING, Any
 
 from ._compat import override
-from .optionrows import Scope
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -74,6 +73,13 @@ class Tokens(enum.Enum):
     ITEM = "item"
     ITEMS = "items"
     PAIRS = "pairs"
+
+
+class Scope(enum.Enum):
+    """Whether an option configures the project or the user's environment."""
+
+    PROJECT = "project"
+    USER = "user"
 
 
 class _Unset:

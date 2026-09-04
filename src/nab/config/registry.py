@@ -17,10 +17,10 @@ from . import (
 from ..optiondefs import (
     Kind,
     Opt,
+    Scope,
     Tokens,
     VType,
 )
-from ..optionrows import Scope
 from nab_provider.policy import (
     BuildPolicy,
     DecisionOrder,
