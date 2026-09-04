@@ -167,6 +167,24 @@ def _rewritten_by_git(path: str) -> bool:
 
 
 _REPO_BOUNDARY_CHARS: frozenset[str] = frozenset({"/", "@", "#"})
+_GIT_SUFFIX = ".git"
+
+
+def _skip_optional_git_suffix(rest: str) -> str:
+    """Return ``rest`` without a leading ``.git`` that ends the repo path.
+
+    ``.git`` is optional only where a repo name ends, so it is skipped
+    when nothing but a trailing ``/``, the ref or the fragment follows
+    it.  In ``foo.git/bar`` it is part of a directory name and stays.
+    """
+    if not rest.startswith(_GIT_SUFFIX):
+        return rest
+
+    tail = rest[len(_GIT_SUFFIX) :]
+    after_slashes = tail.lstrip("/")
+    if after_slashes and after_slashes[0] not in _REPO_BOUNDARY_CHARS:
+        return rest
+    return tail
 
 
 def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
@@ -178,8 +196,9 @@ def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
     at a path-segment boundary: the candidate must equal the prefix, the
     prefix must already end in a separator, or the next candidate
     character must be ``/`` (path), ``@`` (ref) or ``#`` (fragment).
-    Git treats the ``.git`` suffix as optional, so it is stripped from the
-    prefix and skipped once on the candidate before the boundary check.
+    Git treats a trailing ``.git`` as optional, so it is stripped from the
+    prefix and skipped on the candidate by :func:`_skip_optional_git_suffix`
+    before the boundary check.
     Both URLs have their authority ``user[:pass]@`` / ``git@`` stripped
     by the caller.
 
@@ -200,10 +219,11 @@ def _repo_prefix_matches(inner_url: str, prefix: str) -> bool:
     if any(_rewritten_by_git(part) for part in (repo, repo.partition("?")[0])):
         return False
 
-    prefix = prefix.removesuffix(".git")
+    prefix = prefix.removesuffix(_GIT_SUFFIX)
     if not inner_url.startswith(prefix):
         return False
-    rest = inner_url[len(prefix) :].removeprefix(".git")
+
+    rest = _skip_optional_git_suffix(inner_url[len(prefix) :])
     if not rest or not prefix or prefix[-1] in _REPO_BOUNDARY_CHARS:
         return True
     return rest[0] in _REPO_BOUNDARY_CHARS

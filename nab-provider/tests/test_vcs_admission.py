@@ -402,6 +402,56 @@ class TestAdmitVcsUrlRepo:
                 config,
             )
 
+    @pytest.mark.parametrize(
+        ("allowed", "url"),
+        [
+            (
+                "https://github.com/myorg",
+                f"git+https://github.com/myorg.git/other@{_FORTY}",
+            ),
+            (
+                "https://github.com/myorg/lib",
+                f"git+https://github.com/myorg/lib.git/other@{_FORTY}",
+            ),
+            (
+                "https://github.com",
+                f"git+https://github.com.git/other@{_FORTY}",
+            ),
+            (
+                "file:///srv/git/team",
+                f"git+file:///srv/git/team.git/other@{_FORTY}",
+            ),
+        ],
+    )
+    def test_dot_git_followed_by_path_segment_refused(
+        self, allowed: str, url: str
+    ) -> None:
+        """``.git`` is optional where a repo name ends, not mid-path.
+
+        ``<prefix>.git/other`` names a different repo, and skipping the
+        suffix would put the boundary check on the ``/`` in front of it.
+        """
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https", "git+file"}),
+            allowed_repos=(allowed,),
+        )
+        with pytest.raises(UnsupportedVcsError, match="not in vcs.allowed-repos"):
+            admit_vcs_url(url, config)
+
+    def test_dot_git_clone_url_without_ref_passes(self) -> None:
+        """An unpinned candidate ending in ``.git`` is the same repo."""
+        config = VcsConfig(
+            policy=VcsPolicy.ALLOW,
+            allowed_schemes=frozenset({"git+https"}),
+            allowed_repos=("https://github.com/myorg/myrepo",),
+            require_pin=False,
+        )
+        assert (
+            admit_vcs_url("git+https://github.com/myorg/myrepo.git", config)
+            == "git+https"
+        )
+
     def test_dot_segment_escape_above_prefix_refused(self) -> None:
         """A ``../`` path git resolves outside the prefix is refused."""
         config = VcsConfig(

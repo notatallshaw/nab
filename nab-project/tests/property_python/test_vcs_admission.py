@@ -149,7 +149,21 @@ def boundary_cases(draw: st.DrawFn) -> tuple[str, VcsConfig]:
     login = draw(st.sampled_from(["", "git@", "user:pw@"]))
     tail = draw(
         st.sampled_from(
-            ["", "\t", "\r", "\n", "?", "?x", "x", "/x", ".git", ".gitx", "#f"]
+            [
+                "",
+                "\t",
+                "\r",
+                "\n",
+                "?",
+                "?x",
+                "x",
+                "/x",
+                ".git",
+                ".git/",
+                ".git/x",
+                ".gitx",
+                "#f",
+            ]
         )
     )
     position = draw(st.sampled_from(["authority", "end"]))
@@ -225,12 +239,13 @@ def _prefix_under_repo(inner: str, prefix: str) -> bool:
     A candidate is under an allowed prefix only when the prefix ends at a
     path-segment boundary, so a sibling repo whose URL only begins with
     the prefix (``.../airflow.git`` vs ``.../airflow.git.other``) is refused.
-    Git's optional ``.git`` suffix is stripped from the prefix and skipped
-    once on the candidate so an exact-repo prefix and the ``.git`` clone URL
-    match either way round.  A candidate whose path git would rewrite is
-    refused first: the post-authority remainder, minus the trailing ``@<ref>``
-    the clone splits off, must equal its dot-segment-normalised form both
-    whole and cut at the first ``?``.
+    Git's optional ``.git`` suffix is stripped from the prefix and skipped on
+    the candidate where the repo path ends, so an exact-repo prefix and the
+    ``.git`` clone URL match either way round.  ``<prefix>.git/<segment>`` is
+    a different repo and keeps its suffix.  A candidate whose path git would
+    rewrite is refused first: the post-authority remainder, minus the trailing
+    ``@<ref>`` the clone splits off, must equal its dot-segment-normalised form
+    both whole and cut at the first ``?``.
     """
     parts = urlsplit(inner)
     remainder = f"{parts.path}?{parts.query}" if parts.query else parts.path
@@ -242,7 +257,13 @@ def _prefix_under_repo(inner: str, prefix: str) -> bool:
     prefix = prefix.removesuffix(".git")
     if not inner.startswith(prefix):
         return False
-    rest = inner[len(prefix) :].removeprefix(".git")
+
+    rest = inner[len(prefix) :]
+    if rest.startswith(".git"):
+        after_slashes = rest[len(".git") :].lstrip("/")
+        if not after_slashes or after_slashes[0] in "@#":
+            rest = rest[len(".git") :]
+
     if not rest or not prefix or prefix[-1] in "/@#":
         return True
     return rest[0] in "/@#"
