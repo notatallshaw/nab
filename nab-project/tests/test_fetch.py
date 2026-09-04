@@ -197,6 +197,32 @@ class TestInMemoryIndex:
         )
         assert idx.get_metadata("foo", "1.0") == "Name: foo\nVersion: 1.0\n"
 
+    def test_equal_metadata_texts_in_a_release_share_one_str(self) -> None:
+        """Wheels of one version whose header blocks match hold one shared str."""
+        idx = InMemoryIndex()
+        linux = "Name: foo\nVersion: 1.0\nRequires-Dist: linux-only\n\n"
+        macos = "Name: foo\nVersion: 1.0\nRequires-Dist: macos-only\n\n"
+        windows = "Name: foo\nVersion: 1.0\nRequires-Dist: windows-only\n\n"
+        wheels = [
+            ("https://example.com/foo-linux.whl", linux),
+            ("https://example.com/foo-manylinux.whl", linux),
+            ("https://example.com/foo-macos.whl", macos),
+            ("https://example.com/foo-macos-arm.whl", macos),
+            ("https://example.com/foo-windows.whl", windows),
+        ]
+        for url, header in wheels:
+            idx.store_metadata(
+                "foo", "1.0", header + "A long description.\n", metadata_url=url
+            )
+
+        held = [idx.get_metadata("foo", "1.0", metadata_url=url) for url, _ in wheels]
+
+        assert held == [linux, linux, macos, macos, windows]
+
+        assert held[0] is held[1]
+        assert held[2] is held[3]
+        assert held[0] is not held[2]
+
     def test_store_metadata_none(self) -> None:
         idx = InMemoryIndex()
         idx.store_metadata("foo", "1.0", None)
