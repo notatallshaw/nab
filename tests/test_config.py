@@ -2636,6 +2636,42 @@ class TestEnvironment:
         ):
             read_pyproject_config(path)
 
+    def test_implementation_without_platform_named_for_nab_toml(
+        self, tmp_path: Path
+    ) -> None:
+        """The repair goes in the file that declared the environment."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        (tmp_path / "nab.toml").write_text(
+            '[environment]\nimplementation = "pypy"\n', encoding="utf-8"
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+
+        message = str(excinfo.value)
+        assert "[environment].implementation needs a platform" in message
+        assert "tool.nab" not in message
+
+    def test_implementation_without_platform_named_for_nab_toml_under_a_flag(
+        self, tmp_path: Path
+    ) -> None:
+        """A flag on another axis does not move the repair out of nab.toml."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        (tmp_path / "nab.toml").write_text(
+            '[environment]\nimplementation = "pypy"\n', encoding="utf-8"
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(
+                path,
+                discover_workspace=False,
+                cli_overrides={"environment": _cli_environment(python="3.12")},
+            )
+
+        message = str(excinfo.value)
+        assert "[environment].implementation needs a platform" in message
+        assert "tool.nab" not in message
+
     def test_rejected_alongside_a_matrix(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
@@ -2648,6 +2684,65 @@ class TestEnvironment:
             match=r"\[tool.nab.matrix\] and \[tool.nab.environment\] cannot both",
         ):
             read_pyproject_config(path)
+
+    def test_nab_toml_matrix_and_environment_named_at_top_level(
+        self, tmp_path: Path
+    ) -> None:
+        """nab.toml takes both tables at the top level, so neither is prefixed."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        (tmp_path / "nab.toml").write_text(
+            'mode = "universal"\n'
+            '[matrix]\npython = ">=3.11,<3.12"\nplatforms = ["linux_x86_64"]\n'
+            '[environment]\npython = "3.11"\n',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+
+        message = str(excinfo.value)
+        assert "[matrix] and [environment] cannot both be set" in message
+        assert "tool.nab" not in message
+
+    def test_environment_in_nab_toml_named_for_its_own_file(
+        self, tmp_path: Path
+    ) -> None:
+        """A matrix in pyproject.toml keeps its prefix beside a nab.toml environment."""
+        path = write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n'
+            '[tool.nab]\nmode = "universal"\n' + _UNIVERSAL_MATRIX,
+        )
+        (tmp_path / "nab.toml").write_text(
+            '[environment]\npython = "3.11"\n', encoding="utf-8"
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+
+        assert "[tool.nab.matrix] and [environment] cannot both be set" in str(
+            excinfo.value
+        )
+
+    def test_matrix_in_nab_toml_named_for_its_own_file(self, tmp_path: Path) -> None:
+        """A matrix in nab.toml drops its prefix beside a pyproject.toml environment."""
+        path = write(
+            tmp_path,
+            '[project]\nname = "x"\nversion = "0"\n'
+            '[tool.nab.environment]\npython = "3.11"\n',
+        )
+        (tmp_path / "nab.toml").write_text(
+            'mode = "universal"\n'
+            '[matrix]\npython = ">=3.11,<3.12"\nplatforms = ["linux_x86_64"]\n',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+
+        assert "[matrix] and [tool.nab.environment] cannot both be set" in str(
+            excinfo.value
+        )
 
 
 class TestMarkerEnvironmentDeprecation:
@@ -2807,18 +2902,29 @@ class TestMarkerEnvironmentDeprecation:
             "[tool.nab.marker-environment]\n"
             'python_version = "3.11"\n',
         )
-        with pytest.raises(ConfigError, match="are both set"):
+        with pytest.raises(
+            ConfigError,
+            match=r"\[tool.nab.environment\] and the deprecated"
+            r" \[tool.nab.marker-environment\] are both set",
+        ):
             read_pyproject_config(path)
 
     def test_both_surfaces_rejected_under_a_cli_key(self, tmp_path: Path) -> None:
-        """A file table beside the overlay still refuses, flag or no flag."""
+        """A file table beside the overlay still refuses, flag or no flag.
+
+        The flag wins the key, so the table is named for the file under it.
+        """
         path = write(
             tmp_path,
             '[tool.nab.environment]\npython = "3.12"\n'
             "[tool.nab.marker-environment]\n"
             'python_version = "3.11"\n',
         )
-        with pytest.raises(ConfigError, match="are both set"):
+        with pytest.raises(
+            ConfigError,
+            match=r"\[tool.nab.environment\] and the deprecated"
+            r" \[tool.nab.marker-environment\] are both set",
+        ):
             read_pyproject_config(
                 path,
                 discover_workspace=False,
@@ -2865,6 +2971,44 @@ class TestMarkerEnvironmentDeprecation:
         assert config.environment == EnvironmentConfig(
             platform=PlatformSpec("macos_arm64"), implementation="pypy"
         )
+
+    def test_both_surfaces_in_nab_toml_named_at_top_level(self, tmp_path: Path) -> None:
+        """Both surfaces come from nab.toml, so neither is named under tool.nab."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        (tmp_path / "nab.toml").write_text(
+            '[environment]\npython = "3.12"\n'
+            '[marker-environment]\npython_version = "3.11"\n',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+
+        message = str(excinfo.value)
+        assert "[environment] and the deprecated [marker-environment]" in message
+        assert "tool.nab" not in message
+
+    def test_both_surfaces_in_nab_toml_named_under_a_cli_key(
+        self, tmp_path: Path
+    ) -> None:
+        """A flag wins the key, so the table is named for the file below it."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        (tmp_path / "nab.toml").write_text(
+            '[environment]\npython = "3.12"\n'
+            '[marker-environment]\npython_version = "3.11"\n',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(
+                path,
+                discover_workspace=False,
+                cli_overrides={"environment": _cli_environment(python="3.13")},
+            )
+
+        message = str(excinfo.value)
+        assert "[environment] and the deprecated [marker-environment]" in message
+        assert "tool.nab" not in message
 
     def test_must_be_table(self, tmp_path: Path) -> None:
         path = write(tmp_path, '[tool.nab]\nmarker-environment = "no"\n')
@@ -2931,9 +3075,27 @@ class TestMarkerEnvironmentDeprecation:
         )
         with pytest.raises(
             ConfigError,
-            match=r"\[tool.nab.matrix\] and \[tool.nab.environment\] cannot both",
+            match=r"\[tool.nab.matrix\] and \[tool.nab.marker-environment\]"
+            r" cannot both",
         ):
             read_pyproject_config(path)
+
+    def test_rejected_in_universal_mode_from_nab_toml(self, tmp_path: Path) -> None:
+        """The message names the overlay nab.toml holds, not the environment."""
+        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
+        (tmp_path / "nab.toml").write_text(
+            'mode = "universal"\n'
+            '[matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n'
+            '[marker-environment]\npython_version = "3.11"\n',
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(path, discover_workspace=False)
+
+        message = str(excinfo.value)
+        assert "[matrix] and [marker-environment] cannot both be set" in message
+        assert "tool.nab" not in message
 
 
 class TestIndexes:
