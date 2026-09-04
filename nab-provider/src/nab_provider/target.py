@@ -20,7 +20,6 @@ report metadata for the target or for someone else.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from typing import TYPE_CHECKING
@@ -36,6 +35,10 @@ from nab_provider._vendor.packaging.specifiers import (
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
 
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS, MARKER_VARIABLE_FOR_KIND
+from .environment import (
+    EnvironmentSource,
+    host_environment,
+)
 from .marker_holds import IntractableMarkerError, UnevaluableMarkerError
 from .tags import (
     FREE_THREADED_MIN_PYTHON,
@@ -45,6 +48,8 @@ from .tags import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Mapping, Sequence
+
     from .tags import TagsSource
 
 
@@ -73,12 +78,6 @@ __all__ = [
     "slices_from_points",
     "unboundable_variables",
 ]
-
-
-# Where a host marker environment comes from.  Injected so a caller
-# (and every test) can name the interpreter it means instead of the one
-# running.
-EnvironmentSource = Callable[[], Mapping[str, object]]
 
 
 # The OS/arch PEP 508 marker values per matrix platform id.  These are
@@ -640,18 +639,6 @@ def _clause_interval_literal(
     except (InvalidVersion, InvalidSpecifier):
         raise _non_interval(parts, target) from None
     return op, specifier, version
-
-
-def host_environment(
-    env_source: EnvironmentSource = default_environment,
-) -> dict[str, str]:
-    """Return the host's PEP 508 marker environment as a plain string dict.
-
-    ``default_environment`` returns a TypedDict whose ``.items()`` view
-    widens the values to ``object``, so rebuild it as ``dict[str, str]``
-    the callers can overlay onto.
-    """
-    return {key: value for key, value in env_source().items() if isinstance(value, str)}
 
 
 def python_axis_environment(python_version: str) -> dict[str, str]:
