@@ -13,10 +13,11 @@ import zipfile
 import zlib
 from pathlib import Path
 from typing import TYPE_CHECKING, TypeVar
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 import pytest
 
+from nab_index import local_index
 from nab_index.client import SdistFile, WheelFile, zip_sdist_version
 from nab_index.local_index import (
     LocalIndexClient,
@@ -367,10 +368,7 @@ class TestErrorHierarchy:
 
 
 def _url2pathname_with_authority(url: str) -> str:
-    """``url2pathname`` as Python 3.14 defines it off Windows.
-
-    It resolves an authority out of its argument and rejects a non-local one.
-    """
+    """Model Python 3.14's non-Windows file-URL authority handling."""
     _, authority, path = urlsplit("file:" + url)[:3]
     if authority not in ("", "localhost"):
         msg = f"file:// scheme is supported only on localhost: {authority!r}"
@@ -379,27 +377,38 @@ def _url2pathname_with_authority(url: str) -> str:
 
 
 def _url2pathname_on_windows(url: str) -> str:
-    """Python 3.14's Windows ``url2pathname``, cut down to the drive rule.
-
-    It reads the authority of ``//C:/tmp`` as a drive rather than a host.
-    No other clause is modelled, since only this one is under test.
-    """
+    """Model Python 3.14's Windows drive-prefix handling."""
     _, authority, path = urlsplit("file:" + url)[:3]
     if authority[1:2] == ":":
         path = authority + path
     return unquote(path.replace("/", "\\"))
 
 
+def _urljoin_dropping_an_empty_authority(base: str, href: str) -> str:
+    """Model loss of an empty authority for the root-path examples."""
+    joined = urljoin(base, href)
+    scheme, netloc, path, _, _ = urlsplit(joined)
+    if netloc or not path.startswith("//"):
+        return joined
+    return f"{scheme}:{path}"
+
+
+@pytest.fixture(params=["stdlib", "collapsing"])
+def urljoin_contract(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise installed urljoin and the variant that drops an empty authority."""
+    if request.param == "collapsing":
+        monkeypatch.setattr(
+            local_index, "urljoin", _urljoin_dropping_an_empty_authority
+        )
+
+
 @pytest.fixture(params=["stdlib", "authority"])
 def url2pathname_contract(
     request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Run the test against the installed ``url2pathname`` and against 3.14's.
-
-    What ``url2pathname`` does with an authority in its argument changed in
-    3.12 and again in 3.14, so one interpreter's version does not stand in
-    for the rest.
-    """
+    """Exercise installed and Python 3.14 authority handling."""
     if request.param == "authority":
         monkeypatch.setattr(
             urllib.request, "url2pathname", _url2pathname_with_authority
@@ -1091,9 +1100,9 @@ class TestPep503Directory:
         )
 
     def test_network_path_href_keeps_its_double_slash_root(
-        self, tmp_path: Path
+        self, tmp_path: Path, urljoin_contract: None
     ) -> None:
-        """The record's local path names the file its URL names."""
+        """The parsed link preserves matching URL and local path."""
         body = '<a href="////localhost/packages/foo-1.0-py3-none-any.whl">foo</a>'
         self._make_index(tmp_path, body)
         client = LocalIndexClient(tmp_path.as_uri())

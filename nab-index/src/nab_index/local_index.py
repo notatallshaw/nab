@@ -328,8 +328,9 @@ def _resolve_local_link(
     # page's, so the split round trip is what drops a tab, CR or LF.
     try:
         if absolute is None:
-            absolute = urljoin(base_url, href_no_frag)
-        url = _normalized_url(absolute)
+            url = _joined_url(base_url, href_no_frag)
+        else:
+            url = _normalized_url(absolute)
         parsed = urlparse(url)
         page = urlparse(base_url)
     except ValueError:
@@ -358,7 +359,7 @@ def _resolve_local_link(
     if parsed.scheme in {"http", "https"}:
         return _Link(unquote(last_segment), url, None, hashes)
 
-    # Drop an anchor naming no local file rather than fail the whole listing.
+    # Distinguish an unusable release link from a non-package link.
     try:
         path = _parsed_file_url_path(parsed, url)
     except ValueError:
@@ -371,6 +372,17 @@ def _resolve_local_link(
         )
 
     return _Link(path.name, url, path, hashes)
+
+
+def _joined_url(base_url: str, href: str) -> str:
+    """Resolve and normalize a link while preserving a ``//`` path root."""
+    if not href.startswith("////"):
+        return _normalized_url(urljoin(base_url, href))
+
+    # Some urljoin versions discard the empty authority before a // path.
+    escaped_path = f"/%2F{href[4:]}"
+    joined = _normalized_url(urljoin(base_url, f"//{escaped_path}"))
+    return joined.replace("/%2F", "//", 1)
 
 
 # A mirror href climbs out of the package directory to the shared packages
