@@ -354,7 +354,7 @@ def test_only_the_level_that_builds_index_sdists_names_them(
 
 def test_readme_project_is_valid_toml() -> None:
     """The quick-start project is a minimal PEP 621 project."""
-    blocks = _blocks(README, "toml")
+    blocks = _fenced_blocks(_section(README, "Quick start"), "toml")
     assert len(blocks) == 1
 
     project = tomli.loads(blocks[0])["project"]

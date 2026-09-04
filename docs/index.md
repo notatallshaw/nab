@@ -4,6 +4,10 @@ nab resolves Python project dependencies and writes a PEP 751 lock or
 pinned requirements. It can download resolved artifacts, but it does
 not install them.
 
+Keep dependency ranges in `pyproject.toml`, use nab to select compatible versions, then review the lock before handing it to an installer. The lock includes transitive dependencies and records its target environments. Installing from it reuses the recorded selection; running nab again makes a fresh one.
+
+Start with the Python and platform running nab, {ref}`declare a deployment target <the-resolve-environment>`, or [lock a matrix of environments](explanation/universal.md). Remote sources are read without building them by default; [build policy](reference/build-policy.md) controls when a backend may run.
+
 ## Start with a task
 
 * [Make your first lock](tutorial/getting-started.md), then install its

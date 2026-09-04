@@ -404,6 +404,7 @@ is hashed. Local and VCS pins make the output mixed and therefore
 unsuitable for that mode. [Use a lock](../how-to/use-the-lock.md) gives
 the install commands.
 
+(reproducibility)=
 ## Reproducibility
 
 Repeatable locking needs a fixed index view and a fixed search order:

@@ -113,6 +113,7 @@ PKG-INFO dependencies skips the dynamic-metadata path):
 dist-policy = { policy = "wheel-or-sdist", trust-unverified-deps = false }
 ```
 
+(the-resolve-environment)=
 ## The resolve environment
 
 nab resolves for the interpreter it is running on.  The host is the
