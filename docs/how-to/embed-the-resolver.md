@@ -191,6 +191,14 @@ to decide the virtual root at, which `range_type.singleton()` has to
 accept, and a `format_range` unless that type's `str` already reads as a
 constraint. nab drives the resolver this way, with a PEP 440 range type.
 
+## Candidates discovered while resolving
+
+When candidate availability depends on selected packages, pass `Resolver` an `availability_generation` callback. It takes no arguments and returns an integer that increases whenever provider operations can change a candidate query's answer. Reading it must not change availability.
+
+An unsuccessful query is deferred while other packages can still be decided. After a stable pass through the remaining packages, the resolver records absence guarded by the current decisions. The provider must guarantee that absence whenever those decisions and requirements hold, even after its caches gain data. A source discovered through one parent must therefore remain eligible only while its declaring requirement is active; a growing cache alone does not satisfy this contract.
+
+This mode is synchronous: availability cannot change between the final generation check and recording the clause. Omit the callback for a provider with a fixed candidate universe.
+
 ## The supported API
 
 These module paths will not move without a major version bump:

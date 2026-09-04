@@ -611,9 +611,11 @@ class Resolver(Generic[PackageType, VersionType]):
         :class:`packaging.ranges.VersionRange` requires a parseable
         version string or :class:`~packaging.version.Version` here.
 
-        ``availability_generation`` enables synchronous candidate discovery.
+        ``availability_generation`` defers failed queries when candidate
+        availability depends on current decisions.
         Its monotonically increasing result invalidates deferred queries when
-        provider operations reveal candidates. Missing packages are retried
+        provider operations reveal candidates; reading it must not change
+        availability. Missing packages are retried
         after other decisions, and an exhausted sweep records absence guarded
         by all current decisions. The provider must ensure such an absence
         remains true whenever those decisions and requirements hold, regardless
