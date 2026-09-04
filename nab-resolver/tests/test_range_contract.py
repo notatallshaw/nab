@@ -38,7 +38,7 @@ class FlaggedRange:
     ``full()`` sets the flag, ``empty()`` clears it, and the four operations
     below carry it by VersionRange's rules.  As there, the flag admits strings
     only at full bounds, so a full-bounded flagged range is a strict superset
-    of its unflagged twin and ``is_subset`` gates on that.  ``===`` literals
+    of its unflagged twin and ``is_subset`` checks that flag. ``===`` literals
     and pre-release regions are left out; the identity above turns on neither.
     """
 
@@ -68,7 +68,7 @@ class FlaggedRange:
         return self.base.is_empty
 
     def arbitrary_active(self) -> bool:
-        """Whether the flag actually admits strings, as VersionRange gates it."""
+        """Whether the flag admits strings under ``VersionRange`` rules."""
         return self.arbitrary and self.base == Range.full()
 
     def __contains__(self, version: int) -> bool:
@@ -120,7 +120,7 @@ class FlaggedRange:
         return other.is_subset(self)
 
     def is_disjoint(self, other: FlaggedRange) -> bool:
-        """Disjoint when the intersection holds no version and no admission."""
+        """Disjoint when the intersection lacks versions and arbitrary admission."""
         combined = self & other
         return combined.base.is_empty and not combined.arbitrary_active()
 

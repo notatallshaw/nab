@@ -38,20 +38,17 @@ def format_error(
 ) -> str:
     """Format a human-readable error from an incompatibility derivation tree.
 
-    Where narrowing leaves a line ruling out versions its causes no longer
-    account for, the range it dropped is stated once for that package, as the
-    resolver states it when it looks for a version in a range and finds none.
-
     ``narrow`` maps ``(package, constraint)`` to a display constraint and is
-    applied to originally-positive terms only; a negative dependency-side
-    term renders as requested even when displayed negated.  On a
-    ``NO_VERSIONS`` line a narrowing to the full range is ignored, since the
-    range is what keeps the sentence true.  Narrowing happens at render time
-    only, never mutating the derivation tree.
+    applied to positive terms except on a ``NO_VERSIONS`` line, whose stored
+    range keeps the sentence true. Negative terms are not narrowed. Rendering
+    never mutates the derivation tree.
+
+    When narrowing leaves a line ruling out versions its causes do not account
+    for, the dropped range is stated once for that package.
 
     ``format_range`` renders a constraint for display and defaults to ``str``,
-    which reads well for the resolver's own ``Range``.  A range type whose
-    ``str`` is a debug repr passes its own.  Rendering a constraint as the
+    which reads well for the resolver's own ``Range``. A range type whose
+    ``str`` is a debug repr passes its own. Rendering a constraint as the
     empty string drops it from the line along with its separating space.
     """
     lines: list[str] = []
@@ -408,8 +405,8 @@ def prior_cause(
         result.append(cause_shared)
 
     # Remaining packages: intersect when in both sides, else keep as-is.
-    # Dict merge keeps insertion order; a set union would iterate in hash
-    # order, making learned-clause term order vary across processes.
+    # Dict merge keeps insertion order. Set union would make
+    # learned-clause term order depend on process hash order.
     all_packages = {**incompat_terms, **cause_terms}
     for package in all_packages:
         incompat_term = incompat_terms.get(package)

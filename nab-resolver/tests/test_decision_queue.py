@@ -205,7 +205,7 @@ class ConflictSensitiveProvider(FuzzProvider):
     leading one and then on how many versions its range leaves, so a key moves
     both when crediting a culprit leaves the solution alone and when the
     solution narrows the range. ``is_ready`` holds one package back for the
-    first scans, the way a listing still in flight does.
+    first scans to simulate a listing still in flight.
     """
 
     def __init__(
@@ -260,7 +260,7 @@ class RecheckingDecisionQueue(DecisionQueue[str]):
     """
 
     def __init__(self) -> None:
-        """Start empty, with no unready package seen and no key held back."""
+        """Start empty with both diagnostic counters at zero."""
         super().__init__()
         self.unready_picks = 0
         self.held_keys = 0

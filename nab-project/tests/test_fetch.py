@@ -65,8 +65,8 @@ def no_retries(monkeypatch: pytest.MonkeyPatch) -> None:
 def _coord(**kwargs: object) -> FetchCoordinator:
     """Build a FetchCoordinator wired to httpx so respx can mock it.
 
-    The overlap gate defaults off (threshold 0) so the serve-mechanism tests
-    exercise the sync path independent of the blob-size gate, which has its own
+    The overlap check defaults off (threshold 0) so the serve-mechanism tests
+    exercise the sync path independent of the blob-size threshold, which has its own
     dedicated tests.
     """
     coord = FetchCoordinator(transport=HttpxAsyncTransport(), **kwargs)  # type: ignore[arg-type]
@@ -75,7 +75,7 @@ def _coord(**kwargs: object) -> FetchCoordinator:
 
 
 def _wait_until(predicate: Callable[[], bool], timeout: float = 5) -> bool:
-    """Poll ``predicate`` until it holds, and report whether it did.
+    """Return whether ``predicate`` holds before ``timeout``.
 
     The coordinator finishes some work without setting the waiter's event, so
     waiting on the event itself would just spend the whole timeout.
@@ -483,7 +483,7 @@ class TestInMemoryIndex:
         assert idx.get_parsed_metadata("foo", "2.0", "TEXT-2") == "v2"
 
     def test_parsed_metadata_keeps_every_text_of_a_version(self) -> None:
-        """Each text of one ``(package, version)`` keeps its own parse."""
+        """Keep a separate parse for each metadata text at a version."""
         idx = InMemoryIndex()
         idx.store_parsed_metadata("foo", "1.0", "linux-parse", "LINUX-METADATA")
         idx.store_parsed_metadata("foo", "1.0", "win-parse", "WIN-METADATA")
@@ -491,11 +491,7 @@ class TestInMemoryIndex:
         assert idx.get_parsed_metadata("foo", "1.0", "WIN-METADATA") == "win-parse"
 
     def test_parsed_metadata_answers_only_for_its_own_text(self) -> None:
-        """The sdist's parse is not served to a reader holding wheel METADATA.
-
-        Both kinds write one ``(package, version)`` slot, so the wheel's
-        PEP 658 sidecar can replace PKG-INFO a previous tuple already parsed.
-        """
+        """Do not return a parse for different metadata text."""
         idx = InMemoryIndex()
         idx.store_sdist_metadata("foo", "1.0", "PKG-INFO")
         idx.store_parsed_metadata("foo", "1.0", "sdist-parse", "PKG-INFO")
@@ -1239,7 +1235,7 @@ class TestFetchCoordinator:
             coord.request_listing("foo")
 
     def test_shutdown_completes_after_startup_crash(self) -> None:
-        """shutdown() tears down cleanly when the fetcher crashed at startup."""
+        """shutdown() returns when the fetcher crashed at startup."""
         coord = _coord(index_routes=[IndexRoute(name="foo", index="missing")])
         coord.start()
         assert coord._thread is not None
@@ -1317,7 +1313,7 @@ class TestFetchCoordinator:
             coord.shutdown()
 
     def _dead_loop_coord(self) -> FetchCoordinator:
-        """Return a coordinator whose loop is dead, crash flag cleared."""
+        """Return a coordinator with a stopped loop and cleared crash flag."""
         coord = _coord(index_routes=[IndexRoute(name="foo", index="missing")])
         coord.start()
         assert coord._thread is not None
@@ -2175,8 +2171,7 @@ class TestFetchCoordinatorCache:
         assert failures[0].levelno == logging.DEBUG
         assert failures[0].exc_info is None
 
-    def test_explicit_cache_backend_takes_precedence(self) -> None:
-        """A passed-in cache_backend wins over cache_dir."""
+    def test_explicit_cache_backend_is_stored_without_cache_dir(self) -> None:
         from nab_index.cache import NullCache
 
         backend = NullCache()
@@ -3062,7 +3057,7 @@ class TestRangeMetadataIndex:
 
 
 def _crashed_range_coord() -> FetchCoordinator:
-    """Return a coordinator whose loop is dead, crash flag cleared."""
+    """Return a coordinator with a stopped loop and cleared crash flag."""
     coord = _coord(index_routes=[IndexRoute(name="foo", index="missing")])
     coord.start()
     assert coord._thread is not None
@@ -3308,7 +3303,7 @@ class TestWarmSyncListingPath:
     """The synchronous warm-hit fast path for ``request_listing`` (C5, S-ALL)."""
 
     def test_eligibility_gate_single_index_ondisk(self, tmp_path: Path) -> None:
-        """The gate is on for a single non-file index over an OnDiskCache."""
+        """One non-file index over an OnDiskCache enables sync listings."""
         coord = _coord(cache_dir=tmp_path)
         try:
             assert coord._sync_listing_enabled is True
@@ -3348,7 +3343,7 @@ class TestWarmSyncListingPath:
             coord.shutdown()
 
     def test_eligibility_off_for_bare_file_url(self, tmp_path: Path) -> None:
-        """The other RFC 8089 spelling is a file index too, so the gate is off."""
+        """The other RFC 8089 form is also a file index and disables sync."""
         wheelhouse = tmp_path / "wheelhouse"
         wheelhouse.mkdir()
         coord = _coord(
@@ -3455,7 +3450,7 @@ class TestWarmSyncListingPath:
 
     @respx.mock
     def test_preexisting_pending_joins_without_probe(self, tmp_path: Path) -> None:
-        """A pending key joins the existing event: no probe, store, or submit."""
+        """A pending key joins the event without probing, storing, or submitting."""
         cache = OnDiskCache(tmp_path, _PYPI)
         _warm_parsed(cache, "pkg", [_sync_sdist("1.0")])
 
@@ -3539,7 +3534,7 @@ class TestWarmSyncListingPath:
             coord.shutdown()
 
     def test_gate_admits_when_sync_disabled(self) -> None:
-        """The gate admits (defers to the eligibility gate) when sync is off."""
+        """The overlap check defers to the separate eligibility condition."""
         coord = _coord()
         try:
             assert coord._sync_listing_enabled is False
@@ -3586,7 +3581,7 @@ class TestWarmSyncListingPath:
 
     @respx.mock
     def test_gate_admits_when_blob_size_unknown(self, tmp_path: Path) -> None:
-        """A missing blob has no size, so the gate admits and _try declines."""
+        """A missing blob passes the size check before _try declines."""
         cache = OnDiskCache(tmp_path, _PYPI)
         _warm_parsed(cache, "pkg", [_sync_sdist("1.0")], blob=False)
         assert cache.get_simple_parsed_size("pkg") is None
@@ -3742,7 +3737,7 @@ class TestWarmSyncListingPath:
     def test_warm_hit_stores_the_releases_the_parse_dropped(
         self, tmp_path: Path
     ) -> None:
-        """The blob carries them, so an inline serve reports them as a fetch does.
+        """An inline serve reports the blob's releases through the fetch path.
 
         Nothing else on this path reads the body a ``.zip`` sdist was listed in.
         """

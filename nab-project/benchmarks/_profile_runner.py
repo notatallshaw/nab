@@ -82,6 +82,10 @@ def build_inputs(
     resolution_override: sc.ResolutionStrategy | None = None,
     host: sc.BenchmarkHost | None = None,
 ) -> dict:
+    """Validate a scenario and build resolver inputs for one applicable host.
+
+    Returns requirements, constraints, config, target, and the effective host.
+    """
     validate_scenario_settings(name, scenario)
     trust_unverified_sdist_deps = parse_trust_unverified_sdist_deps(name, scenario)
     requirement_inputs = parse_scenario_requirement_strings(name, scenario)

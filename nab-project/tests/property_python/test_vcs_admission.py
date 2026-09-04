@@ -223,7 +223,7 @@ def _prefix_under_repo(inner: str, prefix: str) -> bool:
     r"""Boundary-aware repo-prefix check, transcribed from the documented policy.
 
     A candidate is under an allowed prefix only when the prefix ends at a
-    path-segment boundary, so a sibling repo whose URL merely begins with
+    path-segment boundary, so a sibling repo whose URL only begins with
     the prefix (``.../airflow.git`` vs ``.../airflow.git.other``) is refused.
     Git's optional ``.git`` suffix is stripped from the prefix and skipped
     once on the candidate so an exact-repo prefix and the ``.git`` clone URL
@@ -362,7 +362,7 @@ def test_admitted_pin_is_a_real_pin_at_clone_time(url: str) -> None:
         policy=VcsPolicy.ALLOW,
         allowed_schemes=frozenset(VALID_SCHEMES),
         # "" is an allow-all prefix (every inner URL starts with it), so the
-        # repo gate passes and the pin/clone-agreement assertion is reached;
+        # repo check passes and the pin/clone-agreement assertion is reached;
         # an empty tuple would deny every repo and make this test vacuous.
         allowed_repos=("",),
         require_pin=True,

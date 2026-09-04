@@ -198,7 +198,7 @@ def _probe(
 
 @pytest.fixture
 def generator() -> ModuleType:
-    """``tasks/gen_cli.py`` as a module: it is outside the package and the gate."""
+    """Load ``tasks/gen_cli.py`` outside the installed package and checks."""
     loaded = importlib.util.spec_from_file_location("gen_cli", _GENERATOR)
     assert loaded is not None
     assert loaded.loader is not None
@@ -318,11 +318,11 @@ def test_the_generator_refuses_a_row_that_names_no_page(
     )
 
 
-def test_the_generator_refuses_a_rung_zero_it_cannot_spell(
+def test_the_generator_refuses_a_rung_zero_it_cannot_render(
     generator: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A rung 0 with no source spelling is a refusal naming the row."""
-    unspellable = optiondefs.Opt(
+    """An unsupported rung 0 value is a refusal naming the row."""
+    unsupported = optiondefs.Opt(
         "probe",
         scope=optiondefs.Scope.PROJECT,
         rdefault=object(),
@@ -331,13 +331,13 @@ def test_the_generator_refuses_a_rung_zero_it_cannot_spell(
         help="a row written by a test",
         docs="reference/cli.md",
     )
-    monkeypatch.setattr(generator, "ALL", (unspellable,))
+    monkeypatch.setattr(generator, "ALL", (unsupported,))
 
     with pytest.raises(SystemExit) as caught:
         generator._registry_text()
 
     assert str(caught.value).startswith("probe holds <object object at ")
-    assert str(caught.value).endswith("which the generator cannot spell")
+    assert str(caught.value).endswith("which the generator cannot render")
 
 
 def test_the_generator_refuses_a_row_with_no_kind(generator: ModuleType) -> None:
@@ -351,5 +351,5 @@ def test_the_generator_refuses_a_row_with_no_kind(generator: ModuleType) -> None
 def test_the_generator_writes_the_row_type_the_walk_reads(
     generator: ModuleType,
 ) -> None:
-    """The two hand-written spellings of the ten-field row, held in step."""
+    """The two hand-written forms of the ten-field row stay equal."""
     assert str(parse_module.Spec) == generator._ROW_TYPE

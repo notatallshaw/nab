@@ -1770,8 +1770,8 @@ class TestTargetedBacktrack:
         call site fires, returns a triggering package, and that package
         becomes the next ``changed_package`` for re-propagation.
 
-        We lower the thresholds so a single backtracking scenario hits
-        the gate, and we raise the restart threshold so restart never
+        We lower the thresholds so a single backtracking scenario triggers
+        compaction, and we raise the restart threshold so restart never
         fires (which would clear the pending queue first).
         """
         monkeypatch.setattr(Resolver, "TARGETED_BT_MIN_CONFLICTS", 1)
@@ -1793,12 +1793,12 @@ class TestTargetedBacktrack:
     def test_call_site_handles_none_triggering(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Cover branch 308->318: the gate fires, ``_apply`` returns
+        """Cover branch 308->318: compaction runs, ``_apply`` returns
         ``None`` (cap reached), and ``changed_package`` is left alone.
 
-        We lower the gate to fire on the first conflict and set the cap
+        We lower the threshold to trigger on the first conflict and set the cap
         to zero so the helper short-circuits immediately. The resolver
-        still completes successfully because the cap clears the pending
+        still completes because the cap clears the pending
         queue and the loop continues normally.
         """
         monkeypatch.setattr(Resolver, "TARGETED_BT_MIN_CONFLICTS", 1)
@@ -3499,7 +3499,7 @@ class TestResolverStats:
         assert ResolverStats.__hash__ is None
 
     def test_a_bag_of_counters_carries_no_instance_dict(self) -> None:
-        """The ten slots are the whole layout."""
+        """The ten declared slots leave no instance dictionary."""
         stats: ResolverStats[str] = ResolverStats()
 
         with pytest.raises(AttributeError):

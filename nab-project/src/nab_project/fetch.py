@@ -251,30 +251,24 @@ class FetchCoordinator:
     ) -> None:
         """Create a coordinator that wraps ``transport``.
 
-        ``indexes`` is the ordered list of :class:`IndexConfig` records;
-        order is significant (presence-based first-index walks them
-        left-to-right).  When omitted, defaults to
-        ``[IndexConfig("pypi", "https://pypi.org/simple/")]``.  Each
-        index name must be unique across the list.
+        ``indexes`` is ordered and its names must be unique. It defaults to
+        PyPI when omitted.
 
-        ``index_routes`` adds per-package routing rules; an entry's
-        ``index`` field names one of the configured indexes and pins that
-        package's listing fetch to it.
+        ``index_routes`` pins package listings to named indexes.
+        ``index_cache_floors`` maps index names to read-time freshness floors
+        in seconds. Local ``file:`` indexes do not use a cache or floor.
 
-        ``index_cache_floors`` maps an index name to a read-time
-        freshness floor in seconds, passed to that index's cached client
-        as ``min_fresh_seconds``.  Indexes absent from the map, and the
-        ``file://`` local client, get no floor.
+        ``cache_dir`` builds a cache for each async index client. Without it,
+        ``cache_backend`` supplies the single-index cache.
+
+        If both are passed, ``cache_backend`` may serve synchronous warm hits
+        while async fetches use ``cache_dir``. Pass only one.
+
+        An explicit backend cannot partition several indexes or a pinned
+        serialization.
 
         ``build_config`` is the settings a :pep:`517` build runs under;
         a caller that resolves without building leaves it ``None``.
-
-        ``cache_backend`` wins over ``cache_dir`` if both are given;
-        otherwise ``cache_dir`` enables a per-index :class:`OnDiskCache`
-        and ``None`` falls back to a :class:`NullCache`.  Passing an
-        explicit ``cache_backend`` together with more than one entry in
-        ``indexes``, or with an index that pins its ``serialization``, is
-        rejected: each of those needs its own cache.
         """
         if indexes is None:
             indexes = [IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL)]
@@ -820,7 +814,7 @@ class FetchCoordinator:
     ) -> CachedAsyncSimpleClient | LocalIndexClient:
         """Build a single index client for ``cfg``.
 
-        A ``file:`` URL in either RFC 8089 spelling goes to
+        Either RFC 8089 form of a ``file:`` URL goes to
         :class:`LocalIndexClient` (no caching; the filesystem is the
         cache).  Everything else goes to :class:`CachedAsyncSimpleClient`
         with a per-URL :class:`OnDiskCache` when ``cache_dir`` is set.
@@ -850,6 +844,7 @@ class FetchCoordinator:
         )
 
     async def _async_fetcher(self) -> None:
+        """Own one fetch run's queue and clients; normal shutdown drains tasks."""
         # Fresh per-run memo, owned on this single loop thread, injected into
         # every client _build_client constructs below.
         self._range_memo = RangeCapabilityMemo()
@@ -940,6 +935,7 @@ class FetchCoordinator:
         req: FetchRequest,
         sem: asyncio.Semaphore,
     ) -> None:
+        """Run one limited request and record fetch failures for its waiter."""
         async with sem:
             try:
                 if req.kind is FetchKind.LISTING:

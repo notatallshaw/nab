@@ -1,4 +1,4 @@
-"""Unit suite for the marker algebra: acceptance cases, algebra, and edges.
+"""Unit tests for the marker algebra.
 
 Correctness against packaging is pinned by ``test_marker_algebra_differential``;
 this suite pins the ported acceptance cases and exercises the construction,
@@ -9,6 +9,7 @@ pinning the private packaging names the engine imports.
 from __future__ import annotations
 
 import gc
+import pickle
 import sys
 import traceback
 import weakref
@@ -304,6 +305,14 @@ def test_direct_construction_is_refused() -> None:
         MarkerSet()  # type: ignore[call-arg]
 
 
+def test_pickle_writes_but_load_is_refused() -> None:
+    payload = pickle.dumps(MarkerSet.full())
+    assert payload
+
+    with pytest.raises(TypeError, match="from_marker"):
+        pickle.loads(payload)  # noqa: S301 - exercise the documented load failure
+
+
 # ---------------------------------------------------------------- interning
 
 
@@ -338,7 +347,7 @@ def test_reversed_operands_do_not_collapse_onto_one_atom() -> None:
     """The intern key carries every field, ``swapped`` included.
 
     Only ``swapped`` separates these two leaves, and sharing one atom between
-    them would read the literal as the same operand in both, making two
+    them would read the literal as the same operand in both and make two
     disjoint sets equal.
     """
     (below,) = _atoms('python_full_version < "3.10"')
@@ -471,7 +480,7 @@ def test_equality_is_structural_not_semantic() -> None:
     assert MarkerSet.full() == MarkerSet.full()
     assert MarkerSet.full() != MarkerSet.empty()
 
-    # Two spellings of one set are unequal, which is what equivalent is for.
+    # Equivalent set expressions remain structurally unequal.
     assert (a & b) != (b & a)
     assert (a & b).equivalent(b & a)
     assert (a | ~a) != MarkerSet.full()
@@ -1245,8 +1254,8 @@ def test_unserializable_swapped_version_complement() -> None:
         ):
             ms(text).complement().to_marker_string()
 
-    # A swapped atom on a string variable still complements: that variable never
-    # dispatches as a version, so the table's reading is the whole story.
+    # A string variable never dispatches as a version, so its swapped equality
+    # still uses the string operator table.
     assert ms('"linux" == sys_platform').complement().to_marker_string() == (
         '"linux" != sys_platform'
     )
@@ -1262,8 +1271,8 @@ def test_unserializable_twin_equality_complement() -> None:
 
 def test_unserializable_degraded_equality_complement() -> None:
     # A literal the ordered specifier rejects sends >= and <= down the string
-    # operator table, where they mean exact equality. Spelling that complement
-    # as != would re-dispatch as a version, so it has no marker string.
+    # operator table, where they mean exact equality. Using != for the
+    # complement would re-dispatch as a version, so it has no marker string.
     for text in (
         'python_full_version >= "3.9+local"',
         'platform_release <= "6.6+x"',

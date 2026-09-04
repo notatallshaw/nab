@@ -9,9 +9,8 @@ things about what PyPI now serves:
   ``dist/`` tree is passed with ``--dist-dir``.
 
 A freshly published file can lag on PyPI's CDN, so a not-yet-available file is
-retried within a time budget shared across the whole run. A real verification
-failure -- a bad signature, the wrong repository, or a digest mismatch -- fails
-at once and is never retried.
+retried within a time budget for the run. A bad signature,
+wrong repository, or digest mismatch fails at once and is never retried.
 
 Run it against a release tag::
 

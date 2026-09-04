@@ -52,7 +52,7 @@ def parameter_shape(func: object) -> list[tuple[str, inspect._ParameterKind, obj
 def is_the_handle(node: ast.expr, handle: str) -> bool:
     """Whether ``node`` evaluates to the handle named ``handle``.
 
-    Two spellings reach it: the parameter of that name, and the attribute it
+    Two reference forms reach it: the parameter name and the attribute it
     is stored under.
     """
     if isinstance(node, ast.Name):
@@ -107,7 +107,7 @@ def members_read_from(path: Path, handle: str = "coordinator") -> set[str]:
     """Every attribute name ``path`` reads off the ``handle`` it holds.
 
     Refuses any occurrence of the handle the walk cannot account for: an alias
-    has too many spellings to chase.
+    has too many forms to follow.
     """
     module = ast.parse(path.read_text(encoding="utf-8"))
     followable = followable_handles(module, handle)
@@ -247,7 +247,7 @@ class TestFakeSatisfiesThePort:
         assert isinstance(make_coordinator().request_listing("pkg"), Waitable)
 
     def test_the_archive_requests_serve_what_they_were_given(self) -> None:
-        """Both archive requests land bytes in the index, not just a set event."""
+        """Both archive requests write bytes to the index and set the event."""
         port = make_coordinator(sdist_archive=b"archive-bytes")
 
         port.request_sdist_archive("pkg", "1.0", "https://ex.com/pkg-1.0.tar.gz")

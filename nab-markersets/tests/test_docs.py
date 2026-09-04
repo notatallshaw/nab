@@ -1,9 +1,7 @@
 """Run the examples in the public module's docstrings.
 
-Several pin outputs the engine chooses rather than the API: a witness version,
-a simplified marker string, a restricted one, and the verdict the class
-docstring uses to show where the decisions are not exact. Changing any of those
-is a change to what the package promises, and this is where it shows.
+Several examples pin outputs chosen by the engine. A changed output changes the
+package's documented behavior.
 """
 
 from __future__ import annotations

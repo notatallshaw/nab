@@ -243,7 +243,7 @@ class TestConflictForks:
         assert [f.active_groups for f in forks] == [(), ("dev",)]
 
     def test_single_selected_member_does_not_engage(self) -> None:
-        # Only cpu selected, gpu absent: no conflict, no fork.
+        # Selecting cpu alone triggers neither a conflict nor a fork.
         forks = conflict_forks(("cpu",), (), (_extra_set("cpu", "gpu"),))
         assert len(forks) == 1
         assert forks[0].selection == ()
@@ -692,8 +692,8 @@ class TestTwoConflictSetsPartialInstall:
 
     ``at-most-one`` lets an install pick no member of a set, so the lock of a
     four-fork resolve has to install the a1 packages for ``--extra a1`` alone,
-    not only for a full ``(a, b)`` pair. The resolve runs through the engine so
-    the gates come from the resolved graph rather than a hand-written
+    even without a full ``(a, b)`` pair. The resolve runs through the engine so
+    the selection conditions come from the graph rather than a hand-written
     ``package_gates``.
     """
 
@@ -1081,14 +1081,7 @@ class TestMatrixPerTargetWheelDivergence:
 
 
 class TestMatrixMetadataReadGranularity:
-    """Which metadata a matrix reads per wheel, and which per version.
-
-    A wheel's metadata comes from its own sidecar, so a matrix asks for one
-    URL per wheel its targets pick between them.  An sdist's ``PKG-INFO``
-    stands for the version, so one read serves the whole matrix.  Collapsing
-    repeat requests for one URL is the coordinator's job, covered by
-    ``property_python/test_fetch_coordinator.py``.
-    """
+    """Metadata is fetched per wheel URL and per sdist version."""
 
     def _wheel(self, tag: str) -> WheelFile:
         """A ``pkg`` 1.0 wheel tagged ``tag``, advertising a sidecar."""
@@ -1153,11 +1146,7 @@ class TestMatrixMetadataReadGranularity:
     def test_a_wheel_text_is_parsed_once_across_pythons(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Two platforms across two Pythons parse two texts, not four.
-
-        The targets alternate platforms, so each wheel's text is read again
-        after the other platform's.
-        """
+        """Parse each platform's wheel text once across Python targets."""
         linux = self._wheel("py3-none-manylinux_2_17_x86_64")
         windows = self._wheel("py3-none-win_amd64")
         assert linux.metadata_url is not None
@@ -1685,7 +1674,7 @@ class TestVcsConfigPlumbing:
         assert tr.pins == {"other": Version("1.0")}
 
     def test_source_root_required_for_vcs_materialize(self) -> None:
-        """Without a source root, vcs materialisation raises cleanly.
+        """Without a source root, VCS materialisation raises its config error.
 
         When the resolver requests the VCS-backed package the provider
         raises ``UnsupportedSdistError`` mentioning ``vcs_cache_dir``.
@@ -1967,7 +1956,7 @@ class TestRunPassSerial:
 
 
 class TestRunPassConflict:
-    """A contradictory root requirement fails each target cleanly."""
+    """A contradictory root requirement returns a failure for each target."""
 
     def test_conflicting_requirements_fail_the_target(self) -> None:
         """Pinned-but-different reqs surface as a failed TargetResult.
@@ -1989,10 +1978,10 @@ class TestRunPassConflict:
 
 
 class TestRunPassConstraintMarker:
-    """A constraint's marker gates it per target, not across the matrix."""
+    """A constraint marker applies independently to each target."""
 
     def test_marker_gated_constraint_binds_only_matching_targets(self) -> None:
-        """A win32-gated ``pkg<2.0`` pins 1.0 on Windows, leaves Linux at 2.0.
+        """A win32-conditioned ``pkg<2.0`` pins 1.0 only on Windows.
 
         Each target evaluates the constraint marker against its own
         environment, so the constraint binds only the Windows target.
@@ -2169,7 +2158,7 @@ class TestBuildLockInput:
     def test_a_double_quote_in_a_consulted_marker_value_still_locks(self) -> None:
         """A marker value carrying a double quote still locks.
 
-        urllib3 1.11 gates a dependency on
+        urllib3 1.11 conditions a dependency on
         ``extra == 'secure;python_version>"2.7"'``, and the lock's
         ``environments`` come from re-parsing the markers the resolve read,
         so the value has to survive that round trip.
@@ -2877,12 +2866,7 @@ class TestSharedListingFilter:
         return calls, counting
 
     def _record_parse_passes(self) -> tuple[list[bool], object]:
-        """Return each parse pass's ``target_drops``, and the patch that records them.
-
-        False is the pass a matrix's Pythons share; True is the pass that
-        carries the drops, which a resolve with nothing to share runs per
-        Python.
-        """
+        """Return recorded ``target_drops`` values and their patch."""
         passes: list[bool] = []
         real = listing_mod._prepare_listing
 
@@ -3141,8 +3125,8 @@ class TestMicroBoundaryNarrowing:
     )
     def test_a_quote_in_a_marker_value_does_not_cut_the_minor(self, value: str) -> None:
         """A single-quoted value is consumed whole by the micro scanner, so
-        the clause inside it neither splits 3.10 at a boundary no dependency
-        gates on nor trips the splitter on an operator it cannot tile."""
+        the clause inside it neither splits 3.10 at an unused boundary nor
+        trips the splitter on an operator it cannot tile."""
         coordinator = self._coordinator(
             {
                 "1.0": self._meta("foo", "1.0", f"mid ; platform_release == '{value}'"),
@@ -3219,7 +3203,7 @@ class TestMicroBoundaryNarrowing:
     def test_an_epoch_tagged_marker_leaves_the_minor_whole(self) -> None:
         """``>= "1!3.10.4"`` is False on every interpreter, since none reports
         an epoch. Cutting the minor there would resolve a slice at
-        ``1!3.10.4`` and gate ``mid`` behind a row nothing matches.
+        ``1!3.10.4`` and place ``mid`` behind a row nothing matches.
         """
         coordinator = self._coordinator(
             {
@@ -3408,9 +3392,8 @@ class TestMicroSliceAlignmentDirection:
     def _coordinator(cls, *split_markers: str) -> FakeFetchPort:
         """A graph whose ``foo`` splits every minor ``split_markers`` cuts.
 
-        ``bar`` is the package under test: nothing in the split concerns it,
-        and both its versions resolve everywhere, so whichever one a slice
-        pins came from that slice's preferences.
+        ``bar`` is unaffected by the split, and both versions resolve
+        everywhere. Its selected version reflects each slice's preferences.
         """
         requires = {"foo": [f"mid ; {marker}" for marker in split_markers]}
         listings = {

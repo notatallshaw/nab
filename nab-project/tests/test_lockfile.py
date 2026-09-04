@@ -948,7 +948,7 @@ class TestConflictForkBaseDepMarkers:
     def test_a_fork_reaching_a_base_dep_by_extra_keeps_the_shared_gate(self) -> None:
         """One fork also reaching it through an extra must not narrow it.
 
-        The forks then disagree on the gate, but both still name the main
+        The forks then disagree on the selection clause, but both name the main
         group, and a base dep is in every fork, so it installs under that
         group with no member selected.
         """
@@ -1030,10 +1030,10 @@ class TestConflictForkBaseDepMarkers:
 
 
 class TestConflictForkGateMerge:
-    """Forks of one environment merge their gates on a collapsing entry.
+    """Forks of one environment merge selection clauses on a shared entry.
 
     A base dep present in every fork drops its membership clause, so
-    only the selections that reach it still gate the entry, and those
+    only the selections that reach it still condition the entry, and those
     differ per fork: a fork reaches it through its own member as well as
     through the non-conflicting selections every fork shares.
     """
@@ -1083,7 +1083,7 @@ class TestConflictForkGateMerge:
         assert str(marker) == '"cpu" in extras or "docs" in extras'
 
     def test_an_ungated_fork_leaves_the_entry_unconditional(self) -> None:
-        """The cpu fork's own dependencies reach it, so no gate holds."""
+        """The cpu fork's own dependencies leave the entry unconditional."""
         assert self._marker((), (("extra", "gpu"),)) is None
 
 
@@ -1149,7 +1149,7 @@ class TestConflictForkBaseDepDivergence:
     def test_divergent_member_only_dep_keeps_membership_entries(self) -> None:
         """The same divergence on a dep the base pass did not pin is
         representable: each entry keeps its membership clause and the
-        no-member context correctly installs neither."""
+        no-member context installs neither."""
         pylock = build_pylock(self._lock_input(base_names=frozenset()))
         markers = sorted(
             str(p.marker) for p in pylock.packages if str(p.name) == "shared"
@@ -1283,8 +1283,8 @@ class TestConflictForkBaseDepDivergentClosure:
 
     def test_divergent_extra_activated_dep_emits_cleanly(self) -> None:
         # Same shape, but the extra-activated telemetrylib pins diverge
-        # across the forks.  It is member-gated, not base, so the two
-        # entries stay disjoint and no DivergentBaseDependencyError fires.
+        # across the forks. Its membership clauses keep the two entries
+        # disjoint, and no DivergentBaseDependencyError fires.
         cpu_pins: dict[str, PinShape] = {
             "foo": _index_pin(name="foo", version="1.0"),
             "telemetrylib": _index_pin(name="telemetrylib", version="1.0"),
@@ -1310,10 +1310,8 @@ class TestConflictForkBaseDepDivergentClosure:
         assert all("in extras" in marker for marker in markers)
 
     def test_base_edge_only_some_forks_carry_stays_member_gated(self) -> None:
-        # cudalib is a base dep of foo, but only the cpu fork pins it, so
-        # foo -> cudalib is a base edge one fork carries and the other
-        # drops.  An edge not shared by every fork must not promote
-        # cudalib to base.
+        # Only the cpu fork pins cudalib, a base dep of foo. The absent edge in
+        # the other fork must prevent promotion of cudalib to base.
         lock_input = self._lock_input_with(
             cpu_pins={
                 "foo": _index_pin(name="foo", version="2.0"),
@@ -2681,7 +2679,7 @@ class TestMarkerDisjointness:
         )
 
     def test_undeclared_extra_reference_is_pinned_absent(self) -> None:
-        # The universe only selects declared names.  Both entries gate on
+        # The universe only selects declared names. Both entries require
         # an extra the producer never declared, so no install context
         # selects it and the two never fire together: no collision, even
         # with no conflict declared.
@@ -2765,7 +2763,7 @@ class TestMarkerDisjointness:
         # over-approximating boolean.  ``"ab" in v`` implies ``"a" in v``, so
         # no realisable implementation_version satisfies ``"ab" in v and "a"
         # not in v``; the algebra cannot rule the pair out (over-approximates
-        # to non-disjoint) and no concrete witness exists.  The gate stays
+        # to non-disjoint) and no concrete witness exists. The check stays
         # conservative and reports the pair without a point.  A declared env
         # supplying implementation_version would fold the atoms away, so this
         # uses an env that omits it.
@@ -2790,7 +2788,7 @@ class TestMarkerDisjointness:
     def test_group_membership_drives_conflict_hint(self) -> None:
         # The collision fires at a witness where a referenced group is
         # active (extras play no part), so the groups branch of the hint
-        # gate must trigger.
+        # check must trigger.
         with pytest.raises(DisjointnessError, match=r"\[tool.nab\].conflicts"):
             validate_marker_disjointness(
                 [
@@ -5087,7 +5085,7 @@ class TestGettingStartedTranscript:
 
 
 def test_lock_input_ignores_vcs_policy() -> None:
-    """VcsConfig gates the provider, not the lock builder.
+    """VcsConfig controls the provider while the lock builder stays unchanged.
 
     Building the same resolve under ALLOW and BLOCK yields an identical
     lock input. The pin is VCS-sourced so a policy leaking into the
@@ -5331,8 +5329,8 @@ class TestDependencyGraph:
 class TestMainGroupAcrossTargets:
     """One package, reached by the project on one target and a group on another.
 
-    The gate is per target, so each environment contributes its own
-    clause.  Pairing every environment with every gate instead would
+    The selection marker is per target, so each environment contributes its
+    own clause. Pairing every environment with every selection clause would
     install the package on Windows for a default install.
     """
 
@@ -5376,11 +5374,11 @@ class TestMainGroupAcrossTargets:
         assert not installs(self._WINDOWS, "default")
 
     def test_one_gate_over_several_environments_binds_them_all(self) -> None:
-        """The gate holds over the disjunction, not over its first clause.
+        """The selection clause applies to the whole environment disjunction.
 
-        Two targets share a gate and two more lock nothing, so the gate's
-        environments come out as an ``or``.  Conjoining the gate without
-        parenthesising them would leave the second environment ungated.
+        Two targets share a selection and two more lock nothing. The selected
+        environments form an ``or`` that must be parenthesized before the
+        membership clause is joined.
         """
         gated = (_target(), _target(python_version="3.12", platform="windows_amd64"))
         ungated = (
@@ -5585,7 +5583,7 @@ class TestMembershipGates:
         assert lock.package_gates == {}
 
     def test_selector_roots_without_base_roots_are_refused(self) -> None:
-        """Omitting ``base_roots`` would gate the base packages too.
+        """Omitting ``base_roots`` would condition the base packages too.
 
         An empty ``base_roots`` is a project with no dependencies of its
         own, so it cannot double as "the caller did not say".
@@ -5636,7 +5634,7 @@ class TestMembershipGates:
     def test_target_specific_gate_keeps_its_environment_clause(self) -> None:
         """Only one target's extra reaches the package, so the env stays.
 
-        The gate is joined by and onto that target's own marker, so an installer
+        The selection clause joins that target's marker, so an installer
         on the other target leaves the package out however it selects.
         """
         provider = self._provider(
@@ -6066,7 +6064,7 @@ class TestConflictForkNegatedEmission:
         assert torch_markers[0].is_disjoint(torch_markers[1])
 
     def test_gate_accepts_partitions_without_the_conflict_universe(self) -> None:
-        # The torch pair passes the gate with empty ``exclusive_groups``;
+        # The torch pair passes disjointness with empty ``exclusive_groups``;
         # the negation in the markers makes the entries disjoint.
         pylock = self._lock()
         validate_marker_disjointness(
@@ -6180,7 +6178,7 @@ class TestConflictForkNegatedEmission:
     def test_three_large_sets_write_lock_within_budget(self) -> None:
         # Three declared 5-member at-most-one sets, one fork per member
         # index, so every per-package marker negates 12 co-members.  The
-        # disjointness gate binds them through the selection instead of
+        # disjointness check binds them through the selection instead of
         # the full membership powerset, so the lock is written rather
         # than raising IntractableMarkerSet.
         sets = [tuple(f"{letter}{i}" for i in range(5)) for letter in ("a", "b", "c")]
@@ -6249,7 +6247,7 @@ class TestConflictForkNegatedEmission:
 
 
 class TestConflictSetCrossGating:
-    """Two engaged conflict sets gate a package only along the set it varies over.
+    """Two engaged conflict sets condition a package on the set it varies over.
 
     ``--all-groups`` over two declared sets forks into their cartesian
     product.  A package one member of one set pulls in is the same in
@@ -6435,7 +6433,7 @@ class TestConflictSetCrossGating:
     def test_member_only_package_flat_everywhere_keeps_the_set_that_reaches_it(
         self,
     ) -> None:
-        # attrs is the same in all six forks, and its gate says the
+        # attrs is the same in all six forks, and its selection clause says the
         # a-members are what reach it, so the b-set drops and the a-set
         # stays: a1 alone installs it, no member at all does not.
         pylock = self._forked_lock(
@@ -6450,8 +6448,7 @@ class TestConflictSetCrossGating:
 
     def test_a_dependency_either_set_reaches_installs_for_either_alone(self) -> None:
         # attrs is the same in every fork and a member of each set
-        # requires it, so neither set is what selects it and the gate
-        # stands alone.
+        # requires it, so neither set alone determines the selection.
         pylock = self._forked_lock(
             lambda a, b: (
                 {"attrs": _selection_pin("attrs", "24.0")},

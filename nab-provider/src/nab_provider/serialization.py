@@ -24,7 +24,7 @@ class SimpleSerialization(enum.Enum):
 # PEP 691: negotiation advertises every serialization we can read, because an
 # index that cannot honour the header may answer with a type we did not ask
 # for.  The HTML pin names text/html too, which PEP 691 treats as an alias for
-# the pre-691 spelling rather than a second format.
+# the older media type rather than a second format.
 _ACCEPT: dict[SimpleSerialization, str] = {
     SimpleSerialization.NEGOTIATE: (
         "application/vnd.pypi.simple.v1+json, "

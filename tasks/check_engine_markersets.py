@@ -173,7 +173,10 @@ class Walk:
     """What an entry point imports, and which definitions it uses."""
 
     def __init__(self, modules: dict[str, Module], split: frozenset[str]) -> None:
-        """Walk ``modules``; a non-empty ``split`` gates entry to ``ENGINE_MODULE``."""
+        """Walk ``modules``.
+
+        A non-empty ``split`` restricts entry to ``ENGINE_MODULE``.
+        """
         self.modules = modules
         self.split = split
         self.imported: set[str] = set()

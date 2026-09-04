@@ -1,6 +1,6 @@
 """Marker-evaluation semantics the resolver depends on.
 
-The PubGrub provider gates marker-conditioned dependencies on
+The PubGrub provider conditions marker dependencies on
 ``nab_provider._vendor.packaging.markers.Marker.evaluate``. The vendored
 snapshot tracks packaging PR #1182 (unreleased), so these tests pin the
 boolean results for realistic markers and the deliberate string-key
@@ -165,7 +165,7 @@ class TestStringKeyOrderingSemantics:
 class TestStringKeyVersionLikeRhsIsRobust:
     """A version-like rhs on a string key returns a bool, never raises.
 
-    Older packaging raised InvalidVersion here; nab stays robust.
+    Older packaging raised InvalidVersion here; nab returns false.
     """
 
     @pytest.mark.parametrize(

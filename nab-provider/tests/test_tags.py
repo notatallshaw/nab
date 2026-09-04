@@ -1366,7 +1366,7 @@ class TestLinuxPlatformOrderMatchesSysTags:
         assert platforms[1] == "musllinux_1_99_x86_64"
 
     def test_plain_linux_wheel_wins_over_manylinux(self) -> None:
-        """The install pick follows the ranking, as pip's does."""
+        """The install pick uses the same tag ranking as pip."""
         tags = TagSet.for_spec(python_version="3.11", spec=PlatformSpec("linux_x86_64"))
         wheels = [
             _wheel("pkg-1.0-cp311-cp311-manylinux_2_28_x86_64.whl"),

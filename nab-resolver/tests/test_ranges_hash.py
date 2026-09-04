@@ -151,7 +151,7 @@ class TestPickle:
     def test_an_unpickled_range_hashes_under_the_reading_process_seed(
         self, tmp_path: Path
     ) -> None:
-        """A range written at one hash seed indexes correctly when read at another.
+        """A range written at one hash seed indexes at another.
 
         Without the state methods the writer's memo rides along in the pickle,
         the restored range disagrees with an equal one built locally, and a

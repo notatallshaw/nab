@@ -28,7 +28,7 @@ class IntractableMarkerSet(ValueError):
 
 
 class UnserializableMarkerSet(ValueError):
-    """The set has no marker-string spelling.
+    """The set has no marker-string representation.
 
     Raised, rather than emitting a string for some other set, for the empty set
     and for complements the marker grammar cannot express.

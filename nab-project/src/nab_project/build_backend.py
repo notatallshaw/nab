@@ -51,41 +51,16 @@ __all__ = [
 
 @lru_cache(maxsize=4096)
 def extract_static_metadata(source_dir: Path) -> WheelMetadata | None:
-    """Build :class:`WheelMetadata` from a directory's static pyproject.toml.
+    """Return authoritative static metadata from ``pyproject.toml`` when possible.
 
-    Returns ``None`` when ``[project]`` is missing, malformed, or
-    ``project.dynamic`` includes ``dependencies``,
-    ``optional-dependencies``, ``version``, or ``requires-python`` (the
-    field cannot be trusted as static).
-    Returns a :class:`WheelMetadata` shape when the static fields are
-    authoritative, populating ``name``, ``version``,
-    ``requires_python``, ``requires_dist``, and ``provides_extra``.
+    Missing or non-static project metadata returns ``None``. An unreadable or
+    invalid TOML file raises :class:`BuildBackendError`.
 
-    Raises :class:`BuildBackendError` when the file is there but cannot
-    be read: a path that is not a regular file, an errno other than
-    absence, bytes that do not decode as UTF-8, or text that does not
-    parse as TOML.  Its contents are unknown, so it is neither "no
-    static metadata" nor a missing file; the message names the cause.
+    Invalid static dependency fields, versions, and Python constraints raise
+    :class:`InvalidProjectRequirementError`. ``provides_extra`` contains the
+    normalized keys declared by ``project.optional-dependencies``.
 
-    Raises :class:`InvalidProjectRequirementError` when a present,
-    non-dynamic field is corrupt: a structurally wrong ``dependencies`` /
-    ``optional-dependencies`` (not an array of strings / not a table), a
-    ``version`` string that does not parse as :pep:`440`, or a
-    ``requires-python`` that is not a string or does not parse as a
-    specifier.  A corrupt static value is not something the build backend
-    can compute, so it raises rather than deferring to a build of the same
-    broken file.
-
-    The returned ``provides_extra`` includes both the lower-cased
-    keys of ``project.optional-dependencies`` and any extras declared
-    via PEP 685 markers in ``requires-dist``.  PEP 685 normalisation
-    is applied to all extra names.
-
-    Cached per ``source_dir``: the static fields are deterministic
-    derivations of the on-disk ``pyproject.toml``, and a universal
-    resolve reads the same workspace member's file once per matrix
-    tuple.  Callers must treat the returned :class:`WheelMetadata`
-    as read-only.
+    Results are cached by ``source_dir`` and must be treated as read-only.
     """
     pyproject = source_dir / "pyproject.toml"
     state = path_state(pyproject)
@@ -176,11 +151,8 @@ def _collect_requires_dist(project: dict[str, Any]) -> list[Requirement]:
     Optional-dependencies entries get an ``; extra == "name"`` marker
     appended (combined with any existing marker via ``and``).
 
-    A structurally wrong value (``dependencies`` that is not an array of
-    strings, ``optional-dependencies`` that is not a table, or a per-extra
-    value that is not an array of strings) raises
-    :class:`InvalidProjectRequirementError`.  A well-typed entry that is
-    not valid PEP 508 is dropped with a warning.
+    Invalid shapes or PEP 508 entries raise
+    :class:`InvalidProjectRequirementError`.
     """
     out: list[Requirement] = []
     _extend_with_dep_strings(

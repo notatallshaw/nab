@@ -615,14 +615,7 @@ def _detailed(
     return DroppedFile(dist, version, cause, dist.upload_time, cutoff)
 
 
-# One short line per cause, for the listing the filter emptied.  Read only
-# where every group says the same one, so each states the whole of what went
-# wrong.  A why-clause is here only where the key does not carry it: an
-# excluding uploaded-prior-to reads as a cutoff nothing was old enough for
-# unless the line says otherwise, and the dist-policy value says which half
-# of the listing that key kept.  The two rungs this report never offers a
-# remedy for name the target they judged against instead, which is the half
-# a reader can move.
+# Each template describes a whole empty listing for one uniform drop cause.
 _SHORT_EMPTY: dict[Cause, str] = {
     DropCause.UPLOAD_TIME_MISSING: (
         "uploaded-prior-to excluded every file; none is dated"
@@ -688,7 +681,7 @@ def in_range_diagnostic(
     Returns ``None`` when the walk explains every drop and none of them
     falls inside the range, which is the caller's signal that the
     requirement asks for a version the index never published.  A refused
-    version equal to one in ``kept`` survived under another spelling and
+    version equal to one in ``kept`` survived under another form. It
     does not count.
     """
     named = [
@@ -962,7 +955,7 @@ def _newest(records: Sequence[DroppedFile]) -> DroppedFile:
 
 
 def _version_of(record: DroppedFile) -> Version:
-    """Return a record's version, which every cause but INVALID_VERSION has."""
+    """Return a record's version; INVALID_VERSION records have none."""
     assert record.version is not None
     return record.version
 
@@ -1019,18 +1012,8 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
     ),
 }
 
-# The instruction cut out of each remedy, for the one ``try:`` line the
-# default report prints.  It names a setting to change rather than a
-# fragment to paste, since the table holding that setting usually exists
-# already and a second one is a TOML error.  Three layers name an entry
-# the file already holds.  The per-package and scoped-entry layers do it
-# because the same override is written on two surfaces, only one of them
-# spelled ``packages."<selector>"``, and a ``[[package-rules]]`` entry can
-# match several packages, so naming the one being reported would send the
-# reader to change the others too.  The bare-name layer does it because
-# the table its key path would write is that entry.  It states what to
-# set and not what follows: lifting a filter admits files rather than
-# promising a resolve.
+# Name a setting to change, not a TOML fragment that may duplicate
+# its table. Lifting a filter admits files; it does not promise a resolution.
 _TRY_LINES: dict[tuple[Field, Layer], str] = {
     ("uploaded-prior-to", OverrideLayer.GLOBAL): (
         'set packages."{selector}".uploaded-prior-to = false'
@@ -1361,12 +1344,12 @@ def metadata_diagnostic(
     return Diagnostic(_METADATA_REJECTED, tuple(block.message for block in blocks))
 
 
-# The bullet already names the proxy, so these say "the extra" rather than
-# spelling it out again, and only the narrowed line names the base package.
+# The bullet names the proxy, so these say "the extra" instead of
+# repeating it, and only the narrowed line names the base package.
 _EXTRA_SHORT: dict[Kind, str] = {
     ReasonKind.EXTRA_UNDECLARED: "no version of {base} declares this extra",
-    # nab never read the metadata that would say which versions declare the
-    # extra, so this line cannot claim any version does.
+    # Metadata was not read, so the message cannot name a version that
+    # declares the extra.
     ReasonKind.EXTRA_METADATA: _METADATA_REJECTED,
     ReasonKind.EXTRA_NARROWED: (
         "another requirement holds {base} where this extra is undeclared"

@@ -1,13 +1,8 @@
 """Tests for the ``nab config`` subcommand.
 
-The config command is the read-only inspector over the layered registry.
-These tests drive it through :func:`nab.cli.run` (so the real flag surface
-is exercised) with injected search roots.  The gate holding that surface to
-the registry is ``tests/test_cli_conformance.py``.
-They also pin the ``--resolution`` -> ``--project-resolution`` rename, the
-lock-ladder config-error exit, a byte-identical no-op lock at defaults, and
-every override flag reaching the config that ``nab lock`` and ``nab download``
-resolve from.
+The config command inspects the layered registry. These tests drive it through
+:func:`nab.cli.run` with injected search roots. Registry conformance is tested
+in ``tests/test_cli_conformance.py``.
 """
 
 from __future__ import annotations
@@ -223,7 +218,7 @@ class TestConfigList:
         value: str,
     ) -> None:
         # NAB_VERBOSITY and NAB_NO_PROGRESS belong to the output layer, so the
-        # config env-layer skips them: no warning, and no rejected entry.
+        # config env-layer skips them. They produce zero warnings and rejected entries.
         _project(hermetic_roots)
         monkeypatch.setenv(var, value)
         path = str(hermetic_roots / "pyproject.toml")
@@ -1142,7 +1137,7 @@ def test_config_module_imports_cleanly() -> None:
 def test_lock_exits_cleanly_on_layered_config_error(
     hermetic_roots: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A category-gate error reached via the lock ladder exits 1, not traceback."""
+    """A category error from the lock ladder exits 1 without a traceback."""
     # A user nab.toml setting the PROJECT resolution key is a category
     # error the pyproject parser never sees, so it surfaces through the
     # lock ladder's SourceConfigError handler.
@@ -1501,7 +1496,7 @@ class TestDownloadLadder:
     def test_layered_config_error_exits(
         self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        # A category-gate error reached via the download ladder exits 1.
+        # A category error reached via the download ladder exits 1.
         _project(hermetic_roots)
         # The fixture's user_toml lives at <tmp>/usr; project_dir is <tmp>/proj.
         _write(hermetic_roots.parent / "usr" / "nab.toml", 'resolution = "lowest"\n')
@@ -1533,8 +1528,8 @@ class TestDownloadCliOverrides:
 
     def test_project_overrides_reach_the_config(self, hermetic_roots: Path) -> None:
         # The file declares something other than each flag's value, so a value
-        # the resolve sees came off the command line.  ``default-groups`` is
-        # left undeclared: its default, the empty tuple, already differs.
+        # the resolve sees came off the command line. ``default-groups`` stays
+        # undeclared because its empty-tuple default already differs.
         proj = _project(
             hermetic_roots,
             'resolution = "highest"\n'

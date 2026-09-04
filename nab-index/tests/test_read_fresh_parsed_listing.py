@@ -258,7 +258,7 @@ class TestReadFreshParsedListing:
         mismatched = encode(files, "f" * 64)
         cache.put_simple_parsed("pkg", mismatched)
         read_fresh_parsed_listing(cache, "pkg", offline=False)
-        # No rebuild: the mismatched blob is left exactly as it was.
+        # Leave the mismatched blob unchanged without rebuilding it.
         assert cache.get_simple_parsed("pkg") == mismatched
 
 

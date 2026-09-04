@@ -90,8 +90,8 @@ _WHEEL_NAME_RE = re.compile(r"^[\w._]+\Z", re.UNICODE)
 _WHEEL_DASHES = (4, 5)
 _WHEEL_DASHES_WITH_BUILD = 5
 
-# The pre-PEP 714 spelling.  PEP 714 blesses no ``data-`` prefixed key for JSON,
-# so that spelling is never read.
+# The pre-PEP 714 key.  PEP 714 defines no ``data-`` prefixed JSON key,
+# so it is never read.
 _LEGACY_METADATA_KEY = "dist-info-metadata"
 
 
@@ -171,8 +171,8 @@ def _parse_wheel_filename(filename: str) -> tuple[NormalizedName, str] | None:
         dashes == _WHEEL_DASHES_WITH_BUILD and _BUILD_TAG_RE.match(parts[2]) is None
     )
 
-    # parts[-1] is the whole tag triple, so it carries the two dashes
-    # _tag_triple_is_parseable unpacks on.
+    # parts[-1] holds the tag triple and the two separators that
+    # _tag_triple_is_parseable unpacks.
     if bad_build or not _tag_triple_is_parseable(parts[-1]):
         return None
 

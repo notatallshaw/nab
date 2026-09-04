@@ -627,7 +627,7 @@ class TestNarrowForDisplay:
     def test_hole_sharing_a_release_with_a_local_build_is_not_stated(self) -> None:
         """``!=1.0`` would exclude ``1.0+cu118`` too, so no hole is stated.
 
-        PEP 440 has no spelling for the plain release on its own, so the term
+        PEP 440 cannot express the plain release alone, so the term
         falls back to the snapped range.
         """
         provider = _listing_provider("p", ["2.0", "1.0+cu118", "1.0", "0.5"])
@@ -704,8 +704,8 @@ class TestNarrowForDisplay:
 
         ``x`` pins d and e at 1, so c is rejected at 0.5, 1.0+cu118 and 2.0
         against d, and at 1.0 against e.  The d clause holds every listed
-        version but plain 1.0; ``!=1.0`` understates it by dropping the local
-        build too, which the report then names as a version c does not have.
+        version but plain 1.0. ``!=1.0`` understates it by dropping the local
+        build and makes the report name a version c does not have.
 
         The e clause is the mirror, holding only the local build, and
         ``!=1.0+cu118`` states it exactly.
@@ -813,7 +813,7 @@ class TestNarrowForDisplay:
 
 
 class TestFormatRange:
-    """``format_range`` prefers the specifier spelling of a range."""
+    """``format_range`` prefers a range's specifier form."""
 
     def test_bounded_range_reads_as_its_specifiers(self) -> None:
         provider = _listing_provider("p", ["1.0"])

@@ -192,8 +192,8 @@ class TestExtrasIncludeBase:
     extension of ``P``.  Selecting ``P[X]`` therefore always pulls in
     ``P`` itself.
 
-    Required for the proxy-package construction in nab to correctly
-    model the user-facing meaning of ``Provides-Extra`` /
+    The proxy-package construction relies on this to model the meaning of
+    ``Provides-Extra`` /
     ``Requires-Dist; extra == "X"`` (`Core Metadata § Provides-Extra`_).
 
     .. _Core Metadata § Provides-Extra:

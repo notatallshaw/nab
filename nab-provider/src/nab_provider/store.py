@@ -91,7 +91,7 @@ class InMemoryIndex:
         self._metadata: dict[tuple[str, str, str | None], str | None] = {}
         self._metadata_errors: dict[tuple[str, str, str | None], BaseException] = {}
         # Versions whose version-level slot was written from an sdist PKG-INFO;
-        # only sdist deps go through the PEP 643 gate.
+        # only sdist deps go through the PEP 643 check.
         self._metadata_from_sdist: set[tuple[str, str]] = set()
 
         # Empty metadata slots that stand for a rung skipped offline, keyed by
@@ -108,9 +108,7 @@ class InMemoryIndex:
         # the provider's tier accounting.
         self._range_outcomes: dict[tuple[str, str, str], RangeOutcome] = {}
 
-        # A parse is a pure function of its text, so a version's
-        # ``(source_text, parsed)`` entries are shared across the per-target
-        # providers of one resolve.
+        # Share each text's parse across the target providers of one resolve.
         self._parsed_metadata: dict[tuple[str, str], tuple[tuple[str, Any], ...]] = {}
 
         # Sdist metadata after PEP 643 dynamic deps have been resolved from the
@@ -316,10 +314,9 @@ class InMemoryIndex:
         *,
         from_sdist: bool,
     ) -> None:
-        """Write one metadata slot, cut to its header block less the description.
+        """Write a metadata slot while holding the lock.
 
-        Caller holds the lock. Reconciled sdist metadata is derived from the
-        version-level text, so replacing that text drops it.
+        Replacing version-level text drops metadata derived from it.
         """
         package, version, metadata_url = slot
         if data is None:
@@ -347,16 +344,10 @@ class InMemoryIndex:
         *,
         metadata_url: str | None = None,
     ) -> None:
-        """Cache the header block of ``data`` less the description.
+        """Cache metadata without its description.
 
-        ``metadata_url`` is the sidecar the text came from; ``None`` stores it
-        as standing for the version rather than one artifact.  It is
-        keyword-only: it and ``data`` are both ``str | None``, so a transposed
-        call would type-check.
-
-        A ``data`` of ``None`` says no sidecar was served.  It lands in the
-        sidecar's own slot, so it cannot erase sdist PKG-INFO from the
-        version-level one.
+        ``metadata_url`` selects an artifact slot. ``None`` data records a
+        missing sidecar without replacing version-level PKG-INFO.
         """
         key = metadata_pending_key(package, version, metadata_url)
         slot = (package, version, metadata_url)
@@ -460,8 +451,8 @@ class InMemoryIndex:
     ) -> None:
         """Store range-recovered wheel METADATA in the wheel's own slot.
 
-        The text is authoritative wheel METADATA, so it is stored with
-        ``from_sdist=False`` and stays off the :pep:`643` dynamic-deps gate.
+        The text is authoritative wheel METADATA, so it uses
+        ``from_sdist=False`` and skips the :pep:`643` check.
         """
         key = range_pending_key(package, version, wheel_url)
         with self._publishing(key):
@@ -574,12 +565,7 @@ class InMemoryIndex:
     def get_parsed_metadata(
         self, package: str, version: str, source_text: str
     ) -> Any | None:
-        """Return the cached parse of ``source_text``, or ``None``.
-
-        A version's entries are matched by text: wheel METADATA, sdist
-        PKG-INFO and per-platform wheels all parse under one ``(package,
-        version)``, so a key-only hit could hand back another artifact's deps.
-        """
+        """Return the parse cached for ``source_text``, if any."""
         for text, metadata in self._parsed_metadata.get((package, version), ()):
             if text == source_text:
                 return metadata
@@ -588,10 +574,9 @@ class InMemoryIndex:
     def store_parsed_metadata(
         self, package: str, version: str, metadata: Any, source_text: str
     ) -> None:
-        """Cache the parse of ``source_text`` beside the version's other parses.
+        """Cache a text's parse beside the version's other parses.
 
-        The entries are a tuple replaced whole, so a read without the lock
-        never sees a half-built one.
+        Replacing the tuple keeps unlocked reads atomic.
         """
         key = (package, version)
         with self._lock:

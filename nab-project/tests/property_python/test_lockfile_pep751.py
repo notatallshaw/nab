@@ -313,10 +313,8 @@ class TestQuoteShuffledInputInvariant:
     > arrays in consistent order."
 
     The byte-stability guarantee must survive a reordering of every
-    insertion-ordered input: the package map, the per-target map, each
-    pin's wheel list, each wheel's hash pairs, and the OR-marker
-    fragments. Emitting a shuffled-but-equivalent input must produce
-    identical bytes; otherwise a re-resolve that happened to populate
+    insertion-ordered input. Emitting a shuffled-but-equivalent input must
+    produce identical bytes; otherwise a re-resolve that happened to populate
     its dicts in a different order would churn the lockfile.
 
     Reference: https://peps.python.org/pep-0751/#file-format

@@ -1,18 +1,7 @@
-"""The process environment nab reads to decide what it does.
+"""Read the process environment that controls nab.
 
-A read is either :func:`current` here or a reader the census in
-``tests/test_env_layer.py`` names, so the variables that change nab's
-behaviour are enumerable rather than found by grep.  A variable a
-subprocess is handed is not one of these: the package that spawns the
-process owns that environment.
-
-``HOME`` belongs to the list but is not named in the code: the cache and
-config fallbacks reach it through ``Path.home()``, which reads it on
-POSIX and ``USERPROFILE`` on Windows.
-
-The colour decision puts this module on the ``--help`` and refusal paths,
-so it imports no :mod:`typing`: the ``TYPE_CHECKING`` block that would hold
-the annotation import is itself an ``import typing``.
+``HOME`` and ``USERPROFILE`` are read indirectly through ``Path.home()``.
+Help and refusal paths import this module, so it avoids :mod:`typing`.
 """
 
 from __future__ import annotations
@@ -33,12 +22,7 @@ OUTPUT_OWNED = frozenset({NAB_VERBOSITY, NAB_NO_PROGRESS})
 
 
 def current(environ: Mapping[str, str] | None = None) -> Mapping[str, str]:
-    """Return ``environ``, or the process environment when it is ``None``.
-
-    The one door onto ``os.environ`` in this package.  A caller with a
-    mapping of its own (a test, or a layer handed one) passes it through
-    unchanged.
-    """
+    """Return ``environ``, or ``os.environ`` when it is ``None``."""
     return os.environ if environ is None else environ
 
 
@@ -91,8 +75,7 @@ def _absolute_root(environ: Mapping[str, str] | None, name: str) -> str | None:
     """
     value = current(environ).get(name)
 
-    # Path.is_absolute would pull pathlib, 17 modules and about 5 ms, onto a
-    # startup that loads 52 and imports it nowhere else.
+    # Keep pathlib off the help and refusal startup path.
     if value is None or not os.path.isabs(value):  # noqa: PTH117
         return None
     return value

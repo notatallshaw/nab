@@ -1,4 +1,4 @@
-"""Tests for the solution a resolve returns: its pins, roots, and edges."""
+"""Tests for the solution returned by a resolve."""
 
 from __future__ import annotations
 

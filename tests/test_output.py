@@ -358,7 +358,7 @@ def test_default_color_is_auto() -> None:
 
 
 def test_a_color_value_outside_the_set_is_refused() -> None:
-    """The walk pins ``--color``'s choices, and this is the second gate."""
+    """The walk enforces the declared ``--color`` choices."""
     with pytest.raises(OutputOptionError, match="auto, always, never"):
         _options(color="rainbow")
 
@@ -626,8 +626,8 @@ def test_printer_message_wipes_live_progress_line() -> None:
 def test_stdout_data_wipes_live_progress_line() -> None:
     """The artefact shares a terminal with the progress line it must not land on.
 
-    ``nab lock --output -`` paints progress on stderr while the lock goes
-    to stdout, so ``data`` wipes the line the way a stderr message does.
+    ``nab lock --output -`` paints progress on stderr while the lock goes to
+    stdout. ``data`` clears the progress line before writing the lock.
     """
     out = io.StringIO()
     err = _TTY(tty=True)

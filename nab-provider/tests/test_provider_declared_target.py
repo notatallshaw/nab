@@ -118,7 +118,7 @@ class TestPerTupleRequiresPythonOverride:
 
 
 class TestProvidesExtraDependenciesOverride:
-    """A dependencies + provides-extra override gates deps behind the extra."""
+    """A dependencies + provides-extra override conditions deps on the extra."""
 
     def _provider(self) -> Provider:
         coordinator = make_coordinator(
@@ -330,7 +330,7 @@ class TestExtrasProxyPreference:
 
 
 class TestExtrasProxyPreferenceAdmission:
-    """A preferred pre-release survives the extras-proxy preference gate."""
+    """A preferred pre-release passes the extras-proxy preference check."""
 
     _WITH_EXTRA = (
         "Metadata-Version: 2.1\nName: foo\nVersion: {ver}\n"
@@ -661,12 +661,10 @@ class TestWheelTagFiltering:
         assert provider.stats.excluded_versions_no_compatible_wheel == 0
 
     def test_fetch_versions_applies_wheel_tag_filter(self) -> None:
-        """The resolver path runs the filter, not just a direct call.
+        """The resolver path runs the distribution filter.
 
-        ``versions_cache`` is the single funnel: candidate selection,
-        metadata sourcing, every prefetch path, look-ahead, and the
-        emitted wheel list all read what ``fetch_versions`` stored.  The
-        unit tests above call ``filter_distributions`` directly, so this
+        Candidate selection and metadata paths all read ``versions_cache``.
+        The unit tests above call ``filter_distributions`` directly, so this
         one pins the path production takes.
         """
         files: list[WheelFile | SdistFile] = [
@@ -1261,7 +1259,7 @@ _WHEEL_METADATA = (
 )
 
 # Metadata-Version 2.1 predates PEP 643, so this text read as an sdist's
-# PKG-INFO fails the static gate and its deps are treated as dynamic.
+# PKG-INFO fails the static metadata check and its deps are treated as dynamic.
 _LEGACY_WHEEL_METADATA = (
     "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: dep-from-wheel\n\n"
 )
@@ -1350,7 +1348,7 @@ class TestSharedMetadataSlot:
         so the sidecar can land on the shared slot between the sdist write and
         the waiter's read.  The waiter reads the slot, not its own result, so
         assuming the sdist still owns it puts a wheel's METADATA through the
-        PEP 643 gate, where a Metadata-Version 2.1 wheel is judged dynamic and
+        PEP 643 check, where a Metadata-Version 2.1 wheel is judged dynamic and
         its deps are replaced by the sdist's pyproject.
         """
         coordinator, macos, _linux = _wheel_and_sdist_targets(

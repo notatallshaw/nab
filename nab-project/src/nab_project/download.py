@@ -159,7 +159,8 @@ def _coalesce_download_targets(
 ) -> list[DownloadEntry]:
     """Coalesce casefold-equivalent names sharing ``(hash_algo, digest)``.
 
-    The first spelling wins; a different identity raises :class:`DownloadError`.
+    The first filename wins. A different identity raises
+    :class:`DownloadError`.
     """
     by_name: dict[str, DownloadEntry] = {}
     unique: list[DownloadEntry] = []
@@ -220,6 +221,10 @@ async def _run_downloads(
     *,
     offline: bool,
 ) -> DownloadResult:
+    """Download concurrently and return the paths written or reused.
+
+    On failure, cancel unfinished entries and close the client before re-raising.
+    """
     sem = asyncio.Semaphore(max_concurrency)
     client = AsyncSimpleClient(transport)
     written: list[Path] = []

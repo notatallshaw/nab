@@ -1,14 +1,7 @@
-"""The parse and render hooks a row needs the ladder's own state for.
+"""Parse and render configuration values that need ladder-owned state.
 
-Every row of :data:`nab.config.ladder.OPTIONS` names one ``parse`` and one
-``render``.  Most rows name a parser in :mod:`nab.config.values` directly;
-the ones here either render a merged value back to a line of ``nab config``,
-or need a piece of parse state that varies per pass and cannot travel in the
-fixed ``(value, where)`` pair.  Four such pieces ride on context variables
-the ladder binds around a read: the resolve anchor a ``P<n>D`` duration is
-measured from, the one ``now`` an inspector pass shares, the directory a
-relative path in the file being read resolves against, and the matrix
-header that file writes.
+Context variables supply time, path, and table-name state to fixed-arity
+parser hooks.
 """
 
 from __future__ import annotations
@@ -67,13 +60,7 @@ __all__ = [
     "resolve_anchor",
 ]
 
-# The anchor that ``P<n>D`` relative durations resolve against during a
-# real resolve.  ``nab config`` (the inspector) leaves it unset, so the
-# display anchors a relative duration at the current time; the resolve
-# path (``model.read_pyproject_config``) sets it to the lockfile-captured
-# anchor for the duration of the merge so re-locks reproduce the same
-# cutoff.  Carried on a ContextVar rather than threaded through every
-# fixed-arity parse hook.
+# The resolve anchor for ``P<n>D`` values, kept out of fixed-arity parsers.
 _RESOLVE_ANCHOR: ContextVar[datetime | None] = ContextVar(
     "_RESOLVE_ANCHOR", default=None
 )
@@ -84,46 +71,24 @@ _RESOLVE_ANCHOR: ContextVar[datetime | None] = ContextVar(
 # rather than re-derived by splitting a human-facing ``where`` label.
 _DECLARING_DIR: ContextVar[Path | None] = ContextVar("_DECLARING_DIR", default=None)
 
-# The matrix header the TOML file being parsed writes: ``tool.nab.matrix``
-# in a pyproject.toml, ``matrix`` in a nab.toml, whose keys sit at the top
-# level.  Bound by :func:`matrix_table` from the ladder's own key-path rule;
-# the patch-table refusal spells its header from here.
+# The matrix table name for the file being parsed.
 _MATRIX_TABLE: ContextVar[str] = ContextVar("_MATRIX_TABLE", default="tool.nab.matrix")
 
-# A single ``now`` for one inspector pass, so override-body ``P<n>D``
-# durations in the two project files anchor against the same instant.
-# Unlike the top-level ``uploaded-prior-to`` row (which keeps a relative
-# duration as its raw string when the resolve anchor is unset), an override
-# body is resolved eagerly to an absolute datetime, so two identical
-# durations across pyproject and the project nab.toml would otherwise anchor
-# microseconds apart and read as conflicting values.  Bound by
-# :func:`inspector_anchor` around the inspector's discover+merge.  The
-# resolve path leaves it unset and uses :data:`_RESOLVE_ANCHOR` instead.
+# One timestamp per inspector pass keeps equal relative values equal across files.
 _INSPECTOR_ANCHOR: ContextVar[datetime | None] = ContextVar(
     "_INSPECTOR_ANCHOR", default=None
 )
 
 
 def _current_anchor() -> datetime:
-    """Return the active ``P<n>D`` anchor: the resolve anchor or ``now``.
-
-    The resolve path sets :data:`_RESOLVE_ANCHOR` so relative durations
-    resolve against the lockfile anchor; the inspector leaves it unset and
-    anchors at the current time (display only).
-    """
+    """Return the resolve anchor, or the current time for inspection."""
     anchor = _RESOLVE_ANCHOR.get()
     return anchor if anchor is not None else datetime.now(timezone.utc)
 
 
 @contextmanager
 def resolve_anchor(anchor: datetime | None) -> Iterator[None]:
-    """Bind the ``P<n>D`` resolve anchor for the duration of a merge.
-
-    The resolve path wraps its :func:`resolve_config` call in this so the
-    effective override / ``uploaded-prior-to`` values it consumes resolve
-    relative durations against the lockfile anchor.  A ``None`` anchor is a
-    no-op (the inspector's current-time behaviour).
-    """
+    """Bind the ``P<n>D`` resolve anchor for one config merge."""
     token = _RESOLVE_ANCHOR.set(anchor)
     try:
         yield
@@ -133,15 +98,10 @@ def resolve_anchor(anchor: datetime | None) -> Iterator[None]:
 
 @contextmanager
 def inspector_anchor() -> Iterator[None]:
-    """Pin one ``now`` for an inspector discover+merge pass.
+    """Pin one current-time anchor for an inspector merge.
 
-    The inspector (``nab config``) leaves :data:`_RESOLVE_ANCHOR` unset, so
-    each override-body ``P<n>D`` duration would otherwise anchor against a
-    fresh :func:`datetime.now` per layer.  Binding a single instant here
-    makes an identical relative duration in pyproject ``[tool.nab]`` and the
-    project ``nab.toml`` resolve to the same datetime, so the cross-file
-    equality check does not see a spurious conflict.  A no-op on the resolve
-    path (the resolve anchor takes precedence).
+    Override bodies resolve relative durations eagerly. Sharing one instant
+    keeps equal values in both project files from becoming a false conflict.
     """
     token = _INSPECTOR_ANCHOR.set(datetime.now(timezone.utc))
     try:
@@ -167,13 +127,7 @@ def declaring_dir(directory: Path) -> Iterator[None]:
 
 @contextmanager
 def matrix_table(table: str) -> Iterator[None]:
-    """Bind the matrix header of the file being read.
-
-    The ladder wraps each TOML source's parse in this, so
-    :func:`parse_matrix` names the python-patches table the way the
-    declaring file writes it: ``[tool.nab.matrix.python-patches]`` in a
-    pyproject.toml, ``[matrix.python-patches]`` in a nab.toml.
-    """
+    """Bind the matrix table name for one file read."""
     token = _MATRIX_TABLE.set(table)
     try:
         yield
@@ -185,8 +139,8 @@ def parse_uploaded_prior_to(value: Any, where: str) -> Any:
     """Parse ``uploaded-prior-to`` without re-anchoring relative durations.
 
     A ``P<n>D`` duration anchors to the lockfile at resolve time, and the
-    registry merely gates and displays the key, so it must not silently
-    re-anchor one to ``now``.  A relative duration is carried as its raw
+    registry only validates and displays the key. It must not silently
+    re-anchor one to ``now``. A relative duration is carried as its raw
     string (the cross-file conflict check compares raw strings, so identical
     durations match and different ones conflict), and only an absolute
     datetime is normalised through the shared parser.
@@ -233,14 +187,7 @@ def parse_matrix(value: Any, where: str) -> values.MatrixConfig:
 
 
 def _override_anchor() -> datetime:
-    # An override body may carry an ``uploaded-prior-to`` whose ``P<n>D`` form
-    # resolves against an anchor at parse time.  The resolve path binds the
-    # lockfile anchor, so the duration anchors reproducibly.  The inspector
-    # leaves it unset and, unlike the top-level uploaded-prior-to row, cannot
-    # defer to a raw string (the body is an opaque object), so it anchors at
-    # the inspector pass's single ``now`` (bound by inspector_anchor) rather
-    # than a fresh now per layer, so an identical duration in both project
-    # files compares equal.
+    """Return the resolve anchor, inspector anchor, or current time."""
     resolve = _RESOLVE_ANCHOR.get()
     if resolve is not None:
         return resolve
@@ -418,7 +365,7 @@ def render_dist_policy(value: Any) -> str:
 
 
 def render_enum_value(value: Any) -> str:
-    """Render an enum-valued row as the spelling its members carry."""
+    """Render an enum-valued row as its member value."""
     return str(value.value)
 
 

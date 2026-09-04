@@ -1,8 +1,7 @@
 """Differential property tests for ``VersionRange.relation``.
 
-Over random ranges, ``relation`` is checked against both equivalent
-expressions: ``(is_subset, is_disjoint)`` asked separately, and
-``(is_subset, (self & other).is_empty)``.
+Over random ranges, ``relation`` is checked against separate subset and
+disjointness calls and against an explicit intersection.
 """
 
 from __future__ import annotations

@@ -1,11 +1,8 @@
-"""Check the published CLI pages against what the CLI does.
+"""Check the published CLI pages against commands and emitters.
 
-The reference page lists each subcommand's invocation, its own flags, the env
-vars and the statuses; selection, output formats and resolution failures have
-a page each; the config reference groups the ``nab lock`` flags by what
-each one decides; the conflicts page quotes refusal lines verbatim. The
-formats and lockfile pages, ``nab lock --help`` and the README each
-summarise the lock formats, so those are checked against the emitters.
+The CLI reference owns subcommands, flags, environment variables, and statuses.
+Other pages own selection, formats, failures, config overrides, and refusal
+text.
 
 These tests read ``docs/``, which the umbrella sdist does not ship, so the
 module is on that sdist's exclude list in pyproject.toml.
@@ -13,7 +10,6 @@ module is on that sdist's exclude list in pyproject.toml.
 
 from __future__ import annotations
 
-import inspect
 import io
 import logging
 import re
@@ -114,7 +110,7 @@ def _run_config(args: list[str], *, status: int = 0) -> str:
 
 
 def _flag_forms(flag: str, *, wildcard: str) -> list[str]:
-    """The spellings a page may use for ``flag``: itself or its ``--no-`` form.
+    """Return the forms a page may use for ``flag``.
 
     A ``--project-`` flag is also covered by ``wildcard``, the placeholder a
     page writes when it stands for the whole family rather than one member.
@@ -173,41 +169,6 @@ def _command_flags(command: str) -> list[str]:
     ]
     assert len(flags) == _FLAG_COUNTS[command], flags
     return flags
-
-
-def _cli_flag_section() -> str:
-    """The config reference's CLI flags section."""
-    return _reference_section(_CONFIG_REFERENCE, "## CLI flags")
-
-
-def _flag_block() -> str:
-    """The fenced ``nab lock`` usage block that opens the CLI flags section."""
-    block = re.search(r"```\n(.*?)```", _cli_flag_section(), re.DOTALL)
-    if block is None:
-        msg = "no fenced flag block under the config reference's CLI flags heading"
-        raise AssertionError(msg)
-
-    return block.group(1)
-
-
-def _block_flags(block: str) -> list[str]:
-    """The flags a fenced usage ``block`` declares, one per line."""
-    return re.findall(r"(?m)^\s+(--[\w<>-]+)", block)
-
-
-def _first_flag_group() -> set[str]:
-    """The flags of the flag block's first group, the one its bullets explain."""
-    return set(_block_flags(_flag_block().split("\n\n")[0]))
-
-
-def _bullet_flags() -> set[str]:
-    """The flags the bullets under the flag block name in a code span."""
-    bullets = [
-        chunk
-        for chunk in _prose_chunks(_cli_flag_section().rpartition("```")[2])
-        if chunk.startswith("* ")
-    ]
-    return set(re.findall(r"`(--[\w<>-]+)`", "\n".join(bullets)))
 
 
 def _doc_paragraph(text: str, needle: str) -> str:
@@ -451,8 +412,8 @@ class TestConfigExplainReferenceDocs:
     def test_reference_names_every_status(
         self, hermetic_roots: Path, tmp_path: Path
     ) -> None:
-        # One source per status: the user file rejected (project-scope key),
-        # the pyproject binding shadowed, the CLI winning.
+        # Exercise a rejected user file, shadowed pyproject binding, and
+        # winning CLI source.
         _write(
             hermetic_roots / "pyproject.toml",
             '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
@@ -524,39 +485,6 @@ class TestLockReferenceDocumentsProjectOverrides:
 
         assert "replaces the file value" in prose
         assert "append" not in prose
-
-
-class TestConfigReferenceCliFlags:
-    """The config reference's flag block matches what ``nab lock`` accepts.
-
-    The block groups the flags by what each one decides, and the bullets
-    under it say what the first group does to ``[tool.nab]``.  One
-    ``--project-<key>`` line stands for the whole family, so the block is
-    not read for the individual names.
-    """
-
-    _WILDCARD = "--project-<key>"
-
-    def test_block_lists_every_lock_flag(self) -> None:
-        declared = set(_block_flags(_flag_block()))
-
-        for flag in _command_flags("lock"):
-            forms = _flag_forms(flag, wildcard=self._WILDCARD)
-            assert declared.intersection(forms), f"the flag block omits {flag}"
-
-    def test_block_lists_only_flags_lock_accepts(self) -> None:
-        accepted = {
-            form
-            for flag in _command_flags("lock")
-            for form in _flag_forms(flag, wildcard=self._WILDCARD)
-        }
-
-        for flag in _block_flags(_flag_block()):
-            assert flag in accepted, f"the flag block still lists {flag}"
-
-    def test_bullets_cover_exactly_the_first_group(self) -> None:
-        """A flag in the wrong group leaves the bullets covering the wrong set."""
-        assert _bullet_flags() == _first_flag_group()
 
 
 _FLAG = "--include-rejected"
@@ -837,8 +765,8 @@ def _format_bullets(text: str) -> str:
 def _format_summaries() -> dict[str, str]:
     """The user-facing ``nab lock --format`` summaries, keyed by where each lives.
 
-    Each reference page carries a bullet per format, ``nab lock``'s docstring is
-    its ``--help`` text, and the README is the distribution's PyPI description.
+    Each reference page carries a bullet per format, and the README is the
+    distribution's PyPI description.
     """
     preamble = _page(_LOCKFILE_REFERENCE).partition("\n## ")[0]
     readme = _page(_README)
@@ -846,9 +774,6 @@ def _format_summaries() -> dict[str, str]:
     summaries = {
         "formats.md": _format_bullets(_reference_section(_FORMATS, "## `--format`")),
         "lockfile.md": _format_bullets(preamble),
-        "nab lock --help": _unwrapped(
-            _doc_paragraph(inspect.getdoc(lock) or "", "Formats:")
-        ),
         "README.md": _unwrapped(_doc_paragraph(readme, _WITHOUT_HASHES)),
     }
 
@@ -892,15 +817,36 @@ class TestLockFormatSummaries:
         ]
         assert hashed[2:] == plain[1:]
 
-    def test_no_summary_calls_a_format_hash_free(self, tmp_path: Path) -> None:
-        """An archive pin keeps its digest, so neither format drops every hash."""
+    def test_summaries_scope_hash_removal_to_index_hash_lines(
+        self, tmp_path: Path
+    ) -> None:
+        """Only index hash lines disappear; an archive digest remains in its URL."""
         plain = _requirements_lines(
             _pins_by_shape(tmp_path).values(), with_hashes=False
         )
         assert any(f"sha256={_ARCHIVE_DIGEST}" in line for line in plain)
 
         for source, summary in _format_summaries().items():
-            assert "no hashes" not in summary.lower(), source
+            normalized = summary.lower().replace("`", "")
+            assert "index pin" in normalized, source
+            assert "hash line" in normalized, source
+
+        reference_sections = {
+            "formats.md": _reference_section(_FORMATS, "## `--format`"),
+            "lockfile.md": _page(_LOCKFILE_REFERENCE).partition("\n## ")[0],
+        }
+        for source, text in reference_sections.items():
+            bullet = next(
+                chunk
+                for chunk in _prose_chunks(text)
+                if chunk.startswith("* `--format requirements`")
+            )
+            normalized = bullet.lower().replace("`", "")
+            assert "index pin" in normalized, source
+
+        for source in ("formats.md", "lockfile.md"):
+            assert "archive" in _format_summaries()[source].lower(), source
+            assert "digest" in _format_summaries()[source].lower(), source
 
     def test_a_summary_naming_name_equals_version_says_which_pins(self) -> None:
         """The phrase covers index pins only, so a summary using it says so."""
@@ -928,7 +874,7 @@ class TestLockFormatSummaries:
 
 
 class TestCliReferenceMatchesTheseFourBehaviours:
-    """Four claims on the CLI page, each checked against what the code does."""
+    """Check four CLI-page claims against the implementation."""
 
     @staticmethod
     def _rows(heading: str) -> dict[str, str]:

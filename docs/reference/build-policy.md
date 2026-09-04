@@ -29,15 +29,11 @@ Static metadata only, from any source:
 * PEP 643 (Metadata 2.2+) sdists: fine when `Dynamic:` lists
   neither `Requires-Dist` nor `Provides-Extra`; the resolver reads
   the static `Requires-Dist` lines from `PKG-INFO`.
-* Every other sdist, whether it lists one of those fields under
-  `Dynamic:` or predates Metadata 2.2: nab falls back to the
-  bundled `pyproject.toml`, reading `[project].dependencies` and
-  `[project].optional-dependencies` when `[project].dynamic`
-  lists neither.  Anything beyond that is skipped at look-ahead
-  and surfaces as a no-version diagnostic if no candidate works.
-  Setting `trust-unverified-deps` in the `dist-policy` table
-  trusts a pre-2.2 `PKG-INFO` instead; see the
-  [configuration reference](configuration.md).
+* Other sdists: nab reads the bundled `pyproject.toml` when
+  `[project].dynamic` leaves dependencies and optional dependencies
+  static. Otherwise look-ahead skips the candidate.
+  `trust-unverified-deps` instead trusts pre-2.2 `PKG-INFO`; see
+  [Configuration](configuration.md).
 * Local checkouts declared via `[[tool.nab.local-sources]]`:
   the directory's `pyproject.toml` is read statically.  A missing
   or malformed `[project]`, or a `dynamic` list covering
@@ -51,23 +47,20 @@ Static metadata only, from any source:
   its `pyproject.toml` is read statically.  Same failure when the
   static read comes up empty.
 
-Picks the most reproducible posture: every input to the SAT
-problem is a file read, not a sandboxed subprocess.  Use `never`
-for a lockdown resolve; only a per-package or per-index override
-lets a backend run.
+`never` runs no build backend unless a per-package or per-index override
+raises the policy. It still reads configured indexes and source files.
 
 ## `build-local` (default)
 
-Adds PEP 517 backend invocation on local checkouts.  When the
-static read of a `[[tool.nab.local-sources]]` entry (or a
-workspace member) comes up empty, the project's
-`[build-system].build-backend` runs inside an isolated venv via
-`nab_project._build.runner` and the resulting wheel `METADATA` is
-used.  Empty means a missing or malformed `[project]`, or a
-`dynamic` list naming `version`, `requires-python`,
-`dependencies`, or `optional-dependencies`, the same cases that
-end the resolve under `never`.  Remote PyPI sdists, VCS clones,
-and archive sources remain static-only.
+Adds PEP 517 backend invocation for `[[tool.nab.local-sources]]` and
+workspace members. When static metadata is unavailable, the project's
+backend runs in an isolated environment and nab reads the resulting
+wheel metadata.
+
+Static metadata is unavailable when `[project]` is missing or malformed,
+or when `[project].dynamic` names `version`, `requires-python`,
+`dependencies`, or `optional-dependencies`.
+Remote PyPI sdists, VCS clones, and archives remain static-only.
 
 ## `build-remote`
 
@@ -83,25 +76,18 @@ sdists.  On top of `build-local`:
   built when their `PKG-INFO` deps are not PEP 643 static and the
   bundled `pyproject.toml` offers no static fallback.
 
-A backend failure on any of these surfaces as
-`UnsupportedSdistError`; for a PyPI sdist the resolver skips that
-version, then either picks the next candidate or, if no candidate
-works, reports the accumulated build failures as a no-version
-diagnostic.  Honesty over silence: a version that needs a build
-which fails is treated as unbuildable, not as having zero
-dependencies.  A VCS clone or an archive source ends the resolve
-instead; see below.
+A backend failure surfaces as `UnsupportedSdistError`. For a PyPI sdist,
+the resolver rejects that version and tries another candidate; if none
+works, the diagnostic includes the build failures. A VCS or archive
+source ends the resolve instead because it is the only candidate for its
+name.
 
 ## A source that cannot be read ends the resolve
 
-A declared source (`[[tool.nab.local-sources]]`,
-`[[tool.nab.vcs-sources]]`, `[[tool.nab.archive-sources]]`, or a
-workspace member) is the only candidate for its name, and nab
-reads its metadata while listing that one version.  If the
-effective policy forbids the build that read needs, or the
-backend runs and fails, nab names the source it could not read
-and exits non-zero.  No candidate was formed, so there is nothing
-to skip and no no-version diagnostic to report.
+A declared local, VCS, archive, or workspace source is the only
+candidate for its name. If its required build is forbidden or fails,
+nab names the source and exits non-zero. No candidate was formed, so
+there is no no-version diagnostic.
 
 A PyPI sdist is one candidate among many, read at look-ahead, so
 a forbidden or failed build rejects that version alone and the
@@ -109,10 +95,9 @@ resolver moves on to the next.
 
 ## Choosing a level
 
-The default `build-local` handles the common case (a local
-checkout with `dynamic = ["version"]` from hatch-vcs or similar)
-without opening the door to remote-sdist builds.  Lower to
-`never` when you want a fully hermetic resolve.
+The default `build-local` handles a local checkout with dynamic metadata
+without running backends for remote sources. Use global `never` to make
+backend execution opt-in through per-package or per-index overrides.
 
 For transitive dependencies that only publish a dynamic sdist
 (native or CUDA-heavy wheels are the usual offenders), prefer a
@@ -123,11 +108,9 @@ per-package override rather than raising the global to `build-remote`:
 build-policy = "build-remote"
 ```
 
-That keeps the rest of the graph in the hermetic default while
-permitting the one package you actually need to build.  When you
-know the package's dependencies, a `dependencies` metadata override
-(see the [configuration reference](configuration.md)) resolves it under
-`never` without building at all.
+The override permits a backend only for that package. If its
+dependencies are known, a `dependencies` metadata override can avoid the
+build instead; see [Configuration](configuration.md).
 
 ## Building a build requirement
 
@@ -157,12 +140,10 @@ wheels out of the environment even where the index publishes one this
 host installs, so satisfying it means building it, and the refusal
 names the policy rather than the listing.
 
-What the build produces has to be the release nab resolved, because
-the dependencies installed beside it were resolved for that release.
-A backend that computes its own version and emits another one is
-refused, naming the requirement and the name and version its wheel
-filename carries.  Versions compare as PEP 440 does, so `1.0` and
-`1.0.0` are one release while `1.0+local` is another.
+Build output must match the resolved release because its environment was
+chosen for that release. A wheel with another name or version is
+refused. PEP 440 treats `1.0` and `1.0.0` as one release, but not
+`1.0+local`.
 
 A build already in the chain cannot be re-entered:
 
@@ -182,12 +163,11 @@ being built, pin it to wheels:
 dist-policy = "wheel-only"
 ```
 
-`build-requires-depth` is inert only where no build can run.  A target
-that declares a platform is such a case: there an explicit non-`never`
-build policy, global or in any override, is a config error.  A global
-`build-policy = "never"` is not, since a per-package or per-index
-override can still permit a build, and the environment opened for it
-reads `build-requires-depth` from the same config.
+`build-requires-depth` is inert only where no build can run. A declared
+platform makes every explicit non-`never` policy, including overrides, a
+config error. Global `build-policy = "never"` alone is insufficient: an
+override may still permit a build whose environment reads the same
+depth.
 
 ## Overrides
 
@@ -218,33 +198,30 @@ per-index override instead:
 build-policy = "build-remote"
 ```
 
-A build-policy override for a local checkout, VCS clone, or archive
-source is matched by bare name only.  A source build is decided before
-any version is resolved, so a version-scoped per-package override (a
-quoted `"name <specifier>"` key) does not govern a local, VCS, or
-archive source build, and per-index overrides do not apply to sources
-(a local source has no serving index).  Use a bare-name key to govern
-a source build.
+Declared local, VCS, and archive sources match only an override keyed by
+the bare name. Their version is unknown when the build is chosen, so
+version-scoped overrides do not apply. Per-index overrides also do not
+apply because a declared source has no serving index.
 
 ## A declared platform forbids host builds
 
-A PEP 517 backend always runs on the host nab runs on, so it reports the
-host's dependencies.  That is correct when you resolve for the host, but
-wrong when you resolve *as if* you were on another machine.  Every target
-that moves the platform axis therefore forbids host builds:
-`build-policy` is forced to `never`, and an explicit non-`never` value
-(global or in any override) is a config error, checked before the resolve
-starts.  That covers both surfaces that declare a machine:
+A PEP 517 backend reports the host's dependencies. Any declared platform
+or implementation forbids host builds, even when it names the host.
+
+`build-policy` is forced to `never`; an explicit non-`never` value is a
+config error before resolution. This covers both ways to declare a
+machine:
 
 * `[tool.nab.environment]` with a `platform` or an `implementation`.
-* `mode = "universal"`, where every matrix tuple declares one.
+* `mode = "universal"`, where every matrix target declares one.
 
 This matches pip, which requires `--only-binary=:all:` under `--platform`,
 `--abi`, or `--implementation`.
 
-A retarget of the **python axis alone** (`[tool.nab.environment].python`,
+A retarget of the Python axis alone (`[tool.nab.environment].python`,
 or `--python X.Y`) is different: the machine is still the host.  nab warns
 that a build would report the host interpreter's metadata, and permits it.
+
 This is a deliberate deviation from pip: the machine is still the host, so a
 build can run at all, and refusing every one of them would take the default
 case with it.  Set `build-policy = "never"` to forbid it.

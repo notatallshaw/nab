@@ -1,13 +1,7 @@
-"""Deterministic branch coverage for the ``parsed_listing`` codec.
+"""Branch coverage for the ``parsed_listing`` codec.
 
-The exact-equivalence contract is proved by the Hypothesis harness in
-``nab-project/tests/property_python/test_parsed_listing_equiv.py``; that suite
-is opt-in (``-m property``) and does not run under the coverage gate, so these
-plain unit tests drive every branch of the codec: the wheel/sdist tag split,
-present and absent ``requires_python``, present and absent ``metadata_hash``,
-the integrity cells in both their raw and their parsed form, each header /
-digest gate that turns a stale or foreign blob into a decode-to-``None`` miss,
-and the field checks that keep a hand-written row from reaching a record.
+The Hypothesis equivalence suite is opt-in. These unit tests exercise the
+remaining codec branches, including stale and foreign blobs.
 """
 
 from __future__ import annotations

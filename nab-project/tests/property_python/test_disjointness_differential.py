@@ -40,7 +40,7 @@ PLATFORMS = ("linux", "win32")
 PYTHONS = ("3.10", "3.11")
 
 EXTRA_DECLS = ("aa", "b-b", "c-c")
-# Unnormalised spellings a marker may carry for each declared extra,
+# Unnormalised forms a marker may carry for each declared extra,
 # plus one undeclared name; same shape for groups.
 EXTRA_SPELLINGS = ("aa", "AA", "b-b", "B.B", "b_b", "c-c", "C_C", "zz")
 GROUP_DECLS = ("dev", "test-g")
@@ -291,7 +291,7 @@ def _random_environments(rng: random.Random) -> dict[str, dict[str, str]]:
 def _random_exclusive(
     rng: random.Random, extras: list[str], groups: list[str]
 ) -> list[frozenset[tuple[str, str]]]:
-    """Build 0-2 exclusive sets over the declared members (mixed spelling)."""
+    """Build 0-2 exclusive sets over members with mixed name forms."""
     pool = [(KIND_EXTRA, n) for n in extras] + [(KIND_GROUP, n) for n in groups]
     exclusive: list[frozenset[tuple[str, str]]] = []
     for _ in range(rng.randint(0, 2)):

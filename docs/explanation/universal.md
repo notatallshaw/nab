@@ -6,7 +6,7 @@
 > and may change without notice.
 
 A specific resolve pins one version per package for one marker
-environment. A universal resolve produces a single artefact
+environment. A universal resolve produces a single artifact
 valid for a set of marker environments.
 
 nab's universal-resolution model is user-driven: the user
@@ -26,9 +26,10 @@ The targets share one fetcher, so a package's listing is read once for
 the whole matrix rather than once per target. Metadata is shared per
 wheel rather than per package, so a release publishing one wheel per
 interpreter or per platform costs one read for each wheel the matrix
-picks (see Where a version's metadata comes from below). An sdist's
-`PKG-INFO` stands for the whole version, so one read serves every
-target that picks it.
+picks (see Where a version's metadata comes from below).
+
+An sdist's `PKG-INFO` stands for the whole version, so one read serves
+every target that picks it.
 
 After a target resolves, its pins flow forward as preferences for the
 next, giving best-effort alignment across targets.
@@ -82,10 +83,10 @@ other is a config error.
 `python` is a PEP 440 specifier expanded into one target per
 minor version. `platforms` is a list of platform ids
 (`linux_x86_64`, `linux_aarch64`, `linux_i686`, `linux_armv7l`,
-`macos_x86_64`, `macos_arm64`, `windows_amd64`, `windows_arm64`), each
-optionally written as a table to declare its
-wheel-tag knobs (libc family, the libc and macOS the lock must run
-on, free-threaded build).  See
+`macos_x86_64`, `macos_arm64`, `windows_amd64`, `windows_arm64`).
+
+Each platform may be a table declaring its wheel-tag knobs: libc
+family, minimum libc or macOS, and free-threaded builds. See
 [Configuration](../reference/configuration.md).
 
 `python-order` selects the resolution direction:
@@ -107,13 +108,10 @@ nab lock --project-mode universal \
   --project-matrix-platforms linux_x86_64 macos_arm64
 ```
 
-The project declares no matrix here, so there is nothing to narrow:
-`--project-matrix-python` and `--project-matrix-platforms` are both
-required and the other three take their defaults. The flags declare the
-matrix and not the mode, so `--project-mode universal` goes with them.
+Without a file matrix, the Python and platform flags are required. Omitted
+keys use their defaults, and `--project-mode universal` selects matrix mode.
 
-A project that declares a matrix narrows one key with one flag, and its
-file already sets the mode:
+A project that declares a matrix can replace one key:
 
 ```bash
 nab lock --project-matrix-platforms macos_arm64
@@ -129,6 +127,12 @@ Writes a single PEP 751 `pylock.toml` covering the whole matrix.
 Packages whose pinned version differs across targets appear as
 multiple `Package` entries with PEP 508 markers; packages that
 agree across every target appear once with no marker.
+
+### Install from the lock
+
+See [Use a lock](../how-to/use-the-lock.md) to install a selected
+environment, or [Output formats](../reference/formats.md) to write one
+requirements file per target.
 
 ## Inspect the per-target pins
 
@@ -152,7 +156,7 @@ numpy==2.1.3
 ...
 ```
 
-One block per target. Pip cannot install a single requirements.txt
+One block per target. pip cannot install a single requirements.txt
 across multiple targets in hash-checking mode, so the per-target
 block format is for inspection or for tools that consume one block
 at a time. When a target fails resolution, the line reads
@@ -165,13 +169,12 @@ A matrix names Python minors like 3.11, not exact releases, so a 3.11
 target stands for the whole minor: every micro release from 3.11.0
 upward. nab resolves it once, at a representative 3.11.0.
 
-That holds until a dependency's marker turns on a patch release inside
-the minor. If the project asks for
-`some-backport ; python_full_version < "3.11.4"`, then 3.11.3 needs the
-backport and 3.11.5 does not, yet a single resolve at 3.11.0 would
-answer the marker one way for the whole minor. So nab splits the 3.11
-target at 3.11.4 and resolves each side on its own. Each side is a slice
-of the target, with its own pins and its own `environments` row.
+That holds until a dependency marker changes inside the minor. For
+example, `some-backport ; python_full_version < "3.11.4"` is needed on
+3.11.3 but not 3.11.5.
+
+nab splits the 3.11 target at 3.11.4 and resolves each side. Each slice
+gets its own pins and `environments` row.
 
 Take a project that targets just 3.11 on one platform:
 
@@ -215,14 +218,12 @@ version = "1.2.0"
 marker = 'python_full_version < "3.11.4"'
 ```
 
-The two slices meet at `3.11.4.dev0`, not at `3.11.4`. The lower slice
-ends at `< "3.11.4"` and the upper starts at `>= "3.11.4.dev0"`. A plain
-`>= "3.11.4"` upper edge would strand the prereleases of 3.11.4, such as
-`3.11.4rc1`: PEP 440 keeps them below `>= "3.11.4"`, and `< "3.11.4"`
-excludes them too, so they would land in neither slice. Snapping the
-edge down to `3.11.4.dev0` puts them on the upper side, so the slices
-meet exactly, with no gap and no overlap, and a user on `3.11.4rc1` gets
-the pins meant for 3.11.4.
+The slices meet at `3.11.4.dev0`, not `3.11.4`. A plain `>= "3.11.4"`
+upper edge would leave prereleases such as `3.11.4rc1` in neither slice:
+PEP 440 also excludes them from `< "3.11.4"`.
+
+Starting the upper slice at `3.11.4.dev0` closes that gap and gives a
+3.11.4 prerelease the pins intended for 3.11.4.
 
 A split can pull in a dependency the whole minor did not, and that
 dependency's marker can name a fresh boundary, so nab re-splits a target
@@ -230,11 +231,13 @@ until a pass finds no new one.
 
 Every comparison that names an interval cuts a minor: the ordered
 operators (`<`, `<=`, `>`, `>=`) and the ones naming a region (`==`,
-`!=`, `~=`, `== V.*`). A `python_full_version` marker nab cannot turn
-into an interval is a loud error rather than a silent guess: a
-membership test (`in`, `not in`), a verbatim `===`, a non-version
-comparison, a comparison against another marker variable, or certain
-pre- or post-release literals strictly inside the minor.
+`!=`, `~=`, `== V.*`).
+
+A `python_full_version` marker nab cannot turn into an interval is a
+loud error rather than a silent guess: a membership test (`in`, `not
+in`), a verbatim `===`, a non-version comparison, a comparison against
+another marker variable, or certain pre- or post-release literals
+strictly inside the minor.
 
 To resolve a minor as one real release rather than split it, name the
 patch you deploy on:
@@ -267,27 +270,25 @@ implementations). A PyPy target sets `platform_python_implementation =
 accepts `ppXY-pypyXY_pp73` wheel tags instead of `cpXY`. Labels use the
 `pp` interpreter prefix (`pp311-linux_x86_64`).
 
-A CPython-only matrix leaves the axis open: its lockfile markers carry
-no `implementation_name`. Any other matrix, whether it names two
-implementations or one non-CPython one, puts `implementation_name` on
-every target's marker and on the `environments` entry it declares. The
-CPython and PyPy entries for one `(python, platform)` point stay
-mutually exclusive, and a PyPy-only lock refuses CPython. PyPy's
-`implementation_version` is modelled as the Python level, not PyPy's
-own release, so the rare marker comparing `implementation_version`
-against a PyPy version misevaluates during the resolve. The lockfile
-does not carry that synthetic value: a non-CPython `environments` entry
-leaves `implementation_version` open, so a real PyPy still accepts the
-lock (a dep gated on the axis may be missed at install).
+A CPython-only matrix leaves `implementation_name` open. A matrix with
+PyPy, or with more than one implementation, writes the name into every
+target marker and `environments` entry. This keeps CPython and PyPy
+entries disjoint, and a PyPy-only lock refuses CPython.
+
+PyPy's `implementation_version` is modelled as its Python level rather
+than its own release. A marker comparing that value with a PyPy release
+can misevaluate during resolution. The lock leaves the synthetic value
+out, so the interpreter accepts the lock, but a dependency gated on it
+may be missed.
 
 ## Resolution axes
 
-The `[tool.nab.matrix]` keys above drive two decisions per tuple: how
-each PEP 508 marker evaluates, and which wheels the tuple can install.
+The `[tool.nab.matrix]` keys drive two decisions per target: how each
+PEP 508 marker evaluates and which wheels the target can install.
 
 ### Marker variables
 
-Every PEP 508 environment variable gets a value in every tuple, so no
+Every PEP 508 environment variable gets a value in every target, so no
 marker ever evaluates against a missing key. Each takes its value from
 the axis or fixed default shown:
 
@@ -305,14 +306,13 @@ the axis or fixed default shown:
 | `platform_release` | `platforms` (`platform-release`) | `""` |
 | `platform_version` | `platforms` (`platform-version`) | `""` |
 
-`extra`, `extras` and `dependency_groups` are not axes. `extra` is bound
-one name at a time as a version's dependencies are sorted into the base
-package and its extras, so `extra == "cpu"` names the dependencies of
-`pkg[cpu]` and a requirement read with no extra active sees none. The
-other two are empty during resolution, so a dependency gated on
-`'x' in extras` is always dropped; nab emits that clause only onto a
-package's lockfile marker, where it fires for the installer consuming
-the lock.
+`extra`, `extras`, and `dependency_groups` are not axes. `extra` is
+bound while a version's dependencies are sorted into the base package
+and its extras, so `extra == "cpu"` names the dependencies of
+`pkg[cpu]`.
+
+The other two are empty during resolution. nab uses their clauses only
+in the lockfile marker that a consumer evaluates.
 
 ### How the axes couple
 
@@ -351,13 +351,13 @@ default and the rules it carries.
 
 ### What the axes do not cover
 
-The `[tool.nab.matrix]` keys and the platform tag knobs are the whole of
-it. The platform ids and the implementations are fixed enumerations, and
-an unknown name is a config error rather than a silently skipped tuple.
-The Python minors are an enumeration too, but `python` is a specifier
-intersected with it: a range reaching past the newest minor nab knows
-expands to the ones it knows, and only a range matching none of them is
-an error.
+The matrix keys and platform tag knobs cover every supported axis.
+Platform IDs and implementations are fixed enumerations, so unknown
+names are configuration errors.
+
+`python` accepts a specifier over known minor versions. A range can
+extend beyond those versions; only a range matching none of them is an
+error.
 
 `platform_release` and `platform_version` name one machine's kernel
 build. Both default to the empty string, so a marker gated on the kernel

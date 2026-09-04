@@ -31,9 +31,9 @@ require-pin = true
 
 Three layers, each AND-checked:
 
-1. `allowed-schemes`: pip-style scheme prefixes.  The supported set
-   is `git+https`, `git+ssh`, `git+http`, `git+file`, `git+git`.
-   Empty means "no scheme is allowed".  `git+http` and `git+git` are
+1. `allowed-schemes`: the supported pip-style prefixes are `git+https`,
+   `git+ssh`, `git+http`, `git+file`, and `git+git`. Empty means "no
+   scheme is allowed". `git+http` and `git+git` are
    unauthenticated; prefer `git+https` or `git+ssh`.
 2. `allowed-repos`: prefix match against the URL after the
    `git+` prefix is stripped, so the value includes the inner
@@ -64,22 +64,21 @@ name = "my-fork"
 url  = "git+https://github.com/myorg/my-fork.git@<sha>"
 ```
 
-The named package becomes a single-version source pinned to the
-commit you specified.  nab clones the repo, reads the static
-metadata (Layer 2: clone + static metadata), and treats the
-result as a normal dependency for the rest of the resolve.  The
-URL in each `[[tool.nab.vcs-sources]]` table is run through the
-same admission as project-root requirements, so it must pass
-`allowed-schemes`, `allowed-repos`, and `require-pin`.
+The named package becomes a single-version source at the specified
+commit. nab clones the repository, reads its static metadata, and treats
+the result as a normal dependency. The URL uses the same admission as a
+project-root requirement, so it must pass `allowed-schemes`,
+`allowed-repos`, and `require-pin`.
 
 Reading static metadata from the cloned tree works at any
-`build-policy` level.  When the static read comes up empty, nab
+`build-policy` level. When the static read comes up empty, nab
 builds the clone instead, which needs
 `build-policy = "build-remote"` (a clone counts as remote because
 the source bytes are network-fetched, even though they end up on
-disk before the backend runs).  The
-[build policy](../reference/build-policy.md) page lists what
-counts as empty.
+disk before the backend runs).
+
+The [build policy](../reference/build-policy.md) page lists what counts
+as empty.
 
 ## Offline runs
 

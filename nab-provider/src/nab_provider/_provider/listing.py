@@ -303,50 +303,16 @@ def filter_distributions(
     normalized: str,
     files: Sequence[WheelFile | SdistFile],
 ) -> list[tuple[Version, DistFile]]:
-    """Filter by wheel tag, requires-python, upload time, and sort.
+    """Return candidate listing records, newest version first.
 
-    Sorting: newest version first. When the effective ``dist-policy``
-    is PREFER_WHEEL or SDIST_INSTALL, wheels sort before sdists at
-    the same version so the metadata picker hits the cheapest source
-    first.  ``normalized`` is the canonical package name used to look
-    up the per-package / per-index ``uploaded-prior-to`` and
-    ``dist-policy`` overrides; the serving index is read from the
-    coordinator.
+    :func:`base_distributions` applies dist policy, Requires-Python, upload
+    cutoffs, and equal-version ordering before the target-specific wheel-tag
+    pass. Package and index overrides are evaluated for each candidate version.
 
-    This is the single funnel into ``versions_cache``, so what it drops
-    is gone from candidate selection, metadata sourcing, every prefetch
-    path, look-ahead, the emitted wheel list, and ``nab download``.
-
-    A wheel whose PEP 425 tags the target does not accept is dropped
-    (:func:`excluded_by_wheel_tags`), and a version left with no
-    compatible wheel and no sdist is dropped with it: the target cannot
-    install it, so the resolver must not pin it.  An sdist keeps a
-    version alive at every :class:`~nab_provider.provider.BuildPolicy`,
-    which is what stops the filter over-refusing a pure-source package;
-    the tag check is a wheel's check, as it is in pip.  Look-ahead
-    rejects the version later if the sdist's metadata cannot be read
-    under the policy in force.
-
-    The dist-policy and upload-time cutoff are version-scoped: a
-    per-package override applies only to candidate versions inside its
-    requirement's range, so each version's policy is evaluated against
-    its own :class:`Version`.
-
-    Under :attr:`~nab_provider.provider.DistPolicy.SDIST_INSTALL` a
-    version keeps its wheels in ``versions_cache`` as a cheap metadata
-    source only when it also publishes an sdist; a version whose only
-    surviving artifact is a wheel has no source to install, so it is
-    dropped and never becomes a candidate.  The kept wheels are dropped
-    later, at lock construction time, so only the sdist is pinned.
-
-    The filter runs in two passes.  :func:`base_distributions` applies
-    everything that has no platform axis (dist policy, Requires-Python,
-    upload cutoff, sort order, equal-version canonicalization), and is
-    memoised per (package, Python) across the targets of one resolve
-    when the provider carries a
-    :class:`~nab_provider.provider.ListingFilterCache`.  The wheel-tag
-    pass then runs per target on top of that shared list, so a
-    linux-only wheel still stays off the Windows target.
+    Under ``PREFER_WHEEL`` and ``SDIST_INSTALL``, wheels sort before sdists of
+    the same version as the cheaper metadata source. ``SDIST_INSTALL`` keeps a
+    version only when it has a surviving sdist; its wheels remain metadata
+    candidates and are removed during lock construction.
     """
     base = base_distributions(provider, normalized, files)
     return _apply_wheel_tags(provider, normalized, base)
@@ -776,10 +742,10 @@ def dropped_release_in_range(
 
     Callers ask only when no surviving version falls in the range, so a
     dropped one that does is the release the requirement asked for.  A
-    dropped version equal to a surviving one survived under another
-    spelling instead: :func:`filter_distributions` collapses equal
-    versions onto one representative, and ``===`` compares its string
-    form.  Filtering through ``version_range`` keeps the pre-release
+    dropped version equal to a survivor is represented by that survivor:
+    :func:`filter_distributions` collapses equal versions onto one
+    representative. ``===`` compares its string form. Filtering through
+    ``version_range`` keeps the pre-release
     semantics candidate selection uses.
     """
     files = provider.coordinator.index.get_listing(normalized)
@@ -849,7 +815,7 @@ def _canonicalize_equal_versions(
             representative[version] = version
         elif chosen is not version:
             # The listing interns its versions, so two distinct objects that
-            # compare equal are two spellings of one release.
+            # compare equal are two representations of one release.
             needs_rebuild = True
             if (len(version.release), str(version)) < (
                 len(chosen.release),
@@ -909,7 +875,7 @@ def excluded_by_python(
 
 
 def upload_time_cause(dist: DistFile, cutoff: datetime | None) -> Cause | None:
-    """Return which upload-time rule refuses ``dist``, or None when none does.
+    """Return the upload-time rule that refuses ``dist``, if any.
 
     ``cutoff`` is the effective upload-time cutoff for the package, already
     resolved through the overrides and the global ``uploaded-prior-to``
@@ -1133,7 +1099,7 @@ def parse_prefetched_metadata(
         # as dependency-free.
         return
     if from_sdist:
-        # sdist PKG-INFO: caching it here would skip the PEP 643 gate.
+        # sdist PKG-INFO: caching it here would skip the PEP 643 check.
         return
 
     try:

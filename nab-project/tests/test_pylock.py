@@ -1,7 +1,7 @@
 """Emission-time per-package marker simplification.
 
 Covers the ``build_pylock`` wiring that finalises each per-package marker
-to its shortest within-universe form before the disjointness gate, plus the
+to its shortest within-universe form before the disjointness check, plus the
 fail-closed verify on the emitted bytes.
 """
 
@@ -253,7 +253,7 @@ class TestSelectionBudgetRefusal:
     """
 
     def _lock(self, extras_count: int) -> LockInput:
-        """A lock whose two ``foo`` pins split ``extras_count`` extra gates."""
+        """A lock whose two ``foo`` pins split ``extras_count`` extra selections."""
         extras = tuple(f"e{i}" for i in range(extras_count))
         half = extras_count // 2
         older, newer = _target("3.11"), _target("3.12")
@@ -369,12 +369,12 @@ class TestFinalizeMarker:
 
 @pytest.fixture
 def ungated(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Stand the coverage gate down for a hand-built declaration.
+    """Disable coverage validation for a hand-built declaration.
 
     ``build_pylock`` refuses a lock whose ``environments`` leave a resolved
     target uncovered, so a non-covering shape never reaches the simplification
-    layer through the public entry point.  The tests that ask what that layer
-    does with one drive it with the gate stood down.
+    layer through the public entry point. These tests disable that check to
+    exercise the simplification layer.
     """
     monkeypatch.setattr(pylock, "validate_marker_coverage", lambda *_, **__: None)
 
@@ -398,7 +398,7 @@ def _non_covering_lock() -> LockInput:
 class TestNonCoveringEnvironments:
     """A package selecting nothing inside the declared universe ships raw.
 
-    Its simplification is the empty set, which has no marker spelling, so there
+    Its simplification is the empty set, which has no marker text, so there
     is nothing shorter to emit.
     """
 
@@ -742,7 +742,7 @@ class TestEightLockRegression:
     """The captured markers of the eight committed CI locks.
 
     Each raw marker finalises offline to the byte the lock now carries, and the
-    emission gates still pass on the simplified output.
+    emission checks still pass on the simplified output.
     """
 
     def test_wide_locks_become_tractable_and_byte_exact(self) -> None:

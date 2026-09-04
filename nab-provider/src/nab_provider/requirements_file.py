@@ -61,8 +61,8 @@ def _add_extra_marker(dep_str: str, extra_name: str) -> str:
     ``extra_name`` is a table key interpolated into the quoted marker, so
     it is canonicalised with ``validate=True`` (PEP 685). A key that is
     not a valid name (say one containing a quote) then raises
-    :class:`InvalidName` instead of producing a marker that gates the dep
-    wrongly.
+    :class:`InvalidName` instead of producing a marker for the wrong
+    dependency.
     """
     req = parse_requirement(dep_str)
     canonical_extra = canonicalize_name(extra_name, validate=True)
@@ -329,8 +329,8 @@ def _self_ref_edges(
 
     The self-ref's own marker is reduced against the walked ``extra``: a
     contradiction means it does not activate (no entries), a tautology
-    propagates the inherited ``gates`` unchanged, and an environment
-    residual is added to the gate carried onto the reached extras.
+    propagates the inherited conditions unchanged, and an environment
+    residual is added to the conditions carried onto the reached extras.
     """
     edge = gates
     if req.marker is not None:

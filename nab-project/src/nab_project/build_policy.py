@@ -20,12 +20,7 @@ _logger = logging.getLogger(__name__)
 
 
 def _forbids_host_builds(targets: Sequence[ResolveTarget]) -> bool:
-    """Whether any target impersonates a machine other than the host's.
-
-    A declared target (a matrix tuple, or an environment naming a platform
-    or implementation) carries a :class:`PlatformSpec`; the host and a
-    host-python retarget do not.
-    """
+    """Whether any target declares a platform or implementation."""
     return any(target.platform_spec is not None for target in targets)
 
 
@@ -42,8 +37,8 @@ def enforce_build_policy_for_targets(
     A PEP 517 backend only ever runs on the host interpreter, so what a
     build reports is the host's metadata.  Two tiers follow:
 
-    * A target that moves the platform axis (a matrix, or an environment
-      naming a ``platform`` or ``implementation``) forbids host builds:
+    * A target declaring a ``platform`` or ``implementation`` forbids
+      host builds:
       ``build-policy`` is forced to ``never`` and an explicit non-``never``
       value, global or in any override, is an error.  This matches pip,
       which requires ``--only-binary=:all:`` under ``--platform``.

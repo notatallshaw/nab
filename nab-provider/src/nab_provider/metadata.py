@@ -236,20 +236,15 @@ _LOGICAL_LINE_CR = re.compile(r"(?:\r\n|\r(?!\n)|\n)(?![ \t])")
 
 
 def _logical_line_boundary(text: str) -> re.Pattern[str]:
-    """Return the pattern for a line ending that closes a logical line of ``text``."""
-    # Equal counts mean every \r begins a \r\n, so no line ends on a bare one.
+    """Return the logical-line boundary pattern for ``text``."""
+    # Unequal counts reveal a bare CR line ending.
     if "\r" in text and text.count("\r") != text.count("\r\n"):
         return _LOGICAL_LINE_CR
     return _LOGICAL_LINE
 
 
 def _logical_lines(text: str) -> list[str]:
-    r"""Split ``text`` into RFC 822 logical lines, each holding its own folds.
-
-    A line ending inside a fold stays. The ending that closes a logical line
-    goes, except that the common pattern splits on the ``\n`` of a ``\r\n``
-    and leaves the ``\r`` at the end of the line.
-    """
+    r"""Split RFC 822 logical lines while retaining folded line endings."""
     return _logical_line_boundary(text).split(text)
 
 
@@ -262,12 +257,7 @@ def _description_start(text: str) -> int:
 
 
 def metadata_without_description(text: str) -> str:
-    """Return ``text`` with its ``Description:`` field cut out, folds included.
-
-    distutils writes the long description as a folded header field, which
-    :func:`metadata_header_block` keeps and :func:`parse_metadata` never reads.
-    Only the first one is cut, and the name is matched case-sensitively.
-    """
+    """Remove the first case-sensitive ``Description:`` field and its folds."""
     start = _description_start(text)
     if start < 0:
         return text

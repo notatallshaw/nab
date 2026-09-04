@@ -1,39 +1,43 @@
 # The six distributions
 
-`nab` is one command built out of six distributions. Installing `nab` pulls
-all of them, so the split matters only when you embed part of nab elsewhere.
+`nab` is one command built out of six distributions. Installing `nab`
+pulls all of them, so the split matters only when you embed part of nab
+elsewhere.
+
+Except for `nab-resolver`'s documented surface, these APIs are
+experimental. Pin exact versions when embedding them.
 
 ## What each one is
 
-`nab-resolver` is the solver: a generic PubGrub implementation over abstract
-versions and ranges, with no knowledge of Python packaging. It does not import
-`packaging`.
+`nab-resolver` is the solver: a generic PubGrub implementation over
+abstract versions and ranges, with no knowledge of Python packaging. It
+does not import `packaging`.
 
-`nab-markersets` is the marker algebra: a PEP 508 marker read as the set of
-environments it selects. Its parser and evaluator come from whichever
-`packaging` is installed, released or nab's fork.
-[Reasoning about markers](../how-to/reason-about-markers.md) works through it.
+`nab-markersets` is the marker algebra: a PEP 508 marker read as the set
+of environments it selects. Its parser and evaluator come from
+whichever `packaging` is installed, released or nab's fork. [Reasoning
+about markers](../how-to/reason-about-markers.md) works through it.
 
 `nab-provider` is the resolution logic: the provider the solver asks for
-candidates, the target and tag model, marker evaluation, extras expansion, the
-metadata parser, the policies (`BuildPolicy`, `DistPolicy`, VCS admission) with
-their per-package and per-index overrides, and the store the answers land in.
-It does no I/O: everything it needs arrives through
-`nab_provider.fetch_port.FetchPort`, which its host implements.
+candidates, the target and tag model, marker evaluation, extras
+expansion, the metadata parser, packaging policies with their
+per-package and per-index overrides, and the result store. It does no
+I/O: everything arrives through `nab_provider.fetch_port.FetchPort`,
+which its host implements.
 
 `nab-index` is the index client: the Simple API reader, the on-disk HTTP
-cache, the lazy-wheel range reader, the archive and VCS fetchers, and the local
-`file://` index.
+cache, the lazy-wheel range reader, the archive and VCS fetchers, and
+the local `file://` index.
 
-`nab-project` is nab's own host: it implements `FetchPort` over `nab-index` in
-`nab_project.fetch.FetchCoordinator`, and adds workspace discovery, the PEP 517
-build path, the lockfile writer, the downloader and the resolve orchestration.
-It resolves against a list of targets and a `nab_project.inputs.ResolveInputs`,
-both of which its host supplies.
+`nab-project` is nab's own host. It implements `FetchPort` over
+`nab-index` in `nab_project.fetch.FetchCoordinator`, then adds workspace
+discovery, the PEP 517 build path, the lockfile writer, the downloader,
+and resolve orchestration. Its host supplies a target list and
+`nab_project.inputs.ResolveInputs`.
 
-`nab` is the CLI, and it owns the `[tool.nab]` config ladder in `nab.config`:
-reading the option a project declares, and turning it into the targets and
-inputs nab-project resolves under.
+`nab` is the CLI. It owns the `[tool.nab]` config ladder in
+`nab.config`, reads the project options, and turns them into the targets
+and inputs `nab-project` resolves under.
 
 ## How they depend on each other
 
@@ -48,26 +52,25 @@ nab            ->  nab-markersets, nab-provider, nab-index, nab-project,
                    nab-resolver
 ```
 
-Of the third-party dependencies only `packaging` is shown, since it is the one
-that exists here in two copies.
+Only `packaging` is shown among the third-party dependencies because it
+exists here in two copies.
 
-`nab-index` depends on `nab-provider` because the records `WheelFile`,
-`SdistFile`, `IndexConfig` and the fetch errors live with the side that must
-never fetch.
+`nab-index` depends on `nab-provider` because `WheelFile`, `SdistFile`,
+`IndexConfig`, and the fetch errors live with the side that must never
+fetch.
 
 ## Why the provider is separate
 
-Resolution logic with no HTTP client in its import graph can be tested on its
-own: CI runs `nab-provider/tests` in a workspace that installs only
-`nab-provider`, `nab-markersets` and `nab-resolver`.
+Resolution logic with no HTTP client in its import graph can be tested
+alone. CI runs `nab-provider/tests` in a workspace that installs only
+`nab-provider`, `nab-markersets`, and `nab-resolver`.
 
-A host that already owns a session and a download path can implement
-`FetchPort` and get nab's resolution without its networking, caching or lock
-output.
+A host that owns a session and download path can implement `FetchPort`
+and use nab's resolution without its networking, cache, or lock output.
 
 ## Driving the provider on its own
 
-`nab_provider.testing` ships a `FetchPort` over a store you fill yourself, so
+`nab_provider.testing` ships a `FetchPort` over a store you fill, so
 nothing below reaches the network:
 
 ```python
@@ -101,26 +104,27 @@ resolver = Resolver(provider, range_type=VersionRange, root_version="0")
 print(resolver.resolve({"app": VersionRange.full()}))
 ```
 
-`nab_project.resolve.resolve_for_targets` is the entry point that takes a
-project path; the provider has none.
+`nab_project.resolve.resolve_for_targets` is the entry point that takes
+a project path; the provider has none.
 
 ## Where the vendored packaging fork lives
 
 `nab-provider` carries nab's fork of `packaging` at
-`nab_provider._vendor.packaging`, and `nab-project` and `nab.config` reach into
-it rather than carrying their own copy: both build `Version`, `Requirement` and
-`VersionRange` objects the provider consumes, and two copies would be two
-distinct classes that `isinstance` and dict keying disagree about.
-`tasks/check_boundaries.py` forbids every other reach into another package's
-`_vendor`, and lists these two in `VENDOR_ALLOWANCES`.
+`nab_provider._vendor.packaging`. `nab-project` and `nab.config` use it
+to build `Version`, `Requirement`, and `VersionRange` objects consumed
+by the provider. A second copy would produce distinct classes, breaking
+`isinstance` checks and dictionary keys.
 
-`nab-markersets` reaches the same tree from outside the workspace, by name
-rather than by import: `nab_markersets._packaging` weighs
-`nab_provider._vendor.packaging` first and released `packaging` second, and
-binds the first at `packaging>=26.3`. Inside nab the fork wins, so a `Marker`
-the provider built is the class the algebra tests against and the exceptions it
-raises are the ones `marker_holds` catches. `nab-markersets[nab-vendored-packaging]` is the extra
-that installs it; `nab-markersets[packaging]` is what a standalone install
-takes. Two copies still run in one process, because `nab-index` reads
-`packaging.utils` and `packaging.version` and `nab-project` reads
-`packaging.utils`, but no marker crosses between them.
+`tasks/check_boundaries.py` forbids other packages from reaching into a
+package's `_vendor` tree and lists these two exceptions in
+`VENDOR_ALLOWANCES`.
+
+`nab_markersets._packaging` prefers the vendored tree, then released
+`packaging`, and requires version 26.3 or newer. Inside nab the fork
+wins, so provider markers and exceptions retain the classes the algebra
+expects.
+
+The `nab-markersets[nab-vendored-packaging]` extra installs the fork;
+standalone users install `nab-markersets[packaging]`. `nab-index` and
+`nab-project` still use released `packaging` for other APIs, but no
+marker crosses between the two copies.

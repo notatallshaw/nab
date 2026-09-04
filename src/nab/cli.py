@@ -1,11 +1,10 @@
 """Entry point for the nab command: read the line, run it, write the result.
 
-:func:`run` is the whole CLI. It hands ``argv`` to the walk over
-:mod:`nab._cli.spec`, which answers with a page, a refusal or a command to
-dispatch into, and it returns the status the process should end with. The
-page, the refusal and a command's parting message all leave through
-:func:`run`'s one write per stream, so output that cannot be written is a
-status rather than a traceback.
+:func:`run` parses ``argv`` with :mod:`nab._cli.spec`. Parsing returns
+a page, a refusal, or a command to dispatch. ``run`` returns the process
+exit status. The page, refusal, and a command's parting message leave
+through :func:`run`'s one write per stream, so output that cannot be
+written becomes a status rather than a traceback.
 
 Nothing on this path imports a command module, ``pathlib`` or ``typing``.
 The four modules :func:`_load` reaches are loaded only by the line that
@@ -73,9 +72,8 @@ def _load(name: str) -> types.ModuleType:
 def run(argv: tuple[str, ...], resume: Callable[[], None] = _nothing) -> int:
     """Run one command line and report the status it ends with.
 
-    Both writes a run makes are here, one per stream. A stream that
-    refuses one replaces the status with 120, which is what makes a page
-    redirected to a full disk an exit code rather than a traceback.
+    Write the returned stdout and stderr payloads once each. A failed
+    payload write returns status 120 instead of raising.
 
     ``resume`` runs when the line reaches a command module, and not at
     all on a page or a refusal.

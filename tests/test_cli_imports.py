@@ -4,9 +4,8 @@ Every case here runs its probe as its own process, because the suite's
 own ``conftest`` imports :mod:`nab.cli` before any test runs and a probe
 sharing that interpreter would find the whole graph already built.
 
-The bans are the design's import rule: ``nab.cli`` reads a table and walks
-a line, so it needs no package of nab's own, no HTTP library and none of
-the heavier stdlib modules the rest of nab uses.  ``nab._cli.dispatch``,
+The import rule keeps ``nab.cli`` independent of nab's packages, HTTP
+libraries, and the heavier stdlib modules used elsewhere. ``nab._cli.dispatch``,
 ``nab._cli.render``, ``nab._cli.diagnose`` and ``nab.env`` are the
 sanctioned exemptions, and each is loaded only by a line that asked for it.
 
@@ -221,7 +220,7 @@ _PAGE_COST = frozenset({"collections.abc", "nab._cli.render", "nab.env"})
 def test_a_page_or_a_version_adds_only_what_writes_it(
     line: tuple[str, ...], expected: frozenset[str]
 ) -> None:
-    """Probe D: the renderer and the colour rule are the whole cost of ``--help``.
+    """Probe D bounds ``--help`` imports to renderer and colour support.
 
     A bound rather than a list, because ``collections.abc`` is already
     loaded on some interpreters.  It is a claim about which modules the line
@@ -256,7 +255,7 @@ def test_a_settings_command_loads_no_index_reader(
 
 
 def test_a_lock_command_holds_no_email_module(tmp_path: Path) -> None:
-    """Probe G: locking loads no header parser and no HTTP-date reader.
+    """Probe G: locking leaves the header and HTTP-date readers unloaded.
 
     :mod:`nab_index.cached_client` and :mod:`nab_index.local_index` are held
     by the line even under ``--offline``, which keeps the probe off the

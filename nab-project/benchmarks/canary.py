@@ -492,7 +492,7 @@ def parse_canary_case(spec: str) -> CanaryCase:
 
 
 def _retired_selector_replacement(spec: str) -> str | None:
-    """Translate a deleted clone selector into the explicit modern spelling."""
+    """Translate a deleted clone selector to its current form."""
     if ":" not in spec:
         return None
     stem, name = spec.split(":", 1)

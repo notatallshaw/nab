@@ -12,10 +12,10 @@ Declaring the conflict tells nab to keep them apart.
 ## Declaring a conflict
 
 Conflicts live in `[tool.nab].conflicts`. Each entry is a set of
-members that are mutually exclusive with each other. A member is an
-extra, a dependency group, or one of the groups `[tool.nab]` names
-itself: `base-group` for the project's own dependencies and
-`build-group` for its `[build-system].requires`.
+members and a policy constraining how many may or must be active. A
+member is an extra, a dependency group, or one of the groups
+`[tool.nab]` names itself: `base-group` for the project's own
+dependencies and `build-group` for its `[build-system].requires`.
 
 ```toml
 [tool.nab]
@@ -57,14 +57,14 @@ group in two sets is refused when the config is read, whether both sets
 sit in one file or one comes from `pyproject.toml` and the other from a
 project-directory `nab.toml`.
 
-Extra and group names are normalised (PEP 685 / PEP 735), so the
-spelling here does not have to match the table key exactly.
+Extra and group names are normalised (PEP 685 / PEP 735), so the name
+here does not have to match the table key exactly.
 
 In a workspace, `conflicts` is scoped to the pyproject being locked.
 Declaring conflicts in the workspace root does not propagate to a
 `nab lock packages/<member>/pyproject.toml`; each member declares
-its own. See [Lock a workspace](../how-to/workspaces.md) for the full
-list of keys that flow vs stay local.
+its own. See [Lock a workspace](../how-to/workspaces.md) for the
+workspace scoping rules.
 
 ## Conflicting the build requirements
 
@@ -136,11 +136,12 @@ When the selection activates two or more members of an exclusive set
 (`at-most-one` or `exactly-one`), nab does not reject it: it forks the
 resolve. For example `nab lock --extras cpu gpu`, or
 `nab lock --all-groups` over the `black*` groups above, resolves each
-member separately and writes every result into one lockfile. This is the
-same in specific and universal mode; the resolve mode does not change how
-a conflict is handled. Two cases are refused rather than forked, both
-covered below: a selection that reaches both members through one
-umbrella, and a `default-groups` that activates two members on its own.
+member separately and writes every result into one lockfile.
+
+Specific and universal mode handle conflicts the same way. Two cases
+are refused rather than forked: a selection that reaches both members
+through one umbrella, and a `default-groups` that activates two members
+on its own. Both are covered below.
 
 Each fork's pins carry a marker selecting that member:
 
@@ -159,7 +160,7 @@ marker = "... and \"black23\" in dependency_groups and \"black22\" not in depend
 The requirements formats name a fork with the `{selection}` variable in
 an `--output` template (`--output 'req-{selection}.txt'` writes
 `req-extra-cpu.txt` and `req-extra-gpu.txt`), since two forks of one
-tuple share every other axis and would otherwise collide onto one file.
+target share every other axis and would otherwise collide onto one file.
 
 When several sets are engaged at once, the forks are the cartesian
 product across them (one member chosen per set), so `black{22,23,24}`
@@ -213,25 +214,29 @@ A dependency required by every member of a set but not by the base
 keeps its membership marker, so it does not install when no member is
 selected (relevant under `at-most-one`, which permits selecting none).
 A base resolve names the deps that install regardless of the
-selection, which is how the writer tells the two apart. When the
-forks of one environment pin a base dependency at different versions,
-no single entry can serve the no-member context; the writer raises a
-`DivergentBaseDependencyError` rather than emit a lock that silently
-skips the dependency.
+selection, which is how the writer tells the two apart.
+
+When the forks of one environment pin a base dependency at different
+versions, no single entry can serve the no-member context; the writer
+raises a `DivergentBaseDependencyError` rather than emit a lock that
+silently skips the dependency.
 
 With two or more sets engaged, each entry names only the sets its
-package varies over. A dependency one member of one set pulls in at the
-same version in every fork of the other sets contributes no clause for
-them, so selecting that member on its own installs it, and a dependency
-a member of each of two sets reaches is selected by either alone. A
-package whose version does depend on the combination keeps the
+package varies over.
+
+If one set pulls a dependency at the same version in every fork of the
+other sets, its entry has no clause for those sets. Selecting that
+member alone installs it. A dependency reached by members of two sets
+is selected by either member alone.
+
+A package whose version does depend on the combination keeps the
 conjunction, and so does anything that requires it: an entry never
 fires where one of its own dependencies would not.
 
 An exclusive set forks only over the members the selection activates.
 The rest of its declared members are absent from the lock's `extras` and
 `dependency-groups` arrays and from every marker, so a set with an
-unselected member gates an entry exactly as one without it would.
+unselected member excludes an entry exactly as one without it would.
 
 A dependency a member shares with a selection outside the set names
 both in its marker (`"cpu" in extras or "docs" in extras`), so
@@ -241,7 +246,9 @@ The lockfile stays within PEP 751: the membership markers use the
 standard `extras` and `dependency_groups` variables, and each fork's
 marker negates the other members it was forked against
 (`"cpu" in extras and "gpu" not in extras`), so the forks are mutually
-exclusive in the markers themselves. A PEP 751 consumer that never
+exclusive in the markers themselves.
+
+A PEP 751 consumer that never
 reads `[tool.nab].conflicts` still installs at most one fork; the two
 entries cannot collide for a reader. A collision that is *not* covered
 by a declared conflict still raises a `DisjointnessError`, with a hint

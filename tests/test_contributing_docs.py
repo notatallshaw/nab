@@ -2,7 +2,7 @@
 
 A contributor pastes these into a shell, so a documented pytest flag has to be
 one the installed pytest accepts, and the documented coverage recipe has to run
-the steps CI's gate runs. A tool the page runs out of the development
+the same steps as CI. A tool the page runs out of the development
 environment has to be one that environment carries.
 """
 
@@ -115,7 +115,7 @@ def _ci_coverage_steps() -> set[str]:
 
 
 def _canonical(name: str) -> str:
-    """A distribution, module or script name in one spelling."""
+    """Return one normalized form of a distribution, module, or script name."""
     return name.lower().replace("_", "-")
 
 

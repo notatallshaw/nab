@@ -1,19 +1,7 @@
-"""One left-to-right walk over ``argv``, with the tables passed in.
+"""Parse ``argv`` from generated option tables without writing or exiting.
 
-:func:`build` reduces a table of generated rows to what the walk reads and
-returns a fresh mapping, so building a second table cannot disturb one
-already built.  :func:`parse` takes the root rows and the per-command rows
-as arguments, which is what lets a construction rule be proved against a
-fixture table and keeps every branch here reachable from a test.
-
-The walk stores every occurrence and reduces once at the end, so last-wins,
-accumulate, count and negation are four reductions over one list rather
-than four paths through the loop.  Conversion runs after the whole line
-parses, so an eager ``--help`` short-circuits a line whose values would
-not convert, while a word the walk itself refused raises where it stands.
-
-Nothing here writes or exits: a bad line raises :class:`UsageError` and
-:mod:`nab._cli.diagnose` turns it into text.
+Occurrences are reduced and converted after the walk, so eager options can skip
+conversion.
 """
 
 from __future__ import annotations
@@ -42,15 +30,15 @@ _LONG = "--"
 # What a tri-state boolean accepts as a separated value.
 _TRI_VALUES = frozenset({"True", "False", "None"})
 
-# The two spellings a bool converts from, in the order the message lists them.
+# The two text values a bool converts from, in message order.
 _BOOL_VALUES = ("True", "False")
 
 
 class UsageError(Exception):
     """A command line the walk refuses, with what a suggestion needs.
 
-    ``token`` is the word the user typed and ``candidates`` the spellings
-    it might have meant, both empty on an error no suggestion can help.
+    ``token`` is the word the user typed and ``candidates`` the option
+    names it might mean. Both are empty when no suggestion can help.
     ``root_options`` holds the root flags read before the refusal, so a
     refusal honours ``--color`` the way an eager page does.
     """
@@ -119,7 +107,7 @@ class Row:
 
 
 class Table:
-    """One command's rows: the spellings to match and the operands to fill."""
+    """One command's option names and operand slots."""
 
     __slots__ = ("operands", "options", "rows")
 
@@ -164,13 +152,13 @@ _Hit = tuple[Row, object]
 # The pair conversion works over: the row that stored a value and its dest.
 _Pending = tuple[Row, str]
 
-# Both live tables, innermost first.  A command's spellings never repeat the
-# root's, so the order is unobservable and only makes the lookup deterministic.
+# Both live tables, innermost first. Command option names never repeat
+# the root's, so the order only makes the lookup deterministic.
 _Tables = tuple[Table, Table]
 
 
 def build(rows: tuple[Spec, ...], *, root: bool = False) -> Table:
-    """Reduce ``rows`` to a table: spellings to rows, and the operands in order."""
+    """Reduce ``rows`` to option lookups and ordered operands."""
     built: list[Row] = []
     options: dict[str, Row] = {}
     operands: list[Row] = []
@@ -242,7 +230,7 @@ def _walk(
 
             # The command opens a level of its own: a ``--`` before it
             # ended the root's options rather than the line's, and its
-            # name has stopped being a spelling a suggestion may offer.
+            # name is no longer a candidate a suggestion may offer.
             unnamed_commands = ()
             ended = False
         elif ended:
@@ -306,9 +294,9 @@ def _is_option(word: str) -> bool:
 
 
 def _match(tables: _Tables, name: str) -> Row | None:
-    """Find the row ``name`` spells, retrying an unmatched name with hyphens.
+    """Find the row named by ``name``, retrying with hyphens.
 
-    Both underscored and dashed spellings have always parsed, and no declared
+    Both underscored and dashed forms have always parsed. No declared
     name holds an underscore, so the retry can never resolve to a second row.
     The alias is a lookup key: the caller still quotes the token the user
     typed.
@@ -462,7 +450,7 @@ def _star_value(
 ) -> int:
     """Take ``attached``, then every following token up to the next option-shaped one.
 
-    The attached and separated spellings take the same words, so
+    The attached and separated forms take the same words, so
     ``--groups=dev docs`` and ``--groups dev docs`` select the same two
     groups.
     """
@@ -604,7 +592,7 @@ def _integer(row: Row, value: str, prog: str) -> int:
 
 
 def _boolean(row: Row, value: str, prog: str) -> bool:
-    """Convert ``True`` or ``False``, the two spellings a boolean flag takes."""
+    """Convert ``True`` or ``False``, the accepted boolean values."""
     if value not in _BOOL_VALUES:
         raise _bad_choice(prog, row, value, _BOOL_VALUES)
     return value == "True"
@@ -631,13 +619,13 @@ def _quote(token: str) -> str:
 def _option_names(
     tables: _Tables, unnamed_commands: tuple[str, ...], *, negations: bool
 ) -> tuple[str, ...]:
-    """Collect the spellings a suggestion may offer, in declaration order.
+    """Collect suggestion candidates in declaration order.
 
     ``negations`` admits the generated ``--no-`` rows.  They are withheld
     from a positive typo, where a negation resembles the row it negates
     closely enough to fill the second slot every time, so ``--upgrad``
-    would answer ``--upgrade`` and ``--no-upgrade``.  A typo spelled
-    ``no-`` needs them, or the one spelling offered means the opposite of
+    would answer ``--upgrade`` and ``--no-upgrade``. A typo starting in
+    ``no-`` needs them, or the one name offered means the opposite of
     what was typed.
 
     Until a command has been named its name is a candidate too,
@@ -657,7 +645,7 @@ def _option_names(
 def _unknown_option(
     prog: str, name: str, tables: _Tables, unnamed_commands: tuple[str, ...]
 ) -> UsageError:
-    """Refuse a long spelling no table declares."""
+    """Refuse a long option no table declares."""
     message = f"unrecognized option {_quote(name)}"
     negations = name.lstrip("-").replace("_", "-").startswith("no-")
     candidates = _option_names(tables, unnamed_commands, negations=negations)

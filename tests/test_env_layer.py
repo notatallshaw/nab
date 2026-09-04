@@ -150,7 +150,7 @@ _ENVIRON_READS = frozenset({"environ", "getenv"})
 def _reads_the_environment(module: ast.Module) -> bool:
     """Whether ``module`` reaches ``os.environ`` or ``os.getenv``.
 
-    Both spellings count, and under whatever name they were bound:
+    Both access forms count, under whatever name they were bound:
     ``import os as _o`` and ``from os import environ`` are the two ways
     past a check that only knows the literal ``os.environ``.
     """

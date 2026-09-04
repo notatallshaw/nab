@@ -392,7 +392,7 @@ class TestStableOrderIgnoresArrival:
     """Under ``stable`` the scan settles a listing rather than ranking its absence."""
 
     def test_a_listing_that_lands_mid_scan_is_counted_now(self) -> None:
-        """The count is the real one, not the in-flight sentinel."""
+        """The count reflects the listing after its in-flight sentinel clears."""
         provider = Provider(
             _coordinator({"foo": [_wheel("foo")]}),
             decision_order=DecisionOrder.STABLE,

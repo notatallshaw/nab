@@ -114,17 +114,9 @@ _DEFAULT_VCS = VcsConfig()
 
 
 class EnvironmentConfig(ValueType):
-    """The single environment ``[tool.nab.environment]`` declares.
+    """The axes declared by ``[tool.nab.environment]``.
 
-    The axes a target is made of, the same ones a matrix entry carries.
-    An unset axis takes the host's value, so an empty table is the host
-    and a table naming only ``python`` is the host machine running
-    another Python.
-
-    ``platform`` is the same :class:`~nab_provider.tags.PlatformSpec` a
-    ``matrix.platforms`` entry parses to, so the wheel-tag knobs (the libc
-    family, the libc and macOS the lock must run on, the kernel
-    marker values, the free-threaded build) are declarable here too.
+    Unset axes use the host. ``platform`` accepts a matrix ``PlatformSpec``.
     """
 
     __slots__ = __match_args__ = ("python", "platform", "implementation")
@@ -306,48 +298,26 @@ def read_pyproject_config(
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, Any] | None = None,
 ) -> NabProjectConfig:
-    """Parse ``[tool.nab]`` from ``path`` into :class:`NabProjectConfig`.
+    """Read the project's effective :class:`NabProjectConfig`.
 
-    Returns the default ``NabProjectConfig`` when the table is absent.
-    Unknown keys at the top level are rejected so typos fail loud.
+    The project ``nab.toml`` and ``path``'s ``[tool.nab]`` table share one
+    precedence level. Setting the same option differently is an error; lists
+    and tables are each compared as one value. ``cli_overrides`` is the
+    highest layer. A scalar or list replaces the file value; a table override
+    replaces the keys it names.
 
-    When ``discover_workspace`` is true (the default), the merged
-    ``workspace`` table drives discovery and its members resolve against
-    the project directory.  A project that declares no workspace of its
-    own walks up from ``path`` for the first ancestor project file that
-    declares one.  Either way every member is materialised as an
-    additional :class:`LocalSource` (explicit
-    ``[[tool.nab.local-sources]]`` entries win on collision).  A workspace
-    does not change the effective ``build-policy``: a member with dynamic
-    metadata needs a build, and under ``never`` it is refused like any
-    other source.  Pass ``discover_workspace=False`` to skip discovery;
-    useful for tests or for callers that layer their own workspace logic
-    on top of a base config.
+    ``anchor`` fixes the instant used by ``P<n>D`` durations. It defaults to
+    the current UTC time; the lock CLI may reuse a lock's recorded timestamp.
 
-    The ``[tool.nab]``-config portion is sourced from the registry merged
-    ladder (pyproject ``[tool.nab]`` plus a project-dir ``nab.toml``,
-    merged by :func:`nab.config.ladder.resolve_config` with its per-key merge,
-    cross-file conflict check, and category gate), so a project-dir
-    ``nab.toml`` value configures the resolve exactly as the inspector
-    reports it.  The
-    cross-field transforms (mode/matrix, the build-policy host-build gate,
-    universal marker-environment ban, source-name uniqueness, declared
-    index references) then run on the merged config; workspace discovery
-    runs last.
+    By default, workspace discovery finds the declared or nearest ancestor
+    workspace and adds its members as local sources, with explicit sources
+    winning name collisions. It does not relax ``build-policy``. Pass
+    ``discover_workspace=False`` when the caller owns discovery.
 
-    ``anchor`` is the timestamp ``P<n>D`` durations resolve against.
-    Defaults to ``datetime.now(UTC)`` when not supplied, which gives
-    fresh-resolve semantics.  The ``nab lock`` CLI passes the anchor
-    captured in any existing lockfile so re-locks reproduce the same
-    cutoff for relative durations.
-
-    ``cli_overrides`` carries the ``--project-*`` overrides for the
-    PROJECT options that take a CLI flag, keyed by registry key.  They
-    layer as the highest-precedence source, so a flag wins over both
-    project files; a table key arrives as a
-    :class:`~nab.config.subflags.CliTable` and replaces the keys it names
-    inside whatever table the files declared.  ``None`` (the default) is a
-    file-only resolve, byte-identical to before.
+    A missing ``[tool.nab]`` table contributes no values; project ``nab.toml``,
+    ``[project].requires-python``, CLI overrides, and built-in defaults still
+    apply. Unknown keys and invalid cross-field combinations raise
+    :class:`ConfigError`.
     """
     if anchor is None:
         anchor = datetime.now(timezone.utc)
@@ -361,10 +331,6 @@ def read_pyproject_config(
     # and the project-dir nab.toml lookup resolve against.  ``open`` still
     # follows the symlink, so the same file is read.
     roots = SourceRoots(project_dir=pyproject_dir, pyproject=pyproject_dir / path.name)
-    # Bind the lock anchor so the registry resolves ``P<n>D`` durations
-    # (top-level and override-body) against it.  System/user nab.toml and
-    # env/CLI carry no PROJECT key, so they are excluded here: this is the
-    # file-only project config.
     with resolve_anchor(anchor):
         layers = discover_layers(roots)
         cli_layer = build_cli_layer(cli_overrides or {})
@@ -392,18 +358,10 @@ def _config_from_effective(
     pyproject_dir: Path,
     project_requires_python: str | None = None,
 ) -> NabProjectConfig:
-    """Assemble :class:`NabProjectConfig` from the registry merged ladder.
+    """Build a project config after single-option precedence is resolved.
 
-    Each ``[tool.nab]`` config key is taken from its effective (merged)
-    value; the registry has already applied the per-key merge, the
-    cross-file conflict rule, and the category gate.  The cross-field
-    transforms the single-key rows deliberately defer (mode/matrix mutual
-    requirement, declared-index references for routing and per-index
-    overrides, the cross-surface package-override overlap, the resolve-target
-    plan and the build-policy enforcement it drives, the
-    default-groups-vs-conflicts check, and source-name uniqueness) then run
-    here over the merged whole.  Workspace discovery is applied by the
-    caller afterwards.
+    This applies cross-option validation and transformations. The caller
+    applies workspace discovery afterwards.
 
     ``project_requires_python`` is ``[project].requires-python``, the
     fallback source for the declaration when ``[tool.nab]`` sets none.
@@ -560,13 +518,7 @@ def _specific_mode_message(matrix_value: EffectiveValue) -> str:
 def _matrix_environment_message(
     matrix_value: EffectiveValue, environment_value: EffectiveValue
 ) -> str:
-    """Say why a matrix and a declared environment cannot both stand.
-
-    ``environment_value`` is the surface the environment came from, so the
-    deprecated overlay is named as the overlay.  Each file side is named the
-    way the file that declared it writes it, since a matrix in a
-    ``pyproject.toml`` can sit beside an environment in a ``nab.toml``.
-    """
+    """Explain why matrix and environment declarations conflict."""
     matrix_flags = _declared_by(matrix_value)
     environment_flags = _declared_by(environment_value)
     matrix = " and ".join(matrix_flags) or f"[{_declared_table(matrix_value)}]"
@@ -1208,7 +1160,7 @@ def _reject_duplicate_source_names(
     """
     seen: dict[str, str] = {}
     # The three types share only SlottedValue, which declares no name, so the
-    # joined tuple needs the element type spelling out.
+    # joined tuple needs an explicit element union.
     declared: tuple[LocalSource | VcsSource | ArchiveSource, ...] = (
         *local_sources,
         *vcs_sources,
@@ -1254,10 +1206,10 @@ def _reject_vcs_sources_under_block(
     it. The two project files share a precedence rank, so a policy written
     into the other one conflicts instead of overriding.
 
-    ``policy = "allow"`` opens the gate but does not on its own admit a
+    ``policy = "allow"`` permits checks but does not on its own admit a
     URL: ``allowed-schemes`` and ``allowed-repos`` are empty by default
     and each denies every URL until an entry is added, so the message
-    points at the whole gate rather than promising that one key is enough.
+    names all settings instead of promising that one key is enough.
     """
     sources: tuple[VcsSource, ...] = vcs_sources.value
     config: VcsConfig = vcs.value
@@ -1277,8 +1229,9 @@ def _reject_vcs_sources_under_block(
     msg = (
         f"[[{sources_table}]] is declared but [{vcs_table}].policy is"
         f" {config.policy.value!r}, which refuses every clone; remove"
-        f' the sources, or set [{vcs_table}].policy = "allow" and open the'
-        " rest of the gate (vcs.allowed-schemes and vcs.allowed-repos are"
+        f' the sources, or set [{vcs_table}].policy = "allow" and'
+        " configure the remaining VCS filters (vcs.allowed-schemes and"
+        " vcs.allowed-repos are"
         " empty by default and each denies every URL)"
     )
     raise ConfigError(msg)

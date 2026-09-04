@@ -158,7 +158,7 @@ def _resolved(target: ResolveTarget, pins: dict[str, Version]) -> TargetResult:
 
 
 def _failed(target: ResolveTarget, error: ResolutionError | None) -> TargetResult:
-    """A failed :class:`TargetResult`: no pins, no lock, just the error."""
+    """A failed :class:`TargetResult` carrying only its error."""
     return TargetResult(target=target, success=False, pins={}, error=error, lock=None)
 
 
@@ -829,7 +829,7 @@ class TestLockCommandSpecific:
         assert "dependency-groups" not in written
 
     def test_build_group_reaches_the_lock(self, tmp_path: Path) -> None:
-        """The configured name is what the writer offers and gates on."""
+        """The writer offers and selects on the configured name."""
         pyproject = _make_pyproject(
             tmp_path,
             '[project]\nname = "proj"\ndependencies = ["foo"]\n'
@@ -1044,7 +1044,7 @@ class TestLockCommandSpecific:
         Directly co-selecting two members of a declared conflict set
         forks a single-environment resolve into one target per member,
         so a failed fork has a sibling that resolved.  The report labels
-        each fork and keeps the succeeded fork's pins, as a matrix does.
+        each fork and keeps the succeeded fork's pins using matrix formatting.
         """
         pyproject = _make_pyproject(
             tmp_path,
@@ -1288,7 +1288,7 @@ class TestLockCommandSpecific:
     def test_malformed_simple_response_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A malformed Simple-API listing exits 1 cleanly, not a raw traceback.
+        """A malformed Simple-API listing exits 1 without a traceback.
 
         Raises the parser's real error so the test tracks whatever type a
         broken 200 body produces.
@@ -1314,7 +1314,7 @@ class TestLockCommandSpecific:
         monkeypatch: pytest.MonkeyPatch,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """An unreadable file:// index exits 1 cleanly, not a raw traceback.
+        """An unreadable file:// index exits 1 without a traceback.
 
         A local index makes no request, so its failures are not HTTP errors.
         Raises the local client's real error so the test tracks whatever type
@@ -1411,7 +1411,7 @@ class TestLockCommandSpecific:
 
         PEP 440 gives the compatible-release operator no meaning over a
         single-component release, so PEP 508 accepts the clause and nothing
-        evaluates it. It needs no matrix and no ``--python``.
+        evaluates it. The default host target is enough to reach the error.
         """
         pyproject = _make_pyproject(
             tmp_path,
@@ -1970,7 +1970,7 @@ class TestLockCommandSpecific:
     def test_output_is_directory_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--output naming an existing directory exits cleanly, not a traceback."""
+        """--output naming an existing directory exits 1 without a traceback."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         out.mkdir()
@@ -1986,7 +1986,7 @@ class TestLockCommandSpecific:
     def test_output_missing_parent_dir_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--output under a non-existent directory exits cleanly, not a traceback."""
+        """--output under a missing directory exits 1 without a traceback."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "nope" / "pylock.toml"
         with (
@@ -2413,8 +2413,8 @@ class TestProjectFlagErrors:
     """A bad ``--project-*`` value reads as a flag error, not a table one.
 
     These overrides fold through the same ``[tool.nab]`` parse the file
-    uses, so the error must name the flag rather than the ``[tool.nab]``
-    table, which the project may not even have.
+    uses. The error names the flag because the project may lack the
+    ``[tool.nab]`` table.
     """
 
     def test_requires_python_bad_value_names_the_flag(
@@ -2795,7 +2795,7 @@ class TestLockCommandUniversal:
     def test_config_error_during_resolve_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A ConfigError raised by the universal resolve exits 1 cleanly."""
+        """A ConfigError raised by the universal resolve exits 1."""
         pyproject = _universal_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
         with (
@@ -3228,7 +3228,7 @@ class TestLockCommandUniversal:
     def test_unsupported_vcs_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A direct-URL requirement refused in universal mode exits cleanly."""
+        """A refused direct-URL requirement exits 1 in universal mode."""
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
@@ -3453,7 +3453,7 @@ class TestLockCommandUniversal:
     def test_malformed_simple_response_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A malformed Simple-API listing exits 1 cleanly, not a raw traceback."""
+        """A malformed Simple-API listing exits 1 without a traceback."""
         from nab_index.client import _parse_files
 
         with pytest.raises(HttpError, match="malformed Simple-API") as caught:
@@ -4866,8 +4866,7 @@ class TestLockAnchorReuse:
         assert read_lockfile_anchor(out) == absolute
 
     def test_relative_cutoff_window_uses_reused_anchor(self, tmp_path: Path) -> None:
-        # The reused created-at sets the resolve window, not just the recorded
-        # provenance.
+        # The reused created-at sets the resolve window and recorded provenance.
         assert self._relock_cutoff(tmp_path) == self._RECORDED - timedelta(days=4)
 
     def test_upgrade_moves_relative_cutoff_window(self, tmp_path: Path) -> None:
@@ -5044,7 +5043,7 @@ class TestLockedFlag:
     def test_a_renamed_base_group_is_out_of_date(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Renaming the group renames a marker on every package it gates.
+        """Renaming the group renames a marker on every package it selects.
 
         Nothing else about the lock changes, so only the name the writer
         would now use can tell the checker it is stale.
@@ -5716,8 +5715,8 @@ class TestGroupAndExtraSelection:
 class TestEmitHelpers:
     """The emit helpers accept a lock input with no provenance.
 
-    ``LockInput.provenance`` defaults to ``None``, so a caller that does
-    not want a ``[tool.nab]`` block simply never sets it.
+    ``LockInput.provenance`` defaults to ``None``. A caller omits it to avoid
+    a ``[tool.nab]`` block.
     """
 
     def test_emit_without_provenance(self, tmp_path: Path) -> None:
@@ -5858,6 +5857,27 @@ class TestHelpText:
         assert "--no-no-emit-workspace" not in help_text
         assert "--no-emit-workspace " in help_text
 
+    def test_lock_help_explains_output_defaults_and_universal_templates(self) -> None:
+        help_text = " ".join(_command_help("lock").split())
+        assert "defaults to pylock.toml or requirements.txt" in help_text
+        for variable in ("{python_version}", "{platform_id}", "{selection}"):
+            assert variable in help_text
+        assert "must render uniquely for every target" in help_text
+
+    def test_lock_help_distinguishes_requirements_hash_lines(self) -> None:
+        help_text = " ".join(_command_help("lock").split())
+        assert "requirements with index-pin hash lines" in help_text
+        assert "requirements without them" in help_text
+
+    def test_lock_help_explains_build_requirements_output(self) -> None:
+        help_text = " ".join(_command_help("lock").split())
+        assert "defaults to pylock.build.toml or build-requirements.txt" in help_text
+
+    def test_lock_help_explains_omitted_workspace_pins(self) -> None:
+        help_text = " ".join(_command_help("lock").split())
+        assert "omit workspace pins but keep members in resolution" in help_text
+        assert "outside a hashed-requirements run" in help_text
+
     def test_download_cache_flag_has_no_double_negative(self) -> None:
         help_text = _command_help("download")
         assert "--no-no-cache" not in help_text
@@ -5991,7 +6011,7 @@ class TestEagerLinesIgnoreVerbosityFromTheEnvironment:
 
 
 class TestOfflineFlagSurface:
-    """All four ``--offline`` spellings, and what an absent flag leaves.
+    """All four ``--offline`` forms and the result of an absent flag.
 
     ``offline`` is layered, so the flag is tri-state: an explicit value
     overrides the config layers while an absent one defers to them. The
@@ -6653,7 +6673,7 @@ class TestMainWiresOutputOptions:
     def test_debug_verbosity_lowers_the_engine_log_level(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``-vv`` reaches the log handler, not just the printer."""
+        """``-vv`` reaches both the log handler and printer."""
         printer, _stderr = self._run_lock(tmp_path, monkeypatch, "-vv")
         assert printer.verbosity is Verbosity.DEBUG
         assert logging.getLogger("nab_project").getEffectiveLevel() == logging.DEBUG
@@ -6707,7 +6727,7 @@ class TestMainWiresOutputOptions:
     def test_no_progress_flag_blocks_progress(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """``--no-progress`` reaches the printer that gates the progress line."""
+        """``--no-progress`` reaches the printer's progress condition."""
         printer, _stderr = self._run_lock(tmp_path, monkeypatch, "--no-progress")
         assert printer.progress_allowed is False
 
@@ -6900,7 +6920,7 @@ class TestMakeTransport:
     def test_httpx_missing_exits_with_hint(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """When httpx isn't installed, the CLI exits cleanly with a hint."""
+        """When httpx isn't installed, the CLI exits with an installation hint."""
         original_import = builtins.__import__
 
         def fake_import(name: str, *args: object, **kwargs: object) -> object:
@@ -7136,7 +7156,7 @@ class TestDownloadCommand:
     def test_threads_offline_into_the_artefact_fetch(
         self, tmp_path: Path, offline: bool
     ) -> None:
-        """``--offline`` must reach the download, not just the resolve."""
+        """``--offline`` reaches both resolution and download."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "vendor"
         download_result = DownloadResult(written=(), skipped=())
@@ -7152,7 +7172,7 @@ class TestDownloadCommand:
         assert mock_dl.call_args.kwargs["offline"] is offline
 
     def test_http_backend_reaches_both_transports(self, tmp_path: Path) -> None:
-        """``--http-backend`` must reach the download, not just the resolve."""
+        """``--http-backend`` reaches both resolution and download."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "vendor"
         download_result = DownloadResult(written=(), skipped=())
@@ -7366,7 +7386,7 @@ class TestDownloadCommand:
     def test_universal_config_error_during_resolve_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """A ConfigError out of the universal download path exits 1 cleanly."""
+        """A ConfigError from the universal download path exits 1."""
         pyproject = _universal_pyproject(tmp_path)
         with (
             patch(
@@ -7470,7 +7490,7 @@ class TestDownloadCommand:
     def test_output_is_existing_file_exits(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """--output colliding with an existing file exits cleanly, not a traceback."""
+        """--output colliding with a file exits 1 without a traceback."""
         pyproject = _make_pyproject(tmp_path)
         out = tmp_path / "wheels"
         out.write_text("not a directory")
@@ -7499,10 +7519,10 @@ class TestDownloadCommand:
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """A directory path exits 1 with a clean message, not a traceback.
+        """A directory path exits 1 without a traceback.
 
         The group/extra selection flags read the path before the config
-        load, so they must reject a directory just as cleanly.
+        load, so they must reject a directory with the same message.
         """
         with pytest.raises(SystemExit, match="1"):
             download(tmp_path, **kwargs)
@@ -7526,7 +7546,7 @@ class TestDownloadCommand:
     ) -> None:
         """``nab download`` names a lock as one under every selection flag.
 
-        Only the bare arm reaches the guard through the config load; the
+        Only the bare path reaches the guard through the config load; the
         selection flags read the path first and have to say the same thing.
         """
         pylock = _make_pylock_with_groups(tmp_path)

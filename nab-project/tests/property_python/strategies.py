@@ -108,7 +108,7 @@ def non_empty_specifiers(draw: st.DrawFn) -> SpecifierSet:
     """Generate a ``SpecifierSet`` that admits at least one version.
 
     Falls back to the empty ``SpecifierSet`` (which admits everything)
-    if Hypothesis happens to draw an obviously-unsatisfiable
+    if Hypothesis draws an unsatisfiable
     combination.
     """
     spec = draw(pep440_specifiers())
@@ -215,8 +215,8 @@ def small_packaging_graphs(
     return graph
 
 
-# A version pool wide enough that random bounds over it land on every
-# interesting shape: pre-release, dev, post, local, and a second epoch.
+# The version pool includes pre-releases, development and post releases, local
+# versions, and a second epoch.
 RANGE_VERSION_POOL = [
     "0.9",
     "1.0.dev1",

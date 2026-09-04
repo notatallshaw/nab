@@ -1,9 +1,8 @@
 """Hold the package to the API its own docstring advertises.
 
-``nab_resolver`` re-exports nothing, so the module paths listed in its
-docstring are the whole surface an embedder has to import from.  A name that
-moves out from under one of them breaks the promise rather than refactoring
-behind it, and the README carries a second copy of the list that can drift.
+``nab_resolver`` re-exports nothing. Its docstring lists the supported import
+paths for embedders. Moving a name from one of those paths breaks that promise,
+and the README carries a second copy of the list that can drift.
 
 The docstring being true is not the same as it being current, so a new public
 name in a promised module has to be either promised or written off below.

@@ -1,13 +1,6 @@
-"""Build a help page out of the same table the walk reads.
+"""Render help from the parser's option tables without writing it.
 
-The page is returned as a string, so the caller owns the one write site
-and a page that cannot be written is one status rather than a traceback.
-Help is wrapped rather than truncated, at the terminal's width, by a
-greedy wrapper here rather than by :mod:`textwrap`, which the design's
-import rule keeps off this path along with the :mod:`re` it pulls in.
-
-Colour is handed in as a flag rather than decided here, so the width is
-the only environment this module reads.
+The caller supplies the colour decision. Only terminal width comes from the environment.
 """
 
 from __future__ import annotations
@@ -31,18 +24,14 @@ _GAP = 2
 # The metavar each value type prints when the row declares no choices.
 _METAVARS = {"path": "PATH", "int": "INT", "str": "STR"}
 
-# Bold marks structure and cyan marks a token the reader can type.  The two
-# are never combined: bold plus a colour selects the bright slot, which a
-# theme may map to a grey with less contrast than the plain hue.
-# :mod:`nab.output` holds nab's other SGR table, and importing it would pull
-# the whole output layer onto a path that writes one page.
+# Keep bold and cyan separate because some themes give their combined bright
+# colour too little contrast. Local codes keep ``nab.output`` off this path.
 _BOLD = "\033[1m"
 _CYAN = "\033[36m"
 _RESET = "\033[0m"
 
-# One entry as the layout sees it: the spelling it measures, the spelling it
-# writes, and the help beside them.  The two spellings differ by escapes,
-# which occupy no cell and so cannot be measured.
+# One entry holds measured text, displayed coloured text, and help.
+# The display form has escapes, which occupy no cell.
 _Entry = tuple[str, str, str]
 
 
@@ -76,10 +65,9 @@ def terminal_width(environ: dict[str, str] | None = None) -> int:
 
 
 def wrap(text: str, width: int) -> list[str]:
-    """Break ``text`` into lines of at most ``width``, never cutting a word.
+    """Wrap ``text`` without splitting words.
 
-    A word longer than ``width`` takes its own line and overruns, which is
-    what every wrapper does with an unbreakable token.
+    A word longer than ``width`` occupies one over-width line.
     """
     lines: list[str] = []
     line = ""
@@ -190,7 +178,7 @@ def _option_entries(
 def _operand_entries(table: Table, texts: tuple[str, ...]) -> list[_Entry]:
     """One entry per operand slot, in the order it binds.
 
-    An operand names a placeholder rather than a spelling to type, so it
+    An operand names a placeholder rather than an option to type, so it
     takes no colour and its two forms are the same string.
     """
     entries = []
@@ -204,7 +192,7 @@ def _operand_entries(table: Table, texts: tuple[str, ...]) -> list[_Entry]:
 def _spelling(row: Row, negation: str, *, color: bool) -> str:
     """How one option is written: its names, its value, then its negation.
 
-    The names and the negation are spellings a reader can type; the metavar
+    The names and the negation are literal options; the metavar
     stands in for a value, so it stays the terminal's own foreground.
     """
     names = [f"-{row.short}", row.long] if row.short else [row.long]
@@ -254,7 +242,7 @@ def _metavar(row: Row) -> str:
     if row.kind == "star":
         return f"{name} ..."
     # A tri reads its value only when one is written, so the bare flag is
-    # a spelling too and the brackets are the page's way of saying so.
+    # valid too and the brackets are the page's way of saying so.
     return f"[{name}]" if row.kind == "tri" else name
 
 
@@ -267,7 +255,7 @@ def _layout(
     *,
     color: bool,
 ) -> str:
-    """Lay the page out around one spelling column, wrapping every help line."""
+    """Lay out one option column and wrap every help line."""
     lines = [usage]
     if summary:
         lines.append("")
@@ -290,9 +278,9 @@ def _layout(
 
 
 def _column(sections: list[tuple[str, list[_Entry]]], width: int) -> int:
-    """Where the help text starts: past the widest spelling that fits half the page.
+    """Start help after the widest option that fits in half the page.
 
-    A spelling wider than half the width takes its own line instead of
+    A wider option takes its own line instead of
     pushing every help line into the right margin.
     """
     limit = width // 2
@@ -306,7 +294,7 @@ def _column(sections: list[tuple[str, list[_Entry]]], width: int) -> int:
 
 
 def _entry(plain: str, painted: str, text: str, column: int, width: int) -> list[str]:
-    """One entry: the spelling, then its help, hanging under the column.
+    """Write one option and hang its help under the column.
 
     The padding is measured off ``plain`` and written with ``painted``, so a
     page keeps one column whether or not it carries escapes.

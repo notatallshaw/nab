@@ -1,18 +1,6 @@
-"""Lower a declared row to the :class:`nab.optiondefs.Opt` everything reads.
+"""Lower declared rows into :class:`nab.optiondefs.Opt` values.
 
-This is the one module that sees both sides, so the declaration gains a
-vocabulary without ``Opt``, its rules or any reader of :data:`ALL` changing.
-
-Two refusals live here because they need both sides of a row at once, and
-both name the row that broke:
-
-- a choice row that says it ``mirrors`` an enum whose members it no longer
-  lists, which is the tie a hand-written ``Literal`` alias otherwise loses;
-- a layered choice row whose rung 0 is not one of the tokens its own flag
-  offers.
-
-The refusals :func:`nab.optiontypes.shape` raises take the row's name from
-here, so those read like the two above.
+Checks that need both the row declaration and inferred value shape live here.
 """
 
 from __future__ import annotations

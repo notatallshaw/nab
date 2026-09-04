@@ -881,7 +881,7 @@ class TestAdmitVcsUrlRawBytes:
             admit_vcs_url(f"git+https://{login}github.com/myorg/repo?", config)
 
     def test_control_character_reaches_the_clone_url(self) -> None:
-        """The tab survives into the clone URL, not just the admission check."""
+        """The tab survives admission and reaches the clone URL."""
         request = VcsRequest.parse(f"git+ssh://git@github.com/myorg/repo\t@{_FORTY}")
         assert request.repo_url == "ssh://git@github.com/myorg/repo\t"
         assert request.ref == _FORTY

@@ -52,13 +52,10 @@ if TYPE_CHECKING:
 
 
 def require_pyproject_file(path: Path) -> None:
-    """Exit 1 if ``path`` is not a readable pyproject file.
+    """Exit 1 for a missing, non-file, or pylock project path.
 
-    Shared by every command that takes a project path, so the rejection
-    wording lives in one place.  A ``--path`` that is missing, a
-    directory, or not a regular file is a hard error, not a
-    silently-skipped source.  A path whose stat fails passes: the config
-    read reports it, naming the errno.
+    Stat and read failures pass through so the config reader reports the
+    errno.
     """
     state = path_state(path)
 
@@ -83,11 +80,7 @@ def require_pyproject_file(path: Path) -> None:
 
 
 def _default_cache_dir() -> Path:
-    """Return the default per-user cache root.
-
-    Mirrors ``platformdirs.user_cache_path("nab")`` without the
-    dependency: ``$XDG_CACHE_HOME/nab`` or ``~/.cache/nab``.
-    """
+    """Return ``$XDG_CACHE_HOME/nab`` or ``~/.cache/nab``."""
     base = env.cache_root()
     if base:
         return Path(base) / "nab"
@@ -110,11 +103,10 @@ def effective_config(
     rejected_out: list[RejectedLayer] | None = None,
     read_pyproject: bool = True,
 ) -> dict[str, EffectiveValue]:
-    """Resolve the full layered config for the pyproject at ``path``.
+    """Resolve config layers for the project at ``path``.
 
-    Discovers the TOML layers over :func:`config_search_roots`, reads the
-    ``NAB_*`` layer, builds the CLI layer from the keys ``cli_overrides``
-    names, and merges the four through the registry.
+    The option registry parses and merges the discovered TOML,
+    environment, and CLI layers.
 
     ``collect_rejected`` attaches each key's category-rejections to its
     ``EffectiveValue``.  ``rejected_out`` takes the whole rejection list,
@@ -181,8 +173,7 @@ class RunSettings:
     cache_dir: Path | None
     http_backend: str
     max_concurrency: int
-    # The (flag, rendered value) pairs for any --project-* override set on
-    # the CLI, recorded into the lockfile provenance so the lock is auditable.
+    # Explicit --project-* overrides as rendered flag/value pairs.
     cli_project_overrides: tuple[tuple[str, str], ...]
 
 
@@ -368,15 +359,10 @@ def _layered_run_settings(effective: Mapping[str, EffectiveValue]) -> RunSetting
 def _layered_run_settings_or_exit(
     ladder: ConfigLadder, *, produces_lock: bool = True
 ) -> RunSettings:
-    """Fold the ladder's run knobs, exiting on a category error it holds.
+    """Fold the run settings or exit on a config error.
 
-    The single ``SourceConfigError`` -> ``error: config error: ...`` ->
-    ``exit(1)`` mapping shared by ``nab lock`` and ``nab download`` lives
-    here.  On success it also emits the reproducibility notice when a
-    PROJECT option was set on the CLI, so a result-shaping override is
-    never silent.  ``produces_lock`` picks the wording: ``nab lock`` warns
-    about the lock it produces while ``nab download`` (which writes no
-    lock) warns only that the resolved set reflects the override.
+    Emit a normal-level notice for CLI PROJECT overrides.
+    ``produces_lock`` selects its wording.
     """
     if isinstance(ladder, SourceConfigError):
         _fail_config(ladder)

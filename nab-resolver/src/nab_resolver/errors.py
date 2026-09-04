@@ -34,7 +34,8 @@ class ResolutionError(Exception):
 
     ``verbose_message`` is the same report at more depth, set by whatever
     augments the error with what the resolve knows beyond the derivation.
-    It is None when nothing did, and ``str(error)`` is then all there is.
+    With no augmentation, it is None. ``str(error)`` returns the base
+    report.
 
     Reference: https://github.com/dart-lang/pub/blob/master/doc/solver.md#error-reporting
     """

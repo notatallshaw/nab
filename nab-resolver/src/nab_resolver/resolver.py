@@ -156,11 +156,8 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
     ) -> bool:
         """Return whether ``choose_version`` would pick a version in ``version_range``.
 
-        A diagnostic query with no lasting side effect: it is used to attribute a
-        ``NO_VERSIONS`` failure to a user constraint only when the un-narrowed
-        range still offers a version the constraint clipped away.  Providers that
-        queue clauses or record state during ``choose_version`` must not let any
-        of that escape here.
+        Providers must restore decision-affecting state but may retain evidence
+        used only in failure diagnostics.
         """
         ...
 
@@ -259,7 +256,7 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         Drained after every ``choose_version`` call.  When non-empty AND
         ``choose_version`` returned None, the resolver suppresses the default
         ``NO_VERSIONS`` clause (which would persist across backjumps) so the
-        provider's context-aware clauses become the source of truth.
+        provider's context-aware clauses replace it.
         """
         ...
 
@@ -270,7 +267,7 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         the resolver bumps each package's culprit count past the
         demote threshold, queues it, and fires
         ``apply_targeted_backtrack`` without waiting for the normal
-        conflict-count gate.
+        conflict-count threshold.
 
         Providers without a force-backtrack signal return an empty list.
         """
@@ -301,14 +298,13 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
     ) -> RangeProtocol[VersionType]:
         """Map a possibly-widened ``constraint`` back onto known versions.
 
-        Applied at error-render time only; the derivation state is never
-        mutated.  The renderer narrows every originally-positive term, so
-        ``package`` may be the virtual root sentinel or another package
-        outside the provider's namespace; return such constraints
-        unchanged, as providers that do not widen do for all input.
+        Applied only to positive terms at error-render time, except that a
+        ``NO_VERSIONS`` term keeps its stored range. The derivation state is never
+        mutated. ``package`` may be the virtual root sentinel or another package
+        outside the provider's namespace; return those constraints unchanged.
 
         Soundness contract: the result must hold the same known versions as
-        ``constraint``.  The renderer reports what a narrowing drops as a range
+        ``constraint``. The renderer reports what a narrowing drops as a range
         holding no version, so dropping one that exists states a falsehood.
         """
         ...

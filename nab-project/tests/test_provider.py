@@ -208,12 +208,7 @@ def make_sdist(
 
 
 class _CountingVersion(Version):
-    """A version that counts every comparison it takes part in.
-
-    Python tries a subclass's reflected comparison first, so a listing entry
-    compared as ``entry == version`` counts here too. Every operator is
-    defined so the count does not depend on which one the caller reaches for.
-    """
+    """Count comparisons, including reflected comparisons from listing entries."""
 
     def __init__(self, version: str) -> None:
         super().__init__(version)
@@ -2157,7 +2152,7 @@ class TestNoVersionsReasons:
         assert short_reason(provider, "foo") == "no version matches the requirement"
 
     def test_another_spelling_of_a_kept_version_is_not_a_filtered_match(self) -> None:
-        """A release that survived under another spelling was not filtered.
+        """A release retained under another form was not filtered.
 
         The wheel's ``1.0`` and the sdist's ``1.0.0`` are one release, which
         the listing collapses onto the ``1.0`` representative.  ``===``
@@ -2207,7 +2202,7 @@ class TestNoVersionsReasons:
     def test_present_but_wheel_tags_incompatible_names_the_tags(self) -> None:
         """A Windows-only package on a Linux target reads like pip's message.
 
-        pywin32 is the real case: every wheel is ``win_*`` and there is no
+        pywin32 is the motivating example: every wheel is ``win_*`` and there is no
         sdist, so the target has nothing to install and the reason has to
         say so rather than blame requires-python.
         """
@@ -2694,9 +2689,9 @@ class TestNoVersionsReasons:
         """Candidates that disagree on the blocker still read as requirements.
 
         ``foo`` 2.0 requires ``bar==3.0`` and 1.0 requires ``bar==1.0``, a
-        union no specifier set spells, so the line states the two pins one by
+        union no specifier set expresses, so the line states the two pins one by
         one.  Neither pin names a version ``bar`` publishes, so its listing
-        cannot supply a spelling whether or not it is cached.
+        cannot supply a representation whether or not it is cached.
         """
         coordinator = make_coordinator(
             listings={
@@ -2727,10 +2722,10 @@ class TestNoVersionsReasons:
         )
 
     def test_declared_pins_covering_the_listing_keep_their_spelling(self) -> None:
-        """Pins that between them cover every listed version stay on the line.
+        """Pins covering every listed version stay on the line.
 
-        ``bar`` publishes only the two versions ``foo`` pins, so spelling
-        their union over that listing would name every version and leave no
+        ``bar`` publishes only the two versions ``foo`` pins. Formatting their
+        union over that listing would name every version and leave no
         requirement in the sentence.
         """
         coordinator = make_coordinator(
@@ -3280,8 +3275,8 @@ class TestGetDependencies:
         provider = Provider(coordinator, target=_PY312)
         with pytest.raises(MetadataError, match="Invalid metadata"):
             provider.get_dependencies("foo", V("1.0"))
-        # Make the underlying parse blow up if we go through it again --
-        # the cached entry must short-circuit before then.
+        # Make the underlying parse fail if reached again. The cached entry
+        # must short-circuit first.
         coordinator.index._metadata[("foo", "1.0")] = "this is not METADATA"
         with pytest.raises(MetadataError, match="Invalid metadata"):
             provider.get_dependencies("foo", V("1.0"))
@@ -3349,7 +3344,7 @@ class TestGetDependencies:
     def test_unreadable_local_wheel_fails_instead_of_pinning_older(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """An unreadable local wheel fails the resolve, not just the version.
+        """An unreadable local wheel aborts the resolve.
 
         Look-ahead treats a ``MetadataError`` as a rejection, so folding the
         read failure into one would drop 1.0 and answer with 0.9.
@@ -3491,7 +3486,7 @@ class TestGetDependencies:
         ``packaging.ranges.VersionRange`` represents arbitrary-string
         equality as a literal that matches the original string but no
         PEP 440 ``Version``.  The resolver consumes that range like any
-        other; it simply finds no candidates and backtracks naturally.
+        other; it finds no candidates and backtracks.
         """
         coordinator = make_coordinator(
             [make_wheel("1.0")],
@@ -3849,7 +3844,7 @@ class TestAddClassifiedDep:
         assert V("1.0") not in base["bar"]
         assert V("9.0") not in base["bar"]
 
-        # The memoized range is shared, so folding must leave it as it was.
+        # Folding must leave the shared memoized range unchanged.
         assert V("9.0") in ranges[">=2.0"]
 
     def test_extra_deps_intersect(self) -> None:
@@ -3863,7 +3858,7 @@ class TestAddClassifiedDep:
         assert V("9.0") not in extra_map["x"]["bar"]
 
     def test_repeated_specifier_builds_one_range(self) -> None:
-        """Two deps spelling one specifier share the range built for it."""
+        """Two deps using one specifier share the range built for it."""
         ranges: dict[str, VersionRange] = {}
         base: dict[str, VersionRange] = {}
         add_classified_dep(Requirement("bar>=2.0"), set(), base, {}, ranges)
@@ -4173,7 +4168,7 @@ class TestTargetDepSignature:
         assert self._sig(provider, a) == self._sig(provider, b)
 
     def test_specifier_spelling_equal(self) -> None:
-        """Whitespace and specifier spelling normalize equal."""
+        """Whitespace variants of one specifier normalize equal."""
         provider = self._provider()
         a = self._md(["foo>=1,<2"])
         b = self._md(["foo >= 1, < 2"])
@@ -4194,7 +4189,7 @@ class TestTargetDepSignature:
         assert self._sig(provider, a) != self._sig(provider, b)
 
     def test_extra_only_difference_unequal(self) -> None:
-        """A difference confined to an extra-gated dep is unequal."""
+        """A difference confined to an extra-conditioned dep is unequal."""
         provider = self._provider()
         a = self._md(['foo; extra == "e"'], provides_extra=("e",))
         b = self._md(['foo>=2; extra == "e"'], provides_extra=("e",))
@@ -4210,9 +4205,8 @@ class TestTargetDepSignature:
     def test_requires_python_difference_folds(self) -> None:
         """A Requires-Python difference alone does not change the signature.
 
-        Requires-Python gates admission, not the dependency edges a lock
-        records, so two wheels with the same deps but different Python floors
-        project equal.
+        Requires-Python determines admission. Two wheels with the same deps but
+        different Python floors therefore project to equal lock edges.
         """
         provider = self._provider()
         a = self._md(["foo"], requires_python=">=3.8")
@@ -4712,8 +4706,7 @@ class TestLocalSources:
 
         The visible failure was an ``--extras all`` lock on a workspace
         member: the resolver reported "no versions of <member> in
-        [3.3.0, 3.4.0.dev0)" because the pre-cached PyPI listing did
-        not have that range, even though the local source did.
+        [3.3.0, 3.4.0.dev0)" because only the local source supplied that range.
         """
         from nab_provider._vendor.packaging.specifiers import SpecifierSet
 
@@ -5689,8 +5682,7 @@ class TestDecisionLookAhead:
         )
 
     def test_full_resolve_terminates_on_an_arbitrary_equality_blocker(self) -> None:
-        """An unsatisfiable ``===`` dependency reports cleanly, not by
-        exhausting the iteration cap.
+        """An unsatisfiable ``===`` dependency reports before the iteration cap.
 
         Both foo versions pin ``bar===1.0.0`` while root holds bar below 2.0,
         so bar decides at 1.0 and the scan rejects both.  The widened blocker
@@ -6850,7 +6842,7 @@ class TestRequiresPythonListingGate:
 
 
 class TestRequiresPythonMetadataGate:
-    """The wheel METADATA Requires-Python gates a candidate the listing admits.
+    """Wheel METADATA can reject a candidate admitted by the listing.
 
     The Simple-API requires-python hint is optional, so a listing that omits
     it admits the version; the fetched METADATA carries the authoritative
@@ -9016,7 +9008,7 @@ class TestDistPolicy:
 
     def test_no_pep658_inline_path_raises(self) -> None:
         """MetadataError when requesting version without PEP 658 metadata."""
-        # Two versions: v2 has metadata, v1 doesn't.
+        # Of the two versions, only v2 has metadata.
         coordinator = make_coordinator(
             [make_wheel("2.0"), make_wheel("1.0", has_metadata=False)],
         )
@@ -9048,7 +9040,7 @@ class TestDistPolicy:
         assert "dep-a" in deps
 
     def test_listing_includes_both_types(self) -> None:
-        """Listing with both wheels and sdists is stored correctly."""
+        """A listing stores both wheels and sdists."""
         files = [make_wheel("1.0"), make_sdist("0.9")]
         coordinator = make_coordinator(files)
         provider = Provider(coordinator, dist_policy=DistPolicy.WHEEL_OR_SDIST)
@@ -9594,7 +9586,7 @@ class TestPrefetchWalkAhead:
         spy.assert_called_with("foo", version_range)
 
     def test_does_not_fire_when_first_candidate_accepted(self) -> None:
-        """No rejection means no pipelined scan and no deep prefetch."""
+        """Accepting the first candidate skips pipelined scans and deep prefetch."""
         wheels = [make_wheel("1.0")]
         coordinator = make_coordinator(
             wheels,
@@ -9824,7 +9816,7 @@ class TestAwaitMetadataBatchEdgeCases:
         falls back to the sdist, stores its PKG-INFO in the shared
         metadata slot, and rejects the version under the strict PEP 643
         default. A later batch await reads the same slot; caching that
-        text as wheel METADATA would bypass the gate and resurrect the
+        text as wheel METADATA would bypass validation and resurrect the
         rejected version with unverified deps.
         """
         dists = [make_sdist("1.0"), make_wheel("1.0")]
@@ -9844,11 +9836,11 @@ class TestAwaitMetadataBatchEdgeCases:
             provider.get_dependencies("pkg", V("1.0"))
 
     def test_batch_leaves_an_empty_sidecar_on_the_sdists_terms(self) -> None:
-        """A sidecar that served no text reads PKG-INFO, and stays gated.
+        """A sidecar with no text reads PKG-INFO and remains rejected.
 
         The fetcher records a sidecar that served nothing as the ``None`` of
         its own slot, so the batch read falls back to the sdist's PKG-INFO.
-        Caching that as wheel METADATA would bypass the PEP 643 gate.
+        Caching that as wheel METADATA would bypass the PEP 643 check.
         """
         wheel = make_wheel("1.0")
         assert wheel.metadata_url is not None
@@ -10090,7 +10082,7 @@ class TestPrioritizeMatchingFromIndex:
             True,
         )
         wheels = [make_wheel(v) for v in ("1.0", "2.0", "3.0")]
-        # Store directly into the index, as the fetcher thread would.
+        # Store directly into the index in the fetcher thread's format.
         coordinator.index.store_listing("foo", wheels)
         provider.begin_decision_scan()
         assert provider.prioritize("foo", rng, {}) == (
@@ -10297,12 +10289,7 @@ def _declared_target(platform: str) -> ResolveTarget:
 def _wheelhouse_wheel(
     directory: Path, *reqs: str, dist_info: str = "pkg-1.0"
 ) -> WheelFile:
-    """Write a linux-only 1.0 wheel to disk, listed as a flat wheelhouse would.
-
-    A flat wheelhouse serves no PEP 658 sidecar, so ``has_metadata`` is false
-    and the METADATA lives only inside the ``.whl``.  A ``dist_info`` naming
-    another distribution makes that METADATA unreadable.
-    """
+    """Write a Linux-only wheel without a metadata sidecar."""
     filename = "pkg-1.0-py3-none-manylinux_2_17_x86_64.whl"
     path = directory / filename
     with zipfile.ZipFile(path, "w") as zf:
@@ -10323,14 +10310,7 @@ def _wheelhouse_wheel(
 
 class TestSharedSlotProvenance:
     def test_pkg_info_stays_gated_for_provider_with_wheel_in_view(self) -> None:
-        """PKG-INFO stored by one provider stays sdist-gated for another.
-
-        Universal mode shares one coordinator index across tuple
-        providers. A tuple whose filtered view is sdist-only stores
-        PKG-INFO in the shared slot; a second tuple with the wheel in
-        view must not relabel that text as wheel METADATA and trust
-        the pre-PEP-643 deps.
-        """
+        """Keep shared PKG-INFO subject to the sdist metadata policy."""
         coordinator = make_coordinator(None, sdist_pkg_info=PKG_INFO_PRE_PEP643_DEPS)
         first = Provider(coordinator, target=_PY312)
         first.versions_cache["pkg"] = [(V("1.0"), make_sdist("1.0"))]
@@ -10346,14 +10326,7 @@ class TestSharedSlotProvenance:
             second.get_dependencies("pkg", V("1.0"))
 
     def test_an_sdist_only_view_reads_the_sdists_own_pkg_info(self) -> None:
-        """A wheel's METADATA does not answer for a tuple that installs the sdist.
-
-        The reverse ordering: a provider with the wheel in view stores its
-        METADATA, then a provider whose view is sdist-only reads.  The two
-        artifacts can declare different dependencies, and the origin travels
-        with the text, so the sdist's PEP 643 static PKG-INFO is trusted on
-        its own terms rather than replaced by the wheel's deps.
-        """
+        """Use the sdist's PKG-INFO after another target cached wheel METADATA."""
         metadata = (
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\nRequires-Dist: dep-a\n"
         )
@@ -10375,12 +10348,7 @@ class TestSharedSlotProvenance:
     def test_a_wheelhouse_wheel_reads_its_own_metadata(
         self, tmp_path: Path, order: tuple[str, str]
     ) -> None:
-        """A find-links wheel is not served a sibling target's PKG-INFO.
-
-        A flat wheelhouse publishes no sidecar, and the windows target, whose
-        only artifact is the sdist, fills the version-level slot the matrix
-        shares.  Either order leaves linux its own wheel's dependencies.
-        """
+        """Read a local wheel's METADATA after another target cached PKG-INFO."""
         wheel = _wheelhouse_wheel(tmp_path, "wheel-dep")
         pkg_info = (
             "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\nRequires-Dist: sdist-dep\n"
@@ -10404,11 +10372,7 @@ class TestSharedSlotProvenance:
     def test_an_unreadable_wheelhouse_wheel_falls_back_to_pkg_info(
         self, tmp_path: Path, order: tuple[str, str]
     ) -> None:
-        """A wheel with no usable METADATA of its own still reads the sdist's.
-
-        Its ``.dist-info`` names another distribution, so nothing answers for
-        the wheel and the version-level PKG-INFO stands for the version.
-        """
+        """Fall back to PKG-INFO when the wheel's METADATA is unusable."""
         wheel = _wheelhouse_wheel(tmp_path, "wheel-dep", dist_info="other-9.9")
         pkg_info = (
             "Metadata-Version: 2.2\nName: pkg\nVersion: 1.0\nRequires-Dist: sdist-dep\n"
@@ -10431,13 +10395,7 @@ class TestSharedSlotProvenance:
     def test_a_wheelhouse_wheel_survives_an_unbuildable_sdist(
         self, tmp_path: Path, order: tuple[str, str]
     ) -> None:
-        """A target holding an installable wheel is not refused with the sdist.
-
-        The sdist's pre-PEP-643 PKG-INFO has to go through the dynamic-deps
-        path, which the default build policy refuses.  That refusal belongs to
-        the target with no wheel; the target that installs the wheelhouse wheel
-        reads its METADATA off disk and keeps the version.
-        """
+        """Keep a target's wheel when another target cannot use the sdist."""
         wheel = _wheelhouse_wheel(tmp_path, "wheel-dep")
         coordinator = make_coordinator(
             [wheel, make_sdist("1.0")], sdist_pkg_info=PKG_INFO_PRE_PEP643_DEPS
@@ -10457,14 +10415,14 @@ class TestDistsAtVersion:
     def test_yields_the_release_run_in_listing_order(
         self, version: str, start: int
     ) -> None:
-        """The head, an interior release and the tail each yield wheel then sdist."""
+        """Preserve distribution order at any listed version."""
         listing = _wheel_and_sdist_releases(3)
         expected = [dist for _, dist in listing[start : start + 2]]
         assert dists_at_version(listing, V(version)) == expected
 
     @pytest.mark.parametrize("version", ["4.0", "2.5", "0.5"])
     def test_an_unlisted_version_yields_nothing(self, version: str) -> None:
-        """Above the head, between two releases, and below the tail."""
+        """Return nothing for a version outside or between releases."""
         assert dists_at_version(_wheel_and_sdist_releases(3), V(version)) == []
 
     def test_an_empty_listing_yields_nothing(self) -> None:
@@ -10506,7 +10464,7 @@ class TestPickDistForMetadata:
         assert pick_dist_for_metadata(versions, V("1.0"), None) is None
 
     def test_bisects_the_newest_first_listing(self) -> None:
-        """A 256-entry listing costs about ten comparisons, not 256."""
+        """Find one of 256 entries in fewer than 20 comparisons."""
         listing = _one_wheel_releases(256)
         mid_version, mid_dist = listing[127]
         version = _CountingVersion(str(mid_version))
@@ -10791,10 +10749,9 @@ class TestEffectiveBuildPolicy:
     def test_resolve_dynamic_sdist_reuses_cross_tuple_cache(self) -> None:
         """A second call for the same sdist returns the cached metadata.
 
-        The ``InMemoryIndex._resolved_sdist_metadata`` cache is the
-        backstop that stops universal mode from re-augmenting (or, more
-        importantly, re-building) the same sdist for every tuple.  The
-        cache key is the canonical name + version string.
+        ``InMemoryIndex._resolved_sdist_metadata`` stops universal mode from
+        augmenting or rebuilding the same sdist for every tuple. The cache key
+        is the canonical name and version string.
         """
         from nab_provider._vendor.packaging.version import Version as _Version
 
@@ -11286,7 +11243,7 @@ class TestStaticSdistMetadata:
     ) -> None:
         """A local index that cannot serve the archive aborts, not skips.
 
-        A local failure is not an HTTP error, so the hard-error arm has to name
+        A local failure is not an HTTP error, so the hard-error branch names
         the family both backends share; otherwise a wheelhouse that goes
         unreadable mid-resolve is cached as a bad-metadata skip.
         """
@@ -11722,7 +11679,7 @@ class TestBuildRemoteFailureModes:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # The built value excludes the 3.12 target; a widening override
-        # admits it, matching what the listing gate already accepted.
+        # admits it, matching the listing check.
         built = WheelMetadata(
             name="pkg",
             version=V("1.0"),
@@ -11879,7 +11836,7 @@ class TestPublicAccessors:
         assert provider.dist_files_for("unknown", V("1.0")) == []
 
     def test_dist_files_for_bisects_the_listing(self) -> None:
-        """The accessor bisects too: about ten comparisons over 256 entries."""
+        """Find one of 256 entries in fewer than 20 comparisons."""
         provider = Provider(make_coordinator(package="pkg"), target=_PY312)
         listing = _one_wheel_releases(256)
         provider.versions_cache["pkg"] = listing
@@ -12013,7 +11970,7 @@ class TestExtrasInvalidMetadata:
         assert version == V("1.0")
 
     def test_user_extra_skips_version_with_no_metadata_source(self) -> None:
-        """A user extra skips a version with no PEP 658 metadata and no sdist.
+        """A user extra skips a version lacking both PEP 658 metadata and an sdist.
 
         resolve_metadata raises a generic MetadataError before
         get_dependencies records the version, so has_invalid_metadata stays

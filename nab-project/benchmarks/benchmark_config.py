@@ -440,7 +440,7 @@ def parse_scenario_build_packages(
     scenario_name: str,
     scenario: Mapping[str, object],
 ) -> dict[str, BuildPolicy]:
-    """Return remote-build overrides preserving declared spelling and order."""
+    """Return remote-build overrides in declared name order."""
     raw = scenario.get("build_packages", [])
     if type(raw) is not list:
         msg = (

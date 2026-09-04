@@ -201,7 +201,7 @@ and a repeated entry is a cycle.
 
 
 def chain_label(name: str, version: str) -> str:
-    """Return the chain entry for one build, canonical so two spellings match."""
+    """Return a build's chain entry with a canonical package name."""
     return f"{canonicalize_name(name)} {version}"
 
 
@@ -394,11 +394,10 @@ class NabBuildEnv:
         """Install additional requirements into the live env.
 
         Used for ``get_requires_for_build_wheel`` follow-up requests
-        (the backend asks for additional deps after the env is
-        already up).  The inner resolve runs over ``requires`` and
-        ``requirements`` together, so its result is the whole build
-        env rather than an addition to it: it can pin a different
-        version of something already installed, or drop it.
+        after the environment is ready. The inner resolve combines
+        ``requires`` and ``requirements``. Its result replaces the
+        resolved build dependencies, so it can pin a different version
+        of an installed dependency or drop it.
         """
         if self._venv_path is None or self._python_executable is None:
             msg = "NabBuildEnv used outside its context-manager scope"
@@ -482,8 +481,8 @@ class NabBuildEnv:
                 targets=(ResolveTarget.for_host(),),
                 inputs=inner_inputs,
             )
-            # The build env resolves for the host alone, so its one
-            # target's failure is the whole resolve's.
+            # The build env has one host target; its failure fails the
+            # resolve.
             result.raise_for_failure()
         except (
             UnsupportedVcsError,
@@ -683,9 +682,9 @@ def _wheel_barring_dist_policy(
     """Return the ``dist-policy`` in force for ``pin`` when it bars wheels.
 
     ``None`` when neither a per-package nor a per-index override sets
-    ``sdist-only`` or ``sdist-install``: those two are the whole of what
-    can bar a wheel here, because the build env's own resolve runs at
-    ``wheel-or-sdist``.  Whether the index published a wheel to bar is
+    ``sdist-only`` or ``sdist-install``. Only those policies bar wheels
+    here because the build env's own resolve runs at ``wheel-or-sdist``.
+    Whether the index published a wheel to bar is
     not known here, so a returned policy says the env would have refused
     one, not that one existed.
 

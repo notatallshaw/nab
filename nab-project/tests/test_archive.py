@@ -1482,7 +1482,7 @@ def _attribute_docstrings(cls: type) -> dict[str, str]:
 
     A bare string literal after an assignment in a class body is an attribute
     docstring.  It is not reachable at runtime (``member.__doc__`` returns the
-    class docstring), so read it from source the way Sphinx and IDEs do.
+    class docstring). Read it from source to match Sphinx and IDE handling.
     """
     tree = ast.parse(textwrap.dedent(inspect.getsource(cls)))
     classdef = tree.body[0]

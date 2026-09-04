@@ -361,12 +361,9 @@ def _record_range_outcome(
 def dists_at_version(
     versions: Sequence[tuple[Version, DistFile]], version: Version
 ) -> list[DistFile]:
-    """Every dist listed at ``version``, in listing order.
+    """Return distributions at ``version`` in listing order.
 
-    ``versions`` is the newest-first listing
-    :func:`~nab_provider._provider.listing.filter_distributions` emits, where a
-    release's dists sit together, so bisection finds them. :mod:`bisect`
-    searches ascending sequences only, hence the loop.
+    The newest-first listing keeps each version's distributions adjacent.
     """
     low, high = 0, len(versions)
     while low < high:
@@ -575,12 +572,9 @@ def augment_from_pyproject(
     is missing, unparseable, or itself marks deps dynamic via
     ``[project].dynamic``.
 
-    Raises :class:`InvalidProjectRequirementError` when ``dependencies``
-    or ``optional-dependencies`` is present but structurally wrong (not
-    an array of strings / not a table), rather than silently dropping the
-    declared dependencies.  ``get_dependencies`` catches it and rejects the
-    candidate version.  A well-typed entry that is not valid PEP 508 is
-    dropped with a warning.
+    Invalid dependency shapes or PEP 508 strings raise
+    :class:`InvalidProjectRequirementError`; ``get_dependencies`` catches it
+    and rejects the candidate version.
     """
     # Late import keeps the resolver-time path off ``WheelMetadata``
     # construction unless the dynamic-deps pyproject fallback fires.
@@ -662,13 +656,12 @@ def fetch_sdist_metadata(
 ) -> tuple[str | None, bool]:
     """Block until the coordinator returns sdist PKG-INFO text.
 
-    Returns ``(metadata_text, from_sdist)``: the origin comes back with the
-    text, so text that landed in the version-level slot from somewhere other
-    than the sdist is not put through the :pep:`643` gate as if it were the
-    sdist's own PKG-INFO.
+    Returns ``(metadata_text, from_sdist)``.
+    Metadata from another source can occupy the version slot. Its origin
+    excludes it from the :pep:`643` check for sdist PKG-INFO.
 
-    The archive is verified against ``sdist.hashes`` before its PKG-INFO is
-    read. A hash mismatch is recorded as an integrity error and re-raised here.
+    When ``sdist.hashes`` contains an accepted digest, the archive is verified
+    before its PKG-INFO is read. A mismatch is recorded and re-raised here.
     """
     event = provider.coordinator.request_sdist(
         package, version, sdist.url, sdist.hashes
@@ -853,12 +846,14 @@ def _reject_incompatible_python(
 ) -> None:
     """Reject an index candidate whose METADATA Requires-Python excludes the target.
 
-    The listing gate (:func:`nab_provider._provider.listing.excluded_by_python`)
+    The listing filter
+    (:func:`nab_provider._provider.listing.excluded_by_python`)
     reads the optional Simple-API ``requires-python`` hint, so a version whose
     listing omits it reaches here unfiltered.  The wheel's own METADATA (or the
     sdist's PKG-INFO) carries the authoritative field; a per-package override
-    still replaces it, matching the listing gate.  Raised before the deps are
-    cached so no partial state survives the rejection.
+    still replaces it, matching the listing filter. Raised before deps
+    are
+    cached, so no partial state survives the rejection.
     """
     target = provider.target
     if target is None:
@@ -1132,9 +1127,9 @@ def target_dep_signature(
     to tell two wheels of one version apart by the dependencies they impose on
     this target rather than by raw text.  Each requirement is classified the way
     the resolver classifies deps, so a marker both wheels evaluate the same
-    folds away, and ranges go through :func:`add_classified_dep`, so ordering,
-    whitespace, and specifier spelling normalize equal.  It records nothing into
-    the marker caches or ``consulted_markers``: see
+    folds away. Ranges use :func:`add_classified_dep`, so ordering,
+    whitespace, and specifier syntax normalize equally. This writes no
+    marker cache or ``consulted_markers`` entry: see
     :func:`_classify_requirement_uncached`.
 
     ``cache_key`` is the release the wheel was served as, not whatever the
@@ -1142,7 +1137,7 @@ def target_dep_signature(
     ``provides-extra`` override is compared in the same view the resolver pins
     from.  A complete ``dependencies`` override takes the skip-fetch path in
     :meth:`nab_provider.provider.Provider.get_dependencies` and never reaches
-    here.  ``Requires-Python`` is left out: it gates admission, not the
+    here. ``Requires-Python`` controls admission, not the
     dependency edges a lock records.
 
     Unlike :func:`cache_deps_from_metadata`, a direct-URL dep is bucketed rather

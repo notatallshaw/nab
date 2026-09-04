@@ -153,12 +153,7 @@ class LockInputProvider(Protocol):
 
 
 class ArtifactMemo:
-    """The lock artifacts one resolve has built, keyed by listing URL.
-
-    Targets of one matrix pin many of the same files, so sharing a memo
-    across them keeps one artifact object per file instead of one per
-    target.
-    """
+    """Lock artifacts shared by one resolve, keyed by listing URL."""
 
     __slots__ = ("sdists", "wheels")
 
@@ -407,10 +402,10 @@ def _membership_gates(
 
     Reachability is over this target's resolved graph, so an extras proxy
     (an extra requiring ``pkg[fancy]`` while the project requires plain
-    ``pkg``) gates what ``fancy`` adds without gating ``pkg``.
+    ``pkg``) conditions ``fancy`` additions but not ``pkg``.
 
-    Empty roots on both sides gate nothing, which is a lock with no
-    selection and no name for the project's own dependencies.
+    Empty roots on both sides produce no membership conditions. The lock
+    has no selection or name for the project's own dependencies.
     """
     pinned = {canonicalize_name(name): version for name, version in pins.items()}
 
@@ -610,7 +605,7 @@ def _build_artifact(
     cls: type[_Artifact],
     memo: dict[str, _Artifact],
 ) -> _Artifact:
-    """Return ``source``'s lock artifact, reusing the one ``memo`` holds for its URL."""
+    """Build or reuse the artifact for ``source.url``."""
     artifact = memo.get(source.url)
     if artifact is None:
         artifact = memo[source.url] = cls(

@@ -402,31 +402,17 @@ class CachedAsyncSimpleClient:
     async def get_files(self, package: str) -> list[WheelFile | SdistFile]:
         """Return parsed Simple API file list for ``package``.
 
-        Cache hit served from disk (fresh, offline, or kept fresh by the
-        read-time floor): the parsed-listing blob is rehydrated without reading
-        the large raw body; on a blob miss, build/digest mismatch, corruption,
-        or a blob holding no records the raw body is reparsed and the blob
-        rebuilt (a WARNING self-heal on genuine corruption).
-        Cache hit + stale + online: conditional revalidation without reading
-        the body; on 304 the parsed blob answers and the body is read only
-        when the blob misses, on 200 body and blob are replaced.
-        Cache miss + offline: raises :class:`OfflineError`.
-        Cache miss + online: fetches, caches, returns.
+        A fresh, offline, or floor-covered positive entry serves its parsed blob.
+        If that blob is absent, incompatible, or corrupt, the raw body rebuilds it.
+        A stale online entry is conditionally revalidated.
 
-        The policy sidecar is read first: it carries the freshness window and
-        the ``body_digest`` that gates the parsed blob, without the raw body. An
-        absent policy is a full miss.
+        A negative sentinel is checked only after a positive miss. It answers
+        empty when fresh, offline, or covered by the read-time floor; otherwise
+        the name is fetched again. A 404 writes a new sentinel.
 
-        A positive entry beats the negative sentinel, so the sentinel is
-        consulted only on a positive miss. A fresh sentinel, or any sentinel
-        offline, answers an absent name empty with no transport call; a
-        stale sentinel online falls through to a fetch. A 404 records a
-        sentinel.
-
-        A cached body that will not decode as JSON is a corrupt positive:
-        re-fetched online, raising :class:`OfflineError` offline. It is reached
-        only after a parsed-blob miss reads the body, so the sentinel is not
-        consulted then and a corrupt body never answers the name absent.
+        Corrupt positive JSON is fetched again online and raises
+        :class:`OfflineError` offline. A cold offline cache also raises that
+        error.
         """
         policy = self._cache.get_simple_policy(package)
         corrupt_positive = False

@@ -93,9 +93,9 @@ fix = "ruff check --fix ."
 fmt = "ruff format ."
 fmt-check = "ruff format --check ."
 
-# The docs dependency-group in pyproject.toml is the single source of truth: it
-# is what nab locks into .github/requirements/pylock.docs.toml, which is what CI
-# and Read the Docs install.  Only the live-reload server is local-only.
+# nab locks the docs dependency group from pyproject.toml into
+# .github/requirements/pylock.docs.toml. CI and Read the Docs install
+# that lock; only the live-reload server remains local.
 #
 # `template` also keeps out the workspace members: hatch installs them editable
 # even under `skip-install`, and neither CI nor Read the Docs has the project in

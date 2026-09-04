@@ -16,7 +16,7 @@ __all__ = ["is_file_url", "parse_file_url"]
 
 
 def is_file_url(url: str) -> bool:
-    """Return True when ``url`` is a ``file:`` URL in either RFC 8089 spelling.
+    """Return True for either RFC 8089 form of a ``file:`` URL.
 
     An authority :func:`urlsplit` cannot parse, such as an unterminated IPv6
     bracket, is not one.
@@ -28,15 +28,15 @@ def is_file_url(url: str) -> bool:
 
 
 def parse_file_url(url: str) -> Path:
-    """Resolve a ``file://`` URL to the filesystem path it names.
+    """Return the filesystem path named by a ``file:`` URL.
 
-    Uses :func:`urllib.request.url2pathname` so Windows-style drive
-    paths (``file:///C:/...``) and percent-encoded characters round-trip
-    cleanly across platforms. An empty or ``localhost`` authority (RFC
-    8089) means the local machine; any other host becomes a UNC share on
-    Windows and is rejected elsewhere.  :mod:`pathlib` accepts a decoded
-    null character, which names no file on any platform, so it raises
-    :class:`ValueError` here instead.
+    Uses :func:`urllib.request.url2pathname` to decode Windows drive paths and
+    percent escapes. An empty or ``localhost`` authority (RFC 8089) means the
+    local machine; any other host becomes a UNC share on Windows and is
+    rejected elsewhere.
+
+    :mod:`pathlib` accepts a decoded null character, which cannot name a file,
+    so this function raises :class:`ValueError` instead.
     """
     return _parsed_file_url_path(urlparse(url), url)
 

@@ -314,7 +314,7 @@ def _write_corrupt_zstd_wheel(path: Path, name: str, version: str) -> None:
     The method is spelled as its number because ``zipfile.ZIP_ZSTANDARD`` only
     exists from 3.14, where reading the member raises ``ZstdError``: an
     ``Exception`` subclass that is not an ``OSError``.  Before 3.14 the method
-    is merely unsupported.
+    is unsupported.
     """
     _write_unsupported_compression_wheel(path, name, version, method=_ZIP_ZSTANDARD)
 
@@ -370,7 +370,7 @@ class TestParseFileUrl:
         assert parse_file_url(url) == tmp_path
 
     def test_url_encoding_round_trip(self, tmp_path: Path) -> None:
-        # Spaces and unicode in the path must round-trip cleanly.
+        # Spaces and unicode in the path must survive the round trip.
         # Build under tmp_path so the path is absolute on Windows.
         path = tmp_path / "with space" / "foo"
         path.parent.mkdir(parents=True)
@@ -748,7 +748,7 @@ class TestFlatWheelhouse:
 
     def test_requires_python_none_for_corrupt_zstd(self, tmp_path: Path) -> None:
         # The listing runs before any version is chosen, so an error here loses
-        # the package's other versions too, not just this wheel.
+        # every other version of the package too.
         _write_corrupt_zstd_wheel(tmp_path / "foo-1.0-py3-none-any.whl", "foo", "1.0")
         client = LocalIndexClient(tmp_path.as_uri())
         files = run(client.get_files("foo"))
@@ -1047,7 +1047,7 @@ class TestPep503Directory:
     def test_symlinked_root_resolves_hrefs_against_the_page_path(
         self, tmp_path: Path
     ) -> None:
-        """The symlink may be the index root itself, not only ``<root>/<package>``.
+        """The symlink may itself be the index root.
 
         A mirror can serve ``simple/`` out of another tree while the
         ``../../packages/`` its pages link to sits beside the served root.
@@ -1284,7 +1284,7 @@ class TestPep503Directory:
 
     def test_pep503_null_byte_directory_href_dropped(self, tmp_path: Path) -> None:
         # The null byte need not sit in the filename: the guard covers the
-        # whole path, not just its last segment.
+        # whole path, including directory segments.
         body = (
             '<a href="sub%00dir/foo-1.0-py3-none-any.whl">foo-bad</a>'
             '<a href="foo-2.0-py3-none-any.whl">foo-2.0</a>'

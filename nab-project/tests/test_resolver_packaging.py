@@ -50,7 +50,7 @@ class TestSpecifierToRange:
         assert r.is_empty
 
     def test_term_subset_respects_arbitrary_flag(self) -> None:
-        """The arbitrary-string flag is load-bearing for subset and satisfaction.
+        """The arbitrary-string flag changes subset and satisfaction results.
 
         ``SpecifierSet("")`` produces the full range that also admits
         arbitrary ``===`` versions, while range unions built during conflict

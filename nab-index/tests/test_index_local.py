@@ -106,7 +106,7 @@ _UNREACHABLE = _anchor("ftp://mirror.example/foo-4.0-py3-none-any.whl")
 def test_the_all_yanked_flag_counts_the_yanked_links(
     tmp_path: Path, body: str, expected: bool
 ) -> None:
-    """Every link on the page has to be yanked, not merely one of them.
+    """The page is yanked only when every link is yanked.
 
     A page whose only link nab cannot read also lists no files, and
     reporting that as yanked would name a PEP 592 withdrawal the index
@@ -383,7 +383,7 @@ def test_merged_href_takes_a_relative_artifact_href(href: str) -> None:
 def test_merged_href_declines_what_urljoin_has_to_resolve(href: str) -> None:
     # Most merge to something urljoin would not produce: a different base, a
     # normalised path, a rewritten reference, a climb above the root. "sub/",
-    # "foo.whl?rev=7" and "foo.whl#frag" would merge correctly and are declined
+    # "foo.whl?rev=7" and "foo.whl#frag" would merge to the same base and are declined
     # anyway: a dot segment can end at a "?" or "#" ("a/..?q"), which the
     # segment check does not look past, and a trailing slash names no artefact.
     bases = _listing_bases("file:///simple/foo/index.html")
@@ -405,7 +405,7 @@ def test_merged_href_declines_what_urljoin_has_to_resolve(href: str) -> None:
 )
 def test_listing_bases_declines_a_base_it_cannot_merge_against(base: str) -> None:
     # A declined base puts the whole page back on urljoin, which is the only
-    # thing that reads these correctly.
+    # path that preserves these cases.
     assert _listing_bases(base) is None
 
 
@@ -429,8 +429,7 @@ def test_listing_bases_stops_climbing_at_the_fourth_level() -> None:
 
 
 def test_a_leading_navigation_link_does_not_settle_the_page() -> None:
-    # An autoindex opens with links to its parent and its own sort orders,
-    # none of which merge, and the files below them all do.
+    # Parent and sort-order links do not merge. The file links below them do.
     anchors, _ = read_page(
         '<a href="?C=N;O=D">name</a>'
         '<a href="../">parent</a>'

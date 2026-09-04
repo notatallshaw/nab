@@ -1,36 +1,45 @@
 # nab
 
-nab is an experimental Python packaging lock and package download tool,
-aiming to have similar resolver performance to uv, while being written
-in Python.
+nab is an experimental dependency locker for Python packages, written in Python. It reads your `pyproject.toml`, finds compatible versions of your dependencies, and writes a PEP 751 `pylock.toml` or pinned requirements. An installer such as pip then installs from that file.
 
-nab reads a `pyproject.toml`, resolves the dependency tree, and
-writes a pinned set of versions or a PEP 751 lockfile. It does not
-install. Hand the lockfile to whatever installer you trust.
+Documentation: <https://nab.readthedocs.io/en/stable/>
 
-## Documentation
+## Why nab?
 
-<https://nab.readthedocs.io/>
+### Keep dependency choices in a file
+
+Locking is a separate step from changing your environment. `nab lock` records exact versions, including dependencies of your dependencies, so you can review and commit the result before installing it. Installing from that lock reuses those choices; running `nab lock` again makes a fresh selection and may choose newer releases.
+
+For a single-environment lock, you can also [check the committed file in CI][check-lock].
+
+### Use standard packaging formats
+
+Keep your dependency declarations in the standard `[project]` table of `pyproject.toml`. nab reads Python packaging versions, requirements, and environment markers, and produces a [cross-tool PEP 751 lockfile][lockfiles]. You can also write hashed requirements for pip without changing the project's dependency declarations.
+
+### Choose the environments you support
+
+By default, nab resolves for the Python and platform running nab. You can [declare a different target][resolve-environment], such as the Python used in production, or a matrix of targets for several platforms. Dependency markers and wheel compatibility are evaluated for those targets, and the lock records where it applies.
+
+### Control when builds run
+
+Reading dependency metadata can require running a package's build backend. nab [reads remote sources without building them by default][build-policy]; local checkouts may build when their metadata needs it. If a remote package requires a build, you can opt in for that package. [Direct archives][archive-sources] also require a verified digest.
 
 ## Install
 
-For package hygiene, and security reasons, the preference is to install nab itself
-as a tool, e.g.
-
-Via pipx:
-
-```bash
-pipx install nab
-```
-
-Or via uv:
+Install nab in an isolated tool environment:
 
 ```bash
 uv tool install nab
+# or
+pipx install nab
 ```
 
+Confirm the command is available with `nab --version`. nab runs on
+CPython 3.10 and newer.
 
 ## Quick start
+
+Use your existing `pyproject.toml`, or save this small example in a new directory:
 
 ```toml
 # pyproject.toml
@@ -43,120 +52,83 @@ dependencies = [
 ]
 ```
 
+From that directory, resolve and write the lock:
+
 ```bash
 nab lock pyproject.toml
 ```
 
-Writes `pylock.toml` next to the project. For a pip-style
-requirements list instead, use
-`nab lock --format requirements-without-hashes --output -`.
+Open `pylock.toml` to see the selected versions and distribution hashes. The constraints above must hold together: nab may choose an older FastAPI release to satisfy the Starlette limit.
 
-# Security
+In the virtual environment where you want to use those dependencies, install with pip 26.1 or newer:
 
-nab makes some opinionated choices to be secure first
-
-## Build policy
-
-By default nab tries to extract static metadata, even from sdists,
-but sometimes that is not possible and you have to build a package
-to extract the dependency metadata. There are three build policies:
-
- * never: Never builds a Python package
- * build-local (default): Builds `[[tool.nab.local-sources]]` entries
-   and workspace members when their `pyproject.toml` cannot be read
-   statically
- * build-remote: Also builds `[[tool.nab.vcs-sources]]` clones,
-   `[[tool.nab.archive-sources]]` trees, and sdists from an index. It
-   is recommended that this only be turned on via per-package override
-
-## Indexes
-
-nab does not currently support sourcing the same package from
-distinct indexes. Indexes are processed in the order they are given
-to nab, and the first index that has a package is the only index
-that nab will source that package.
-
-You can override this behavior by pinning specific packages to
-specific behavior.
-
-You can also list different urls as a mirror for the same index.
-When a lockfile is written the primary url will always be used
-so that the lockfile will be stable, even if mirrors are used
-(this feature is a work in progress).
-
-## VCS policy
-
-By default nab refuses every git URL, pinned or not:
-
-```toml
-[tool.nab.vcs]
-policy = "block"
-allowed-schemes = []
-allowed-repos = []
-require-pin = true
+```bash
+python -m pip install -r pylock.toml
 ```
 
-Each of the first three refuses everything until you set it:
+pip's `pylock.toml` support is experimental. This installs the locked dependencies; installing your own project is a separate step. The [getting-started tutorial][getting-started] includes environment setup, and [Use a lock][use-lock] explains pip's selection limits.
 
- * `policy`: set to `allow` to consider git URLs at all
- * `allowed-schemes`: the schemes you accept, e.g. `git+https`
- * `allowed-repos`: the repository prefixes you accept, e.g.
-   `https://github.com/myorg/`
+For a project using only index packages, the hashed-requirements alternative is:
 
-`require-pin` is on by default, so a URL has to carry a
-40-character commit hash and a floating branch or tag is
-refused.
+```bash
+nab lock --format requirements pyproject.toml
+python -m pip install --require-hashes -r requirements.txt
+```
 
-A package is then taken from a repository through a
-`[[tool.nab.vcs-sources]]` entry. A `pkg @ git+...` requirement
-under `[project].dependencies` gets the same admission checks,
-but nab cannot resolve that form yet, so use a source entry.
+This performs a fresh resolve and writes `requirements.txt`.
 
-# Standards first behavior
+`--format requirements-without-hashes` omits separate hash lines from index pins; archive URLs keep their digest. See [Output formats][output-formats] before using local, VCS, archive, or multi-target inputs.
 
-## Pre-releases
+## Lock for your deployment targets
 
-Pre-release versions are selected if there are no stable
-versions to select given the requirements, even for transitive
-dependencies. A user option to force allow or block
-pre-releases per-package is a work in progress.
+If your application uses Python 3.12 on the same platform as nab, select it explicitly:
 
-## Validate per-distribution dependencies
+```bash
+nab lock --python 3.12 pyproject.toml
+```
 
-By default when a distribution is chosen the dependencies from
-that distribution are used, nab does not assume two different
-distributions for the same package version will have the same
-dependencies.
+`--python` changes the resolve target; it does not install or switch interpreters. Use an environment matching the lock when installing.
 
-However, sometimes you may want the lock file to produce an
-sdist, that sdist may not have static metadata, and you don't
-want to wait for the sdist to build on every lock, there is
-a distribution policy of "sdist-install", that is the metadata
-will be taken from an appropriate wheel, but the sdist will
-be selected for the install.
+To cover Python 3.11 and 3.12 on Linux and macOS, add these tables to your project:
 
+```toml
+[tool.nab]
+mode = "universal"
 
-# Libraries
+[tool.nab.matrix]
+python = ">=3.11,<3.13"
+platforms = ["linux_x86_64", "macos_arm64"]
+```
 
-This project includes multiple libraries that can be used by
-other tools:
+Run `nab lock pyproject.toml` again to write one lock covering those four targets. Versions can differ between targets when compatibility requires it. The multi-target lock format is experimental; [Universal resolution][universal] explains the matrix and how to set minimum operating-system versions.
 
- * `nab-resolver`: An agnostic resolver library based on PubGrub, but with
-   extensions that make it compatible with Python packaging standards
- * `nab-markersets`: The PEP 508 marker algebra, reading a marker as the set
-   of environments it selects so markers can be combined and compared
- * `nab-provider`: The Python packaging provider that drives the nab-resolver,
-   with lots of specific features and optimizations for the Python packaging
-   ecosystem. It does no I/O: everything comes through one interface a host
-   implements
- * `nab-index`: Provides APIs for talking to Python package indexes, abstracts
-   HTTP library interface so different HTTP libraries can be plugged in
- * `nab-project`: nab's own host. It implements the fetch interface over
-   nab-index and adds the resolve orchestration, workspace discovery, the
-   build path, the lockfile emitter and the downloader
+## Libraries
 
-All 5 libraries are in experimental mode, I currently recommend pinning them,
-e.g. `nab-resolver==0.0.1`, as APIs may change at any point.
+nab publishes five component libraries for other tools:
 
-Once we reach `0.1.0` we will only break API stability on each minor update,
-so you will be able to pin to `==0.1.*` or `~=0.1.0`.
+* `nab-resolver`: a generic PubGrub resolver.
+* `nab-markersets`: a PEP 508 marker algebra.
+* `nab-provider`: Python packaging policy and resolution logic without
+  I/O.
+* `nab-index`: package-index and source clients with caching.
+* `nab-project`: resolve orchestration plus lock and download workflows.
+
+`nab-resolver` has stable public module paths. The other component APIs
+are experimental. See [how the distributions fit together][packages].
+
+## Project status
+
+nab is under active development. See the [status summary][status] for
+supported inputs and experimental features.
+
+[archive-sources]: https://nab.readthedocs.io/en/stable/how-to/archive-sources.html
+[build-policy]: https://nab.readthedocs.io/en/stable/reference/build-policy.html
+[check-lock]: https://nab.readthedocs.io/en/stable/reference/lockfile.html#checking-the-lock-in-ci
+[getting-started]: https://nab.readthedocs.io/en/stable/tutorial/getting-started.html
+[lockfiles]: https://nab.readthedocs.io/en/stable/reference/lockfile.html
+[output-formats]: https://nab.readthedocs.io/en/stable/reference/formats.html
+[packages]: https://nab.readthedocs.io/en/stable/explanation/packages.html
+[resolve-environment]: https://nab.readthedocs.io/en/stable/reference/configuration.html#the-resolve-environment
+[status]: https://nab.readthedocs.io/en/stable/#status
+[universal]: https://nab.readthedocs.io/en/stable/explanation/universal.html
+[use-lock]: https://nab.readthedocs.io/en/stable/how-to/use-the-lock.html

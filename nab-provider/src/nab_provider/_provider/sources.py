@@ -127,7 +127,7 @@ def index_archive_sources(
     """Validate archive sources and return a canonical-name map.
 
     Admitted at every :class:`~nab_provider.provider.BuildPolicy` level, like a
-    local source.  There is no ``VcsPolicy``-style gate: the download is
+    local source. There is no ``VcsPolicy`` counterpart: the download is
     hash-verified, and which archive URLs are permitted is decided at config
     parse.
     """

@@ -361,7 +361,7 @@ def _requirement_over_listing(
 
     Bounds ``selected`` on each side ``constraint`` is bounded, then excludes
     by name every other listed version those bounds admit.  Built out of
-    specifiers, so it has a spelling to render.
+    specifiers, so it has a text form to render.
 
     ``None`` when a bound carries a local segment, which an ordering specifier
     does not accept, when the span holds more than ``_MAX_EXCLUSIONS`` versions
@@ -407,7 +407,7 @@ class Provider:
     port the host supplies; nab's own implementation submits them to a
     background asyncio loop, so transitive deps land during resolution.
 
-    ``target`` is the environment the resolve is for: its markers gate
+    ``target`` is the environment the resolve is for: its markers filter
     every dependency, its Python filters candidates by Requires-Python,
     and its wheel tags filter candidates by PEP 425 compatibility, so a
     version whose only wheels the target cannot install is a version the
@@ -1372,41 +1372,16 @@ class Provider:
     def has_satisfying_version(
         self, package: str, version_range: RangeProtocol[Version]
     ) -> bool:
-        """Report whether a usable version exists, side-effect-free.
+        """Report whether a usable version exists without affecting later decisions.
 
-        Runs the real ``choose_version`` over ``version_range`` so look-ahead
-        rejections are honored, then rolls back the state it records: the queued
-        clauses, the force-backtrack signal, and the pending look-ahead blocks
-        are dropped, and the force-backtrack budget and no-versions reasons are
-        restored to their pre-probe values.  A failed-resolve attribution probe
-        therefore cannot alter a later decision.
+        Runs the real ``choose_version`` so look-ahead rejections count, then
+        clears its clauses, pending blocks, and force-backtrack state. The
+        probed package's no-versions reason and permanent metadata-ban evidence
+        may remain because they affect only failure diagnostics.
 
-        The one exception is ``package``'s own no-versions reason.  When the
-        un-narrowed range yields no version because a transitive conflict
-        rejected every candidate, this probe is the only pass that names the
-        blocker, so its reason is kept rather than rolled back to the generic
-        no-match the constraint-narrowed pass recorded.  The reason map only
-        labels a ``NO_VERSIONS`` clause, so keeping it cannot alter a decision.
-
-        The probe also suppresses the two look-ahead shortcuts that could
-        otherwise report a version the decided blocker rejects:
-        ``_probing_satisfiable`` skips the abort and keeps checking decisions
-        past ``_BROAD_LA_REJECT_CAP``.
-
-        The un-narrowed range spans versions the constraint clipped away, so
-        look-ahead can reach one whose metadata raises a hard error the narrowed
-        resolve never touched (a failed integrity check, a tie-ranked-wheel
-        divergence, or an advertised sidecar the index answered it will not
-        serve).  Each names a fault of that one version, so the probe catches
-        them and returns ``False`` rather than aborting; the crash still fires
-        when the version is pinned for real.
-
-        A transient transport failure is deliberately not in that tuple.  A 5xx
-        that outlived the retry budget, or a dropped connection, says nothing
-        about the version, and swallowing it would report "no satisfying
-        candidate" for a version that has one and hand back a different
-        resolution instead of failing.  The ``finally`` restores the snapshot
-        either way.
+        Candidate-specific integrity, metadata, policy, and format failures
+        count as unsatisfied. Transport failures propagate. Decision-affecting
+        state is restored either way.
         """
         saved_counts = dict(self._force_backtrack_counts)
         saved_reasons = dict(self._no_versions_reasons)
@@ -1679,44 +1654,13 @@ class Provider:
         metadata: tuple[_diagnosis.MetadataBlock, ...] = (),
         version_range: VersionRange | None = None,
     ) -> None:
-        """Record why ``choose_version`` returned ``None`` for ``package``.
+        """Store deferred failure evidence for ``package``.
 
-        Runs during the resolve, on every ask that returns no version, which
-        is ordinary backtracking and not failure.  So it stores a marker and
-        renders nothing: no listing is walked, no version parsed and no
-        sentence built until :meth:`get_no_versions_reason` is asked for one,
-        which happens once, after the resolve has already failed.
-
-        ``blockers`` and ``metadata`` carry the look-ahead rejection causes
-        when every candidate that fell in ``version_range`` was rejected:
-        either because of an already-decided package, a positive-range
-        constraint, a root-requirement disagreement, or because the
-        candidate's metadata could not be read under the current
-        build policy.  When supplied, the recorded reason names those
-        causes so the user does not see a bare "no version matches
-        the requirement", which would suggest the package is
-        missing from the index when in fact it is the resolver's
-        transitive constraints (or a too-strict build policy) that
-        excluded every candidate.
-
-        ``version_range`` is passed only when no surviving version fell
-        inside it.  A version the listing filter dropped that does fall
-        inside it is the release the requirement asked for, so the reason
-        names the filters that dropped it rather than reporting no match.
-        The marker carries the range; which filters fired is decided later.
-
-        ``all_versions`` is post-filter, so an empty one means either the
-        index served no files or every file it served was dropped by one of
-        the listing filter's rungs.  The stored listing tells absence from
-        incompatibility apart, except that it is also empty for an index
-        skipped offline and for a page that named files nab could not use.
-        Both are marked when stored, so the reason names what happened
-        instead of absence.
-
-        A look-ahead rejection emits a clause that removes the rejected
-        versions from the range, so the resolver asks again over a range
-        nothing falls in.  That second ask has no blockers of its own, so
-        its no-match reason must not overwrite the one naming the blocker.
+        ``blockers`` and ``metadata`` are look-ahead rejection causes.
+        ``version_range`` separates a filtered release from no match. An
+        empty post-filter listing reuses its stored diagnosis, including
+        offline-skipped and unusable-file pages. A later generic miss
+        does not replace an earlier blocker.
         """
         if not all_versions:
             _, _, normalized = self.split_and_normalize(package)
@@ -1841,7 +1785,7 @@ class Provider:
             ]
 
             # The blocker is decided, so the record keeps that version rather
-            # than a singleton range, which has no specifier spelling.
+            # than a singleton range, which has no specifier form.
             out.append(
                 _diagnosis.Blocker(
                     _diagnosis.BlockerKind.DECIDED,
@@ -2400,10 +2344,10 @@ class Provider:
         """Map a possibly-widened ``constraint`` back onto listed versions.
 
         Returns a requirement admitting the same listed versions as
-        ``constraint``, built out of specifiers so :meth:`format_range` has a
-        spelling to print.  Where no short requirement states those versions,
-        ``constraint`` stands if it spells, and is snapped onto the listing if
-        it does not.
+        ``constraint``, built from specifiers for :meth:`format_range`.
+        Where no short requirement states those versions, ``constraint``
+        stands if it has a specifier form. Otherwise, it is snapped onto
+        the listing.
 
         A constraint containing every listed version becomes the full range,
         so it reads as "any version".  One containing none is returned
@@ -2445,8 +2389,8 @@ class Provider:
 
         An unconstrained range renders as nothing, leaving the package name to
         carry the line, and the empty range gets a phrase rather than the
-        ``<0`` a specifier set spells it with.  A range with no specifier
-        spelling, such as a disjunction, keeps the range's own rendering.
+        ``<0`` from a specifier set. A range without a specifier-set
+        form, such as a disjunction, keeps the range's own rendering.
         """
         assert isinstance(constraint, VersionRange)
         if constraint.is_empty:

@@ -44,7 +44,7 @@ class VcsPolicy(enum.Enum):
     ALLOW = "allow"
     """Honor VCS subject to scheme + repo allowlists.
 
-    Cloning a repo is staged in two phases: admission (this enum gates
+    Cloning a repo is staged in two phases: admission (this enum decides
     whether a URL is even considered) and materialisation (the clone
     happens lazily through :class:`VcsSource` when the resolver asks
     for the package's metadata).

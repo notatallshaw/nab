@@ -116,11 +116,10 @@ def _assert_witness_sound(
 
 @pytest.mark.property
 class TestCoverageDifferential:
-    """The coverage gate against the real emitter and an evaluation oracle.
+    """Compare the coverage check with the emitter and evaluation oracle.
 
-    The gate must never fire on what the emitter produces, must fire on a
-    removed region, and every witness it names must be a real interpreter
-    that a target resolved for and no row admits.
+    Emitted rows must pass. Removing a covered region must produce a sound
+    witness that no remaining row admits.
     """
 
     @given(matrix_points=points, micros=boundaries, variable=version_variables)
@@ -128,7 +127,7 @@ class TestCoverageDifferential:
     def test_real_emit_pipeline_is_covered(
         self, matrix_points: list[tuple[str, str]], micros: list[int], variable: str
     ) -> None:
-        """The gate never fires on rows the real emit pipeline produced.
+        """Rows from the real emit pipeline pass the coverage check.
 
         An ``IntractableMarkerSet`` on a large matrix is the algebra's
         bounded-failure escape hatch, a sound non-emit the design allows;
@@ -238,7 +237,7 @@ def _blowup_matrix() -> tuple[list[ResolveTarget], list[Marker]]:
 
 
 class TestCoverageGateBlowupRegression:
-    """The CI-lock fixture that crashed the gate with ``IntractableMarkerSet``.
+    """The CI-lock fixture that raised ``IntractableMarkerSet`` in validation.
 
     Complementing the 30-row union carried every axis every row named at once,
     overrunning the witness cell budget. The fix restricts the union to each
@@ -288,10 +287,9 @@ class TestCoverageOverRandomEmitShapes:
     """A bounded, deterministic differential over random emit shapes.
 
     The hypothesis properties shrink toward small counterexamples; this
-    seeds a fixed pseudo-random stream and drives a larger corpus of whole
-    emit shapes through the gate.  Every shape must be covering as emitted,
-    and dropping any one row must leave a real gap the gate fires on with a
-    sound witness.
+    seeds a fixed pseudo-random stream and checks a larger corpus of complete
+    emit shapes. Emitted rows must cover their targets; a removed row must
+    leave a gap with a sound witness.
     """
 
     def test_random_emit_shapes_cover_and_gaps_fire(self) -> None:
@@ -308,7 +306,7 @@ class TestCoverageOverRandomEmitShapes:
             except IntractableMarkerSet:
                 continue
 
-            # Dropping the sole row empties ``environments``, which the gate
+            # Dropping the sole row empties ``environments``, which validation
             # reads as an omitted field covering everything, so a gap needs a
             # row left behind.
             if len(environments) < 2:
@@ -324,5 +322,5 @@ class TestCoverageOverRandomEmitShapes:
                 assert environments[drop].evaluate(env)
                 _assert_witness_sound(exc, targets, remaining)
             else:
-                msg = "dropping one row must leave a gap the gate fires on"
+                msg = "dropping one row must produce a coverage gap"
                 raise AssertionError(msg)

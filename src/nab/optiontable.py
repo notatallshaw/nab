@@ -1,45 +1,7 @@
-"""Every nab option, declared once.
+"""Declare the rows that drive CLI parsing, configuration, and option docs.
 
-Seven root rows, forty-four behind a command's parameters, and thirteen
-configuration keys with no flag.
-
-A row is a call in a table body.  The class says how the parser reads it and
-the type parameter says what its value is, so an option's kind, vtype,
-choice set, nullability and printed label are read off the declaration
-rather than written into it.  :mod:`nab.optionrows` is the vocabulary and
-:mod:`nab.optionlower` turns each row into the :class:`nab.optiondefs.Opt`
-the generator and the tests read.
-
-The thirteen classes a row is written with, and how each is read:
-
-- ``Count``: how many times the flag was written.
-- ``Switch``: stores a constant.
-- ``Eager``: acted on before the rest of the line is parsed.
-- ``Tri``: a flag with a negation, absent until one of the two is written.
-- ``Value``: reads one token.
-- ``Many``: repeatable, and one occurrence contributes one value.
-- ``Star``: takes every token up to the next flag.
-- ``Items``: a token run read as a list of tables, one opened per id.
-- ``Item``: a token run read as the one table its key holds.
-- ``Pairs``: a token run read as a table of ``KEY=VALUE``.
-- ``Operand``: a positional word.
-- ``Verb``: a required positional word out of a fixed set.
-- ``Key``: a configuration key with no command line at all.
-
-A table's class keywords are its rows' defaults, and a row writes ``on=`` or
-``docs=`` only where it differs.  Class order and body order are help order,
-and that is what a table's name cannot always follow: ``path``, ``action``
-and ``output`` are each declared by two commands while a table binds a name
-once, and ``include-rejected`` prints last.  Those four sit in a table whose
-command set they do not share, and each table's docstring names its own.
-
-Adding an option is a row here, a parameter on the command function that
-takes it, and ``python tasks/gen_bijection.py --write``.  A row a
-configuration source reaches, whether it holds the key or sits ``under``
-one, needs two more: an entry in ``nab._run._cli_overrides``, and the page
-its ``docs=`` names.  The censuses in ``tests/test_cli_table.py``,
-``tests/test_cli_docs.py`` and ``tests/test_config_cmd.py`` are written out
-rather than derived, so a new row moves those too.
+A table binds each name once, and body order sets help order. Shared rows
+therefore sit in narrow tables whose command sets may differ from nearby rows.
 """
 
 from __future__ import annotations
@@ -575,7 +537,12 @@ class CacheWords(Table, on=("cache",), docs="reference/cache.md"):
     )
 
     output = Value[Path | None](
-        help="where to write the lock; - writes it to stdout",
+        help=(
+            "output path or -; defaults to pylock.toml or requirements.txt; "
+            "universal requirements paths may use {python_version}, "
+            "{platform_id}, and {selection}, but must render uniquely for every "
+            "target; otherwise use pylock"
+        ),
         docs="reference/formats.md",
         on=("lock",),
     )
@@ -596,7 +563,10 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
 
     format = Value[LockFormat](
         default="pylock",
-        help="the lockfile format to emit",
+        help=(
+            "emit pylock, requirements with index-pin hash lines, or requirements "
+            "without them"
+        ),
         docs="reference/formats.md",
         on=("lock",),
     )
@@ -646,16 +616,22 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
     build_requirements = Switch(
         default=False,
         negatable=True,
-        help="lock [build-system].requires instead of the dependencies",
+        help=(
+            "lock [build-system].requires; defaults to pylock.build.toml or "
+            "build-requirements.txt"
+        ),
         docs="reference/selection.md",
         on=("lock",),
     )
 
-    # The one bool flag that is not negatable: its name already spells the
-    # negation, so --no-no-emit-workspace is not a spelling the table offers.
+    # This bool is not negatable because its name already states the
+    # negation, so the table does not offer --no-no-emit-workspace.
     no_emit_workspace = Switch(
         default=False,
-        help="leave the workspace member pins out of the lockfile",
+        help=(
+            "omit workspace pins but keep members in resolution; install them "
+            "outside a hashed-requirements run"
+        ),
         docs="how-to/workspaces.md",
         on=("lock",),
     )

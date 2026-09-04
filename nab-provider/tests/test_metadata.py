@@ -247,7 +247,7 @@ _FOLDED_DESCRIPTION = (
 
 
 class TestMetadataWithoutDescription:
-    """Cutting the folded ``Description:`` field out of a header block."""
+    """Remove a folded ``Description:`` field from a header block."""
 
     def test_folded_field_goes_and_the_fields_after_it_stay(self) -> None:
         assert metadata_without_description(_FOLDED_DESCRIPTION) == (
@@ -410,7 +410,7 @@ class TestOversizedClauseVersions:
 
 
 class TestReadHeaderFields:
-    """``_read_header_fields``: folding, envelope lines, and where headers stop."""
+    """Header folding and boundaries in ``_read_header_fields``."""
 
     def test_repeated_fields_keep_file_order(self) -> None:
         """Repeats stack in order, and a re-declared single field keeps the first."""

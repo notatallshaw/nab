@@ -154,7 +154,7 @@ class HttpResponse(Protocol):
     def raise_for_status(self) -> None:
         """Raise :class:`HttpError` for 4xx/5xx responses.
 
-        Not a gate on reading the body; see :func:`raise_unless_ok`.
+        The body remains readable; see :func:`raise_unless_ok`.
         """
         ...
 

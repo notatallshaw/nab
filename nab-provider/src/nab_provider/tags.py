@@ -154,8 +154,8 @@ class PlatformSpec:
 
     platform_id: str
     libc: Libc = DEFAULT_LIBC
-    runs_on_libc: tuple[int, int] | None = None  # unset: accept any level
-    runs_on_macos: tuple[int, int] | None = None  # unset: accept any level
+    runs_on_libc: tuple[int, int] | None = None  # any libc version
+    runs_on_macos: tuple[int, int] | None = None  # any macOS version
     platform_release: str = ""
     platform_version: str = ""
     free_threaded: bool = False

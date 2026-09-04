@@ -1,6 +1,6 @@
 """Check each README's claims against the packages that implement them.
 
-``project.readme`` is the whole of a distribution's page on PyPI.  A capability
+PyPI renders ``project.readme`` as the distribution page. A capability
 the page credits to a library has to be implemented in that library, and one a
 library's own page promises has to arrive with an install of it.
 """
@@ -40,7 +40,7 @@ CAPABILITY_MODULES = {
 }
 
 # A Libraries bullet: the library it opens with, then everything it claims.
-_BULLET = re.compile(r"^ \* `([^`\n]+)`:(.*?)(?=^ \*|\Z)", re.MULTILINE | re.DOTALL)
+_BULLET = re.compile(r"^\* `([^`\n]+)`:(.*?)(?=^\*|\Z)", re.MULTILINE | re.DOTALL)
 
 
 def _project(directory: Path) -> dict[str, Any]:
@@ -70,7 +70,7 @@ def _bullet_list(lines: Iterable[str]) -> str:
     """
     listed: list[str] = []
     for line in lines:
-        if line.startswith(" * ") or (listed and line.startswith("   ")):
+        if line.startswith("* ") or (listed and line.startswith("  ")):
             listed.append(line)
         elif listed:
             break
@@ -79,7 +79,7 @@ def _bullet_list(lines: Iterable[str]) -> str:
 
 def _library_bullets() -> dict[str, str]:
     """The Libraries section's bullet bodies, keyed by the library each names."""
-    body = README.read_text(encoding="utf-8").partition("\n# Libraries\n")[2]
+    body = README.read_text(encoding="utf-8").partition("\n## Libraries\n")[2]
     assert body, "README.md has no Libraries section"
 
     section = takewhile(lambda line: not line.startswith("#"), body.splitlines())

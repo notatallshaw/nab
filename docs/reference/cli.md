@@ -18,17 +18,19 @@ nab [COMMAND] --version | -V
 nab [COMMAND] --help | -h
 ```
 
-`GLOBAL FLAGS` are the verbosity, colour, and progress knobs listed under
-Global flags below. They are rows of the same table a command's own flags
-come from, so they work on either side of the command name.
+`GLOBAL FLAGS` are the verbosity, colour, and progress knobs listed
+under Global flags below. They are rows of the same table a command's
+own flags come from, so they work on either side of the command name.
 
-`--` ends the options for the level it appears at: `nab lock -- --upgrade`
-passes `--upgrade` as the project path, while `nab -- lock` still runs
-`lock`.
+`--` ends the options for the level where it appears:
+`nab lock -- --upgrade` passes `--upgrade` as the project path, while
+`nab -- lock` still runs `lock`.
 
 `PATH` is positional and defaults to `pyproject.toml` in the
 current directory. Run `nab lock --help` (or `-h`) for the full
-per-command flag list. Boolean flags render as a `--flag` /
+per-command flag list.
+
+Boolean flags render as a `--flag` /
 `--no-flag` pair (for example `--cache` / `--no-cache`). `--offline`
 is layered, so an explicit `--offline True` / `--offline False`
 overrides the config layers; bare `--offline` / `--no-offline` are
@@ -52,32 +54,32 @@ Resolve and emit a lockfile or pin list.
 
 `--python X.Y` resolves for that Python on this machine instead of the
 running interpreter, like pip's `--python-version`; it moves only the
-python axis, so a declared `[tool.nab.environment].platform` stays. It is
-the short form of `--project-environment-python`, and writing both is
-refused. It is rejected in universal mode, where the matrix declares the
-Python axis.
+python axis, so a declared `[tool.nab.environment].platform` stays. It
+is the short form of `--project-environment-python`; using both is an
+error. Universal mode rejects it because the matrix declares Python.
 
 ### Project overrides
 
-A project option can be overridden for one run with a `--project-<key>`
-flag: `--project-resolution`, `--project-mode`, `--project-requires-python`,
+Scalar and list project options have individual flags. They are
+`--project-resolution`, `--project-mode`, `--project-requires-python`,
 `--project-uploaded-prior-to`, `--project-dist-policy`,
 `--project-build-policy`, `--project-build-requires-depth`,
 `--project-decision-order`, `--project-base-group`,
-`--project-build-group`, and the
-repeatable `--project-constraint` and `--project-default-group`. Every one
-of them replaces the file value outright; repeating `--project-constraint`
-builds up that run's whole constraint list rather than adding to the
-declared one. Each changes what the run writes, so passing one prints a
-reproducibility notice on stderr, which `-q` drops, and records the
-override in the lockfile's `[tool.nab]` block, since the lock no longer
-derives from the committed files alone.
+`--project-build-group`, `--project-constraint`, and
+`--project-default-group`.
 
-`[tool.nab.matrix]` and `[tool.nab.environment]` are set key by key:
-`--project-matrix-python`, `--project-matrix-platforms`,
-`--project-matrix-implementations`, `--project-matrix-python-order`,
-`--project-matrix-python-patches`, `--project-environment-python`,
-`--project-environment-platform` and `--project-environment-implementation`.
+Each replaces the file value. Repeating `--project-constraint` builds
+that run's whole constraint list rather than adding to the declared
+one. An override prints a reproducibility notice on stderr, which `-q`
+drops, and is recorded in the lockfile's `[tool.nab]` block.
+
+`[tool.nab.matrix]` and `[tool.nab.environment]` are set key by key through
+the `--project-matrix-*` and `--project-environment-*` flags. The matrix flags
+are `--project-matrix-python`, `--project-matrix-platforms`,
+`--project-matrix-implementations`, `--project-matrix-python-order`, and
+`--project-matrix-python-patches`. The environment flags are
+`--project-environment-python`, `--project-environment-platform`, and
+`--project-environment-implementation`.
 Each replaces the key it names inside the table the project files declare and
 leaves the rest alone; a list flag replaces its list whole. With no file
 table, `--project-matrix-python` and `--project-matrix-platforms` are both
@@ -93,9 +95,10 @@ change or is missing, so CI can assert the lock is current. It covers
 When a mismatch is provable from the inputs alone, a changed direct
 dependency, a changed `[build-system].requires` under `build-group`, a
 narrowed `requires-python`, a changed extra or group, or a tightened
-constraint, `--locked` fails fast with that reason before
-resolving. Otherwise it runs the full re-resolve, and only that comparison
-reports the lock up to date: nab is non-sticky, so a lock can satisfy every
+constraint, `--locked` fails fast with that reason before resolving.
+
+Otherwise it runs the full re-resolve, and only that comparison reports
+the lock up to date: nab is non-sticky, so a lock can satisfy every
 input yet be stale once a newer admissible version exists.
 
 `--upgrade` re-anchors the `P<n>D` resolve window to the current time
@@ -104,15 +107,15 @@ prints a notice naming the cutoff it dropped.
 
 ## `nab download`
 
-Resolve and download every wheel, sdist, and direct-URL
-archive into a local directory. The download is idempotent:
-files whose recorded sha256 matches a local file are left
-alone. Local and VCS pins are skipped.
+Resolve project inputs again, then download every wheel, sdist, and
+direct-URL archive into a local directory. This command does not read an
+existing lock. Files whose recorded digest matches are kept; local and
+VCS pins are skipped.
 
 Universal mode (`[tool.nab].mode = "universal"`) re-resolves
-across the matrix and downloads the union of every tuple's
-artefacts into the same directory, deduplicated by URL so a
-wheel shared across tuples is fetched once.
+across the matrix and downloads the union of every target's
+artifacts into the same directory, deduplicated by URL so a
+wheel shared across targets is fetched once.
 
 * `--output` defaults to `wheels/`.
 * `--max-concurrency` controls parallel HTTP fetches (default `8`,
@@ -121,7 +124,7 @@ wheel shared across tuples is fetched once.
 * `--groups foo bar` / `--all-groups` and `--extras foo bar` /
   `--all-extras` fold dependency groups and extras into the resolve as
   they do on `nab lock` (see [Selecting what to lock](selection.md)), so
-  they decide which artefacts are downloaded.
+  they decide which artifacts are downloaded.
 * `--python X.Y` resolves for that Python on this machine instead of
   the running interpreter, as on `nab lock`. It is the short form of
   `--project-environment-python`, and writing both is refused. It is
@@ -131,12 +134,12 @@ wheel shared across tuples is fetched once.
   members. `--no-workspace-discovery` turns that off. See
   [Lock a workspace](../how-to/workspaces.md).
 
-`--offline`, `--cache-dir`, `--http-backend`, `--max-concurrency` and the
-`--project-*` overrides flow through the same layered config sources `nab
-lock` uses, so a `NAB_*` variable or a system/user/project `nab.toml` is
-read for `nab download` as for `nab lock`.
+`--offline`, `--cache-dir`, `--http-backend`, `--max-concurrency` and
+the `--project-*` overrides flow through the same layered config
+sources `nab lock` uses. A `NAB_*` variable or a system, user, or
+project `nab.toml` is read for `nab download` as for `nab lock`.
 
-Offline covers the artefacts too: an artefact that is neither already in
+Offline covers the artifacts too: an artifact that is neither already in
 the output directory with a matching digest nor readable from a local
 `file://` path fails the run instead of being fetched.
 
@@ -156,16 +159,14 @@ actions:
   option's own scope instead.
 * `nab config get <key>` prints one effective value.
 * `nab config explain <key>` prints a header naming the key, its scope,
-  its type and its effective value, then the option's own help line and a
-  link to the page documenting it on <https://nab.readthedocs.io/>, then
-  the full source stack. The winning row carries a `>` gutter and the
-  status `winner`, and every source it beats is `shadowed`. A shadowed
-  source contributes nothing to the value, whatever the key's type. A
-  `--project-<table>-<key>` flag replaces one key of the table beneath it,
-  so that source is `merged`: it supplied the rest of the value.
+  type, effective value, help, documentation link, and source stack. The
+  sources are labelled `winner`, `shadowed`, `merged`, or `rejected`, and
+  the documentation link points to <https://nab.readthedocs.io/>.
 
 `--include-rejected` is a flag on `nab config` itself, so every action
-takes it. Without it, a config file that sets an unknown key or a key
+takes it.
+
+Without it, a config file that sets an unknown key or a key
 its scope does not allow is a config error: the inspector writes the
 message to stderr, prints no configuration, and exits 1. With the flag
 the run succeeds, and each action shows the refused sources differently:
@@ -205,9 +206,9 @@ directory uses: `cache-dir` is read off the config source ladder, so a
 * `nab cache dir` prints the resolved cache root to stdout, whether or
   not it exists yet.
 * `nab cache verify` walks the cached index records read-only and lists
-  any corrupt entry on stdout by path and reason, exiting 1 when it found
-  one. Cloned repositories and extracted archives hold upstream files, so
-  they are not parsed.
+  any corrupt entry on stdout by path and reason, exiting 1 when it
+  found one. Cloned repositories and extracted archives hold upstream
+  files, so they are not parsed.
 * `nab cache clear` removes every bucket under the root, including the
   cloned repositories and extracted archives, returning the cache to
   cold.
@@ -219,7 +220,7 @@ directory uses: `cache-dir` is read off the config source ladder, so a
 | Flag | Default | Effect |
 | ---- | ------- | ------ |
 | `--cache-dir PATH` | `~/.cache/nab` | Override the on-disk cache root. |
-| `--no-cache` | off | Disable cache for this run. A declared VCS or archive source is materialised into a temporary directory instead, so it is refetched every run. Combine with `--offline` only if the cache already has every file. |
+| `--no-cache` | off | Disable cache reads and writes. VCS and archive sources use temporary directories and are refetched on networked runs. |
 | `--offline {True,False}` | unset | Use cache only, never hit the network. Layered: `--offline True` forces offline, `--offline False` forces network even over a lower `offline = true`. Bare `--offline` / `--no-offline` are shorthands for `True` / `False`. |
 | `--http-backend {urllib3,httpx}` | `urllib3` | Pick the async transport for fetches. Layered, so it can also be set in an `nab.toml` or `NAB_HTTP_BACKEND`. `httpx` needs its extra (see [Install nab](../how-to/install.md)). |
 
@@ -229,9 +230,15 @@ repeated lookup is answered from cache, offline included.
 Offline refuses rather than fetches, so a PEP 517 build environment
 that has anything to install cannot be created and the build fails.
 At `build-remote` that rejects only the sdist version, and the
-resolve tries the next candidate. A declared local, VCS, or archive
+resolve tries the next candidate.
+
+A declared local, VCS, or archive
 source, or a workspace member, is the only candidate for its name, so
 the same refusal ends the run. See [Build policy](build-policy.md).
+
+`--no-cache --offline` neither fetches nor reads a warm cache. It works
+only when every required input is local and no build needs an
+installation step.
 
 `urllib3` is the only backend pulled in by the base install. Selecting
 another without its extra prints one of these and exits 1:
@@ -262,18 +269,18 @@ row of the same table the command's own flags come from.
 | `-h`, `--help` | print this help and exit |
 <!-- /generated -->
 
-`--version` and `--help` end the line where they stand: `nab lock --help`
-prints the `lock` page and `nab lock --version` prints the version. Neither
-loads a command module. The verbosity, colour, and progress flags are
-described under Output control below.
+`--version` and `--help` end the line where they stand:
+`nab lock --help` prints the `lock` page and `nab lock --version` prints
+the version. Neither loads a command module. The verbosity, colour, and
+progress flags are described under Output control below.
 
 ## Output control
 
 These flags set how much `nab` writes to stderr, whether it colours it,
-and whether it animates a progress line. They work with `lock`, `download`,
-`config`, and `cache`. stdout carries only the requested output (the
-lockfile, the requirements list, the `config` dump), so it stays pipeable
-at every verbosity.
+and whether it animates a progress line. They work with `lock`,
+`download`, `config`, and `cache`. stdout carries only the requested
+output (the lockfile, the requirements list, the `config` dump), so it
+stays pipeable at every verbosity.
 
 | Flag | Effect |
 | ---- | ------ |
@@ -310,8 +317,8 @@ It shows only at normal verbosity on an stderr terminal; `--no-progress`
 | `FORCE_COLOR` | Any non-empty value, `0` included, forces colour under `--color auto`. |
 | `TERM` | `dumb` disables colour under `--color auto`. |
 
-Under `--color auto` those three are read in that order, and the first that
-applies decides.
+Under `--color auto` those three are read in that order, and the first
+that applies decides.
 
 ## Exit codes
 

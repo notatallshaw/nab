@@ -36,9 +36,9 @@ BUILD_LOCK = ".github/requirements/pylock.build.toml"
 # Order matters: each entry extends the packages of the one above it, so the
 # tests session can run them all in one environment.
 #
-# nab-index and nab-provider are both gated with the project workspace:
+# Check nab-index and nab-provider with the project workspace:
 # nab-project is nab-index's only consumer, and full coverage of nab_provider
-# needs nab-project's tests. The provider entry gates nab_markersets and
+# needs nab-project's tests. The provider entry checks nab_markersets
 # installs only what nab-provider needs, proving a host can take the provider
 # without nab-index or nab-project.
 WORKSPACES = {
@@ -162,7 +162,9 @@ def _test_steps(session: nox.Session, selected: set[str]) -> list[_Step]:
 
 
 def _run_workspace(session: nox.Session, step: _Step, paths: list[str]) -> bool:
-    """Run ``paths`` under coverage, then gate the workspace; True when both passed.
+    """Run ``paths`` and its coverage checks.
+
+    Return ``True`` only when both pass.
 
     ``paths`` is the workspace's suites less any an earlier workspace already
     ran; the coverage they recorded is still in the session's data file.
@@ -171,8 +173,9 @@ def _run_workspace(session: nox.Session, step: _Step, paths: list[str]) -> bool:
     """
     try:
         # pytest-cov measures the xdist workers, which a bare `coverage run`
-        # cannot see, and combines their data files at the end. Its own gate is
-        # off because it scores every source package at once, and a workspace
+        # cannot see, and combines their data files at the end. Its own
+        # threshold is off because it scores all source packages,
+        # and a workspace
         # only imports the ones it owns.
         if paths:
             session.run(
@@ -200,7 +203,7 @@ def _run_workspace(session: nox.Session, step: _Step, paths: list[str]) -> bool:
 
 @nox.session(reuse_venv=False)
 def tests(session: nox.Session) -> None:
-    """Run every workspace's tests and gate each package it owns at 100 percent.
+    """Run each workspace's tests and check its packages at 100 percent.
 
     Positional arguments select workspaces (``nox -s tests -- project``);
     without them every workspace runs.
@@ -211,7 +214,7 @@ def tests(session: nox.Session) -> None:
     what the last run installed, so this session never reuses one.
 
     One coverage data file serves them all too. A suite runs once, in the first
-    selected workspace that lists it, and a later workspace gates on what every
+    selected workspace that lists it. Later workspaces check what every
     suite before it recorded.
 
     A failing workspace does not stop the others, so one run reports them all.
@@ -263,7 +266,7 @@ def standalone(session: nox.Session) -> None:
 def benchmarks(session: nox.Session) -> None:
     """Run the benchmark-harness tests the workspace sessions deselect."""
     # These cover the scripts under nab-resolver/benchmarks and
-    # nab-project/benchmarks, which no coverage gate owns.
+    # nab-project/benchmarks, which no coverage check owns.
     _install(
         session,
         TESTS_LOCK,

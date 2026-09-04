@@ -41,7 +41,7 @@ def test_valid_body_parses() -> None:
 
 
 def test_malformed_body_is_index_error() -> None:
-    """A malformed body raises ``HttpError``, not just the subclass."""
+    """A malformed body error is caught through ``HttpError``."""
     with pytest.raises(HttpError, match="malformed Simple-API"):
         _parse_files("oops", _INDEX, "foo")
 

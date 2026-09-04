@@ -151,7 +151,7 @@ class TestBoundOrdering:
 
     def test_unbounded_lower_bounds_ignore_inclusivity(self) -> None:
         # -inf is not a version, so "inclusive of it" has no content: the
-        # constructor drops the flag and the two spellings are one point.
+        # constructor drops the flag and both forms describe one point.
         inclusive = LowerBound(None, inclusive=True)
         exclusive = LowerBound(None, inclusive=False)
         assert inclusive.inclusive is False

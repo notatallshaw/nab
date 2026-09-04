@@ -1,16 +1,6 @@
-"""Read what a row's type parameter says about the value it holds.
+"""Read a row's value shape and label from its type argument.
 
-``typing`` writes ``__orig_class__`` on the instance a subscripted generic
-builds, so the parameter a checker reads statically is the same object read
-here.  It is written after ``__init__`` returns, which is why a row cannot
-judge its own type as it is built and :mod:`nab.optionlower` does it later.
-
-A row that reads a value has to be written subscripted.  Inference gives a
-checker the parameter and leaves nothing behind at run time.
-
-The imports here are ``enum``, ``pathlib`` and ``typing``, but the four
-vtype spellings and the ``enum(a|b)`` label format below are nab's, so the
-module is a reader of types rather than a neutral one.
+Generic metadata appears after construction, so :mod:`nab.optionlower` reads it.
 """
 
 from __future__ import annotations
