@@ -31,7 +31,7 @@ __all__ = [
 def choose_package_to_decide(
     resolver: Resolver[Any, Any], excluded: AbstractSet[Any] | None = None
 ) -> Any | None:
-    """Choose the next undecided package, or None if all decided.
+    """Choose the next undecided package outside ``excluded``, or None.
 
     Prefers ``is_ready`` packages so resolution keeps making progress while
     other listings/metadata are still in flight.  ``begin_decision_scan`` marks
@@ -199,7 +199,7 @@ def record_no_versions(
     had_pending: bool,
     deferrable: bool = True,
 ) -> None:
-    """Add the default ``NO_VERSIONS`` clause for ``package``.
+    """Defer a failed query or record its default absence clause.
 
     Skipped when the provider already supplied context-aware clauses;
     otherwise the broad clause would persist past the backjump that lifts
