@@ -43,7 +43,7 @@ from nab_project.value import ValueType
 
 from .. import env
 from ..optiondefs import Opt, Scope
-from .hooks import declaring_dir
+from .hooks import declaring_dir, matrix_table
 from .registry import OPTIONS
 from .subflags import (
     BY_PARENT,
@@ -79,6 +79,7 @@ __all__ = [
     "orphan_rejections",
     "project_cli_override_notice",
     "project_cli_override_records",
+    "project_key_path",
     "pyproject_registry_keys",
     "read_env_layer",
     "reject_user_keys_in_pyproject",
@@ -121,6 +122,15 @@ PRECEDENCE: dict[SourceKind, int] = {
 }
 
 BY_KEY: dict[str, Opt] = {row.name: row for row in OPTIONS}
+
+
+def project_key_path(key: str, kind: SourceKind) -> str:
+    """Return the table path a project file of ``kind`` gives ``key``.
+
+    A project-dir nab.toml takes nab's keys at the top level; a
+    pyproject.toml takes them under ``[tool.nab]``.
+    """
+    return key if kind is SourceKind.PROJECT_TOML else f"tool.nab.{key}"
 
 
 def pyproject_registry_keys() -> frozenset[str]:
@@ -396,9 +406,10 @@ def _load_toml_layer(
     origin = Origin(kind, str(path))
     values: dict[str, Any] = {}
     raw_tables: dict[str, Any] = {}
-    # Carry the declaring file's directory structurally so a relative
-    # local-source path resolves against it.
-    with declaring_dir(path.parent):
+    # Carry the declaring file's directory and matrix header structurally: a
+    # relative local-source path resolves against the directory, and the
+    # patch-table refusal names the header this file writes.
+    with declaring_dir(path.parent), matrix_table(project_key_path("matrix", kind)):
         for key, value in raw.items():
             spec = BY_KEY.get(key)
             if spec is None:

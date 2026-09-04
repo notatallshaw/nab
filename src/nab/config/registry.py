@@ -356,7 +356,7 @@ OPTIONS: tuple[Opt, ...] = (
         "matrix",
         scope=Scope.PROJECT,
         rdefault=None,
-        parse=values.parse_matrix,
+        parse=hooks.parse_matrix,
         render=hooks.render_matrix,
         type_label="table(python,platforms)",
         help="the Python and platform axes a universal resolve covers",

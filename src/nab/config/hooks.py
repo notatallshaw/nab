@@ -4,10 +4,11 @@ Every row of :data:`nab.config.ladder.OPTIONS` names one ``parse`` and one
 ``render``.  Most rows name a parser in :mod:`nab.config.values` directly;
 the ones here either render a merged value back to a line of ``nab config``,
 or need a piece of parse state that varies per pass and cannot travel in the
-fixed ``(value, where)`` pair.  Three such pieces ride on context variables
+fixed ``(value, where)`` pair.  Four such pieces ride on context variables
 the ladder binds around a read: the resolve anchor a ``P<n>D`` duration is
-measured from, the one ``now`` an inspector pass shares, and the directory a
-relative path in the file being read resolves against.
+measured from, the one ``now`` an inspector pass shares, the directory a
+relative path in the file being read resolves against, and the matrix
+header that file writes.
 """
 
 from __future__ import annotations
@@ -36,8 +37,10 @@ if TYPE_CHECKING:
 __all__ = [
     "declaring_dir",
     "inspector_anchor",
+    "matrix_table",
     "parse_index_overrides",
     "parse_local_sources",
+    "parse_matrix",
     "parse_package_rules",
     "parse_packages",
     "parse_uploaded_prior_to",
@@ -80,6 +83,12 @@ _RESOLVE_ANCHOR: ContextVar[datetime | None] = ContextVar(
 # carried structurally on a ContextVar (bound by :func:`declaring_dir`)
 # rather than re-derived by splitting a human-facing ``where`` label.
 _DECLARING_DIR: ContextVar[Path | None] = ContextVar("_DECLARING_DIR", default=None)
+
+# The matrix header the TOML file being parsed writes: ``tool.nab.matrix``
+# in a pyproject.toml, ``matrix`` in a nab.toml, whose keys sit at the top
+# level.  Bound by :func:`matrix_table` from the ladder's own key-path rule;
+# the patch-table refusal spells its header from here.
+_MATRIX_TABLE: ContextVar[str] = ContextVar("_MATRIX_TABLE", default="tool.nab.matrix")
 
 # A single ``now`` for one inspector pass, so override-body ``P<n>D``
 # durations in the two project files anchor against the same instant.
@@ -156,6 +165,22 @@ def declaring_dir(directory: Path) -> Iterator[None]:
         _DECLARING_DIR.reset(token)
 
 
+@contextmanager
+def matrix_table(table: str) -> Iterator[None]:
+    """Bind the matrix header of the file being read.
+
+    The ladder wraps each TOML source's parse in this, so
+    :func:`parse_matrix` names the python-patches table the way the
+    declaring file writes it: ``[tool.nab.matrix.python-patches]`` in a
+    pyproject.toml, ``[matrix.python-patches]`` in a nab.toml.
+    """
+    token = _MATRIX_TABLE.set(table)
+    try:
+        yield
+    finally:
+        _MATRIX_TABLE.reset(token)
+
+
 def parse_uploaded_prior_to(value: Any, where: str) -> Any:
     """Parse ``uploaded-prior-to`` without re-anchoring relative durations.
 
@@ -200,6 +225,11 @@ def _current_declaring_dir() -> Path:
         msg = "local-sources parsed without a declaring directory"
         raise SourceConfigError(msg)
     return base
+
+
+def parse_matrix(value: Any, where: str) -> values.MatrixConfig:
+    """Return the ``matrix`` row's config, its table named for the declaring file."""
+    return values.parse_matrix(value, where, table=_MATRIX_TABLE.get())
 
 
 def _override_anchor() -> datetime:
