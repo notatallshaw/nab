@@ -47,6 +47,12 @@ def range_pending_key(package: str, version: str, wheel_url: str) -> str:
     return f"range:{package}:{version}:{wheel_url}"
 
 
+def _project_table_only(data: Mapping[str, Any]) -> dict[str, Any]:
+    """Return ``data`` cut to ``[project]``, empty unless that key holds a table."""
+    project = data.get("project")
+    return {"project": project} if isinstance(project, dict) else {}
+
+
 class InMemoryIndex:
     """Thread-safe slots for fetched data, plus the events readers wait on.
 
@@ -519,18 +525,19 @@ class InMemoryIndex:
     def store_sdist_pyproject(
         self, package: str, version: str, data: Mapping[str, Any] | None
     ) -> None:
-        """Store an sdist's parsed pyproject.toml for static-metadata fallback.
+        """Store the pyproject cut to ``[project]`` for static-metadata fallback.
 
         The host parses the TOML on the way in, so the store needs no TOML
         library.  ``None`` reads the same as never-fetched.
         """
+        stored = None if data is None else _project_table_only(data)
         with self._lock:
-            self._sdist_pyproject[(package, version)] = data
+            self._sdist_pyproject[(package, version)] = stored
 
     def get_sdist_pyproject(
         self, package: str, version: str
     ) -> Mapping[str, Any] | None:
-        """Return the parsed sdist pyproject, or ``None`` if absent or unfetched."""
+        """Return the ``[project]`` cut, or ``None`` if absent or unfetched."""
         return self._sdist_pyproject.get((package, version))
 
     def store_sdist_archive(
