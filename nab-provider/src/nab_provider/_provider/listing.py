@@ -626,9 +626,10 @@ def _apply_wheel_tags(
     run_version: Version | None = None
     run_length = 0
 
-    for version, dist in base:
+    for pair in base:
+        version, dist = pair  # a kept pair is appended as-is, not rebuilt
         if not excluded_by_wheel_tags(dist, tags):
-            result.append((version, dist))
+            result.append(pair)
             continue
 
         if release_refused:
