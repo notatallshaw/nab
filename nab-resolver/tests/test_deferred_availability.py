@@ -10,7 +10,14 @@ from nab_resolver._compat import override
 from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import BaseProvider, Resolver
-from nab_resolver.types import IncompatibilityCause, RangeProtocol
+from nab_resolver.types import (
+    Incompatibility,
+    IncompatibilityCause,
+    RangeProtocol,
+    Term,
+)
+
+from .test_resolver import DictProvider
 
 
 class DiscoveringProvider(BaseProvider[str, int]):
@@ -216,3 +223,95 @@ def test_contextual_error_identifies_the_missing_package() -> None:
         packages.add(clause.unavailable_package)
         clauses.extend([clause.cause_left, clause.cause_right])
     assert packages == {None, "dep"}
+
+
+class ActionProvider(DictProvider):
+    """Offer a global absence fact or request a backjump after a failed query."""
+
+    def __init__(self, action: str) -> None:
+        super().__init__(
+            {
+                "app": {1: {"mid": Range.full()}},
+                "mid": {1: {"missing": Range.full()}},
+                "missing": {},
+                "trigger": {1: {}},
+            }
+        )
+        self.action = action
+        self.emitted = False
+        self.decisions: Mapping[str, int] = {}
+        self.targets: list[str] = []
+        self.clauses: list[Incompatibility[str, int]] = []
+
+    @override
+    def prioritize(
+        self,
+        package: str,
+        version_range: RangeProtocol[int],
+        conflict_counts: Mapping[str, int],
+        culprit_counts: Mapping[str, int] | None = None,
+    ) -> int:
+        return {"app": 0, "mid": 1, "missing": 2, "trigger": 3}[package]
+
+    @override
+    def receive_partial_solution_hint(
+        self,
+        positive_ranges: Mapping[str, RangeProtocol[int]],
+        decisions: Mapping[str, int],
+    ) -> None:
+        self.decisions = decisions
+
+    @override
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
+        if package == "trigger" and "mid" in self.decisions and not self.emitted:
+            self.emitted = True
+            if self.action == "backjump":
+                self.targets = ["mid"]
+            else:
+                self.clauses = [
+                    Incompatibility(
+                        [Term("missing", Range.full(), positive=True)],
+                        cause=IncompatibilityCause.NO_VERSIONS,
+                    )
+                ]
+            return None
+        return super().choose_version(package, version_range)
+
+    @override
+    def consume_force_backtrack_targets(self) -> list[str]:
+        targets, self.targets = self.targets, []
+        return targets
+
+    @override
+    def consume_pending_clauses(self) -> list[Incompatibility[str, int]]:
+        clauses, self.clauses = self.clauses, []
+        return clauses
+
+
+class ActionTraceResolver(Resolver[str, int]):
+    """Record the deferred sweep immediately around a provider action."""
+
+    def __init__(self, provider: ActionProvider) -> None:
+        super().__init__(provider, availability_generation=lambda: 0)
+        self.action_provider = provider
+        self.sweeps: list[tuple[list[str], list[str]]] = []
+
+    @override
+    def _decide_next(self, next_package: str) -> str:
+        assert self.deferred is not None
+        before = list(self.deferred.packages)
+        emitted = self.action_provider.emitted
+        result = super()._decide_next(next_package)
+        if self.action_provider.emitted and not emitted:
+            self.sweeps.append((before, list(self.deferred.packages)))
+        return result
+
+
+@pytest.mark.parametrize("action", ["backjump", "clause"])
+def test_provider_actions_start_a_fresh_deferred_sweep(action: str) -> None:
+    resolver = ActionTraceResolver(ActionProvider(action))
+    with pytest.raises(ResolutionError):
+        resolver.resolve({"app": Range.full(), "trigger": Range.full()})
+    assert resolver.sweeps == [(["missing"], [])]
