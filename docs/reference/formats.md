@@ -61,7 +61,6 @@ all three formats:
   combined output as one hash-checked requirements file; use an output
   template to create one file per target.
 
-A failed target renders as `# {label}: FAILED`, followed by the
-commented, indented error. The command exits `1`.
+If any target fails, nab writes no lock or requirements output. The report goes to stderr and the command exits `1`; see [Resolution failures](diagnostics.md).
 
 [PEP 751]: https://peps.python.org/pep-0751/
