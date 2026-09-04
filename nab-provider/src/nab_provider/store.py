@@ -93,6 +93,8 @@ class InMemoryIndex:
         # Versions whose version-level slot was written from an sdist PKG-INFO;
         # only sdist deps go through the PEP 643 check.
         self._metadata_from_sdist: set[tuple[str, str]] = set()
+        # The distinct texts a release's slots hold, so equal ones share a str.
+        self._slot_texts: dict[tuple[str, str], tuple[str, ...]] = {}
 
         # Empty metadata slots that stand for a rung skipped offline, keyed by
         # that rung's URL.
@@ -307,6 +309,20 @@ class InMemoryIndex:
         with self._lock:
             return self._read_metadata(package, version, metadata_url)
 
+    def _share_slot_text(self, release: tuple[str, str], text: str) -> str:
+        """Return the str already held for ``release`` equal to ``text``, or hold it.
+
+        Caller holds the lock.  ``release`` is ``(package, version)``.  A matrix
+        writes one slot per target of a release, and targets whose wheels
+        declare the same headers would otherwise hold a copy of the text each.
+        """
+        held = self._slot_texts.get(release, ())
+        for seen in held:
+            if seen == text:
+                return seen
+        self._slot_texts[release] = (*held, text)
+        return text
+
     def _write_metadata_slot(
         self,
         slot: tuple[str, str, str | None],
@@ -322,7 +338,10 @@ class InMemoryIndex:
         if data is None:
             text = None
         else:
-            text = metadata_without_description(metadata_header_block(data))
+            text = self._share_slot_text(
+                (package, version),
+                metadata_without_description(metadata_header_block(data)),
+            )
 
         if metadata_url is None:
             if self._metadata.get(slot) != text:
