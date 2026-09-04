@@ -159,9 +159,9 @@ numpy==2.1.3
 One block per target. pip cannot install a single requirements.txt
 across multiple targets in hash-checking mode, so the per-target
 block format is for inspection or for tools that consume one block
-at a time. When a target fails resolution, the line reads
-`# <label>: FAILED` followed by the indented error and the process
-exits 1.
+at a time. If any target fails, no blocks are written: the run
+reports every target on stderr and exits 1. See
+[Resolution failures](../reference/diagnostics.md).
 
 ## Patch-release markers
 

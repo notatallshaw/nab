@@ -48,3 +48,19 @@ Diagnostics:
 | An extras line can be about the base package | `foo[bar]` has versions only where `foo` does, so a filter that empties `foo`'s listing gives the line and its `try:` under `foo[bar]`, naming `foo` as the entry to edit. |
 | Some lines name no setting | Nothing in the configuration produced them, such as `package not found on any configured index` or `the index lists this package but every file is yanked`. |
 | A routed package is missing from one index, not from all of them | An `index` entry is a strict pin, so the line names that index: `not found on index 'internal', the only index this package is routed to`. |
+
+## Several targets
+
+Universal matrices and declared extra or group conflicts can produce several resolve targets. If any fails, nab writes no lock or requirements output. The failure report goes to stderr, with one labelled block per target:
+
+```
+error: resolution failed:
+# py311-linux_x86_64
+attrs==26.1.0
+# py312-linux_x86_64: FAILED
+#   ResolutionError: because no versions of attrs <1.0 are available
+#   because your project depends on attrs <1.0
+#   so your project's requirements cannot be satisfied
+```
+
+Successful targets show their pins; failed targets show an indented error and any `Diagnostics:` details. A failure in a conflict's base selection adds a `# base/<label>: FAILED` block; see [Conflicting selections](../explanation/conflicts.md).

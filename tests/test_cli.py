@@ -3326,6 +3326,57 @@ class TestLockCommandUniversal:
         assert "FAILED" in err
         assert "#   ResolutionError: conflict" in err
 
+    def test_failed_tuple_writes_no_pins_to_stdout(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A failed target leaves stdout empty under ``--output -``."""
+        pyproject = _universal_pyproject(tmp_path)
+        with (
+            patch(
+                "nab._resolve.resolve_for_targets",
+                return_value=_multi_tuple_failed_result(ResolutionError("conflict")),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=Path("-"))
+
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "# py312-linux_x86_64: FAILED" in captured.err
+
+    def test_failed_tuple_writes_no_requirements_files(self, tmp_path: Path) -> None:
+        """A failed target prevents all per-target requirements files."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "constraints-{python_version}.txt"
+        with (
+            patch(
+                "nab._resolve.resolve_for_targets",
+                return_value=_multi_tuple_failed_result(ResolutionError("conflict")),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="requirements-without-hashes", output=out)
+
+        assert list(tmp_path.glob("constraints-*")) == []
+
+    def test_failed_tuple_writes_no_pylock(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A failed target prevents pylock output and reports on stderr."""
+        pyproject = _universal_pyproject(tmp_path)
+        out = tmp_path / "pylock.toml"
+        with (
+            patch(
+                "nab._resolve.resolve_for_targets",
+                return_value=_multi_tuple_failed_result(ResolutionError("conflict")),
+            ),
+            pytest.raises(SystemExit, match="1"),
+        ):
+            lock(pyproject, format="pylock", output=out)
+
+        assert not out.exists()
+        assert "# py312-linux_x86_64: FAILED" in capsys.readouterr().err
+
     def test_failed_tuple_multi_line_error(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
