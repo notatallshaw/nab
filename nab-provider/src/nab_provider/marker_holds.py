@@ -16,10 +16,14 @@ from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import MarkerSet
 from nab_provider._vendor.packaging.markers import (
     UndefinedComparison,
-    UndefinedEnvironmentName,
 )
 
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
+from .environment import (
+    UnevaluableMarkerError,
+    evaluate_prepared,
+    marker_evaluation_error,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -28,17 +32,14 @@ if TYPE_CHECKING:
     from nab_provider._vendor.packaging.markers import Marker
 
 
-class UnevaluableMarkerError(ValueError):
-    """A dependency marker parses but nothing decides it.
-
-    PEP 508 accepts any operator between a variable and a literal, and PEP 440
-    gives ``~=`` a meaning only over a release with at least two components.
-    So ``python_full_version ~= "3"`` is a valid marker with nothing to
-    evaluate, and ``sys_platform ~= "linux"`` is one on a variable that holds
-    no version at all.  A marker that quotes its variable, ``"extra" == "gpu"``,
-    is a third: neither side names a variable to look up.  Any guess about one
-    of these changes what gets locked.
-    """
+__all__ = [
+    "IntractableMarkerError",
+    "UnevaluableMarkerError",
+    "dependency_marker_holds",
+    "evaluate_prepared",
+    "intractable_as_error",
+    "marker_set",
+]
 
 
 class IntractableMarkerError(ValueError):
@@ -48,16 +49,6 @@ class IntractableMarkerError(ValueError):
     the lock emitter's selection walk, so a pathological marker stops the run
     rather than iterating unbounded.
     """
-
-
-def _unevaluable(
-    marker: Marker, exc: UndefinedComparison | UndefinedEnvironmentName
-) -> UnevaluableMarkerError:
-    """Return the error for ``marker``, named in full.
-
-    The failing clause alone does not say which dependency to edit.
-    """
-    return UnevaluableMarkerError(f"marker {marker} cannot be evaluated: {exc}")
 
 
 @contextmanager
@@ -78,24 +69,7 @@ def marker_set(marker: Marker) -> MarkerSet:
     try:
         return MarkerSet.from_marker(marker)
     except UndefinedComparison as exc:
-        raise _unevaluable(marker, exc) from exc
-
-
-def evaluate_prepared(
-    marker: Marker, environment: dict[str, str | AbstractSet[str]]
-) -> bool:
-    """Evaluate ``marker`` against a ``prepare_environment`` result.
-
-    A marker packaging cannot decide raises :class:`UnevaluableMarkerError`, as
-    it does through :func:`marker_set`.  ``"extra" == "gpu"`` is one: packaging
-    reads the right-hand literal as a variable name and finds none.  So
-    ``environment`` has to carry every variable a marker may name, or a gap in
-    it is reported as an unevaluable marker.
-    """
-    try:
-        return marker.evaluate_prepared(environment)
-    except (UndefinedComparison, UndefinedEnvironmentName) as exc:
-        raise _unevaluable(marker, exc) from exc
+        raise marker_evaluation_error(marker, exc) from exc
 
 
 def dependency_marker_holds(

@@ -19,10 +19,10 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import InvalidName
 from nab_provider.marker_holds import IntractableMarkerError, UnevaluableMarkerError
+from nab_provider.project_requirements import add_extra_marker as _add_extra_marker
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
-    _add_extra_marker,
     expand_extra_requirements,
     expand_group_includes,
     expand_self_extras,

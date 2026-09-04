@@ -20,6 +20,7 @@ from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
 from .._compat import override
+from ..environment import UnevaluableMarkerError, evaluate_prepared
 from ..errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
@@ -28,7 +29,6 @@ from ..errors import (
     UnsupportedSdistError,
 )
 from ..extra_keys import join_extra
-from ..marker_holds import UnevaluableMarkerError, evaluate_prepared
 from ..metadata import (
     DEPENDENCY_FIELDS,
     WheelMetadata,
@@ -37,7 +37,7 @@ from ..metadata import (
     parse_metadata,
 )
 from ..policy import BuildPolicy
-from ..requirements_file import (
+from ..project_requirements import (
     InvalidProjectRequirementError,
     parse_project_requirement,
     parse_requirements,

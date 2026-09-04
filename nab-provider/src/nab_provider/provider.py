@@ -28,6 +28,7 @@ from ._provider import metadata_resolver as _metadata_resolver
 from ._provider import priority as _priority
 from ._provider import sources as _sources
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
+from .environment import host_environment
 from .errors import (
     ForeignMetadataError,
     IncompatiblePythonError,
@@ -63,7 +64,6 @@ from .policy import (
     ResolveMode as ResolveMode,  # noqa: PLC0414  (re-export, importable from here)
 )
 from .records import DistFile, SdistFile, WheelFile
-from .target import host_environment
 from .vcs_admission import (
     UnsupportedVcsError,
     VcsConfig,
