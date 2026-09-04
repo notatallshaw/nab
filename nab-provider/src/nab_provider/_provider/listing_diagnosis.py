@@ -689,7 +689,11 @@ def in_range_diagnostic(
         for record in diagnosis.dropped
         if record.version is not None and record.version not in diagnosis.kept
     ]
-    in_range = set(version_range.filter({record.version for record in named}))
+    # Every version here was refused, so PEP 440's default of yielding a
+    # pre-release only when no final matched would leave its filter unnamed.
+    in_range = set(
+        version_range.filter({record.version for record in named}, prereleases=True)
+    )
     asked = [record for record in named if record.version in in_range]
 
     groups = _groups(asked)
