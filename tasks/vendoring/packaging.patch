@@ -1162,22 +1162,27 @@ index 4fbf48e..d52f359 100644
      def _from_specifier_set(cls, specifier_set: SpecifierSet) -> VersionRange:
          """Build the range accepted by ``specifier_set``.
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py b/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py
-index dd46b56..6f02085 100644
+index dd46b56..df2d424 100644
 --- a/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py
 +++ b/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py
-@@ -329,9 +329,8 @@ class Specifier(BaseSpecifier):
+@@ -329,9 +329,13 @@ class Specifier(BaseSpecifier):
          )
          """
  
 -    _regex = re.compile(
 -        r"\s*" + _specifier_regex_str + r"\s*", re.VERBOSE | re.IGNORECASE
 -    )
++    # The grammar above with re.VERBOSE's whitespace and comments removed, which re's
++    # parser would otherwise walk at every import. Edit both: a corpus differential in
++    # nab-provider/tests/test_vendor_specifier_pattern_shared.py compares the two.
++    _condensed_regex_str = r"(?:(?:===\s*[^\s;)]*)|(?:(?:==|!=)\s*v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*(?:\.\*|(?a:[-_\.]?(alpha|beta|preview|pre|a|b|c|rc)[-_\.]?[0-9]*)?(?a:(?:-[0-9]+)|(?:[-_\.]?(post|rev|r)[-_\.]?[0-9]*))?(?a:[-_\.]?dev[-_\.]?[0-9]*)?(?a:\+[a-z0-9]+(?:[-_\.][a-z0-9]+)*)?)?)|(?:(?:~=)\s*v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)+(?:[-_\.]?(alpha|beta|preview|pre|a|b|c|rc)[-_\.]?[0-9]*)?(?:(?:-[0-9]+)|(?:[-_\.]?(post|rev|r)[-_\.]?[0-9]*))?(?:[-_\.]?dev[-_\.]?[0-9]*)?)|(?:(?:<=|>=|<|>)\s*v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*(?a:[-_\.]?(alpha|beta|preview|pre|a|b|c|rc)[-_\.]?[0-9]*)?(?a:(?:-[0-9]+)|(?:[-_\.]?(post|rev|r)[-_\.]?[0-9]*))?(?a:[-_\.]?dev[-_\.]?[0-9]*)?))"
++
 +    # No surrounding \s*, so _tokenizer can share this object; __init__ strips first.
-+    _regex = re.compile(_specifier_regex_str, re.VERBOSE | re.IGNORECASE)
++    _regex = re.compile(_condensed_regex_str, re.IGNORECASE)
  
      # Legacy unused attribute, kept for backward compatibility
      _operators: Final = {
-@@ -358,10 +357,11 @@ class Specifier(BaseSpecifier):
+@@ -358,10 +362,11 @@ class Specifier(BaseSpecifier):
          :raises InvalidSpecifier:
              If the given specifier is invalid (i.e. bad syntax).
          """
