@@ -25,6 +25,8 @@ __all__ = [
     "Table",
     "UsageError",
     "build",
+    "is_option",
+    "option_tokens",
     "parse",
 ]
 
@@ -233,7 +235,7 @@ def _walk(
         word = argv[index]
         index += 1
 
-        if not command and (ended or not _is_option(word)):
+        if not command and (ended or not is_option(word)):
             if word not in commands:
                 raise _unknown_command(prog_path, word, commands)
             command = word
@@ -261,7 +263,7 @@ def _walk(
             )
             if eager:
                 return _short_circuit(command, seen, prog_path, eager)
-        elif _is_option(word):
+        elif is_option(word):
             index, eager = _short(
                 word, argv, index, (table, root_table), seen, prog_path
             )
@@ -300,9 +302,24 @@ def _root_options(seen: dict[str, list[_Hit]]) -> dict[str, object]:
     return {dest: _reduce(hits) for dest, hits in seen.items() if hits[-1][0].root}
 
 
-def _is_option(word: str) -> bool:
+def is_option(word: str) -> bool:
     """Whether ``word`` is option-shaped: a dash and at least one more character."""
     return word[:1] == "-" and len(word) > 1
+
+
+def option_tokens(flag: str, values: tuple[str, ...]) -> list[str]:
+    """Render ``flag`` and ``values`` as tokens :func:`parse` reads back.
+
+    ``flag=value`` attaches the only value that may be option-shaped, so an
+    option-shaped value has to come first.  The walk ends a multi-value
+    option at the next option-shaped word, so it never hands one back in a
+    later position either.
+    """
+    if not values:
+        return []
+    if is_option(values[0]):
+        return [f"{flag}={values[0]}", *values[1:]]
+    return [flag, *values]
 
 
 def _match(tables: _Tables, name: str) -> Row | None:
@@ -424,7 +441,7 @@ def _separated(
         raise _missing_value(prog, name)
 
     following = argv[index]
-    if _is_option(following) and not _numeric(row, following):
+    if is_option(following) and not _numeric(row, following):
         raise _looks_like_option(prog, name, following)
 
     _store(seen, row, following)
@@ -467,7 +484,7 @@ def _star_value(
     groups.
     """
     taken = list(attached)
-    while index < len(argv) and not _is_option(argv[index]):
+    while index < len(argv) and not is_option(argv[index]):
         taken.append(argv[index])
         index += 1
 

@@ -25,6 +25,7 @@ from nab_provider._vendor.packaging.version import Version
 from nab_provider.policy import ResolveMode
 
 from . import env
+from ._cli.parse import option_tokens
 from .config.hooks import inspector_anchor
 from .config.ladder import (
     OPTIONS,
@@ -335,14 +336,14 @@ def project_override_arguments(cli_overrides: Mapping[str, object]) -> list[str]
         value = cli_overrides.get(spec.name)
         if isinstance(value, CliTable):
             for key in value.keys:
-                arguments += [key.flag, *key.tokens]
+                arguments += option_tokens(key.flag, key.tokens)
             continue
         flag = spec.cli_flag
         if flag is None or value is None:
             continue
         items = value if isinstance(value, tuple) else (value,)
         for item in items:
-            arguments += [flag, str(item)]
+            arguments += option_tokens(flag, (str(item),))
     return arguments
 
 
