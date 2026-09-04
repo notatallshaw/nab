@@ -344,11 +344,12 @@ within a table.
 # Package used to make generated nab imports relative.
 _REGISTRY_PACKAGE = "nab.config"
 
-# Opt keyword defaults in declaration order.
+# Opt keyword defaults in declaration order. generated is not stored on a row,
+# so the __slots__ filter drops it.
 _OPT_FIELDS: dict[str, object] = {
     name: parameter.default
     for name, parameter in inspect.signature(Opt.__init__).parameters.items()
-    if parameter.kind is inspect.Parameter.KEYWORD_ONLY
+    if parameter.kind is inspect.Parameter.KEYWORD_ONLY and name in Opt.__slots__
 }
 
 # Opt supplies defaults for omitted hooks, so compare these fields separately.
@@ -423,6 +424,8 @@ def _opt_lines(row: Opt, imports: _Imports) -> list[str]:
         if value != unwritten:
             lines.extend(_keyword(f"{name}=", value, imports, row))
 
+    # The per-row rules already ran on the declaration this row came from.
+    lines.append(f"{_INDENT * 2}generated=True,")
     lines.append(f"{_INDENT}),")
     return lines
 
