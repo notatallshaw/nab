@@ -1554,14 +1554,43 @@ class TestTheInRangeLead:
         """A range holding only a dropped pre-release still reaches the walk.
 
         The screen filters the dropped versions through the range rather
-        than testing each one, so the pre-release is admitted where no
-        final release in range could stand in for it.
+        than testing each one, so a range whose only match is a pre-release
+        still admits it.
         """
         assert reason_for(
             [wheel("0.5"), wheel("1.0b1", upload_time=AFTER)],
             spec=">=0.9",
             **WITH_CUTOFF,
         ).startswith("uploaded-prior-to excluded every version in range")
+
+    def test_a_refused_final_does_not_hide_a_refused_pre_release(self) -> None:
+        """A refused final and a refused pre-release both name their filter.
+
+        Under PEP 440's default the final in range would suppress the
+        pre-release, dropping the cutoff that refused it from the report.
+        """
+        diagnostic = diagnostic_for(
+            [
+                wheel("1.0"),
+                wheel("2.0", requires_python=">=3.99"),
+                wheel("3.0b1", upload_time=AFTER),
+            ],
+            spec=">=2",
+            target=_LINUX312,
+            uploaded_prior_to=CUTOFF,
+        )
+
+        assert render(diagnostic) == (
+            "uploaded-prior-to and requires-python excluded every version in range"
+            "\nthe uploaded-prior-to cutoff 2026-05-01T00:00:00+00:00 excluded 1"
+            " file uploaded at 2030-01-01T00:00:00Z (3.0b1)"
+            "\nrequires-python excluded 1 file (2.0 requires >=3.99, the resolve"
+            " targets Python 3.12)"
+            "\nnote: the project-level uploaded-prior-to set that cutoff; setting"
+            ' packages."pkg".uploaded-prior-to = false lifts it for this package'
+        )
+
+        assert diagnostic.remedy == 'set packages."pkg".uploaded-prior-to = false'
 
     def test_a_recorded_range_of_none_stays_a_no_match(self) -> None:
         """A scan that rejected every candidate without a range says no match.
