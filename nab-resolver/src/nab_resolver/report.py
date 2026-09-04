@@ -319,7 +319,7 @@ def _render_line(
 def _render_contextual_no_versions(
     incompatibility: Incompatibility[Any, Any], format_range: _FormatFn
 ) -> str:
-    """Name the unavailable package and the decisions its absence depends on."""
+    """Render an absence with its supporting decisions."""
     unavailable, *guards = incompatibility.terms
     context = " and ".join(format_term(term, format_range) for term in guards)
     if incompatibility.constraint_range is not None:
