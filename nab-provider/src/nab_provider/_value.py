@@ -1,9 +1,9 @@
-"""The shared base under the package's declared-source value types.
+"""The shared base under this package's hand-written value types.
 
-Those types are written out by hand instead of declared with
-``@dataclass(slots=True)``, because applying the decorator is import-time work
-every ``nab`` invocation pays for.  The comparison, hash and repr all eight
-share live here; each type declares its own fields and constructor.
+They are written out instead of declared with ``@dataclass(slots=True)``,
+because applying the decorator is import-time work every ``nab`` invocation
+pays for.  The comparison, hash and repr they share live here; each type
+declares its own fields and constructor.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ __all__ = ["SlottedValue"]
 class SlottedValue:
     """Comparison, hashing and repr over a subclass's declared fields.
 
-    A subclass lists its fields in ``__slots__`` and repeats them, in
+    A subclass lists its fields in ``__slots__`` and names them, in
     declaration order, in ``__match_args__``, which is the order read here.
     Comparison tests the exact class, so a subclass holding equal field
     values is not equal.
