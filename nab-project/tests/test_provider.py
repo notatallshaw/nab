@@ -2004,6 +2004,34 @@ class TestNoVersionsReasons:
             "the index lists this package but nab cannot reach any of its links"
         )
 
+    @respx.mock
+    def test_remote_html_page_of_unreachable_links_names_the_links(
+        self, tmp_path: Path
+    ) -> None:
+        """A page served as HTML reads like the same page served as JSON.
+
+        The wheel sits behind a URL with an unterminated IPv6 bracket, so
+        the conversion to JSON has to keep the anchor for the page to read
+        as unreachable rather than absent.
+        """
+        respx.get(f"{DEFAULT_INDEX_URL}foo/").mock(
+            return_value=httpx.Response(
+                200,
+                headers={"content-type": "text/html"},
+                text='<a href="https://[::1/foo-1.0-py3-none-any.whl">foo-1.0</a>',
+            )
+        )
+
+        with FetchCoordinator(
+            transport=HttpxAsyncTransport(), cache_dir=tmp_path
+        ) as coordinator:
+            provider = Provider(coordinator)
+            provider.choose_version("foo", SpecifierSet("").to_range())
+
+        assert rendered_reason(provider, "foo") == (
+            "the index lists this package but nab cannot reach any of its links"
+        )
+
     def test_remote_page_naming_another_project_is_not_absence(
         self, tmp_path: Path
     ) -> None:
