@@ -11,7 +11,7 @@ sanctioned exemptions, and each is loaded only by a line that asked for it.
 
 The last cases ban what a command holds after it has dispatched: a line
 that only reads settings loads nothing a resolve needs, and a line that
-locks holds no part of ``email``.
+locks holds neither ``email`` nor an archive reader.
 """
 
 from __future__ import annotations
@@ -265,3 +265,18 @@ def test_a_lock_command_holds_no_email_module(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(_PROJECT, encoding="utf-8")
 
     assert _run(_HELD_PROBE, "email", "lock", "--offline", cwd=tmp_path) == ""
+
+
+def test_a_lock_command_holds_no_archive_reader(tmp_path: Path) -> None:
+    """Probe H: locking loads neither stdlib archive reader.
+
+    :mod:`nab_index.client`, :mod:`nab_index.lazy_wheel` and
+    :mod:`nab_index.local_index` are all held by the line even under
+    ``--offline``, and each reaches :mod:`tarfile` or :mod:`zipfile` only
+    from a branch that opens an archive.
+    """
+    (tmp_path / "pyproject.toml").write_text(_PROJECT, encoding="utf-8")
+
+    held = _run(_HELD_PROBE, "tarfile,zipfile", "lock", "--offline", cwd=tmp_path)
+
+    assert held == ""
