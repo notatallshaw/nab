@@ -755,7 +755,7 @@ def _without_build_permission(override: _OverrideT) -> _OverrideT:
     """
     if override.build_policy in (None, BuildPolicy.NEVER):
         return override
-    return replace(override, build_policy=None)
+    return override.replace(build_policy=None)
 
 
 def _inner_resolve_inputs(inputs: ResolveInputs) -> ResolveInputs:
