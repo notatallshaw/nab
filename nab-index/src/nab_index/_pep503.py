@@ -87,14 +87,22 @@ def _file_entry(anchor: Anchor, base_url: str) -> dict[str, object] | None:
     """Render one anchor as a PEP 691 file entry, or ``None`` if it names no file.
 
     An href with a malformed authority (an unterminated IPv6 bracket) makes
-    both the join and the split raise, so it is dropped like an href that
-    names no file rather than failing the whole listing.
+    both the join and the split raise. The entry is kept, with the href
+    unresolved, when the last segment names a wheel or ``.tar.gz`` sdist,
+    since this body is the only record that the page offered that release.
     """
     try:
         url, _, fragment = urljoin(base_url, anchor.href).partition("#")
         filename = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
     except ValueError:
-        return None
+        # Deferred because nab_index.client imports this module.
+        from .client import is_readable_filename  # noqa: PLC0415
+
+        url, _, fragment = anchor.href.partition("#")
+        filename = unquote(url.rsplit("/", 1)[-1])
+        if not is_readable_filename(filename):
+            return None
+
     if not filename:
         return None
 
@@ -123,12 +131,13 @@ def json_listing(text: str, page_url: str) -> bytes:
 
     Hrefs are resolved here, against the page's ``<base href>`` when it has
     one and otherwise against ``page_url``, so the cached body stands on its
-    own.
+    own. An href whose own authority cannot be parsed is kept unresolved
+    instead; see :func:`_file_entry`.
 
     Raises :class:`ValueError` when the page's ``<base href>`` cannot be
     parsed. Every relative anchor resolves against it, so the whole page's
     targets are unknown; the caller maps this to its own malformed-listing
-    error. A single unparseable anchor is dropped instead.
+    error. A single unparseable anchor does not raise.
 
     Also raises :class:`ValueError` for a page carrying neither a link nor
     the :pep:`629` ``pypi:repository-version`` marker, since nothing in it
