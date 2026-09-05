@@ -121,7 +121,7 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
     def active_requirements(
         self,
     ) -> Mapping[_PackageT, tuple[CandidateRequirement[_PackageT, _KeyT], ...]]:
-        """Return read-only requirement collections for the current decision snapshot."""
+        """Return read-only requirement collections for the decision snapshot."""
         if self._active_cache is None:
             self._active_cache = self._build_active_requirements()
         return self._active_cache
