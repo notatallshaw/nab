@@ -3920,7 +3920,7 @@ class TestAugmentResolutionError:
         clause = self._no_versions_clause("missing-pkg")
         exc = ResolutionError("base message", incompatibility=clause)
         provider = MagicMock()
-        provider.get_no_versions_reason.side_effect = lambda pkg: (
+        provider.get_no_versions_reason.side_effect = lambda pkg, _range: (
             Diagnostic("package not found on any configured index")
             if pkg == "missing-pkg"
             else None
@@ -3975,7 +3975,7 @@ class TestAugmentResolutionError:
             cause_right=None,
         )
         packages = _walk_no_versions_packages(derived)
-        assert packages == ["buried-pkg"]
+        assert packages == [("buried-pkg", Range.full())]
 
     def test_walk_skips_non_string_packages(self) -> None:
         """Non-str term packages (e.g. the root sentinel) are filtered out."""
@@ -3996,7 +3996,7 @@ class TestAugmentResolutionError:
             ],
             cause=IncompatibilityCause.DEPENDENCY,
         )
-        assert _walk_no_versions_packages(clause) == ["cand"]
+        assert _walk_no_versions_packages(clause) == [("cand", Range.full())]
 
     def test_walk_names_merged_self_dependency_candidate(self) -> None:
         """A self-dependency merges to one positive term and still names it."""
@@ -4005,7 +4005,7 @@ class TestAugmentResolutionError:
             cause=IncompatibilityCause.DEPENDENCY,
             dependency_range=Range.singleton(1),
         )
-        assert _walk_no_versions_packages(clause) == ["cand"]
+        assert _walk_no_versions_packages(clause) == [("cand", Range.full())]
 
     def test_grouped_clause_hint_survives_a_later_range(self) -> None:
         """Accepted tolerance: reasons are keyed by package name, so a later
@@ -4019,7 +4019,7 @@ class TestAugmentResolutionError:
         )
         exc = ResolutionError("base message", incompatibility=clause)
         provider = MagicMock()
-        provider.get_no_versions_reason.side_effect = lambda pkg: (
+        provider.get_no_versions_reason.side_effect = lambda pkg, _range: (
             Diagnostic("no version matches the requirement") if pkg == "cand" else None
         )
         _augment_resolution_error(exc, provider)
@@ -4070,7 +4070,7 @@ class TestAugmentResolutionError:
         )
         # Walk should record ``shared`` exactly once even though ``leaf``
         # is reachable from two branches of the derivation DAG.
-        assert _walk_no_versions_packages(top) == ["shared"]
+        assert _walk_no_versions_packages(top) == [("shared", Range.full())]
 
     def test_walks_a_chain_deeper_than_the_recursion_limit(self) -> None:
         """A derivation longer than the recursion limit is still walked."""
@@ -4083,7 +4083,7 @@ class TestAugmentResolutionError:
                 cause_right=None,
             )
 
-        assert _walk_no_versions_packages(node) == ["buried-pkg"]
+        assert _walk_no_versions_packages(node) == [("buried-pkg", Range.full())]
 
     def test_resolve_pyproject_re_raises_with_diagnostic(self, tmp_path: Path) -> None:
         """``resolve_pyproject`` re-raises the augmented ResolutionError."""
@@ -4432,6 +4432,82 @@ class TestAugmentResolutionError:
             "No metadata for foo==3.0: no PEP 658 metadata and no sdist"
             " available" in diagnostics
         )
+
+    def test_root_ban_outlives_the_scan_that_accepted_an_older_version(
+        self, tmp_path: Path
+    ) -> None:
+        """A root ban remains visible after a scan accepts an older version."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo", "lib==9.0"]\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "foo": _index_wheels("foo", "5.0", "4.0"),
+                "lib": _index_wheels("lib", "9.0", "8.0"),
+                "other": _index_wheels("other", "6.0"),
+            },
+            metadata_by_version={
+                "5.0": _metadata("foo", "5.0", "lib==8.0"),
+                "4.0": _metadata("foo", "4.0", "other==7.0"),
+                "9.0": _metadata("lib", "9.0"),
+                "8.0": _metadata("lib", "8.0"),
+                "6.0": _metadata("other", "6.0"),
+            },
+        )
+
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        derivation = str(info.value).split("Diagnostics:")[0]
+        assert "lib" not in derivation
+
+        diagnostics = _diagnostics(info.value)
+        assert "<VersionRange" not in diagnostics
+        assert (
+            "foo: 5.0 needs lib in ==8.0, but your project requires lib ==9.0"
+            in diagnostics
+        )
+
+    def test_an_unsatisfiable_ask_names_no_uninvolved_requirement(
+        self, tmp_path: Path
+    ) -> None:
+        """An unrelated root constraint stays out of the failure report."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["app", "lib==9.0", "tool"]\n',
+            encoding="utf-8",
+        )
+
+        coordinator = make_coordinator(
+            listings={
+                "app": _index_wheels("app", "5.0", "4.0"),
+                "lib": _index_wheels("lib", "9.0", "8.0"),
+                "tool": _index_wheels("tool", "1.0"),
+            },
+            metadata_by_version={
+                "5.0": _metadata("app", "5.0", "lib==8.0"),
+                "4.0": _metadata("app", "4.0"),
+                "9.0": _metadata("lib", "9.0"),
+                "8.0": _metadata("lib", "8.0"),
+                "1.0": _metadata("tool", "1.0", "app>=6.0"),
+            },
+        )
+
+        with patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls:
+            mock_coord_cls.return_value.__enter__ = lambda _self: coordinator
+            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
+            with pytest.raises(ResolutionError) as info:
+                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+
+        diagnostics = _diagnostics(info.value)
+        assert "app: no version matches the requirement" in diagnostics
+        assert "lib" not in diagnostics
 
     def test_cutoff_filtered_sdist_is_not_reported_as_never_published(
         self, tmp_path: Path
