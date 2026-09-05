@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from collections.abc import Mapping
+from pathlib import Path
 
 import pytest
 
@@ -17,7 +20,26 @@ from nab_resolver.types import (
     Term,
 )
 
-from .test_resolver import DictProvider
+_IMPORT_PROBE = """
+import importlib.util
+import sys
+from types import ModuleType
+
+package = ModuleType("tests")
+package.__path__ = []
+sys.modules["tests"] = package
+spec = importlib.util.spec_from_file_location("tests.test_deferred_availability", sys.argv[1])
+assert spec is not None and spec.loader is not None
+spec.loader.exec_module(importlib.util.module_from_spec(spec))
+"""
+
+
+def test_import_with_another_tests_package() -> None:
+    """Mixed-workspace collection may reserve the tests package for another suite."""
+    subprocess.run(  # noqa: S603 - the interpreter, probe and test-module path are fixed
+        [sys.executable, "-c", _IMPORT_PROBE, str(Path(__file__).resolve())],
+        check=True,
+    )
 
 
 class DiscoveringProvider(BaseProvider[str, int]):
@@ -225,25 +247,21 @@ def test_contextual_error_identifies_the_missing_package() -> None:
     assert packages == {None, "dep"}
 
 
-class ActionProvider(DictProvider):
+class ActionProvider(BaseProvider[str, int]):
     """Offer a global absence fact or request a backjump after a failed query."""
 
     def __init__(self, action: str) -> None:
-        super().__init__(
-            {
-                "app": {1: {"mid": Range.full()}},
-                "mid": {1: {"missing": Range.full()}},
-                "missing": {},
-                "trigger": {1: {}},
-            }
-        )
+        self.dependencies: dict[str, dict[str, Range[int]]] = {
+            "app": {"mid": Range.full()},
+            "mid": {"missing": Range.full()},
+            "trigger": {},
+        }
         self.action = action
         self.emitted = False
         self.decisions: Mapping[str, int] = {}
         self.targets: list[str] = []
         self.clauses: list[Incompatibility[str, int]] = []
 
-    @override
     def prioritize(
         self,
         package: str,
@@ -261,7 +279,6 @@ class ActionProvider(DictProvider):
     ) -> None:
         self.decisions = decisions
 
-    @override
     def choose_version(
         self, package: str, version_range: RangeProtocol[int]
     ) -> int | None:
@@ -277,7 +294,18 @@ class ActionProvider(DictProvider):
                     )
                 ]
             return None
-        return super().choose_version(package, version_range)
+        return 1 if self.has_satisfying_version(package, version_range) else None
+
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> bool:
+        return package in self.dependencies and 1 in version_range
+
+    def get_dependencies(self, package: str, version: int) -> dict[str, Range[int]]:
+        return self.dependencies[package]
+
+    def widen_decision(self, package: str, version: int) -> None:
+        return None
 
     @override
     def consume_force_backtrack_targets(self) -> list[str]:
