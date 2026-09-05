@@ -1,9 +1,9 @@
 """Import boundaries for command invocations.
 
 Runtime code imports ``optiondefs`` through the generated configuration
-registry and never imports ``optiontable``. Commands resolve their ``Literal``
-aliases from ``flagtypes``. Fresh subprocesses keep earlier test imports from
-masking dependencies.
+registry and never imports ``optiontable`` or ``optionrows``. Commands resolve
+their ``Literal`` aliases from ``flagtypes``. Fresh subprocesses keep earlier
+test imports from masking dependencies.
 """
 
 from __future__ import annotations
@@ -35,19 +35,19 @@ def _after_importing(module: str) -> list[str]:
     return _probe(f"import sys\nimport {module}\n{_REPORT}")
 
 
-def test_a_command_invocation_imports_neither_the_model_nor_the_table() -> None:
+def test_a_command_invocation_imports_no_option_module() -> None:
     """Only the generators and the tests build the 64 rows."""
     assert _after_importing("nab.cli")[0] == "clean"
 
 
 def test_a_run_reads_the_registry_and_never_the_declaration() -> None:
-    """The ladder's rows come from the generated module, so the tables stay unbuilt."""
+    """A run loads ``nab.optiondefs`` and no other option module."""
     loaded = _probe(
         "import sys\n"
         "import nab._lock\n"
         "print(sorted(n for n in sys.modules if n.startswith('nab.option')))\n"
     )
-    assert loaded == ["['nab.optiondefs', 'nab.optionrows']"]
+    assert loaded == ["['nab.optiondefs']"]
 
 
 def test_the_command_signatures_reach_their_aliases_through_a_leaf() -> None:

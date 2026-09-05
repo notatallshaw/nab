@@ -40,7 +40,7 @@ from .flagtypes import (
     ModeFlag,
     ResolutionFlag,
 )
-from .optiondefs import GLOBAL, Opt
+from .optiondefs import GLOBAL, Opt, Scope
 from .optionlower import table_rows
 from .optionrows import (
     Count,
@@ -52,7 +52,6 @@ from .optionrows import (
     Many,
     Operand,
     Pairs,
-    Scope,
     Star,
     Switch,
     Table,
