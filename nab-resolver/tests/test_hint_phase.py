@@ -22,7 +22,7 @@ class PinFirstHost:
         self.parent = PreparedCandidate(1, object())
         self.child = PreparedCandidate(1, object())
         self.competitor = PreparedCandidate(1, object())
-        self.dependency = CandidateRequirement(20, Range.singleton(1), "==1")
+        self.dependency = CandidateRequirement[int, int](20, Range.singleton(1), "==1")
         self.queries: list[int] = []
 
     def iter_candidates(
