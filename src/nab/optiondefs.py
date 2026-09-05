@@ -216,8 +216,13 @@ class Opt:
         needed: bool = False,
         tokens: Tokens | None = None,
         opened_by: str = "",
+        generated: bool = False,
     ) -> None:
-        """Record one option and run the rules a single row can be judged by."""
+        """Record one option and run the rules a single row can be judged by.
+
+        ``generated=True`` skips them: ``tasks/gen_cli.py`` writes the call
+        from a row the rules already ran on.
+        """
         self.name = name
         self.scope = scope
         self.kind = kind
@@ -247,7 +252,8 @@ class Opt:
         self.tokens = tokens
         self.opened_by = opened_by
 
-        self._check()
+        if not generated:
+            self._check()
 
     @override
     def __repr__(self) -> str:
