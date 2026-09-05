@@ -199,11 +199,24 @@ An unsuccessful query is deferred while other packages can still be decided. Aft
 
 This mode is synchronous: availability cannot change between the final generation check and recording the clause. Omit the callback for a provider with a fixed candidate universe.
 
+## Reusing a host's prepared candidates
+
+`CandidateProvider` in `nab_resolver.candidate_provider` adapts a `CandidateHost` that supplies `iter_candidates`, `get_dependencies` and `priority`. Construct it with the host and a sequence of `CandidateRequirement` roots, then pass `provider.root_requirements()` to `Resolver.solve`.
+
+The host yields `PreparedCandidate` objects in its preferred order. Each key must identify stable dependency metadata for that package, including distinctions such as source or build options. The key must be hashable and accepted by your range type. Retrieve the selected host object with `provider.prepared(package, key).origin`.
+
+Host methods receive a read-only mapping of active requirements. It contains roots and dependencies from the last decision snapshot supplied before candidate selection; `priority` can therefore see an earlier snapshot. Original host objects remain available through each requirement's `origin`. The host must keep those objects and their constraints stable while resolving.
+
+Candidate queries also serve diagnostic probes, so preparing or caching a candidate must preserve answers for the same active requirements. For conditional availability, use the callback and eligibility contract above.
+
 ## The supported API
 
 These module paths will not move without a major version bump:
 
 ```text
+nab_resolver.candidate_provider
+                       CandidateHost, CandidateProvider,
+                       CandidateRequirement, PreparedCandidate
 nab_resolver.errors     ResolutionError
 nab_resolver.ranges     Range
 nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,

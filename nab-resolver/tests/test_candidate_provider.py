@@ -86,6 +86,32 @@ def test_cached_dependencies_do_not_survive_their_selected_parent() -> None:
     assert provider.causes_for(10, "app-one") == (host.request,)
 
 
+def test_duplicate_dependencies_intersect_and_reuse_host_metadata() -> None:
+    class RepeatedHost(MemoryHost):
+        """Count metadata reads while yielding two compatible restrictions."""
+
+        reads = 0
+
+        def get_dependencies(
+            self, candidate: PreparedCandidate[str]
+        ) -> Iterable[CandidateRequirement[int, str]]:
+            self.reads += 1
+            yield self.request
+            yield CandidateRequirement(20, Range.full(), object())
+
+    host = RepeatedHost()
+    provider = CandidateProvider(
+        host, [CandidateRequirement(10, Range.full(), object())]
+    )
+    provider.choose_version(10, Range.full())
+    first = provider.get_dependencies(10, "app-one")
+    assert first == {20: Range.singleton("dep-one")}
+    assert len(provider.causes_for(10, "app-one")) == 2
+
+    assert provider.get_dependencies(10, "app-one") is first
+    assert host.reads == 1
+
+
 def test_contradictory_dependencies_stop_further_host_work() -> None:
     class ContradictoryHost(MemoryHost):
         """Refuse work after contradictory declarations invalidate a candidate."""
