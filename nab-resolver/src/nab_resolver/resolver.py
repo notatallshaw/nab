@@ -335,7 +335,10 @@ class BaseProvider(Generic[PackageType, VersionType]):
         return
 
     def receive_contextual_failure(self, package: PackageType) -> bool:
-        """Report whether a contextual absence changed the provider's priorities."""
+        """Report whether a contextual absence changed priorities.
+
+        Change priority state only, preserving availability and current decisions.
+        """
         del package
         return False
 

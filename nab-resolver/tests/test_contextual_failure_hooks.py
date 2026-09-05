@@ -1,7 +1,7 @@
 """Check optional failure notifications against the real decision queue and solve lifecycle."""
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -9,7 +9,7 @@ from nab_resolver.decide import choose_package_to_decide, record_contextual_no_v
 from nab_resolver.errors import ResolutionError
 from nab_resolver.propagate import unit_propagation
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import BaseProvider, Resolver
+from nab_resolver.resolver import BaseProvider, Resolver, ResolverProvider
 from nab_resolver.root import ROOT
 from nab_resolver.types import RangeProtocol, RootRequirement
 
@@ -30,10 +30,14 @@ class OrderingProvider(BaseProvider[str, int]):
         self.failures.append(package)
         return self.change_priority
 
-    def choose_version(self, package: str, version_range: RangeProtocol[int]) -> int | None:
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
         return 1 if package != "missing" and 1 in version_range else None
 
-    def has_satisfying_version(self, package: str, version_range: RangeProtocol[int]) -> bool:
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> bool:
         return package != "missing" and 1 in version_range
 
     def get_dependencies(self, package: str, version: int) -> Mapping[str, Range[int]]:
@@ -77,30 +81,34 @@ def test_notification_invalidates_cached_order_only_when_requested(
     )
 
 
-def test_notifications_use_the_replacement_provider() -> None:
+@pytest.mark.parametrize("replace_before_start", [False, True])
+def test_notifications_use_the_replacement_provider(replace_before_start: bool) -> None:
     original = OrderingProvider()
     replacement = OrderingProvider()
     resolver = Resolver(original)
-    resolver.provider = replacement
+    if replace_before_start:
+        resolver.provider = replacement
     resolver._reset(None)
     resolver._add_root_requirements([RootRequirement("guard", Range.full())])
     resolver.solution.decide("guard", 1)
+    resolver.provider = replacement
 
     record_contextual_no_versions(resolver, "missing")
 
-    assert original.beginnings == 0
+    assert original.beginnings == int(not replace_before_start)
     assert original.failures == []
-    assert replacement.beginnings == 1
+    assert replacement.beginnings == int(replace_before_start)
     assert replacement.failures == ["missing"]
 
 
 class LegacyProvider:
-    """Expose the original provider protocol without either optional notification."""
+    """Delegate provider operations while omitting optional notifications."""
 
     def __init__(self) -> None:
         self.inner = OrderingProvider()
 
     def __getattr__(self, name: str) -> Any:
+        """Delegate required operations while leaving notifications absent."""
         if name in {"begin_resolution", "receive_contextual_failure"}:
             raise AttributeError(name)
         return getattr(self.inner, name)
@@ -108,7 +116,9 @@ class LegacyProvider:
 
 def test_structural_provider_can_omit_notifications() -> None:
     provider = LegacyProvider()
-    resolver = Resolver(provider, availability_generation=lambda: 0)
+    resolver = Resolver(
+        cast("ResolverProvider[str, int]", provider), availability_generation=lambda: 0
+    )
     with pytest.raises(ResolutionError):
         resolver.solve({"app": Range.full()})
     assert provider.inner.beginnings == 0
