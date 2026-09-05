@@ -1,7 +1,7 @@
 """Exercise host adaptation without packaging types or package-name strings."""
 
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -10,8 +10,12 @@ from nab_resolver.candidate_provider import (
     CandidateRequirement,
     PreparedCandidate,
 )
+from nab_resolver.decide import choose_package_to_decide
+from nab_resolver.errors import ResolutionError
+from nab_resolver.propagate import unit_propagation
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
+from nab_resolver.root import ROOT
 from nab_resolver.types import RangeProtocol
 
 
@@ -158,3 +162,127 @@ def test_cached_requirement_view_is_immutable_and_tracks_new_dependencies() -> N
     provider.receive_partial_solution_hint({}, {})
     assert 20 not in provider.active_requirements()
     assert after[20] == (host.request,)
+
+
+def test_query_feedback_prioritizes_current_generic_parents_then_targets() -> None:
+    host = MemoryHost()
+    provider = CandidateProvider(
+        host, [CandidateRequirement(10, Range.full(), object())], query_feedback=True
+    )
+    provider.choose_version(10, Range.full())
+    provider.get_dependencies(10, "app-one")
+    provider.receive_partial_solution_hint({}, {10: "app-one"})
+
+    assert provider.receive_contextual_failure(20)
+    assert provider.prioritize(10, Range.full(), {}) == (-1, 0, 10)
+    assert provider.prioritize(20, Range.full(), {}) == (0, -1, 20)
+
+    provider.receive_partial_solution_hint({}, {})
+    assert provider.receive_contextual_failure(20)
+    assert provider.prioritize(10, Range.full(), {}) == (-1, 0, 10)
+    assert provider.prioritize(20, Range.full(), {}) == (0, -2, 20)
+
+    provider.begin_resolution()
+    assert provider.prioritize(10, Range.full(), {}) == (0, 0, 10)
+    assert provider.prioritize(20, Range.full(), {}) == (0, 0, 20)
+
+
+def test_query_feedback_is_disabled_by_default() -> None:
+    provider = CandidateProvider(MemoryHost(), [])
+    provider.begin_resolution()
+    assert provider.receive_contextual_failure(20) is False
+    assert provider.prioritize(20, Range.full(), {}) == 20
+
+
+def test_duplicate_declarations_credit_one_current_parent() -> None:
+    class RepeatedHost(MemoryHost):
+        """Retain two declarations of the same dependency from one candidate."""
+
+        def get_dependencies(
+            self, candidate: PreparedCandidate[str]
+        ) -> Iterable[CandidateRequirement[int, str]]:
+            yield self.request
+            yield CandidateRequirement(20, Range.full(), object())
+
+    provider = CandidateProvider(RepeatedHost(), [], query_feedback=True)
+    provider.choose_version(10, Range.full())
+    provider.get_dependencies(10, "app-one")
+    provider.receive_partial_solution_hint({}, {10: "app-one"})
+    provider.receive_contextual_failure(20)
+    assert provider.prioritize(10, Range.full(), {}) == (-1, 0, 10)
+
+    provider.receive_partial_solution_hint({}, {10: "another-key"})
+    provider.receive_contextual_failure(20)
+    assert provider.prioritize(10, Range.full(), {}) == (-1, 0, 10)
+    assert provider.prioritize(20, Range.full(), {}) == (0, -2, 20)
+
+
+def test_failed_solve_feedback_is_cleared_before_reuse() -> None:
+    host = MemoryHost()
+    host.dep = PreparedCandidate("dep-two", object())
+    provider = CandidateProvider(
+        host, [CandidateRequirement(10, Range.full(), object())], query_feedback=True
+    )
+    resolver = Resolver(
+        provider, root_version="root", availability_generation=lambda: 0
+    )
+    with pytest.raises(ResolutionError):
+        resolver.solve(provider.root_requirements())
+    assert provider.prioritize(10, Range.full(), {})[:2] == (-1, 0)
+    assert provider.prioritize(20, Range.full(), {})[:2] == (0, -1)
+
+    host.dep = PreparedCandidate("dep-one", object())
+    assert resolver.solve(provider.root_requirements()).pins == {
+        10: "app-one",
+        20: "dep-one",
+    }
+    assert provider.prioritize(10, Range.full(), {})[:2] == (0, 0)
+    assert provider.prioritize(20, Range.full(), {})[:2] == (0, 0)
+
+
+def test_disabled_feedback_preserves_an_opaque_host_key() -> None:
+    priority = object()
+
+    class OpaquePriorityHost(MemoryHost):
+        """Return one opaque ordering key without preparing candidates."""
+
+        def priority(
+            self,
+            package: int,
+            requirements: Mapping[int, Sequence[CandidateRequirement[int, str]]],
+        ) -> Any:
+            return priority
+
+    provider = CandidateProvider(OpaquePriorityHost(), [])
+    assert provider.prioritize(10, Range.full(), {}) is priority
+    assert provider.receive_contextual_failure(10) is False
+    assert provider.prioritize(10, Range.full(), {}) is priority
+
+
+def test_feedback_prefers_a_declaring_parent_after_backtrack() -> None:
+    provider = CandidateProvider(
+        MemoryHost(),
+        [
+            CandidateRequirement(10, Range.full(), object()),
+            CandidateRequirement(20, Range.full(), object()),
+        ],
+        query_feedback=True,
+    )
+    resolver = Resolver(provider, root_version="root")
+    resolver._reset(None)
+    resolver._add_root_requirements(provider.root_requirements())
+    assert unit_propagation(resolver, ROOT) is None
+    assert provider.choose_version(10, Range.full()) == "app-one"
+    provider.get_dependencies(10, "app-one")
+    resolver.solution.decide(10, "app-one")
+    provider.receive_partial_solution_hint(
+        resolver.solution.positive_ranges(), resolver.solution.decisions()
+    )
+    assert provider.receive_contextual_failure(20)
+
+    resolver.solution.backtrack(1)
+    provider.receive_partial_solution_hint(
+        resolver.solution.positive_ranges(), resolver.solution.decisions()
+    )
+
+    assert choose_package_to_decide(resolver) == 10
