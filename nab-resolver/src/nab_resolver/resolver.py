@@ -241,8 +241,9 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
     ) -> None:
         """Accept a snapshot of positive ranges and decisions.
 
-        Called before ``choose_version`` so providers can forward-check the
-        candidate's dependencies against accumulated constraints.
+        Delivered after propagation when undecided packages remain, before
+        availability refresh and package ordering. The following version query
+        uses the same snapshot unless the provider is replaced.
         ``decisions`` is the subset with concrete versions (not derivations);
         decision-based reasoning is safer because decisions cannot be undone
         in isolation.  Default is a no-op.
@@ -816,6 +817,12 @@ class Resolver(Generic[PackageType, VersionType]):
                 continue
 
             # Phase 3: Decision making.
+            hinted_provider = (
+                decide.refresh_provider_hint(self)
+                if self.solution.undecided_packages()
+                else None
+            )
+
             deferred = self.deferred
             if deferred is not None:
                 deferred.refresh(self.stats.derivations, self.stats.decisions)
@@ -833,7 +840,9 @@ class Resolver(Generic[PackageType, VersionType]):
                     continue
                 return self._build_result()
 
-            changed_package = self._decide_next(next_package)
+            changed_package = self._decide_next(
+                next_package, hinted_provider=hinted_provider
+            )
 
         exceeded_message = f"Resolution exceeded {self.max_iterations} iterations"
         raise ResolutionError(exceeded_message)
@@ -864,9 +873,16 @@ class Resolver(Generic[PackageType, VersionType]):
             changed_package = ROOT
         return changed_package, restart_threshold, restarts_remaining
 
-    def _decide_next(self, next_package: Any) -> Any:
+    def _decide_next(
+        self,
+        next_package: Any,
+        *,
+        hinted_provider: ResolverProvider[Any, Any] | None = None,
+    ) -> Any:
         """Run the decision phase for ``next_package``. Return next changed package."""
-        chosen_version = decide.choose_version(self, next_package)
+        chosen_version = decide.choose_version(
+            self, next_package, hinted_provider=hinted_provider
+        )
         had_pending = decide.absorb_pending_clauses(self)
 
         # Provider-driven force back-track. When the provider returns

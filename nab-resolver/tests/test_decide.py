@@ -610,6 +610,21 @@ class TestThePartialSolutionHint:
 
         assert len(recorder.hints) == 1
 
+    def test_a_provider_replaced_after_the_phase_hint_receives_its_own(self) -> None:
+        first = _HintRecordingProvider()
+        replacement = _HintRecordingProvider()
+        resolver, solution = _counting_resolver(first)
+        hinted_provider = decide.refresh_provider_hint(resolver)
+        resolver.provider = replacement
+
+        assert (
+            decide.choose_version(resolver, "b", hinted_provider=hinted_provider) == 1
+        )
+
+        assert len(first.hints) == 1
+        assert replacement.hints == first.hints
+        assert solution.snapshots_taken == 4
+
     def test_a_hint_installed_between_resolves_is_honoured(self) -> None:
         """The answer is re-asked per resolve, not kept from the one before."""
         hints: list[tuple[Mapping[Any, RangeProtocol[int]], Mapping[Any, int]]] = []
