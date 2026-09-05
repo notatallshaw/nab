@@ -30,7 +30,9 @@ package.__path__ = []
 sys.modules["tests"] = package
 spec = importlib.util.spec_from_file_location("tests.test_deferred_availability", sys.argv[1])
 assert spec is not None and spec.loader is not None
-spec.loader.exec_module(importlib.util.module_from_spec(spec))
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
 """
 
 
