@@ -425,11 +425,11 @@ def walk_listing(provider: Provider, normalized: str) -> ListingDiagnosis | None
     """Re-walk ``normalized``'s raw listing, recording what refused each file.
 
     Returns ``None`` when the index served nothing, which leaves the walk
-    with nothing to attribute.  The predicates are the filter's own; the
-    order it asks them in is re-expressed here, and the differential-oracle
-    test is what holds the two in step.  Counter bumps those predicates
-    make are taken back by the caller, see
-    :meth:`~nab_provider.provider.Provider.diagnose_listing`.
+    with nothing to attribute.  The predicates are the filter's own, apart
+    from the wheel-tag test the filter runs inline; the order it asks them
+    in is re-expressed here, and the differential-oracle test is what holds
+    the two in step.  Counter bumps those predicates make are taken back by
+    the caller, see :meth:`~nab_provider.provider.Provider.diagnose_listing`.
     """
     files = provider.coordinator.index.get_listing(normalized)
     if not files:

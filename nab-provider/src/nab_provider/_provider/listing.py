@@ -620,7 +620,9 @@ def _apply_wheel_tags(
     if tags is None:
         return base
 
+    accepts = tags.accepts
     release_refused = provider.release_refused_wheels
+
     result: list[tuple[Version, DistFile]] = []
     tag_rejected_versions: set[Version] = set()
     run_version: Version | None = None
@@ -628,7 +630,9 @@ def _apply_wheel_tags(
 
     for pair in base:
         version, dist = pair  # a kept pair is appended as-is, not rebuilt
-        if not excluded_by_wheel_tags(dist, tags):
+
+        # Copied from excluded_by_wheel_tags rather than called: this runs per file.
+        if not isinstance(dist, WheelFile) or accepts(dist.filename):
             result.append(pair)
             continue
 
