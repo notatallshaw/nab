@@ -1279,6 +1279,159 @@ def test_remedy_names_a_custom_output_path(
     assert f"no lockfile at {out} to check; run `{remedy}` first." in err
 
 
+def test_remedy_puts_an_option_shaped_project_path_after_the_separator(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A project path that reads as an option is named after ``--``.
+
+    ``Path`` drops the ``./`` the user typed, so a path nab accepted as
+    ``./-weird.toml`` comes back out of the remedy as ``-weird.toml``.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "-weird.toml").write_text(
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n', encoding="utf-8"
+    )
+
+    _lock_cli("./-weird.toml", "--offline", "True", "--no-cache", "--locked", status=1)
+
+    refresh = ["--offline", "True", "--", "-weird.toml"]
+    remedy = _remedy(*refresh)
+    assert (
+        f"no lockfile at pylock.toml to check; run `{remedy}` first."
+        in capsys.readouterr().err
+    )
+
+    _lock_cli("--no-cache", *refresh)
+
+    assert (tmp_path / "pylock.toml").is_file()
+
+
+def test_remedy_attaches_an_option_shaped_output_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An output path that reads as an option is attached to ``--output``."""
+    monkeypatch.chdir(tmp_path)
+    _write_pyproject(
+        tmp_path, '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n'
+    )
+    (tmp_path / "-sub").mkdir()
+    out = Path("-sub/pylock.toml")
+
+    _lock_cli(
+        f"--output={out}", "--offline", "True", "--no-cache", "--locked", status=1
+    )
+
+    refresh = [f"--output={out}", "--offline", "True"]
+    remedy = _remedy(*refresh)
+    assert (
+        f"no lockfile at {out} to check; run `{remedy}` first."
+        in capsys.readouterr().err
+    )
+
+    _lock_cli("--no-cache", *refresh)
+
+    assert (tmp_path / out).is_file()
+
+
+def test_remedy_attaches_an_option_shaped_group_and_override(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A selected name that reads as an option is attached to the flag taking it.
+
+    ``-dev`` is a real group nab selects and writes into the lock, so the
+    remedy has to select it again.
+    """
+    monkeypatch.chdir(tmp_path)
+    _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n'
+        "[dependency-groups]\n"
+        '"-dev" = []\ntest = []\n',
+    )
+
+    refresh = [
+        *["--groups=-dev", "test"],
+        *["--offline", "True"],
+        "--project-default-group=-dev",
+    ]
+
+    _lock_cli(*refresh, "--locked", status=1)
+
+    remedy = _remedy(*refresh)
+    assert (
+        f"no lockfile at pylock.toml to check; run `{remedy}` first."
+        in capsys.readouterr().err
+    )
+
+    _lock_cli("--no-cache", *refresh)
+
+    written = tomli.loads((tmp_path / "pylock.toml").read_text(encoding="utf-8"))
+    assert written["dependency-groups"] == ["-dev", "test"]
+    assert written["default-groups"] == ["-dev"]
+
+
+def test_remedy_names_all_groups_and_all_extras_not_what_they_selected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--all-groups`` reaches a declared name no expanded list could carry.
+
+    Only the first value of a multi-value option may be option-shaped, so a
+    ``-dev`` declared after ``test`` has no place in the expanded list.
+    """
+    monkeypatch.chdir(tmp_path)
+    _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n'
+        "[project.optional-dependencies]\n"
+        "gpu = []\n"
+        "[dependency-groups]\n"
+        'test = []\n"-dev" = []\n',
+    )
+
+    refresh = ["--all-groups", "--all-extras", "--offline", "True"]
+
+    _lock_cli(*refresh, "--locked", status=1)
+
+    remedy = _remedy(*refresh)
+    assert (
+        f"no lockfile at pylock.toml to check; run `{remedy}` first."
+        in capsys.readouterr().err
+    )
+
+    _lock_cli("--no-cache", *refresh)
+
+    written = tomli.loads((tmp_path / "pylock.toml").read_text(encoding="utf-8"))
+    assert written["dependency-groups"] == ["-dev", "test"]
+    assert written["extras"] == ["gpu"]
+
+
+def test_remedy_for_an_option_shaped_extra_fails_on_the_name_not_the_parse(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Running the remedy reaches nab's refusal of ``-gpu``, not a parse error."""
+    monkeypatch.chdir(tmp_path)
+    _write_pyproject(
+        tmp_path,
+        '[project]\nname = "proj"\nversion = "0"\ndependencies = []\n'
+        "[project.optional-dependencies]\n"
+        '"-gpu" = []\n',
+    )
+
+    refresh = ["--extras=-gpu", "--offline", "True"]
+
+    _lock_cli(*refresh, "--locked", status=1)
+
+    remedy = _remedy(*refresh)
+    assert (
+        f"no lockfile at pylock.toml to check; run `{remedy}` first."
+        in capsys.readouterr().err
+    )
+
+    _lock_cli("--no-cache", *refresh, status=1)
+
+    assert "PEP 751 does not accept in 'extras'" in capsys.readouterr().err
+
+
 def test_remedy_carries_every_run_shaping_flag(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
