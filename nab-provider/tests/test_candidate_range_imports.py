@@ -7,6 +7,7 @@ _PROBE = """
 import sys
 
 for name in (
+    "dataclasses",
     "nab_markersets",
     "nab_provider.provider",
     "nab_provider.fetch_port",
