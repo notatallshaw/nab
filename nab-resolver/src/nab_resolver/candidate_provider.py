@@ -154,6 +154,7 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         """Credit the failed query and its currently decided declaring packages."""
         if self._query_feedback is None:
             return False
+
         parents = (
             parent
             for parent, key in self._decisions.items()

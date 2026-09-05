@@ -215,7 +215,7 @@ Pass `query_feedback=True` to `CandidateProvider` to prioritize packages involve
 
 Feedback changes decision order only. Candidate admission, source eligibility and absence guards still follow the host contracts above. Counts start empty for each `Resolver.solve` call and survive backjumps and restarts within that call.
 
-Providers can implement two optional notifications, supplied as no-ops by `BaseProvider`. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual absence and returns `True` if priority keys changed; the resolver then invalidates its cached priorities. Ordinary unguarded absences and diagnostic probes do not send this notification. Structural providers may omit both methods.
+Providers can implement two optional notifications, supplied as no-ops by `BaseProvider`. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual absence and returns `True` if priority keys changed; the resolver then invalidates its cached priorities. It may change only priority state, preserving candidate availability and current decisions. Ordinary unguarded absences and diagnostic probes do not send this notification. Structural providers may omit both methods.
 
 ## The supported API
 
