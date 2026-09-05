@@ -4,6 +4,9 @@ The supported API is the module paths below.  They will not move without a
 major version bump.  Everything else in the package is internal and may be
 renamed or relocated in any release.
 
+    nab_resolver.candidate_provider
+                           CandidateHost, CandidateProvider,
+                           CandidateRequirement, PreparedCandidate
     nab_resolver.errors     ResolutionError
     nab_resolver.ranges     Range
     nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,

@@ -1,6 +1,7 @@
 """Exercise host adaptation without packaging types or package-name strings."""
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+from typing import cast
 
 import pytest
 
@@ -20,7 +21,9 @@ class MemoryHost:
     def __init__(self) -> None:
         self.app = PreparedCandidate("app-one", object())
         self.dep = PreparedCandidate("dep-one", object())
-        self.request = CandidateRequirement(20, Range.singleton("dep-one"), object())
+        self.request = CandidateRequirement[int, str](
+            20, Range.singleton("dep-one"), object()
+        )
 
     def iter_candidates(
         self,
@@ -142,7 +145,9 @@ def test_cached_requirement_view_is_immutable_and_tracks_new_dependencies() -> N
     before = provider.active_requirements()
     assert 20 not in before
     with pytest.raises(TypeError):
-        before[20] = (host.request,)
+        cast("MutableMapping[int, tuple[CandidateRequirement[int, str], ...]]", before)[
+            20
+        ] = (host.request,)
 
     provider.get_dependencies(10, "app-one")
     after = provider.active_requirements()
