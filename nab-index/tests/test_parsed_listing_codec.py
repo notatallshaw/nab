@@ -173,6 +173,33 @@ def test_blob_is_portable_json() -> None:
     assert [row[0] for row in rows] == [_TAG_WHEEL, _TAG_SDIST, _TAG_WHEEL, _TAG_SDIST]
 
 
+def test_only_the_first_row_of_a_repeat_carries_its_version() -> None:
+    """A repeated version rides as ``null``, on a wheel row and an sdist alike."""
+    _header, rows = json.loads(encode(SAMPLE, DIGEST))
+
+    # Both row kinds hold the version at the same index.
+    assert [row[_W_VERSION] for row in rows] == ["1.0", None, None, "2.0"]
+
+
+def test_adjacent_rows_of_one_version_decode_to_one_string() -> None:
+    """Adjacent rows of one version share a string; a change ends the run."""
+    decoded = _roundtrip(SAMPLE)
+
+    assert decoded[0].version is decoded[1].version
+    assert decoded[0].version is decoded[2].version
+    assert decoded[3].version == "2.0"
+
+
+def test_a_version_repeated_after_a_gap_is_written_again() -> None:
+    """A ``null`` means the row above, not the last distinct version."""
+    files: list[WheelFile | SdistFile] = [WHEEL_FULL, SDIST_BARE, WHEEL_BARE]
+
+    _header, rows = json.loads(encode(files, DIGEST))
+
+    assert [row[_W_VERSION] for row in rows] == ["1.0", "2.0", "1.0"]
+    assert [record.version for record in _roundtrip(files)] == ["1.0", "2.0", "1.0"]
+
+
 def _tamper_header(index: int, value: object) -> bytes:
     header, rows = json.loads(encode(SAMPLE, DIGEST))
     header[index] = value
@@ -281,6 +308,8 @@ def test_unknown_tag_on_a_well_formed_row_is_miss(tag: object) -> None:
         (_W_FILENAME, None),
         (_W_URL, None),
         (_W_VERSION, 1.0),
+        # A first row has nothing to repeat, so a leading null is never written.
+        (_W_VERSION, None),
         (_W_REQUIRES_PYTHON, 3),
         (_W_HAS_METADATA, "yes"),
         # bool is a subclass of int, so an int must not pass as a flag.
@@ -307,6 +336,7 @@ def test_wrong_field_type_is_miss(index: int, value: object) -> None:
     [
         (_S_FILENAME, 12345),
         (_S_URL, None),
+        # A first row has nothing to repeat, so a leading null is never written.
         (_S_VERSION, None),
         (_S_REQUIRES_PYTHON, 3),
         (_S_UPLOAD_TIME, 20230101),
@@ -395,12 +425,7 @@ def test_foreign_build_header_is_not_corruption() -> None:
 
 
 def test_a_previous_format_header_is_a_benign_miss() -> None:
-    """The header this build replaced is one cell shorter, and skew must not warn.
-
-    Every blob a cache already holds carries it, so reading the length as
-    corruption would warn once per package the first time an upgraded nab
-    reads them.
-    """
+    """A shorter header naming an older format is skew, not corruption."""
     _header, rows = json.loads(encode(SAMPLE, DIGEST))
     older = json.dumps([[FORMAT_VERSION - 1, CODEC, KEY_SCHEME, DIGEST], rows]).encode()
 
