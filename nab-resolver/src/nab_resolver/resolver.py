@@ -312,7 +312,7 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
 
 
 class BaseProvider(Generic[PackageType, VersionType]):
-    """Defaults for the six provider methods a synchronous provider does not need.
+    """Defaults for optional provider behavior.
 
     Supplies ``begin_decision_scan``, ``is_ready``,
     ``receive_partial_solution_hint``, ``consume_pending_clauses``,
@@ -322,10 +322,22 @@ class BaseProvider(Generic[PackageType, VersionType]):
     ``choose_version``, ``has_satisfying_version``, ``get_dependencies``,
     ``prioritize`` and ``widen_decision``.
 
+    ``begin_resolution`` and ``receive_contextual_failure`` are optional lifecycle
+    and priority notifications. Structural providers may omit both.
+
     Subclassing is optional; the resolver accepts anything that satisfies the
     protocol.  Nothing re-exports this, so import it as
     ``from nab_resolver.resolver import BaseProvider``.
     """
+
+    def begin_resolution(self) -> None:
+        """Receive notification that a new solve is beginning."""
+        return
+
+    def receive_contextual_failure(self, package: PackageType) -> bool:
+        """Report whether a contextual absence changed the provider's priorities."""
+        del package
+        return False
 
     def begin_decision_scan(self) -> Callable[[PackageType], bool] | None:
         """Freeze nothing and offer no probe: no state moves between scans."""
@@ -961,6 +973,9 @@ class Resolver(Generic[PackageType, VersionType]):
 
         # Re-asked here, so a hook installed since the last resolve is honoured.
         self._hint_ignoring_provider = _provider_with_inherited_hint(self.provider)
+        begin_resolution = getattr(self.provider, "begin_resolution", None)
+        if begin_resolution is not None:
+            begin_resolution()
 
     def _add_root_requirements(
         self, requirements: Sequence[RootRequirement[PackageType, VersionType]]

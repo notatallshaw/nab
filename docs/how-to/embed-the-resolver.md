@@ -211,6 +211,12 @@ Keep requirement fields (`package`, `constraint`, `origin`) and prepared candida
 
 Candidate queries also serve diagnostic probes, so preparing or caching a candidate must preserve answers for the same active requirements. For conditional availability, use the callback and eligibility contract above.
 
+Pass `query_feedback=True` to `CandidateProvider` to prioritize packages involved in contextual query failures. Its key is `(-parent_failures, -target_failures, host_priority)`: each failure credits the queried package and each currently decided package whose cached declarations require it. Multiple declarations from one parent count once. The default, `False`, returns the host's priority directly.
+
+Feedback changes decision order only. Candidate admission, source eligibility and absence guards still follow the host contracts above. Counts start empty for each `Resolver.solve` call and survive backjumps and restarts within that call.
+
+Providers can implement two optional notifications, supplied as no-ops by `BaseProvider`. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual absence and returns `True` if priority keys changed; the resolver then invalidates its cached priorities. Ordinary unguarded absences and diagnostic probes do not send this notification. Structural providers may omit both methods.
+
 ## The supported API
 
 These module paths will not move without a major version bump:

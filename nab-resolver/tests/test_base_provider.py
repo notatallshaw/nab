@@ -43,6 +43,8 @@ OWED = frozenset(
     }
 )
 
+OPTIONAL = frozenset({"begin_resolution", "receive_contextual_failure"})
+
 Graph = dict[str, dict[int, dict[str, Range[int]]]]
 
 
@@ -85,7 +87,7 @@ class NewestFirstProvider(BaseProvider[str, int]):
 class TestTheSplit:
     def test_supplies_exactly_the_documented_defaults(self) -> None:
         defined = {name for name in vars(BaseProvider) if not name.startswith("_")}
-        assert defined == SUPPLIED
+        assert defined == SUPPLIED | OPTIONAL
 
     def test_leaves_the_owed_methods_to_the_subclass(self) -> None:
         assert OWED.isdisjoint(dir(BaseProvider))
@@ -98,9 +100,16 @@ class TestTheSplit:
             if not name.startswith("_") and callable(value)
         }
         assert declared == SUPPLIED | OWED
+        assert declared.isdisjoint(OPTIONAL)
 
 
 class TestDefaults:
+    def test_beginning_a_resolution_retains_no_state(self) -> None:
+        assert BaseProvider[str, int]().begin_resolution() is None
+
+    def test_contextual_failure_does_not_change_priority(self) -> None:
+        assert BaseProvider[str, int]().receive_contextual_failure("foo") is False
+
     def test_beginning_a_scan_freezes_nothing(self) -> None:
         assert BaseProvider[str, int]().begin_decision_scan() is None
 
