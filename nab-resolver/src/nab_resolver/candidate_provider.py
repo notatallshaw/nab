@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Hashable
-from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
+from ._compat import override
 from .resolver import BaseProvider
 from .types import RangeProtocol, RootRequirement
 
@@ -26,21 +26,29 @@ __all__ = [
 ]
 
 
-@dataclass(frozen=True)
 class CandidateRequirement(Generic[_PackageT, _KeyT]):
     """A solver restriction retaining the host's original requirement object."""
 
-    package: _PackageT
-    constraint: RangeProtocol[_KeyT]
-    origin: object
+    __slots__ = ("constraint", "origin", "package")
+
+    def __init__(
+        self, package: _PackageT, constraint: RangeProtocol[_KeyT], origin: object
+    ) -> None:
+        """Retain stable host inputs for the duration of a resolve."""
+        self.package = package
+        self.constraint = constraint
+        self.origin = origin
 
 
-@dataclass(frozen=True)
 class PreparedCandidate(Generic[_KeyT]):
     """A usable candidate retaining the host's prepared install object."""
 
-    key: _KeyT
-    origin: object
+    __slots__ = ("key", "origin")
+
+    def __init__(self, key: _KeyT, origin: object) -> None:
+        """Associate one stable candidate key with its host object."""
+        self.key = key
+        self.origin = origin
 
 
 class CandidateHost(Protocol[_PackageT, _KeyT]):
@@ -185,6 +193,7 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         self._dependencies[key] = dependencies
         return dependencies
 
+    @override
     def receive_partial_solution_hint(
         self,
         positive_ranges: Mapping[_PackageT, RangeProtocol[_KeyT]],
