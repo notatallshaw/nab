@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.ranges import VersionRange
 
+from ._compat import override
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
 
@@ -25,6 +27,7 @@ class CandidateKey:
     version: Version
     source: str
 
+    @override
     def __str__(self) -> str:
         """Render the PEP 440 version for host diagnostics."""
         return str(self.version)
@@ -178,16 +181,19 @@ class CandidateRange:
         """Return the subset and disjoint range flags the resolver reads."""
         return _RangeRelation((self.is_subset(other), self.is_disjoint(other)))
 
+    @override
     def __eq__(self, other: object) -> bool:
         """Compare normalized source coordinates and admission policy."""
         if not isinstance(other, CandidateRange):
             return NotImplemented
         return self.default == other.default and self.overrides == other.overrides
 
+    @override
     def __hash__(self) -> int:
         """Return the hash fixed when the constraint was constructed."""
         return self._hash
 
+    @override
     def __str__(self) -> str:
         """Render the version bounds and exceptional source coordinates."""
         return f"{self.default!r}; sources={self.overrides!r}"

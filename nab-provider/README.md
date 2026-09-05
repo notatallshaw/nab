@@ -30,4 +30,4 @@ Construct `CandidateRange(versions)` from a `VersionRange` supplied by nab-provi
 
 Leave the `prereleases` argument unset when constructing input ranges or specifier sets; explicitly configured `True` or `False` policies raise `ValueError`. Candidate ordering, source admission and prerelease selection remain host responsibilities.
 
-The module imports only the provider's vendored packaging and the standard library.
+Its runtime dependencies are the provider's vendored packaging and the standard library.
