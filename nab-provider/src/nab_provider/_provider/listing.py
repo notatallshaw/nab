@@ -59,6 +59,15 @@ if TYPE_CHECKING:
         "invalid-version",
     ]
 
+    # A prepared listing plus the cutoff verdicts taken over it, keyed by
+    # position in the listing, or ``None`` when no cutoff is configured.
+    _SharedListing = tuple[
+        list[tuple[Version, DistFile]],
+        set[Version],
+        bool,
+        dict[int, Cause | None] | None,
+    ]
+
 
 # Matched to the provider's look-ahead abort threshold: prefetching 8 versions
 # covers the worst-case abort scan without overshooting.  Used by the
@@ -404,23 +413,14 @@ def _filter_base(
             target_drops=True,
         )
     else:
-        parsed, sdist_install_versions, sort_with_wheel_first = cache.prepared(
-            normalized,
-            provider.stats,
-            partial(
-                _prepare_listing,
-                provider,
+        parsed, sdist_install_versions, sort_with_wheel_first, time_causes = (
+            cache.prepared(
                 normalized,
-                files,
-                policy,
-                target_drops=False,
-            ),
+                provider.stats,
+                partial(_prepare_shared, provider, normalized, files, policy),
+            )
         )
-        result = [
-            pair
-            for pair in parsed
-            if not python_or_time_cause(provider, normalized, pair[0], pair[1], policy)
-        ]
+        result = _apply_target_drops(provider, normalized, policy, parsed, time_causes)
 
     result = _drop_sdist_install_wheel_only(result, sdist_install_versions)
 
@@ -443,6 +443,59 @@ def _count_files_seen(stats: ProviderStats, wheels: int, sdists: int) -> None:
     stats.distributions_seen += wheels + sdists
     stats.wheels_seen += wheels
     stats.sdists_seen += sdists
+
+
+def _prepare_shared(
+    provider: Provider,
+    normalized: str,
+    files: Sequence[WheelFile | SdistFile],
+    policy: ListingPolicy,
+) -> _SharedListing:
+    """Run the half of the pass a matrix shares, and start its cutoff table.
+
+    A cutoff verdict reads the file's stamp and its effective cutoff, and
+    neither varies with the target, so one verdict answers every Python.
+    The table starts empty: :func:`_python_or_shared_time_cause` fills it
+    as it reaches each file, so a file no target admits is never dated.
+    """
+    parsed, sdist_install_versions, sort_with_wheel_first = _prepare_listing(
+        provider, normalized, files, policy, target_drops=False
+    )
+
+    time_causes: dict[int, Cause | None] | None = None
+    if policy.time_filter_active:
+        time_causes = {}
+
+    return parsed, sdist_install_versions, sort_with_wheel_first, time_causes
+
+
+def _apply_target_drops(
+    provider: Provider,
+    normalized: str,
+    policy: ListingPolicy,
+    parsed: list[tuple[Version, DistFile]],
+    time_causes: dict[int, Cause | None] | None,
+) -> list[tuple[Version, DistFile]]:
+    """Drop the prepared files this target's Python or the cutoff refuses.
+
+    ``time_causes`` holds the matrix's cutoff verdicts by position in
+    ``parsed``, and is ``None`` when no cutoff is configured and only the
+    Requires-Python drop runs.
+    """
+    if time_causes is None:
+        return [
+            pair
+            for pair in parsed
+            if not python_or_time_cause(provider, normalized, pair[0], pair[1], policy)
+        ]
+
+    return [
+        pair
+        for index, pair in enumerate(parsed)
+        if not _python_or_shared_time_cause(
+            provider, normalized, pair[0], pair[1], policy, time_causes, index
+        )
+    ]
 
 
 def _prepare_listing(
@@ -694,6 +747,55 @@ def python_or_time_cause(
         cutoff = policy.default_cutoff
 
     cause = upload_time_cause(dist, cutoff)
+    if cause is None:
+        return None
+    if cause == DropCause.UPLOAD_TIME_NAIVE:
+        raise InvalidUploadTimeError(naive_upload_time_message(normalized, dist))
+    provider.stats.excluded_by_time += 1
+    return cause
+
+
+def _python_or_shared_time_cause(
+    provider: Provider,
+    normalized: str,
+    version: Version,
+    dist: DistFile,
+    policy: ListingPolicy,
+    time_causes: dict[int, Cause | None],
+    index: int,
+) -> Cause | None:
+    """Answer :func:`python_or_time_cause` from the matrix's shared cutoff verdicts.
+
+    The first target to get the file at ``index`` past Requires-Python
+    takes its cutoff verdict into ``time_causes``, and the rest read that
+    back.  Requires-Python is asked first, as it is per target, so a file
+    no target admits is never given a cutoff.
+
+    Written out rather than shared with :func:`python_or_time_cause`
+    through helpers: both run once per file per target, and the frames
+    that sharing adds cost more than the duplication saves.
+    """
+    if policy.overridden:
+        override_rp = provider.effective_requires_python(normalized, version)
+    else:
+        override_rp = None
+
+    if excluded_by_python(provider, dist, override_rp):
+        return DropCause.REQUIRES_PYTHON
+
+    if index in time_causes:
+        cause = time_causes[index]
+    else:
+        if policy.overridden:
+            cutoff = provider.effective_uploaded_prior_to(
+                normalized, version, policy.index_name
+            )
+        else:
+            cutoff = policy.default_cutoff
+
+        cause = upload_time_cause(dist, cutoff)
+        time_causes[index] = cause
+
     if cause is None:
         return None
     if cause == DropCause.UPLOAD_TIME_NAIVE:

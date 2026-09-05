@@ -185,15 +185,17 @@ class ListingFilterCache:
     identical list.  Memoising it per (package, Python) leaves only the
     wheel-tag pass to run per target.
 
-    Most of that half reads no Python either: the version parse and the
-    dist-policy exclusion do the same work for every Python of a matrix,
-    and only the Requires-Python and upload-cutoff drops differ.  When the
-    resolve spans more than one Python, :attr:`shares_pythons` is set and
-    :meth:`prepared` memoises that inner pass per package, so a
+    Most of that half reads no Python either: the version parse, the
+    dist-policy exclusion and the upload cutoff reach the same answer for
+    every Python of a matrix, and only the Requires-Python drop differs.
+    When the resolve spans more than one Python, :attr:`shares_pythons` is
+    set and :meth:`prepared` memoises that inner pass per package, so a
     three-Python matrix walks each listing's files once rather than three
-    times.  A one-Python resolve has nothing to share and skips the split,
-    since materialising the intermediate list would cost it a pass it does
-    not get back.
+    times.  The memo also holds the cutoff verdicts: the first target to
+    get a file past Requires-Python takes its verdict and the rest read it
+    back, while counting the drop stays per target.  A one-Python resolve
+    has nothing to share and skips the split, since materialising the
+    intermediate list would cost it a pass it does not get back.
 
     One instance is only valid across providers that share a coordinator
     and a policy config, as the targets of one resolve do.
