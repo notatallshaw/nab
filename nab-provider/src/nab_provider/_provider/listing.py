@@ -814,13 +814,17 @@ def _canonicalize_equal_versions(
     """
     representative: dict[Version, Version] = {}
     needs_rebuild = False
+    run_version: Version | None = None
+
     for version, _ in result:
-        chosen = representative.get(version)
-        if chosen is None:
-            representative[version] = version
-        elif chosen is not version:
-            # The listing interns its versions, so two distinct objects that
-            # compare equal are two representations of one release.
+        # ``result`` is sorted by version and the listing interns its versions,
+        # so artifacts sharing a version string arrive as a run of one object.
+        if version is run_version:
+            continue
+        run_version = version
+
+        chosen = representative.setdefault(version, version)
+        if chosen is not version:
             needs_rebuild = True
             if (len(version.release), str(version)) < (
                 len(chosen.release),
