@@ -121,7 +121,7 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
     def active_requirements(
         self,
     ) -> Mapping[_PackageT, tuple[CandidateRequirement[_PackageT, _KeyT], ...]]:
-        """Return immutable requirements for the current decision snapshot."""
+        """Return read-only requirement collections for the current decision snapshot."""
         if self._active_cache is None:
             self._active_cache = self._build_active_requirements()
         return self._active_cache
@@ -172,7 +172,7 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
     def get_dependencies(
         self, package: _PackageT, version: _KeyT
     ) -> dict[_PackageT, RangeProtocol[_KeyT]]:
-        """Return dependencies tied to the exact selected candidate identity."""
+        """Return dependency restrictions, stopping at the first empty result."""
         key = package, version
         cached = self._dependencies.get(key)
         if cached is not None:
@@ -222,7 +222,7 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
     def causes_for(
         self, package: _PackageT, key: _KeyT
     ) -> tuple[CandidateRequirement[_PackageT, _KeyT], ...]:
-        """Return original dependency causes for one selected candidate."""
+        """Return the host dependency declarations consumed for this candidate."""
         return self._causes.get((package, key), ())
 
     def recorded_candidates(
