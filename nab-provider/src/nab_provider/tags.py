@@ -32,6 +32,8 @@ from typing import TYPE_CHECKING, Final, Literal, Protocol, TypeVar
 from nab_provider._vendor.packaging import tags as ptags
 from nab_provider._vendor.packaging.version import Version
 
+from ._value import SlottedValue
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -130,6 +132,7 @@ _X86_GLIBC2_MINOR_FLOOR = 5
 _OTHER_GLIBC2_MINOR_FLOOR = 17
 
 
+# PlatformSpec is a cache key and needs frozen fields and copy/pickle support.
 @dataclass(frozen=True)
 class PlatformSpec:
     """Concrete tag knobs for one matrix platform_id.
@@ -554,8 +557,7 @@ class _Unplaced(enum.Enum):
 _UNPLACED: Final = _Unplaced.TOKEN
 
 
-@dataclass(frozen=True)
-class _AxisIndex:
+class _AxisIndex(SlottedValue):
     """Where a tag sits in a target's expanded tag order.
 
     ``multiplied`` holds the first index of each interpreter/abi block the
@@ -565,9 +567,23 @@ class _AxisIndex:
     index :attr:`TagSet.rank` keeps for a repeated tag.
     """
 
+    __match_args__ = ("multiplied", "fixed", "platforms")
+    __slots__ = __match_args__
+
     multiplied: Mapping[tuple[str, str], int]
     fixed: Mapping[Tag, int]
     platforms: Mapping[str, int]
+
+    def __init__(
+        self,
+        multiplied: Mapping[tuple[str, str], int],
+        fixed: Mapping[Tag, int],
+        platforms: Mapping[str, int],
+    ) -> None:
+        """Record the three tables :meth:`of` reads."""
+        self.multiplied = multiplied
+        self.fixed = fixed
+        self.platforms = platforms
 
     def of(self, tag: Tag) -> int | None:
         """Return ``tag``'s index in the expanded order, or None if unaccepted.
@@ -584,8 +600,7 @@ class _AxisIndex:
         return self.fixed.get(tag)
 
 
-@dataclass(frozen=True)
-class TagSet:
+class TagSet(SlottedValue):
     """The wheel tags one target accepts, in install-preference order.
 
     A target's tags are the cross product of its interpreter/abi axis with
@@ -602,8 +617,18 @@ class TagSet:
     target's preference for the wheels carrying it.
     """
 
+    # No __slots__: the cached properties below need a __dict__.
+    __match_args__ = ("_entries", "_platforms")
+
     _entries: tuple[_AxisEntry, ...]
-    _platforms: tuple[str, ...] = ()
+    _platforms: tuple[str, ...]
+
+    def __init__(
+        self, _entries: tuple[_AxisEntry, ...], _platforms: tuple[str, ...] = ()
+    ) -> None:
+        """Record the two axes whose cross product the target accepts."""
+        self._entries = _entries
+        self._platforms = _platforms
 
     @cached_property
     def ordered(self) -> tuple[Tag, ...]:

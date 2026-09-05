@@ -8,12 +8,14 @@ Pins:
   needing newer, per floor
 - the free-threaded ``cpXYt`` ABI, and ``abi3t`` in place of ``abi3``
 - ``py3-none-any`` fallback ordering
+- every knob reaching comparison, hashing and repr
 - compressed-tag-set wheels (``cp310.cp311``)
 """
 
 from __future__ import annotations
 
 from contextlib import AbstractContextManager
+from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -261,6 +263,83 @@ class TestPlatformSpec:
         """Pins the escaped label shape for a realistic kernel release."""
         spec = PlatformSpec("linux_x86_64", platform_release="5.15.0-generic")
         assert spec.label == "linux_x86_64-rel5.15.0_2d_generic"
+
+
+class TestPlatformSpecFields:
+    """Check platform fields and frozen cache-key behavior."""
+
+    @pytest.mark.parametrize(
+        ("platform_id", "knob", "value"),
+        [
+            ("linux_x86_64", "libc", "musl"),
+            ("linux_x86_64", "runs_on_libc", (2, 28)),
+            ("macos_arm64", "runs_on_macos", (14, 0)),
+            ("linux_x86_64", "platform_release", "5.15.0"),
+            ("linux_x86_64", "platform_version", "#1 SMP"),
+            ("linux_x86_64", "free_threaded", True),
+        ],
+    )
+    def test_a_declared_knob_separates_the_spec_from_the_default(
+        self, platform_id: str, knob: str, value: object
+    ) -> None:
+        """A spec with one knob off the default is unequal, and its repr names it."""
+        declared = PlatformSpec(platform_id, **{knob: value})  # type: ignore[arg-type]
+
+        assert declared != PlatformSpec(platform_id)
+        assert f"{knob}={value!r}" in repr(declared)
+
+    def test_the_platform_id_separates_two_otherwise_equal_specs(self) -> None:
+        """``platform_id`` is a compared field, and the repr names it."""
+        assert PlatformSpec("linux_x86_64") != PlatformSpec("linux_aarch64")
+        assert "platform_id='linux_aarch64'" in repr(PlatformSpec("linux_aarch64"))
+
+    def test_two_specs_declaring_the_same_knobs_agree(self) -> None:
+        """Equal specs hash alike, so a set holds one of the pair."""
+        spec = PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 2))
+        twin = PlatformSpec("linux_x86_64", libc="musl", runs_on_libc=(1, 2))
+
+        assert spec == twin
+        assert hash(spec) == hash(twin)
+        assert len({spec, twin}) == 1
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "platform_id",
+            "libc",
+            "runs_on_libc",
+            "runs_on_macos",
+            "platform_release",
+            "platform_version",
+            "free_threaded",
+        ],
+    )
+    def test_cache_key_fields_are_immutable(self, field: str) -> None:
+        spec = PlatformSpec("linux_x86_64")
+        cache = {spec: "cached"}
+
+        with pytest.raises(FrozenInstanceError):
+            setattr(spec, field, getattr(spec, field))
+        with pytest.raises(FrozenInstanceError):
+            delattr(spec, field)
+
+        assert cache[spec] == "cached"
+
+    def test_subclass_can_change_its_own_fields(self) -> None:
+        class ExtendedSpec(PlatformSpec):
+            """A platform spec with mutable ancillary data."""
+
+            note: str
+
+        spec = ExtendedSpec("linux_x86_64")
+        spec.note = "extra"
+        assert spec.note == "extra"
+        del spec.note
+
+        with pytest.raises(FrozenInstanceError):
+            spec.libc = "musl"
+        with pytest.raises(FrozenInstanceError):
+            del spec.libc
 
 
 class TestLibcFamilyExclusivity:

@@ -27,23 +27,13 @@ if TYPE_CHECKING:
 
 @pytest.fixture(autouse=True)
 def _reset_nab_output(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Pin nab's output state so the CLI suite is deterministic.
+    """Isolate CLI colour settings and reset the per-run printer.
 
-    Two hazards this guards against:
-
-    * CI sets ``FORCE_COLOR=1`` so its tool logs are coloured, which would
-      otherwise make nab wrap its message tokens in ANSI and break the plain
-      output the assertions expect.  Both variables are cleared rather than
-      relying on ``NO_COLOR`` winning: a case that wants the isatty decision
-      clears ``NO_COLOR``, and an ambient ``FORCE_COLOR`` left behind would
-      paint whatever it looked at.
-    * ``nab.output.begin`` sets a module-level printer (bound to the run's
-      streams) and installs a logging handler on the nab loggers; without the
-      reset a test that runs ``main`` would leak the printer (whose captured
-      stream is closed once the test ends) and the handler into later tests.
+    Printers hold captured streams that close when their test finishes.
     """
     monkeypatch.setenv("NO_COLOR", "1")
     monkeypatch.delenv("FORCE_COLOR", raising=False)
+    monkeypatch.delenv("TERM", raising=False)
     yield
     reset_run()
 
