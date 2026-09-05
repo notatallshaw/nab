@@ -205,7 +205,9 @@ This mode is synchronous: availability cannot change between the final generatio
 
 The host yields `PreparedCandidate` objects in its preferred order. Each key must identify stable dependency metadata for that package, including distinctions such as source or build options. The key must be hashable and accepted by your range type. Retrieve the selected host object with `provider.prepared(package, key).origin`.
 
-Host methods receive a read-only mapping of active requirements. It contains roots and dependencies from the last decision snapshot supplied before candidate selection; `priority` can therefore see an earlier snapshot. Original host objects remain available through each requirement's `origin`. The host must keep those objects and their constraints stable while resolving.
+Host methods receive a read-only mapping of active requirements. It contains roots and dependencies from the last decision snapshot supplied before candidate selection; `priority` can therefore see an earlier snapshot. Original host objects remain available through each requirement's `origin`.
+
+Keep requirement fields (`package`, `constraint`, `origin`) and prepared candidate fields (`key`, `origin`) fixed during a resolve. Changes inside host objects may populate caches but must preserve requirement meaning and candidate metadata. Dependency collection stops when a merged restriction becomes empty; `causes_for(package, key)` returns the declarations consumed for that candidate.
 
 Candidate queries also serve diagnostic probes, so preparing or caching a candidate must preserve answers for the same active requirements. For conditional availability, use the callback and eligibility contract above.
 
