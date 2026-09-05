@@ -17,7 +17,7 @@ from .types import Incompatibility, IncompatibilityCause, RangeProtocol, Term
 if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
 
-    from .resolver import Resolver
+    from .resolver import Resolver, ResolverProvider
 
 __all__ = [
     "absorb_pending_clauses",
@@ -25,6 +25,7 @@ __all__ = [
     "choose_package_to_decide",
     "choose_version",
     "record_no_versions",
+    "refresh_provider_hint",
 ]
 
 
@@ -93,12 +94,18 @@ def choose_package_to_decide(
     )
 
 
-def choose_version(resolver: Resolver[Any, Any], package: Any) -> Any | None:
+def choose_version(
+    resolver: Resolver[Any, Any],
+    package: Any,
+    *,
+    hinted_provider: ResolverProvider[Any, Any] | None = None,
+) -> Any | None:
     """Ask the provider to pick a version within the allowed range.
 
     A user constraint narrows the acceptable range here rather than acting
     as an incompatibility: it restricts which version is picked but never
-    forces the package into the solution.
+    forces the package into the solution. A provider already refreshed for
+    this decision phase needs no second hint.
     """
     current_range = resolver.solution.get(package) or resolver.range_type.full()
     constraint = resolver.constraints.get(package)
@@ -106,15 +113,23 @@ def choose_version(resolver: Resolver[Any, Any], package: Any) -> Any | None:
         current_range = current_range & constraint
 
     provider = resolver.provider
-    # The hint costs two snapshots of the solution, so it is skipped for the
-    # provider whose hook is ``BaseProvider``'s discarding no-op.
+    if provider is not hinted_provider:
+        refresh_provider_hint(resolver)
+    return provider.choose_version(package, current_range)
+
+
+def refresh_provider_hint(resolver: Resolver[Any, Any]) -> ResolverProvider[Any, Any]:
+    """Return the current provider, delivering snapshots unless its hint is a no-op."""
+    provider = resolver.provider
+
+    # The inherited no-op cannot read either snapshot.
     if provider is not resolver._hint_ignoring_provider:  # noqa: SLF001
         provider.receive_partial_solution_hint(
             resolver.solution.positive_ranges(),
             resolver.solution.decisions(),
         )
 
-    return provider.choose_version(package, current_range)
+    return provider
 
 
 def _normalize_terms(
