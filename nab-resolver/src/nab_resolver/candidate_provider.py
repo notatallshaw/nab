@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Hashable
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 from .resolver import BaseProvider
@@ -97,6 +98,10 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         self._dependencies: dict[
             tuple[_PackageT, _KeyT], dict[_PackageT, RangeProtocol[_KeyT]]
         ] = {}
+        self._active_cache: (
+            Mapping[_PackageT, tuple[CandidateRequirement[_PackageT, _KeyT], ...]]
+            | None
+        ) = None
 
     def root_requirements(self) -> list[RootRequirement[_PackageT, _KeyT]]:
         """Return solver roots with their original host provenance attached."""
@@ -107,7 +112,15 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
 
     def active_requirements(
         self,
-    ) -> dict[_PackageT, list[CandidateRequirement[_PackageT, _KeyT]]]:
+    ) -> Mapping[_PackageT, tuple[CandidateRequirement[_PackageT, _KeyT], ...]]:
+        """Return immutable requirements for the current decision snapshot."""
+        if self._active_cache is None:
+            self._active_cache = self._build_active_requirements()
+        return self._active_cache
+
+    def _build_active_requirements(
+        self,
+    ) -> Mapping[_PackageT, tuple[CandidateRequirement[_PackageT, _KeyT], ...]]:
         """Collect roots and dependencies of candidates in the current solution."""
         requirements: dict[_PackageT, list[CandidateRequirement[_PackageT, _KeyT]]] = (
             defaultdict(list)
@@ -117,7 +130,9 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         for package, key in self._decisions.items():
             for cause in self._causes.get((package, key), ()):
                 requirements[cause.package].append(cause)
-        return dict(requirements)
+        return MappingProxyType(
+            {package: tuple(causes) for package, causes in requirements.items()}
+        )
 
     def choose_version(
         self, package: _PackageT, version_range: RangeProtocol[_KeyT]
@@ -165,6 +180,7 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
             )
             if dependencies[cause.package].is_empty:
                 break
+        self._active_cache = None
         self._causes[key] = tuple(causes)
         self._dependencies[key] = dependencies
         return dependencies
@@ -177,6 +193,7 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         """Retain the current decisions so rejected parents lose their requirements."""
         del positive_ranges
         self._decisions = decisions
+        self._active_cache = None
 
     def prioritize(
         self,
