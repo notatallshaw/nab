@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import TYPE_CHECKING, Any, cast
+from types import MemberDescriptorType
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from nab_provider._vendor.packaging.ranges import VersionRange
 
@@ -11,7 +12,6 @@ from ._compat import override
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping
-    from types import MemberDescriptorType
 
     from nab_provider._vendor.packaging.version import Version
 
@@ -24,16 +24,67 @@ class _ImmutableSlots:
     """Keep fields used in candidate and range hashes unchanged."""
 
     __slots__ = ("__weakref__",)
+    _immutable_fields: ClassVar[tuple[str, ...]]
 
     @override
     def __setattr__(self, name: str, value: object) -> None:
-        message = f"cannot assign to field {name!r}"
-        raise AttributeError(message)
+        if "_immutable_fields" in type(self).__dict__ or name in self._immutable_fields:
+            message = f"cannot assign to field {name!r}"
+            raise AttributeError(message)
+        object.__setattr__(self, name, value)
 
     @override
     def __delattr__(self, name: str) -> None:
-        message = f"cannot delete field {name!r}"
-        raise AttributeError(message)
+        if "_immutable_fields" in type(self).__dict__ or name in self._immutable_fields:
+            message = f"cannot delete field {name!r}"
+            raise AttributeError(message)
+        object.__delattr__(self, name)
+
+    def __getstate__(
+        self,
+    ) -> dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]:
+        """Collect fields and subclass state without copying contained values."""
+        dictionary = getattr(self, "__dict__", {}).copy()
+        slots: dict[str, Any] = {}
+        seen = set()
+        for cls in type(self).__mro__:
+            for name, descriptor in cls.__dict__.items():
+                if not isinstance(descriptor, MemberDescriptorType) or name in seen:
+                    continue
+                try:
+                    value = descriptor.__get__(self)
+                except AttributeError:
+                    continue
+                seen.add(name)
+                if name in self._immutable_fields:
+                    dictionary[name] = value
+                else:
+                    slots[name] = value
+        return (dictionary, slots) if slots else dictionary
+
+    def __setstate__(
+        self, state: dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]
+    ) -> None:
+        """Restore fields and subclass state without running their constructors."""
+        dictionary, slots = state if isinstance(state, tuple) else (state, {})
+        extra = dictionary.copy()
+        for name in self._immutable_fields:
+            if name in extra and name not in slots:
+                descriptor = _attribute_slot(type(self), name)
+                if descriptor is not None:
+                    descriptor.__set__(self, extra.pop(name))
+        if extra:
+            self.__dict__.update(extra)
+        for name, value in slots.items():
+            setattr(self, name, value)
+
+
+def _attribute_slot(cls: type, name: str) -> MemberDescriptorType | None:
+    """Find the visible slot without invoking a subclass property."""
+    descriptor = next(
+        base.__dict__[name] for base in cls.__mro__ if name in base.__dict__
+    )
+    return descriptor if isinstance(descriptor, MemberDescriptorType) else None
 
 
 def _slot_writer(cls: type, name: str) -> Callable[[object, object], None]:
@@ -45,50 +96,49 @@ def _slot_writer(cls: type, name: str) -> Callable[[object, object], None]:
 class CandidateKey(_ImmutableSlots):
     """Identify a distribution by its version and installer source."""
 
-    __slots__ = __match_args__ = ("version", "source")
+    __slots__ = __match_args__ = _immutable_fields = ("version", "source")
 
     version: Version
     source: str
 
     def __init__(self, version: Version, source: str) -> None:
         """Retain the version and its host-defined source."""
-        _set_key_version(self, version)
-        _set_key_source(self, source)
+        if type(self) is CandidateKey:
+            _set_key_version(self, version)
+            _set_key_source(self, source)
+        else:
+            object.__setattr__(self, "version", version)
+            object.__setattr__(self, "source", source)
 
     @override
     def __eq__(self, other: object) -> bool:
         """Compare version and source within the exact class."""
         if other.__class__ is not self.__class__:
             return NotImplemented
-        other = cast("CandidateKey", other)
         return (self.version, self.source) == (other.version, other.source)
 
     def __lt__(self, other: object) -> bool:
         """Compare versions before source identifiers."""
         if other.__class__ is not self.__class__:
             return NotImplemented
-        other = cast("CandidateKey", other)
         return (self.version, self.source) < (other.version, other.source)
 
     def __le__(self, other: object) -> bool:
         """Compare versions before source identifiers."""
         if other.__class__ is not self.__class__:
             return NotImplemented
-        other = cast("CandidateKey", other)
         return (self.version, self.source) <= (other.version, other.source)
 
     def __gt__(self, other: object) -> bool:
         """Compare versions before source identifiers."""
         if other.__class__ is not self.__class__:
             return NotImplemented
-        other = cast("CandidateKey", other)
         return (self.version, self.source) > (other.version, other.source)
 
     def __ge__(self, other: object) -> bool:
         """Compare versions before source identifiers."""
         if other.__class__ is not self.__class__:
             return NotImplemented
-        other = cast("CandidateKey", other)
         return (self.version, self.source) >= (other.version, other.source)
 
     @override
@@ -108,15 +158,6 @@ class CandidateKey(_ImmutableSlots):
     def __str__(self) -> str:
         """Render the PEP 440 version for host diagnostics."""
         return str(self.version)
-
-    @override
-    def __reduce__(self) -> tuple[type[CandidateKey], tuple[Version, str]]:
-        """Reconstruct immutable fields through the constructor."""
-        return type(self), (self.version, self.source)
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore a pickled field dictionary."""
-        CandidateKey.__init__(self, state["version"], state["source"])
 
 
 _set_key_version = _slot_writer(CandidateKey, "version")
@@ -143,7 +184,7 @@ class _RangeRelation(Enum):
 class CandidateRange(_ImmutableSlots):
     """An immutable default version range with finite source-specific replacements."""
 
-    __slots__ = __match_args__ = ("default", "overrides", "_hash")
+    __slots__ = __match_args__ = _immutable_fields = ("default", "overrides", "_hash")
 
     default: VersionRange
     overrides: tuple[tuple[str, VersionRange], ...]
@@ -165,9 +206,14 @@ class CandidateRange(_ImmutableSlots):
                 (source, value) for source, value in sources.items() if value != default
             )
         )
-        _set_range_default(self, default)
-        _set_range_overrides(self, normalized)
-        _set_range_hash(self, hash((default, normalized)))
+        if type(self) is CandidateRange:
+            _set_range_default(self, default)
+            _set_range_overrides(self, normalized)
+            _set_range_hash(self, hash((default, normalized)))
+        else:
+            object.__setattr__(self, "default", default)
+            object.__setattr__(self, "overrides", normalized)
+            object.__setattr__(self, "_hash", hash((default, normalized)))
 
     @classmethod
     def empty(cls) -> CandidateRange:
@@ -296,16 +342,6 @@ class CandidateRange(_ImmutableSlots):
             f"{type(self).__qualname__}(default={self.default!r}, "
             f"overrides={self.overrides!r}, _hash={self._hash!r})"
         )
-
-    @override
-    def __reduce__(
-        self,
-    ) -> tuple[
-        type[CandidateRange],
-        tuple[VersionRange, tuple[tuple[str, VersionRange], ...]],
-    ]:
-        """Reconstruct a shallow copy through the constructor."""
-        return type(self), (self.default, self.overrides)
 
 
 _set_range_default = _slot_writer(CandidateRange, "default")

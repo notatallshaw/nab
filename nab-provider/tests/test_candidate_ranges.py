@@ -130,13 +130,11 @@ def test_key_preserves_value_operations_and_exact_class_comparisons() -> None:
         high,
     ]
 
-    for operation in (operator.lt, operator.le, operator.gt, operator.ge):
-        assert operation(low, high) == operation(
-            (low.version, low.source), (high.version, high.source)
-        )
-        assert operation(low, low) == operation(
-            (low.version, low.source), (low.version, low.source)
-        )
+    for operation in (operator.eq, operator.lt, operator.le, operator.gt, operator.ge):
+        for other in (high, low, CandidateKey(low.version, "a")):
+            assert operation(low, other) == operation(
+                (low.version, low.source), (other.version, other.source)
+            )
     for name in ("__eq__", "__lt__", "__le__", "__gt__", "__ge__"):
         assert getattr(low, name)(object()) is NotImplemented
         assert getattr(low, name)(DerivedKey(low.version, low.source)) is NotImplemented
@@ -154,6 +152,8 @@ def test_values_keep_their_pattern_fields_and_range_representation() -> None:
     match key:
         case CandidateKey(version, source):
             assert (version, source) == (Version("1"), "direct")
+        case _:
+            pytest.fail("CandidateKey did not match its declared fields")
     match constraint:
         case CandidateRange(default, overrides, cached_hash):
             assert (default, overrides, cached_hash) == (
@@ -161,6 +161,8 @@ def test_values_keep_their_pattern_fields_and_range_representation() -> None:
                 constraint.overrides,
                 hash(constraint),
             )
+        case _:
+            pytest.fail("CandidateRange did not match its declared fields")
     assert repr(constraint) == (
         f"CandidateRange(default={constraint.default!r}, overrides={constraint.overrides!r}, "
         f"_hash={hash(constraint)!r})"
@@ -201,6 +203,8 @@ def test_copy_and_pickle_preserve_keys_and_shallow_range_copies() -> None:
     constraint = CandidateRange.singleton(key)
     restored_range = copy.copy(constraint)
     assert restored_range is not constraint
+    assert restored_range.default is constraint.default
+    assert restored_range.overrides is constraint.overrides
     assert restored_range == constraint
     assert hash(restored_range) == hash(constraint)
     assert repr(restored_range) == repr(constraint)
