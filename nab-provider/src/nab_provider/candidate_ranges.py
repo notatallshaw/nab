@@ -96,7 +96,8 @@ def _slot_writer(cls: type, name: str) -> Callable[[object, object], None]:
 class CandidateKey(_ImmutableSlots):
     """Identify a distribution by its version and installer source."""
 
-    __slots__ = __match_args__ = _immutable_fields = ("version", "source")
+    __slots__ = __match_args__ = ("version", "source")
+    _immutable_fields: ClassVar[tuple[str, ...]] = __slots__
 
     version: Version
     source: str
@@ -113,31 +114,31 @@ class CandidateKey(_ImmutableSlots):
     @override
     def __eq__(self, other: object) -> bool:
         """Compare version and source within the exact class."""
-        if other.__class__ is not self.__class__:
+        if not isinstance(other, CandidateKey) or other.__class__ is not self.__class__:
             return NotImplemented
         return (self.version, self.source) == (other.version, other.source)
 
     def __lt__(self, other: object) -> bool:
         """Compare versions before source identifiers."""
-        if other.__class__ is not self.__class__:
+        if not isinstance(other, CandidateKey) or other.__class__ is not self.__class__:
             return NotImplemented
         return (self.version, self.source) < (other.version, other.source)
 
     def __le__(self, other: object) -> bool:
         """Compare versions before source identifiers."""
-        if other.__class__ is not self.__class__:
+        if not isinstance(other, CandidateKey) or other.__class__ is not self.__class__:
             return NotImplemented
         return (self.version, self.source) <= (other.version, other.source)
 
     def __gt__(self, other: object) -> bool:
         """Compare versions before source identifiers."""
-        if other.__class__ is not self.__class__:
+        if not isinstance(other, CandidateKey) or other.__class__ is not self.__class__:
             return NotImplemented
         return (self.version, self.source) > (other.version, other.source)
 
     def __ge__(self, other: object) -> bool:
         """Compare versions before source identifiers."""
-        if other.__class__ is not self.__class__:
+        if not isinstance(other, CandidateKey) or other.__class__ is not self.__class__:
             return NotImplemented
         return (self.version, self.source) >= (other.version, other.source)
 
@@ -184,7 +185,8 @@ class _RangeRelation(Enum):
 class CandidateRange(_ImmutableSlots):
     """An immutable default version range with finite source-specific replacements."""
 
-    __slots__ = __match_args__ = _immutable_fields = ("default", "overrides", "_hash")
+    __slots__ = __match_args__ = ("default", "overrides", "_hash")
+    _immutable_fields: ClassVar[tuple[str, ...]] = __slots__
 
     default: VersionRange
     overrides: tuple[tuple[str, VersionRange], ...]
