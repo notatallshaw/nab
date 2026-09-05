@@ -2,6 +2,8 @@
 
 from collections.abc import Iterable, Mapping, Sequence
 
+import pytest
+
 from nab_resolver.candidate_provider import (
     CandidateProvider,
     CandidateRequirement,
@@ -78,7 +80,7 @@ def test_cached_dependencies_do_not_survive_their_selected_parent() -> None:
     provider.get_dependencies(10, "app-one")
     assert 20 not in provider.active_requirements()
     provider.receive_partial_solution_hint({}, {10: "app-one"})
-    assert provider.active_requirements()[20] == [host.request]
+    assert provider.active_requirements()[20] == (host.request,)
     provider.receive_partial_solution_hint({}, {})
     assert 20 not in provider.active_requirements()
     assert provider.causes_for(10, "app-one") == (host.request,)
@@ -102,3 +104,26 @@ def test_contradictory_dependencies_stop_further_host_work() -> None:
     provider.choose_version(10, Range.full())
     assert provider.get_dependencies(10, "app-one") == {20: Range.empty()}
     assert len(provider.causes_for(10, "app-one")) == 2
+
+
+def test_cached_requirement_view_is_immutable_and_tracks_new_dependencies() -> None:
+    host = MemoryHost()
+    provider = CandidateProvider(
+        host, [CandidateRequirement(10, Range.full(), object())]
+    )
+    provider.choose_version(10, Range.full())
+    provider.receive_partial_solution_hint({}, {10: "app-one"})
+    before = provider.active_requirements()
+    assert 20 not in before
+    with pytest.raises(TypeError):
+        before[20] = (host.request,)
+
+    provider.get_dependencies(10, "app-one")
+    after = provider.active_requirements()
+    assert after[20] == (host.request,)
+    assert 20 not in before
+    assert provider.active_requirements() is after
+
+    provider.receive_partial_solution_hint({}, {})
+    assert 20 not in provider.active_requirements()
+    assert after[20] == (host.request,)
