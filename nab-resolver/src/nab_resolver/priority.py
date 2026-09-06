@@ -1,4 +1,4 @@
-"""Promote affected packages before applying culprit demotion."""
+"""Shared conflict ordering and bounded dependency-precheck feedback."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 __all__ = [
     "CONFLICT_THRESHOLD",
     "CULPRIT_DEMOTE_THRESHOLD",
+    "MAX_PRECHECK_BACKTRACKS",
+    "PRECHECK_REJECTION_THRESHOLD",
     "TIER_AFFECTED",
     "TIER_CULPRIT",
     "TIER_NORMAL",
@@ -21,6 +23,8 @@ __all__ = [
 
 
 CONFLICT_THRESHOLD = 5
+PRECHECK_REJECTION_THRESHOLD = 4
+MAX_PRECHECK_BACKTRACKS = 3
 
 # Minimum culprit count and lead required for count-based demotion.
 CULPRIT_DEMOTE_THRESHOLD = 5
