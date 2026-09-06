@@ -126,7 +126,10 @@ def _shown_terms(
     The comparison runs on exactly what the reader sees, so a requirement is
     read as printed, un-narrowed, the way the line states it.
     """
-    if incompatibility.cause is IncompatibilityCause.NO_VERSIONS:
+    if incompatibility.cause in {
+        IncompatibilityCause.NO_VERSIONS,
+        IncompatibilityCause.CONTEXTUAL_NO_VERSIONS,
+    }:
         return {term.package: term for term in incompatibility.terms}
     return {
         term.package: _narrow_positive(term, narrow) for term in incompatibility.terms
@@ -273,8 +276,14 @@ def _render_line(
     terms = incompatibility.terms
     # An availability line renders its own range: narrowing it onto the listing
     # is what let it stop covering the requirement it closes against.
-    if narrow is not None and cause is not IncompatibilityCause.NO_VERSIONS:
+    if narrow is not None and cause not in {
+        IncompatibilityCause.NO_VERSIONS,
+        IncompatibilityCause.CONTEXTUAL_NO_VERSIONS,
+    }:
         terms = [_narrow_positive(term, narrow) for term in terms]
+
+    if cause is IncompatibilityCause.CONTEXTUAL_NO_VERSIONS:
+        return _render_contextual_no_versions(incompatibility, format_range)
 
     attributed = _dependency_pair(incompatibility, terms)
     if attributed is not None:
@@ -305,6 +314,21 @@ def _render_line(
         return f"because the user constrained {subject}"
 
     return _render_prefix_line(cause, terms, format_range)
+
+
+def _render_contextual_no_versions(
+    incompatibility: Incompatibility[Any, Any], format_range: _FormatFn
+) -> str:
+    """Render an absence with its supporting decisions."""
+    unavailable, *guards = incompatibility.terms
+    context = " and ".join(format_term(term, format_range) for term in guards)
+    if incompatibility.constraint_range is not None:
+        requirement = _with_range(
+            str(unavailable.package), format_range(incompatibility.constraint_range)
+        )
+        return f"because the user constrained {requirement} with {context} selected"
+    requirement = _format_requirement(unavailable, format_range)
+    return f"because no versions of {requirement} are available with {context} selected"
 
 
 def _render_prefix_line(

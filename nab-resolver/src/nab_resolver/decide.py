@@ -11,9 +11,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .incompat_index import add_incompatibility
+from .root import ROOT
 from .types import Incompatibility, IncompatibilityCause, RangeProtocol, Term
 
 if TYPE_CHECKING:
+    from collections.abc import Set as AbstractSet
+
     from .resolver import Resolver
 
 __all__ = [
@@ -25,8 +28,10 @@ __all__ = [
 ]
 
 
-def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
-    """Choose the next undecided package, or None if all decided.
+def choose_package_to_decide(
+    resolver: Resolver[Any, Any], excluded: AbstractSet[Any] | None = None
+) -> Any | None:
+    """Choose the next undecided package outside ``excluded``, or None.
 
     Prefers ``is_ready`` packages so resolution keeps making progress while
     other listings/metadata are still in flight.  ``begin_decision_scan`` marks
@@ -41,7 +46,11 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
     than backjumping to level 0.
     """
     undecided = resolver.solution.undecided_packages()
+    if excluded:
+        undecided = undecided - excluded
     if not undecided:
+        if excluded is not None and resolver.solution.undecided_packages():
+            resolver.provider.begin_decision_scan()
         return None
 
     key_inputs_arrived = resolver.provider.begin_decision_scan()
@@ -70,6 +79,10 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
                 tiebreak = (1, 0, str(package))
             tiebreak_cache[package] = tiebreak
         return (ready_penalty, priority, tiebreak)
+
+    if excluded is not None:
+        resolver.solution.take_changed_packages()
+        return min(undecided, key=sort_key)
 
     return resolver.decision_queue.pick(
         undecided,
@@ -129,6 +142,8 @@ def absorb_pending_clauses(resolver: Resolver[Any, Any]) -> bool:
     the default ``NO_VERSIONS`` clause this turn.
     """
     clauses = list(resolver.provider.consume_pending_clauses())
+    if clauses and resolver.deferred is not None:
+        resolver.deferred.clear()
     for incompatibility in clauses:
         _normalize_terms(resolver, incompatibility)
         add_incompatibility(resolver, incompatibility)
@@ -178,15 +193,22 @@ def _constraint_hid_a_version(
 
 
 def record_no_versions(
-    resolver: Resolver[Any, Any], package: Any, *, had_pending: bool
+    resolver: Resolver[Any, Any],
+    package: Any,
+    *,
+    had_pending: bool,
+    deferrable: bool = True,
 ) -> None:
-    """Add the default ``NO_VERSIONS`` clause for ``package``.
+    """Defer a failed query or record its default absence clause.
 
     Skipped when the provider already supplied context-aware clauses;
     otherwise the broad clause would persist past the backjump that lifts
     the supporting decisions.
     """
     if had_pending:
+        return
+    if deferrable and resolver.deferred is not None:
+        resolver.deferred.packages[package] = None
         return
 
     current_range = resolver.solution.get(package) or resolver.term_top
@@ -209,5 +231,34 @@ def record_no_versions(
             [Term(package, current_range, positive=True)],
             cause=cause,
             constraint_range=constraint_range,
+        ),
+    )
+
+
+def record_contextual_no_versions(resolver: Resolver[Any, Any], package: Any) -> None:
+    """Guard an exhausted availability query by every other current decision."""
+    decisions = resolver.solution.decisions()
+    guards = [
+        Term(name, resolver.range_type.singleton(version), positive=True)
+        for name, version in decisions.items()
+        if name is not ROOT
+    ]
+    if not guards:
+        record_no_versions(resolver, package, had_pending=False, deferrable=False)
+        return
+
+    current_range = resolver.solution.get(package) or resolver.term_top
+    resolver.observer.on_no_versions(package, current_range)
+    constraint = resolver.constraints.get(package)
+    if constraint is None or not _constraint_hid_a_version(
+        resolver, package, current_range
+    ):
+        constraint = None
+    add_incompatibility(
+        resolver,
+        Incompatibility(
+            [Term(package, current_range, positive=True), *guards],
+            cause=IncompatibilityCause.CONTEXTUAL_NO_VERSIONS,
+            constraint_range=constraint,
         ),
     )

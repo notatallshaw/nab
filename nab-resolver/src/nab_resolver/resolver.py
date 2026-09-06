@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Final, Generic, Protocol
 from . import conflict, decide, incompat_index, propagate
 from ._compat import override
 from .decision_queue import DecisionQueue
+from .deferred import DeferredChoices
 from .errors import ResolutionError
 from .partial_solution import PartialSolution
 from .ranges import Range
@@ -598,6 +599,8 @@ class Resolver(Generic[PackageType, VersionType]):
         range_type: type[RangeProtocol[Any]] = Range,
         root_version: Any = 1,
         format_range: Callable[[Any], str] = str,
+        *,
+        availability_generation: Callable[[], int] | None = None,
     ) -> None:
         """Create a resolver with the given provider and optional observer.
 
@@ -608,12 +611,29 @@ class Resolver(Generic[PackageType, VersionType]):
         :class:`packaging.ranges.VersionRange` requires a parseable
         version string or :class:`~packaging.version.Version` here.
 
+        ``availability_generation`` defers failed queries when candidate
+        availability depends on current decisions.
+        Its monotonically increasing result invalidates deferred queries when
+        provider operations reveal candidates; reading it must not change
+        availability. Missing packages are retried
+        after other decisions, and an exhausted sweep records absence guarded
+        by all current decisions. The provider must ensure such an absence
+        remains true whenever those decisions and requirements hold, regardless
+        of later cache population. Availability must not change asynchronously
+        between the final generation check and clause recording. Omitting this
+        callback keeps the static candidate-universe contract.
+
         ``format_range`` renders a constraint in a failure report.  It travels
         with ``range_type``: the default ``str`` reads well for
         :class:`~nab_resolver.ranges.Range`, while a range type whose ``str``
         is a debug representation needs its own.
         """
         self.provider = provider
+        self.deferred = (
+            None
+            if availability_generation is None
+            else DeferredChoices[PackageType](availability_generation)
+        )
 
         # Recording the provider rather than a flag keeps the answer tied to
         # the object it was asked about, so a provider swapped into
@@ -781,10 +801,21 @@ class Resolver(Generic[PackageType, VersionType]):
                 continue
 
             # Phase 3: Decision making.
-            next_package = decide.choose_package_to_decide(self)
+            deferred = self.deferred
+            if deferred is not None:
+                deferred.refresh(self.stats.derivations, self.stats.decisions)
+            next_package = decide.choose_package_to_decide(
+                self, None if deferred is None else deferred.packages.keys()
+            )
             if next_package is None:
-                # All packages decided; the spec requires filtering out
-                # any unreachable extras before returning.
+                if deferred is not None and deferred.packages:
+                    deferred.refresh(self.stats.derivations, self.stats.decisions)
+                    if not deferred.packages:
+                        continue
+                    changed_package = next(iter(deferred.packages))
+                    decide.record_contextual_no_versions(self, changed_package)
+                    deferred.clear()
+                    continue
                 return self._build_result()
 
             changed_package = self._decide_next(next_package)
@@ -799,6 +830,8 @@ class Resolver(Generic[PackageType, VersionType]):
         restarts_remaining: int,
     ) -> tuple[Any, int, int]:
         """Run conflict resolution, targeted backtrack, and restart phases."""
+        if self.deferred is not None:
+            self.deferred.clear()
         self.stats.conflicts += 1
         self.observer.on_conflict(conflicting_incompatibility)
         learned = conflict.conflict_resolution(self, conflicting_incompatibility)
@@ -829,6 +862,8 @@ class Resolver(Generic[PackageType, VersionType]):
             self.priority_epoch += 1
             triggering = conflict.force_targeted_backtrack(self, force_targets)
             if triggering is not None:
+                if self.deferred is not None:
+                    self.deferred.clear()
                 return triggering
 
         if chosen_version is None:
@@ -899,6 +934,8 @@ class Resolver(Generic[PackageType, VersionType]):
         constraints: Mapping[PackageType, RangeProtocol[VersionType]] | None,
     ) -> None:
         """Reset solver state for a new resolution."""
+        if self.deferred is not None:
+            self.deferred.clear()
         self.incompatibilities.clear()
         self.package_to_incompatibilities.clear()
         self.clause_contradicted_at.clear()
