@@ -77,6 +77,8 @@ _STABLE_DOCS_LINK = re.compile(rf"{re.escape(_STABLE_DOCS_ROOT)}[^)\s>]*")
 _WHY_DOCS_TARGETS = {
     f"{_STABLE_DOCS_ROOT}reference/build-policy.html",
     f"{_STABLE_DOCS_ROOT}how-to/archive-sources.html",
+    f"{_STABLE_DOCS_ROOT}how-to/vcs.html",
+    f"{_STABLE_DOCS_ROOT}reference/configuration.html#overrides",
     f"{_STABLE_DOCS_ROOT}reference/configuration.html#the-resolve-environment",
     f"{_STABLE_DOCS_ROOT}reference/lockfile.html",
     f"{_STABLE_DOCS_ROOT}reference/lockfile.html#checking-the-lock-in-ci",
@@ -353,8 +355,8 @@ def test_only_the_level_that_builds_index_sdists_names_them(
 
 
 def test_readme_project_is_valid_toml() -> None:
-    """The quick-start project is a minimal PEP 621 project."""
-    blocks = _fenced_blocks(_section(README, "Quick start"), "toml")
+    """The example project is a minimal PEP 621 project."""
+    blocks = _fenced_blocks(_section(README, "Example project"), "toml")
     assert len(blocks) == 1
 
     project = tomli.loads(blocks[0])["project"]
