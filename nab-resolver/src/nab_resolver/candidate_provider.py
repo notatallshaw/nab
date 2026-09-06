@@ -304,14 +304,14 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
             assignment = self._positive_ranges.get(dependency)
             if assignment is None or not assignment.is_disjoint(required):
                 continue
-            selected = type(required).singleton(self._decisions[dependency])
+            selected = required.singleton(self._decisions[dependency])
             if not selected.is_disjoint(required):
                 continue
 
             self._pending.append(
                 Incompatibility(
                     [
-                        Term(package, type(allowed).singleton(key), positive=True),
+                        Term(package, allowed.singleton(key), positive=True),
                         Term(dependency, required, positive=False),
                     ],
                     cause=IncompatibilityCause.DEPENDENCY,
