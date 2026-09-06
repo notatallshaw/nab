@@ -254,6 +254,9 @@ def record_contextual_no_versions(resolver: Resolver[Any, Any], package: Any) ->
         resolver, package, current_range
     ):
         constraint = None
+    receive_failure = getattr(resolver.provider, "receive_contextual_failure", None)
+    if receive_failure is not None and receive_failure(package):
+        resolver.priority_epoch += 1
     add_incompatibility(
         resolver,
         Incompatibility(

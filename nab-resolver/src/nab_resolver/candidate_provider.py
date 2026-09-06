@@ -87,6 +87,35 @@ class CandidateHost(Protocol[_PackageT, _KeyT]):
         ...
 
 
+class _QueryFeedback(Generic[_PackageT]):
+    """Count contextual failures for one solve without changing candidate admission."""
+
+    __slots__ = ("parent_failures", "target_failures")
+
+    def __init__(self) -> None:
+        self.parent_failures: dict[_PackageT, int] = {}
+        self.target_failures: dict[_PackageT, int] = {}
+
+    def clear(self) -> None:
+        """Start a new solve with no inherited ordering feedback."""
+        self.parent_failures.clear()
+        self.target_failures.clear()
+
+    def record(self, package: _PackageT, parents: Iterable[_PackageT]) -> None:
+        """Credit the query target and each current declaring package."""
+        self.target_failures[package] = self.target_failures.get(package, 0) + 1
+        for parent in parents:
+            self.parent_failures[parent] = self.parent_failures.get(parent, 0) + 1
+
+    def priority(self, package: _PackageT, host_priority: Any) -> tuple[int, int, Any]:
+        """Prefer declaring packages, then failed targets, before the host's key."""
+        return (
+            -self.parent_failures.get(package, 0),
+            -self.target_failures.get(package, 0),
+            host_priority,
+        )
+
+
 class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
     """Keep candidate identity and active requirements around a host's selection."""
 
@@ -94,10 +123,13 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         self,
         host: CandidateHost[_PackageT, _KeyT],
         roots: Sequence[CandidateRequirement[_PackageT, _KeyT]],
+        *,
+        query_feedback: bool = False,
     ) -> None:
-        """Snapshot roots and retain selected dependency provenance."""
+        """Snapshot roots and optionally prioritize contextual query failures."""
         self.host = host
         self.roots = tuple(roots)
+        self._query_feedback = _QueryFeedback[_PackageT]() if query_feedback else None
         self._decisions: Mapping[_PackageT, _KeyT] = {}
         self._selected: dict[tuple[_PackageT, _KeyT], PreparedCandidate[_KeyT]] = {}
         self._causes: dict[
@@ -110,6 +142,29 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
             Mapping[_PackageT, tuple[CandidateRequirement[_PackageT, _KeyT], ...]]
             | None
         ) = None
+
+    @override
+    def begin_resolution(self) -> None:
+        """Clear ordering feedback while retaining prepared candidate metadata."""
+        if self._query_feedback is not None:
+            self._query_feedback.clear()
+
+    @override
+    def receive_contextual_failure(self, package: _PackageT) -> bool:
+        """Credit the failed query and its currently decided declaring packages."""
+        if self._query_feedback is None:
+            return False
+
+        parents = (
+            parent
+            for parent, key in self._decisions.items()
+            if any(
+                cause.package == package
+                for cause in self._causes.get((parent, key), ())
+            )
+        )
+        self._query_feedback.record(package, parents)
+        return True
 
     def root_requirements(self) -> list[RootRequirement[_PackageT, _KeyT]]:
         """Return solver roots with their original host provenance attached."""
@@ -211,9 +266,12 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         conflict_counts: Mapping[_PackageT, int],
         culprit_counts: Mapping[_PackageT, int] | None = None,
     ) -> Any:
-        """Use the host's package priority without listing candidates."""
+        """Combine contextual-query feedback with the host's package priority."""
         del version_range, conflict_counts, culprit_counts
-        return self.host.priority(package, self.active_requirements())
+        priority = self.host.priority(package, self.active_requirements())
+        if self._query_feedback is not None:
+            return self._query_feedback.priority(package, priority)
+        return priority
 
     def prepared(self, package: _PackageT, key: _KeyT) -> PreparedCandidate[_KeyT]:
         """Return the exact prepared candidate used by a solver decision."""
