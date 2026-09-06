@@ -147,12 +147,13 @@ class _PrecheckFeedback(Generic[_PackageT, _KeyT]):
         self, package: _PackageT, key: _KeyT, blocker: _PackageT, blocked_key: _KeyT
     ) -> None:
         """Record a distinct candidate and request a retreat at the shared threshold."""
+        requests = self.counts.get(blocker, 0)
+        if requests >= MAX_PRECHECK_BACKTRACKS:
+            return
         rejected = self.rejected.setdefault((package, blocker, blocked_key), set())
         rejected.add(key)
-        requests = self.counts.get(blocker, 0)
         if (
             len(rejected) >= PRECHECK_REJECTION_THRESHOLD
-            and requests < MAX_PRECHECK_BACKTRACKS
             and blocker not in self.targets
         ):
             self.targets.append(blocker)
@@ -292,7 +293,7 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         key: _KeyT,
         allowed: RangeProtocol[_KeyT],
     ) -> bool:
-        """Queue a dependency conflict while leaving the rejected candidate undecided."""
+        """Queue a dependency conflict without deciding the rejected candidate."""
         dependencies = self.get_dependencies(package, key)
         if package in dependencies:
             return False
@@ -406,7 +407,9 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
                 and self._precheck_feedback.requested(package)
             )
             priority = (
-                compute_tier(package, affected, culprit, counts, force_backtracked=forced),
+                compute_tier(
+                    package, affected, culprit, counts, force_backtracked=forced
+                ),
                 priority,
             )
         if self._query_feedback is not None:
