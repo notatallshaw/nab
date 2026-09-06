@@ -403,6 +403,40 @@ class TestContradictionEpoch:
 class TestSnapshots:
     """A map handed out keeps reading as it did when it was taken."""
 
+    def test_truthiness_stays_pinned_across_decisions_and_backtracking(self) -> None:
+        ps = PartialSolution()
+        empty = ps.decisions()
+        assert not empty
+
+        ps.decide("foo", 0)
+        populated = ps.decisions()
+        assert populated
+        assert not empty
+
+        ps.decide("bar", 1)
+        assert populated
+        assert not empty
+
+        ps.decide("foo", 2)
+        assert populated
+        assert populated["foo"] == 0
+
+        ps.backtrack(0)
+        assert populated
+        assert not empty
+        assert not ps.decisions()
+
+    def test_truthiness_counts_packages_with_empty_ranges(self) -> None:
+        ps = PartialSolution()
+        inc = Incompatibility([], cause=IncompatibilityCause.ROOT)
+        ps.derive("foo", Range.empty(), positive=True, cause=inc)
+        snapshot = ps.positive_ranges()
+        assert snapshot
+
+        ps.derive("foo", Range.full(), positive=True, cause=inc)
+        assert snapshot
+        assert snapshot["foo"].is_empty
+
     def test_a_snapshot_does_not_show_a_later_decision(self) -> None:
         ps = PartialSolution()
         ps.decide("foo", 3)
