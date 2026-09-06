@@ -389,6 +389,7 @@ ignore = [
     "ANN401",  # Disallows Any (needed for generic library)
     "CPY001",  # Copyright notice per file; the licence sits at the repo root.
     "S101",    # Assert usage (needed for type narrowing and tests)
+    "SIM110",  # Allow explicit loops in place of any/all.
     "TID252",  # Bans relative imports; the project prefers them.
 ]
 
