@@ -10,7 +10,7 @@ from nab_resolver.candidate_provider import (
     CandidateRequirement,
     PreparedCandidate,
 )
-from nab_resolver.errors import ProvisionalResolutionError, ResolutionError
+from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver, ResolverObserver, Solution
 from nab_resolver.types import IncompatibilityCause, RangeProtocol
@@ -143,43 +143,11 @@ def test_provisional_keeps_deferral_before_exhaustion() -> None:
         availability_generation=host.generation,
         provisional=True,
     )
-    solution = resolver.solve(provider.root_requirements(), max_provisional_rounds=0)
+    solution = resolver.solve(provider.root_requirements())
     assert solution.pins == {10: 2, 30: 1, 20: 3}
     assert provider.validate_solution(solution)
     assert resolver.provisional_absences == 0
-    assert resolver.provisional_rounds == 0
     assert (20, False) in host.queries
-
-
-@pytest.mark.parametrize("limit", [0, 1])
-def test_provisional_budget_leaves_complete_resolution_unlimited(limit: int) -> None:
-    host = SourceHost()
-    provider = provider_for(host)
-    resolver = Resolver(
-        provider,
-        availability_generation=host.generation,
-        provisional=True,
-    )
-    with pytest.raises(ProvisionalResolutionError) as caught:
-        resolver.solve(provider.root_requirements(), max_provisional_rounds=limit)
-    assert caught.value.rounds == limit
-    assert caught.value.incompatibility is None
-    assert resolver.provisional_absences > 0
-    assert resolver.provisional_rounds == limit
-
-    resolver.provisional = False
-    solution = resolver.solve(
-        provider.root_requirements(), max_provisional_rounds=limit
-    )
-    assert solution.pins == {10: 1, 20: 3}
-    assert resolver.provisional_absences == 0
-    assert resolver.provisional_rounds == 0
-    assert provider.validate_solution(solution)
-
-
-def test_negative_provisional_budget_is_rejected() -> None:
-    with pytest.raises(ValueError, match="max_provisional_rounds must be nonnegative"):
-        Resolver(provider_for(SourceHost())).solve({}, max_provisional_rounds=-1)
 
 
 def test_validation_reads_complete_host_declarations() -> None:
@@ -297,9 +265,10 @@ def test_provisional_absence_observer_precedes_priority_feedback() -> None:
         observer=Observer(),
         availability_generation=host.generation,
         provisional=True,
+        max_iterations=2,
     )
-    with pytest.raises(ProvisionalResolutionError):
-        resolver.solve(provider.root_requirements(), max_provisional_rounds=0)
+    with pytest.raises(ResolutionError, match="Resolution exceeded 2 iterations"):
+        resolver.solve(provider.root_requirements())
     assert events == ["absence", "feedback"]
     assert any(
         item.cause is IncompatibilityCause.NO_VERSIONS
@@ -315,11 +284,10 @@ def test_provisional_constraint_failure_retains_its_diagnostic() -> None:
         provider,
         availability_generation=host.generation,
         provisional=True,
+        max_iterations=2,
     )
-    with pytest.raises(ProvisionalResolutionError):
-        resolver.solve(
-            provider.root_requirements(), {20: constraint}, max_provisional_rounds=0
-        )
+    with pytest.raises(ResolutionError, match="Resolution exceeded 2 iterations"):
+        resolver.solve(provider.root_requirements(), {20: constraint})
     assert resolver.provisional_absences == 1
     assert any(
         item.cause is IncompatibilityCause.CONSTRAINT
@@ -339,7 +307,6 @@ def test_unguarded_missing_root_does_not_make_a_provisional_assumption() -> None
         provisional=True,
     )
     with pytest.raises(ResolutionError) as caught:
-        resolver.solve(provider.root_requirements(), max_provisional_rounds=0)
-    assert not isinstance(caught.value, ProvisionalResolutionError)
+        resolver.solve(provider.root_requirements())
+    assert caught.value.incompatibility is not None
     assert resolver.provisional_absences == 0
-    assert resolver.provisional_rounds == 0
