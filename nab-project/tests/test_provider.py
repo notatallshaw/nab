@@ -98,6 +98,7 @@ from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import pkg_override
 from nab_resolver.errors import ResolutionError
+from nab_resolver.priority import TIER_CULPRIT, compute_tier
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import (
     Incompatibility,
@@ -12077,11 +12078,6 @@ class TestComputeTier:
     """Cover the tier-decision branches."""
 
     def test_force_backtracked_returns_culprit(self) -> None:
-        from nab_provider._provider.priority import (
-            TIER_CULPRIT,
-            compute_tier,
-        )
-
         tier = compute_tier(
             "foo",
             affected_count=0,
