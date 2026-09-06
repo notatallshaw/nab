@@ -25,6 +25,7 @@ nab_resolver.candidate_provider
                        CandidateHost, CandidateProvider,
                        CandidateRequirement, PreparedCandidate
 nab_resolver.errors     ResolutionError
+nab_resolver.priority   compute_tier, is_dominant_culprit
 nab_resolver.ranges     Range
 nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
                         ResolverObserver, ResolverProvider, Solution
