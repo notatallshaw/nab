@@ -81,12 +81,56 @@ def test_the_message_names_every_offending_override() -> None:
             build_policy=BuildPolicy.NEVER,
             build_policy_set=False,
             package_overrides=(
-                pkg_override("demo", build_policy=BuildPolicy.BUILD_REMOTE),
+                pkg_override(
+                    "demo",
+                    build_policy=BuildPolicy.BUILD_REMOTE,
+                    source_label="pyproject.toml: packages.'demo'",
+                ),
             ),
             index_overrides={
                 "private": IndexOverride(build_policy=BuildPolicy.BUILD_LOCAL)
             },
         )
 
-    assert "packages.demo build-policy = 'build-remote'" in str(raised.value)
-    assert "index.private build-policy = 'build-local'" in str(raised.value)
+    message = str(raised.value)
+
+    assert "pyproject.toml: packages.'demo' build-policy = 'build-remote'" in message
+    assert "index.private build-policy = 'build-local'" in message
+
+
+def test_one_rule_entry_is_named_once_however_many_it_matches() -> None:
+    """A ``match`` list is one declaration, so it is one entry to edit."""
+    with pytest.raises(ConfigError) as raised:
+        enforce_build_policy_for_targets(
+            targets=DECLARED,
+            build_policy=BuildPolicy.NEVER,
+            build_policy_set=False,
+            package_overrides=tuple(
+                pkg_override(
+                    name,
+                    build_policy=BuildPolicy.BUILD_LOCAL,
+                    source_label="pyproject.toml: package-rules[0]",
+                )
+                for name in ("foo", "bar")
+            ),
+            index_overrides={},
+        )
+
+    message = str(raised.value)
+
+    assert "pyproject.toml: package-rules[0] build-policy = 'build-local'" in message
+    assert message.count("package-rules[0]") == 1
+
+
+def test_an_override_with_no_declared_surface_names_its_requirement() -> None:
+    """With no source label, the refusal names the override's requirement."""
+    with pytest.raises(ConfigError, match=r"got demo>=2 build-policy = 'build-local'"):
+        enforce_build_policy_for_targets(
+            targets=DECLARED,
+            build_policy=BuildPolicy.NEVER,
+            build_policy_set=False,
+            package_overrides=(
+                pkg_override("demo>=2", build_policy=BuildPolicy.BUILD_LOCAL),
+            ),
+            index_overrides={},
+        )

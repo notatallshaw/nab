@@ -41,7 +41,7 @@ if TYPE_CHECKING:
     from nab_provider.provider import ResolutionStrategy
     from nab_provider.resolver_inputs import MarkerHolds
     from nab_provider.target import ResolveTarget
-    from nab_resolver.types import Incompatibility
+    from nab_resolver.types import Incompatibility, RangeProtocol
 
     from ..fetch import FetchCoordinator
     from ..inputs import ResolveInputs
@@ -783,32 +783,21 @@ def _raise_for_source_python(
 
 
 def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
-    """Append per-package no-versions diagnostics to ``exc`` in-place.
+    """Attach short and verbose no-versions diagnostics to exc.
 
-    Reasons are keyed by package name and outlive the ask that recorded
-    them, so a package keeps its hint even when the tree names it over a
-    later range.
-
-    Both depths are attached: ``str(exc)`` carries the one line per package
-    a default run prints, and :attr:`~nab_resolver.errors.ResolutionError.
-    verbose_message` carries the same report with each package's clauses and
-    ``note:`` in place of its ``try:`` line.  The host picks by verbosity;
-    a host that only prints the exception gets the short one.
+    Combine repeated packages' ranges before filtering permanent bans.
     """
     if exc.incompatibility is None:
         return
 
-    packages: list[str] = []
-    seen: set[str] = set()
-    for package in _walk_no_versions_packages(exc.incompatibility):
-        if package in seen:
-            continue
-        seen.add(package)
-        packages.append(package)
+    failed: dict[str, RangeProtocol[Version]] = {}
+    for package, clause_range in _walk_no_versions_packages(exc.incompatibility):
+        earlier = failed.get(package)
+        failed[package] = clause_range if earlier is None else earlier | clause_range
 
     entries: list[tuple[str, Diagnostic]] = []
-    for package in packages:
-        diagnostic = provider.get_no_versions_reason(package)
+    for package, failed_range in failed.items():
+        diagnostic = provider.get_no_versions_reason(package, failed_range)
         if diagnostic is not None:
             entries.append((package, diagnostic))
     if not entries:
@@ -857,18 +846,12 @@ def _rules_out_candidate(node: Incompatibility[Any, Any]) -> bool:
 
 def _walk_no_versions_packages(
     incompatibility: Incompatibility[Any, Any],
-) -> list[str]:
-    """Return the packages a no-versions diagnostic may name.
+) -> list[tuple[str, RangeProtocol[Any]]]:
+    """Collect package/range pairs from clauses that exclude candidates.
 
-    NO_VERSIONS clauses name every package they carry.  A dependency clause
-    that rules its own candidate's versions out names that candidate: a union
-    widened over the whole listing conflicts during propagation, with no
-    second ``choose_version`` ask to raise a NO_VERSIONS clause.
-
-    The walk is iterative: the tree gains a level per conflict, and recursion
-    would overflow on a deeply backtracked resolve.
+    Walk iteratively because backtracking can produce a deep cause graph.
     """
-    out: list[str] = []
+    out: list[tuple[str, RangeProtocol[Any]]] = []
     seen_ids: set[int] = set()
     stack: list[Incompatibility[Any, Any]] = [incompatibility]
 
@@ -882,11 +865,12 @@ def _walk_no_versions_packages(
             for term in node.terms:
                 pkg = term.package
                 if isinstance(pkg, str):
-                    out.append(pkg)
+                    out.append((pkg, term.constraint))
         elif _rules_out_candidate(node):
-            pkg = node.terms[0].package
+            candidate = node.terms[0]
+            pkg = candidate.package
             if isinstance(pkg, str):
-                out.append(pkg)
+                out.append((pkg, candidate.constraint))
 
         # Right before left, so the left cause pops first and names keep their order.
         if node.cause_right is not None:

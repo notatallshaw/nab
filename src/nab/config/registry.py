@@ -17,10 +17,10 @@ from . import (
 from ..optiondefs import (
     Kind,
     Opt,
+    Scope,
     Tokens,
     VType,
 )
-from ..optionrows import Scope
 from nab_provider.policy import (
     BuildPolicy,
     DecisionOrder,
@@ -48,6 +48,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="enum(highest|lowest|lowest-direct)",
         help="which version of each package to prefer",
         docs="reference/configuration.md",
+        generated=True,
     ),
     Opt(
         "decision-order",
@@ -64,6 +65,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="enum(arrival|stable)",
         help="whether an arrived listing may steer the decision order",
         docs="reference/configuration.md",
+        generated=True,
     ),
     Opt(
         "mode",
@@ -80,6 +82,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="enum(specific|universal)",
         help="resolve for this environment or across a matrix",
         docs="explanation/universal.md",
+        generated=True,
     ),
     Opt(
         "constraints",
@@ -95,6 +98,7 @@ OPTIONS: tuple[Opt, ...] = (
         sample="attrs<24",
         help="bound a package's versions without pulling it into the resolve",
         docs="reference/configuration.md",
+        generated=True,
     ),
     Opt(
         "default-groups",
@@ -110,6 +114,7 @@ OPTIONS: tuple[Opt, ...] = (
         sample="dev",
         help="a dependency group every resolve selects",
         docs="reference/selection.md",
+        generated=True,
     ),
     Opt(
         "base-group",
@@ -126,6 +131,7 @@ OPTIONS: tuple[Opt, ...] = (
         sample="runtime",
         help="the group name the project's own dependencies lock under",
         docs="reference/selection.md",
+        generated=True,
     ),
     Opt(
         "build-group",
@@ -142,6 +148,7 @@ OPTIONS: tuple[Opt, ...] = (
         sample="build",
         help="the group name [build-system].requires locks under",
         docs="reference/selection.md",
+        generated=True,
     ),
     Opt(
         "requires-python",
@@ -158,6 +165,7 @@ OPTIONS: tuple[Opt, ...] = (
         sample=">=3.11",
         help="the Python range the project supports, as a specifier",
         docs="reference/configuration.md",
+        generated=True,
     ),
     Opt(
         "uploaded-prior-to",
@@ -174,6 +182,7 @@ OPTIONS: tuple[Opt, ...] = (
         sample="P7D",
         help="ignore distributions uploaded after this point",
         docs="reference/configuration.md",
+        generated=True,
     ),
     Opt(
         "dist-policy",
@@ -191,6 +200,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="enum(wheel-only|prefer-wheel|wheel-or-sdist|sdist-only|sdist-install)",
         help="which distribution kinds the resolve may pin",
         docs="reference/configuration.md",
+        generated=True,
     ),
     Opt(
         "build-policy",
@@ -207,6 +217,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="enum(never|build-local|build-remote)",
         help="whether nab may build an sdist, and which ones",
         docs="reference/build-policy.md",
+        generated=True,
     ),
     Opt(
         "build-requires-depth",
@@ -223,6 +234,7 @@ OPTIONS: tuple[Opt, ...] = (
         sample="1",
         help="how many build environments nab may open beneath the first",
         docs="reference/build-policy.md",
+        generated=True,
     ),
     Opt(
         "environment",
@@ -233,6 +245,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="table(python,platform[,knobs],implementation)",
         help="the target whose markers and wheel tags the resolve uses",
         docs="reference/configuration.md",
+        generated=True,
     ),
     Opt(
         "marker-environment",
@@ -244,6 +257,7 @@ OPTIONS: tuple[Opt, ...] = (
         deprecated=True,
         help="PEP 508 marker variables, set one at a time",
         docs="reference/configuration.md",
+        generated=True,
     ),
     Opt(
         "vcs",
@@ -254,6 +268,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="table(vcs-policy)",
         help="whether a requirement may name a VCS URL, and which ones",
         docs="how-to/vcs.md",
+        generated=True,
     ),
     Opt(
         "workspace",
@@ -264,6 +279,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="table(members)",
         help="the member paths a workspace root declares",
         docs="how-to/workspaces.md",
+        generated=True,
     ),
     Opt(
         "indexes",
@@ -274,6 +290,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="array-of-tables(name,url,serialization)",
         help="the package indexes, consulted in the order declared",
         docs="how-to/multi-index.md",
+        generated=True,
     ),
     Opt(
         "local-sources",
@@ -284,6 +301,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="array-of-tables(name,path)",
         help="a directory that becomes the only candidate for a named package",
         docs="how-to/local-sources.md",
+        generated=True,
     ),
     Opt(
         "vcs-sources",
@@ -294,6 +312,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="array-of-tables(name,url)",
         help="a repository that becomes the only candidate for a named package",
         docs="how-to/vcs.md",
+        generated=True,
     ),
     Opt(
         "archive-sources",
@@ -304,6 +323,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="array-of-tables(name,url)",
         help="a hashed .tar.gz URL a named package is pinned to",
         docs="reference/configuration.md",
+        generated=True,
     ),
     Opt(
         "packages",
@@ -314,6 +334,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="table(package-override)",
         help="policy and metadata overrides keyed by package name",
         docs="reference/configuration.md",
+        generated=True,
     ),
     Opt(
         "package-rules",
@@ -324,6 +345,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="array-of-tables(match,policy)",
         help="policy and metadata overrides selected by a list of requirements",
         docs="reference/configuration.md",
+        generated=True,
     ),
     Opt(
         "index",
@@ -334,6 +356,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="table(index-override)",
         help="policy overrides keyed by index name",
         docs="how-to/multi-index.md",
+        generated=True,
     ),
     Opt(
         "conflicts",
@@ -344,6 +367,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="array-of-tables(members,policy)",
         help="sets of groups and extras that cannot be selected together",
         docs="explanation/conflicts.md",
+        generated=True,
     ),
     Opt(
         "matrix",
@@ -354,6 +378,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="table(python,platforms)",
         help="the Python and platform axes a universal resolve covers",
         docs="explanation/universal.md",
+        generated=True,
     ),
     Opt(
         "offline",
@@ -371,6 +396,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="bool",
         help="never hit the network; resolve from the cache alone",
         docs="reference/cli.md",
+        generated=True,
     ),
     Opt(
         "cache-dir",
@@ -388,6 +414,7 @@ OPTIONS: tuple[Opt, ...] = (
         sample="nab-cache",
         help="the on-disk cache root",
         docs="reference/cache.md",
+        generated=True,
     ),
     Opt(
         "http-backend",
@@ -405,6 +432,7 @@ OPTIONS: tuple[Opt, ...] = (
         type_label="enum(httpx|urllib3)",
         help="the transport index and artefact fetches go through",
         docs="reference/cli.md",
+        generated=True,
     ),
     Opt(
         "max-concurrency",
@@ -422,6 +450,7 @@ OPTIONS: tuple[Opt, ...] = (
         sample="4",
         help="how many fetches may be in flight at once",
         docs="reference/cli.md",
+        generated=True,
     ),
 )
 
@@ -439,6 +468,7 @@ SUB_ROWS: tuple[Opt, ...] = (
         under="matrix",
         needed=True,
         tokens=Tokens.SCALAR,
+        generated=True,
     ),
     Opt(
         "platforms",
@@ -453,6 +483,7 @@ SUB_ROWS: tuple[Opt, ...] = (
         needed=True,
         tokens=Tokens.ITEMS,
         opened_by="id",
+        generated=True,
     ),
     Opt(
         "implementations",
@@ -465,6 +496,7 @@ SUB_ROWS: tuple[Opt, ...] = (
         docs="explanation/universal.md",
         under="matrix",
         tokens=Tokens.LIST,
+        generated=True,
     ),
     Opt(
         "python-order",
@@ -479,6 +511,7 @@ SUB_ROWS: tuple[Opt, ...] = (
         docs="explanation/universal.md",
         under="matrix",
         tokens=Tokens.SCALAR,
+        generated=True,
     ),
     Opt(
         "python-patches",
@@ -491,6 +524,7 @@ SUB_ROWS: tuple[Opt, ...] = (
         docs="explanation/universal.md",
         under="matrix",
         tokens=Tokens.PAIRS,
+        generated=True,
     ),
     Opt(
         "python",
@@ -504,6 +538,7 @@ SUB_ROWS: tuple[Opt, ...] = (
         docs="reference/configuration.md",
         under="environment",
         tokens=Tokens.SCALAR,
+        generated=True,
     ),
     Opt(
         "platform",
@@ -517,6 +552,7 @@ SUB_ROWS: tuple[Opt, ...] = (
         under="environment",
         tokens=Tokens.ITEM,
         opened_by="id",
+        generated=True,
     ),
     Opt(
         "implementation",
@@ -531,6 +567,7 @@ SUB_ROWS: tuple[Opt, ...] = (
         docs="reference/configuration.md",
         under="environment",
         tokens=Tokens.SCALAR,
+        generated=True,
     ),
 )
 

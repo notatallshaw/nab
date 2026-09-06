@@ -223,6 +223,27 @@ class TestInMemoryIndex:
         assert held[2] is held[3]
         assert held[0] is not held[2]
 
+    def test_sdist_pyproject_slot_keeps_only_the_project_table(self) -> None:
+        idx = InMemoryIndex()
+        idx.store_sdist_pyproject(
+            "foo",
+            "1.0",
+            {
+                "project": {"name": "foo"},
+                "build-system": {"requires": ["setuptools"]},
+                "tool": {"mypy": {"strict": True}},
+            },
+        )
+        assert idx.get_sdist_pyproject("foo", "1.0") == {"project": {"name": "foo"}}
+
+    def test_sdist_pyproject_with_no_project_table_reads_as_fetched(self) -> None:
+        """An empty table keeps a fetched pyproject distinct from an absent one."""
+        idx = InMemoryIndex()
+        idx.store_sdist_pyproject("foo", "1.0", {"build-system": {"requires": []}})
+
+        assert idx.get_sdist_pyproject("foo", "1.0") == {}
+        assert idx.get_sdist_pyproject("bar", "1.0") is None
+
     def test_store_metadata_none(self) -> None:
         idx = InMemoryIndex()
         idx.store_metadata("foo", "1.0", None)

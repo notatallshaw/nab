@@ -126,9 +126,11 @@ _WINDOWS311 = ResolveTarget.for_declared(
 )
 
 
-def short_reason(provider: Provider, package: str) -> str | None:
+def short_reason(
+    provider: Provider, package: str, failed_range: VersionRange | None = None
+) -> str | None:
     """Return the one line ``package``'s diagnostic prints at default verbosity."""
-    diagnostic = provider.get_no_versions_reason(package)
+    diagnostic = provider.get_no_versions_reason(package, failed_range)
     return None if diagnostic is None else diagnostic.short
 
 
@@ -2596,6 +2598,201 @@ class TestNoVersionsReasons:
             "\nNo metadata for foo==5.0"
             "\nNo metadata for foo==3.0"
         )
+
+    def test_root_ban_outranks_a_generic_reason(self) -> None:
+        """A root ban takes precedence over a generic no-match reason."""
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+        provider._no_versions_reasons["foo"] = diagnosis_mod.NoVersionsReason(
+            diagnosis_mod.ReasonKind.NO_MATCH
+        )
+
+        provider.record_root_ban(
+            "foo",
+            "bar",
+            SpecifierSet("==2.0").to_range(),
+            SpecifierSet("==1.0").to_range(),
+            [V("5.0")],
+        )
+
+        assert short_reason(provider, "foo") == (
+            "5.0 needs bar in ==2.0, but your project requires bar ==1.0"
+        )
+
+    def test_root_ban_unions_the_versions_of_every_scan(self) -> None:
+        """Repeated records combine banned versions without duplicates."""
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+        declared = SpecifierSet("==2.0").to_range()
+        root_range = SpecifierSet("==1.0").to_range()
+
+        provider.record_root_ban("foo", "bar", declared, root_range, [V("5.0")])
+        provider.record_root_ban(
+            "foo", "bar", declared, root_range, [V("5.0"), V("4.0")]
+        )
+
+        assert short_reason(provider, "foo") == (
+            "5.0 and 4.0 need bar in ==2.0, but your project requires bar ==1.0"
+        )
+
+    def test_two_root_bans_leave_their_ranges_to_the_detail(self) -> None:
+        """Multiple root constraints retain their ranges in Diagnostic.detail."""
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+
+        provider.record_root_ban(
+            "foo",
+            "bar",
+            SpecifierSet("==2.0").to_range(),
+            SpecifierSet("==1.0").to_range(),
+            [V("5.0")],
+        )
+        provider.record_root_ban(
+            "foo",
+            "baz",
+            SpecifierSet(">=7.0").to_range(),
+            SpecifierSet("<7.0").to_range(),
+            [V("4.0")],
+        )
+
+        assert rendered_reason(provider, "foo") == (
+            "some versions are blocked by bar and baz"
+            "\n5.0 needs bar in ==2.0, but your project requires bar ==1.0"
+            "\n4.0 needs baz in >=7.0, but your project requires baz <7.0"
+        )
+
+    def test_a_root_ban_and_a_metadata_ban_are_reported_together(self) -> None:
+        """Root and metadata rejections appear in the same diagnostic."""
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+
+        provider.record_root_ban(
+            "foo",
+            "bar",
+            SpecifierSet("==2.0").to_range(),
+            SpecifierSet("==1.0").to_range(),
+            [V("5.0")],
+        )
+        provider.record_metadata_ban(
+            "foo", metadata_blocks(**{"4.0": "No metadata for foo==4.0"})
+        )
+
+        assert rendered_reason(provider, "foo") == (
+            "some versions are blocked by bar or rejected on their metadata"
+            "\n5.0 needs bar in ==2.0, but your project requires bar ==1.0"
+            "\nNo metadata for foo==4.0"
+        )
+
+    def test_metadata_ban_outside_the_failed_clause_is_not_its_reason(self) -> None:
+        """Metadata failures outside the failed range are excluded."""
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+        provider._no_versions_reasons["foo"] = diagnosis_mod.NoVersionsReason(
+            diagnosis_mod.ReasonKind.NO_MATCH,
+            version_range=SpecifierSet(">=2").to_range(),
+        )
+
+        provider.record_metadata_ban(
+            "foo", metadata_blocks(**{"1.0": "No metadata for foo==1.0"})
+        )
+
+        assert (
+            short_reason(provider, "foo", SpecifierSet(">=2").to_range())
+            == "no version matches the requirement"
+        )
+
+    def test_root_ban_outside_the_failed_clause_is_not_its_reason(self) -> None:
+        """Root bans are limited to versions in the failed range."""
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+        provider._no_versions_reasons["foo"] = diagnosis_mod.NoVersionsReason(
+            diagnosis_mod.ReasonKind.NO_MATCH,
+            version_range=SpecifierSet(">=6.0").to_range(),
+        )
+
+        provider.record_root_ban(
+            "foo",
+            "bar",
+            SpecifierSet("==2.0").to_range(),
+            SpecifierSet("==1.0").to_range(),
+            [V("5.0")],
+        )
+
+        assert (
+            short_reason(provider, "foo", SpecifierSet(">=6.0").to_range())
+            == "no version matches the requirement"
+        )
+
+    def test_a_root_ban_names_only_the_versions_the_clause_named(self) -> None:
+        """A narrowed failure range restricts the reported banned versions."""
+        coordinator = make_coordinator([], package="foo")
+        provider = Provider(coordinator)
+
+        provider.record_root_ban(
+            "foo",
+            "bar",
+            SpecifierSet("==2.0").to_range(),
+            SpecifierSet("==1.0").to_range(),
+            [V("5.0"), V("4.0")],
+        )
+
+        assert short_reason(provider, "foo", SpecifierSet("<5.0").to_range()) == (
+            "4.0 needs bar in ==2.0, but your project requires bar ==1.0"
+        )
+
+    def test_a_ban_beside_a_filtered_sdist_keeps_the_filter_it_named(self) -> None:
+        """The metadata diagnosis retains the filter and its remedy."""
+        coordinator = make_coordinator(
+            [
+                make_wheel(
+                    "1.0", has_metadata=False, upload_time="2026-01-01T00:00:00Z"
+                ),
+                make_sdist("1.0", upload_time="2026-01-20T00:00:00Z"),
+            ]
+        )
+        provider = Provider(
+            coordinator,
+            target=_PY312,
+            uploaded_prior_to=datetime(2026, 1, 10, tzinfo=timezone.utc),
+        )
+
+        with pytest.raises(MetadataError) as excinfo:
+            provider.get_dependencies("pkg", V("1.0"))
+
+        provider.record_metadata_ban(
+            "pkg",
+            {
+                V("1.0"): diagnosis_mod.MetadataBlock(
+                    str(excinfo.value), excinfo.value.filtered_sdist_version
+                )
+            },
+        )
+        provider.record_root_ban(
+            "pkg",
+            "bar",
+            SpecifierSet("==2.0").to_range(),
+            SpecifierSet("==1.0").to_range(),
+            [V("2.0")],
+        )
+
+        diagnostic = provider.get_no_versions_reason("pkg")
+        assert diagnostic is not None
+        assert diagnostic.short == (
+            "some versions are blocked by bar or rejected on their metadata"
+        )
+        assert diagnostic.detail == (
+            "2.0 needs bar in ==2.0, but your project requires bar ==1.0",
+            "pkg 1.0 has no PEP 658 metadata on the index",
+            (
+                "the uploaded-prior-to cutoff 2026-01-10T00:00:00+00:00 excluded"
+                " pkg-1.0.tar.gz, uploaded at 2026-01-20T00:00:00Z"
+            ),
+            (
+                "note: the project-level uploaded-prior-to set that cutoff; setting"
+                ' packages."pkg".uploaded-prior-to = false lifts it for this package'
+            ),
+        )
+        assert diagnostic.remedy == 'set packages."pkg".uploaded-prior-to = false'
 
     def test_root_requirement_rejection_names_the_blocker(self) -> None:
         """When the rejection comes from the root-requirement check at

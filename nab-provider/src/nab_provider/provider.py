@@ -185,15 +185,17 @@ class ListingFilterCache:
     identical list.  Memoising it per (package, Python) leaves only the
     wheel-tag pass to run per target.
 
-    Most of that half reads no Python either: the version parse and the
-    dist-policy exclusion do the same work for every Python of a matrix,
-    and only the Requires-Python and upload-cutoff drops differ.  When the
-    resolve spans more than one Python, :attr:`shares_pythons` is set and
-    :meth:`prepared` memoises that inner pass per package, so a
+    Most of that half reads no Python either: the version parse, the
+    dist-policy exclusion and the upload cutoff reach the same answer for
+    every Python of a matrix, and only the Requires-Python drop differs.
+    When the resolve spans more than one Python, :attr:`shares_pythons` is
+    set and :meth:`prepared` memoises that inner pass per package, so a
     three-Python matrix walks each listing's files once rather than three
-    times.  A one-Python resolve has nothing to share and skips the split,
-    since materialising the intermediate list would cost it a pass it does
-    not get back.
+    times.  The memo also holds the cutoff verdicts: the first target to
+    get a file past Requires-Python takes its verdict and the rest read it
+    back, while counting the drop stays per target.  A one-Python resolve
+    has nothing to share and skips the split, since materialising the
+    intermediate list would cost it a pass it does not get back.
 
     One instance is only valid across providers that share a coordinator
     and a policy config, as the targets of one resolve do.
@@ -765,6 +767,11 @@ class Provider:
         # and unioned across scans.
         self._metadata_ban_blocks: dict[
             str, dict[Version, _diagnosis.MetadataBlock]
+        ] = {}
+
+        # Root constraints and rejected versions retained across look-ahead scans.
+        self._root_ban_versions: dict[
+            str, dict[tuple[str, VersionRange, VersionRange], dict[Version, None]]
         ] = {}
 
         # Blocker packages queued for force back-track by the resolver after
@@ -1840,6 +1847,19 @@ class Provider:
         meta = self.pending_metadata_blocks.get(normalized) or {}
         return out, tuple(meta.values())
 
+    def record_root_ban(
+        self,
+        normalized: str,
+        blocker: str,
+        declared: VersionRange,
+        root_range: VersionRange,
+        versions: Sequence[Version],
+    ) -> None:
+        """Retain a root constraint and its rejected versions across scans."""
+        recorded = self._root_ban_versions.setdefault(normalized, {})
+        banned = recorded.setdefault((blocker, declared, root_range), {})
+        banned.update(dict.fromkeys(versions))
+
     def record_metadata_ban(
         self, normalized: str, blocks: Mapping[Version, _diagnosis.MetadataBlock]
     ) -> None:
@@ -1852,31 +1872,58 @@ class Provider:
         for version, message in blocks.items():
             recorded.setdefault(version, message)
 
-    def get_no_versions_reason(self, package: str) -> Diagnostic | None:
-        """Return the recorded reason for ``package``'s NO_VERSIONS clause.
+    def _root_bans(
+        self, normalized: str, failed_range: RangeProtocol[Version] | None
+    ) -> list[_diagnosis.RootBan]:
+        """Return root bans restricted to failed_range; None includes all versions."""
+        bans: list[_diagnosis.RootBan] = []
+        recorded = self._root_ban_versions.get(normalized, {})
+        for (blocker, declared, root_range), banned in recorded.items():
+            versions = tuple(
+                version
+                for version in banned
+                if failed_range is None or version in failed_range
+            )
+            if not versions:
+                continue
+            bans.append(
+                _diagnosis.RootBan(
+                    _diagnosis.Blocker(
+                        _diagnosis.BlockerKind.ROOT, blocker, (declared,), root_range
+                    ),
+                    versions,
+                )
+            )
+        return bans
 
-        Ranked by specificity, not by which pass wrote first: a recorded
-        reason that names a cause wins, and a metadata ban beats the two
-        that say only that nothing matched.
+    def _metadata_bans(
+        self, normalized: str, failed_range: RangeProtocol[Version] | None
+    ) -> list[_diagnosis.MetadataBlock]:
+        """Return metadata bans within failed_range, or all bans when it is None."""
+        recorded = self._metadata_ban_blocks.get(normalized, {})
+        return [
+            block
+            for version, block in recorded.items()
+            if failed_range is None or version in failed_range
+        ]
 
-        This is where the sentence is built, and the only place it is built.
-        Reaching it means the resolve has already failed, so the marker is
-        rendered here rather than on the resolve path.
+    def get_no_versions_reason(
+        self, package: str, failed_range: RangeProtocol[Version] | None = None
+    ) -> Diagnostic | None:
+        """Return the recorded no-versions diagnostic for package.
 
-        Returns ``None`` if no diagnostic was captured (e.g. the
-        package was decided successfully or failed for a non-listing
-        reason such as a metadata parse error).
+        Specific recorded causes take precedence over permanent bans.
+        ``failed_range`` restricts banned versions; None includes every ban.
         """
         recorded = self._no_versions_reasons.get(package)
         if recorded is not None and not recorded.is_generic:
             return self._render_no_versions_reason(package, recorded)
 
         normalized = canonicalize_name(package)
-        blocks = self._metadata_ban_blocks.get(normalized)
-        if blocks:
-            return _diagnosis.metadata_diagnostic(
-                self, normalized, list(blocks.values())
-            )
+        bans = self._root_bans(normalized, failed_range)
+        blocks = self._metadata_bans(normalized, failed_range)
+        if bans or blocks:
+            return _diagnosis.ban_diagnostic(self, normalized, bans, blocks)
         if recorded is None:
             return None
         return self._render_no_versions_reason(package, recorded)

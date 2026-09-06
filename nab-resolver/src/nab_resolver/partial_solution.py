@@ -149,6 +149,16 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
     def __len__(self) -> int:
         return sum(1 for _ in self)
 
+    def __bool__(self) -> bool:
+        """Return whether the snapshot contains any packages."""
+        shadow = self._shadow
+        if not shadow:
+            return bool(self._live)
+        for package in self._live:
+            if shadow.get(package, _UNSET) is not _ABSENT:
+                return True
+        return False
+
 
 def _take_snapshot(
     live: dict[PackageType, _ValueType],

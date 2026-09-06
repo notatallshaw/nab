@@ -223,15 +223,12 @@ class NabBuildEnv:
     """An isolated PEP 518 build environment driven by nab.
 
     Implements ``build.env.IsolatedEnv`` so it can be passed to
-    ``build.ProjectBuilder.from_isolated_env``. The runtime cost
-    is one venv creation, one inner resolve over
-    ``[build-system].requires``, one wheel download per dep, and
-    one ``installer.install`` per wheel.
+    ``build.ProjectBuilder.from_isolated_env``.
 
     ``requires`` is the PEP 508 string list from
-    ``[build-system].requires``.  ``config`` carries the outer resolve's
-    settings, pruned of declared sources, constraints and group selection
-    so the build env resolves against the configured indexes alone.
+    ``[build-system].requires``.  ``config`` is the outer resolve's
+    settings unchanged; :func:`_inner_resolve_inputs` narrows them for
+    the build-requires resolve.
 
     ``offline`` refuses to populate the env when a build requirement
     would have to come off the network.  A ``requires`` that is empty,
@@ -835,7 +832,7 @@ def _venv_scheme_paths(python_executable: Path) -> dict[str, str]:
     Subprocessing the venv guarantees the returned paths reflect the
     venv's layout (``site-packages`` under the venv root, scripts in
     its ``bin``/``Scripts`` dir, etc.) regardless of how nab itself
-    was installed.  One subprocess per env construction; negligible.
+    was installed.
 
     ``sysconfig`` has no ``headers`` scheme, and its ``include`` names
     the base interpreter rather than the venv, so the header root comes

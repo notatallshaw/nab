@@ -336,16 +336,22 @@ def flush_pending_blocks(provider: Provider) -> None:
             )
         )
 
-    # Permanent rejections: a root requirement is fixed for the whole resolve,
-    # and a version whose metadata will not read is unusable in every state.
+    # Root and metadata rejections persist after pending state is cleared.
     unusable: defaultdict[str, RangeProtocol[Version]] = defaultdict(VersionRange.empty)
 
-    for (candidate_pkg, *_), versions in provider.pending_root_blocks.items():
+    for (
+        candidate_pkg,
+        blocker_pkg,
+        dep_range,
+        root_range,
+    ), versions in provider.pending_root_blocks.items():
         unusable[candidate_pkg] |= _candidate_union(provider, candidate_pkg, versions)
+        provider.record_root_ban(
+            candidate_pkg, blocker_pkg, dep_range, root_range, versions
+        )
 
     for candidate_pkg, blocks in provider.pending_metadata_blocks.items():
         unusable[candidate_pkg] |= _candidate_union(provider, candidate_pkg, blocks)
-        # The ban outlives this flush, so its reason has to as well.
         provider.record_metadata_ban(candidate_pkg, blocks)
 
     for candidate_pkg, rejected in unusable.items():

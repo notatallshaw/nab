@@ -71,6 +71,7 @@ from nab_provider.requirements_file import (
 )
 from nab_provider.target import IntractableMarkerError, UnevaluableMarkerError
 
+from ._cli.parse import is_option, option_tokens
 from ._resolve import (
     _check_targets_or_exit,
     _load_config,
@@ -306,7 +307,9 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         path=path,
         output=output,
         groups=selected_groups,
+        all_groups=all_groups,
         extras=selected_extras,
+        all_extras=all_extras,
         offline=offline,
         build_requirements=build_requirements,
         workspace_discovery=workspace_discovery,
@@ -493,7 +496,9 @@ class _LockRun:
     path: Path
     output: Path | None
     groups: tuple[str, ...]
+    all_groups: bool
     extras: tuple[str, ...]
+    all_extras: bool
     offline: bool | None
     build_requirements: bool
     workspace_discovery: bool
@@ -503,28 +508,49 @@ class _LockRun:
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""
-        return _join_command(
-            ["nab", "lock", *self._file_arguments(), *self._content_arguments()]
-        )
+        options = [*self._output_arguments(), *self._content_arguments()]
+        return _join_command(["nab", "lock", *self._with_project_path(options)])
 
-    def _file_arguments(self) -> list[str]:
-        """Return the arguments naming the project read and the file written."""
-        arguments: list[str] = []
-        if self.path != _DEFAULT_PROJECT_PATH:
-            arguments.append(str(self.path))
-        if self.output is not None:
-            arguments += ["--output", str(self.output)]
-        return arguments
+    def _with_project_path(self, options: list[str]) -> list[str]:
+        """Return ``options`` with the project path placed where nab reads it.
+
+        A path the parser would read as an option is only a path after
+        ``--``, which ends the options, so it goes last.
+        """
+        if self.path == _DEFAULT_PROJECT_PATH:
+            return options
+
+        path = str(self.path)
+        if is_option(path):
+            return [*options, "--", path]
+        return [path, *options]
+
+    def _output_arguments(self) -> list[str]:
+        """Return the argument naming the file written, when the run names one."""
+        if self.output is None:
+            return []
+        return option_tokens("--output", (str(self.output),))
 
     def _content_arguments(self) -> list[str]:
-        """Return the flags that decide what the rewritten lock holds."""
+        """Return the flags that decide what the rewritten lock holds.
+
+        ``--all-groups`` and ``--all-extras`` stay as themselves rather than
+        expanding into the names they selected, because only the first name
+        of an expanded list may be option-shaped.
+        """
         arguments: list[str] = []
-        if self.groups:
-            arguments += ["--groups", *self.groups]
-        if self.extras:
-            arguments += ["--extras", *self.extras]
+        if self.all_groups:
+            arguments.append("--all-groups")
+        else:
+            arguments += option_tokens("--groups", self.groups)
+
+        if self.all_extras:
+            arguments.append("--all-extras")
+        else:
+            arguments += option_tokens("--extras", self.extras)
+
         if self.offline is not None:
-            arguments += ["--offline", str(self.offline)]
+            arguments += option_tokens("--offline", (str(self.offline),))
 
         if self.build_requirements:
             arguments.append("--build-requirements")

@@ -2067,6 +2067,8 @@ _UNIVERSAL_MATRIX = (
     '[tool.nab.matrix]\npython = ">=3.11,<3.12"\nplatforms = ["linux_x86_64"]\n'
 )
 
+_UNIVERSAL_RULE = '[[tool.nab.package-rules]]\nmatch = ["foo", "bar"]\n'
+
 
 class TestUniversalBuildPolicy:
     """Universal mode cannot build on the host: build-policy is forced never."""
@@ -2111,8 +2113,47 @@ class TestUniversalBuildPolicy:
             + _UNIVERSAL_MATRIX
             + '[tool.nab.packages.foo]\nbuild-policy = "build-remote"\n',
         )
-        with pytest.raises(ConfigError, match="packages.foo"):
+        with pytest.raises(ConfigError, match=r"packages\.'foo' build-policy"):
             read_pyproject_config(path)
+
+    def test_package_rule_build_policy_names_that_surface(self, tmp_path: Path) -> None:
+        """One rule entry is one thing to edit, whatever its match list holds."""
+        path = write(
+            tmp_path,
+            '[tool.nab]\nmode = "universal"\n'
+            + _UNIVERSAL_MATRIX
+            + _UNIVERSAL_RULE
+            + 'build-policy = "build-remote"\n',
+        )
+        with pytest.raises(ConfigError) as raised:
+            read_pyproject_config(path)
+
+        message = str(raised.value)
+
+        assert f"{path}: package-rules[0] build-policy = 'build-remote'" in message
+
+        assert "packages.foo" not in message
+        assert message.count("build-remote") == 1
+
+    def test_the_prescribed_repairs_parse(self, tmp_path: Path) -> None:
+        """Every repair the refusal names leaves a config that parses."""
+        header = '[tool.nab]\nmode = "universal"\n' + _UNIVERSAL_MATRIX
+        offending = _UNIVERSAL_RULE + 'build-policy = "build-remote"\n'
+
+        with pytest.raises(ConfigError) as raised:
+            read_pyproject_config(write(tmp_path, header + offending))
+
+        assert "Remove the whole entry" in str(raised.value)
+
+        # An entry with no body sets no policy and is rejected, so removing the
+        # setting alone is a repair only where the entry keeps another key.
+        setting_removed = _UNIVERSAL_RULE + 'dist-policy = "wheel-only"\n'
+        entry_removed = ""
+        set_to_never = _UNIVERSAL_RULE + 'build-policy = "never"\n'
+
+        for repair in (setting_removed, entry_removed, set_to_never):
+            path = write(tmp_path, header + repair)
+            assert read_pyproject_config(path).build_policy is BuildPolicy.NEVER
 
     def test_package_override_without_build_policy_ok(self, tmp_path: Path) -> None:
         path = write(
