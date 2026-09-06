@@ -324,7 +324,8 @@ class BaseProvider(Generic[PackageType, VersionType]):
     ``prioritize`` and ``widen_decision``.
 
     ``begin_resolution`` and ``receive_contextual_failure`` are optional lifecycle
-    and priority notifications. Structural providers may omit both.
+    and priority notifications. ``is_query_ready`` controls provisional queries.
+    Structural providers may omit these hooks.
 
     Subclassing is optional; the resolver accepts anything that satisfies the
     protocol.  Nothing re-exports this, so import it as
@@ -351,6 +352,11 @@ class BaseProvider(Generic[PackageType, VersionType]):
         """Report every package ready, since answers do not wait on a fetch."""
         del package
         return True
+
+    def is_query_ready(self, package: PackageType) -> bool:
+        """Decline provisional absence when query provenance is not established."""
+        del package
+        return False
 
     def receive_partial_solution_hint(
         self,
@@ -617,6 +623,7 @@ class Resolver(Generic[PackageType, VersionType]):
         format_range: Callable[[Any], str] = str,
         *,
         availability_generation: Callable[[], int] | None = None,
+        provisional: bool = False,
     ) -> None:
         """Create a resolver with the given provider and optional observer.
 
@@ -639,12 +646,22 @@ class Resolver(Generic[PackageType, VersionType]):
         between the final generation check and clause recording. Omitting this
         callback keeps the static candidate-universe contract.
 
+        ``provisional`` treats failed queries as permanent absences when the
+        provider's optional ``is_query_ready(package)`` returns True. Other
+        failures retain query deferral and contextual guards. Validate successful
+        results against final availability and retry failures without this
+        option. ``provisional_absences`` counts attempted provisional absences,
+        including attempts interrupted by an observer or diagnostic probe.
+        ``max_iterations`` bounds normal and provisional solves.
+
         ``format_range`` renders a constraint in a failure report.  It travels
         with ``range_type``: the default ``str`` reads well for
         :class:`~nab_resolver.ranges.Range`, while a range type whose ``str``
         is a debug representation needs its own.
         """
         self.provider = provider
+        self.provisional = provisional
+        self.provisional_absences = 0
         self.deferred = (
             None
             if availability_generation is None
@@ -761,7 +778,8 @@ class Resolver(Generic[PackageType, VersionType]):
         """Resolve requirements and return ``{package: version}``.
 
         The pins of :meth:`solve`, for a caller that has no use for the
-        dependency graph.
+        dependency graph. Use ``solve`` for provisional attempts so the
+        complete result can be validated.
         """
         return self.solve(requirements, constraints).pins
 
@@ -787,9 +805,13 @@ class Resolver(Generic[PackageType, VersionType]):
         ``~range_type.empty()``, which may be strictly narrower; see
         :class:`~nab_resolver.types.RangeProtocol`.
 
-        Raises ``ResolutionError`` if no solution exists.
+        Raises ``ResolutionError`` if resolution fails. After provisional
+        assumptions, failure is inconclusive and success requires validation
+        against the host's final candidate availability. ``max_iterations``
+        bounds both modes; reaching it does not prove unsatisfiability.
         """
         self._reset(constraints)
+        self.provisional_absences = 0
         self._add_root_requirements(_as_root_requirements(requirements))
 
         # Threshold doubles each restart (geometric schedule).

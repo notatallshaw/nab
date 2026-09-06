@@ -223,6 +223,9 @@ def record_no_versions(
     if had_pending:
         return
     if deferrable and resolver.deferred is not None:
+        if resolver.provisional and _can_assume_absence(resolver, package):
+            _record_provisional_absence(resolver, package)
+            return
         resolver.deferred.packages[package] = None
         return
 
@@ -250,8 +253,46 @@ def record_no_versions(
     )
 
 
+def _can_assume_absence(resolver: Resolver[Any, Any], package: Any) -> bool:
+    """Ask whether this provisional query had enough host context to run."""
+    ready = getattr(resolver.provider, "is_query_ready", None)
+    return ready is not None and bool(ready(package))
+
+
+def _record_provisional_absence(resolver: Resolver[Any, Any], package: Any) -> None:
+    """Record an assumed absence, including queries preceding every real decision."""
+    # Probes can raise before the incompatibility is recorded.
+    resolver.provisional_absences += 1
+    current_range = resolver.solution.get(package) or resolver.term_top
+    resolver.observer.on_no_versions(package, current_range)
+    constraint = resolver.constraints.get(package)
+    if constraint is None or not _constraint_hid_a_version(
+        resolver, package, current_range
+    ):
+        constraint = None
+    receive_failure = getattr(resolver.provider, "receive_contextual_failure", None)
+    if receive_failure is not None and receive_failure(package):
+        resolver.priority_epoch += 1
+    cause = (
+        IncompatibilityCause.NO_VERSIONS
+        if constraint is None
+        else IncompatibilityCause.CONSTRAINT
+    )
+    add_incompatibility(
+        resolver,
+        Incompatibility(
+            [Term(package, current_range, positive=True)],
+            cause=cause,
+            constraint_range=constraint,
+        ),
+    )
+
+
 def record_contextual_no_versions(resolver: Resolver[Any, Any], package: Any) -> None:
     """Guard an exhausted availability query by every other current decision."""
+    if resolver.provisional and _can_assume_absence(resolver, package):
+        _record_provisional_absence(resolver, package)
+        return
     decisions = resolver.solution.decisions()
     guards = [
         Term(name, resolver.range_type.singleton(version), positive=True)
@@ -272,6 +313,7 @@ def record_contextual_no_versions(resolver: Resolver[Any, Any], package: Any) ->
     receive_failure = getattr(resolver.provider, "receive_contextual_failure", None)
     if receive_failure is not None and receive_failure(package):
         resolver.priority_epoch += 1
+
     add_incompatibility(
         resolver,
         Incompatibility(

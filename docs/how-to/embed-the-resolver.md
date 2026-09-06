@@ -217,7 +217,7 @@ Pass `conflict_feedback=True` to include the shared conflict tier before the hos
 
 Feedback changes decision order only. Candidate admission, source eligibility and absence guards still follow the host contracts above. Counts start empty for each `Resolver.solve` call and survive backjumps and restarts within that call.
 
-Providers can implement two optional notifications, supplied as no-ops by `BaseProvider`. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual absence and returns `True` if priority keys changed; the resolver then invalidates its cached priorities. It may change only priority state, preserving candidate availability and current decisions. Ordinary unguarded absences and diagnostic probes do not send this notification. Structural providers may omit both methods.
+Providers can implement two optional notifications, supplied as no-ops by `BaseProvider`. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual absence and returns `True` if priority keys changed; the resolver then invalidates its cached priorities. It may change only priority state, preserving candidate availability and current decisions. Provisional absences send the same notification. Ordinary unguarded absences and diagnostic probes do not send it. Structural providers may omit both methods.
 
 
 ## Checking dependencies before a decision
@@ -225,6 +225,16 @@ Providers can implement two optional notifications, supplied as no-ops by `BaseP
 `CandidateProvider(..., dependency_precheck=True)` reads a candidate's complete dependency mapping before deciding it. If a dependency contradicts both an already selected key and its positive range, the provider queues that ordinary dependency clause. The candidate stays undecided, and its declarations do not enter the active requirement map. Mappings that include the candidate’s own package follow the normal decision path. Metadata errors and the existing stop at an intrinsically empty restriction are preserved; `has_satisfying_version` does not precheck or queue clauses.
 
 `precheck_feedback=True` additionally requests a retreat after four distinct candidates from one package share the same selected blocker key. It permits at most three requests per blocker package in a solve, retains the dependency clauses, and demotes requested blockers before the host preference. This option requires `dependency_precheck=True`; both default to `False`. Ordinary `conflict_feedback` remains independent. Rejection history survives backtracks and restarts but resets for a new solve.
+
+## Provisional attempts
+
+`Resolver(..., provisional=True)` may strengthen a failed query only when the provider's optional `is_query_ready(package)` hook confirms that its query context is available. This is separate from the priority readiness hook `is_ready`. The default is `False`; `CandidateProvider` requires active original declarations, so inferred packages without a chosen declaring candidate remain deferred.
+
+When `resolver.provisional_absences` is nonzero, treat the attempt as tentative. Validate success with `provider.validate_solution(solution, constraints)` and retry a rejected result or `ResolutionError` with a fresh resolver in normal mode. Rebind roots and constraints if a fresh host assigns different candidate keys. The counter includes assumptions interrupted by observer or constraint probes.
+
+Validation rebuilds complete reachable declarations and checks admission under their final requirement map. Host keys, metadata and requirement meaning must remain stable, including when caches are reused. A validated plan can select different versions from a normal attempt.
+
+`Resolver(..., max_iterations=200000)` bounds both normal and provisional solves. Reaching the limit raises `ResolutionError` without proving unsatisfiability. Use a fresh resolver for a normal retry; it receives its own iteration budget. This limit counts solver iterations and does not interrupt a blocked provider operation.
 
 ## The supported API
 
