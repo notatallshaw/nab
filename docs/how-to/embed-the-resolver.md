@@ -217,7 +217,7 @@ Pass `conflict_feedback=True` to include the shared conflict tier before the hos
 
 Feedback changes decision order only. Candidate admission, source eligibility and absence guards still follow the host contracts above. Counts start empty for each `Resolver.solve` call and survive backjumps and restarts within that call.
 
-Providers can implement two optional notifications, supplied as no-ops by `BaseProvider`. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual absence and returns `True` if priority keys changed; the resolver then invalidates its cached priorities. It may change only priority state, preserving candidate availability and current decisions. Ordinary unguarded absences and diagnostic probes do not send this notification. Structural providers may omit both methods.
+Providers can implement two optional notifications, supplied as no-ops by `BaseProvider`. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual absence and returns `True` if priority keys changed; the resolver then invalidates its cached priorities. It may change only priority state, preserving candidate availability and current decisions. Provisional absences send the same notification. Ordinary unguarded absences and diagnostic probes do not send it. Structural providers may omit both methods.
 
 
 ## Checking dependencies before a decision
@@ -230,7 +230,7 @@ Providers can implement two optional notifications, supplied as no-ops by `BaseP
 
 `Resolver(..., provisional=True)` may strengthen a failed query only when the provider's optional `is_query_ready(package)` hook confirms that its query context is available. This is separate from the priority readiness hook `is_ready`. The default is `False`; `CandidateProvider` requires active original declarations, so inferred packages without a chosen declaring candidate remain deferred.
 
-When `resolver.provisional_absences` is nonzero, treat the attempt as tentative. Validate success with `provider.validate_solution(solution, constraints)` and retry a rejected result or `ResolutionError` with a fresh resolver in normal mode. Rebind roots and constraints if a fresh host assigns different candidate keys. The counter records attempted assumptions before observer or constraint probes, allowing a failed probe to trigger a retry too.
+When `resolver.provisional_absences` is nonzero, treat the attempt as tentative. Validate success with `provider.validate_solution(solution, constraints)` and retry a rejected result or `ResolutionError` with a fresh resolver in normal mode. Rebind roots and constraints if a fresh host assigns different candidate keys. The counter includes assumptions interrupted by observer or constraint probes.
 
 Validation rebuilds complete reachable declarations and checks admission under their final requirement map. Host keys, metadata and requirement meaning must remain stable, including when caches are reused. A validated plan can select different versions from a normal attempt.
 

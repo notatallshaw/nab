@@ -444,7 +444,7 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
             if any(key not in cause.constraint for cause in requirements[package]):
                 return False
 
-            allowed = type(requirements[package][0].constraint).singleton(key)
+            allowed = requirements[package][0].constraint.singleton(key)
             if not any(
                 offered.key == key
                 for offered in self.host.iter_candidates(package, allowed, requirements)

@@ -324,7 +324,8 @@ class BaseProvider(Generic[PackageType, VersionType]):
     ``prioritize`` and ``widen_decision``.
 
     ``begin_resolution`` and ``receive_contextual_failure`` are optional lifecycle
-    and priority notifications. Structural providers may omit both.
+    and priority notifications. ``is_query_ready`` controls provisional queries.
+    Structural providers may omit these hooks.
 
     Subclassing is optional; the resolver accepts anything that satisfies the
     protocol.  Nothing re-exports this, so import it as

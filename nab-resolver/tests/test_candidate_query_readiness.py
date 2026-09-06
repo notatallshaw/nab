@@ -2,7 +2,11 @@
 
 from collections.abc import Iterable, Mapping, Sequence
 
-from nab_resolver.candidate_provider import CandidateProvider, CandidateRequirement, PreparedCandidate
+from nab_resolver.candidate_provider import (
+    CandidateProvider,
+    CandidateRequirement,
+    PreparedCandidate,
+)
 from nab_resolver.ranges import Range
 from nab_resolver.types import RangeProtocol
 
@@ -19,29 +23,43 @@ class ScopedHost:
         self.reads = 0
 
     def iter_candidates(
-        self, package: int, allowed: RangeProtocol[int],
+        self,
+        package: int,
+        allowed: RangeProtocol[int],
         requirements: Mapping[int, Sequence[CandidateRequirement[int, int]]],
     ) -> Iterable[PreparedCandidate[int]]:
         if package == 10:
             yield self.parent
         elif package == 20:
-            if self.registered and any(cause.origin is self.url for cause in requirements.get(20, ())):
+            if self.registered and any(
+                cause.origin is self.url for cause in requirements.get(20, ())
+            ):
                 yield self.linked
             yield self.index
 
-    def get_dependencies(self, candidate: PreparedCandidate[int]) -> Iterable[CandidateRequirement[int, int]]:
+    def get_dependencies(
+        self, candidate: PreparedCandidate[int]
+    ) -> Iterable[CandidateRequirement[int, int]]:
         self.reads += 1
         if candidate is self.parent:
             self.registered = True
             yield CandidateRequirement(20, Range.singleton(1), self.url)
 
-    def priority(self, package: int, requirements: Mapping[int, Sequence[CandidateRequirement[int, int]]]) -> int:
+    def priority(
+        self,
+        package: int,
+        requirements: Mapping[int, Sequence[CandidateRequirement[int, int]]],
+    ) -> int:
         return package
 
 
-def test_inferred_ranges_and_cached_sources_do_not_supply_original_requirements() -> None:
+def test_inferred_ranges_and_cached_sources_do_not_supply_original_requirements() -> (
+    None
+):
     host = ScopedHost()
-    provider = CandidateProvider(host, [CandidateRequirement(10, Range.full(), object())])
+    provider = CandidateProvider(
+        host, [CandidateRequirement(10, Range.full(), object())]
+    )
     assert provider.is_query_ready(10)
     assert not provider.is_query_ready(20)
     provider.receive_partial_solution_hint({20: Range.singleton(1)}, {})
@@ -66,7 +84,8 @@ def test_prechecked_rejection_leaves_cached_url_ineligible() -> None:
     provider = CandidateProvider(
         host,
         [CandidateRequirement(package, Range.full(), object()) for package in (10, 20)],
-        dependency_precheck=True, precheck_feedback=True,
+        dependency_precheck=True,
+        precheck_feedback=True,
     )
     provider.receive_partial_solution_hint({20: Range.singleton(2)}, {20: 2})
     before = dict(provider.active_requirements())
