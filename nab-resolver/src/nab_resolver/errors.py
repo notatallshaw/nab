@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .types import Incompatibility
 
 __all__ = [
+    "ProvisionalResolutionError",
     "ResolutionError",
 ]
 
@@ -49,3 +50,13 @@ class ResolutionError(Exception):
         super().__init__(message)
         self.incompatibility = incompatibility
         self.verbose_message: str | None = None
+
+
+class ProvisionalResolutionError(ResolutionError):
+    """A provisional attempt reached its work limit without proving failure."""
+
+    def __init__(self, rounds: int) -> None:
+        """Record the completed rounds after the first provisional absence."""
+        self.rounds = rounds
+        message = f"Provisional resolution stopped after {rounds} rounds"
+        super().__init__(message)

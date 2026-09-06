@@ -226,6 +226,16 @@ Providers can implement two optional notifications, supplied as no-ops by `BaseP
 
 `precheck_feedback=True` additionally requests a retreat after four distinct candidates from one package share the same selected blocker key. It permits at most three requests per blocker package in a solve, retains the dependency clauses, and demotes requested blockers before the host preference. This option requires `dependency_precheck=True`; both default to `False`. Ordinary `conflict_feedback` remains independent. Rejection history survives backtracks and restarts but resets for a new solve.
 
+## Provisional attempts
+
+`Resolver(..., provisional=True)` may strengthen a failed query only when the provider's optional `is_query_ready(package)` hook confirms that its query context is available. This is separate from the priority readiness hook `is_ready`. The default is `False`; `CandidateProvider` requires active original declarations, so inferred packages without a chosen declaring candidate remain deferred.
+
+When `resolver.provisional_absences` is nonzero, treat the attempt as tentative. Validate success with `provider.validate_solution(solution, constraints)` and retry a rejected result or `ResolutionError` with a fresh resolver in normal mode. Rebind roots and constraints if a fresh host assigns different candidate keys. The counter records attempted assumptions before observer or constraint probes, allowing a failed probe to trigger a retry too.
+
+Validation rebuilds complete reachable declarations and checks admission under their final requirement map. Host keys, metadata and requirement meaning must remain stable, including when caches are reused. A validated plan can select different versions from a normal attempt.
+
+`solve(..., max_provisional_rounds=10000)` limits decision or conflict phases after the first assumption. `resolver.provisional_rounds` counts those phases. Reaching the limit raises `ProvisionalResolutionError`, without proving unsatisfiability. Attempts without assumptions and normal-mode retries consume no provisional budget. The budget is a caller policy and may need to be larger for expensive searches.
+
 ## The supported API
 
 These module paths will not move without a major version bump:
@@ -234,7 +244,7 @@ These module paths will not move without a major version bump:
 nab_resolver.candidate_provider
                        CandidateHost, CandidateProvider,
                        CandidateRequirement, PreparedCandidate
-nab_resolver.errors     ResolutionError
+nab_resolver.errors     ProvisionalResolutionError, ResolutionError
 nab_resolver.priority   CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD,
                         MAX_PRECHECK_BACKTRACKS, PRECHECK_REJECTION_THRESHOLD,
                         TIER_AFFECTED, TIER_CULPRIT, TIER_NORMAL,
