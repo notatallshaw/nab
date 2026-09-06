@@ -1,6 +1,6 @@
 [project]
 name = "nab-markersets"
-version = "0.0.17.dev0"
+version = "0.0.17"
 description = "PEP 508 marker algebra: markers as sets of environments"
 readme = "README.md"
 license = "MIT"
@@ -29,7 +29,7 @@ classifiers = [
 # says whether one did.
 [project.optional-dependencies]
 packaging = ["packaging>=26.3"]
-nab-vendored-packaging = ["nab-provider==0.0.17.dev0"]
+nab-vendored-packaging = ["nab-provider==0.0.17"]
 
 [project.urls]
 Homepage = "https://github.com/notatallshaw/nab"
