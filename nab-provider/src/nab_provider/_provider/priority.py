@@ -12,14 +12,7 @@ from operator import itemgetter
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.ranges import VersionRange
-from nab_resolver.priority import (
-    CONFLICT_THRESHOLD as CONFLICT_THRESHOLD,
-    CULPRIT_DEMOTE_THRESHOLD as CULPRIT_DEMOTE_THRESHOLD,
-    TIER_AFFECTED as TIER_AFFECTED,
-    TIER_CULPRIT as TIER_CULPRIT,
-    TIER_NORMAL as TIER_NORMAL,
-    compute_tier,
-)
+from nab_resolver.priority import CULPRIT_DEMOTE_THRESHOLD, compute_tier
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

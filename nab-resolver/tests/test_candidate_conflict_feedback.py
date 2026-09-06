@@ -23,7 +23,6 @@ class UpperBoundHost:
         self.consumers = [
             PreparedCandidate(version, (20, version)) for version in range(12, 0, -1)
         ]
-        self.reads: list[PreparedCandidate[int]] = []
 
     def iter_candidates(
         self,
@@ -36,7 +35,6 @@ class UpperBoundHost:
     def get_dependencies(
         self, candidate: PreparedCandidate[int]
     ) -> Iterable[CandidateRequirement[int, int]]:
-        self.reads.append(candidate)
         if candidate in self.consumers:
             yield CandidateRequirement(10, Range.less_than(2), object())
 
@@ -61,7 +59,7 @@ def make_provider(
 
 
 @pytest.mark.parametrize(
-    "affected,culprit,others,forced,expected",
+    ("affected", "culprit", "others", "forced", "expected"),
     [
         (0, 0, None, False, 1),
         (4, 4, {2: 0}, False, 1),
@@ -80,7 +78,9 @@ def test_shared_conflict_tier_boundaries(
     forced: bool,
     expected: int,
 ) -> None:
-    assert compute_tier(1, affected, culprit, others, force_backtracked=forced) == expected
+    assert (
+        compute_tier(1, affected, culprit, others, force_backtracked=forced) == expected
+    )
 
 
 def test_feedback_defaults_keep_the_host_preference() -> None:
@@ -94,9 +94,9 @@ def test_conflict_feedback_reorders_without_changing_candidates() -> None:
     provider = make_provider(host, conflict=True)
     counts = {20: 5}
     culprits = {10: 8, 20: 2}
-    assert provider.prioritize(20, Range.full(), counts, culprits) < provider.prioritize(
-        10, Range.full(), counts, culprits
-    )
+    assert provider.prioritize(
+        20, Range.full(), counts, culprits
+    ) < provider.prioritize(10, Range.full(), counts, culprits)
     assert provider.choose_version(10, Range.full()) == 2
     assert provider.prepared(10, 2) is host.hubs[0]
     assert provider.prioritize(10, Range.full(), {}, None) == (1, 10)
@@ -111,13 +111,13 @@ def test_query_parent_and_target_feedback_precede_conflict_tiers() -> None:
     assert provider.receive_contextual_failure(10)
 
     # The declaring consumer still precedes its failed hub, even if it is a culprit.
-    assert provider.prioritize(20, Range.full(), {10: 5}, {20: 20}) < provider.prioritize(
-        10, Range.full(), {10: 5}, {20: 20}
-    )
+    assert provider.prioritize(
+        20, Range.full(), {10: 5}, {20: 20}
+    ) < provider.prioritize(10, Range.full(), {10: 5}, {20: 20})
     # The failed hub still precedes an unmentioned package with an affected tier.
-    assert provider.prioritize(10, Range.full(), {30: 5}, {10: 20}) < provider.prioritize(
-        30, Range.full(), {30: 5}, {10: 20}
-    )
+    assert provider.prioritize(
+        10, Range.full(), {30: 5}, {10: 20}
+    ) < provider.prioritize(30, Range.full(), {30: 5}, {10: 20})
 
 
 def test_repeated_upper_bound_conflicts_preserve_pins() -> None:
@@ -129,5 +129,5 @@ def test_repeated_upper_bound_conflicts_preserve_pins() -> None:
         solution = resolver.solve(provider.root_requirements())
         rows.append((solution.pins, resolver.stats.decisions, resolver.stats.conflicts))
     assert rows[0][0] == rows[1][0] == {10: 1, 20: 12}
-    assert rows[1][1] <= rows[0][1]
-    assert rows[1][2] <= rows[0][2]
+    assert rows[1][1] < rows[0][1]
+    assert rows[1][2] < rows[0][2]

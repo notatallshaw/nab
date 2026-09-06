@@ -1,4 +1,4 @@
-"""Order affected packages before ordinary choices and dominant culprits after them."""
+"""Promote affected packages before applying culprit demotion."""
 
 from __future__ import annotations
 
@@ -22,14 +22,14 @@ __all__ = [
 
 CONFLICT_THRESHOLD = 5
 
-# Demotion requires a runaway gap to the second-highest culprit, so
-# co-dominant culprits keep standard ordering.
+# Minimum culprit count and lead required for count-based demotion.
 CULPRIT_DEMOTE_THRESHOLD = 5
 
 # Lower number = higher priority.
 TIER_AFFECTED = 0
 TIER_NORMAL = 1
 TIER_CULPRIT = 2
+
 
 def compute_tier(
     package: PackageType,
