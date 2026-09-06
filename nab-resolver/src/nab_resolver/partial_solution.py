@@ -154,9 +154,10 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
         shadow = self._shadow
         if not shadow:
             return bool(self._live)
-        if any(value is not _ABSENT for value in shadow.values()):
-            return True
-        return any(package not in shadow for package in self._live)
+        for package in self._live:  # noqa: SIM110 - avoid yielding a boolean for every absent key
+            if shadow.get(package, _UNSET) is not _ABSENT:
+                return True
+        return False
 
 
 def _take_snapshot(
