@@ -12,7 +12,7 @@ import pytest
 from nab_resolver._compat import override
 from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import BaseProvider, Resolver
+from nab_resolver.resolver import BaseProvider, Resolver, ResolverProvider
 from nab_resolver.types import (
     Incompatibility,
     IncompatibilityCause,
@@ -329,11 +329,16 @@ class ActionTraceResolver(Resolver[str, int]):
         self.sweeps: list[tuple[list[str], list[str]]] = []
 
     @override
-    def _decide_next(self, next_package: str) -> str:
+    def _decide_next(
+        self,
+        next_package: str,
+        *,
+        hinted_provider: ResolverProvider[str, int] | None = None,
+    ) -> str:
         assert self.deferred is not None
         before = list(self.deferred.packages)
         emitted = self.action_provider.emitted
-        result = super()._decide_next(next_package)
+        result = super()._decide_next(next_package, hinted_provider=hinted_provider)
         if self.action_provider.emitted and not emitted:
             self.sweeps.append((before, list(self.deferred.packages)))
         return result
