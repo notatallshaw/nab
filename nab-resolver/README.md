@@ -24,7 +24,7 @@ internal and may be renamed or relocated in any release.
 nab_resolver.candidate_provider
                        CandidateHost, CandidateProvider,
                        CandidateRequirement, PreparedCandidate
-nab_resolver.errors     ResolutionError
+nab_resolver.errors     ProvisionalResolutionError, ResolutionError
 nab_resolver.priority   CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD,
                         MAX_PRECHECK_BACKTRACKS, PRECHECK_REJECTION_THRESHOLD,
                         TIER_AFFECTED, TIER_CULPRIT, TIER_NORMAL,

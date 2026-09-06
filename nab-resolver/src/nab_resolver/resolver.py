@@ -28,7 +28,7 @@ from . import conflict, decide, incompat_index, propagate
 from ._compat import override
 from .decision_queue import DecisionQueue
 from .deferred import DeferredChoices
-from .errors import ResolutionError
+from .errors import ProvisionalResolutionError, ResolutionError
 from .partial_solution import PartialSolution
 from .ranges import Range
 from .result import build_solution_data
@@ -352,6 +352,11 @@ class BaseProvider(Generic[PackageType, VersionType]):
         del package
         return True
 
+    def is_query_ready(self, package: PackageType) -> bool:
+        """Decline provisional absence when query provenance is not established."""
+        del package
+        return False
+
     def receive_partial_solution_hint(
         self,
         positive_ranges: Mapping[PackageType, RangeProtocol[VersionType]],
@@ -617,6 +622,7 @@ class Resolver(Generic[PackageType, VersionType]):
         format_range: Callable[[Any], str] = str,
         *,
         availability_generation: Callable[[], int] | None = None,
+        provisional: bool = False,
     ) -> None:
         """Create a resolver with the given provider and optional observer.
 
@@ -639,12 +645,25 @@ class Resolver(Generic[PackageType, VersionType]):
         between the final generation check and clause recording. Omitting this
         callback keeps the static candidate-universe contract.
 
+        ``provisional`` treats failed queries as permanent absences when the
+        provider's optional ``is_query_ready(package)`` returns True. Other
+        failures retain query deferral and contextual guards. Validate successful
+        results against final availability and retry failures without this
+        option. ``provisional_absences`` counts attempted provisional absences,
+        including attempts interrupted by an observer or diagnostic probe.
+        ``solve`` limits work after the first assumption and records it in
+        ``provisional_rounds``.
+
         ``format_range`` renders a constraint in a failure report.  It travels
         with ``range_type``: the default ``str`` reads well for
         :class:`~nab_resolver.ranges.Range`, while a range type whose ``str``
         is a debug representation needs its own.
         """
         self.provider = provider
+        self.provisional = provisional
+        self._max_provisional_rounds = 0
+        self.provisional_absences = 0
+        self.provisional_rounds = 0
         self.deferred = (
             None
             if availability_generation is None
@@ -761,7 +780,8 @@ class Resolver(Generic[PackageType, VersionType]):
         """Resolve requirements and return ``{package: version}``.
 
         The pins of :meth:`solve`, for a caller that has no use for the
-        dependency graph.
+        dependency graph. Use ``solve`` for provisional attempts so the
+        complete result can be validated.
         """
         return self.solve(requirements, constraints).pins
 
@@ -770,6 +790,8 @@ class Resolver(Generic[PackageType, VersionType]):
         requirements: Mapping[PackageType, RangeProtocol[VersionType]]
         | Sequence[RootRequirement[PackageType, VersionType]],
         constraints: Mapping[PackageType, RangeProtocol[VersionType]] | None = None,
+        *,
+        max_provisional_rounds: int = 10_000,
     ) -> Solution[PackageType, VersionType]:
         """Resolve requirements and return the pins, roots, and edges.
 
@@ -787,9 +809,20 @@ class Resolver(Generic[PackageType, VersionType]):
         ``~range_type.empty()``, which may be strictly narrower; see
         :class:`~nab_resolver.types.RangeProtocol`.
 
-        Raises ``ResolutionError`` if no solution exists.
+        Raises ``ResolutionError`` if resolution fails. After provisional
+        assumptions, failure is inconclusive and success requires validation
+        against the host's final candidate availability. ``max_provisional_rounds``
+        limits subsequent decision or conflict phases; reaching it raises
+        :class:`~nab_resolver.errors.ProvisionalResolutionError`. The limit
+        does not apply before an assumption or in normal mode.
         """
+        if max_provisional_rounds < 0:
+            message = "max_provisional_rounds must be nonnegative"
+            raise ValueError(message)
         self._reset(constraints)
+        self._max_provisional_rounds = max_provisional_rounds
+        self.provisional_absences = 0
+        self.provisional_rounds = 0
         self._add_root_requirements(_as_root_requirements(requirements))
 
         # Threshold doubles each restart (geometric schedule).
@@ -825,6 +858,8 @@ class Resolver(Generic[PackageType, VersionType]):
 
             deferred = self.deferred
             if deferred is not None:
+                if self.provisional_absences:
+                    self._consume_provisional_round()
                 deferred.refresh(self.stats.derivations, self.stats.decisions)
             next_package = decide.choose_package_to_decide(
                 self, None if deferred is None else deferred.packages.keys()
@@ -847,6 +882,12 @@ class Resolver(Generic[PackageType, VersionType]):
         exceeded_message = f"Resolution exceeded {self.max_iterations} iterations"
         raise ResolutionError(exceeded_message)
 
+    def _consume_provisional_round(self) -> None:
+        """Charge one decision or conflict phase after a provisional absence."""
+        if self.provisional_rounds >= self._max_provisional_rounds:
+            raise ProvisionalResolutionError(self.provisional_rounds)
+        self.provisional_rounds += 1
+
     def _handle_conflict(
         self,
         conflicting_incompatibility: Incompatibility[Any, Any],
@@ -855,6 +896,8 @@ class Resolver(Generic[PackageType, VersionType]):
     ) -> tuple[Any, int, int]:
         """Run conflict resolution, targeted backtrack, and restart phases."""
         if self.deferred is not None:
+            if self.provisional_absences:
+                self._consume_provisional_round()
             self.deferred.clear()
         self.stats.conflicts += 1
         self.observer.on_conflict(conflicting_incompatibility)

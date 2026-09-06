@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from collections.abc import Hashable
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
@@ -24,6 +24,8 @@ from .types import (
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
+
+    from .resolver import Solution
 
 
 _PackageT = TypeVar("_PackageT", bound=Hashable)
@@ -337,6 +339,11 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
             return []
         return self._precheck_feedback.consume_targets()
 
+    @override
+    def is_query_ready(self, package: _PackageT) -> bool:
+        """Require original declarations before an early provisional absence."""
+        return bool(self.active_requirements().get(package, ()))
+
     def has_satisfying_version(
         self, package: _PackageT, version_range: RangeProtocol[_KeyT]
     ) -> bool:
@@ -419,6 +426,59 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
     def prepared(self, package: _PackageT, key: _KeyT) -> PreparedCandidate[_KeyT]:
         """Return the exact prepared candidate used by a solver decision."""
         return self._selected[package, key]
+
+    def validate_solution(
+        self,
+        solution: Solution[_PackageT, _KeyT],
+        constraints: Mapping[_PackageT, RangeProtocol[_KeyT]] | None = None,
+    ) -> bool:
+        """Check complete declarations, constraints and final host admission."""
+        requirements = self._validation_requirements(solution)
+        if requirements is None or requirements.keys() != solution.pins.keys():
+            return False
+
+        for package, key in solution.pins.items():
+            constraint = None if constraints is None else constraints.get(package)
+            if constraint is not None and key not in constraint:
+                return False
+            if any(key not in cause.constraint for cause in requirements[package]):
+                return False
+
+            allowed = type(requirements[package][0].constraint).singleton(key)
+            if not any(
+                offered.key == key
+                for offered in self.host.iter_candidates(package, allowed, requirements)
+            ):
+                return False
+        return True
+
+    def _validation_requirements(
+        self, solution: Solution[_PackageT, _KeyT]
+    ) -> dict[_PackageT, list[CandidateRequirement[_PackageT, _KeyT]]] | None:
+        """Rebuild reachable declarations, requiring a prepared pin for each package."""
+        requirements: dict[_PackageT, list[CandidateRequirement[_PackageT, _KeyT]]] = (
+            defaultdict(list)
+        )
+        pending = deque(root.package for root in self.roots)
+        for root in self.roots:
+            requirements[root.package].append(root)
+
+        visited = set()
+        while pending:
+            package = pending.popleft()
+            if package in visited:
+                continue
+            if package not in solution.pins:
+                return None
+
+            candidate = self._selected.get((package, solution.pins[package]))
+            if candidate is None:
+                return None
+            visited.add(package)
+            for cause in self.host.get_dependencies(candidate):
+                requirements[cause.package].append(cause)
+                pending.append(cause.package)
+        return requirements
 
     def causes_for(
         self, package: _PackageT, key: _KeyT
