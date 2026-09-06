@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping, Sequence
 
 import pytest
 
+from nab_resolver import decide
 from nab_resolver._compat import override
 from nab_resolver.candidate_provider import (
     CandidateProvider,
@@ -13,7 +14,7 @@ from nab_resolver.candidate_provider import (
 from nab_resolver.errors import ResolutionError
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import BaseProvider, Resolver
-from nab_resolver.types import RangeProtocol
+from nab_resolver.types import IncompatibilityCause, RangeProtocol
 
 
 class MetadataProbeError(Exception):
@@ -125,3 +126,22 @@ def test_probe_failure_retains_the_early_assumption_count() -> None:
         attempt.solve(provider.root_requirements(), {10: Range.less_than(2)})
     assert attempt.provisional_absences == 1
     assert not host.discovered
+
+
+def test_an_exhausted_ready_query_records_a_provisional_absence() -> None:
+    host = LateRootHost()
+    provider = CandidateProvider(host, roots())
+    attempt = Resolver(
+        provider, availability_generation=host.generation, provisional=True
+    )
+    attempt._reset(None)
+    attempt._add_root_requirements(provider.root_requirements())
+    assert provider.choose_version(10, Range.at_least(2)) is None
+
+    decide.record_contextual_no_versions(attempt, 10)
+
+    assert attempt.provisional_absences == 1
+    absence = attempt.incompatibilities[-1]
+    assert absence.cause is IncompatibilityCause.NO_VERSIONS
+    assert len(absence.terms) == 1
+    assert absence.terms[0].package == 10

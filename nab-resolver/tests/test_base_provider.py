@@ -43,7 +43,9 @@ OWED = frozenset(
     }
 )
 
-OPTIONAL = frozenset({"begin_resolution", "receive_contextual_failure"})
+OPTIONAL = frozenset(
+    {"begin_resolution", "receive_contextual_failure", "is_query_ready"}
+)
 
 Graph = dict[str, dict[int, dict[str, Range[int]]]]
 
