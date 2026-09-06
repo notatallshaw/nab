@@ -269,13 +269,16 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         conflict_counts: Mapping[_PackageT, int],
         culprit_counts: Mapping[_PackageT, int] | None = None,
     ) -> Any:
-        """Order by query parent/target feedback, conflict tier, then host preference."""
+        """Order query feedback (parent, target), conflict tier, and host preference."""
         del version_range
         priority = self.host.priority(package, self.active_requirements())
         if self._conflict_feedback:
             affected = conflict_counts.get(package, 0)
             culprit = 0 if culprit_counts is None else culprit_counts.get(package, 0)
-            priority = (compute_tier(package, affected, culprit, culprit_counts), priority)
+            priority = (
+                compute_tier(package, affected, culprit, culprit_counts),
+                priority,
+            )
         if self._query_feedback is not None:
             return self._query_feedback.priority(package, priority)
         return priority
