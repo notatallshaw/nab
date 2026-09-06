@@ -9,6 +9,7 @@ renamed or relocated in any release.
                            CandidateRequirement, PreparedCandidate
     nab_resolver.errors     ResolutionError
     nab_resolver.priority   CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD,
+                            MAX_PRECHECK_BACKTRACKS, PRECHECK_REJECTION_THRESHOLD,
                             TIER_AFFECTED, TIER_CULPRIT, TIER_NORMAL,
                             compute_tier, is_dominant_culprit
     nab_resolver.ranges     Range

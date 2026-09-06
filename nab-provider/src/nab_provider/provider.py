@@ -476,12 +476,12 @@ class Provider:
     # Set low because the trigger is conservative: a unique
     # ``(blocker_pkg, blocker_version)`` repeating across every rejection
     # is already a strong signal.
-    _LOOKAHEAD_ABORT_THRESHOLD = 4
+    _LOOKAHEAD_ABORT_THRESHOLD = _conflict_priority.PRECHECK_REJECTION_THRESHOLD
 
     # Max force-backtracks one blocker can drive per resolution.
     # One-shot misses sustained culprits; unlimited oscillates on
     # blockers that are also the right pin.
-    _MAX_FORCE_BACKTRACKS_PER_PKG = 3
+    _MAX_FORCE_BACKTRACKS_PER_PKG = _conflict_priority.MAX_PRECHECK_BACKTRACKS
 
     TIER_AFFECTED = _conflict_priority.TIER_AFFECTED
     TIER_NORMAL = _conflict_priority.TIER_NORMAL
