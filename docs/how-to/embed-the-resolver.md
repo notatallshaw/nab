@@ -219,6 +219,13 @@ Feedback changes decision order only. Candidate admission, source eligibility an
 
 Providers can implement two optional notifications, supplied as no-ops by `BaseProvider`. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual absence and returns `True` if priority keys changed; the resolver then invalidates its cached priorities. It may change only priority state, preserving candidate availability and current decisions. Ordinary unguarded absences and diagnostic probes do not send this notification. Structural providers may omit both methods.
 
+
+## Checking dependencies before a decision
+
+`CandidateProvider(..., dependency_precheck=True)` reads a candidate's complete dependency mapping before deciding it. If a dependency contradicts both an already selected key and its positive range, the provider queues that ordinary dependency clause. The candidate stays undecided, and its declarations do not enter the active requirement map. Mappings that include the candidate’s own package follow the normal decision path. Metadata errors and the existing stop at an intrinsically empty restriction are preserved; `has_satisfying_version` does not precheck or queue clauses.
+
+`precheck_feedback=True` additionally requests a retreat after four distinct candidates from one package share the same selected blocker key. It permits at most three requests per blocker package in a solve, retains the dependency clauses, and demotes requested blockers before the host preference. This option requires `dependency_precheck=True`; both default to `False`. Ordinary `conflict_feedback` remains independent. Rejection history survives backtracks and restarts but resets for a new solve.
+
 ## The supported API
 
 These module paths will not move without a major version bump:
@@ -229,6 +236,7 @@ nab_resolver.candidate_provider
                        CandidateRequirement, PreparedCandidate
 nab_resolver.errors     ResolutionError
 nab_resolver.priority   CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD,
+                        MAX_PRECHECK_BACKTRACKS, PRECHECK_REJECTION_THRESHOLD,
                         TIER_AFFECTED, TIER_CULPRIT, TIER_NORMAL,
                         compute_tier, is_dominant_culprit
 nab_resolver.ranges     Range
