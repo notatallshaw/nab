@@ -234,7 +234,7 @@ When `resolver.provisional_absences` is nonzero, treat the attempt as tentative.
 
 Validation rebuilds complete reachable declarations and checks admission under their final requirement map. Host keys, metadata and requirement meaning must remain stable, including when caches are reused. A validated plan can select different versions from a normal attempt.
 
-`solve(..., max_provisional_rounds=10000)` limits decision or conflict phases after the first assumption. `resolver.provisional_rounds` counts those phases. Reaching the limit raises `ProvisionalResolutionError`, without proving unsatisfiability. Attempts without assumptions and normal-mode retries consume no provisional budget. The budget is a caller policy and may need to be larger for expensive searches.
+`Resolver(..., max_iterations=200000)` bounds both normal and provisional solves. Reaching the limit raises `ResolutionError` without proving unsatisfiability. Use a fresh resolver for a normal retry; it receives its own iteration budget. This limit counts solver iterations and does not interrupt a blocked provider operation.
 
 ## The supported API
 
@@ -244,7 +244,7 @@ These module paths will not move without a major version bump:
 nab_resolver.candidate_provider
                        CandidateHost, CandidateProvider,
                        CandidateRequirement, PreparedCandidate
-nab_resolver.errors     ProvisionalResolutionError, ResolutionError
+nab_resolver.errors     ResolutionError
 nab_resolver.priority   CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD,
                         MAX_PRECHECK_BACKTRACKS, PRECHECK_REJECTION_THRESHOLD,
                         TIER_AFFECTED, TIER_CULPRIT, TIER_NORMAL,
