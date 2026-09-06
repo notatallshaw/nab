@@ -295,3 +295,25 @@ def test_an_ordinary_restart_preserves_precheck_feedback() -> None:
     assert [target for key in (12, 11, 10, 9) for target in reject(provider, key)] == [
         10
     ]
+
+
+@pytest.mark.parametrize("blocker_present", [False, True])
+def test_unusable_retreat_requests_keep_clauses_and_remain_bounded(
+    blocker_present: bool,
+) -> None:
+    provider = prepared_provider(Host(), feedback=True)
+    resolver = Resolver(provider)
+    if blocker_present:
+        resolver.solution.decide(10, 2)
+    resolver.solution.decide(30, 1)
+    before = dict(resolver.solution.decisions())
+    requests = []
+    for key in range(16, 0, -1):
+        targets = reject(provider, key)
+        requests.extend(targets)
+        assert conflict.force_targeted_backtrack(resolver, targets) is None
+
+    assert requests == [10, 10, 10]
+    assert resolver.stats.targeted_backtracks == 0
+    assert dict(resolver.solution.decisions()) == before
+    assert provider.consume_pending_clauses() == []
