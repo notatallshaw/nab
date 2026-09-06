@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
 
 from ._compat import override
+from .priority import compute_tier
 from .resolver import BaseProvider
 from .types import RangeProtocol, RootRequirement
 
@@ -125,11 +126,13 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         roots: Sequence[CandidateRequirement[_PackageT, _KeyT]],
         *,
         query_feedback: bool = False,
+        conflict_feedback: bool = False,
     ) -> None:
-        """Snapshot roots and optionally prioritize contextual query failures."""
+        """Snapshot roots and enable optional query or conflict ordering feedback."""
         self.host = host
         self.roots = tuple(roots)
         self._query_feedback = _QueryFeedback[_PackageT]() if query_feedback else None
+        self._conflict_feedback = conflict_feedback
         self._decisions: Mapping[_PackageT, _KeyT] = {}
         self._selected: dict[tuple[_PackageT, _KeyT], PreparedCandidate[_KeyT]] = {}
         self._causes: dict[
@@ -266,9 +269,13 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         conflict_counts: Mapping[_PackageT, int],
         culprit_counts: Mapping[_PackageT, int] | None = None,
     ) -> Any:
-        """Combine contextual-query feedback with the host's package priority."""
-        del version_range, conflict_counts, culprit_counts
+        """Order by query parent/target feedback, conflict tier, then host preference."""
+        del version_range
         priority = self.host.priority(package, self.active_requirements())
+        if self._conflict_feedback:
+            affected = conflict_counts.get(package, 0)
+            culprit = 0 if culprit_counts is None else culprit_counts.get(package, 0)
+            priority = (compute_tier(package, affected, culprit, culprit_counts), priority)
         if self._query_feedback is not None:
             return self._query_feedback.priority(package, priority)
         return priority

@@ -213,6 +213,8 @@ Candidate queries also serve diagnostic probes, so preparing or caching a candid
 
 Pass `query_feedback=True` to `CandidateProvider` to prioritize packages involved in contextual query failures. Its key is `(-parent_failures, -target_failures, host_priority)`: each failure credits the queried package and each currently decided package whose cached declarations require it. Multiple declarations from one parent count once. The default, `False`, returns the host's priority directly.
 
+Pass `conflict_feedback=True` to include the shared conflict tier before the host's preference. Packages involved in at least five conflicts are promoted. A culprit with at least five events is demoted only when it leads every other culprit by at least five. With both feedback options enabled, query-parent and query-target counts come first, followed by the conflict tier and the host's preference. Both options default to `False`.
+
 Feedback changes decision order only. Candidate admission, source eligibility and absence guards still follow the host contracts above. Counts start empty for each `Resolver.solve` call and survive backjumps and restarts within that call.
 
 Providers can implement two optional notifications, supplied as no-ops by `BaseProvider`. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual absence and returns `True` if priority keys changed; the resolver then invalidates its cached priorities. It may change only priority state, preserving candidate availability and current decisions. Ordinary unguarded absences and diagnostic probes do not send this notification. Structural providers may omit both methods.
@@ -226,6 +228,7 @@ nab_resolver.candidate_provider
                        CandidateHost, CandidateProvider,
                        CandidateRequirement, PreparedCandidate
 nab_resolver.errors     ResolutionError
+nab_resolver.priority   compute_tier, is_dominant_culprit
 nab_resolver.ranges     Range
 nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
                         ResolverObserver, ResolverProvider, Solution
