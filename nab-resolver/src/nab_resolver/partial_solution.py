@@ -150,13 +150,14 @@ class _Snapshot(Mapping[PackageType, _ValueType]):
         return sum(1 for _ in self)
 
     def __bool__(self) -> bool:
-        """Test an untouched snapshot in constant time, otherwise stop at a key."""
+        """Return whether the snapshot contains any packages."""
         shadow = self._shadow
         if not shadow:
             return bool(self._live)
-        if any(value is not _ABSENT for value in shadow.values()):
-            return True
-        return any(package not in shadow for package in self._live)
+        for package in self._live:
+            if shadow.get(package, _UNSET) is not _ABSENT:
+                return True
+        return False
 
 
 def _take_snapshot(

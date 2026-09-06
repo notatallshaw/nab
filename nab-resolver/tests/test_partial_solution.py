@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import gc
+from collections import UserDict
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -17,6 +19,20 @@ from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 _CAUSE: Incompatibility[str, int] = Incompatibility(
     [Term("foo", Range.at_least(2))], cause=IncompatibilityCause.NO_VERSIONS
 )
+
+
+class CountingSnapshotMap(UserDict[str, Any]):
+    """Count entries visited through key or value iteration in a snapshot map."""
+
+    def __init__(self, entries: dict[str, Any]) -> None:
+        super().__init__(entries)
+        self.visits = 0
+
+    def __iter__(self) -> Iterator[str]:
+        """Yield keys and count each visit."""
+        for key in super().__iter__():
+            self.visits += 1
+            yield key
 
 
 class TestAssignments:
@@ -402,6 +418,47 @@ class TestContradictionEpoch:
 
 class TestSnapshots:
     """A map handed out keeps reading as it did when it was taken."""
+
+    def test_empty_snapshot_truthiness_scans_at_most_one_map(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ps = PartialSolution()
+        snapshot = ps.decisions()
+        assert isinstance(snapshot, partial_solution._Snapshot)
+        for index in range(8):
+            ps.decide(str(index), 0)
+
+        live = CountingSnapshotMap(snapshot._live)
+        shadow = CountingSnapshotMap(snapshot._shadow)
+        monkeypatch.setattr(snapshot, "_live", live)
+        monkeypatch.setattr(snapshot, "_shadow", shadow)
+
+        assert not snapshot
+        assert live.visits + shadow.visits <= 8
+
+    @pytest.mark.parametrize("initial_count", [0, 1, 32])
+    def test_truthiness_after_many_later_decisions(self, initial_count: int) -> None:
+        ps = PartialSolution()
+        for index in range(initial_count):
+            ps.decide(str(index), 0)
+        decisions = ps.decisions()
+        ranges = ps.positive_ranges()
+
+        for index in range(initial_count, initial_count + 32):
+            ps.decide(str(index), 1)
+        for index in range(initial_count):
+            ps.decide(str(index), 2)
+
+        assert bool(decisions) == bool(initial_count)
+        assert bool(ranges) == bool(initial_count)
+        assert dict(decisions) == dict.fromkeys(map(str, range(initial_count)), 0)
+
+        ps.backtrack(0)
+
+        assert bool(decisions) == bool(initial_count)
+        assert bool(ranges) == bool(initial_count)
+        assert not ps.decisions()
+        assert not ps.positive_ranges()
 
     def test_truthiness_stays_pinned_across_decisions_and_backtracking(self) -> None:
         ps = PartialSolution()
