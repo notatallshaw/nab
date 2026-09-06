@@ -5,7 +5,12 @@ from typing import cast
 
 import pytest
 
-from nab_resolver.candidate_provider import CandidateProvider, CandidateRequirement, PreparedCandidate
+from nab_resolver import conflict
+from nab_resolver.candidate_provider import (
+    CandidateProvider,
+    CandidateRequirement,
+    PreparedCandidate,
+)
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import IncompatibilityCause, RangeProtocol
@@ -17,8 +22,14 @@ class Host:
     def __init__(self) -> None:
         self.catalog = {
             10: [PreparedCandidate(version, (10, version)) for version in (2, 1)],
-            20: [PreparedCandidate(version, (20, version)) for version in range(16, 0, -1)],
-            30: [PreparedCandidate(version, (30, version)) for version in range(16, 0, -1)],
+            20: [
+                PreparedCandidate(version, (20, version))
+                for version in range(16, 0, -1)
+            ],
+            30: [
+                PreparedCandidate(version, (30, version))
+                for version in range(16, 0, -1)
+            ],
         }
         self.events: list[str] = []
         self.self_requirement: Range[int] | None = None
@@ -26,12 +37,16 @@ class Host:
         self.required = Range.less_than(2)
 
     def iter_candidates(
-        self, package: int, allowed: RangeProtocol[int],
+        self,
+        package: int,
+        allowed: RangeProtocol[int],
         requirements: Mapping[int, Sequence[CandidateRequirement[int, int]]],
     ) -> Iterable[PreparedCandidate[int]]:
         yield from self.catalog.get(package, ())
 
-    def get_dependencies(self, candidate: PreparedCandidate[int]) -> Iterable[CandidateRequirement[int, int]]:
+    def get_dependencies(
+        self, candidate: PreparedCandidate[int]
+    ) -> Iterable[CandidateRequirement[int, int]]:
         package, _ = cast("tuple[int, int]", candidate.origin)
         self.events.append(f"metadata:{package}")
         if package in (20, 30):
@@ -39,26 +54,38 @@ class Host:
             yield CandidateRequirement(10, self.required, "child origin")
             if self.self_requirement is not None:
                 self.events.append("self")
-                yield CandidateRequirement(package, self.self_requirement, "self origin")
+                yield CandidateRequirement(
+                    package, self.self_requirement, "self origin"
+                )
             if self.fail_after_dependency:
                 self.events.append("error")
                 raise OSError("late metadata error")
 
-    def priority(self, package: int, requirements: Mapping[int, Sequence[CandidateRequirement[int, int]]]) -> int:
+    def priority(
+        self,
+        package: int,
+        requirements: Mapping[int, Sequence[CandidateRequirement[int, int]]],
+    ) -> int:
         return package
 
 
-def prepared_provider(host: Host, *, feedback: bool = False) -> CandidateProvider[int, int]:
+def prepared_provider(
+    host: Host, *, feedback: bool = False
+) -> CandidateProvider[int, int]:
     """Supply the real hint snapshots a selected hub would leave behind."""
     provider = CandidateProvider(
-        host, [CandidateRequirement(20, Range.full(), "root")],
-        dependency_precheck=True, precheck_feedback=feedback,
+        host,
+        [CandidateRequirement(20, Range.full(), "root")],
+        dependency_precheck=True,
+        precheck_feedback=feedback,
     )
     provider.receive_partial_solution_hint({10: Range.singleton(2)}, {10: 2})
     return provider
 
 
-def reject(provider: CandidateProvider[int, int], key: int, *, package: int = 20) -> list[int]:
+def reject(
+    provider: CandidateProvider[int, int], key: int, *, package: int = 20
+) -> list[int]:
     """Reject one candidate, preserving its exact clause before consuming feedback."""
     before = dict(provider.active_requirements())
     assert provider.choose_version(package, Range.singleton(key)) is None
@@ -89,7 +116,9 @@ def test_precheck_clause_and_probe_do_not_activate_rejected_metadata() -> None:
 
 def test_disabled_precheck_leaves_dependency_reading_to_the_core() -> None:
     host = Host()
-    provider = CandidateProvider(host, [CandidateRequirement(20, Range.full(), object())])
+    provider = CandidateProvider(
+        host, [CandidateRequirement(20, Range.full(), object())]
+    )
     provider.receive_partial_solution_hint({10: Range.singleton(2)}, {10: 2})
     assert provider.choose_version(20, Range.full()) == 16
     assert host.events == []
@@ -97,7 +126,9 @@ def test_disabled_precheck_leaves_dependency_reading_to_the_core() -> None:
 
 
 @pytest.mark.parametrize("self_bounds", [Range.full(), Range.singleton(99)])
-def test_later_self_declaration_delegates_the_complete_candidate(self_bounds: Range[int]) -> None:
+def test_later_self_declaration_delegates_the_complete_candidate(
+    self_bounds: Range[int],
+) -> None:
     host = Host()
     host.self_requirement = self_bounds
     provider = prepared_provider(host)
@@ -133,7 +164,9 @@ def test_selected_singleton_must_also_be_disjoint() -> None:
     assert provider.consume_pending_clauses() == []
 
 
-def test_feedback_requires_distinct_candidates_in_one_parent_and_blocker_group() -> None:
+def test_feedback_requires_distinct_candidates_in_one_parent_and_blocker_group() -> (
+    None
+):
     provider = prepared_provider(Host(), feedback=True)
     for _ in range(5):
         assert reject(provider, 16) == []
@@ -163,16 +196,24 @@ def test_feedback_cap_survives_blocker_changes_and_resets_for_a_new_solve() -> N
     provider.receive_partial_solution_hint({10: Range.singleton(3)}, {10: 3})
     for key in (16, 15, 14, 13):
         assert reject(provider, key) == []
-    assert provider.prioritize(10, Range.full(), {}, None) > provider.prioritize(20, Range.full(), {}, None)
+    assert provider.prioritize(10, Range.full(), {}, None) > provider.prioritize(
+        20, Range.full(), {}, None
+    )
 
     provider.begin_resolution()
-    assert provider.prioritize(10, Range.full(), {}, None) < provider.prioritize(20, Range.full(), {}, None)
+    assert provider.prioritize(10, Range.full(), {}, None) < provider.prioritize(
+        20, Range.full(), {}, None
+    )
     provider.receive_partial_solution_hint({10: Range.singleton(2)}, {10: 2})
-    assert [target for key in (16, 15, 14, 13) for target in reject(provider, key)] == [10]
+    assert [target for key in (16, 15, 14, 13) for target in reject(provider, key)] == [
+        10
+    ]
 
 
 def test_feedback_is_not_available_without_prechecking() -> None:
-    with pytest.raises(ValueError, match="precheck_feedback requires dependency_precheck"):
+    with pytest.raises(
+        ValueError, match="precheck_feedback requires dependency_precheck"
+    ):
         CandidateProvider(Host(), [], precheck_feedback=True)
 
 
@@ -181,14 +222,76 @@ def test_prechecks_and_bounded_feedback_preserve_the_real_solution() -> None:
     for enabled, feedback in ((False, False), (True, False), (True, True)):
         host = Host()
         provider = CandidateProvider(
-            host, [CandidateRequirement(package, Range.full(), object()) for package in (10, 20)],
-            dependency_precheck=enabled, precheck_feedback=feedback,
+            host,
+            [
+                CandidateRequirement(package, Range.full(), object())
+                for package in (10, 20)
+            ],
+            dependency_precheck=enabled,
+            precheck_feedback=feedback,
         )
         resolver = Resolver(provider, availability_generation=lambda: 0)
         solution = resolver.solve(provider.root_requirements())
-        rows.append((solution.pins, resolver.stats.decisions, resolver.stats.conflicts, host.events.count("metadata:20")))
+        rows.append(
+            (
+                solution.pins,
+                resolver.stats.decisions,
+                resolver.stats.conflicts,
+                host.events.count("metadata:20"),
+            )
+        )
     assert rows[0][0] == rows[1][0] == rows[2][0] == {10: 1, 20: 16}
     assert rows[1][1] < rows[0][1]
     assert rows[2][1] <= rows[1][1]
     assert rows[2][2] < rows[1][2]
     assert rows[2][3] < rows[1][3]
+
+
+def test_intrinsically_empty_dependencies_stop_metadata_consumption() -> None:
+    class EmptyHost(Host):
+        def get_dependencies(
+            self, candidate: PreparedCandidate[int]
+        ) -> Iterable[CandidateRequirement[int, int]]:
+            yield CandidateRequirement(10, Range.singleton(1), object())
+            yield CandidateRequirement(10, Range.singleton(2), object())
+            raise AssertionError("metadata after an empty intersection was read")
+
+    provider = prepared_provider(EmptyHost())
+    assert provider.choose_version(20, Range.singleton(16)) is None
+    clauses = provider.consume_pending_clauses()
+    assert len(clauses) == 1
+    assert clauses[0].terms[1].constraint.is_empty
+
+
+def test_capped_blockers_do_not_accumulate_more_candidate_history() -> None:
+    provider = prepared_provider(Host(), feedback=True)
+    for key in range(16, 4, -1):
+        reject(provider, key)
+    feedback = provider._precheck_feedback
+    assert feedback is not None
+    before = {group: set(keys) for group, keys in feedback.rejected.items()}
+    for key in range(4, 0, -1):
+        assert reject(provider, key) == []
+    assert feedback.rejected == before
+
+
+def test_an_ordinary_restart_preserves_precheck_feedback() -> None:
+    host = Host()
+    provider = prepared_provider(host, feedback=True)
+    resolver = Resolver(provider)
+    resolver._reset(None)
+    resolver._add_root_requirements(provider.root_requirements())
+    provider.receive_partial_solution_hint({10: Range.singleton(2)}, {10: 2})
+    assert [target for key in (16, 15, 14, 13) for target in reject(provider, key)] == [
+        10
+    ]
+    resolver.stats.package_conflict_counts[20] = 5
+    _, _, restarted = conflict.maybe_restart(resolver, 5, 1)
+    assert restarted
+    assert provider.prioritize(10, Range.full(), {}, None) > provider.prioritize(
+        20, Range.full(), {}, None
+    )
+    provider.receive_partial_solution_hint({10: Range.singleton(2)}, {10: 2})
+    assert [target for key in (12, 11, 10, 9) for target in reject(provider, key)] == [
+        10
+    ]

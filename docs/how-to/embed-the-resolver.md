@@ -222,7 +222,7 @@ Providers can implement two optional notifications, supplied as no-ops by `BaseP
 
 ## Checking dependencies before a decision
 
-`CandidateProvider(..., dependency_precheck=True)` reads a candidate's complete dependency mapping before deciding it. If a dependency contradicts both an already selected key and its positive range, the provider queues that ordinary dependency clause. The candidate stays undecided, and its declarations do not enter the active requirement map. Self-dependency candidates follow the normal decision path. Metadata errors and the existing stop at an intrinsically empty restriction are preserved; `has_satisfying_version` does not precheck or queue clauses.
+`CandidateProvider(..., dependency_precheck=True)` reads a candidate's complete dependency mapping before deciding it. If a dependency contradicts both an already selected key and its positive range, the provider queues that ordinary dependency clause. The candidate stays undecided, and its declarations do not enter the active requirement map. Mappings that include the candidate’s own package follow the normal decision path. Metadata errors and the existing stop at an intrinsically empty restriction are preserved; `has_satisfying_version` does not precheck or queue clauses.
 
 `precheck_feedback=True` additionally requests a retreat after four distinct candidates from one package share the same selected blocker key. It permits at most three requests per blocker package in a solve, retains the dependency clauses, and demotes requested blockers before the host preference. This option requires `dependency_precheck=True`; both default to `False`. Ordinary `conflict_feedback` remains independent. Rejection history survives backtracks and restarts but resets for a new solve.
 
