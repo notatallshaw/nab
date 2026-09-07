@@ -219,7 +219,7 @@ Feedback changes decision order only. Candidate admission, source eligibility an
 
 Optional notifications have no-op defaults in `BaseProvider`; structural providers may omit them. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual or provisional absence and returns `True` if priority keys changed. Ordinary unguarded absences and diagnostic probes do not send it.
 
-`receive_decision(package, version)` runs after the observer returns and before dependency loading, including for leaves and decisions immediately backtracked. It goes to the current provider, and the virtual root is excluded. Observer errors prevent notification; notification errors precede dependency errors. The last hint can predate the notified decision.
+`receive_decision(package, version)` runs after the observer returns and before that decision's `get_dependencies` call, including for leaves and decisions immediately backtracked. Prechecks may already have read metadata. The notification goes to the current provider, and the virtual root is excluded. Observer errors prevent notification; notification errors precede the subsequent dependency call. The last hint can predate the notified decision.
 
 Both boolean notifications may change only priority state, preserving candidate availability, current decisions and queued clauses. Returning `True` invalidates cached priority keys.
 

@@ -169,6 +169,7 @@ def test_observer_replacement_routes_notification_and_metadata_to_current_provid
 ):
     events: list[str] = []
     original = ListeningProvider(events)
+    original.dependency_error = OSError("metadata must use the replacement provider")
     replacement = ListeningProvider(events)
     replacement.changed = True
     observer = ActingObserver(events)

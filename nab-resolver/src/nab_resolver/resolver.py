@@ -348,7 +348,8 @@ class BaseProvider(Generic[PackageType, VersionType]):
     def receive_decision(self, package: PackageType, version: VersionType) -> bool:
         """Report whether the recorded decision changed priorities.
 
-        Runs after the observer and before dependencies, including for leaf decisions.
+        Runs after the observer, before this decision's ``get_dependencies`` call.
+        Prechecks may already have read metadata. Leaf decisions also notify.
         Selections may be backtracked immediately. The virtual root is excluded.
         Change priority state only; preserve availability, decisions and queued clauses.
         Return True to invalidate cached priority keys.

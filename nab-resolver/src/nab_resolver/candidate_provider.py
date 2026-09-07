@@ -176,11 +176,14 @@ class _PrecheckFeedback(Generic[_PackageT, _KeyT]):
 
     def decided(self, package: _PackageT) -> bool:
         """Expire blockers whose requesting parents have all been decided."""
+        if not self.parents:
+            return False
         expired = []
         for blocker, parents in self.parents.items():
             parents.discard(package)
             if not parents:
                 expired.append(blocker)
+
         for blocker in expired:
             del self.parents[blocker]
         return bool(expired)

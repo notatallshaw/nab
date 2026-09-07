@@ -325,6 +325,41 @@ def test_decision_notification_without_feedback_changes_nothing() -> None:
     assert provider.receive_decision(20, 1) is False
 
 
+def test_one_parent_decision_expires_all_its_blockers() -> None:
+    class TwoBlockerHost(Host):
+        def get_dependencies(
+            self, candidate: PreparedCandidate[int]
+        ) -> Iterable[CandidateRequirement[int, int]]:
+            package, _ = cast("tuple[int, int]", candidate.origin)
+            if package == 20:
+                for blocker in (10, 40):
+                    yield CandidateRequirement(
+                        blocker, Range.less_than(2), "dependency"
+                    )
+
+    host = TwoBlockerHost()
+    host.catalog[40] = [PreparedCandidate(2, (40, 2))]
+    provider = prepared_provider(host, feedback=True)
+    for blocker in (10, 40):
+        provider.receive_partial_solution_hint(
+            {blocker: Range.singleton(2)}, {blocker: 2}
+        )
+        for key in (16, 15, 14, 13):
+            assert provider.choose_version(20, Range.singleton(key)) is None
+            clauses = provider.consume_pending_clauses()
+            assert len(clauses) == 1
+            assert clauses[0].terms[1].package == blocker
+
+    feedback = provider._precheck_feedback
+    assert feedback is not None
+    assert feedback.parents == {10: {20}, 40: {20}}
+    assert provider.receive_decision(20, 1) is True
+    assert feedback.parents == {}
+    assert feedback.counts == {10: 1, 40: 1}
+    assert provider.consume_force_backtrack_targets() == [10, 40]
+    assert provider.receive_decision(20, 1) is False
+
+
 def test_only_the_last_requesting_parent_expires_a_blocker() -> None:
     provider = prepared_provider(Host(), feedback=True)
     for package in (20, 30):
