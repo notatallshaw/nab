@@ -323,8 +323,9 @@ class BaseProvider(Generic[PackageType, VersionType]):
     ``choose_version``, ``has_satisfying_version``, ``get_dependencies``,
     ``prioritize`` and ``widen_decision``.
 
-    ``begin_resolution`` and ``receive_contextual_failure`` are optional lifecycle
-    and priority notifications. ``is_query_ready`` controls provisional queries.
+    ``begin_resolution``, ``receive_contextual_failure`` and ``receive_decision``
+    are optional lifecycle and priority notifications.
+    ``is_query_ready`` controls provisional queries.
     Structural providers may omit these hooks.
 
     Subclassing is optional; the resolver accepts anything that satisfies the
@@ -342,6 +343,17 @@ class BaseProvider(Generic[PackageType, VersionType]):
         Change priority state only, preserving availability and current decisions.
         """
         del package
+        return False
+
+    def receive_decision(self, package: PackageType, version: VersionType) -> bool:
+        """Report whether the recorded decision changed priorities.
+
+        Runs after the observer and before dependencies, including for leaf decisions.
+        Selections may be backtracked immediately. The virtual root is excluded.
+        Change priority state only; preserve availability, decisions and queued clauses.
+        Return True to invalidate cached priority keys.
+        """
+        del package, version
         return False
 
     def begin_decision_scan(self) -> Callable[[PackageType], bool] | None:
@@ -895,6 +907,14 @@ class Resolver(Generic[PackageType, VersionType]):
             changed_package = ROOT
         return changed_package, restart_threshold, restarts_remaining
 
+    def _apply_force_requests(self, targets: list[Any]) -> Any | None:
+        """Apply requested retreats and clear deferred queries after a backtrack."""
+        self.priority_epoch += 1
+        triggering = conflict.force_targeted_backtrack(self, targets)
+        if triggering is not None and self.deferred is not None:
+            self.deferred.clear()
+        return triggering
+
     def _decide_next(
         self,
         next_package: Any,
@@ -912,11 +932,8 @@ class Resolver(Generic[PackageType, VersionType]):
         # blockers before the candidate is decided.
         force_targets = list(self.provider.consume_force_backtrack_targets())
         if force_targets:
-            self.priority_epoch += 1
-            triggering = conflict.force_targeted_backtrack(self, force_targets)
+            triggering = self._apply_force_requests(force_targets)
             if triggering is not None:
-                if self.deferred is not None:
-                    self.deferred.clear()
                 return triggering
 
         if chosen_version is None:
@@ -928,6 +945,12 @@ class Resolver(Generic[PackageType, VersionType]):
         self.observer.on_decision(
             next_package, chosen_version, self.solution.decision_level
         )
+
+        receive_decision = getattr(self.provider, "receive_decision", None)
+        if receive_decision is not None and receive_decision(
+            next_package, chosen_version
+        ):
+            self.priority_epoch += 1
 
         dependencies = self.provider.get_dependencies(next_package, chosen_version)
         if not dependencies:

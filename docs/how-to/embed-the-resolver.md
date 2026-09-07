@@ -217,14 +217,18 @@ Pass `conflict_feedback=True` to include the shared conflict tier before the hos
 
 Feedback changes decision order only. Candidate admission, source eligibility and absence guards still follow the host contracts above. Counts start empty for each `Resolver.solve` call and survive backjumps and restarts within that call.
 
-Providers can implement two optional notifications, supplied as no-ops by `BaseProvider`. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual absence and returns `True` if priority keys changed; the resolver then invalidates its cached priorities. It may change only priority state, preserving candidate availability and current decisions. Provisional absences send the same notification. Ordinary unguarded absences and diagnostic probes do not send it. Structural providers may omit both methods.
+Optional notifications have no-op defaults in `BaseProvider`; structural providers may omit them. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual or provisional absence and returns `True` if priority keys changed. Ordinary unguarded absences and diagnostic probes do not send it.
+
+`receive_decision(package, version)` runs after the observer returns and before dependency loading, including for leaves and decisions immediately backtracked. It goes to the current provider, and the virtual root is excluded. Observer errors prevent notification; notification errors precede dependency errors. The last hint can predate the notified decision.
+
+Both boolean notifications may change only priority state, preserving candidate availability, current decisions and queued clauses. Returning `True` invalidates cached priority keys.
 
 
 ## Checking dependencies before a decision
 
 `CandidateProvider(..., dependency_precheck=True)` reads a candidate's complete dependency mapping before deciding it. If a dependency contradicts both an already selected key and its positive range, the provider queues that ordinary dependency clause. The candidate stays undecided, and its declarations do not enter the active requirement map. Mappings that include the candidate’s own package follow the normal decision path. Metadata errors and the existing stop at an intrinsically empty restriction are preserved; `has_satisfying_version` does not precheck or queue clauses.
 
-`precheck_feedback=True` additionally requests a retreat after four distinct candidates from one package share the same selected blocker key. It permits at most three requests per blocker package in a solve, retains the dependency clauses, and demotes requested blockers before the host preference. This option requires `dependency_precheck=True`; both default to `False`. Ordinary `conflict_feedback` remains independent. Rejection history survives backtracks and restarts but resets for a new solve.
+`precheck_feedback=True` additionally requests a retreat after four distinct candidates from one package share the same selected blocker key. It permits at most three requests per blocker package in a solve and retains the dependency clauses. Requested blockers are demoted until all their requesting packages have been decided; expiry does not replenish the request budget. This option requires `dependency_precheck=True`; both default to `False`. Ordinary `conflict_feedback` remains independent. Rejection history survives backtracks and restarts but resets for a new solve.
 
 ## Provisional attempts
 

@@ -98,6 +98,7 @@ def reject(
     assert clauses[0].terms[1].package == 10
     assert not clauses[0].terms[1].is_positive()
     assert provider.consume_pending_clauses() == []
+
     return provider.consume_force_backtrack_targets()
 
 
@@ -317,3 +318,123 @@ def test_unusable_retreat_requests_keep_clauses_and_remain_bounded(
     assert resolver.stats.targeted_backtracks == 0
     assert dict(resolver.solution.decisions()) == before
     assert provider.consume_pending_clauses() == []
+
+
+def test_decision_notification_without_feedback_changes_nothing() -> None:
+    provider = prepared_provider(Host())
+    assert provider.receive_decision(20, 1) is False
+
+
+def test_only_the_last_requesting_parent_expires_a_blocker() -> None:
+    provider = prepared_provider(Host(), feedback=True)
+    for package in (20, 30):
+        assert [
+            target
+            for key in (16, 15, 14, 13)
+            for target in reject(provider, key, package=package)
+        ] == [10]
+    for key in (12, 11, 10):
+        assert reject(provider, key) == []
+    assert provider.choose_version(20, Range.singleton(9)) is None
+    assert len(provider.consume_pending_clauses()) == 1
+    feedback = provider._precheck_feedback
+    assert feedback is not None
+    counts = dict(feedback.counts)
+    rejected = {group: set(keys) for group, keys in feedback.rejected.items()}
+    targets = list(feedback.targets)
+
+    assert provider.receive_decision(99, 1) is False
+    assert provider.receive_decision(20, 1) is False
+    assert provider.prioritize(10, Range.full(), {}, None) > provider.prioritize(
+        20, Range.full(), {}, None
+    )
+    assert provider.receive_decision(30, 1) is True
+    assert provider.prioritize(10, Range.full(), {}, None) < provider.prioritize(
+        20, Range.full(), {}, None
+    )
+    assert provider.receive_decision(30, 1) is False
+
+    assert feedback.counts == counts
+    assert feedback.rejected == rejected
+    assert feedback.targets == targets
+    assert provider.consume_force_backtrack_targets() == [10]
+    for key in (8, 7, 6, 5):
+        assert reject(provider, key) == []
+    assert feedback.counts == {10: 3}
+    assert feedback.parents == {}
+
+    provider.begin_resolution()
+    provider.receive_partial_solution_hint({10: Range.singleton(2)}, {10: 2})
+    assert [target for key in (16, 15, 14, 13) for target in reject(provider, key)] == [
+        10
+    ]
+    assert feedback.parents == {10: {20}}
+    provider.begin_resolution()
+    assert feedback.parents == {}
+    assert provider.receive_decision(20, 1) is False
+
+
+def test_metadata_and_probes_do_not_expire_requesting_parents() -> None:
+    provider = prepared_provider(Host(), feedback=True)
+    for key in (16, 15, 14, 13):
+        reject(provider, key)
+
+    assert provider.get_dependencies(20, 13)
+    assert provider.has_satisfying_version(20, Range.singleton(13))
+    assert provider.prioritize(10, Range.full(), {}, None) > provider.prioritize(
+        20, Range.full(), {}, None
+    )
+    assert provider.receive_decision(20, 1) is True
+
+
+class CompatibleOlderHost(Host):
+    """Offer four blocked parents, then a compatible parent and an unrelated root."""
+
+    def __init__(self, *, leaf: bool) -> None:
+        super().__init__()
+        self.leaf = leaf
+
+    def get_dependencies(
+        self, candidate: PreparedCandidate[int]
+    ) -> Iterable[CandidateRequirement[int, int]]:
+        package, version = cast("tuple[int, int]", candidate.origin)
+        if package == 20 and (version >= 13 or not self.leaf):
+            yield CandidateRequirement(
+                10, Range.singleton(1 if version >= 13 else 2), "dependency"
+            )
+
+
+class DecisionRecordingProvider(CandidateProvider[int, int]):
+    """Record only actual committed candidates while retaining expiry behavior."""
+
+    def __init__(self, host: CompatibleOlderHost) -> None:
+        roots = [
+            CandidateRequirement[int, int](
+                package, Range.singleton(2) if package == 10 else Range.full(), "root"
+            )
+            for package in (10, 20, 30)
+        ]
+        super().__init__(host, roots, dependency_precheck=True, precheck_feedback=True)
+        self.decisions: list[tuple[int, int]] = []
+
+    def receive_decision(self, package: int, version: int) -> bool:
+        self.decisions.append((package, version))
+        return super().receive_decision(package, version)
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+@pytest.mark.parametrize("leaf", [False, True])
+def test_decided_parent_restores_blocker_priority_with_unchanged_bounds(
+    *, dynamic: bool, leaf: bool
+) -> None:
+    provider = DecisionRecordingProvider(CompatibleOlderHost(leaf=leaf))
+    resolver = Resolver(
+        provider, availability_generation=(lambda: 0) if dynamic else None
+    )
+
+    result = resolver.solve(provider.root_requirements())
+
+    assert result.pins == {10: 2, 20: 12, 30: 16}
+    assert provider.decisions == [(10, 2), (20, 12), (10, 2), (30, 16)]
+    assert provider.validate_solution(result)
+    assert provider.decisions == [(10, 2), (20, 12), (10, 2), (30, 16)]

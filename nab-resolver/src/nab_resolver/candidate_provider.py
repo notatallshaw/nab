@@ -132,17 +132,19 @@ class _QueryFeedback(Generic[_PackageT]):
 class _PrecheckFeedback(Generic[_PackageT, _KeyT]):
     """Bound retreat requests from distinct candidates sharing a selected blocker."""
 
-    __slots__ = ("counts", "rejected", "targets")
+    __slots__ = ("counts", "parents", "rejected", "targets")
 
     def __init__(self) -> None:
         self.rejected: dict[tuple[_PackageT, _PackageT, _KeyT], set[_KeyT]] = {}
         self.counts: dict[_PackageT, int] = {}
+        self.parents: dict[_PackageT, set[_PackageT]] = {}
         self.targets: list[_PackageT] = []
 
     def clear(self) -> None:
         """Forget rejection history at the start of a new solve."""
         self.rejected.clear()
         self.counts.clear()
+        self.parents.clear()
         self.targets.clear()
 
     def record(
@@ -160,6 +162,7 @@ class _PrecheckFeedback(Generic[_PackageT, _KeyT]):
         ):
             self.targets.append(blocker)
             self.counts[blocker] = requests + 1
+            self.parents.setdefault(blocker, set()).add(package)
             rejected.clear()
 
     def consume_targets(self) -> list[_PackageT]:
@@ -168,8 +171,19 @@ class _PrecheckFeedback(Generic[_PackageT, _KeyT]):
         return targets
 
     def requested(self, package: _PackageT) -> bool:
-        """Whether the package has been named in a retreat request this solve."""
-        return package in self.counts
+        """Whether a requesting parent still has to be decided."""
+        return package in self.parents
+
+    def decided(self, package: _PackageT) -> bool:
+        """Expire blockers whose requesting parents have all been decided."""
+        expired = []
+        for blocker, parents in self.parents.items():
+            parents.discard(package)
+            if not parents:
+                expired.append(blocker)
+        for blocker in expired:
+            del self.parents[blocker]
+        return bool(expired)
 
 
 class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
@@ -241,6 +255,14 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         )
         self._query_feedback.record(package, parents)
         return True
+
+    @override
+    def receive_decision(self, package: _PackageT, version: _KeyT) -> bool:
+        """Expire forced demotion once the requesting parents are decided."""
+        del version
+        if self._precheck_feedback is None:
+            return False
+        return self._precheck_feedback.decided(package)
 
     def root_requirements(self) -> list[RootRequirement[_PackageT, _KeyT]]:
         """Return solver roots with their original host provenance attached."""
