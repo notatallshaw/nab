@@ -23,18 +23,22 @@ class CatalogueProvider(BaseProvider[str, int]):
         self.catalogue: dict[str, dict[int, dict[str, Range[int]]]] = {"leaf": {1: {}}}
         self.dependency_error: Exception | None = None
 
-    def choose_version(self, package: str, allowed: RangeProtocol[int]) -> int | None:
+    def choose_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> int | None:
         return next(
             (
                 version
                 for version in sorted(self.catalogue[package], reverse=True)
-                if version in allowed
+                if version in version_range
             ),
             None,
         )
 
-    def has_satisfying_version(self, package: str, allowed: RangeProtocol[int]) -> bool:
-        return self.choose_version(package, allowed) is not None
+    def has_satisfying_version(
+        self, package: str, version_range: RangeProtocol[int]
+    ) -> bool:
+        return self.choose_version(package, version_range) is not None
 
     def get_dependencies(
         self, package: str, version: int
@@ -47,7 +51,7 @@ class CatalogueProvider(BaseProvider[str, int]):
     def prioritize(
         self,
         package: str,
-        allowed: RangeProtocol[int],
+        version_range: RangeProtocol[int],
         conflict_counts: Mapping[str, int],
         culprit_counts: Mapping[str, int] | None = None,
     ) -> int:
@@ -252,14 +256,14 @@ def test_a_tentative_choice_abandoned_by_force_backtracking_does_not_notify() ->
             self.leaf_queries = 0
 
         def choose_version(
-            self, package: str, allowed: RangeProtocol[int]
+            self, package: str, version_range: RangeProtocol[int]
         ) -> int | None:
             if package == "leaf":
                 self.leaf_queries += 1
                 if not self.forced:
                     self.targets.append("blocker")
                     self.forced = True
-            return super().choose_version(package, allowed)
+            return super().choose_version(package, version_range)
 
         def consume_force_backtrack_targets(self) -> list[str]:
             targets, self.targets = self.targets, []
