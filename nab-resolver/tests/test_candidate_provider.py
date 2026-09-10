@@ -49,7 +49,7 @@ class MemoryHost:
     def priority(
         self,
         package: int,
-        requirements: Mapping[int, Sequence[CandidateRequirement[int, str]]],
+        requirements: Sequence[CandidateRequirement[int, str]],
     ) -> int:
         return package
 
@@ -249,7 +249,7 @@ def test_disabled_feedback_preserves_an_opaque_host_key() -> None:
         def priority(
             self,
             package: int,
-            requirements: Mapping[int, Sequence[CandidateRequirement[int, str]]],
+            requirements: Sequence[CandidateRequirement[int, str]],
         ) -> Any:
             return priority
 

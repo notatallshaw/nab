@@ -123,12 +123,12 @@ class GraphHost:
     def priority(
         self,
         package: Package,
-        requirements: Mapping[Package, Sequence[CandidateRequirement[Package, int]]],
+        requirements: Sequence[CandidateRequirement[Package, int]],
     ) -> tuple[int, str]:
         """Prefer pins and upper bounds, then use the package's stable label."""
         priorities = (
             cast("Dependency", requirement.origin).priority
-            for requirement in requirements.get(package, ())
+            for requirement in requirements
         )
         return min(priorities, default=2), package.value
 

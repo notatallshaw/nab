@@ -41,6 +41,7 @@ class DecisionQueue(Generic[PackageType]):
         self._heap: list[tuple[tuple[Any, ...], int, PackageType]] = []
         self._keys: dict[PackageType, tuple[Any, ...]] = {}
         self._unready: set[PackageType] = set()
+        self._excluded: set[PackageType] = set()
         self._epoch = 0
         self._pushes = 0
         self._rebuild_at = _REBUILD_MINIMUM
@@ -50,6 +51,7 @@ class DecisionQueue(Generic[PackageType]):
         self._heap.clear()
         self._keys.clear()
         self._unready.clear()
+        self._excluded.clear()
         self._epoch = 0
         self._rebuild_at = _REBUILD_MINIMUM
 
@@ -60,6 +62,8 @@ class DecisionQueue(Generic[PackageType]):
         changed: set[PackageType],
         epoch: int,
         key_inputs_arrived: Callable[[PackageType], bool] | None = None,
+        *,
+        excluded: AbstractSet[PackageType] | None = None,
     ) -> PackageType:
         """Return the undecided package with the smallest sort key.
 
@@ -78,6 +82,11 @@ class DecisionQueue(Generic[PackageType]):
         already gave stands until that answer turns true, which lets the scan
         keep the key instead of building it again.
         """
+        if excluded is not None or self._excluded:
+            current_excluded = set(excluded or ())
+            changed = changed | (self._excluded ^ current_excluded)
+            self._excluded = current_excluded
+
         # _stale_packages overwrites the stored epoch, so compare before it
         # runs: a new epoch re-evaluates every key, probe or not.
         probe = key_inputs_arrived if epoch == self._epoch else None

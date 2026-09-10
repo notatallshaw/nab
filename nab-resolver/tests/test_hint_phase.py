@@ -43,10 +43,12 @@ class PinFirstHost:
     def priority(
         self,
         package: int,
-        requirements: Mapping[int, Sequence[CandidateRequirement[int, int]]],
+        requirements: Sequence[CandidateRequirement[int, int]],
     ) -> tuple[bool, bool]:
-        active = requirements.get(package, ())
-        return (not any(item.origin == "==1" for item in active), not bool(active))
+        return (
+            not any(item.origin == "==1" for item in requirements),
+            not bool(requirements),
+        )
 
 
 class HintRecorder(CandidateProvider[int, int]):
@@ -129,3 +131,66 @@ def test_empty_solve_does_not_deliver_a_hint() -> None:
     assert provider.hints == []
     assert host.queries == []
     assert len(refreshes) - before == 1
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_new_pin_changes_priority_without_changing_the_range(*, dynamic: bool) -> None:
+    host = PinFirstHost()
+    provider = CandidateProvider(
+        host,
+        [
+            CandidateRequirement(20, Range.at_least(1), ">=1"),
+            CandidateRequirement(20, Range.at_most(1), "<=1"),
+            CandidateRequirement(10, Range.singleton(1), "==1"),
+            CandidateRequirement(30, Range.singleton(1), "==1"),
+        ],
+    )
+    resolver = Resolver(
+        provider, availability_generation=(lambda: 0) if dynamic else None
+    )
+
+    assert resolver.solve(provider.root_requirements()).pins == {10: 1, 20: 1, 30: 1}
+    assert host.queries == [10, 20, 30]
+
+
+def test_dynamic_catalogue_does_not_rescan_unchanged_priorities() -> None:
+    class CountingHost(PinFirstHost):
+        """Count priority evaluations while serving independent integer packages."""
+
+        calls = 0
+
+        def iter_candidates(
+            self,
+            package: int,
+            allowed: RangeProtocol[int],
+            requirements: Mapping[int, Sequence[CandidateRequirement[int, int]]],
+        ) -> Iterable[PreparedCandidate[int]]:
+            yield PreparedCandidate(1, package)
+
+        def priority(
+            self,
+            package: int,
+            requirements: Sequence[CandidateRequirement[int, int]],
+        ) -> tuple[bool, bool]:
+            self.calls += 1
+            return super().priority(package, requirements)
+
+    host = CountingHost()
+    provider = CandidateProvider(
+        host,
+        [
+            CandidateRequirement(package, Range.singleton(1), "==1")
+            for package in range(60)
+        ],
+    )
+    resolver = Resolver(provider, availability_generation=lambda: 0)
+
+    assert resolver.solve(provider.root_requirements()).pins == dict.fromkeys(
+        range(60), 1
+    )
+    assert host.calls == 60
+
+    assert resolver.solve(provider.root_requirements()).pins == dict.fromkeys(
+        range(60), 1
+    )
+    assert host.calls == 120

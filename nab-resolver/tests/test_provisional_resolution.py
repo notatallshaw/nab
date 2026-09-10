@@ -67,7 +67,7 @@ class SourceHost:
     def priority(
         self,
         package: int,
-        requirements: Mapping[int, Sequence[CandidateRequirement[int, int]]],
+        requirements: Sequence[CandidateRequirement[int, int]],
     ) -> int:
         return package
 

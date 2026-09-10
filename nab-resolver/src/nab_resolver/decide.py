@@ -81,16 +81,22 @@ def choose_package_to_decide(
             tiebreak_cache[package] = tiebreak
         return (ready_penalty, priority, tiebreak)
 
-    if excluded is not None:
+    consume_changes = getattr(resolver.provider, "consume_priority_changes", None)
+    priority_changes = None if consume_changes is None else consume_changes()
+    if excluded is not None and priority_changes is None:
         resolver.solution.take_changed_packages()
         return min(undecided, key=sort_key)
 
+    changed = resolver.solution.take_changed_packages()
+    if priority_changes is not None:
+        changed.update(priority_changes)
     return resolver.decision_queue.pick(
         undecided,
         sort_key,
-        resolver.solution.take_changed_packages(),
+        changed,
         resolver.priority_epoch,
         key_inputs_arrived,
+        excluded=excluded,
     )
 
 

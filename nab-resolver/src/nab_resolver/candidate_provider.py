@@ -92,11 +92,12 @@ class CandidateHost(Protocol[_PackageT, _KeyT]):
     def priority(
         self,
         package: _PackageT,
-        requirements: Mapping[
-            _PackageT, Sequence[CandidateRequirement[_PackageT, _KeyT]]
-        ],
+        requirements: Sequence[CandidateRequirement[_PackageT, _KeyT]],
     ) -> Any:
-        """Order package decisions without preparing candidate metadata."""
+        """Rank this package from its declarations and fixed host policy.
+
+        The result must remain stable while these declarations are unchanged.
+        """
         ...
 
 
@@ -228,6 +229,9 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
             Mapping[_PackageT, tuple[CandidateRequirement[_PackageT, _KeyT], ...]]
             | None
         ) = None
+        self._priority_requirements: Mapping[
+            _PackageT, tuple[CandidateRequirement[_PackageT, _KeyT], ...]
+        ] = {}
 
     @override
     def begin_resolution(self) -> None:
@@ -235,6 +239,7 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         if self._query_feedback is not None:
             self._query_feedback.clear()
         self._pending.clear()
+        self._priority_requirements = {}
         if self._precheck_feedback is not None:
             self._precheck_feedback.clear()
         if self._dependency_precheck:
@@ -281,6 +286,17 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
         if self._active_cache is None:
             self._active_cache = self._build_active_requirements()
         return self._active_cache
+
+    def consume_priority_changes(self) -> set[_PackageT]:
+        """Report declaration changes even when the solver's ranges did not move."""
+        current = self.active_requirements()
+        previous = self._priority_requirements
+        self._priority_requirements = current
+        return {
+            package
+            for package in previous.keys() | current.keys()
+            if previous.get(package) != current.get(package)
+        }
 
     def _build_active_requirements(
         self,
@@ -429,7 +445,9 @@ class CandidateProvider(BaseProvider[_PackageT, _KeyT]):
     ) -> Any:
         """Order query feedback (parent, target), conflict tier, and host preference."""
         del version_range
-        priority = self.host.priority(package, self.active_requirements())
+        priority = self.host.priority(
+            package, self.active_requirements().get(package, ())
+        )
         if self._conflict_feedback or self._precheck_feedback is not None:
             affected = conflict_counts.get(package, 0) if self._conflict_feedback else 0
             counts = culprit_counts if self._conflict_feedback else None
