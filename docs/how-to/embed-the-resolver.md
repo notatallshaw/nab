@@ -205,7 +205,9 @@ This mode is synchronous: availability cannot change between the final generatio
 
 The host yields `PreparedCandidate` objects in its preferred order. Each key must identify stable dependency metadata for that package, including distinctions such as source or build options. The key must be hashable and accepted by your range type. Retrieve the selected host object with `provider.prepared(package, key).origin`.
 
-Host methods receive a read-only mapping of active requirements. It contains roots and dependencies from the last decision snapshot supplied before candidate selection; `priority` can therefore see an earlier snapshot and must tolerate its package being absent from the mapping. Original host objects remain available through each requirement's `origin`.
+`iter_candidates` receives a read-only mapping of roots and dependencies from the current decision snapshot. `priority` receives only its package's active declarations, or an empty sequence if none are active. Its result must depend only on those declarations and fixed host policy. Original host objects remain available through each requirement's `origin`.
+
+The provider reports declaration changes to the decision queue even when their intersection leaves the version range unchanged. Deferred packages leave the queue until they can be queried again.
 
 Keep requirement fields (`package`, `constraint`, `origin`) and prepared candidate fields (`key`, `origin`) fixed during a resolve. Changes inside host objects may populate caches but must preserve requirement meaning and candidate metadata. Dependency collection stops when a merged restriction becomes empty; `causes_for(package, key)` returns the declarations consumed for that candidate.
 
@@ -222,6 +224,8 @@ Optional notifications have no-op defaults in `BaseProvider`; structural provide
 `receive_decision(package, version)` runs after the observer returns and before that decision's `get_dependencies` call, including for leaves and decisions immediately backtracked. Prechecks may already have read metadata. The notification goes to the current provider, and the virtual root is excluded. Observer errors prevent notification; notification errors precede the subsequent dependency call. The last hint can predate the notified decision.
 
 Both boolean notifications may change only priority state, preserving candidate availability, current decisions and queued clauses. Returning `True` invalidates cached priority keys.
+
+A structural provider may implement `consume_priority_changes()` to return the set of packages whose priority inputs changed since the previous call, beyond changes to solution ranges and conflict counts. Returning an empty set declares that no additional keys changed. `CandidateProvider` implements this using active declaration sequences. A dynamic provider that omits the method or returns `None` retains full decision scans.
 
 
 ## Checking dependencies before a decision

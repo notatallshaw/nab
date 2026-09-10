@@ -74,6 +74,10 @@ class DecisionQueue(Generic[PackageType]):
         scan; a new ``epoch`` stands for a move in the counts every key reads,
         so it re-evaluates all of them.
 
+        ``excluded`` names deferred packages already removed from ``undecided``.
+        Changes to that set invalidate their keys, including when a deferred
+        package returns without a new solution assignment.
+
         ``sort_key`` must lead with the ready penalty: a truthy first field
         keeps the package on the re-evaluate list until it clears.
 

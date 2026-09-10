@@ -42,6 +42,10 @@ def choose_package_to_decide(
     across scans, so one that moves without the solution or ``priority_epoch``
     moving is never read again.
 
+    A dynamic provider can supply ``consume_priority_changes`` to report
+    additional invalidations and use the queue across deferred queries.
+    Without that contract, dynamic queries recompute every eligible key.
+
     ``ROOT`` never turns up in the undecided set: it is decided at level 1, a
     targeted backtrack never aims lower, and conflict resolution raises rather
     than backjumping to level 0.
