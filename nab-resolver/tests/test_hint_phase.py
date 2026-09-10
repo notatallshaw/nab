@@ -194,3 +194,18 @@ def test_dynamic_catalogue_does_not_rescan_unchanged_priorities() -> None:
         range(60), 1
     )
     assert host.calls == 120
+
+
+@pytest.mark.parametrize("dynamic", [False, True])
+def test_priority_change_hook_must_return_changes(
+    monkeypatch: pytest.MonkeyPatch, *, dynamic: bool
+) -> None:
+    host = PinFirstHost()
+    provider = HintRecorder(host)
+    monkeypatch.setattr(provider, "consume_priority_changes", lambda: None)
+    resolver = Resolver(
+        provider, availability_generation=(lambda: 0) if dynamic else None
+    )
+
+    with pytest.raises(TypeError):
+        resolver.solve(provider.root_requirements())
