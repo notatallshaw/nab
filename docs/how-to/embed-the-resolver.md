@@ -225,7 +225,7 @@ Optional notifications have no-op defaults in `BaseProvider`; structural provide
 
 Both boolean notifications may change only priority state, preserving candidate availability, current decisions and queued clauses. Returning `True` invalidates cached priority keys.
 
-A structural provider may implement `consume_priority_changes()` to return the set of packages whose priority inputs changed since the previous call, beyond changes to solution ranges and conflict counts. Returning an empty set declares that no additional keys changed. `CandidateProvider` implements this using active declaration sequences. A dynamic provider that omits the method or returns `None` retains full decision scans.
+A structural provider may implement `consume_priority_changes()` to return the set of packages whose priority inputs changed since the previous call, beyond changes to solution ranges and conflict counts. It must return a set on every call; an empty set declares that no additional keys changed. `CandidateProvider` implements this using active declaration sequences. A dynamic provider that omits the method retains full decision scans.
 
 
 ## Checking dependencies before a decision
