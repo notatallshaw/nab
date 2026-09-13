@@ -205,7 +205,9 @@ This mode is synchronous: availability cannot change between the final generatio
 
 The host yields `PreparedCandidate` objects in its preferred order. Each key must identify stable dependency metadata for that package, including distinctions such as source or build options. The key must be hashable and accepted by your range type. Retrieve the selected host object with `provider.prepared(package, key).origin`.
 
-`iter_candidates` receives a read-only mapping of roots and dependencies from the current decision snapshot. `priority` receives only its package's active declarations, or an empty sequence if none are active. Its result must depend only on those declarations and fixed host policy. Original host objects remain available through each requirement's `origin`.
+The host must treat the requirement mapping and its sequences as read-only. Ordinary `iter_candidates` queries receive the current decision snapshot; final validation supplies complete reachable declarations.
+
+`priority` receives only its package's active declarations, or an empty sequence if none are active. Its result must depend only on those declarations and fixed host policy. Original host objects remain available through each requirement's `origin`.
 
 The provider reports declaration changes to the decision queue even when their intersection leaves the version range unchanged. Deferred packages leave the queue until they can be queried again.
 
