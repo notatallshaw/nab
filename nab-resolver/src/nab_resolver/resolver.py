@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Final, Generic, Protocol
 from . import conflict, decide, incompat_index, propagate
 from ._compat import override
 from .decision_queue import DecisionQueue
+from .deferred import DeferredChoices
 from .errors import ResolutionError
 from .partial_solution import PartialSolution
 from .ranges import Range
@@ -240,8 +241,9 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
     ) -> None:
         """Accept a snapshot of positive ranges and decisions.
 
-        Called before ``choose_version`` so providers can forward-check the
-        candidate's dependencies against accumulated constraints.
+        Delivered after propagation when undecided packages remain, before
+        availability refresh and package ordering. The following version query
+        uses the same snapshot unless the provider is replaced.
         ``decisions`` is the subset with concrete versions (not derivations);
         decision-based reasoning is safer because decisions cannot be undone
         in isolation.  Default is a no-op.
@@ -311,7 +313,7 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
 
 
 class BaseProvider(Generic[PackageType, VersionType]):
-    """Defaults for the six provider methods a synchronous provider does not need.
+    """Defaults for optional provider behavior.
 
     Supplies ``begin_decision_scan``, ``is_ready``,
     ``receive_partial_solution_hint``, ``consume_pending_clauses``,
@@ -321,10 +323,39 @@ class BaseProvider(Generic[PackageType, VersionType]):
     ``choose_version``, ``has_satisfying_version``, ``get_dependencies``,
     ``prioritize`` and ``widen_decision``.
 
+    ``begin_resolution``, ``receive_contextual_failure`` and ``receive_decision``
+    are optional lifecycle and priority notifications.
+    ``is_query_ready`` controls provisional queries.
+    Structural providers may omit these hooks.
+
     Subclassing is optional; the resolver accepts anything that satisfies the
     protocol.  Nothing re-exports this, so import it as
     ``from nab_resolver.resolver import BaseProvider``.
     """
+
+    def begin_resolution(self) -> None:
+        """Receive notification that a new solve is beginning."""
+        return
+
+    def receive_contextual_failure(self, package: PackageType) -> bool:
+        """Report whether a contextual absence changed priorities.
+
+        Change priority state only, preserving availability and current decisions.
+        """
+        del package
+        return False
+
+    def receive_decision(self, package: PackageType, version: VersionType) -> bool:
+        """Report whether the recorded decision changed priorities.
+
+        Runs after the observer, before this decision's ``get_dependencies`` call.
+        Prechecks may already have read metadata. Leaf decisions also notify.
+        Selections may be backtracked immediately. The virtual root is excluded.
+        Change priority state only; preserve availability, decisions and queued clauses.
+        Return True to invalidate cached priority keys.
+        """
+        del package, version
+        return False
 
     def begin_decision_scan(self) -> Callable[[PackageType], bool] | None:
         """Freeze nothing and offer no probe: no state moves between scans."""
@@ -334,6 +365,11 @@ class BaseProvider(Generic[PackageType, VersionType]):
         """Report every package ready, since answers do not wait on a fetch."""
         del package
         return True
+
+    def is_query_ready(self, package: PackageType) -> bool:
+        """Decline provisional absence when query provenance is not established."""
+        del package
+        return False
 
     def receive_partial_solution_hint(
         self,
@@ -598,6 +634,9 @@ class Resolver(Generic[PackageType, VersionType]):
         range_type: type[RangeProtocol[Any]] = Range,
         root_version: Any = 1,
         format_range: Callable[[Any], str] = str,
+        *,
+        availability_generation: Callable[[], int] | None = None,
+        provisional: bool = False,
     ) -> None:
         """Create a resolver with the given provider and optional observer.
 
@@ -608,12 +647,39 @@ class Resolver(Generic[PackageType, VersionType]):
         :class:`packaging.ranges.VersionRange` requires a parseable
         version string or :class:`~packaging.version.Version` here.
 
+        ``availability_generation`` defers failed queries when candidate
+        availability depends on current decisions.
+        Its monotonically increasing result invalidates deferred queries when
+        provider operations reveal candidates; reading it must not change
+        availability. Missing packages are retried
+        after other decisions, and an exhausted sweep records absence guarded
+        by all current decisions. The provider must ensure such an absence
+        remains true whenever those decisions and requirements hold, regardless
+        of later cache population. Availability must not change asynchronously
+        between the final generation check and clause recording. Omitting this
+        callback keeps the static candidate-universe contract.
+
+        ``provisional`` treats failed queries as permanent absences when the
+        provider's optional ``is_query_ready(package)`` returns True. Other
+        failures retain query deferral and contextual guards. Validate successful
+        results against final availability and retry failures without this
+        option. ``provisional_absences`` counts attempted provisional absences,
+        including attempts interrupted by an observer or diagnostic probe.
+        ``max_iterations`` bounds normal and provisional solves.
+
         ``format_range`` renders a constraint in a failure report.  It travels
         with ``range_type``: the default ``str`` reads well for
         :class:`~nab_resolver.ranges.Range`, while a range type whose ``str``
         is a debug representation needs its own.
         """
         self.provider = provider
+        self.provisional = provisional
+        self.provisional_absences = 0
+        self.deferred = (
+            None
+            if availability_generation is None
+            else DeferredChoices[PackageType](availability_generation)
+        )
 
         # Recording the provider rather than a flag keeps the answer tied to
         # the object it was asked about, so a provider swapped into
@@ -725,7 +791,8 @@ class Resolver(Generic[PackageType, VersionType]):
         """Resolve requirements and return ``{package: version}``.
 
         The pins of :meth:`solve`, for a caller that has no use for the
-        dependency graph.
+        dependency graph. Use ``solve`` for provisional attempts so the
+        complete result can be validated.
         """
         return self.solve(requirements, constraints).pins
 
@@ -751,9 +818,13 @@ class Resolver(Generic[PackageType, VersionType]):
         ``~range_type.empty()``, which may be strictly narrower; see
         :class:`~nab_resolver.types.RangeProtocol`.
 
-        Raises ``ResolutionError`` if no solution exists.
+        Raises ``ResolutionError`` if resolution fails. After provisional
+        assumptions, failure is inconclusive and success requires validation
+        against the host's final candidate availability. ``max_iterations``
+        bounds both modes; reaching it does not prove unsatisfiability.
         """
         self._reset(constraints)
+        self.provisional_absences = 0
         self._add_root_requirements(_as_root_requirements(requirements))
 
         # Threshold doubles each restart (geometric schedule).
@@ -781,13 +852,32 @@ class Resolver(Generic[PackageType, VersionType]):
                 continue
 
             # Phase 3: Decision making.
-            next_package = decide.choose_package_to_decide(self)
+            hinted_provider = (
+                decide.refresh_provider_hint(self)
+                if self.solution.undecided_packages()
+                else None
+            )
+
+            deferred = self.deferred
+            if deferred is not None:
+                deferred.refresh(self.stats.derivations, self.stats.decisions)
+            next_package = decide.choose_package_to_decide(
+                self, None if deferred is None else deferred.packages.keys()
+            )
             if next_package is None:
-                # All packages decided; the spec requires filtering out
-                # any unreachable extras before returning.
+                if deferred is not None and deferred.packages:
+                    deferred.refresh(self.stats.derivations, self.stats.decisions)
+                    if not deferred.packages:
+                        continue
+                    changed_package = next(iter(deferred.packages))
+                    decide.record_contextual_no_versions(self, changed_package)
+                    deferred.clear()
+                    continue
                 return self._build_result()
 
-            changed_package = self._decide_next(next_package)
+            changed_package = self._decide_next(
+                next_package, hinted_provider=hinted_provider
+            )
 
         exceeded_message = f"Resolution exceeded {self.max_iterations} iterations"
         raise ResolutionError(exceeded_message)
@@ -799,6 +889,8 @@ class Resolver(Generic[PackageType, VersionType]):
         restarts_remaining: int,
     ) -> tuple[Any, int, int]:
         """Run conflict resolution, targeted backtrack, and restart phases."""
+        if self.deferred is not None:
+            self.deferred.clear()
         self.stats.conflicts += 1
         self.observer.on_conflict(conflicting_incompatibility)
         learned = conflict.conflict_resolution(self, conflicting_incompatibility)
@@ -816,9 +908,24 @@ class Resolver(Generic[PackageType, VersionType]):
             changed_package = ROOT
         return changed_package, restart_threshold, restarts_remaining
 
-    def _decide_next(self, next_package: Any) -> Any:
+    def _apply_force_requests(self, targets: list[Any]) -> Any | None:
+        """Apply requested retreats and clear deferred queries after a backtrack."""
+        self.priority_epoch += 1
+        triggering = conflict.force_targeted_backtrack(self, targets)
+        if triggering is not None and self.deferred is not None:
+            self.deferred.clear()
+        return triggering
+
+    def _decide_next(
+        self,
+        next_package: Any,
+        *,
+        hinted_provider: ResolverProvider[Any, Any] | None = None,
+    ) -> Any:
         """Run the decision phase for ``next_package``. Return next changed package."""
-        chosen_version = decide.choose_version(self, next_package)
+        chosen_version = decide.choose_version(
+            self, next_package, hinted_provider=hinted_provider
+        )
         had_pending = decide.absorb_pending_clauses(self)
 
         # Provider-driven force back-track. When the provider returns
@@ -826,8 +933,7 @@ class Resolver(Generic[PackageType, VersionType]):
         # blockers before the candidate is decided.
         force_targets = list(self.provider.consume_force_backtrack_targets())
         if force_targets:
-            self.priority_epoch += 1
-            triggering = conflict.force_targeted_backtrack(self, force_targets)
+            triggering = self._apply_force_requests(force_targets)
             if triggering is not None:
                 return triggering
 
@@ -840,6 +946,12 @@ class Resolver(Generic[PackageType, VersionType]):
         self.observer.on_decision(
             next_package, chosen_version, self.solution.decision_level
         )
+
+        receive_decision = getattr(self.provider, "receive_decision", None)
+        if receive_decision is not None and receive_decision(
+            next_package, chosen_version
+        ):
+            self.priority_epoch += 1
 
         dependencies = self.provider.get_dependencies(next_package, chosen_version)
         if not dependencies:
@@ -899,6 +1011,8 @@ class Resolver(Generic[PackageType, VersionType]):
         constraints: Mapping[PackageType, RangeProtocol[VersionType]] | None,
     ) -> None:
         """Reset solver state for a new resolution."""
+        if self.deferred is not None:
+            self.deferred.clear()
         self.incompatibilities.clear()
         self.package_to_incompatibilities.clear()
         self.clause_contradicted_at.clear()
@@ -924,6 +1038,9 @@ class Resolver(Generic[PackageType, VersionType]):
 
         # Re-asked here, so a hook installed since the last resolve is honoured.
         self._hint_ignoring_provider = _provider_with_inherited_hint(self.provider)
+        begin_resolution = getattr(self.provider, "begin_resolution", None)
+        if begin_resolution is not None:
+            begin_resolution()
 
     def _add_root_requirements(
         self, requirements: Sequence[RootRequirement[PackageType, VersionType]]

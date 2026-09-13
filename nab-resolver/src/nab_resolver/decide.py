@@ -11,10 +11,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .incompat_index import add_incompatibility
+from .root import ROOT
 from .types import Incompatibility, IncompatibilityCause, RangeProtocol, Term
 
 if TYPE_CHECKING:
-    from .resolver import Resolver
+    from collections.abc import Set as AbstractSet
+
+    from .resolver import Resolver, ResolverProvider
 
 __all__ = [
     "absorb_pending_clauses",
@@ -22,11 +25,14 @@ __all__ = [
     "choose_package_to_decide",
     "choose_version",
     "record_no_versions",
+    "refresh_provider_hint",
 ]
 
 
-def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
-    """Choose the next undecided package, or None if all decided.
+def choose_package_to_decide(
+    resolver: Resolver[Any, Any], excluded: AbstractSet[Any] | None = None
+) -> Any | None:
+    """Choose the next undecided package outside ``excluded``, or None.
 
     Prefers ``is_ready`` packages so resolution keeps making progress while
     other listings/metadata are still in flight.  ``begin_decision_scan`` marks
@@ -36,12 +42,20 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
     across scans, so one that moves without the solution or ``priority_epoch``
     moving is never read again.
 
+    A dynamic provider can supply ``consume_priority_changes`` to report
+    additional invalidations and use the queue across deferred queries.
+    Without that contract, dynamic queries recompute every eligible key.
+
     ``ROOT`` never turns up in the undecided set: it is decided at level 1, a
     targeted backtrack never aims lower, and conflict resolution raises rather
     than backjumping to level 0.
     """
     undecided = resolver.solution.undecided_packages()
+    if excluded:
+        undecided = undecided - excluded
     if not undecided:
+        if excluded is not None and resolver.solution.undecided_packages():
+            resolver.provider.begin_decision_scan()
         return None
 
     key_inputs_arrived = resolver.provider.begin_decision_scan()
@@ -71,21 +85,36 @@ def choose_package_to_decide(resolver: Resolver[Any, Any]) -> Any | None:
             tiebreak_cache[package] = tiebreak
         return (ready_penalty, priority, tiebreak)
 
+    consume_changes = getattr(resolver.provider, "consume_priority_changes", None)
+    if excluded is not None and consume_changes is None:
+        resolver.solution.take_changed_packages()
+        return min(undecided, key=sort_key)
+
+    changed = resolver.solution.take_changed_packages()
+    if consume_changes is not None:
+        changed.update(consume_changes())
     return resolver.decision_queue.pick(
         undecided,
         sort_key,
-        resolver.solution.take_changed_packages(),
+        changed,
         resolver.priority_epoch,
         key_inputs_arrived,
+        excluded=excluded,
     )
 
 
-def choose_version(resolver: Resolver[Any, Any], package: Any) -> Any | None:
+def choose_version(
+    resolver: Resolver[Any, Any],
+    package: Any,
+    *,
+    hinted_provider: ResolverProvider[Any, Any] | None = None,
+) -> Any | None:
     """Ask the provider to pick a version within the allowed range.
 
     A user constraint narrows the acceptable range here rather than acting
     as an incompatibility: it restricts which version is picked but never
-    forces the package into the solution.
+    forces the package into the solution. A provider already refreshed for
+    this decision phase needs no second hint.
     """
     current_range = resolver.solution.get(package) or resolver.range_type.full()
     constraint = resolver.constraints.get(package)
@@ -93,15 +122,23 @@ def choose_version(resolver: Resolver[Any, Any], package: Any) -> Any | None:
         current_range = current_range & constraint
 
     provider = resolver.provider
-    # The hint costs two snapshots of the solution, so it is skipped for the
-    # provider whose hook is ``BaseProvider``'s discarding no-op.
+    if provider is not hinted_provider:
+        refresh_provider_hint(resolver)
+    return provider.choose_version(package, current_range)
+
+
+def refresh_provider_hint(resolver: Resolver[Any, Any]) -> ResolverProvider[Any, Any]:
+    """Return the current provider, delivering snapshots unless its hint is a no-op."""
+    provider = resolver.provider
+
+    # The inherited no-op cannot read either snapshot.
     if provider is not resolver._hint_ignoring_provider:  # noqa: SLF001
         provider.receive_partial_solution_hint(
             resolver.solution.positive_ranges(),
             resolver.solution.decisions(),
         )
 
-    return provider.choose_version(package, current_range)
+    return provider
 
 
 def _normalize_terms(
@@ -129,6 +166,8 @@ def absorb_pending_clauses(resolver: Resolver[Any, Any]) -> bool:
     the default ``NO_VERSIONS`` clause this turn.
     """
     clauses = list(resolver.provider.consume_pending_clauses())
+    if clauses and resolver.deferred is not None:
+        resolver.deferred.clear()
     for incompatibility in clauses:
         _normalize_terms(resolver, incompatibility)
         add_incompatibility(resolver, incompatibility)
@@ -178,15 +217,25 @@ def _constraint_hid_a_version(
 
 
 def record_no_versions(
-    resolver: Resolver[Any, Any], package: Any, *, had_pending: bool
+    resolver: Resolver[Any, Any],
+    package: Any,
+    *,
+    had_pending: bool,
+    deferrable: bool = True,
 ) -> None:
-    """Add the default ``NO_VERSIONS`` clause for ``package``.
+    """Defer a failed query or record its default absence clause.
 
     Skipped when the provider already supplied context-aware clauses;
     otherwise the broad clause would persist past the backjump that lifts
     the supporting decisions.
     """
     if had_pending:
+        return
+    if deferrable and resolver.deferred is not None:
+        if resolver.provisional and _can_assume_absence(resolver, package):
+            _record_provisional_absence(resolver, package)
+            return
+        resolver.deferred.packages[package] = None
         return
 
     current_range = resolver.solution.get(package) or resolver.term_top
@@ -209,5 +258,76 @@ def record_no_versions(
             [Term(package, current_range, positive=True)],
             cause=cause,
             constraint_range=constraint_range,
+        ),
+    )
+
+
+def _can_assume_absence(resolver: Resolver[Any, Any], package: Any) -> bool:
+    """Ask whether this provisional query had enough host context to run."""
+    ready = getattr(resolver.provider, "is_query_ready", None)
+    return ready is not None and bool(ready(package))
+
+
+def _record_provisional_absence(resolver: Resolver[Any, Any], package: Any) -> None:
+    """Record an assumed absence, including queries preceding every real decision."""
+    # Probes can raise before the incompatibility is recorded.
+    resolver.provisional_absences += 1
+    current_range = resolver.solution.get(package) or resolver.term_top
+    resolver.observer.on_no_versions(package, current_range)
+    constraint = resolver.constraints.get(package)
+    if constraint is None or not _constraint_hid_a_version(
+        resolver, package, current_range
+    ):
+        constraint = None
+    receive_failure = getattr(resolver.provider, "receive_contextual_failure", None)
+    if receive_failure is not None and receive_failure(package):
+        resolver.priority_epoch += 1
+    cause = (
+        IncompatibilityCause.NO_VERSIONS
+        if constraint is None
+        else IncompatibilityCause.CONSTRAINT
+    )
+    add_incompatibility(
+        resolver,
+        Incompatibility(
+            [Term(package, current_range, positive=True)],
+            cause=cause,
+            constraint_range=constraint,
+        ),
+    )
+
+
+def record_contextual_no_versions(resolver: Resolver[Any, Any], package: Any) -> None:
+    """Guard an exhausted availability query by every other current decision."""
+    if resolver.provisional and _can_assume_absence(resolver, package):
+        _record_provisional_absence(resolver, package)
+        return
+    decisions = resolver.solution.decisions()
+    guards = [
+        Term(name, resolver.range_type.singleton(version), positive=True)
+        for name, version in decisions.items()
+        if name is not ROOT
+    ]
+    if not guards:
+        record_no_versions(resolver, package, had_pending=False, deferrable=False)
+        return
+
+    current_range = resolver.solution.get(package) or resolver.term_top
+    resolver.observer.on_no_versions(package, current_range)
+    constraint = resolver.constraints.get(package)
+    if constraint is None or not _constraint_hid_a_version(
+        resolver, package, current_range
+    ):
+        constraint = None
+    receive_failure = getattr(resolver.provider, "receive_contextual_failure", None)
+    if receive_failure is not None and receive_failure(package):
+        resolver.priority_epoch += 1
+
+    add_incompatibility(
+        resolver,
+        Incompatibility(
+            [Term(package, current_range, positive=True), *guards],
+            cause=IncompatibilityCause.CONTEXTUAL_NO_VERSIONS,
+            constraint_range=constraint,
         ),
     )

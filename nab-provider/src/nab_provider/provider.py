@@ -15,6 +15,7 @@ from dataclasses import dataclass, fields
 from itertools import chain
 from typing import TYPE_CHECKING, TypeVar, cast
 
+import nab_resolver.priority as _conflict_priority
 from nab_provider._vendor.packaging.markers import prepare_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
@@ -475,18 +476,18 @@ class Provider:
     # Set low because the trigger is conservative: a unique
     # ``(blocker_pkg, blocker_version)`` repeating across every rejection
     # is already a strong signal.
-    _LOOKAHEAD_ABORT_THRESHOLD = 4
+    _LOOKAHEAD_ABORT_THRESHOLD = _conflict_priority.PRECHECK_REJECTION_THRESHOLD
 
     # Max force-backtracks one blocker can drive per resolution.
     # One-shot misses sustained culprits; unlimited oscillates on
     # blockers that are also the right pin.
-    _MAX_FORCE_BACKTRACKS_PER_PKG = 3
+    _MAX_FORCE_BACKTRACKS_PER_PKG = _conflict_priority.MAX_PRECHECK_BACKTRACKS
 
-    TIER_AFFECTED = _priority.TIER_AFFECTED
-    TIER_NORMAL = _priority.TIER_NORMAL
-    TIER_CULPRIT = _priority.TIER_CULPRIT
-    CONFLICT_THRESHOLD = _priority.CONFLICT_THRESHOLD
-    CULPRIT_DEMOTE_THRESHOLD = _priority.CULPRIT_DEMOTE_THRESHOLD
+    TIER_AFFECTED = _conflict_priority.TIER_AFFECTED
+    TIER_NORMAL = _conflict_priority.TIER_NORMAL
+    TIER_CULPRIT = _conflict_priority.TIER_CULPRIT
+    CONFLICT_THRESHOLD = _conflict_priority.CONFLICT_THRESHOLD
+    CULPRIT_DEMOTE_THRESHOLD = _conflict_priority.CULPRIT_DEMOTE_THRESHOLD
 
     def __init__(  # noqa: PLR0913, PLR0915, PLR0917 - resolver config is wide; bundling all flags into one bag is worse for callers
         self,

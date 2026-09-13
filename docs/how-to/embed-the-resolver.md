@@ -191,12 +191,74 @@ to decide the virtual root at, which `range_type.singleton()` has to
 accept, and a `format_range` unless that type's `str` already reads as a
 constraint. nab drives the resolver this way, with a PEP 440 range type.
 
+## Candidates discovered while resolving
+
+When candidate availability depends on selected packages, pass `Resolver` an `availability_generation` callback. It takes no arguments and returns an integer that increases whenever provider operations can change a candidate query's answer. Reading it must not change availability.
+
+An unsuccessful query is deferred while other packages can still be decided. After a stable pass through the remaining packages, the resolver records absence guarded by the current decisions. The provider must guarantee that absence whenever those decisions and requirements hold, even after its caches gain data. A source discovered through one parent must therefore remain eligible only while its declaring requirement is active; a growing cache alone does not satisfy this contract.
+
+This mode is synchronous: availability cannot change between the final generation check and recording the clause. Omit the callback for a provider with a fixed candidate universe.
+
+## Reusing a host's prepared candidates
+
+`CandidateProvider` in `nab_resolver.candidate_provider` adapts a `CandidateHost` that supplies `iter_candidates`, `get_dependencies` and `priority`. Construct it with the host and a sequence of `CandidateRequirement` roots, then pass `provider.root_requirements()` to `Resolver.solve`.
+
+The host yields `PreparedCandidate` objects in its preferred order. Each key must identify stable dependency metadata for that package, including distinctions such as source or build options. The key must be hashable and accepted by your range type. Retrieve the selected host object with `provider.prepared(package, key).origin`.
+
+The host must treat the requirement mapping and its sequences as read-only. Ordinary `iter_candidates` queries receive the current decision snapshot; final validation supplies complete reachable declarations.
+
+`priority` receives only its package's active declarations, or an empty sequence if none are active. Its result must depend only on those declarations and fixed host policy. Original host objects remain available through each requirement's `origin`.
+
+The provider reports declaration changes to the decision queue even when their intersection leaves the version range unchanged. Deferred packages leave the queue until they can be queried again.
+
+Keep requirement fields (`package`, `constraint`, `origin`) and prepared candidate fields (`key`, `origin`) fixed during a resolve. Changes inside host objects may populate caches but must preserve requirement meaning and candidate metadata. Dependency collection stops when a merged restriction becomes empty; `causes_for(package, key)` returns the declarations consumed for that candidate.
+
+Candidate queries also serve diagnostic probes, so preparing or caching a candidate must preserve answers for the same active requirements. For conditional availability, use the callback and eligibility contract above.
+
+Pass `query_feedback=True` to `CandidateProvider` to prioritize packages involved in contextual query failures. Its key is `(-parent_failures, -target_failures, host_priority)`: each failure credits the queried package and each currently decided package whose cached declarations require it. Multiple declarations from one parent count once. The default, `False`, returns the host's priority directly.
+
+Pass `conflict_feedback=True` to include the shared conflict tier before the host's preference. Packages involved in at least five conflicts are promoted. A culprit with at least five events is demoted only when it leads every other culprit by at least five. With both feedback options enabled, query-parent and query-target counts come first, followed by the conflict tier and the host's preference. Both options default to `False`.
+
+Feedback changes decision order only. Candidate admission, source eligibility and absence guards still follow the host contracts above. Counts start empty for each `Resolver.solve` call and survive backjumps and restarts within that call.
+
+Optional notifications have no-op defaults in `BaseProvider`; structural providers may omit them. `begin_resolution()` runs when a solve starts. `receive_contextual_failure(package)` runs before recording a guarded contextual or provisional absence and returns `True` if priority keys changed. Ordinary unguarded absences and diagnostic probes do not send it.
+
+`receive_decision(package, version)` runs after the observer returns and before that decision's `get_dependencies` call, including for leaves and decisions immediately backtracked. Prechecks may already have read metadata. The notification goes to the current provider, and the virtual root is excluded. Observer errors prevent notification; notification errors precede the subsequent dependency call. The last hint can predate the notified decision.
+
+Both boolean notifications may change only priority state, preserving candidate availability, current decisions and queued clauses. Returning `True` invalidates cached priority keys.
+
+A structural provider may implement `consume_priority_changes()` to return the set of packages whose priority inputs changed since the previous call, beyond changes to solution ranges and conflict counts. It must return a set on every call; an empty set declares that no additional keys changed. `CandidateProvider` implements this using active declaration sequences. A dynamic provider that omits the method retains full decision scans.
+
+
+## Checking dependencies before a decision
+
+`CandidateProvider(..., dependency_precheck=True)` reads a candidate's complete dependency mapping before deciding it. If a dependency contradicts both an already selected key and its positive range, the provider queues that ordinary dependency clause. The candidate stays undecided, and its declarations do not enter the active requirement map. Mappings that include the candidate’s own package follow the normal decision path. Metadata errors and the existing stop at an intrinsically empty restriction are preserved; `has_satisfying_version` does not precheck or queue clauses.
+
+`precheck_feedback=True` additionally requests a retreat after four distinct candidates from one package share the same selected blocker key. It permits at most three requests per blocker package in a solve and retains the dependency clauses. Requested blockers are demoted until all their requesting packages have been decided; expiry does not replenish the request budget. This option requires `dependency_precheck=True`; both default to `False`. Ordinary `conflict_feedback` remains independent. Rejection history survives backtracks and restarts but resets for a new solve.
+
+## Provisional attempts
+
+`Resolver(..., provisional=True)` may strengthen a failed query only when the provider's optional `is_query_ready(package)` hook confirms that its query context is available. This is separate from the priority readiness hook `is_ready`. The default is `False`; `CandidateProvider` requires active original declarations, so inferred packages without a chosen declaring candidate remain deferred.
+
+When `resolver.provisional_absences` is nonzero, treat the attempt as tentative. Validate success with `provider.validate_solution(solution, constraints)` and retry a rejected result or `ResolutionError` with a fresh resolver in normal mode. Rebind roots and constraints if a fresh host assigns different candidate keys. The counter includes assumptions interrupted by observer or constraint probes.
+
+Validation rebuilds complete reachable declarations and checks admission under their final requirement map. Host keys, metadata and requirement meaning must remain stable, including when caches are reused. A validated plan can select different versions from a normal attempt.
+
+`Resolver(..., max_iterations=200000)` bounds both normal and provisional solves. Reaching the limit raises `ResolutionError` without proving unsatisfiability. Use a fresh resolver for a normal retry; it receives its own iteration budget. This limit counts solver iterations and does not interrupt a blocked provider operation.
+
 ## The supported API
 
 These module paths will not move without a major version bump:
 
 ```text
+nab_resolver.candidate_provider
+                       CandidateHost, CandidateProvider,
+                       CandidateRequirement, PreparedCandidate
 nab_resolver.errors     ResolutionError
+nab_resolver.priority   CONFLICT_THRESHOLD, CULPRIT_DEMOTE_THRESHOLD,
+                        MAX_PRECHECK_BACKTRACKS, PRECHECK_REJECTION_THRESHOLD,
+                        TIER_AFFECTED, TIER_CULPRIT, TIER_NORMAL,
+                        compute_tier, is_dominant_culprit
 nab_resolver.ranges     Range
 nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
                         ResolverObserver, ResolverProvider, Solution
