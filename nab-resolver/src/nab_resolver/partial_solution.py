@@ -467,7 +467,7 @@ class PartialSolution(Generic[PackageType, VersionType]):
         self._refresh_effective_range(package)
         self._undecided.discard(package)
 
-        assignment = Assignment(
+        assignment: Assignment[PackageType, VersionType] = Assignment(
             package=package,
             accumulated_range=exact_range,
             decision_level=self._decision_level,

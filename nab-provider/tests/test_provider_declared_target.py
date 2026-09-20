@@ -154,6 +154,29 @@ class TestProvidesExtraDependenciesOverride:
         assert "dep" in extra_deps
         assert "pkg" in extra_deps
 
+    def test_returned_mappings_stay_stable_across_extras_and_hints(self) -> None:
+        provider = self._provider()
+        version = provider.choose_version("pkg", VersionRange.full())
+        assert version is not None
+        base = provider.get_dependencies("pkg", version)
+        base_snapshot = dict(base)
+
+        assert provider.choose_version("pkg[cli]", VersionRange.full()) == version
+        extra = provider.get_dependencies("pkg[cli]", version)
+        extra_snapshot = dict(extra)
+        assert "dep" not in base
+        assert "dep" in extra
+
+        provider.receive_partial_solution_hint(
+            {"pkg": VersionRange.singleton(version)}, {"pkg": version}
+        )
+        provider.receive_partial_solution_hint({}, {})
+
+        assert provider.get_dependencies("pkg", version) == base_snapshot
+        assert provider.get_dependencies("pkg[cli]", version) == extra_snapshot
+        assert base == base_snapshot
+        assert extra == extra_snapshot
+
 
 class TestEnvironmentOverlay:
     """The provider overlays user-supplied marker keys on the host env."""
