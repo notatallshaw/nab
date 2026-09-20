@@ -42,10 +42,27 @@ which leaves five to write:
 its docstrings are the full contract. Subclassing is optional: the
 resolver accepts any object satisfying that protocol.
 
+Within one resolution, `get_dependencies(package, version)` must
+describe the same dependencies on every call. Keep each returned
+mapping unchanged until the resolution finishes, including result
+construction. Range values must be immutable. Returning a fresh equal
+mapping is allowed. Use distinct package/version keys for candidates
+with different dependencies, or start a new resolution.
+`widen_decision` may return a different parent range on a later
+decision, provided it still satisfies its contract.
+
+The stability rule applies to dependency declarations, not candidate
+eligibility. Prerelease and yanked-release admission can depend on
+active requirements and host policy, and must be checked before
+preparing candidates. Widened ranges must remain valid for versions
+that may become eligible later in the same resolution.
+
 ## A provider over an in-memory graph
 
 Packages are strings and versions are integers here. A package can be
-any hashable value, a version any type its range type orders.
+any hashable value. Versions must also be hashable and ordered by
+their range type. Their hashes must remain stable while retained by
+the resolver, and equal versions must have equal hashes.
 
 ```python
 from collections.abc import Mapping

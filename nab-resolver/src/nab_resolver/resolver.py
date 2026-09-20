@@ -141,6 +141,8 @@ class Solution(Generic[PackageType, VersionType]):
 class ResolverProvider(Protocol[PackageType, VersionType]):
     """Interface for supplying version and dependency information.
 
+    Version values must be hashable, with stable hashes consistent with equality.
+
     Modeled after pubgrub-rs v0.3+ ``DependencyProvider``:
     https://docs.rs/pubgrub/latest/pubgrub/trait.DependencyProvider.html
     """
@@ -173,6 +175,15 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         The same pair is asked more than once: a backjump that re-decides a
         version asks again, and building the final :class:`Solution` asks once
         per pin.  Cache by package and version.
+
+        During one resolution, every call for a package/version pair must
+        describe the same dependencies. Returned mappings must remain unchanged
+        until result construction finishes. Range values must be immutable.
+        Providers may return fresh equal mappings.
+
+        This stability requirement applies to dependency declarations, not to
+        candidate eligibility. Prerelease and yank admission can depend on active
+        requirements and host policy; check it before preparing candidates.
         """
         ...
 
@@ -286,7 +297,9 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         every version inside it that could ever be chosen for ``package`` in
         this resolution must have exactly the dependencies being recorded
         for ``version``; versions inside it that can never be selected are
-        harmless.  ``None`` keeps the exact singleton.  Widening merges
+        harmless. Versions excluded only by current admission policy still count
+        if they could become selectable later. ``None`` keeps the exact singleton.
+        Widening merges
         dependency clauses for adjacent rejected versions into contiguous
         ranges instead of one hole per version, and lets a single clause
         reject a whole run of same-dependency versions.
@@ -568,6 +581,20 @@ def _as_root_requirements(
     ]
 
 
+class _RecordedDependencies:
+    """Retain a parent range and refinement causes across repeated decisions."""
+
+    __slots__ = ("parent_range", "refinement_causes")
+
+    def __init__(
+        self,
+        parent_range: RangeProtocol[Any],
+        refinement_causes: list[Incompatibility[Any, Any]],
+    ) -> None:
+        self.parent_range = parent_range
+        self.refinement_causes = refinement_causes
+
+
 class Resolver(Generic[PackageType, VersionType]):
     """PubGrub dependency resolver.
 
@@ -655,16 +682,9 @@ class Resolver(Generic[PackageType, VersionType]):
         # to merge mergeable dependency clauses (pubgrub-rs's merge_dependents).
         self.dependency_index: dict[Any, int] = {}
 
-        # The decisions whose dependency clauses are recorded, each with the
-        # dependencies and parent range its clauses were built from.  A
-        # version decided again after a backjump or restart builds the same
-        # clauses, and each would merge into the clause already indexed and
-        # change nothing, so a repeat with the same inputs skips the merges.
-        # Clauses outlive backtracking and restarts, so the record does too;
-        # only a new resolution clears it.
+        # Dependency clauses survive backtracking and restarts.
         self.recorded_dependencies: dict[
-            tuple[PackageType, VersionType],
-            tuple[Mapping[PackageType, RangeProtocol[VersionType]], RangeProtocol[Any]],
+            tuple[PackageType, VersionType], _RecordedDependencies
         ] = {}
 
         self.solution: PartialSolution[Any, Any] = PartialSolution(
@@ -867,18 +887,22 @@ class Resolver(Generic[PackageType, VersionType]):
         exact_range: RangeProtocol[Any],
         dependencies: Mapping[PackageType, RangeProtocol[VersionType]],
     ) -> None:
-        """Add one dependency clause per dependency of the decided ``version``.
-
-        A version decided again after a backjump or restart builds the same
-        clauses, and each would merge into the one already indexed and change
-        nothing, so a repeat with the same inputs skips the merges (see
-        ``recorded_dependencies``).  The redundant-requirement absorption
-        reads the live solution and so runs either way.
-        """
+        """Record dependency clauses or reapply their retained refinement causes."""
         widened = self.provider.widen_decision(package, version)
         parent_range = exact_range if widened is None else self.as_term_range(widened)
         record_key = (package, version)
-        recorded = self._dependencies_recorded(record_key, dependencies, parent_range)
+        prior = self.recorded_dependencies.get(record_key)
+        if prior is not None and (
+            prior.parent_range is parent_range or prior.parent_range == parent_range
+        ):
+            for clause in prior.refinement_causes:
+                dependency = clause.terms[1]
+                decide.absorb_redundant_requirement(
+                    self, dependency.package, dependency.constraint, clause
+                )
+            return
+
+        record = _RecordedDependencies(parent_range, [])
         for dependency_package, supplied_range in dependencies.items():
             dependency_range = self.as_term_range(supplied_range)
             cross_package = dependency_package != package
@@ -904,35 +928,14 @@ class Resolver(Generic[PackageType, VersionType]):
                 cause=IncompatibilityCause.DEPENDENCY,
                 dependency_range=None if cross_package else dependency_range,
             )
-            if not recorded:
-                incompat_index.add_incompatibility(self, incompatibility)
+            incompat_index.add_incompatibility(self, incompatibility)
 
             if cross_package:
+                record.refinement_causes.append(incompatibility)
                 decide.absorb_redundant_requirement(
                     self, dependency_package, dependency_range, incompatibility
                 )
-        if not recorded:
-            self.recorded_dependencies[record_key] = (dependencies, parent_range)
-
-    def _dependencies_recorded(
-        self,
-        record_key: tuple[PackageType, VersionType],
-        dependencies: Mapping[PackageType, RangeProtocol[VersionType]],
-        parent_range: RangeProtocol[Any],
-    ) -> bool:
-        """Whether ``record_key``'s clauses were recorded from these same inputs.
-
-        The provider hands back its cached dependencies and memoised widening,
-        so a repeat decision usually presents the same objects; a fresh but
-        equal pair builds the same clauses and counts as recorded too.
-        """
-        prior = self.recorded_dependencies.get(record_key)
-        if prior is None:
-            return False
-        prior_dependencies, prior_parent = prior
-        return (
-            prior_dependencies is dependencies or prior_dependencies == dependencies
-        ) and (prior_parent is parent_range or prior_parent == parent_range)
+        self.recorded_dependencies[record_key] = record
 
     def _build_result(self) -> Solution[PackageType, VersionType]:
         """Build the final result, including only reachable packages.

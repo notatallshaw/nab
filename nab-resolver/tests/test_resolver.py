@@ -4,13 +4,13 @@ and end-to-end resolution with a simple in-memory provider."""
 from __future__ import annotations
 
 import sys
-from collections import defaultdict
-from collections.abc import Mapping
+from collections import UserDict, defaultdict
+from collections.abc import ItemsView, Mapping
 from typing import Any, ClassVar
 
 import pytest
 
-from nab_resolver import propagate
+from nab_resolver import incompat_index, propagate
 from nab_resolver.conflict import (
     apply_targeted_backtrack,
     conflict_resolution,
@@ -3557,8 +3557,6 @@ class TestRecordedDependencies:
     @staticmethod
     def _count_adds(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Any]]:
         """Log the package term of each dependency clause added."""
-        from nab_resolver import incompat_index
-
         added: list[tuple[str, Any]] = []
         real_add = incompat_index.add_incompatibility
 
@@ -3626,3 +3624,98 @@ class TestRecordedDependencies:
             Range.singleton(4),
             Range.between(3, 5),
         ]
+
+    @staticmethod
+    def _count_clauses(monkeypatch: pytest.MonkeyPatch) -> list[Incompatibility]:
+        """Collect real dependency clauses as their constructors finish."""
+        clauses: list[Incompatibility] = []
+        original = Incompatibility.__init__
+
+        def count(clause: Incompatibility, *args: Any, **kwargs: Any) -> None:
+            original(clause, *args, **kwargs)
+            if clause.cause is IncompatibilityCause.DEPENDENCY:
+                clauses.append(clause)
+
+        monkeypatch.setattr(Incompatibility, "__init__", count)
+        return clauses
+
+    def test_equal_fresh_inputs_reuse_clause_objects(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Copying a provider mapping does not require another clause allocation."""
+
+        class FreshDependencies(DictProvider):
+            def get_dependencies(self, package: str, version: int) -> dict[str, Range]:
+                return dict(super().get_dependencies(package, version))
+
+        clauses = self._count_clauses(monkeypatch)
+        log: list[LogEntry] = []
+        resolver = Resolver(
+            FreshDependencies(self.PACKAGES), observer=DecisionLogObserver(log)
+        )
+        solution = resolver.solve(self.REQUIREMENTS)
+
+        assert solution.pins["d"] == 4
+        assert [entry[1:] for entry in log if entry[0] == "decide"].count(("d", 4)) == 2
+        assert sum(clause.terms[0].package == "d" for clause in clauses) == 1
+
+    def test_repeated_self_dependency_does_not_allocate(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clauses = self._count_clauses(monkeypatch)
+        resolver = Resolver(DictProvider({}))
+        dependency = {"d": Range.singleton(3)}
+        for _ in range(2):
+            resolver._record_dependency_clauses("d", 4, Range.singleton(4), dependency)
+
+        assert len(clauses) == 1
+        assert len(resolver.incompatibilities) == 1
+        assert clauses[0].dependency_range == Range.singleton(3)
+
+    def test_restart_reuses_recorded_clauses(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        clauses = self._count_clauses(monkeypatch)
+        resolver = Resolver(DictProvider(self.PACKAGES))
+        monkeypatch.setattr(resolver, "_RESTART_THRESHOLD", 0)
+        monkeypatch.setattr(resolver, "_MAX_RESTARTS", 1)
+        solution = resolver.solve(self.REQUIREMENTS)
+
+        assert solution.pins == {"a": 3, "b": 1, "c": 5, "d": 4, "e": 1}
+        assert resolver.stats.restarts == 1
+        assert sum(clause.terms[0].package == "d" for clause in clauses) == 1
+
+    def test_repeat_does_not_read_the_dependency_mapping(self) -> None:
+        """Stable dependency contents need one traversal per recorded parent range."""
+
+        class CountingDependencies(UserDict[str, Range]):
+            def __init__(self) -> None:
+                super().__init__({"e": Range.full()})
+                self.reads = 0
+
+            def items(self) -> ItemsView[str, Range]:
+                self.reads += 1
+                return super().items()
+
+        first = CountingDependencies()
+        repeated = CountingDependencies()
+        resolver = Resolver(DictProvider({}))
+        resolver._record_dependency_clauses("d", 4, Range.singleton(4), first)
+        resolver._record_dependency_clauses("d", 4, Range.singleton(4), repeated)
+
+        assert first.reads == 1
+        assert repeated.reads == 0
+        assert len(resolver.incompatibilities) == 1
+
+    def test_new_resolution_can_use_different_dependencies(self) -> None:
+        """Dependency stability ends when a solve has finished building its result."""
+        dependencies = {"e": Range.singleton(1)}
+        provider = DictProvider({"d": {1: dependencies}, "e": {1: {}, 2: {}}})
+        resolver = Resolver(provider)
+        first = resolver.solve({"d": Range.full()})
+
+        dependencies["e"] = Range.singleton(2)
+        second = resolver.solve({"d": Range.full()})
+
+        assert first.pins == {"d": 1, "e": 1}
+        assert second.pins == {"d": 1, "e": 2}
