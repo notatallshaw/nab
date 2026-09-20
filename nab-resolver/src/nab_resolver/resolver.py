@@ -180,6 +180,10 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         describe the same dependencies. Returned mappings must remain unchanged
         until result construction finishes. Range values must be immutable.
         Providers may return fresh equal mappings.
+
+        This stability requirement applies to dependency declarations, not to
+        candidate eligibility. Prerelease and yank admission can depend on active
+        requirements and host policy; check it before preparing candidates.
         """
         ...
 
@@ -293,7 +297,9 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
         every version inside it that could ever be chosen for ``package`` in
         this resolution must have exactly the dependencies being recorded
         for ``version``; versions inside it that can never be selected are
-        harmless.  ``None`` keeps the exact singleton.  Widening merges
+        harmless. Versions excluded only by current admission policy still count
+        if they could become selectable later. ``None`` keeps the exact singleton.
+        Widening merges
         dependency clauses for adjacent rejected versions into contiguous
         ranges instead of one hole per version, and lets a single clause
         reject a whole run of same-dependency versions.

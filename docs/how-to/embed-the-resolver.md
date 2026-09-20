@@ -51,6 +51,12 @@ with different dependencies, or start a new resolution.
 `widen_decision` may return a different parent range on a later
 decision, provided it still satisfies its contract.
 
+The stability rule applies to dependency declarations, not candidate
+eligibility. Prerelease and yanked-release admission can depend on
+active requirements and host policy, and must be checked before
+preparing candidates. Widened ranges must remain valid for versions
+that may become eligible later in the same resolution.
+
 ## A provider over an in-memory graph
 
 Packages are strings and versions are integers here. A package can be
