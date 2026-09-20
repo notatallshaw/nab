@@ -655,6 +655,18 @@ class Resolver(Generic[PackageType, VersionType]):
         # to merge mergeable dependency clauses (pubgrub-rs's merge_dependents).
         self.dependency_index: dict[Any, int] = {}
 
+        # The decisions whose dependency clauses are recorded, each with the
+        # dependencies and parent range its clauses were built from.  A
+        # version decided again after a backjump or restart builds the same
+        # clauses, and each would merge into the clause already indexed and
+        # change nothing, so a repeat with the same inputs skips the merges.
+        # Clauses outlive backtracking and restarts, so the record does too;
+        # only a new resolution clears it.
+        self.recorded_dependencies: dict[
+            tuple[PackageType, VersionType],
+            tuple[Mapping[PackageType, RangeProtocol[VersionType]], RangeProtocol[Any]],
+        ] = {}
+
         self.solution: PartialSolution[Any, Any] = PartialSolution(
             range_type=range_type
         )
@@ -842,25 +854,46 @@ class Resolver(Generic[PackageType, VersionType]):
         )
 
         dependencies = self.provider.get_dependencies(next_package, chosen_version)
-        if not dependencies:
-            return next_package
-        widened = self.provider.widen_decision(next_package, chosen_version)
+        if dependencies:
+            self._record_dependency_clauses(
+                next_package, chosen_version, exact_range, dependencies
+            )
+        return next_package
+
+    def _record_dependency_clauses(
+        self,
+        package: PackageType,
+        version: VersionType,
+        exact_range: RangeProtocol[Any],
+        dependencies: Mapping[PackageType, RangeProtocol[VersionType]],
+    ) -> None:
+        """Add one dependency clause per dependency of the decided ``version``.
+
+        A version decided again after a backjump or restart builds the same
+        clauses, and each would merge into the one already indexed and change
+        nothing, so a repeat with the same inputs skips the merges (see
+        ``recorded_dependencies``).  The redundant-requirement absorption
+        reads the live solution and so runs either way.
+        """
+        widened = self.provider.widen_decision(package, version)
         parent_range = exact_range if widened is None else self.as_term_range(widened)
+        record_key = (package, version)
+        recorded = self._dependencies_recorded(record_key, dependencies, parent_range)
         for dependency_package, supplied_range in dependencies.items():
             dependency_range = self.as_term_range(supplied_range)
-            cross_package = dependency_package != next_package
+            cross_package = dependency_package != package
             if not cross_package:
                 # An incompatibility holds at most one term per package,
                 # so self-dependency terms merge to {v} & ~range: empty
                 # (a vacuous clause) when the range contains the chosen
                 # version, else exactly {v}.  The exact singleton is kept:
                 # widening a single-term clause only degrades error text.
-                if chosen_version in dependency_range:
+                if version in dependency_range:
                     continue
-                terms = [Term(next_package, exact_range, positive=True)]
+                terms = [Term(package, exact_range, positive=True)]
             else:
                 terms = [
-                    Term(next_package, parent_range, positive=True),
+                    Term(package, parent_range, positive=True),
                     Term(dependency_package, dependency_range, positive=False),
                 ]
 
@@ -871,13 +904,35 @@ class Resolver(Generic[PackageType, VersionType]):
                 cause=IncompatibilityCause.DEPENDENCY,
                 dependency_range=None if cross_package else dependency_range,
             )
-            incompat_index.add_incompatibility(self, incompatibility)
+            if not recorded:
+                incompat_index.add_incompatibility(self, incompatibility)
 
             if cross_package:
                 decide.absorb_redundant_requirement(
                     self, dependency_package, dependency_range, incompatibility
                 )
-        return next_package
+        if not recorded:
+            self.recorded_dependencies[record_key] = (dependencies, parent_range)
+
+    def _dependencies_recorded(
+        self,
+        record_key: tuple[PackageType, VersionType],
+        dependencies: Mapping[PackageType, RangeProtocol[VersionType]],
+        parent_range: RangeProtocol[Any],
+    ) -> bool:
+        """Whether ``record_key``'s clauses were recorded from these same inputs.
+
+        The provider hands back its cached dependencies and memoised widening,
+        so a repeat decision usually presents the same objects; a fresh but
+        equal pair builds the same clauses and counts as recorded too.
+        """
+        prior = self.recorded_dependencies.get(record_key)
+        if prior is None:
+            return False
+        prior_dependencies, prior_parent = prior
+        return (
+            prior_dependencies is dependencies or prior_dependencies == dependencies
+        ) and (prior_parent is parent_range or prior_parent == parent_range)
 
     def _build_result(self) -> Solution[PackageType, VersionType]:
         """Build the final result, including only reachable packages.
@@ -902,6 +957,7 @@ class Resolver(Generic[PackageType, VersionType]):
         self.package_to_incompatibilities.clear()
         self.clause_contradicted_at.clear()
         self.dependency_index.clear()
+        self.recorded_dependencies.clear()
         self.solution = PartialSolution(range_type=self.range_type)
         self.stats = ResolverStats()
 

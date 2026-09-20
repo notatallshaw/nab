@@ -6,7 +6,7 @@ from __future__ import annotations
 import sys
 from collections import defaultdict
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -3535,3 +3535,94 @@ class TestResolverStats:
             " package_conflict_counts=defaultdict(<class 'int'>, {}),"
             " package_culprit_counts=defaultdict(<class 'int'>, {}))"
         )
+
+
+class TestRecordedDependencies:
+    """A version decided again after a backjump does not re-add its clauses."""
+
+    # ``b`` and ``d`` tie on candidate count, so ``b`` is decided first, then
+    # ``d``, then ``c``, whose every version wants ``b == 1``.  The conflict
+    # backjumps past ``d``, which is then decided at 4 a second time.
+    PACKAGES: ClassVar[dict[str, dict[int, dict[str, Range]]]] = {
+        "a": {1: {}, 2: {}, 3: {}},
+        "b": {1: {}, 2: {}, 3: {}, 4: {}},
+        "d": {v: {"e": Range.full()} for v in (1, 2, 3, 4)},
+        "c": {v: {"b": Range.singleton(1)} for v in (1, 2, 3, 4, 5)},
+        "e": {1: {}},
+    }
+    REQUIREMENTS: ClassVar[dict[str, Range]] = {
+        name: Range.full() for name in ("a", "b", "c", "d")
+    }
+
+    @staticmethod
+    def _count_adds(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Any]]:
+        """Log the package term of each dependency clause added."""
+        from nab_resolver import incompat_index
+
+        added: list[tuple[str, Any]] = []
+        real_add = incompat_index.add_incompatibility
+
+        def logging_add(resolver: Any, incompatibility: Any) -> None:
+            if incompatibility.cause is IncompatibilityCause.DEPENDENCY:
+                term = incompatibility.terms[0]
+                added.append((term.package, term.constraint))
+            real_add(resolver, incompatibility)
+
+        monkeypatch.setattr(incompat_index, "add_incompatibility", logging_add)
+        return added
+
+    def test_a_repeated_decision_records_its_clauses_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        added = self._count_adds(monkeypatch)
+        log: list[LogEntry] = []
+        provider = CallLogProvider(self.PACKAGES, log)
+        resolver = Resolver(provider, observer=DecisionLogObserver(log))
+        solution = resolver.solve(self.REQUIREMENTS)
+
+        assert solution.pins == {"a": 3, "b": 1, "c": 5, "d": 4, "e": 1}
+        assert resolver.stats.backjumps >= 1
+        decisions = [entry[1:] for entry in log if entry[0] == "decide"]
+        assert decisions.count(("d", 4)) == 2
+        assert added.count(("d", Range.singleton(4))) == 1
+        assert ("d", 4) in resolver.recorded_dependencies
+
+    def test_a_new_resolution_records_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        added = self._count_adds(monkeypatch)
+        resolver = Resolver(DictProvider(self.PACKAGES))
+        resolver.solve(self.REQUIREMENTS)
+        first = list(added)
+        resolver.solve(self.REQUIREMENTS)
+        assert added == first + first
+
+    def test_a_repeat_with_wider_inputs_still_records(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A parent range that widened between decisions merges as before."""
+
+        class WidensLater(DictProvider):
+            def __init__(
+                self, packages: dict[str, dict[int, dict[str, Range]]]
+            ) -> None:
+                super().__init__(packages)
+                self.asked: dict[tuple[str, int], int] = {}
+
+            def widen_decision(
+                self, package: str, version: int
+            ) -> RangeProtocol[int] | None:
+                seen = self.asked.get((package, version), 0)
+                self.asked[(package, version)] = seen + 1
+                if package == "d" and seen:
+                    return Range.between(version - 1, version + 1)
+                return None
+
+        added = self._count_adds(monkeypatch)
+        resolver = Resolver(WidensLater(self.PACKAGES))
+        solution = resolver.solve(self.REQUIREMENTS)
+        assert solution.pins["d"] == 4
+        assert [c for p, c in added if p == "d"] == [
+            Range.singleton(4),
+            Range.between(3, 5),
+        ]
