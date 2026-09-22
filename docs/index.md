@@ -87,7 +87,6 @@ reference/cache
 :caption: Explanation
 
 explanation/universal
-explanation/yanking
 explanation/conflicts
 explanation/packages
 ```
