@@ -1071,7 +1071,9 @@ class TestPep503Directory:
         package_dir = self._make_index(tmp_path, body)
         (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
-        assert run(client.get_files("foo")) == []
+        files = run(client.get_files("foo"))
+        assert len(files) == 1
+        assert files[0].yanked == "broken build"
         assert client.served_all_yanked("foo")
         assert not client.served_unreadable_only("foo")
 
@@ -1606,7 +1608,7 @@ class TestPep503Directory:
         assert [r.filename for r in result] == ["foo-1.0.tar.gz"]
         assert isinstance(result[0], SdistFile)
 
-    def test_pep503_yanked_link_excluded(self, tmp_path: Path) -> None:
+    def test_pep503_yanked_link_retained(self, tmp_path: Path) -> None:
         body = (
             '<a href="foo-1.0-py3-none-any.whl" data-yanked="security">yanked</a>'
             '<a href="foo-2.0-py3-none-any.whl">live</a>'
@@ -1616,15 +1618,17 @@ class TestPep503Directory:
         (package_dir / "foo-2.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
         result = run(client.get_files("foo"))
-        assert [r.version for r in result] == ["2.0"]
+        assert [r.version for r in result] == ["1.0", "2.0"]
+        assert [r.yanked for r in result] == ["security", False]
 
-    def test_pep503_yanked_with_empty_attr_excluded(self, tmp_path: Path) -> None:
+    def test_pep503_yanked_with_empty_attr_retained(self, tmp_path: Path) -> None:
         body = '<a href="foo-1.0-py3-none-any.whl" data-yanked>foo</a>'
         package_dir = self._make_index(tmp_path, body)
         (package_dir / "foo-1.0-py3-none-any.whl").write_bytes(b"")
         client = LocalIndexClient(tmp_path.as_uri())
         result = run(client.get_files("foo"))
-        assert result == []
+        assert len(result) == 1
+        assert result[0].yanked is True
 
     def test_pep503_build_tag_sdist_dropped(self, tmp_path: Path) -> None:
         # cffi-1.0.2-2.tar.gz parses as project cffi-1-0-2 at version 2;

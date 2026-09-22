@@ -169,7 +169,7 @@ def test_lone_surrogate_in_field_round_trips() -> None:
 def test_blob_is_portable_json() -> None:
     """The wire form carries no interpreter tag, so any reader can decode it."""
     header, rows = json.loads(encode(SAMPLE, DIGEST))
-    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST, []]
+    assert header == [FORMAT_VERSION, CODEC, KEY_SCHEME, DIGEST, [], {}]
     assert [row[0] for row in rows] == [_TAG_WHEEL, _TAG_SDIST, _TAG_WHEEL, _TAG_SDIST]
 
 
@@ -515,3 +515,43 @@ def test_a_row_is_the_same_whether_or_not_the_record_was_read() -> None:
     assert read.metadata_hash == (SHA256, DIGEST)
 
     assert encode([read], DIGEST) == encode([unread], DIGEST)
+
+
+@pytest.mark.parametrize("reason", [True, "bad dependency metadata"])
+def test_withdrawal_roundtrip_keeps_reason_and_deferred_integrity(
+    reason: bool | str,
+) -> None:
+    from nab_provider.yanking import YankedListing, mark_yanked
+
+    wheel = _deferred_wheel({"sha256": DIGEST}, sidecar={"sha256": DIGEST})
+    files = [mark_yanked(wheel, reason=reason), mark_yanked(SDIST_BARE, reason=reason)]
+    restored = _roundtrip(files)
+    assert isinstance(restored, YankedListing)
+    assert restored.withdrawn_versions == {"1.0", "2.0"}
+    assert [file.yanked for file in restored] == [reason, reason]
+    assert restored[0].raw_hashes() == {"sha256": DIGEST}
+    assert isinstance(restored[0], WheelFile)
+    assert restored[0].raw_sidecar() == {"sha256": DIGEST}
+    assert restored[1].hashes == SDIST_BARE.hashes
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        [],
+        None,
+        {"x": True},
+        {"-1": True},
+        {"\u0660": True},
+        {"01": True},
+        {"99": True},
+        {"0": False},
+        {"0": ""},
+        {"0": 1},
+        {"0": None},
+    ],
+)
+def test_corrupt_withdrawal_table_is_rejected(cell: object) -> None:
+    blob = _tamper_header(5, cell)
+    assert decode(blob, _policy()) is None
+    assert corruption_reason(blob) is not None

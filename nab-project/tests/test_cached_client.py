@@ -59,6 +59,7 @@ from nab_provider.records import (
     sidecar_hash,
 )
 from nab_provider.serialization import SimpleSerialization
+from nab_provider.store import sdist_artifact_key
 
 LISTING = {
     "meta": {"api-version": "1.0"},
@@ -445,10 +446,10 @@ class TestMetadataHashParsing:
         assert wheel.metadata_hash is None
 
 
-class TestYankedFiltering:
+class TestYankedMetadata:
     """PEP 592 ``yanked`` files are dropped from the listing."""
 
-    def test_yanked_true_excluded(self) -> None:
+    def test_yanked_true_retained(self) -> None:
         from nab_index.client import _parse_files
 
         data = {
@@ -465,9 +466,13 @@ class TestYankedFiltering:
             ],
         }
         files = _parse_files(data, "https://example.com/", "foo")
-        assert [f.filename for f in files] == ["foo-2.0-py3-none-any.whl"]
+        assert [f.filename for f in files] == [
+            "foo-1.0-py3-none-any.whl",
+            "foo-2.0-py3-none-any.whl",
+        ]
+        assert [f.yanked for f in files] == [True, False]
 
-    def test_yanked_reason_string_excluded(self) -> None:
+    def test_yanked_reason_retained(self) -> None:
         from nab_index.client import _parse_files
 
         data = {
@@ -480,7 +485,8 @@ class TestYankedFiltering:
             ],
         }
         files = _parse_files(data, "https://example.com/", "foo")
-        assert files == []
+        assert len(files) == 1
+        assert files[0].yanked == "security incident #42"
 
     def test_yanked_false_kept(self) -> None:
         from nab_index.client import _parse_files
@@ -2876,13 +2882,14 @@ class TestHtmlListing:
         assert [f.version for f in files] == ["2.8.0+cpu"]
         assert len(transport.calls) == 1
 
-    def test_yanked_anchor_dropped(self, tmp_path: Path) -> None:
+    def test_yanked_anchor_retained(self, tmp_path: Path) -> None:
         page = (
             b'<a href="torch-2.7.0-py3-none-any.whl" data-yanked="bad build">a</a>'
             b'<a href="torch-2.8.0-py3-none-any.whl">b</a>'
         )
         files, _ = self._fetch(_make_cache(tmp_path), page, "text/html")
-        assert [f.version for f in files] == ["2.8.0"]
+        assert [f.version for f in files] == ["2.7.0", "2.8.0"]
+        assert [f.yanked for f in files] == ["bad build", False]
 
     def test_relative_href_resolves_against_page(self, tmp_path: Path) -> None:
         page = b'<a href="../pkgs/torch-2.7.0-py3-none-any.whl">a</a>'
@@ -3622,7 +3629,12 @@ class TestNonOkStatusIsNotContent:
 
         with pytest.raises(HttpError, match="204"):
             asyncio.run(go())
-        assert cache.get_sdist_files("pkg", "1.0") is None
+        assert (
+            cache.get_sdist_files(
+                "pkg", sdist_artifact_key("1.0", "https://x/pkg.tar.gz")
+            )
+            is None
+        )
 
     def test_sdist_archive_204_raises(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -3666,12 +3678,17 @@ class TestGetSdistFiles:
         assert "Name: pkg" in pkg_info
         assert pyproject is not None
         assert "[project]" in pyproject
-        assert cache.get_sdist_files("pkg", "1.0") == (pkg_info, pyproject)
+        assert cache.get_sdist_files(
+            "pkg", sdist_artifact_key("1.0", "https://x/pkg.tar.gz")
+        ) == (pkg_info, pyproject)
 
     def test_warm_cache_skips_network(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
         cache.put_sdist_files(
-            "pkg", "1.0", "Name: cached\n", "[project]\nname = 'cached'\n"
+            "pkg",
+            sdist_artifact_key("1.0", "https://x/pkg.tar.gz"),
+            "Name: cached\n",
+            "[project]\nname = 'cached'\n",
         )
         transport = _FakeTransport()
 
@@ -3705,7 +3722,12 @@ class TestGetSdistFiles:
                 await client.aclose()
 
         assert asyncio.run(go()) == (None, None)
-        assert cache.get_sdist_files("pkg", "1.0") is None
+        assert (
+            cache.get_sdist_files(
+                "pkg", sdist_artifact_key("1.0", "https://x/pkg.tar.gz")
+            )
+            is None
+        )
 
     @pytest.mark.parametrize(
         "members",
@@ -3734,7 +3756,9 @@ class TestGetSdistFiles:
                 await client.aclose()
 
         assert asyncio.run(go()) == [(None, None), (None, None)]
-        assert cache.get_sdist_files("pkg", "1.0") == (None, None)
+        assert cache.get_sdist_files(
+            "pkg", sdist_artifact_key("1.0", "https://x/pkg.tar.gz")
+        ) == (None, None)
         assert len(transport.calls) == 1
 
     def test_offline_miss_raises(self, tmp_path: Path) -> None:
@@ -3796,7 +3820,12 @@ class TestGetSdistFiles:
         first_pkg_info, first_pyproject = asyncio.run(fetch())
         assert first_pkg_info is not None
         assert first_pyproject is not None
-        assert cache.get_sdist_files("pkg", "1.0") is None
+        assert (
+            cache.get_sdist_files(
+                "pkg", sdist_artifact_key("1.0", "https://x/pkg.tar.gz")
+            )
+            is None
+        )
 
         fail["active"] = False
         pkg_info, recovered_pyproject = asyncio.run(fetch())
@@ -3825,7 +3854,9 @@ class TestGetSdistFiles:
         pkg_info, _ = asyncio.run(go())
         assert pkg_info is not None
         assert "Name: pkg" in pkg_info
-        assert cache.get_sdist_files("pkg", "1.0") == (pkg_info, None)
+        assert cache.get_sdist_files(
+            "pkg", sdist_artifact_key("1.0", "https://x/pkg.tar.gz")
+        ) == (pkg_info, None)
 
     def test_mismatching_hash_raises_and_skips_cache(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -3849,7 +3880,12 @@ class TestGetSdistFiles:
 
         with pytest.raises(SdistHashMismatchError):
             asyncio.run(go())
-        assert cache.get_sdist_files("pkg", "1.0") is None
+        assert (
+            cache.get_sdist_files(
+                "pkg", sdist_artifact_key("1.0", "https://x/pkg.tar.gz")
+            )
+            is None
+        )
 
     def test_no_published_hash_skips_verification(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
@@ -4003,6 +4039,43 @@ class TestGetSdistArchive:
         assert asyncio.run(go()) == body
         assert len(transport.calls) == 1
 
+    def test_same_version_archives_keep_separate_metadata_and_bytes(
+        self, tmp_path: Path
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        urls = ("https://x/live/pkg.tar.gz", "https://x/yanked/pkg.tar.gz")
+        metadata = tuple(
+            f"Name: pkg\nVersion: 1.0\nRequires-Dist: {dependency}\n"
+            for dependency in ("live-dependency", "withdrawn-dependency")
+        )
+        bodies = tuple(
+            _build_tarball([("pkg-1.0/PKG-INFO", text.encode())]) for text in metadata
+        )
+        transport = _FakeTransport([_FakeResponse(body) for body in bodies])
+        hold = SdistArchiveHold()
+
+        async def go() -> None:
+            client = CachedAsyncSimpleClient(transport, cache, sdist_archive_hold=hold)
+            try:
+                for url, text in zip(urls, metadata, strict=True):
+                    assert await client.get_sdist_files("pkg", "1.0", url) == (
+                        text,
+                        None,
+                    )
+
+                # Revisit the first URL after the second has populated both caches.
+                for url, text, body in zip(urls, metadata, bodies, strict=True):
+                    assert await client.get_sdist_files("pkg", "1.0", url) == (
+                        text,
+                        None,
+                    )
+                    assert await client.get_sdist_archive("pkg", "1.0", url) == body
+            finally:
+                await client.aclose()
+
+        asyncio.run(go())
+        assert len(transport.calls) == 2
+
     def test_a_held_archive_is_verified_against_the_published_hash(
         self, tmp_path: Path
     ) -> None:
@@ -4012,7 +4085,7 @@ class TestGetSdistArchive:
         tampered = _build_tarball([("pkg-1.0/PKG-INFO", b"Name: evil\n")])
         transport = _FakeTransport([])
         hold = SdistArchiveHold()
-        hold.put("pkg", "1.0", tampered)
+        hold.put("pkg", sdist_artifact_key("1.0", "https://x/pkg.tar.gz"), tampered)
 
         async def go() -> bytes:
             client = CachedAsyncSimpleClient(transport, cache, sdist_archive_hold=hold)
@@ -5254,7 +5327,12 @@ class TestAssumeFreshFloor:
 
     def test_immutable_sdist_files_warm_hit_with_floor(self, tmp_path: Path) -> None:
         cache = _make_cache(tmp_path)
-        cache.put_sdist_files("pkg", "1.0", "Name: cached\n", None)
+        cache.put_sdist_files(
+            "pkg",
+            sdist_artifact_key("1.0", "https://x/pkg.tar.gz"),
+            "Name: cached\n",
+            None,
+        )
         transport = _FakeTransport()
 
         async def go() -> tuple[str | None, str | None]:

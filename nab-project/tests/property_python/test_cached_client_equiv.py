@@ -7,8 +7,8 @@ the cached parse, via 200 must equal the new body's parse.  PEP 658
 metadata is immutable once verified; a hash mismatch must raise and must
 not poison the cache.
 
-Also fuzzes ``_parse_files`` over random PEP 691 JSON: drops yanked and
-name-mismatched files, lowercases hex digests, never keeps a negative size.
+Also fuzzes ``_parse_files`` over random PEP 691 JSON: preserves yank flags,
+drops name-mismatched files, lowercases hex digests, never keeps a negative size.
 """
 
 from __future__ import annotations
@@ -332,13 +332,21 @@ def test_metadata_hash_gate_and_immutability(
 @given(data=listings())
 @PROPERTY_SETTINGS
 def test_parse_files_postconditions(data: tuple[str, bytes]) -> None:
-    """Yanked and name-mismatched files are dropped; digests and sizes sane."""
+    """Retain withdrawal state while rejecting foreign names and invalid fields."""
     package, body = data
     payload = json.loads(body)
     files = _parse_files(payload, INDEX, package)
+    live_payload = {
+        **payload,
+        "files": [{**entry, "yanked": False} for entry in payload["files"]],
+    }
+    live_files = _parse_files(live_payload, INDEX, package)
+    assert [(file.filename, file.url) for file in files] == [
+        (file.filename, file.url) for file in live_files
+    ]
     for f in files:
         candidates = [e for e in payload["files"] if e["filename"] == f.filename]
-        assert any(not e.get("yanked") for e in candidates), "yanked file leaked"
+        assert any(f.yanked == (e.get("yanked") or False) for e in candidates)
         # Name always matches the queried package (pkg_names are canonical).
         assert f.filename.startswith((package, package.replace("-", "_")))
         for _algo, digest in f.hashes:

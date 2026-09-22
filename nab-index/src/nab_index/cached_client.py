@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from nab_provider.records import select_artifact_hash
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
+from nab_provider.store import sdist_artifact_key
 
 from ._json_decode import decode_json
 from .cache import CacheBackend, CachePolicy, OfflineError, is_sendable_etag
@@ -901,7 +902,8 @@ class CachedAsyncSimpleClient:
         :class:`SdistArchiveHold`, when it has one, for a build of the same
         version to take.
         """
-        cached = self._cache.get_sdist_files(package, version)
+        source_key = sdist_artifact_key(version, sdist_url)
+        cached = self._cache.get_sdist_files(package, source_key)
         if cached is not None:
             return cached
 
@@ -917,12 +919,12 @@ class CachedAsyncSimpleClient:
         files = _extract_sdist_files_if_readable(response.content)
 
         if self._sdist_archive_hold is not None:
-            self._sdist_archive_hold.put(package, version, response.content)
+            self._sdist_archive_hold.put(package, source_key, response.content)
 
         if files is None:
             return (None, None)
 
-        self._cache.put_sdist_files(package, version, *files)
+        self._cache.put_sdist_files(package, source_key, *files)
         return files
 
     async def get_sdist_archive(
@@ -946,7 +948,7 @@ class CachedAsyncSimpleClient:
         downloaded here or held. A mismatch raises
         :class:`SdistHashMismatchError`.
         """
-        content = self._held_archive(package, version)
+        content = self._held_archive(package, sdist_artifact_key(version, sdist_url))
         if content is None:
             if self._offline:
                 msg = f"sdist archive fetch unavailable in offline mode ({sdist_url})"

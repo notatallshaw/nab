@@ -46,6 +46,7 @@ from .errors import (
     UnserveableUrlError,
     UnsupportedSdistError,
     WheelHashMismatchError,
+    YankAdmissionRequiredError,
 )
 from .extra_keys import join_extra, split_extra
 from .metadata import WheelMetadata
@@ -436,6 +437,10 @@ class Provider:
     package on whether its listing has landed yet.  See
     :meth:`settled_listing`.
 
+    ``defer_yanked`` retains withdrawn candidates for a caller that resolves
+    their admission. It does not permit metadata preparation by itself.
+    Like dist policy, this setting must agree across a shared listing filter cache.
+
     ``release_refused_wheels`` lets the wheel-tag filter drop the payload
     of the wheels it refuses
     (:func:`nab_provider.records.release_wheel_payload`).  Only the caller
@@ -488,6 +493,11 @@ class Provider:
     CONFLICT_THRESHOLD = _priority.CONFLICT_THRESHOLD
     CULPRIT_DEMOTE_THRESHOLD = _priority.CULPRIT_DEMOTE_THRESHOLD
 
+    # Deferred admission retains withdrawn candidates but still guards preparation.
+    yank_admissions: frozenset[tuple[str, Version]] = frozenset()
+    yank_admission_sources: dict[str, tuple[str, ...]] | None = None
+    yanked_versions: frozenset[tuple[str, Version]] = frozenset()
+
     def __init__(  # noqa: PLR0913, PLR0915, PLR0917 - resolver config is wide; bundling all flags into one bag is worse for callers
         self,
         coordinator: FetchPort,
@@ -515,6 +525,7 @@ class Provider:
         trust_unverified_sdist_deps: bool = False,
         decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
         release_refused_wheels: bool = False,
+        defer_yanked: bool = False,
     ) -> None:
         """Construct the provider; see the class docstring for parameters."""
         if isinstance(resolution_strategy, str):
@@ -536,6 +547,7 @@ class Provider:
         self.listing_filter_cache = listing_filter_cache
 
         self.release_refused_wheels = release_refused_wheels
+        self.defer_yanked = defer_yanked
 
         self.extras_mode = extras_mode
         self.root_extras = root_extras or set()
@@ -1215,6 +1227,20 @@ class Provider:
         self, normalized: str, files: Sequence[WheelFile | SdistFile]
     ) -> list[tuple[Version, DistFile]]:
         """See :func:`nab_provider._provider.listing.filter_distributions`."""
+        if raw_versions := getattr(files, "withdrawn_versions", ()):
+            self.yanked_versions = self.yanked_versions | {
+                (normalized, version)
+                for raw in raw_versions
+                if (version := _listing.parsed_version(raw)) is not None
+            }
+        if not self.defer_yanked:
+            files = [
+                file
+                for file in files
+                if not file.yanked
+                or (normalized, _listing.parsed_version(file.version))
+                in self.yank_admissions
+            ]
         return _listing.filter_distributions(self, normalized, files)
 
     def pick_best_candidate(
@@ -2470,6 +2496,10 @@ class Provider:
             return _extras.get_extra_dependencies(self, base, extra, version)
 
         cache_key = (normalized, version)
+        if self.yanked_versions and cache_key in self.yanked_versions:
+            _metadata_resolver.require_yank_admission(
+                self, self.fetch_versions(base), normalized, version
+            )
 
         # Before the cache check: a queued prefetch lands in deps_cache only
         # when this decodes it.
@@ -2485,6 +2515,10 @@ class Provider:
             raise MetadataError(cached_invalid)
 
         versions = self.fetch_versions(package)
+        if self.yanked_versions and cache_key in self.yanked_versions:
+            _metadata_resolver.require_yank_admission(
+                self, versions, normalized, version
+            )
 
         # Local, VCS, and archive sources pre-populate metadata during
         # fetch_versions.
@@ -2504,6 +2538,9 @@ class Provider:
         # metadata caching applies the remaining override fields to the bare
         # record.
         if self.effective_dependencies(normalized, version) is not None:
+            _metadata_resolver.require_yank_admission(
+                self, versions, normalized, version
+            )
             _metadata_resolver.cache_deps_from_metadata(
                 self,
                 cache_key,
@@ -2723,6 +2760,22 @@ class Provider:
         """
         return self.vcs_pins.get(canonicalize_name(canonical_name))
 
+    def has_withdrawn_alternative(self) -> bool:
+        """Whether an attempted live release also offers a withdrawn artifact."""
+        return any(
+            file.yanked
+            and (
+                (package, version) in self.metadata_cache
+                or self.invalid_metadata_reason(package, version) is not None
+                or any(
+                    other_version == version and other.version != str(version)
+                    for other_version, other in versions
+                )
+            )
+            for package, versions in self.versions_cache.items()
+            for version, file in versions
+        )
+
     def dist_files_for(self, canonical_name: str, version: Version) -> list[DistFile]:
         """Return every distribution file the resolver saw at ``version``.
 
@@ -2732,7 +2785,29 @@ class Provider:
         """
         normalized = canonicalize_name(canonical_name)
         listing = self.versions_cache.get(normalized, [])
-        return _metadata_resolver.dists_at_version(listing, version)
+        files = _metadata_resolver.dists_at_version(listing, version)
+        if (
+            not self.yanked_versions
+            or (normalized, version) not in self.yanked_versions
+            or (
+                normalized,
+                version,
+            )
+            in self.yank_admissions
+        ):
+            return files
+        live = [file for file in files if not file.yanked]
+        if len(live) == len(files):
+            return files
+        if not live or (
+            self.effective_dist_policy(
+                normalized, version, self.serving_index(normalized)
+            )
+            is DistPolicy.SDIST_INSTALL
+            and not any(isinstance(file, SdistFile) for file in live)
+        ):
+            raise YankAdmissionRequiredError(normalized, version)
+        return live
 
     def tag_excluded_wheel_count(self, canonical_name: str, version: Version) -> int:
         """Return how many wheels the tag filter dropped at ``version`` (0 if none)."""
