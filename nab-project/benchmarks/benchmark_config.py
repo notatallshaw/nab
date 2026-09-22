@@ -12,6 +12,7 @@ from nab_project.inputs import ResolveInputs
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
+from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.overrides import PackageOverride
 from nab_provider.provider import (
     BuildPolicy,
@@ -24,13 +25,18 @@ from nab_provider.provider import (
     split_extra,
 )
 from nab_provider.serialization import SimpleSerialization
+from nab_provider.yanked_resolution import YankResolver
+from nab_resolver.errors import ResolutionError
+from nab_resolver.types import RootRequirement
 
 if TYPE_CHECKING:
-    from collections.abc import AbstractSet, Mapping, Sequence
+    from collections.abc import AbstractSet, Callable, Mapping, Sequence
     from datetime import datetime
 
     from nab_project.fetch import FetchCoordinator
+    from nab_provider._vendor.packaging.version import Version
     from nab_provider.target import ResolveTarget
+    from nab_resolver.resolver import Resolver
 
 
 DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS = (
@@ -67,6 +73,25 @@ _SCENARIO_SETTINGS = frozenset(
 )
 
 
+class BenchmarkRequirements(dict[str, VersionRange]):
+    """Keep original requirement text alongside resolver version ranges."""
+
+    def __init__(self) -> None:
+        """Start with no ranges or original declarations."""
+        super().__init__()
+        self.declarations: list[Requirement] = []
+
+
+class YankStats:
+    """Candidate-selection state visits, including retries."""
+
+    __slots__ = ("contexts",)
+
+    def __init__(self) -> None:
+        """Start the candidate-selection visit count at zero."""
+        self.contexts = 0
+
+
 class _BenchmarkResolveInputs(NamedTuple):
     """Inputs shared by one benchmark's provider and resolver.
 
@@ -78,6 +103,7 @@ class _BenchmarkResolveInputs(NamedTuple):
     requirements: dict[str, VersionRange]
     constraints: Mapping[str, VersionRange] | None
     root_extras: set[tuple[str, str]]
+    declarations: tuple[Requirement, ...] = ()
 
 
 class ScenarioRequirementStrings(NamedTuple):
@@ -731,6 +757,8 @@ def build_benchmark_resolver_inputs(
         requirements=requirements,
         constraints=resolver_constraints,
         root_extras=root_extras,
+        declarations=tuple(getattr(requirements, "declarations", ()))
+        + tuple(getattr(constraints, "declarations", ())),
     )
 
 
@@ -765,4 +793,58 @@ def build_benchmark_provider(
         direct_packages=direct_packages_from_requirements(inputs.requirements),
         constraints=inputs.constraints,
         release_refused_wheels=True,
+        defer_yanked=True,
     )
+
+
+def retry_yanked_resolution(
+    provider: Provider,
+    resolver: Resolver[str, Version],
+    factory: Callable[[], Provider],
+    inputs: _BenchmarkResolveInputs,
+    error: ResolutionError | MissingExtraError | YankAdmissionRequiredError,
+    stats: YankStats,
+) -> tuple[dict[str, Version], Provider]:
+    """Run the project's candidate search after ordinary resolution."""
+    if isinstance(error, ResolutionError) and (
+        error.incompatibility is None
+        or str(error).startswith("Conflict resolution made no progress")
+        or not provider.has_withdrawn_alternative()
+    ):
+        raise error
+    if (
+        isinstance(error, MissingExtraError)
+        and not provider.has_withdrawn_alternative()
+    ):
+        raise error
+    roots = [
+        RootRequirement(name, constraint, name)
+        for name, constraint in inputs.requirements.items()
+    ]
+    search = YankResolver(
+        provider,
+        factory,
+        roots,
+        inputs.declarations,
+        inputs.constraints or {},
+        preferences={},
+    )
+    try:
+        return search.resolve()
+    finally:
+        stats.contexts = search.contexts
+        for name in (
+            "rounds",
+            "decisions",
+            "conflicts",
+            "derivations",
+            "backjumps",
+            "restarts",
+            "incompatibilities_learned",
+            "targeted_backtracks",
+        ):
+            setattr(
+                resolver.stats,
+                name,
+                getattr(resolver.stats, name) + getattr(search.stats, name),
+            )

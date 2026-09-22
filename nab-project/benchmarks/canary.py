@@ -20,6 +20,7 @@ import statistics
 import subprocess
 import sys
 import time
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -33,6 +34,8 @@ else:
     import tomli as tomllib  # type: ignore[no-redef]
 
 from benchmark_config import (
+    BenchmarkRequirements,
+    YankStats,
     benchmark_index_settings,
     build_benchmark_config,
     build_benchmark_provider,
@@ -49,6 +52,7 @@ from benchmark_config import (
     parse_vcs_allowed_schemes,
     parse_vcs_policy,
     parse_vcs_require_pin,
+    retry_yanked_resolution,
     validate_scenario_build_policy,
     validate_scenario_settings,
 )
@@ -66,6 +70,7 @@ from nab_provider._vendor.packaging.markers import default_environment
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.provider import (
     BuildPolicy,
     ResolutionStrategy,
@@ -73,6 +78,7 @@ from nab_provider.provider import (
     split_extra,
 )
 from nab_provider.vcs_admission import admit_vcs_url
+from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
@@ -261,7 +267,7 @@ def parse_requirements(
 ) -> dict[str, VersionRange]:
     config = vcs_config or VcsConfig()
     env = _full_marker_environment(marker_environment)
-    reqs: dict[str, VersionRange] = {}
+    reqs = BenchmarkRequirements()
     for req_str in requirement_strings:
         req = Requirement(req_str)
         if req.marker is not None and not req.marker.evaluate(env):
@@ -273,6 +279,7 @@ def parse_requirements(
                 f" yet implemented: {req.name} @ {req.url}"
             )
             raise NotImplementedError(msg)
+        reqs.declarations.append(req)
         name = canonicalize_name(req.name)
         term = (
             req.specifier.to_range()
@@ -333,13 +340,34 @@ def run_one(
             root_version="0",
         )
 
+        yanked_stats = YankStats()
         start = time.monotonic()
         try:
             with host.wall_timeout():
-                raw = resolver.resolve(
-                    inputs.requirements,
-                    constraints=inputs.constraints,
-                )
+                try:
+                    raw = resolver.resolve(
+                        inputs.requirements,
+                        constraints=inputs.constraints,
+                    )
+                except (
+                    ResolutionError,
+                    MissingExtraError,
+                    YankAdmissionRequiredError,
+                ) as exc:
+                    raw, provider = retry_yanked_resolution(
+                        provider,
+                        resolver,
+                        partial(
+                            build_benchmark_provider,
+                            coordinator,
+                            config=config,
+                            target=target,
+                            inputs=inputs,
+                        ),
+                        inputs,
+                        exc,
+                        yanked_stats,
+                    )
             elapsed = time.monotonic() - start
             result = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
             success = True
@@ -377,6 +405,7 @@ def run_one(
             },
             "success": success,
             "error": error,
+            "yanked_contexts": yanked_stats.contexts,
             "decisions": rs.decisions,
             "conflicts": rs.conflicts,
             "backjumps": rs.backjumps,
