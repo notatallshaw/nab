@@ -73,6 +73,7 @@ how-to/reason-about-markers
 
 reference/cli
 reference/selection
+reference/yanking
 reference/formats
 reference/diagnostics
 reference/configuration
@@ -86,6 +87,7 @@ reference/cache
 :caption: Explanation
 
 explanation/universal
+explanation/yanking
 explanation/conflicts
 explanation/packages
 ```

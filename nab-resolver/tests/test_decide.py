@@ -210,6 +210,44 @@ class _ScanOrderProvider(_InertProvider):
         return True
 
 
+class _ContextScanProvider(_ScanOrderProvider):
+    """Observe the optional context callback before the readiness scan."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.contexts: list[dict[Any, int]] = []
+
+    def receive_decision_scan_hint(
+        self,
+        positive_ranges: Mapping[Any, RangeProtocol[int]],
+        decisions: Mapping[Any, int],
+    ) -> None:
+        self.calls.append("context")
+        assert "child" in positive_ranges
+        self.contexts.append(dict(decisions))
+
+
+def test_scan_context_precedes_readiness_and_reflects_backtracking() -> None:
+    provider = _ContextScanProvider()
+    resolver, _ = _resolver_with(provider)
+    resolver.solution.decide("parent", 2)
+    resolver.solution.derive(
+        "child", RefiningRange.full(), positive=True, cause=_dependency_cause()
+    )
+    assert decide.choose_package_to_decide(resolver) == "child"
+    assert provider.calls[:2] == ["context", "begin"]
+    assert provider.contexts == [{"parent": 2}]
+
+    resolver.solution.backtrack(0)
+    resolver.solution.derive(
+        "child", RefiningRange.full(), positive=True, cause=_dependency_cause()
+    )
+    provider.calls.clear()
+    assert decide.choose_package_to_decide(resolver) == "child"
+    assert provider.calls[:2] == ["context", "begin"]
+    assert provider.contexts[-1] == {}
+
+
 def _resolver_with(
     provider: ResolverProvider[Any, int],
 ) -> tuple[Resolver[Any, int], _RecordingObserver]:
