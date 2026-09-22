@@ -21,6 +21,7 @@ from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 
 from ..errors import UnsupportedSdistError
+from ..store import sdist_artifact_key
 from .metadata_resolver import find_sdist
 
 if TYPE_CHECKING:
@@ -65,7 +66,7 @@ def build_remote_sdist(
 
     # The port raises on failure, so a request that returned left the metadata.
     built: WheelMetadata | None = provider.coordinator.index.get_built_metadata(
-        canonical, ver_str
+        canonical, sdist_artifact_key(ver_str, sdist.url)
     )
     assert built is not None
 

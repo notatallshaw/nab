@@ -117,3 +117,24 @@ def test_init_defaults_match_the_fields(record: type[WheelFile | SdistFile]) -> 
     }
 
     assert parameter_defaults == field_defaults
+
+
+def test_withdrawn_wheel_releases_the_original_record_slots() -> None:
+    from nab_provider.records import release_wheel_payload
+    from nab_provider.yanking import mark_yanked
+
+    wheel = WheelFile(
+        filename="pkg-1-py3-none-any.whl",
+        url="https://index.test/pkg.whl",
+        version="1",
+        requires_python=None,
+        has_metadata=True,
+        upload_time=None,
+    )
+    withdrawn = mark_yanked(wheel, reason="withdrawn")
+    assert isinstance(withdrawn, WheelFile)
+    release_wheel_payload(withdrawn)
+    assert withdrawn.url == ""
+    assert not withdrawn.has_metadata
+    assert withdrawn.metadata_url is None
+    assert withdrawn.yanked == "withdrawn"

@@ -31,6 +31,7 @@ __all__ = [
     "UnsupportedSdistError",
     "UnsupportedWheelError",
     "WheelHashMismatchError",
+    "YankAdmissionRequiredError",
 ]
 
 
@@ -171,3 +172,13 @@ class UnsupportedWheelError(Exception):
     directory, or a single one whose name does not canonicalise to the
     distribution named by the wheel's filename.
     """
+
+
+class YankAdmissionRequiredError(Exception):
+    """A candidate needs an admission proof before its metadata can be used."""
+
+    def __init__(self, package: str, version: Version) -> None:
+        """Identify the candidate whose preparation must wait."""
+        super().__init__(f"{package}=={version} requires yanked-file admission")
+        self.package = package
+        self.version = version

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import threading
 from contextlib import contextmanager
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any
 
 from nab_provider.metadata import metadata_header_block, metadata_without_description
@@ -22,6 +23,7 @@ __all__ = [
     "InMemoryIndex",
     "metadata_pending_key",
     "range_pending_key",
+    "sdist_artifact_key",
 ]
 
 
@@ -45,6 +47,11 @@ def range_pending_key(package: str, version: str, wheel_url: str) -> str:
     declare different dependencies.
     """
     return f"range:{package}:{version}:{wheel_url}"
+
+
+def sdist_artifact_key(version: str, url: str) -> str:
+    """Identify an sdist's cache slots without conflating sibling artifacts."""
+    return "artifact-" + sha256(f"{version}\0{url}".encode()).hexdigest()
 
 
 def _project_table_only(data: Mapping[str, Any]) -> dict[str, Any]:
@@ -150,7 +157,7 @@ class InMemoryIndex:
         """Return the cached listing for ``package``, or ``None``."""
         return self._listings.get(package)
 
-    def store_listing(
+    def store_listing(  # noqa: PLR0913 - independent diagnostics accompany one listing
         self,
         package: str,
         data: Sequence[WheelFile | SdistFile],
@@ -160,6 +167,7 @@ class InMemoryIndex:
         unreachable_only: bool = False,
         no_usable_file: bool = False,
         all_yanked: bool = False,
+        has_yanked_files: bool | None = None,
         zip_sdists: frozenset[str] = frozenset(),
     ) -> None:
         """Cache the listing for ``package`` and unblock any waiter.
@@ -173,12 +181,25 @@ class InMemoryIndex:
         as a page that named files nab kept none of; ``all_yanked`` marks it
         as a page whose every file is yanked.
 
+        ``has_yanked_files`` may be False when a parser has already proved
+        the listing has no withdrawals. Otherwise leave it unset to derive
+        the sparse withdrawal index from the records.
+
         ``zip_sdists`` names the releases served as a ``.zip`` sdist, which
         nothing in ``data`` records.  It replaces whatever a prior store left,
         so re-storing a listing without one clears it.
         """
         key = f"listing:{package}"
         materialised = list(data)
+        withdrawn = getattr(data, "withdrawn_versions", None)
+        if has_yanked_files is None:
+            withdrawn = {file.version for file in materialised if file.yanked}
+            has_yanked_files = bool(withdrawn)
+        if has_yanked_files or withdrawn:
+            # Ordinary listings do not need the withdrawal record classes.
+            from .yanking import YankedListing  # noqa: PLC0415
+
+            materialised = YankedListing(materialised, withdrawn_versions=withdrawn)
         with self._publishing(key):
             # The marks land first, so an unlocked reader sees them with the listing.
             if offline_miss:
@@ -444,11 +465,11 @@ class InMemoryIndex:
     def store_sdist_metadata(
         self, package: str, version: str, data: str | None
     ) -> None:
-        """Store sdist-derived PKG-INFO in the version-level metadata slot.
+        """Store PKG-INFO using the archive's cache identity.
 
-        PKG-INFO is core-metadata-equivalent, so it stands for the version
-        rather than one artifact.  Its pending key differs from a wheel's, so
-        an sdist request can run alongside or after a failed wheel request.
+        Indexed sdists pass ``sdist_artifact_key(actual_version, url)`` as
+        ``version``. The separate pending key lets an sdist request run
+        alongside or after a failed wheel request.
         """
         key = f"sdist:{package}:{version}"
         with self._publishing(key):
@@ -468,7 +489,7 @@ class InMemoryIndex:
             self._metadata_errors[(package, version, None)] = error
 
     def metadata_from_sdist(self, package: str, version: str) -> bool:
-        """Return ``True`` when the version-level slot was written from an sdist."""
+        """Return whether the supplied cache key holds sdist-derived metadata."""
         return (package, version) in self._metadata_from_sdist
 
     def store_range_metadata(

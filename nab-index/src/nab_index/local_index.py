@@ -222,26 +222,23 @@ def _scan_pep503_directory(
     zip_sdists: set[str] = set()
 
     for anchor in anchors:
-        # PEP 592: a yanked link never reaches the listing.
         if anchor.yanked:
             yanked += 1
-            continue
 
         link = _resolve_local_link(anchor.href, base_url, bases)
         filename = link.filename
         if filename is None:
             # An unreachable href still names a release, so it does not join
             # the navigation links the all-yanked test discounts.
-            if link.unreachable:
-                unreachable = True
-            else:
-                nameless += 1
+            unreachable |= link.unreachable
+            nameless += not link.unreachable
             continue
 
         if not is_readable_filename(filename):
-            unreadable = True
-            if (version := zip_sdist_version(filename, canonical)) is not None:
-                zip_sdists.add(version)
+            if not anchor.yanked:
+                unreadable = True
+                if (version := zip_sdist_version(filename, canonical)) is not None:
+                    zip_sdists.add(version)
             continue
 
         record = _make_record(
@@ -254,7 +251,7 @@ def _scan_pep503_directory(
             has_metadata=metadata_declaration(anchor.metadata) is not None,
         )
         if record is not None:
-            files.append(record)
+            files = _append_record(files, record, yanked=anchor.yanked)
 
     # A navigation link is not a release, so both counts below read the
     # anchors that name one.
@@ -267,6 +264,22 @@ def _scan_pep503_directory(
         named_files=named > 0,
         zip_sdists=frozenset(zip_sdists),
     )
+
+
+def _append_record(
+    files: list[WheelFile | SdistFile],
+    record: WheelFile | SdistFile,
+    *,
+    yanked: bool | str,
+) -> list[WheelFile | SdistFile]:
+    """Keep the ordinary list representation until a withdrawn record is retained."""
+    if yanked:
+        # Load withdrawal record classes only when the page contains a yank.
+        from nab_provider.yanking import append_yanked_file  # noqa: PLC0415
+
+        return append_yanked_file(files, record, reason=yanked)
+    files.append(record)
+    return files
 
 
 def _page_base_url(index_html: Path, base_href: str | None) -> str:
@@ -804,7 +817,7 @@ class LocalIndexClient:
             self._unreadable_only.add(package)
         if not scan.files and scan.unreachable:
             self._unreachable_only.add(package)
-        if not scan.files and scan.all_yanked:
+        if scan.all_yanked:
             self._all_yanked.add(package)
         if not scan.files and scan.named_files:
             self._no_usable_file.add(package)

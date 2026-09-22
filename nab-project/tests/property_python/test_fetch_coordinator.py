@@ -34,6 +34,7 @@ from hypothesis import strategies as st
 
 from nab_index.client import SdistFile, WheelFile
 from nab_project.fetch import FetchCoordinator
+from nab_provider.store import sdist_artifact_key
 
 pytestmark = pytest.mark.property
 
@@ -308,36 +309,43 @@ def test_every_request_gets_exactly_one_correct_reply(
             base_ver = ver.split("#", 1)[0]
             # Metadata is keyed by the artifact it came from, so read back the
             # slot the request was for: a metadata request asks about its own
-            # sidecar, an sdist request about the version.
+            # sidecar, an sdist request about its archive URL.
             if kind == "metadata":
+                cache_key = ver
                 sidecar = _metadata_url(pkg, ver)
                 mode, _ = client.plan.get(("metadata", pkg, ver), ("ok", 0.0))
                 expected = f"META:{pkg}:{ver}"
             else:
                 sidecar = None
+                cache_key = sdist_artifact_key(
+                    ver, f"https://example.invalid/{pkg}-{ver}.tar.gz"
+                )
                 mode, _ = client.plan.get(("sdist", pkg, base_ver), ("ok", 0.0))
                 expected = f"PKGINFO:{pkg}:{ver}"
 
             if mode == "ok":
                 # A served fetch wrote its own slot, and it holds only its own
                 # text: no cross-talk from another key.
-                assert index.has_metadata(pkg, ver, sidecar), (
+                assert index.has_metadata(pkg, cache_key, sidecar), (
                     f"no metadata slot for {key}"
                 )
-                got = index.get_metadata(pkg, ver, sidecar)
+                got = index.get_metadata(pkg, cache_key, sidecar)
                 assert got == expected, f"cross-talk at {key}: {got!r} != {expected!r}"
             else:
                 # A failed advertised fetch is recorded as an error, not an empty
                 # slot, so the resolve surfaces it instead of falling through.
                 assert isinstance(
-                    index.get_metadata_error(pkg, ver, sidecar), RuntimeError
+                    index.get_metadata_error(pkg, cache_key, sidecar), RuntimeError
                 ), f"no error for {key}"
 
         for key, _ in requested:
             if key[0] == "sdist-archive":
                 _, pkg, ver = key
                 mode, _delay = client.plan.get(key, ("ok", 0.0))
-                got = index.get_sdist_archive(pkg, ver)
+                cache_key = sdist_artifact_key(
+                    ver, f"https://example.invalid/{pkg}-{ver}.tar.gz"
+                )
+                got = index.get_sdist_archive(pkg, cache_key)
                 if mode == "ok":
                     assert got == f"BYTES:{pkg}:{ver}".encode(), (
                         f"archive mismatch for {key}"
@@ -345,7 +353,7 @@ def test_every_request_gets_exactly_one_correct_reply(
                 else:
                     assert got is None, f"archive bytes for a failed {key}"
                     assert isinstance(
-                        index.get_sdist_archive_error(pkg, ver), RuntimeError
+                        index.get_sdist_archive_error(pkg, cache_key), RuntimeError
                     ), f"no archive error for {key}"
 
         for key, _ in requested:

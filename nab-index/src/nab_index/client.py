@@ -537,7 +537,7 @@ def _parse_files(
     relative entry resolves against. ``None`` falls back to the page URL
     built from ``index_url`` and ``package``.
 
-    PEP 592 ``yanked`` files are dropped unconditionally.
+    Yanked files retain their withdrawal state and optional reason.
 
     A single malformed *entry* (non-dict, missing string ``filename`` /
     ``url``, or a ``url`` that cannot be used) is skipped so the usable
@@ -569,6 +569,7 @@ def _parse_files(
             continue
         # PEP 592: ``true`` or a non-empty reason string means yanked.
         if file_info.get("yanked"):
+            files = _with_yanked_file(files, file_info, index_url, package, page_url)
             continue
         filename = file_info.get("filename")
         raw_url = file_info.get("url")
@@ -578,6 +579,31 @@ def _parse_files(
         if parsed is not None:
             files.append(parsed)
 
+    return files
+
+
+def _with_yanked_file(
+    files: list[WheelFile | SdistFile],
+    file_info: _FileEntry,
+    index_url: str,
+    package: str,
+    page_url: str | None,
+) -> list[WheelFile | SdistFile]:
+    """Retain a withdrawn file without adding storage to ordinary records."""
+    # Load withdrawal record classes only when the page contains a yank.
+    from nab_provider.yanking import append_yanked_file  # noqa: PLC0415
+
+    retained = _parse_files(
+        {"files": [dict(file_info, yanked=False)]},
+        index_url,
+        package,
+        page_url=page_url,
+    )
+    reason = file_info["yanked"]
+    for file in retained:
+        files = append_yanked_file(
+            files, file, reason=reason if isinstance(reason, str) else True
+        )
     return files
 
 

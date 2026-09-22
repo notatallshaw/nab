@@ -26,7 +26,7 @@ from .errors import IndexAccessError
 from .overrides import PackageOverride
 from .pep508 import parse_requirement
 from .records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
-from .store import InMemoryIndex
+from .store import InMemoryIndex, sdist_artifact_key
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
@@ -153,10 +153,10 @@ def _make_sdist_server(
     sdist_pkg_info: str | None,
     sdist_pkg_info_by_version: Mapping[str, str | None] | None,
     sdist_pyproject: Mapping[str, Any] | None,
-) -> Callable[[str, str], None]:
+) -> Callable[[str, str, str], None]:
     """Return the callable that writes an sdist fetch's result into ``index``."""
 
-    def _serve(pkg: str, ver: str) -> None:
+    def _serve(pkg: str, ver: str, source_key: str) -> None:
         pkg_info = (
             sdist_pkg_info
             if sdist_pkg_info_by_version is None
@@ -164,9 +164,9 @@ def _make_sdist_server(
         )
 
         # Always store: ``None`` records an sdist with no readable PKG-INFO.
-        index.store_sdist_metadata(pkg, ver, pkg_info)
+        index.store_sdist_metadata(pkg, source_key, pkg_info)
         if sdist_pyproject is not None:
-            index.store_sdist_pyproject(pkg, ver, sdist_pyproject)
+            index.store_sdist_pyproject(pkg, source_key, sdist_pyproject)
 
     return _serve
 
@@ -225,7 +225,7 @@ class FakeFetchPort:
         index: InMemoryIndex,
         *,
         serve_metadata: Callable[[str, str, str], str | None],
-        serve_sdist: Callable[[str, str], None],
+        serve_sdist: Callable[[str, str, str], None],
         serve_range: Callable[[str, str, str], None],
         serve_archive: Callable[[str, str], None],
         build_config: object = None,
@@ -451,8 +451,8 @@ class FakeFetchPort:
         sdist_hashes: tuple[tuple[str, str], ...],
     ) -> threading.Event:
         """Serve one sdist PKG-INFO request."""
-        del url, sdist_hashes
-        self._serve_sdist(package, version)
+        del sdist_hashes
+        self._serve_sdist(package, version, sdist_artifact_key(version, url))
         return _done_event()
 
     def _archive(
@@ -463,8 +463,8 @@ class FakeFetchPort:
         sdist_hashes: tuple[tuple[str, str], ...],
     ) -> threading.Event:
         """Serve one sdist-archive request."""
-        del url, sdist_hashes
-        self._serve_archive(package, version)
+        del sdist_hashes
+        self._serve_archive(package, sdist_artifact_key(version, url))
         return _done_event()
 
     def _direct_archive(self, package: str, version: str, url: str) -> threading.Event:
@@ -489,7 +489,9 @@ class FakeFetchPort:
         if self._build_sdist is None:
             raise NotImplementedError(_UNSERVED.format(name="request_built_metadata"))
         self.index.store_built_metadata(
-            pkg, ver, self._build_sdist(self, pkg, ver, url, hashes, self.build_config)
+            pkg,
+            sdist_artifact_key(ver, url),
+            self._build_sdist(self, pkg, ver, url, hashes, self.build_config),
         )
         return _done_event()
 

@@ -245,7 +245,11 @@ def prefetch_root_batch(
             continue
         if _has_complete_override(provider, normalized, version):
             continue
-        if isinstance(dist, WheelFile) and (url := dist.metadata_url) is not None:
+        if (
+            isinstance(dist, WheelFile)
+            and not dist.yanked
+            and (url := dist.metadata_url) is not None
+        ):
             items.append((normalized, dist.version, url, dist.metadata_hash))
     if items:
         provider.coordinator.request_metadata_batch(items)
@@ -285,7 +289,11 @@ def prefetch_transitive_best(
     dist = pick_dist_for_metadata(
         versions, version, provider.wheel_tags, provider.target
     )
-    if isinstance(dist, WheelFile) and (url := dist.metadata_url) is not None:
+    if (
+        isinstance(dist, WheelFile)
+        and not dist.yanked
+        and (url := dist.metadata_url) is not None
+    ):
         provider.coordinator.request_metadata(
             normalized, dist.version, url, dist.metadata_hash
         )
@@ -1095,7 +1103,11 @@ def prefetch_walk_ahead(
         if (normalized, version) in provider.deps_cache:
             continue
         dist = picked[version]
-        if not isinstance(dist, WheelFile) or (url := dist.metadata_url) is None:
+        if (
+            not isinstance(dist, WheelFile)
+            or dist.yanked
+            or (url := dist.metadata_url) is None
+        ):
             continue
         if _has_complete_override(provider, normalized, version):
             continue
@@ -1151,7 +1163,11 @@ def prefetch_batch(
         if _has_complete_override(provider, package, v):
             continue
         wheel = wheel_by_version_map[v]
-        if isinstance(wheel, WheelFile) and (url := wheel.metadata_url) is not None:
+        if (
+            isinstance(wheel, WheelFile)
+            and not wheel.yanked
+            and (url := wheel.metadata_url) is not None
+        ):
             items.append((package, wheel.version, url, wheel.metadata_hash))
             version_map.append((v, wheel.version, url))
 
@@ -1216,7 +1232,7 @@ def parse_prefetched_metadata(
         # as dependency-free.
         return
     if from_sdist:
-        # sdist PKG-INFO: caching it here would skip the PEP 643 check.
+        # A host may supply version-level PKG-INFO after a sidecar miss.
         return
 
     try:
