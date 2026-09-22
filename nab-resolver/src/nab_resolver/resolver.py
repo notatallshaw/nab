@@ -143,6 +143,11 @@ class ResolverProvider(Protocol[PackageType, VersionType]):
 
     Version values must be hashable, with stable hashes consistent with equality.
 
+    Providers whose readiness depends on selected candidates may implement
+    ``receive_decision_scan_hint(positive_ranges, decisions)``. This optional
+    callback receives current snapshots before ``begin_decision_scan`` and the
+    readiness checks, including after backtracking.
+
     Modeled after pubgrub-rs v0.3+ ``DependencyProvider``:
     https://docs.rs/pubgrub/latest/pubgrub/trait.DependencyProvider.html
     """
