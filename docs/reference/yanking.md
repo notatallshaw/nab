@@ -1,34 +1,24 @@
 # Yanked releases
 
-A package publisher can mark distribution files as *yanked*: still available to download, but withdrawn from normal use. nab skips yanked files unless an exact version requirement allows them.
+Yanked files have been withdrawn by their publisher. nab normally skips them, but an exact pin can allow them.
 
-## Choosing a version
+Suppose `lib==1.2` is yanked and `lib==1.1` is not:
 
-Suppose `example-lib` has versions `1.1` and `1.2`, and the publisher has yanked `1.2`.
-
-| Requirement | What nab does |
+| Requirement | Result |
 | --- | --- |
-| `example-lib>=1` | Skips `1.2` and can choose `1.1`. |
-| `example-lib==1.2` | Can use the yanked `1.2`. |
-| `example-lib==1.*` | Skips `1.2`; a wildcard does not allow yanked files. |
-| `example-lib>=1.2,<=1.2` | Cannot use the yanked `1.2`; a range does not count as an exact pin. |
+| `lib>=1` | Uses `1.1`. |
+| `lib==1.2` or `lib===1.2` | Can use the yanked `1.2`. |
+| `lib==1.*` | Skips `1.2`; a wildcard is not an exact pin. |
+| `lib>=1.2,<=1.2` | Fails; a range is not an exact pin. |
 
-An exact `===` requirement also allows matching yanked files. Other requirements still have to be satisfied, including Python-version and platform compatibility.
+The pin can come from your requirements, a selected dependency, or a constraint on a required package. Pins for inactive extras or other environments do not apply.
 
-If an exact pin matches both yanked and non-yanked files, nab first looks for a live alternative. It can change an independently requested package's version to make that alternative work. Explicit version requirements still apply.
+## Dependencies and alternatives
 
-A selected parent that pins its yanked dependency keeps its version preference. For example, nab can keep `app==2` requiring yanked `lib==2` even when older `app==1` would use live `lib==1`. During a live-alternative check, other selected live files stay live; nab does not simply exchange which package is yanked.
+If `app==2` requires yanked `lib==2`, nab can keep that combination even when older `app==1` would use non-yanked `lib==1`. You do not need to repeat the dependency's pin yourself.
 
-Missing offline metadata cannot prove that a live alternative fails. Nab can use a fully known alternative, or report that resolution is incomplete.
+For independently requested packages, nab prefers a working non-yanked file. For example, you request `lib==1` and `tools`. If the non-yanked `lib` file needs `tools==1`, nab prefers that over `tools==2` with a yanked `lib` file. Explicit pins still apply.
 
-## When a dependency needs a yanked release
+If matching non-yanked files cannot satisfy the dependencies, nab may use an allowed yank. Missing offline metadata does not establish that failure.
 
-Suppose your project depends on `example-app`, which requires `example-lib==1.2`. That dependency's exact pin allows nab to use the yanked `example-lib` release. You do not need to repeat the pin in your project.
-
-An exact pin in a constraint works too, provided the package is already required. Requirements for an unselected extra or a different Python environment do not allow yanked releases for your current environment.
-
-## Understanding warnings
-
-When a resolution uses a yanked file, nab reports the admitting input pin or dependency and the publisher's reason when available. Check that reason before deciding whether to keep the pin or choose another version.
-
-Yanking applies to individual files. A release can have a yanked source archive and a non-yanked wheel, so the result can differ between platforms or when you request a source-only installation.
+A warning shows which requirement allowed the yank and the publisher's reason, when provided. Yanking applies to individual files, so results can differ by platform or between wheels and source archives.
