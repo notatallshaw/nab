@@ -1,8 +1,8 @@
 """Run resolution scenarios against nab-project and record statistics.
 
 Calls nab-project's Python API directly (no subprocess). Each scenario
-is resolved via Provider + Resolver, and the resulting ResolverStats
-plus provider I/O metrics are saved as JSON.
+uses Provider + Resolver and the production yank-admission search when needed.
+Solver counters and provider I/O metrics are saved as JSON.
 
 Usage:
     python nab-project/benchmarks/scenarios.py [--commit LABEL] [--force]
@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import time
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -36,6 +37,8 @@ else:
 from benchmark_config import (
     DEFAULT_INDEXES,
     DEFAULT_SCENARIO_TRUST_UNVERIFIED_SDIST_DEPS,
+    BenchmarkRequirements,
+    YankStats,
     benchmark_index_settings,
     build_benchmark_config,
     build_benchmark_provider,
@@ -47,6 +50,7 @@ from benchmark_config import (
     parse_scenario_requirement_strings,
     parse_scenario_vcs_config,
     parse_trust_unverified_sdist_deps,
+    retry_yanked_resolution,
     validate_scenario_build_policy,
     validate_scenario_settings,
 )
@@ -71,6 +75,7 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name, is_normalized_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.provider import (
     BuildPolicy,
     DistPolicy,
@@ -80,6 +85,7 @@ from nab_provider.provider import (
     split_extra,
 )
 from nab_provider.vcs_admission import admit_vcs_url
+from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import DEFAULT_MAX_ITERATIONS, Resolver
 
 BENCHMARKS_DIR = Path(__file__).parent
@@ -818,7 +824,7 @@ def parse_requirements(
     """
     config = vcs_config or VcsConfig()
     env = _full_marker_environment(marker_environment)
-    reqs: dict[str, VersionRange] = {}
+    reqs = BenchmarkRequirements()
     for req_str in requirement_strings:
         req = Requirement(req_str)
         if req.marker is not None and not req.marker.evaluate(env):
@@ -830,6 +836,7 @@ def parse_requirements(
                 f" implemented: {req.name} @ {req.url}"
             )
             raise NotImplementedError(msg)
+        reqs.declarations.append(req)
         name = canonicalize_name(req.name)
         term = (
             req.specifier.to_range()
@@ -1359,13 +1366,34 @@ def resolve_scenario(
         )
 
         pins: dict[str, str] = {}
+        yanked_stats = YankStats()
         start = time.monotonic()
         try:
             with host.wall_timeout():
-                raw = resolver.resolve(
-                    inputs.requirements,
-                    constraints=inputs.constraints,
-                )
+                try:
+                    raw = resolver.resolve(
+                        inputs.requirements,
+                        constraints=inputs.constraints,
+                    )
+                except (
+                    ResolutionError,
+                    MissingExtraError,
+                    YankAdmissionRequiredError,
+                ) as exc:
+                    raw, provider = retry_yanked_resolution(
+                        provider,
+                        resolver,
+                        partial(
+                            build_benchmark_provider,
+                            coordinator,
+                            config=config,
+                            target=target,
+                            inputs=inputs,
+                        ),
+                        inputs,
+                        exc,
+                        yanked_stats,
+                    )
             elapsed = time.monotonic() - start
             pins = dict(
                 sorted(
@@ -1392,6 +1420,7 @@ def resolve_scenario(
                 "pins": pins,
             },
             "stats": {
+                "yanked_contexts": yanked_stats.contexts,
                 "rounds": rstats.rounds,
                 "decisions": rstats.decisions,
                 "conflicts": rstats.conflicts,

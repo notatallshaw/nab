@@ -539,6 +539,7 @@ def test_canary_configures_lowest_direct_roots(
         key: value for key, value in result.items() if key not in _NON_STAT_KEYS
     }
     assert counters == {
+        "yanked_contexts": 0,
         "decisions": 202,
         "conflicts": 203,
         "backjumps": 205,
