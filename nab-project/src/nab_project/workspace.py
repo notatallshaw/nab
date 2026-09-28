@@ -256,7 +256,6 @@ def read_workspace_members(root_file: Path) -> tuple[LocalSource, ...]:
         )
         raise WorkspaceDiscoveryError(msg)
 
-    members: list[str] = []
     for entry in raw_members:
         if not isinstance(entry, str):
             msg = (
@@ -264,10 +263,9 @@ def read_workspace_members(root_file: Path) -> tuple[LocalSource, ...]:
                 f" strings, got {type(entry).__name__}: {entry!r}"
             )
             raise WorkspaceDiscoveryError(msg)
-        members.append(entry)
 
     return workspace_local_sources(
-        members,
+        raw_members,
         root_dir=root_file.parent,
         declared_in=str(root_file),
     )
