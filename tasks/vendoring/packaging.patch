@@ -1162,7 +1162,7 @@ index 4fbf48e..d52f359 100644
      def _from_specifier_set(cls, specifier_set: SpecifierSet) -> VersionRange:
          """Build the range accepted by ``specifier_set``.
 diff --git a/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py b/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py
-index dd46b56..6f02085 100644
+index dd46b56..4acd755 100644
 --- a/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py
 +++ b/nab-provider/src/nab_provider/_vendor/packaging/specifiers.py
 @@ -329,9 +329,8 @@ class Specifier(BaseSpecifier):
@@ -1191,3 +1191,31 @@ index dd46b56..6f02085 100644
          if spec.startswith("==="):
              operator, version = spec[:3], spec[3:].strip()
          elif spec.startswith(("~=", "==", "!=", "<=", ">=")):
+@@ -806,14 +806,21 @@ class SpecifierSet(BaseSpecifier):
+             raised.
+         """
+ 
+-        if isinstance(specifiers, str):
+-            # Split on `,` to break each individual specifier into its own item, and
+-            # strip each item to remove leading/trailing whitespace.
+-            split_specifiers = [s.strip() for s in specifiers.split(",") if s.strip()]
+-
+-            self._specs: tuple[Specifier, ...] = tuple(map(Specifier, split_specifiers))
++        self._specs: tuple[Specifier, ...]
++        if type(specifiers) is str:
++            if "," not in specifiers:
++                stripped = specifiers.strip()
++                self._specs = (Specifier(stripped),) if stripped else ()
++            else:
++                stripped_parts = filter(None, map(str.strip, specifiers.split(",")))
++                self._specs = tuple(map(Specifier, stripped_parts))
+             # Fast substring check; avoids iterating parsed specs.
+             self._has_arbitrary = "===" in specifiers
++        elif isinstance(specifiers, str):
++            # String subclasses can override splitting and stripping.
++            split_specifiers = [s.strip() for s in specifiers.split(",") if s.strip()]
++            self._specs = tuple(map(Specifier, split_specifiers))
++            self._has_arbitrary = "===" in specifiers
+         else:
+             self._specs = tuple(specifiers)
+             # Substring check works for both Specifier objects and plain

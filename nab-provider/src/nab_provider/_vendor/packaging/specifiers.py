@@ -806,13 +806,20 @@ class SpecifierSet(BaseSpecifier):
             raised.
         """
 
-        if isinstance(specifiers, str):
-            # Split on `,` to break each individual specifier into its own item, and
-            # strip each item to remove leading/trailing whitespace.
-            split_specifiers = [s.strip() for s in specifiers.split(",") if s.strip()]
-
-            self._specs: tuple[Specifier, ...] = tuple(map(Specifier, split_specifiers))
+        self._specs: tuple[Specifier, ...]
+        if type(specifiers) is str:
+            if "," not in specifiers:
+                stripped = specifiers.strip()
+                self._specs = (Specifier(stripped),) if stripped else ()
+            else:
+                stripped_parts = filter(None, map(str.strip, specifiers.split(",")))
+                self._specs = tuple(map(Specifier, stripped_parts))
             # Fast substring check; avoids iterating parsed specs.
+            self._has_arbitrary = "===" in specifiers
+        elif isinstance(specifiers, str):
+            # String subclasses can override splitting and stripping.
+            split_specifiers = [s.strip() for s in specifiers.split(",") if s.strip()]
+            self._specs = tuple(map(Specifier, split_specifiers))
             self._has_arbitrary = "===" in specifiers
         else:
             self._specs = tuple(specifiers)
