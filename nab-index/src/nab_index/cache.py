@@ -46,6 +46,7 @@ import logging
 import os
 import shutil
 import stat
+import threading
 import time
 from contextlib import suppress
 from dataclasses import dataclass, replace
@@ -63,6 +64,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
 logger = logging.getLogger(__name__)
+_STORE_FAILURE_LOCK = threading.Lock()
 
 __all__ = [
     "ARCHIVE_BUCKET",
@@ -253,11 +255,11 @@ class OnDiskCache:
         try:
             _atomic_write(path, data)
         except OSError as exc:
-            if not self._store_failed:
+            with _STORE_FAILURE_LOCK:
+                if self._store_failed:
+                    return False
                 self._store_failed = True
-                logger.warning(
-                    "cannot store cache entries under %s: %s", self._root, exc
-                )
+            logger.warning("cannot store cache entries under %s: %s", self._root, exc)
             return False
         return True
 
