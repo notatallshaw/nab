@@ -153,6 +153,12 @@ timeout, and iteration identity machine-checkable. Retained CI or
 release artifacts still need Python and platform, index context, cache
 provenance, and toolchain metadata to support a performance claim.
 
+## Yanked candidates
+
+Standard and canary runs retain the original requirement text to recognize exact pins. When yanked candidates need consideration, they invoke `YankProxyProvider`, matching project resolution. A singleton version range alone does not count as an exact pin.
+
+The existing PubGrub counters include every fallback resolve, non-yanked alternative check and known-dependency check. `yanked_proxy_rounds` reports their combined rounds; it is a subset of the total rounds and is zero without fallback.
+
 ## Scenario shape
 
 Each single-environment scenario is a top-level TOML table keyed by

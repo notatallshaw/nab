@@ -73,6 +73,7 @@ how-to/reason-about-markers
 
 reference/cli
 reference/selection
+reference/yanking
 reference/formats
 reference/diagnostics
 reference/configuration

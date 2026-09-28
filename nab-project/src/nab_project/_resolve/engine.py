@@ -15,11 +15,13 @@ import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.errors import MissingExtraError, YankAdmissionRequiredError
 from nab_provider.provider import ListingFilterCache, Provider, join_extra, split_extra
 from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
 from nab_provider.target import micro_boundary_points, slices_from_points
@@ -28,10 +30,10 @@ from nab_resolver.resolver import Resolver, ResolverObserver
 from nab_resolver.types import IncompatibilityCause
 
 from .._compat import override
-from ..lockfile import ArtifactMemo, build_target_lock
+from ..lockfile import ArtifactMemo, IndexPin, build_target_lock
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     from pathlib import Path
 
     from nab_provider._vendor.packaging.markers import Marker
@@ -41,7 +43,8 @@ if TYPE_CHECKING:
     from nab_provider.provider import ResolutionStrategy
     from nab_provider.resolver_inputs import MarkerHolds
     from nab_provider.target import ResolveTarget
-    from nab_resolver.types import Incompatibility, RangeProtocol
+    from nab_resolver.resolver import ResolverStats
+    from nab_resolver.types import Incompatibility, RangeProtocol, RootRequirement
 
     from ..fetch import FetchCoordinator
     from ..inputs import ResolveInputs
@@ -549,6 +552,49 @@ def _run_pass(
     return results
 
 
+def _make_target_provider(
+    settings: _EngineSettings,
+    target: ResolveTarget,
+    resolver_requirements: dict[str, VersionRange],
+    resolver_constraints: Mapping[str, VersionRange],
+    root_extras: set[tuple[str, str]],
+    preferences: Mapping[str, Version],
+) -> Provider:
+    """Construct the metadata provider from one target's active inputs and policies."""
+    inputs = settings.inputs
+    source_root = settings.source_root
+    return Provider(
+        settings.coordinator,
+        target=target,
+        root_requirements=resolver_requirements,
+        constraints=resolver_constraints,
+        root_extras=root_extras,
+        uploaded_prior_to=inputs.uploaded_prior_to,
+        dist_policy=inputs.dist_policy,
+        build_policy=inputs.build_policy,
+        package_overrides=inputs.package_overrides,
+        index_overrides=inputs.index_overrides,
+        trust_unverified_sdist_deps=inputs.trust_unverified_sdist_deps,
+        vcs_config=inputs.vcs,
+        local_sources=list(inputs.local_sources) or None,
+        vcs_sources=list(inputs.vcs_sources) or None,
+        vcs_cache_dir=source_root / VCS_BUCKET if source_root is not None else None,
+        archive_sources=list(inputs.archive_sources) or None,
+        archive_cache_dir=(
+            source_root / ARCHIVE_BUCKET if source_root is not None else None
+        ),
+        decision_order=inputs.decision_order,
+        resolution_strategy=settings.resolution,
+        direct_packages=frozenset(
+            name for name in resolver_requirements if split_extra(name)[1] is None
+        ),
+        preferences=dict(preferences),
+        listing_filter_cache=settings.listing_filter_cache,
+        release_refused_wheels=settings.release_refused_wheels,
+        defer_yanked=True,
+    )
+
+
 def _resolve_one_target(
     target: ResolveTarget,
     requirements: Sequence[Requirement],
@@ -568,15 +614,15 @@ def _resolve_one_target(
             marker_holds=settings.marker_holds,
             warned=settings.warned_dropped_markers,
         )
-        constraint_ranges = build_resolver_inputs(
+        constraint_inputs = build_resolver_inputs(
             constraints,
             inputs.vcs,
             environment=environment,
             marker_holds=settings.marker_holds,
             kind="constraint",
             warned=settings.warned_dropped_markers,
-        ).ranges
-        resolver_constraints = ProxyConstraints(constraint_ranges)
+        )
+        resolver_constraints = ProxyConstraints(constraint_inputs.ranges)
     except ResolutionError as exc:
         return TargetResult(target=target, success=False, error=exc)
 
@@ -609,6 +655,7 @@ def _resolve_one_target(
         preferences=dict(preferences),
         listing_filter_cache=settings.listing_filter_cache,
         release_refused_wheels=settings.release_refused_wheels,
+        defer_yanked=True,
     )
 
     observer = _ResolveObserver(settings.progress)
@@ -621,9 +668,42 @@ def _resolve_one_target(
     )
 
     _logger.debug("resolving %s", target.label)
+    artifacts = settings.artifacts
     start = time.monotonic()
     try:
-        raw = resolver.resolve(root_requirements, constraints=resolver_constraints)
+        try:
+            raw = resolver.resolve(root_requirements, constraints=resolver_constraints)
+        except (YankAdmissionRequiredError, ResolutionError, MissingExtraError) as exc:
+            if isinstance(exc, ResolutionError) and (
+                exc.incompatibility is None
+                or str(exc).startswith("Conflict resolution made no progress")
+                or not provider.has_withdrawn_alternative()
+            ):
+                raise
+            if (
+                isinstance(exc, MissingExtraError)
+                and not provider.has_withdrawn_alternative()
+            ):
+                raise
+            raw, provider = _resolve_yanked_target(
+                provider,
+                partial(
+                    _make_target_provider,
+                    settings,
+                    target,
+                    resolver_requirements,
+                    resolver_constraints,
+                    root_extras,
+                    preferences,
+                ),
+                root_requirements,
+                constraint_inputs.roots,
+                (*requirements, *constraints),
+                resolver_constraints,
+                preferences,
+                resolver.stats,
+            )
+            artifacts = ArtifactMemo()
         pins = {k: v for k, v in raw.items() if split_extra(k)[1] is None}
         _raise_for_source_python(provider, target, pins)
     except ResolutionError as exc:
@@ -636,6 +716,21 @@ def _resolve_one_target(
             **_target_stats(resolver, provider),
         )
     elapsed = time.monotonic() - start
+    base_roots, selector_roots = _install_context_roots(
+        contexts, environment, settings.marker_holds
+    )
+    target_lock = build_target_lock(
+        provider,
+        target,
+        pins,
+        indexes=settings.coordinator.indexes,
+        resolved_keys=raw,
+        base_roots=base_roots,
+        selector_roots=selector_roots,
+        artifacts=artifacts,
+    )
+    if provider.yank_admissions:
+        _warn_selected_yanks(provider, target_lock)
     _logger.info(
         "resolved %d packages for %s in %.2fs (%d distributions seen, %d fetched)",
         len(pins),
@@ -644,27 +739,72 @@ def _resolve_one_target(
         provider.stats.distributions_seen,
         provider.stats.metadata_fetched,
     )
-    base_roots, selector_roots = _install_context_roots(
-        contexts, environment, settings.marker_holds
-    )
     return TargetResult(
         target=target,
         success=True,
         pins=pins,
         consulted=_consulted_markers(provider, requirements, constraints),
-        lock=build_target_lock(
-            provider,
-            target,
-            pins,
-            indexes=settings.coordinator.indexes,
-            resolved_keys=raw,
-            base_roots=base_roots,
-            selector_roots=selector_roots,
-            artifacts=settings.artifacts,
-        ),
+        lock=target_lock,
         wall_time=elapsed,
         **_target_stats(resolver, provider),
     )
+
+
+def _resolve_yanked_target(
+    provider: Provider,
+    factory: Callable[[], Provider],
+    roots: Sequence[RootRequirement[str, Version]],
+    constraint_roots: Sequence[RootRequirement[str, Version]],
+    requirements: Sequence[Requirement],
+    constraint_ranges: Mapping[str, VersionRange],
+    preferences: Mapping[str, Version],
+    stats: ResolverStats[str],
+) -> tuple[dict[str, Version], Provider]:
+    """Preserve the caller's active declarations when restarting with admission."""
+    # Ordinary resolves do not load the admission proxy implementation.
+    from nab_provider.yanked_resolution import YankProxyProvider  # noqa: PLC0415
+
+    active = {root.origin for root in (*roots, *constraint_roots)}
+    declarations = [req for req in requirements if str(req) in active]
+    search = YankProxyProvider(
+        provider,
+        factory,
+        roots,
+        declarations,
+        constraint_ranges,
+        preferences=preferences,
+    )
+    try:
+        return search.resolve()
+    finally:
+        stats.rounds += search.stats.rounds
+        stats.decisions += search.stats.decisions
+        stats.conflicts += search.stats.conflicts
+        stats.backjumps += search.stats.backjumps
+
+
+def _warn_selected_yanks(provider: Provider, lock: TargetLock) -> None:
+    """Report withdrawal reasons and grounded declarations for selected artifacts."""
+    assert provider.yank_admission_sources is not None
+    for package, version in sorted(provider.yank_admissions):
+        pin = lock.pins[package]
+        assert isinstance(pin, IndexPin)
+        urls = {wheel.url.split("#", 1)[0] for wheel in pin.wheels}
+        if pin.sdist is not None:
+            urls.add(pin.sdist.url.split("#", 1)[0])
+        reasons = sorted(
+            {
+                file.yanked
+                for file in provider.dist_files_for(package, version)
+                if isinstance(file.yanked, str) and file.url.split("#", 1)[0] in urls
+            }
+        )
+        suffix = f": {'; '.join(reasons)}" if reasons else ""
+        sources = provider.yank_admission_sources[package]
+        admission = f" (admitted by {'; '.join(sources)})"
+        _logger.warning(
+            "Selected yanked files for %s==%s%s%s", package, version, suffix, admission
+        )
 
 
 def _install_context_roots(
