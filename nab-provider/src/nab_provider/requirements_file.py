@@ -301,6 +301,9 @@ def expand_group_includes(
     list is skipped, and the loader reports it when that group is
     selected.
     """
+    if not selected:
+        return []
+
     canonical_groups: dict[str, list[str | Mapping[str, str]]] = {}
     for name, entries in groups.items():
         # str is a Sequence, so a bare string would expand into characters.
