@@ -93,7 +93,20 @@ def _file_entry(anchor: Anchor, base_url: str) -> dict[str, object] | None:
     """
     try:
         url, _, fragment = urljoin(base_url, anchor.href).partition("#")
-        filename = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
+        same_http_scheme = (
+            base_url.startswith("https://") and url.startswith("https://")
+        ) or (base_url.startswith("http://") and url.startswith("http://"))
+        # An empty href or a different scheme can bypass urljoin's normalization.
+        if (
+            anchor.href
+            and same_http_scheme
+            and url.find("/", url.find("://") + 3) >= 0
+            and "?" not in url
+            and "%" not in url
+        ):
+            filename = url.rsplit("/", 1)[-1]
+        else:
+            filename = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
     except ValueError:
         # Deferred because nab_index.client imports this module.
         from .client import is_readable_filename  # noqa: PLC0415
