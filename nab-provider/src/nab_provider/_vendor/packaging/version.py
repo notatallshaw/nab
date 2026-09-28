@@ -420,17 +420,30 @@ class Version(_BaseVersion):
             raise InvalidVersion(f"Invalid version: {version!r}") from None
 
         if is_simple:
-            try:
-                self._release = tuple(map(int, version.split(".")))
-            except AttributeError:
-                raise InvalidVersion(f"Invalid version: {version!r}") from None
-            except ValueError:
-                # Empty parts (from "1..2", ".1", etc.) are invalid versions.
-                # Any other ValueError (e.g. int str-digits limit) should
-                # propagate to the caller.
-                if "" in version.split("."):
+            if (
+                type(version) is str
+                and len(version) == 5
+                and version[1] == "."
+                and version[3] == "."
+                and version[::2].isdigit()
+            ):
+                self._release = (
+                    ord(version[0]) - 48,
+                    ord(version[2]) - 48,
+                    ord(version[4]) - 48,
+                )
+            else:
+                try:
+                    self._release = tuple(map(int, version.split(".")))
+                except AttributeError:
                     raise InvalidVersion(f"Invalid version: {version!r}") from None
-                raise
+                except ValueError:
+                    # Empty parts (from "1..2", ".1", etc.) are invalid versions.
+                    # Any other ValueError (e.g. int str-digits limit) should
+                    # propagate to the caller.
+                    if "" in version.split("."):
+                        raise InvalidVersion(f"Invalid version: {version!r}") from None
+                    raise
 
             self._epoch = 0
             self._pre = None
