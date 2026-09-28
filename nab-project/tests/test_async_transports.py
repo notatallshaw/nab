@@ -394,7 +394,7 @@ def slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
 @pytest.fixture
 def thread_slept(monkeypatch: pytest.MonkeyPatch) -> list[float]:
-    """Record the urllib3 transport's truncation-retry sleeps instead of taking them."""
+    """Record the urllib3 transport's retry sleeps instead of taking them."""
     delays: list[float] = []
     monkeypatch.setattr(
         "nab_index.urllib3_async_transport.time.sleep",
@@ -430,6 +430,13 @@ def _assert_jittered_backoff_schedule(delays: list[float]) -> None:
     assert delays[0] == 0.0
     assert 0.5 <= delays[1] < 0.5 + GET_RETRY.backoff_jitter
     assert 1.0 <= delays[2] < 1.0 + GET_RETRY.backoff_jitter
+
+
+def _assert_urllib3_backoff_schedule(delays: list[float]) -> None:
+    """Check the positive backoffs; urllib3 does not sleep for its immediate retry."""
+    assert len(delays) == 2
+    assert 0.5 <= delays[0] < 0.5 + GET_RETRY.backoff_jitter
+    assert 1.0 <= delays[1] < 1.0 + GET_RETRY.backoff_jitter
 
 
 class TestRetryPolicy:
@@ -1457,7 +1464,9 @@ class TestUrllib3AsyncTransport:
             assert resp.status_code == 200
             assert len(index.seen) == MAX_RETRIES + 3
 
-    def test_redirect_leaves_the_transient_retry_budget_intact(self) -> None:
+    def test_redirect_leaves_the_transient_retry_budget_intact(
+        self, thread_slept: list[float]
+    ) -> None:
         """The redirect target still gets the full transient retry budget."""
         with _stub_index([302, *[503] * MAX_RETRIES]) as index:
             url = f"http://127.0.0.1:{index.server_port}/pkg/"
@@ -1473,6 +1482,7 @@ class TestUrllib3AsyncTransport:
             resp.raise_for_status()
             assert resp.status_code == 200
             assert index.seen == ["/pkg/", *["/redirected/"] * (MAX_RETRIES + 1)]
+            _assert_urllib3_backoff_schedule(thread_slept)
 
     def test_get_follows_the_full_redirect_budget(self) -> None:
         with _stub_index([302] * MAX_REDIRECTS) as index:
@@ -1505,7 +1515,9 @@ class TestUrllib3AsyncTransport:
                 asyncio.run(go())
             assert len(index.seen) == MAX_REDIRECTS + 1
 
-    def test_get_gives_up_on_a_persistent_transient_status(self) -> None:
+    def test_get_gives_up_on_a_persistent_transient_status(
+        self, thread_slept: list[float]
+    ) -> None:
         """The budget is bounded, and the caller still sees the 503."""
         with _stub_index([503] * (MAX_RETRIES + 1)) as index:
             url = f"http://127.0.0.1:{index.server_port}/pkg/"
@@ -1521,8 +1533,11 @@ class TestUrllib3AsyncTransport:
             assert len(index.seen) == MAX_RETRIES + 1
             with pytest.raises(HttpError, match="HTTP 503"):
                 resp.raise_for_status()
+            _assert_urllib3_backoff_schedule(thread_slept)
 
-    def test_get_backs_off_when_retry_after_does_not_parse(self) -> None:
+    def test_get_backs_off_when_retry_after_does_not_parse(
+        self, thread_slept: list[float]
+    ) -> None:
         """An unparseable Retry-After must not cost the retry budget."""
         with _stub_index(
             [429] * (MAX_RETRIES + 1), retry_after="Wed, 31 Dec 10000 23:59:59 GMT"
@@ -1540,6 +1555,7 @@ class TestUrllib3AsyncTransport:
             assert len(index.seen) == MAX_RETRIES + 1
             with pytest.raises(HttpError, match="HTTP 429"):
                 resp.raise_for_status()
+            _assert_urllib3_backoff_schedule(thread_slept)
 
     def test_get_does_not_retry_a_client_error(self) -> None:
         """A 404 is the index's answer, so it is fetched once."""
