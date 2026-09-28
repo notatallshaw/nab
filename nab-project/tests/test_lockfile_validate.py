@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import pytest
+
+from nab_project._lockfile import validate
 from nab_project._lockfile.validate import (
     check_constraints,
     check_direct_requirements,
@@ -20,6 +26,9 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 def make_pylock(
@@ -713,3 +722,113 @@ def test_root_requirement_is_frozen() -> None:
         return
     msg = "RootRequirement should be frozen"
     raise AssertionError(msg)
+
+
+def locked(
+    committed: Pylock,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    roots: tuple[RootRequirement, ...] = (),
+    constraints: Iterable[str] = (),
+) -> LockDisqualification | None:
+    """Run the locked check with a parsed lock supplied at the file boundary."""
+    monkeypatch.setattr(validate, "read_committed_pylock", lambda _path: committed)
+    return validate.check_locked(
+        Path("pylock.toml"),
+        requires_python=None,
+        extras=(),
+        dependency_groups=(),
+        default_groups=(),
+        roots=roots,
+        constraints=constraints,
+        resolve_target=MINOR_TARGET,
+    )
+
+
+@pytest.fixture
+def pin_indexes(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record the package count for each real pin-index construction."""
+    calls: list[int] = []
+    original = validate._versioned_pins
+
+    def record(committed: Pylock) -> dict[str, Version]:
+        calls.append(len(committed.packages))
+        return original(committed)
+
+    monkeypatch.setattr(validate, "_versioned_pins", record)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("requirements", "constraints", "expected"),
+    [
+        ((), (), []),
+        (("foo>=1",), (), [2]),
+        ((), ("foo<3",), [2]),
+        (("foo>=1",), ("foo<3",), [2]),
+    ],
+)
+def test_locked_prepares_only_needed_index(
+    monkeypatch: pytest.MonkeyPatch,
+    pin_indexes: list[int],
+    requirements: tuple[str, ...],
+    constraints: tuple[str, ...],
+    expected: list[int],
+) -> None:
+    committed = pylock_of(index_pin("foo", "2"), index_pin("bar", "1"))
+    assert (
+        locked(
+            committed,
+            monkeypatch,
+            roots=tuple(root(text) for text in requirements),
+            constraints=constraints,
+        )
+        is None
+    )
+    assert pin_indexes == expected
+
+
+def test_locked_direct_failure_precedes_constraint_parse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    result = locked(
+        pylock_of(index_pin("foo", "2")),
+        monkeypatch,
+        roots=(root("missing"),),
+        constraints=("not a requirement ???",),
+    )
+    assert result is not None
+    assert "lock has no missing pin" in result.reason
+
+
+def test_locked_shared_index_keeps_ambiguous_and_directory_pins(
+    monkeypatch: pytest.MonkeyPatch,
+    pin_indexes: list[int],
+) -> None:
+    committed = pylock_of(
+        index_pin("foo", "1"), index_pin("foo", "2"), directory_pin("bar")
+    )
+    assert (
+        locked(
+            committed,
+            monkeypatch,
+            roots=(root("foo>=9"), root("bar>=9")),
+            constraints=("foo>=9", "bar>=9"),
+        )
+        is None
+    )
+    assert pin_indexes == [3]
+
+
+@pytest.mark.parametrize("requirements", [(), ("foo>=1",)])
+def test_locked_constraint_failure_with_or_without_roots(
+    monkeypatch: pytest.MonkeyPatch, requirements: tuple[str, ...]
+) -> None:
+    result = locked(
+        pylock_of(index_pin("foo", "2")),
+        monkeypatch,
+        roots=tuple(root(text) for text in requirements),
+        constraints=("foo<2",),
+    )
+    assert result is not None
+    assert result.reason == "the constraint foo<2 is violated by the pinned foo 2"
