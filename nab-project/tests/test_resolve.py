@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, NoReturn
@@ -4090,22 +4091,15 @@ class TestAugmentResolutionError:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text('[project]\ndependencies = ["foo"]\n')
 
-        clause = self._no_versions_clause("foo")
+        coordinator = make_coordinator(listings={"foo": []})
         with (
-            patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_project._resolve.engine.Provider") as mock_provider_cls,
-            patch("nab_project._resolve.engine.Resolver") as mock_resolver_cls,
+            patch(
+                "nab_project.resolve.FetchCoordinator",
+                return_value=nullcontext(coordinator),
+            ),
+            pytest.raises(ResolutionError) as info,
         ):
-            mock_coord_cls.return_value.__enter__ = lambda s: s
-            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            mock_provider_cls.return_value.get_no_versions_reason.return_value = (
-                Diagnostic("package not found on any configured index")
-            )
-            mock_resolver_cls.return_value.resolve.side_effect = ResolutionError(
-                "base", incompatibility=clause
-            )
-            with pytest.raises(ResolutionError) as info:
-                _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
         assert "Diagnostics:" in str(info.value)
         assert "foo: package not found on any configured index" in str(info.value)
 

@@ -22,11 +22,11 @@ exception is `sdist-v1/`, which nab still reads.
 | `sdist-v2/` | an sdist's `PKG-INFO` and `pyproject.toml`, immutable |
 | `sdist-v1/` | the same records in the retired JSON format |
 
-An `sdist-v1/` record is read when `sdist-v2/` misses, rewritten into
-`sdist-v2/`, and left where it is, so a cache filled by an earlier nab
-keeps its records instead of downloading each archive again.
+A matching `sdist-v1/` record is copied into `sdist-v2/` when the newer bucket misses. The original remains in `sdist-v1/`.
 
 Record buckets are keyed per index, so two indexes never share an entry.
+
+After upgrading, nab may need to download source archives again even if an older version cached them. If an offline resolve reports missing source metadata, run the same command without `--offline` once before trying offline again.
 
 A listing body is stored as PEP 691 JSON; when the index answers in PEP
 503 HTML the stored body is nab's own JSON rendering of the page. An

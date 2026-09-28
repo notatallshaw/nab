@@ -121,7 +121,7 @@ def _file_entry(anchor: Anchor, base_url: str) -> dict[str, object] | None:
     if anchor.upload_time is not None:
         entry["upload-time"] = anchor.upload_time
     if anchor.yanked:
-        entry["yanked"] = True
+        entry["yanked"] = anchor.yanked
 
     return entry
 

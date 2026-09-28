@@ -43,7 +43,12 @@ from nab_provider.records import (
     WheelFile,
 )
 from nab_provider.serialization import SimpleSerialization
-from nab_provider.store import InMemoryIndex, metadata_pending_key, range_pending_key
+from nab_provider.store import (
+    InMemoryIndex,
+    metadata_pending_key,
+    range_pending_key,
+    sdist_artifact_key,
+)
 
 from ._build_remote import build_remote_sdist
 from ._sources import materialize_source
@@ -465,9 +470,17 @@ class FetchCoordinator:
                 assert req.url is not None
                 self.index.store_range_absent(req.package, req.version, req.url)
             elif req.kind is FetchKind.SDIST:
-                self.index.store_sdist_metadata_error(req.package, req.version, error)
+                self.index.store_sdist_metadata_error(
+                    req.package, sdist_artifact_key(req.version, req.url or ""), error
+                )
             else:
-                self.index.store_sdist_archive_error(req.package, req.version, error)
+                self.index.store_sdist_archive_error(
+                    req.package,
+                    sdist_artifact_key(req.version, req.url or "")
+                    if req.kind is FetchKind.SDIST_ARCHIVE
+                    else req.version,
+                    error,
+                )
 
     def _record_crash(self, error: BaseException) -> None:
         """Record the failure that killed the fetcher thread."""
@@ -551,7 +564,12 @@ class FetchCoordinator:
                     # on the fetcher loop, or inline when the loop is gone.
                     self.index.store_listing_index(package, self.indexes[0].name)
                     self.index.store_listing(
-                        package, records, zip_sdists=parsed.zip_sdists
+                        package,
+                        records,
+                        zip_sdists=parsed.zip_sdists,
+                        has_yanked_files=bool(
+                            getattr(records, "has_yanked_files", False)
+                        ),
                     )
                     self._warm_sync_stats.listing_hits += 1
                     if not self._post_to_loop(self._run_listing_tail, package, records):
@@ -638,7 +656,7 @@ class FetchCoordinator:
         downloaded archive against ``sdist_hashes`` before extraction.
         """
         self._check_alive()
-        key = f"sdist:{package}:{version}"
+        key = f"sdist:{package}:{sdist_artifact_key(version, url)}"
         event, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
@@ -668,7 +686,7 @@ class FetchCoordinator:
         before storing the bytes.
         """
         self._check_alive()
-        key = f"sdist-archive:{package}:{version}"
+        key = f"sdist-archive:{package}:{sdist_artifact_key(version, url)}"
         event, existed = self.index.get_or_create_pending(key)
         if not existed:
             self._submit(
@@ -751,7 +769,9 @@ class FetchCoordinator:
             self._build_config,
             transport_factory=self._build_transport_factory,
         )
-        self.index.store_built_metadata(package, version, built)
+        self.index.store_built_metadata(
+            package, sdist_artifact_key(version, url), built
+        )
         return _done_event()
 
     def request_metadata_batch(
@@ -1055,13 +1075,25 @@ class FetchCoordinator:
                 self.index.record_offline_metadata_miss(
                     req.package, req.version, req.url
                 )
-                self.index.store_sdist_metadata(req.package, req.version, None)
+                self.index.store_sdist_metadata(
+                    req.package, sdist_artifact_key(req.version, req.url or ""), None
+                )
             else:
-                self.index.store_sdist_metadata_error(req.package, req.version, exc)
+                self.index.store_sdist_metadata_error(
+                    req.package, sdist_artifact_key(req.version, req.url or ""), exc
+                )
         elif offline and req.kind is FetchKind.SDIST_ARCHIVE:
-            self.index.store_sdist_archive(req.package, req.version, None)
+            self.index.store_sdist_archive(
+                req.package, sdist_artifact_key(req.version, req.url or ""), None
+            )
         else:
-            self.index.store_sdist_archive_error(req.package, req.version, exc)
+            self.index.store_sdist_archive_error(
+                req.package,
+                sdist_artifact_key(req.version, req.url or "")
+                if req.kind is FetchKind.SDIST_ARCHIVE
+                else req.version,
+                exc,
+            )
 
     async def _fetch_listing(
         self,
@@ -1077,6 +1109,7 @@ class FetchCoordinator:
         self.index.store_listing(
             req.package,
             files,
+            has_yanked_files=bool(getattr(files, "has_yanked_files", False)),
             unreadable_only=client.served_unreadable_only(req.package),
             unreachable_only=client.served_unreachable_only(req.package),
             no_usable_file=client.served_no_usable_file(req.package),
@@ -1108,7 +1141,7 @@ class FetchCoordinator:
         wanted = self.PREFETCH_METADATA_COUNT
         newest: dict[str, WheelFile] = {}
         for f in reversed(files):
-            if not (isinstance(f, WheelFile) and f.has_metadata):
+            if not (isinstance(f, WheelFile) and f.has_metadata) or f.yanked:
                 continue
             if f.version not in newest and len(newest) == wanted:
                 break
@@ -1231,14 +1264,15 @@ class FetchCoordinator:
         pkg_info, pyproject = await client.get_sdist_files(
             req.package, req.version, req.url, req.sdist_hashes
         )
+        source_key = sdist_artifact_key(req.version, req.url)
         # Store pyproject.toml first: store_sdist_metadata fires the
         # pending event, and a released waiter reads the pyproject slot
         # with no further synchronisation.
         if pyproject is not None:
             table = parse_pyproject_table(pyproject)
-            self.index.store_sdist_pyproject(req.package, req.version, table)
-            self._release_archive_if_deps_are_static(req.package, req.version, table)
-        self.index.store_sdist_metadata(req.package, req.version, pkg_info)
+            self.index.store_sdist_pyproject(req.package, source_key, table)
+            self._release_archive_if_deps_are_static(req.package, source_key, table)
+        self.index.store_sdist_metadata(req.package, source_key, pkg_info)
 
     def _release_archive_if_deps_are_static(
         self, package: str, version: str, table: Mapping[str, Any] | None
@@ -1263,12 +1297,16 @@ class FetchCoordinator:
     ) -> None:
         assert req.version is not None
         if req.url is None:
-            self.index.store_sdist_archive(req.package, req.version, None)
+            self.index.store_sdist_archive(
+                req.package, sdist_artifact_key(req.version, ""), None
+            )
             return
         data = await client.get_sdist_archive(
             req.package, req.version, req.url, req.sdist_hashes
         )
-        self.index.store_sdist_archive(req.package, req.version, data)
+        self.index.store_sdist_archive(
+            req.package, sdist_artifact_key(req.version, req.url), data
+        )
 
     async def _fetch_direct_archive(self, req: FetchRequest) -> None:
         """Read an archive declared by URL, by that URL's own scheme."""

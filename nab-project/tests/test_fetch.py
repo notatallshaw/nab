@@ -53,6 +53,7 @@ from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import BuildPolicy
 from nab_provider.serialization import SimpleSerialization
+from nab_provider.store import sdist_artifact_key
 from nab_provider.testing import pkg_override
 
 
@@ -692,7 +693,7 @@ class TestFetchCoordinator:
     @respx.mock
     def test_request_listing_cached(self) -> None:
         with _coord() as coord:
-            coord.index.store_listing("cached", ["data"])
+            coord.index.store_listing("cached", [_make_wheel("cached", "1.0")])
             event = coord.request_listing("cached")
             assert event.is_set()
 
@@ -1109,8 +1110,19 @@ class TestFetchCoordinator:
             )
             event.wait(timeout=5)
             assert not coord._crashed
-            assert coord.index.get_metadata("broken", "1.0") is None
-            error = coord.index.get_metadata_error("broken", "1.0")
+            assert (
+                coord.index.get_metadata(
+                    "broken",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/broken.tar.gz"
+                    ),
+                )
+                is None
+            )
+            error = coord.index.get_metadata_error(
+                "broken",
+                sdist_artifact_key("1.0", "https://files.example.com/broken.tar.gz"),
+            )
             assert isinstance(error, HttpError)
 
     @respx.mock
@@ -1149,8 +1161,7 @@ class TestFetchCoordinator:
             )
             assert sdist_event.wait(timeout=5)
 
-            # queue the request directly: request_metadata would short-circuit
-            # on the stored PKG-INFO, but a prefetch already in flight lands
+            # Fail the sidecar request after the archive metadata has landed.
             url = "https://files.example.com/pkg-1.0.whl.metadata"
             claimed, _ = coord.index.get_or_create_pending(f"metadata:pkg:1.0:{url}")
             coord._submit(
@@ -1164,8 +1175,19 @@ class TestFetchCoordinator:
 
             assert claimed.wait(timeout=5)
             assert not coord._crashed
-            assert "Name: pkg" in (coord.index.get_metadata("pkg", "1.0") or "")
-            assert coord.index.metadata_from_sdist("pkg", "1.0")
+            assert "Name: pkg" in (
+                coord.index.get_metadata(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                or ""
+            )
+            assert coord.index.metadata_from_sdist(
+                "pkg",
+                sdist_artifact_key("1.0", "https://files.example.com/pkg-1.0.tar.gz"),
+            )
 
     @respx.mock
     def test_metadata_hash_mismatch_records_integrity_error(self) -> None:
@@ -1391,8 +1413,18 @@ class TestFetchCoordinator:
         meta_error = coord.index.get_metadata_error("a", "1.0", "https://f.com/a")
         batch_error = coord.index.get_metadata_error("d", "1.0", "https://f.com/d")
         assert isinstance(meta_error, RuntimeError)
-        assert isinstance(coord.index.get_metadata_error("b", "1.0"), RuntimeError)
-        assert isinstance(coord.index.get_sdist_archive_error("c", "1.0"), RuntimeError)
+        assert isinstance(
+            coord.index.get_metadata_error(
+                "b", sdist_artifact_key("1.0", "https://f.com/b.tar.gz")
+            ),
+            RuntimeError,
+        )
+        assert isinstance(
+            coord.index.get_sdist_archive_error(
+                "c", sdist_artifact_key("1.0", "https://f.com/c.tar.gz")
+            ),
+            RuntimeError,
+        )
         assert isinstance(batch_error, RuntimeError)
 
     def test_submit_to_closed_loop_releases_waiter(self) -> None:
@@ -1622,7 +1654,15 @@ class TestFetchCoordinator:
                 "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz"
             )
             event.wait(timeout=5)
-            assert "Name: pkg" in (coord.index.get_metadata("pkg", "1.0") or "")
+            assert "Name: pkg" in (
+                coord.index.get_metadata(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                or ""
+            )
 
     @respx.mock
     def test_request_sdist_verifies_published_hash(self) -> None:
@@ -1646,8 +1686,24 @@ class TestFetchCoordinator:
                 (("sha256", digest),),
             )
             event.wait(timeout=5)
-            assert "Name: pkg" in (coord.index.get_metadata("pkg", "1.0") or "")
-            assert coord.index.get_metadata_error("pkg", "1.0") is None
+            assert "Name: pkg" in (
+                coord.index.get_metadata(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                or ""
+            )
+            assert (
+                coord.index.get_metadata_error(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                is None
+            )
 
     @respx.mock
     def test_request_sdist_hash_mismatch_records_error(self) -> None:
@@ -1670,9 +1726,22 @@ class TestFetchCoordinator:
             )
             event.wait(timeout=5)
             assert not coord._crashed
-            assert coord.index.get_metadata("pkg", "1.0") is None
+            assert (
+                coord.index.get_metadata(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                is None
+            )
             assert isinstance(
-                coord.index.get_metadata_error("pkg", "1.0"),
+                coord.index.get_metadata_error(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                ),
                 SdistHashMismatchError,
             )
 
@@ -1702,7 +1771,15 @@ class TestFetchCoordinator:
                 "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz"
             )
             event.wait(timeout=5)
-            assert coord.index.get_sdist_pyproject("pkg", "1.0") is not None
+            assert (
+                coord.index.get_sdist_pyproject(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                is not None
+            )
 
     @respx.mock
     def test_request_sdist_pyproject_stored_before_event(self) -> None:
@@ -1772,6 +1849,7 @@ class TestFetchCoordinator:
                 unreachable_only: bool = False,
                 no_usable_file: bool = False,
                 all_yanked: bool = False,
+                has_yanked_files: bool | None = None,
                 zip_sdists: frozenset[str] = frozenset(),
             ) -> None:
                 serving_at_event.append(self.get_listing_index(package))
@@ -1783,6 +1861,7 @@ class TestFetchCoordinator:
                     unreachable_only=unreachable_only,
                     no_usable_file=no_usable_file,
                     all_yanked=all_yanked,
+                    has_yanked_files=has_yanked_files,
                     zip_sdists=zip_sdists,
                 )
 
@@ -1808,7 +1887,9 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, content=buf.getvalue())
         )
         with _coord() as coord:
-            claimed, _ = coord.index.get_or_create_pending("sdist:pkg:1.0")
+            claimed, _ = coord.index.get_or_create_pending(
+                f"sdist:pkg:{sdist_artifact_key('1.0', 'https://f.com/pkg-1.0.tar.gz')}"
+            )
             event = coord.request_sdist("pkg", "1.0", "https://f.com/pkg-1.0.tar.gz")
 
             assert event is claimed
@@ -1825,7 +1906,15 @@ class TestFetchCoordinator:
                 "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz"
             )
             event.wait(timeout=5)
-            assert coord.index.get_sdist_archive("pkg", "1.0") == b"archive-bytes"
+            assert (
+                coord.index.get_sdist_archive(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                == b"archive-bytes"
+            )
 
     @respx.mock
     def test_request_sdist_archive_verifies_published_hash(self) -> None:
@@ -1843,8 +1932,24 @@ class TestFetchCoordinator:
                 (("sha256", digest),),
             )
             event.wait(timeout=5)
-            assert coord.index.get_sdist_archive("pkg", "1.0") == body
-            assert coord.index.get_sdist_archive_error("pkg", "1.0") is None
+            assert (
+                coord.index.get_sdist_archive(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                == body
+            )
+            assert (
+                coord.index.get_sdist_archive_error(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                is None
+            )
 
     @respx.mock
     def test_request_sdist_archive_hash_mismatch_records_error(self) -> None:
@@ -1861,9 +1966,22 @@ class TestFetchCoordinator:
             )
             event.wait(timeout=5)
             assert not coord._crashed
-            assert coord.index.get_sdist_archive("pkg", "1.0") is None
+            assert (
+                coord.index.get_sdist_archive(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                is None
+            )
             assert isinstance(
-                coord.index.get_sdist_archive_error("pkg", "1.0"),
+                coord.index.get_sdist_archive_error(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                ),
                 SdistHashMismatchError,
             )
 
@@ -1874,7 +1992,9 @@ class TestFetchCoordinator:
             return_value=httpx.Response(200, content=b"archive"),
         )
         with _coord() as coord:
-            claimed, _ = coord.index.get_or_create_pending("sdist-archive:pkg:1.0")
+            claimed, _ = coord.index.get_or_create_pending(
+                f"sdist-archive:pkg:{sdist_artifact_key('1.0', 'https://f.com/pkg-1.0.tar.gz')}"
+            )
             event = coord.request_sdist_archive(
                 "pkg", "1.0", "https://f.com/pkg-1.0.tar.gz"
             )
@@ -1891,8 +2011,19 @@ class TestFetchCoordinator:
                 "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz"
             )
             event.wait(timeout=5)
-            assert coord.index.get_sdist_archive("pkg", "1.0") is None
-            error = coord.index.get_sdist_archive_error("pkg", "1.0")
+            assert (
+                coord.index.get_sdist_archive(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                is None
+            )
+            error = coord.index.get_sdist_archive_error(
+                "pkg",
+                sdist_artifact_key("1.0", "https://files.example.com/pkg-1.0.tar.gz"),
+            )
             assert isinstance(error, HttpError)
 
     @respx.mock
@@ -1944,7 +2075,15 @@ class TestFetchCoordinator:
                 "pkg", "1.0", "https://files.example.com/pkg-1.0.tar.gz", ()
             )
             assert event.wait(timeout=5)
-            assert coord.index.get_built_metadata("pkg", "1.0") is built
+            assert (
+                coord.index.get_built_metadata(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                is built
+            )
         assert seen == {
             "config": config,
             "offline": False,
@@ -2187,10 +2326,42 @@ class TestFetchCoordinatorCache:
 
             assert coord.index.get_metadata("pkg", "1.0") is None
             assert coord.index.get_metadata_error("pkg", "1.0") is None
-            assert coord.index.get_metadata("pkg", "2.0") is None
-            assert coord.index.get_metadata_error("pkg", "2.0") is None
-            assert coord.index.get_sdist_archive("pkg", "3.0") is None
-            assert coord.index.get_sdist_archive_error("pkg", "3.0") is None
+            assert (
+                coord.index.get_metadata(
+                    "pkg",
+                    sdist_artifact_key(
+                        "2.0", "https://files.example.com/pkg-2.0.tar.gz"
+                    ),
+                )
+                is None
+            )
+            assert (
+                coord.index.get_metadata_error(
+                    "pkg",
+                    sdist_artifact_key(
+                        "2.0", "https://files.example.com/pkg-2.0.tar.gz"
+                    ),
+                )
+                is None
+            )
+            assert (
+                coord.index.get_sdist_archive(
+                    "pkg",
+                    sdist_artifact_key(
+                        "3.0", "https://files.example.com/pkg-3.0.tar.gz"
+                    ),
+                )
+                is None
+            )
+            assert (
+                coord.index.get_sdist_archive_error(
+                    "pkg",
+                    sdist_artifact_key(
+                        "3.0", "https://files.example.com/pkg-3.0.tar.gz"
+                    ),
+                )
+                is None
+            )
             assert coord.index.is_offline_metadata_miss(
                 "pkg", "1.0", "https://files.example.com/pkg-1.0.whl.metadata"
             )
@@ -4038,6 +4209,9 @@ class _SdistFilesClient:
         return ("Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n", self._pyproject)
 
 
+_HELD_SDIST_KEY = sdist_artifact_key("1.0", "https://f.example/pkg-1.0.tar.gz")
+
+
 class TestSdistArchiveHolding:
     """Which resolves hold an sdist archive after reading its PKG-INFO."""
 
@@ -4089,7 +4263,7 @@ class TestSdistArchiveHolding:
         """
         coord = _coord(build_config=config)
         hold = SdistArchiveHold()
-        hold.put("pkg", "1.0", b"archive bytes")
+        hold.put("pkg", _HELD_SDIST_KEY, b"archive bytes")
         coord._sdist_archive_hold = hold if coord._holds_sdist_archives else None
 
         asyncio.run(
@@ -4112,8 +4286,8 @@ class TestSdistArchiveHolding:
             '[project]\nname = "pkg"\ndependencies = []\n', config
         )
 
-        assert hold.take("pkg", "1.0") is None
-        assert coord.index.get_sdist_pyproject("pkg", "1.0") is not None
+        assert hold.take("pkg", _HELD_SDIST_KEY) is None
+        assert coord.index.get_sdist_pyproject("pkg", _HELD_SDIST_KEY) is not None
 
     def test_a_dynamic_pyproject_keeps_the_archive(self) -> None:
         """A table that defers its deps leaves the build's bytes in place."""
@@ -4122,13 +4296,13 @@ class TestSdistArchiveHolding:
             '[project]\nname = "pkg"\ndynamic = ["dependencies"]\n', config
         )
 
-        assert hold.take("pkg", "1.0") == b"archive bytes"
+        assert hold.take("pkg", _HELD_SDIST_KEY) == b"archive bytes"
 
     def test_an_sdist_without_a_pyproject_keeps_the_archive(self) -> None:
         config = ResolveInputs(build_policy=BuildPolicy.BUILD_REMOTE)
         _, hold = self._fetched_with_pyproject(None, config)
 
-        assert hold.take("pkg", "1.0") == b"archive bytes"
+        assert hold.take("pkg", _HELD_SDIST_KEY) == b"archive bytes"
 
     def test_an_unparseable_pyproject_keeps_the_archive_and_the_pkg_info(self) -> None:
         """A pyproject that will not parse reads as one the sdist never shipped.
@@ -4140,9 +4314,9 @@ class TestSdistArchiveHolding:
             '\ufeff[project]\nname = "pkg"\ndependencies = []\n', config
         )
 
-        assert hold.take("pkg", "1.0") == b"archive bytes"
-        assert coord.index.get_sdist_pyproject("pkg", "1.0") is None
-        assert coord.index.get_metadata("pkg", "1.0") == (
+        assert hold.take("pkg", _HELD_SDIST_KEY) == b"archive bytes"
+        assert coord.index.get_sdist_pyproject("pkg", _HELD_SDIST_KEY) is None
+        assert coord.index.get_metadata("pkg", _HELD_SDIST_KEY) == (
             "Metadata-Version: 2.1\nName: pkg\nVersion: 1.0\n"
         )
 
@@ -4153,8 +4327,8 @@ class TestSdistArchiveHolding:
         )
 
         assert coord._sdist_archive_hold is None
-        assert hold.take("pkg", "1.0") == b"archive bytes"
-        assert coord.index.get_sdist_pyproject("pkg", "1.0") is not None
+        assert hold.take("pkg", _HELD_SDIST_KEY) == b"archive bytes"
+        assert coord.index.get_sdist_pyproject("pkg", _HELD_SDIST_KEY) is not None
 
     def _sdist_bytes(self) -> bytes:
         """A gzipped sdist carrying a PKG-INFO and no pyproject.toml."""
@@ -4178,7 +4352,15 @@ class TestSdistArchiveHolding:
             coord.request_sdist("pkg", "1.0", url).wait(timeout=5)
             coord.request_sdist_archive("pkg", "1.0", url).wait(timeout=5)
 
-            assert coord.index.get_sdist_archive("pkg", "1.0") == archive
+            assert (
+                coord.index.get_sdist_archive(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                == archive
+            )
             assert route.call_count == 1
 
     @respx.mock
@@ -4192,7 +4374,15 @@ class TestSdistArchiveHolding:
             coord.request_sdist("pkg", "1.0", url).wait(timeout=5)
             coord.request_sdist_archive("pkg", "1.0", url).wait(timeout=5)
 
-            assert coord.index.get_sdist_archive("pkg", "1.0") == archive
+            assert (
+                coord.index.get_sdist_archive(
+                    "pkg",
+                    sdist_artifact_key(
+                        "1.0", "https://files.example.com/pkg-1.0.tar.gz"
+                    ),
+                )
+                == archive
+            )
             assert route.call_count == 2
 
     def test_the_fetcher_loop_drops_what_it_still_holds(self) -> None:

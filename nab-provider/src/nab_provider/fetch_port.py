@@ -118,7 +118,11 @@ class FetchPort(Protocol):
         url: str,
         sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> Waitable:
-        """Request the PKG-INFO of the sdist at ``url``."""
+        """Request the PKG-INFO of the sdist at ``url``.
+
+        Publish metadata and pyproject slots using
+        :func:`~nab_provider.store.sdist_artifact_key` on ``version`` and ``url``.
+        """
         ...
 
     def request_sdist_archive(
@@ -128,7 +132,11 @@ class FetchPort(Protocol):
         url: str,
         sdist_hashes: tuple[tuple[str, str], ...] = (),
     ) -> Waitable:
-        """Request the bytes of the sdist at ``url``, for a local build."""
+        """Request the bytes of the sdist at ``url``, for a local build.
+
+        Publish the archive slot using
+        :func:`~nab_provider.store.sdist_artifact_key` on ``version`` and ``url``.
+        """
         ...
 
     def request_direct_archive(self, package: str, version: str, url: str) -> Waitable:
@@ -161,7 +169,8 @@ class FetchPort(Protocol):
         """Build the sdist at ``url`` and store the METADATA it produced.
 
         The result lands under
-        :meth:`~nab_provider.store.InMemoryIndex.store_built_metadata`.
+        :meth:`~nab_provider.store.InMemoryIndex.store_built_metadata`, keyed by
+        :func:`~nab_provider.store.sdist_artifact_key` on ``version`` and ``url``.
 
         Answered inline: a failure raises
         :class:`~nab_provider.errors.UnsupportedSdistError`, or the integrity

@@ -276,11 +276,12 @@ def test_blob_carries_no_interpreter_tag() -> None:
     """The wire form is portable, so a blob written anywhere decodes here."""
     blob, policy = _sample_blob()
     header, _rows = json.loads(blob)
-    *build, digest, zip_sdists = header
+    *build, digest, zip_sdists, yanks = header
 
     assert all(isinstance(cell, int) for cell in build)
     assert isinstance(digest, str)
     assert zip_sdists == []
+    assert yanks == {}
     assert decode(blob, policy) is not None
 
 

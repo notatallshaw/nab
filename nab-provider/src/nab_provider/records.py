@@ -18,6 +18,7 @@ from .serialization import SimpleSerialization
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from dataclasses import field
     from pathlib import Path
     from types import MemberDescriptorType
 
@@ -301,6 +302,12 @@ class WheelFile(_WheelIntegrity):
     local_path: Path | None = None
     metadata_hash: tuple[str, str] | None = None
 
+    # Ordinary frozen records share the flag instead of allocating a slot.
+    if TYPE_CHECKING:
+        yanked: bool | str = field(init=False)
+    else:
+        yanked = False
+
     def __init__(  # noqa: PLR0913, PLR0917 - the dataclass's own fields, in its own order
         self,
         filename: str,
@@ -442,6 +449,12 @@ class SdistFile(_SdistIntegrity):
     hashes: tuple[tuple[str, str], ...] = ()
     size: int | None = None
     local_path: Path | None = None
+
+    # Ordinary frozen records share the flag instead of allocating a slot.
+    if TYPE_CHECKING:
+        yanked: bool | str = field(init=False)
+    else:
+        yanked = False
 
     def __init__(
         self,

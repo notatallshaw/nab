@@ -27,6 +27,7 @@ from ..errors import (
     MetadataError,
     SiblingMetadataDivergenceError,
     UnsupportedSdistError,
+    YankAdmissionRequiredError,
 )
 from ..extra_keys import join_extra
 from ..metadata import (
@@ -43,6 +44,7 @@ from ..project_requirements import (
     parse_requirements,
     require_string_list,
 )
+from ..store import sdist_artifact_key
 from ..tags import python_axis_accepts
 from ..vcs_admission import admit_vcs_url
 
@@ -99,6 +101,8 @@ def resolve_metadata(
     # read is keyed by the artifact this target would install.  ``versions`` is
     # the target's own tag-filtered listing, so the pick is per-target.
     dist = version_dists(provider, normalized, versions).picked.get(version)
+    if dist is not None and dist.yanked:
+        require_yank_admission(provider, versions, normalized, version)
 
     # A wheel keys on its sidecar URL, or on its own URL when it publishes none.
     if isinstance(dist, WheelFile):
@@ -106,7 +110,20 @@ def resolve_metadata(
     else:
         metadata_url = None
 
-    text, from_sdist = index.get_metadata_with_origin(normalized, ver_str, metadata_url)
+    source_key = (
+        sdist_artifact_key(ver_str, dist.url)
+        if isinstance(dist, SdistFile)
+        else ver_str
+    )
+    text, from_sdist = index.get_metadata_with_origin(
+        normalized, source_key, metadata_url
+    )
+    if (
+        text is None
+        and isinstance(dist, SdistFile)
+        and not index.metadata_from_sdist(normalized, ver_str)
+    ):
+        text, from_sdist = index.get_metadata_with_origin(normalized, ver_str)
     if text is not None:
         return (text, from_sdist)
 
@@ -379,6 +396,20 @@ def dists_at_version(
         stop += 1
 
     return [dist for _, dist in versions[low:stop]]
+
+
+def require_yank_admission(
+    provider: Provider,
+    versions: list[tuple[Version, DistFile]],
+    package: str,
+    version: Version,
+) -> None:
+    """Refuse a withdrawn metadata source until a live declaration admits it."""
+    if (package, version) in provider.yank_admissions:
+        return
+    files = dists_at_version(versions, version)
+    if any(file.yanked for file in files):
+        raise YankAdmissionRequiredError(package, version)
 
 
 def pick_dist_for_metadata(
@@ -664,6 +695,14 @@ def _sdist_deps_need_dynamic(
     return not metadata_deps_are_static(metadata)
 
 
+def sdist_metadata_key(provider: Provider, package: str, version: Version) -> str:
+    """Return the chosen archive's cache identity for metadata reconciliation."""
+    sdist = find_sdist(provider.versions_cache.get(package, []), version)
+    return (
+        str(version) if sdist is None else sdist_artifact_key(str(version), sdist.url)
+    )
+
+
 def resolve_dynamic_sdist(
     provider: Provider,
     cache_key: tuple[str, Version],
@@ -687,25 +726,25 @@ def resolve_dynamic_sdist(
 
     package, version = cache_key
     canonical = canonicalize_name(package)
-    version_str = str(version)
     index = provider.coordinator.index
+    source_key = sdist_metadata_key(provider, canonical, version)
 
     cached: WheelMetadata | None = index.get_resolved_sdist_metadata(
-        canonical, version_str
+        canonical, source_key
     )
     if cached is not None:
         return cached
 
     augmented = augment_from_pyproject(provider, package, version, metadata)
     if augmented is not None:
-        index.store_resolved_sdist_metadata(canonical, version_str, augmented)
+        index.store_resolved_sdist_metadata(canonical, source_key, augmented)
         return augmented
     effective = provider.effective_build_policy(
         canonical, version, provider.serving_index(canonical)
     )
     if effective is BuildPolicy.BUILD_REMOTE:
         built = build_remote_sdist(provider, package, version)
-        index.store_resolved_sdist_metadata(canonical, version_str, built)
+        index.store_resolved_sdist_metadata(canonical, source_key, built)
         return built
     provider.stats.excluded_by_build_policy += 1
     msg = (
@@ -738,7 +777,9 @@ def augment_from_pyproject(
     from ..metadata import WheelMetadata as _WheelMetadata
     from ..metadata import static_project_from_table
 
-    data = provider.coordinator.index.get_sdist_pyproject(package, str(version))
+    data = provider.coordinator.index.get_sdist_pyproject(
+        package, sdist_metadata_key(provider, package, version)
+    )
     project = static_project_from_table(data) if data is not None else None
     if project is None:
         return None
@@ -814,21 +855,24 @@ def fetch_sdist_metadata(
     """Block until the coordinator returns sdist PKG-INFO text.
 
     Returns ``(metadata_text, from_sdist)``.
-    Metadata from another source can occupy the version slot. Its origin
-    excludes it from the :pep:`643` check for sdist PKG-INFO.
+    Explicit metadata supplied for this artifact keeps its recorded origin
+    when deciding whether the :pep:`643` check applies.
 
     When ``sdist.hashes`` contains an accepted digest, the archive is verified
     before its PKG-INFO is read. A mismatch is recorded and re-raised here.
     """
+    if sdist.yanked and (package, Version(version)) not in provider.yank_admissions:
+        raise YankAdmissionRequiredError(package, Version(version))
     event = provider.coordinator.request_sdist(
         package, version, sdist.url, sdist.hashes
     )
     event.wait()
     provider.stats.sdist_pkg_info_fetched += 1
-    integrity_error = provider.coordinator.index.get_metadata_error(package, version)
+    source_key = sdist_artifact_key(version, sdist.url)
+    integrity_error = provider.coordinator.index.get_metadata_error(package, source_key)
     if integrity_error is not None:
         raise integrity_error
-    return provider.coordinator.index.get_metadata_with_origin(package, version)
+    return provider.coordinator.index.get_metadata_with_origin(package, source_key)
 
 
 def requirement_gating(provider: Provider, req: Requirement) -> Gating:
@@ -1367,6 +1411,8 @@ def check_sibling_metadata_divergence(
     sig_key = (normalized, version)
     pick_sig: TargetDepSignature | None = None
     for sibling in wheels:
+        if sibling.yanked and not pick.yanked:
+            continue
         if sibling is pick or not _wheels_tie(tags, pick_key, sibling.filename):
             continue
         sibling_sig = _tie_sibling_signature(provider, index, sig_key, sibling)

@@ -14,6 +14,7 @@ from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
 from nab_project.fetch import FetchCoordinator
 from nab_provider.fetch_port import FetchPort, Waitable
+from nab_provider.store import sdist_artifact_key
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "nab_project"
 PROVIDER_SRC = (
@@ -251,7 +252,12 @@ class TestFakeSatisfiesThePort:
         port = make_coordinator(sdist_archive=b"archive-bytes")
 
         port.request_sdist_archive("pkg", "1.0", "https://ex.com/pkg-1.0.tar.gz")
-        assert port.index.get_sdist_archive("pkg", "1.0") == b"archive-bytes"
+        assert (
+            port.index.get_sdist_archive(
+                "pkg", sdist_artifact_key("1.0", "https://ex.com/pkg-1.0.tar.gz")
+            )
+            == b"archive-bytes"
+        )
 
         digest = "a" * 64
         port.request_direct_archive("pkg", digest, "https://ex.com/pkg-1.0.tar.gz")

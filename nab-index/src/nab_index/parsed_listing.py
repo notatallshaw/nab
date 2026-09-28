@@ -1,7 +1,8 @@
 """Translate parsed listing records to and from an opaque cache blob.
 
 The UTF-8 JSON wire form is ``[header, rows]``. The header carries format,
-codec, sort-key scheme, source-body digest, and dropped zip-sdist versions.
+codec, sort-key scheme, source-body digest, dropped zip-sdist versions,
+and sparse withdrawal flags.
 An incompatible header or digest is a cache miss.
 
 Rows preserve source order and tag each flat record as a wheel or sdist. A
@@ -39,7 +40,7 @@ __all__ = ["ParsedListing", "corruption_reason", "decode", "encode"]
 # blob surfacing under the current bucket. Bump it when the header or row shape
 # changes, or when the same body parses to different records: ``body_digest``
 # pins only the input.
-FORMAT_VERSION = 5
+FORMAT_VERSION = 6
 # Serialization variant that wrote the rows, so a future codec switch
 # self-heals rather than misdecodes.
 CODEC = 1
@@ -48,17 +49,17 @@ CODEC = 1
 KEY_SCHEME = 0
 
 _TOP_LEN = 2
-_HEADER_LEN = 5
+_HEADER_LEN = 6
 _PAIR_LEN = 2
 _TAG_WHEEL = 0
 _TAG_SDIST = 1
 
-# The header's first cells name the build that wrote the blob; the last two
-# carry its data.
+# The first three header cells identify the build; the rest carry listing data.
 _BUILD_ID = (FORMAT_VERSION, CODEC, KEY_SCHEME)
 _BUILD_CELLS = len(_BUILD_ID)
 _H_DIGEST = 3
 _H_ZIP_SDISTS = 4
+_H_YANKS = 5
 
 
 class _BadRowError(ValueError):
@@ -107,6 +108,7 @@ def encode(
     is a derived property, so neither rides the wire.
     """
     rows: list[list[object]] = []
+    yanks: dict[str, bool | str] = {}
     previous_version: str | None = None
     for record in files:
         version = record.version
@@ -141,7 +143,9 @@ def encode(
                     record.size,
                 ]
             )
-    header = [*_BUILD_ID, body_digest, sorted(zip_sdists)]
+        if record.yanked:
+            yanks[str(len(rows) - 1)] = record.yanked
+    header = [*_BUILD_ID, body_digest, sorted(zip_sdists), yanks]
 
     # Escape non-ASCII: a field kept verbatim from the listing, such as
     # ``requires_python``, can hold a lone surrogate with no UTF-8 form.
@@ -173,7 +177,8 @@ def decode(blob: bytes, policy: CachePolicy) -> ParsedListing | None:
     # are the wrong shape must rebuild, not crash the resolve.
     try:
         return ParsedListing(
-            _decode_rows(rows), _decode_zip_sdists(header[_H_ZIP_SDISTS])
+            _restore_yanks(_decode_rows(rows), header[_H_YANKS]),
+            _decode_zip_sdists(header[_H_ZIP_SDISTS]),
         )
     except (ValueError, TypeError):
         return None
@@ -203,7 +208,7 @@ def corruption_reason(blob: bytes) -> str | None:
     if not _names_this_build(header) or _bad_zip_sdists_cell(header):
         return "unexpected header shape"
     try:
-        _decode_rows(rows)
+        _restore_yanks(_decode_rows(rows), header[_H_YANKS])
     except (ValueError, TypeError):
         return "unexpected row shape"
     return None
@@ -246,6 +251,33 @@ def _decode_zip_sdists(value: object) -> frozenset[str]:
     if not isinstance(value, list):
         raise _BadRowError
     return frozenset(map(_text, value))
+
+
+def _restore_yanks(
+    files: list[WheelFile | SdistFile], value: object
+) -> list[WheelFile | SdistFile]:
+    """Reattach sparse withdrawal metadata after validating its row references."""
+    if not isinstance(value, dict):
+        raise _BadRowError
+    if not value:
+        return files
+    from nab_provider.yanking import (  # noqa: PLC0415 - load yank-only records on demand
+        YankedListing,
+        mark_yanked,
+    )
+
+    for key, reason in value.items():
+        if not isinstance(key, str) or not key.isascii() or not key.isdigit():
+            raise _BadRowError
+        index = int(key)
+        if str(index) != key or index >= len(files):
+            raise _BadRowError
+        if reason is not True and (not isinstance(reason, str) or not reason):
+            raise _BadRowError
+        files[index] = mark_yanked(files[index], reason=reason)
+    return YankedListing(
+        files, withdrawn_versions=(files[int(key)].version for key in value)
+    )
 
 
 def _decode_rows(rows: object) -> list[WheelFile | SdistFile]:

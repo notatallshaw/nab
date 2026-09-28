@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from nab_index.client import extract_sdist_archive
 from nab_provider.errors import UnsupportedSdistError
+from nab_provider.store import sdist_artifact_key
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,11 +54,13 @@ def build_remote_sdist(
     event = port.request_sdist_archive(package, version, url, sdist_hashes)
     event.wait()
 
-    integrity_error = port.index.get_sdist_archive_error(package, version)
+    integrity_error = port.index.get_sdist_archive_error(
+        package, sdist_artifact_key(version, url)
+    )
     if integrity_error is not None:
         raise integrity_error
 
-    data = port.index.get_sdist_archive(package, version)
+    data = port.index.get_sdist_archive(package, sdist_artifact_key(version, url))
     if data is None:
         msg = (
             f"{package}=={version} build-remote requested but sdist archive"

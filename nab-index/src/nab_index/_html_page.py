@@ -44,7 +44,7 @@ class Anchor:
     href: str
     requires_python: str | None
     metadata: str | None
-    yanked: bool
+    yanked: bool | str
     upload_time: str | None
 
 
@@ -52,7 +52,7 @@ def _anchor(attrs: list[tuple[str, str | None]]) -> Anchor | None:
     """Build an :class:`Anchor` from a tag's attributes, or ``None`` if hrefless."""
     href: str | None = None
     requires_python: str | None = None
-    yanked = False
+    yanked: bool | str = False
     core_metadata: str | None = None
     legacy_metadata: str | None = None
     upload_time: str | None = None
@@ -63,7 +63,7 @@ def _anchor(attrs: list[tuple[str, str | None]]) -> Anchor | None:
         elif name == _REQUIRES_PYTHON_ATTR:
             requires_python = value
         elif name == _YANKED_ATTR:
-            yanked = True
+            yanked = value or True
         elif name == _CORE_METADATA_ATTR:
             core_metadata = value
         elif name == _LEGACY_METADATA_ATTR:
