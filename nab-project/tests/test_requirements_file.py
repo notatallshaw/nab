@@ -1324,6 +1324,10 @@ class TestExpandExtraRequirements:
 
 
 class TestExpandGroupIncludes:
+    def test_empty_selection(self) -> None:
+        groups = {"dev": [{"include-group": "test"}], "test": ["pytest"]}
+        assert expand_group_includes(groups, []) == []
+
     def test_no_include_returns_input(self) -> None:
         groups = {"a": ["depA"], "b": ["depB"]}
         assert expand_group_includes(groups, ["a"]) == ["a"]
