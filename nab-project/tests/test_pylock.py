@@ -50,7 +50,7 @@ from nab_project.lockfile import (
     TargetLock,
     WheelArtifact,
 )
-from nab_provider._vendor.packaging.markers import Marker
+from nab_provider._vendor.packaging.markers import InvalidMarker, Marker
 from nab_provider._vendor.packaging.pylock import Package, PackageWheel
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
@@ -1159,3 +1159,87 @@ class TestFactoringReachesEmission:
         assert handed == {
             "foo": 'sys_platform == "linux" and platform_machine == "x86_64"'
         }
+
+
+@pytest.fixture
+def environment_disjunctions(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
+    """Collect the target groups passed to environment-marker validation."""
+    calls: list[tuple[str, ...]] = []
+    original = pylock._env_disjunction
+
+    def record(
+        texts: Sequence[str], rows: tuple[Mapping[str, str], ...] | None
+    ) -> Marker:
+        calls.append(tuple(texts))
+        return original(texts, rows)
+
+    monkeypatch.setattr(pylock, "_env_disjunction", record)
+    return calls
+
+
+class TestEnvironmentMarkerReuse:
+    def test_shared_group_preserves_membership(
+        self, environment_disjunctions: list[tuple[str, ...]]
+    ) -> None:
+        targets = [_target("3.11"), _target("3.12")]
+        lock = LockInput(
+            targets={
+                target.label: TargetLock(
+                    target=target,
+                    pins={name: _index_pin(name) for name in ("foo", "bar")},
+                    package_gates={"foo": (("extra", "cli"),)},
+                )
+                for target in targets
+            },
+            environments=[_row(target) for target in targets],
+            extras=("cli",),
+        )
+        emitted = _emitted(lock)
+        assert "marker" not in emitted["bar"]
+        assert emitted["foo"]["marker"] == '"cli" in extras'
+        assert len(environment_disjunctions) == 1
+
+        assert _emitted(lock) == emitted
+        assert len(environment_disjunctions) == 2
+
+    def test_partial_group_preserves_environment(
+        self, environment_disjunctions: list[tuple[str, ...]]
+    ) -> None:
+        left, right = _target("3.11"), _target("3.12")
+        lock = LockInput(
+            targets={
+                left.label: TargetLock(
+                    target=left,
+                    pins={name: _index_pin(name) for name in ("foo", "bar", "common")},
+                ),
+                right.label: TargetLock(
+                    target=right, pins={"common": _index_pin("common")}
+                ),
+            },
+            environments=[_row(left), _row(right)],
+        )
+        emitted = _emitted(lock)
+        assert "marker" not in emitted["common"]
+        for name in ("foo", "bar"):
+            marker = Marker(emitted[name]["marker"])
+            assert marker.evaluate(left.marker_env)
+            assert not marker.evaluate(right.marker_env)
+        assert len(environment_disjunctions) == 2
+
+    def test_invalid_environment_after_prior_emission(self) -> None:
+        target = _target("3.11")
+        lock = LockInput(
+            targets={
+                target.label: TargetLock(target=target, pins={"foo": _index_pin()})
+            },
+            environments=[],
+        )
+        _emitted(lock)
+        assert isinstance(target.marker_env, dict)
+        target.marker_env["sys_platform"] = 'bad"platform'
+
+        with pytest.raises(InvalidMarker) as error:
+            _emitted(lock)
+        assert (
+            str(error.value).splitlines()[1].strip() == target.environment_marker_string
+        )
