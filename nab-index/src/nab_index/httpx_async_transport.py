@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 import truststore
 
-from .retry import next_delay
+from .retry import is_certificate_error, next_delay
 from .retry_limits import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES
 from .transport import (
     DEFAULT_HEADERS,
@@ -128,7 +128,7 @@ class HttpxAsyncTransport:
                 raise HttpError(msg) from exc
             except (httpx.HTTPError, ContentDecodingError) as exc:
                 failures += 1
-                if failures > MAX_RETRIES:
+                if is_certificate_error(exc) or failures > MAX_RETRIES:
                     msg = f"GET {url} failed: {exc}"
                     raise HttpError(msg) from exc
                 delay = next_delay(failures)

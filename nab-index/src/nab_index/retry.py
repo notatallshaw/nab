@@ -11,6 +11,8 @@ transports take the policy here instead of their library's default.
 from __future__ import annotations
 
 import random
+import ssl
+from typing import TYPE_CHECKING
 
 import urllib3
 from urllib3.exceptions import InvalidHeader
@@ -18,8 +20,12 @@ from urllib3.exceptions import InvalidHeader
 from ._compat import override
 from .retry_limits import MAX_REDIRECTS, MAX_RETRIES, RETRY_STATUSES
 
+if TYPE_CHECKING:
+    from urllib3.util.retry import RequestHistory
+
 __all__ = [
     "GET_RETRY",
+    "is_certificate_error",
     "next_delay",
 ]
 
@@ -50,6 +56,13 @@ class _BoundedRetry(urllib3.Retry):
     """Retry that bounds the Retry-After wait and ignores a malformed one."""
 
     @override
+    def is_exhausted(self) -> bool:
+        history: tuple[RequestHistory, ...] = self.history
+        return super().is_exhausted() or (
+            bool(history) and is_certificate_error(history[-1].error)
+        )
+
+    @override
     def get_retry_after(self, response: urllib3.BaseHTTPResponse) -> float | None:
         value = response.headers.get("Retry-After")
         return None if value is None else _retry_after_seconds(value)
@@ -70,6 +83,17 @@ GET_RETRY = _BoundedRetry(
     # status the index served rather than a retry error.
     raise_on_status=False,
 )
+
+
+def is_certificate_error(error: BaseException | None) -> bool:
+    """Recognize certificate verification failures through transport wrappers."""
+    seen: set[int] = set()
+    while error is not None and id(error) not in seen:
+        if isinstance(error, ssl.SSLCertVerificationError):
+            return True
+        seen.add(id(error))
+        error = error.__cause__ or error.__context__
+    return False
 
 
 def next_delay(failures: int, retry_after: str | None = None) -> float:
