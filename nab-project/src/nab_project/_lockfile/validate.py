@@ -53,6 +53,7 @@ from .. import toml_io
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Set as AbstractSet
     from pathlib import Path
 
     from nab_provider._vendor.packaging.markers import Marker
@@ -235,6 +236,24 @@ def check_direct_requirements(
     """
     package_names = {package.name for package in committed.packages}
     versioned = _versioned_pins(committed)
+    return _check_direct_pins(
+        requirements,
+        package_names,
+        versioned,
+        marker_env=marker_env,
+        resolve_target=resolve_target,
+    )
+
+
+def _check_direct_pins(
+    requirements: Iterable[RootRequirement],
+    package_names: AbstractSet[str],
+    versioned: Mapping[str, Version],
+    *,
+    marker_env: Mapping[str, str],
+    resolve_target: ResolveTarget | None,
+) -> LockDisqualification | None:
+    """Check direct requirements against prepared pin names and versions."""
     for root in requirements:
         req = root.requirement
         if _marker_skips(req.marker, marker_env, resolve_target):
@@ -282,6 +301,22 @@ def check_constraints(
     environment.
     """
     versioned = _versioned_pins(committed)
+    return _check_constraint_pins(
+        constraints,
+        versioned,
+        marker_env=marker_env,
+        resolve_target=resolve_target,
+    )
+
+
+def _check_constraint_pins(
+    constraints: Iterable[Requirement],
+    versioned: Mapping[str, Version],
+    *,
+    marker_env: Mapping[str, str],
+    resolve_target: ResolveTarget | None,
+) -> LockDisqualification | None:
+    """Check constraints against the prepared versioned pins."""
     for constraint in constraints:
         if _marker_skips(constraint.marker, marker_env, resolve_target):
             continue
@@ -439,18 +474,38 @@ def check_locked(  # noqa: PLR0913 - the envelope fields and the validity inputs
         for root in roots
         if canonicalize_name(root.requirement.name) not in exclude
     ]
-    direct = check_direct_requirements(
-        committed,
-        active,
-        marker_env=resolve_target.marker_env,
-        resolve_target=resolve_target,
-    )
-    if direct is not None:
-        return direct
+    return _check_validity(committed, active, constraints, resolve_target)
+
+
+def _check_validity(
+    committed: Pylock,
+    active: Sequence[RootRequirement],
+    constraints: Iterable[str],
+    resolve_target: ResolveTarget,
+) -> LockDisqualification | None:
+    """Check requirements and constraints against one prepared pin index."""
+    versioned: Mapping[str, Version] | None = None
+    if active:
+        package_names = {package.name for package in committed.packages}
+        versioned = _versioned_pins(committed)
+        direct = _check_direct_pins(
+            active,
+            package_names,
+            versioned,
+            marker_env=resolve_target.marker_env,
+            resolve_target=resolve_target,
+        )
+        if direct is not None:
+            return direct
+
     parsed = [parse_requirement(text) for text in constraints]
-    return check_constraints(
-        committed,
+    if not parsed:
+        return None
+    if versioned is None:
+        versioned = _versioned_pins(committed)
+    return _check_constraint_pins(
         parsed,
+        versioned,
         marker_env=resolve_target.marker_env,
         resolve_target=resolve_target,
     )
