@@ -11,6 +11,7 @@ import logging
 import re
 import sys
 import tarfile
+import threading
 import time
 import zipfile
 from collections.abc import Callable, Mapping
@@ -5399,3 +5400,158 @@ class TestRepeatedCacheControlLines:
         policy = self._stored_policy(tmp_path, response, seed)
 
         assert policy.max_age == 60
+
+
+class _PolicyWriteProbe:
+    """Record writer threads and optionally hold a real cache write open."""
+
+    def __init__(
+        self, write: Callable[[Path, bytes], None], *, blocked: bool = False
+    ) -> None:
+        self.write = write
+        self.threads: list[int] = []
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        if not blocked:
+            self.release.set()
+
+    def __call__(self, path: Path, data: bytes) -> None:
+        self.threads.append(threading.get_ident())
+        self.entered.set()
+        if not self.release.wait(10):
+            raise AssertionError("cache write was never released")
+        self.write(path, data)
+
+
+def _revalidation_client(
+    cache: OnDiskCache, requests: int = 1
+) -> CachedAsyncSimpleClient:
+    """Seed a stale listing and return a client whose requests all revalidate it."""
+    cache.put_simple(
+        "pkg", LISTING_BYTES, CachePolicy(fetched_at=0, max_age=0, etag="old")
+    )
+    responses = [
+        _FakeResponse(b"", status=304, headers={"cache-control": "max-age=0"})
+        for _ in range(requests)
+    ]
+    return CachedAsyncSimpleClient(_FakeTransport(responses), cache)
+
+
+class _ThreadBoundCache(OnDiskCache):
+    """A caller-provided backend that must stay on the caller's thread."""
+
+
+class TestPolicyWriteScheduling:
+    def test_limits_background_writes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        client = _revalidation_client(cache, requests=5)
+        probe = _PolicyWriteProbe(cache_mod.atomic_write)
+        monkeypatch.setattr(cache_mod, "atomic_write", probe)
+        caller = threading.get_ident()
+
+        async def go() -> None:
+            try:
+                results = await asyncio.gather(
+                    *(client.get_files("pkg") for _ in range(5))
+                )
+                assert all(len(files) == 1 for files in results)
+            finally:
+                await client.aclose()
+
+        asyncio.run(go())
+
+        assert len(probe.threads) == 5
+        assert probe.threads.count(caller) == 1
+        assert not client._policy_writes
+
+    def test_custom_cache_keeps_caller_thread(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache = _ThreadBoundCache(tmp_path, "https://pypi.org/simple/")
+        client = _revalidation_client(cache)
+        probe = _PolicyWriteProbe(cache_mod.atomic_write)
+        monkeypatch.setattr(cache_mod, "atomic_write", probe)
+
+        async def go() -> None:
+            try:
+                assert len(await client.get_files("pkg")) == 1
+            finally:
+                await client.aclose()
+
+        asyncio.run(go())
+        assert probe.threads == [threading.get_ident()]
+
+    def test_close_waits_for_cancelled_callers_write(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        client = _revalidation_client(cache)
+        before = cache.get_simple_policy("pkg")
+        probe = _PolicyWriteProbe(cache_mod.atomic_write, blocked=True)
+        monkeypatch.setattr(cache_mod, "atomic_write", probe)
+
+        async def go() -> None:
+            read = asyncio.create_task(client.get_files("pkg"))
+            try:
+                assert await asyncio.to_thread(probe.entered.wait, 5)
+                assert not read.done()
+                read.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await read
+                assert client._policy_writes
+                assert cache.get_simple_policy("pkg") == before
+
+                close = asyncio.create_task(client.aclose())
+                await asyncio.sleep(0)
+                assert not close.done()
+                probe.release.set()
+                await asyncio.wait_for(close, timeout=5)
+            finally:
+                probe.release.set()
+                await asyncio.gather(read, return_exceptions=True)
+                await client.aclose()
+
+        asyncio.run(go())
+        after = cache.get_simple_policy("pkg")
+        assert after is not None
+        assert before is not None
+        assert after.fetched_at > before.fetched_at
+        assert not client._policy_writes
+
+    def test_unexpected_write_failure_reaches_caller(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cache = _make_cache(tmp_path)
+        client = _revalidation_client(cache)
+
+        def fail(_path: Path, _data: bytes) -> None:
+            raise RuntimeError("policy write failed")
+
+        monkeypatch.setattr(cache_mod, "atomic_write", fail)
+
+        async def go() -> None:
+            try:
+                with pytest.raises(RuntimeError, match="policy write failed"):
+                    await client.get_files("pkg")
+            finally:
+                await client.aclose()
+
+        asyncio.run(go())
+        assert not client._policy_writes
+
+    def test_cancelled_write_task_releases_capacity(self, tmp_path: Path) -> None:
+        client = _revalidation_client(_make_cache(tmp_path))
+
+        async def go() -> None:
+            task = asyncio.create_task(asyncio.sleep(0))
+            client._policy_writes.add(task)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            client._policy_write_done(task)
+            await client.aclose()
+
+        asyncio.run(go())
+        assert not client._policy_writes
