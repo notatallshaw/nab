@@ -305,6 +305,38 @@ def _complement_ranges(ranges: Sequence[Interval]) -> list[Interval]:
     return result
 
 
+def _difference_ranges(
+    left: Sequence[Interval], right: Sequence[Interval]
+) -> tuple[Interval, ...]:
+    """Subtract sorted intervals without constructing the right-hand complement."""
+    result: list[Interval] = []
+    right_index = 0
+    for lower, upper in left:
+        while right_index < len(right):
+            right_lower, right_upper = right[right_index]
+            if range_is_empty(lower, right_upper):
+                right_index += 1
+                continue
+            if range_is_empty(right_lower, upper):
+                if not range_is_empty(lower, upper):
+                    result.append((lower, upper))
+                break
+
+            if lower < right_lower:
+                gap_upper = UpperBound(right_lower.version, not right_lower.inclusive)
+                if not range_is_empty(lower, gap_upper):
+                    result.append((lower, gap_upper))
+            if right_upper >= upper:
+                break
+
+            lower = LowerBound(right_upper.version, not right_upper.inclusive)
+            right_index += 1
+        else:
+            if not range_is_empty(lower, upper):
+                result.append((lower, upper))
+    return tuple(result)
+
+
 def _canonical_floor(bounds: tuple[Interval, ...]) -> tuple[Interval, ...]:
     """Collapse the PEP 440 floor in a sorted interval list.
 
@@ -1667,11 +1699,7 @@ class VersionRange:
         if not other._bounds and not other._admit:
             return self
 
-        # Bound complement is two-way, so subtracting other's versions is an
-        # intersection with its gaps.
-        new_bounds = tuple(
-            intersect_ranges(self._bounds, _complement_ranges(other._bounds))
-        )
+        new_bounds = _difference_ranges(self._bounds, other._bounds)
 
         # Match ``self & ~other`` on the opt-in region: a complement carries no
         # opt-in, so only ``self``'s region survives. ``other`` acts as a
