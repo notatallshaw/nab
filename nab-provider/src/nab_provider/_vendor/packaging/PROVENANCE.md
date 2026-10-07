@@ -44,18 +44,20 @@ most one checked-in patch.
     quotes when that body is ASCII and holds no backslash, newline, carriage
     return or NUL, and calls `ast.literal_eval` otherwise. The `QUOTED_STRING`
     rule admits no string prefix, so a token takes the same value either way.
-  - `specifiers.py` and `_tokenizer.py`: `Specifier._regex` compiles the
-    specifier pattern without the surrounding `\s*`, and `Specifier.__init__`
-    strips the string before matching it, so `DEFAULT_RULES["SPECIFIER"]` can be
-    that same compiled object instead of a second compile of the same pattern.
+  - `specifiers.py` and `_tokenizer.py`: `Specifier._regex` compiles
+    `_condensed_regex_str`, which is `_specifier_regex_str` with the
+    `re.VERBOSE` whitespace and comments removed, under `re.IGNORECASE` alone.
+    It carries no surrounding `\s*` and `Specifier.__init__` strips the string
+    before matching it, so `DEFAULT_RULES["SPECIFIER"]` can be that same
+    compiled object instead of a second compile of the same pattern.
 
   Upstream PRs are planned for the bound ordering, the direct subset and
   disjoint walks, `filter`'s `assume_sorted` fast path,
   `from_bounds`/`snap_bounds`/`release_intervals`, the prepared marker
   environment, and the marker-item serialisation. `relation` is not proposed
   yet: most of its win is available from the direct walks alone. The
-  quoted-string slice is not proposed anywhere yet, and neither is the
-  `Marker.__str__` memo.
+  quoted-string slice, the `Marker.__str__` memo, and the condensed specifier
+  pattern are not proposed anywhere yet.
 - `tasks/vendor-packaging.sh` fetches `pypa/packaging` at the pin, replaces this
   package with the pristine `src/packaging/` tree plus the repo-root license
   texts, and reapplies the patch. `--check` rebuilds into a temp location and
