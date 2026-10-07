@@ -116,9 +116,7 @@ def compute_matching(
         record_counts = provider.version_record_counts[normalized]
         matching = sum(
             record_counts[version]
-            for version in version_range.filter(
-                distinct, prereleases=True, assume_sorted="descending"
-            )
+            for version in version_range.filter(distinct, prereleases=True)
         )
     elif has_local_source:
         matching = 1

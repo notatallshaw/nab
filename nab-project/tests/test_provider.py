@@ -14,7 +14,7 @@ import tarfile
 import threading
 import weakref
 import zipfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, ClassVar, NoReturn
@@ -1088,6 +1088,11 @@ class _CountingListing(list[Version]):
         self.reads += 1
         return super().__getitem__(index)
 
+    def __iter__(self) -> Iterator[Version]:
+        for version in super().__iter__():
+            self.reads += 1
+            yield version
+
 
 class TestChooseVersion:
     def test_picks_newest_in_range(self) -> None:
@@ -1121,8 +1126,7 @@ class TestChooseVersion:
 
         assert provider.choose_version("foo", VersionRange.full()) == V("1.59")
 
-        # filter's sortedness check reads both ends; the pick is the third read.
-        assert listing.reads == 3
+        assert listing.reads == 1
 
     def test_returns_none_when_no_match(self) -> None:
         """choose_version returns None when nothing matches."""
@@ -10487,12 +10491,7 @@ class TestPrioritizeMatchingFromIndex:
         assert first is second
 
     def test_versions_only_is_descending_whatever_the_index_order(self) -> None:
-        """The listing view is newest-first, which choose_version's filter asserts.
-
-        ``filter(assume_sorted="descending")`` bisects the view rather than
-        testing every entry, so an index listing files in any other order must
-        still reach the provider sorted.
-        """
+        """The provider's version view presents the newest release first."""
         wheels = [make_wheel(v) for v in ("1.0", "3.0", "1.0a1", "2.0", "0.9")]
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
@@ -10500,17 +10499,20 @@ class TestPrioritizeMatchingFromIndex:
         assert versions == sorted(versions, reverse=True)
         assert versions[0] == V("3.0")
 
-    def test_choose_version_candidates_match_the_entry_wise_filter(self) -> None:
-        """The bisected candidate list equals what the plain filter yields."""
+    def test_version_view_filter_preserves_member_order(self) -> None:
+        """Filtering the view keeps exactly its admitted versions in view order."""
         wheels = [make_wheel(v) for v in ("0.9", "1.0a1", "1.0", "1.5", "2.0")]
         coordinator = make_coordinator(wheels, package="foo")
         provider = Provider(coordinator)
-        version_list = provider.fetch_versions("foo")
-        all_versions = provider.versions_only("foo", version_list)
+        versions = provider.versions_only("foo", provider.fetch_versions("foo"))
         for spec in ("", ">=1.0", ">=1.0,<2.0", "!=1.0", ">=1.0a1", "===1.0"):
             version_range = SpecifierSet(spec).to_range()
-            bisected = version_range.filter(all_versions, assume_sorted="descending")
-            assert list(bisected) == list(version_range.filter(all_versions))
+            expected = [
+                version
+                for version in versions
+                if version_range.contains(version, prereleases=True)
+            ]
+            assert list(version_range.filter(versions, prereleases=True)) == expected
 
     def test_wheel_by_version_cache_hit(self) -> None:
         """Calling _wheel_by_version twice returns the same cached dict."""

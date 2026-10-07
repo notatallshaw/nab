@@ -66,7 +66,7 @@ def choose_extra_version(
         admit_range = version_range
     else:
         admit_range = version_range & base_range
-    candidates = list(admit_range.filter(all_versions, assume_sorted="descending"))
+    candidates = list(admit_range.filter(all_versions))
 
     if provider.wants_lowest(normalized):
         candidates.reverse()
@@ -89,9 +89,7 @@ def choose_extra_version(
         and (
             excluded_by_base := [
                 v
-                for v in version_range.filter(
-                    all_versions, prereleases=True, assume_sorted="descending"
-                )
+                for v in version_range.filter(all_versions, prereleases=True)
                 if v not in base_range
             ]
         )
