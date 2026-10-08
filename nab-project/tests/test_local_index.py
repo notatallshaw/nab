@@ -37,6 +37,7 @@ from nab_provider.errors import IndexAccessError
 if TYPE_CHECKING:
     from collections.abc import Coroutine, Iterator
     from typing import Any
+    from urllib.parse import ParseResult
 
 _T = TypeVar("_T")
 
@@ -429,6 +430,21 @@ class TestParseFileUrl:
         url = path.as_uri()
         assert parse_file_url(url) == path
 
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("file:///%FF", "/\udcff"),
+            ("file://localhost/%FF", "/\udcff"),
+            ("file:////%FF", "//\udcff"),
+            ("file:///%C3%A9/%FF/%25FF", "/é/\udcff/%FF"),
+        ],
+    )
+    def test_preserves_undecodable_posix_bytes(
+        self, monkeypatch: pytest.MonkeyPatch, url: str, expected: str
+    ) -> None:
+        monkeypatch.setattr(sys, "platform", "linux")
+        assert parse_file_url(url) == Path(expected)
+
     def test_rejects_non_file_scheme(self) -> None:
         with pytest.raises(ValueError, match="expected file:// URL"):
             parse_file_url("https://example.com/")
@@ -479,13 +495,14 @@ class TestParseFileUrl:
         )
         assert parse_file_url("file:////C:/tmp/x.whl") == Path("//C:/tmp/x.whl")
 
-    def test_url2pathname_failure_is_a_value_error(
+    def test_windows_url2pathname_failure_is_a_value_error(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def reject(_url: str) -> str:
             msg = "Bad URL"
             raise OSError(msg)
 
+        monkeypatch.setattr(sys, "platform", "win32")
         monkeypatch.setattr(urllib.request, "url2pathname", reject)
         with pytest.raises(ValueError, match="does not name a path"):
             parse_file_url("file:///srv/wheels")
@@ -508,6 +525,22 @@ class TestParseFileUrl:
 
 
 class TestFlatWheelhouse:
+    def test_finds_wheel_in_non_ascii_directory(self, tmp_path: Path) -> None:
+        # Windows and macOS filesystems require Unicode filenames.
+        name = "\u00ff" if sys.platform in {"win32", "darwin"} else "\udcff"
+        root = tmp_path / name
+        root.mkdir()
+        wheel = root / "foo-1.0-py3-none-any.whl"
+        _write_wheel(wheel, "foo", "1.0")
+
+        files = run(LocalIndexClient(root.as_uri()).get_files("foo"))
+
+        assert len(files) == 1
+        assert isinstance(files[0], WheelFile)
+        assert files[0].filename == wheel.name
+        assert files[0].local_path == wheel
+        assert parse_file_url(files[0].url) == wheel
+
     def test_finds_wheel(self, tmp_path: Path) -> None:
         wheel = tmp_path / "foo-1.0-py3-none-any.whl"
         wheel.write_bytes(b"")
@@ -1372,7 +1405,18 @@ class TestPep503Directory:
     ) -> None:
         # A file:// href a local client cannot serve (non-local authority)
         # drops just that anchor; the rest of the listing is kept.
-        monkeypatch.setattr(sys, "platform", "linux")
+        original_parse = local_index._parsed_file_url_path
+
+        def parse_with_posix_authority(parsed: ParseResult, url: str) -> Path:
+            """Apply POSIX authority rules while keeping native local-path decoding."""
+            with monkeypatch.context() as platform_patch:
+                if parsed.netloc == "otherhost":
+                    platform_patch.setattr(sys, "platform", "linux")
+                return original_parse(parsed, url)
+
+        monkeypatch.setattr(
+            local_index, "_parsed_file_url_path", parse_with_posix_authority
+        )
         body = (
             '<a href="file://otherhost/foo-1.0-py3-none-any.whl">foo-1.0</a>'
             '<a href="foo-2.0-py3-none-any.whl">foo-2.0</a>'
