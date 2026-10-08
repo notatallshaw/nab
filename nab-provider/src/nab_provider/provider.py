@@ -1321,18 +1321,16 @@ class Provider:
         a pre-release.
         """
         if not self.wants_lowest(normalized):
-            return version_range.filter(all_versions, assume_sorted="descending")
+            return version_range.filter(all_versions)
 
         ascending = self._ascending_versions(normalized, version_list)
-        oldest_first = version_range.filter(ascending, assume_sorted="ascending")
+        oldest_first = version_range.filter(ascending)
         first = next(oldest_first, None)
         if first is None:
             return iter(())
 
         if first.is_prerelease:
-            newest_first = version_range.filter(
-                all_versions, assume_sorted="descending"
-            )
+            newest_first = version_range.filter(all_versions)
             return reversed(list(newest_first))
 
         return chain((first,), oldest_first)
@@ -1398,7 +1396,7 @@ class Provider:
         """
         if preferred.is_prerelease:
             all_versions = self.versions_only(normalized, version_list)
-            in_range = admit_range.filter(all_versions, assume_sorted="descending")
+            in_range = admit_range.filter(all_versions)
             return preferred in in_range
         return preferred in admit_range and preferred in self._wheel_by_version(
             normalized, version_list

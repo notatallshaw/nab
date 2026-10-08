@@ -13,14 +13,13 @@ most one checked-in patch.
   tree is byte-identical to upstream at the pin. The patch carries:
   - `ranges.py`: `VersionRange.from_bounds`, `snap_bounds`,
     `release_intervals`, and `relation` with its `RangeRelation` result type
-    and the member aliases the return paths bind; an `assume_sorted` keyword
-    on `filter` and the `VersionRange._filter_sorted` it dispatches to;
+    and the member aliases the return paths bind;
     `is_subset` and `is_disjoint` answered by a direct walk over the interval
     lists instead of an intermediate range; the module-level helpers they need
     (`_relate_bounds`, `_subset_bounds`, `_disjoint_bounds`,
-    `_bisect_predicate`, `_partition_indexes`, `_make_project`, `_check_order`,
-    `_lattice_release`, `_release_boundary_point`); the `RangeRelation` and
-    `SortedOrder` `__all__` entries; and the class-docstring lines naming them.
+    `_bisect_predicate`, `_partition_indexes`, `_lattice_release`,
+    `_release_boundary_point`); the `RangeRelation` `__all__` entry; and the
+    class-docstring lines naming them.
   - `_ranges.py`: an unbounded end canonicalizes its inclusivity, and
     `LowerBound.__gt__`, `LowerBound.__le__`, and `UpperBound.__gt__` are
     written out beside `functools.total_ordering`, which still derives the
@@ -31,8 +30,8 @@ most one checked-in patch.
     operand takes that fallback without a type check.
   - `markers.py`: `prepare_environment` with its `__all__` entry, and the
     `Marker.evaluate_prepared` it feeds, so code evaluating many markers
-    against one environment builds it once. `evaluate` is now the two of them
-    composed. `_format_marker` tests for a marker item first and serialises it
+    against one environment builds it once. `evaluate` keeps preparation inline
+    for single evaluations. `_format_marker` tests for a marker item first and serialises it
     by unpacking its three nodes into an f-string instead of joining a list
     comprehension, which puts the `[[...]]` unwrap under the list branch.
     Upstream's opening `assert isinstance(marker, (list, tuple, str))` is
@@ -44,13 +43,10 @@ most one checked-in patch.
     quotes when that body is ASCII and holds no backslash, newline, carriage
     return or NUL, and calls `ast.literal_eval` otherwise. The `QUOTED_STRING`
     rule admits no string prefix, so a token takes the same value either way.
-  - `specifiers.py` and `_tokenizer.py`: `Specifier._regex` compiles the
-    specifier pattern without the surrounding `\s*`, and `Specifier.__init__`
-    strips the string before matching it, so `DEFAULT_RULES["SPECIFIER"]` can be
-    that same compiled object instead of a second compile of the same pattern.
+
 
   Upstream PRs are planned for the bound ordering, the direct subset and
-  disjoint walks, `filter`'s `assume_sorted` fast path,
+  disjoint walks,
   `from_bounds`/`snap_bounds`/`release_intervals`, the prepared marker
   environment, and the marker-item serialisation. `relation` is not proposed
   yet: most of its win is available from the direct walks alone. The

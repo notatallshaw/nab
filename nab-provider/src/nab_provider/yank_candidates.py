@@ -243,9 +243,7 @@ class YankCandidates:
                 (candidate.version for candidate in candidates.values()), reverse=True
             )
             while versions:
-                accepted = list(
-                    version_range.filter(versions, assume_sorted="descending")
-                )
+                accepted = list(version_range.filter(versions))
                 if not accepted:
                     break
                 accepted.sort(key=lambda version: (len(version.release), str(version)))

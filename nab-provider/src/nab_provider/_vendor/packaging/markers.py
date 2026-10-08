@@ -578,7 +578,30 @@ class Marker:
             Added the ``context`` parameter, which influences which marker names
             are considered valid.
         """
-        return self.evaluate_prepared(prepare_environment(environment, context))
+        # Keep single evaluations free of preparation helper calls.
+        current_environment = cast(
+            "dict[str, str | AbstractSet[str]]", default_environment()
+        )
+        if context == "lock_file":
+            current_environment |= {
+                "extras": frozenset(),
+                "dependency_groups": frozenset(),
+            }
+        elif context == "metadata":
+            current_environment["extra"] = ""
+
+        if environment is not None:
+            current_environment |= environment
+            if "extra" in current_environment:
+                # The API used to allow setting extra to None. We need to handle
+                # this case for backwards compatibility. Also skip running
+                # normalize name if extra is empty.
+                extra = cast("str | None", current_environment["extra"])
+                current_environment["extra"] = canonicalize_name(extra) if extra else ""
+
+        return _evaluate_markers(
+            self._markers, _repair_python_full_version(current_environment)
+        )
 
     def evaluate_prepared(self, environment: dict[str, str | AbstractSet[str]]) -> bool:
         """Evaluate a marker against an already-prepared environment.
