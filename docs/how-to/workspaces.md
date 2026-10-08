@@ -3,7 +3,9 @@
 > [!WARNING]
 > Workspace support is experimental. Discovery rules and member validation may change.
 
-A workspace is a parent project that declares one or more in-tree members. When `nab lock` runs against a member (or the root itself), the resolver prefers the in-tree members over PyPI for any package whose canonical name matches a member's `[project].name`.
+A workspace is a parent project that declares one or more in-tree members. When `nab lock` runs
+against a member (or the root itself), the resolver prefers the in-tree members over PyPI for any
+package whose canonical name matches a member's `[project].name`.
 
 ## Declaring a workspace
 
@@ -19,7 +21,8 @@ members = [
 ]
 ```
 
-`workspace` is a project-scope key like any other, so the same table can be written at the top level of the project-directory `nab.toml` instead:
+`workspace` is a project-scope key like any other, so the same table can be written at the top level
+of the project-directory `nab.toml` instead:
 
 ```toml
 # /repo/nab.toml
@@ -27,41 +30,65 @@ members = [
 members = ["packages/core", "packages/extras", "tools/cli"]
 ```
 
-`members` is a list of literal directory paths relative to the workspace root. Globs (`*`, `?`, `[`) are rejected; spell out each member.
+`members` is a list of literal directory paths relative to the workspace root. Globs (`*`, `?`, `[`)
+are rejected; spell out each member.
 
-Every listed member must contain a `pyproject.toml` with a `[project].name`. Two members cannot share the same canonical name (`Foo_Bar` and `foo-bar` collide). Both raise `WorkspaceDiscoveryError` at config-parse time.
+Every listed member must contain a `pyproject.toml` with a `[project].name`. Two members cannot
+share the same canonical name (`Foo_Bar` and `foo-bar` collide). Both raise
+`WorkspaceDiscoveryError` at config-parse time.
 
 ## How discovery works
 
-The project being locked declares the workspace, in either of its two config files, and its `members` are read relative to that project's directory. That is the path `nab lock` takes at a workspace root.
+The project being locked declares the workspace, in either of its two config files, and its
+`members` are read relative to that project's directory. That is the path `nab lock` takes at a
+workspace root.
 
-When `nab lock <member>/pyproject.toml` is invoked and the member declares no workspace of its own, nab walks upwards from the member's directory for the first ancestor that declares one, in either file: `[tool.nab.workspace]` in its `pyproject.toml`, or `[workspace]` in its `nab.toml`. The `pyproject.toml` is checked first.
+When `nab lock <member>/pyproject.toml` is invoked and the member declares no workspace of its own,
+nab walks upwards from the member's directory for the first ancestor that declares one, in either
+file: `[tool.nab.workspace]` in its `pyproject.toml`, or `[workspace]` in its `nab.toml`. The
+`pyproject.toml` is checked first.
 
-Each member of the matched workspace contributes a local source. The provider prefers those local sources over PyPI for any requirement whose canonical name matches.
+Each member of the matched workspace contributes a local source. The provider prefers those local
+sources over PyPI for any requirement whose canonical name matches.
 
 ## Members lock as editable installs
 
-Each member is recorded as an editable install by default, matching uv. Its pin renders as a PEP 660 editable entry: `editable = true` in `pylock.toml`, and `-e file://...` in the two requirements formats.
+Each member is recorded as an editable install by default, matching uv. Its pin renders as a PEP 660
+editable entry: `editable = true` in `pylock.toml`, and `-e file://...` in the two requirements
+formats.
 
-An explicit `[[tool.nab.local-sources]]` entry defaults the other way, non-editable, and becomes editable only when its `editable` key is set to `true`.
+An explicit `[[tool.nab.local-sources]]` entry defaults the other way, non-editable, and becomes
+editable only when its `editable` key is set to `true`.
 
 ## Interaction with `[[tool.nab.local-sources]]`
 
-Explicit `[[tool.nab.local-sources]]` entries always win. When a workspace-discovered member shares a canonical name with an explicit entry, the discovered entry is dropped and the override is logged at INFO so it can be audited. Use this to point a workspace member at a checkout outside the tree without removing it from the `members` list.
+Explicit `[[tool.nab.local-sources]]` entries always win. When a workspace-discovered member shares
+a canonical name with an explicit entry, the discovered entry is dropped and the override is logged
+at INFO so it can be audited. Use this to point a workspace member at a checkout outside the tree
+without removing it from the `members` list.
 
 ## Build policy
 
-Workspace members frequently declare `dynamic = ["version"]` or similar, which nab can only read by running the PEP 517 local backend. The default `build-policy` is `build-local`, so that build runs without any extra configuration.
+Workspace members frequently declare `dynamic = ["version"]` or similar, which nab can only read by
+running the PEP 517 local backend. The default `build-policy` is `build-local`, so that build runs
+without any extra configuration.
 
-A workspace does not raise the policy. Under `build-policy = "never"` a member with dynamic metadata and no static fallback cannot be read, and the lock fails naming it. Give every member static metadata to lock a workspace with no backend invocations.
+A workspace does not raise the policy. Under `build-policy = "never"` a member with dynamic metadata
+and no static fallback cannot be read, and the lock fails naming it. Give every member static
+metadata to lock a workspace with no backend invocations.
 
 ## Scope of `[tool.nab]` keys
 
-Only the discovered workspace members flow from an ancestor root; nab adds them to the locked project's `local-sources`. Every other `[tool.nab]` setting stays local to the pyproject being locked. Thus `nab lock packages/core/pyproject.toml` ignores the root's settings.
+Only the discovered workspace members flow from an ancestor root; nab adds them to the locked
+project's `local-sources`. Every other `[tool.nab]` setting stays local to the pyproject being
+locked. Thus `nab lock packages/core/pyproject.toml` ignores the root's settings.
 
-Declare conflicts and default-groups on each member that needs them. The same applies to constraints: a root-level constraint table does not constrain a member resolve.
+Declare conflicts and default-groups on each member that needs them. The same applies to
+constraints: a root-level constraint table does not constrain a member resolve.
 
-`base-group` follows the same rule. It names the locked project's own dependencies and everything they pull in, including workspace members and other local sources. A project with no dependencies has nothing to name.
+`base-group` follows the same rule. It names the locked project's own dependencies and everything
+they pull in, including workspace members and other local sources. A project with no dependencies
+has nothing to name.
 
 ## Example layout
 
@@ -101,4 +128,6 @@ members = [
 ]
 ```
 
-`nab lock /repo/pyproject.toml` resolves the three workspace dependencies against the in-tree directories rather than fetching them from PyPI. Transitive dependencies of each member are still resolved through the configured indexes.
+`nab lock /repo/pyproject.toml` resolves the three workspace dependencies against the in-tree
+directories rather than fetching them from PyPI. Transitive dependencies of each member are still
+resolved through the configured indexes.

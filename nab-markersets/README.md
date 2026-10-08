@@ -1,6 +1,8 @@
 # nab-markersets
 
-A PEP 508 marker read as the set of environments it selects. `packaging` answers "does this marker hold here"; this answers "can these two ever both hold", "does one imply the other", and "is this a contradiction".
+A PEP 508 marker read as the set of environments it selects. `packaging` answers "does this marker
+hold here"; this answers "can these two ever both hold", "does one imply the other", and "is this a
+contradiction".
 
 **Experimental.** The API can change in any release, so pin an exact version.
 
@@ -12,7 +14,9 @@ A PEP 508 marker read as the set of environments it selects. `packaging` answers
 True
 ```
 
-`MarkerSet` represents an absent marker as full, a contradiction as empty, and complements the marker grammar cannot serialize. `witness` returns a point in the set, which separates two markers that look like one constraint.
+`MarkerSet` represents an absent marker as full, a contradiction as empty, and complements the
+marker grammar cannot serialize. `witness` returns a point in the set, which separates two markers
+that look like one constraint.
 
 ```pycon
 >>> minor = MarkerSet.from_marker('python_version >= "3.11"')
@@ -25,24 +29,32 @@ False
 
 ## Installing
 
-The engine runs on `packaging`'s parse tree and its single-atom evaluator. Two copies of `packaging` exist: the released one, and the fork [`nab`](https://pypi.org/project/nab/) vendors. An extra picks which.
+The engine runs on `packaging`'s parse tree and its single-atom evaluator. Two copies of `packaging`
+exist: the released one, and the fork [`nab`](https://pypi.org/project/nab/) vendors. An extra picks
+which.
 
 ```bash
 pip install "nab-markersets[packaging]"
 pip install "nab-markersets[nab-vendored-packaging]"
 ```
 
-The first copy at version 26.3 or newer is used. The vendored fork is tried first, followed by released `packaging`.
+The first copy at version 26.3 or newer is used. The vendored fork is tried first, followed by
+released `packaging`.
 
-A `Marker` from the other copy is accepted too. If neither copy is new enough, importing `nab_markersets.markersets` fails and says what it found.
+A `Marker` from the other copy is accepted too. If neither copy is new enough, importing
+`nab_markersets.markersets` fails and says what it found.
 
 ## When to use it
 
-Whether two lock entries can both apply, whether a dependency is reachable inside your `requires-python`, or what a marker still says once you fix the platform. The guide covers those tasks and the limits of its decisions: <https://nab.readthedocs.io/en/stable/how-to/reason-about-markers.html>
+Whether two lock entries can both apply, whether a dependency is reachable inside your
+`requires-python`, or what a marker still says once you fix the platform. The guide covers those
+tasks and the limits of its decisions:
+<https://nab.readthedocs.io/en/stable/how-to/reason-about-markers.html>
 
 ## The public API
 
-The supported API is the module paths below. Everything else in the package is internal and may be renamed or relocated in any release.
+The supported API is the module paths below. Everything else in the package is internal and may be
+renamed or relocated in any release.
 
 ```text
 nab_markersets.errors       IntractableMarkerSet, UnserializableMarkerSet
@@ -51,4 +63,6 @@ nab_markersets.markersets   DecisionStore, MarkerSet, variable_names
 
 The package root binds no names, so importing `nab_markersets` pulls in no submodules.
 
-`pickle.dumps` can write a `MarkerSet`, but `pickle.loads` fails because direct construction is refused. `==` compares construction trees; use `equivalent` to compare the environments two sets select.
+`pickle.dumps` can write a `MarkerSet`, but `pickle.loads` fails because direct construction is
+refused. `==` compares construction trees; use `equivalent` to compare the environments two sets
+select.

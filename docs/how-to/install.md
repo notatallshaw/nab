@@ -1,6 +1,8 @@
 # Install nab
 
-`nab` ships as a CLI plus five importable libraries; see [the six distributions](../explanation/packages.md). The recommended path is to install it as an isolated tool.
+`nab` ships as a CLI plus five importable libraries; see
+[the six distributions](../explanation/packages.md). The recommended path is to install it as an
+isolated tool.
 
 ## uv tool install
 
@@ -8,7 +10,8 @@
 uv tool install nab
 ```
 
-Drops `nab` into a uv-managed tool venv and exposes the console script on `PATH`. uv resolves and installs all six distributions together. Confirm with:
+Drops `nab` into a uv-managed tool venv and exposes the console script on `PATH`. uv resolves and
+installs all six distributions together. Confirm with:
 
 ```bash
 nab --version
@@ -22,7 +25,8 @@ nab --version
 pipx install nab
 ```
 
-pipx creates a per-tool virtual environment. The default backend is `uv` on recent pipx; the `pip` backend works equivalently.
+pipx creates a per-tool virtual environment. The default backend is `uv` on recent pipx; the `pip`
+backend works equivalently.
 
 ## Picking an HTTP backend
 
@@ -35,7 +39,9 @@ nab lock --http-backend httpx2
 
 The selected backend also fetches build dependencies, including dependencies of nested builds.
 
-For httpx, install `nab[httpx]` and select `--http-backend httpx`. Each extra includes the `h2` package for HTTP/2 support. Missing dependencies produce an installation hint when selecting the backend.
+For httpx, install `nab[httpx]` and select `--http-backend httpx`. Each extra includes the `h2`
+package for HTTP/2 support. Missing dependencies produce an installation hint when selecting the
+backend.
 
 All backends use system certificates through truststore and send `User-Agent: nab-index/<version>`.
 
@@ -65,4 +71,5 @@ uv build --wheel --out-dir /tmp/nab-wheels .
 uv tool install --find-links /tmp/nab-wheels nab
 ```
 
-Once `nab --version` succeeds, [make your first lock](../tutorial/getting-started.md). To work on nab itself, see [contributing](../contributing.md).
+Once `nab --version` succeeds, [make your first lock](../tutorial/getting-started.md). To work on
+nab itself, see [contributing](../contributing.md).

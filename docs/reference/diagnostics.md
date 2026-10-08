@@ -1,14 +1,20 @@
 # Resolution failures
 
-What `nab lock` and `nab download` print when a resolve fails, and what `-v` adds to it. Both commands are on the [CLI](cli.md) page.
+What `nab lock` and `nab download` print when a resolve fails, and what `-v` adds to it. Both
+commands are on the [CLI](cli.md) page.
 
 ## The failure message
 
-`nab lock` and `nab download` exit non-zero on resolution failure; the message starts with `error: resolution failed:` followed by a derivation tree, and any captured diagnostics are appended under a `Diagnostics:` section.
+`nab lock` and `nab download` exit non-zero on resolution failure; the message starts with
+`error: resolution failed:` followed by a derivation tree, and any captured diagnostics are appended
+under a `Diagnostics:` section.
 
 ## The `Diagnostics:` section
 
-Each package that ran out of versions gets one line, naming the setting that refused its files. An indented `try:` line follows where changing a setting would admit them again. Where the line names a config entry, it is one of the per-package or per-index overrides in [Configuration](configuration.md).
+Each package that ran out of versions gets one line, naming the setting that refused its files. An
+indented `try:` line follows where changing a setting would admit them again. Where the line names a
+config entry, it is one of the per-package or per-index overrides in
+[Configuration](configuration.md).
 
 ```
 Diagnostics: (-v for detail)
@@ -16,7 +22,8 @@ Diagnostics: (-v for detail)
     try: set packages."foo".uploaded-prior-to = false
 ```
 
-`-v` replaces the `try:` line with the whole record: one clause per cause, and a closing `note:` naming the configuration layer that set the key.
+`-v` replaces the `try:` line with the whole record: one clause per cause, and a closing `note:`
+naming the configuration layer that set the key.
 
 ```
 Diagnostics:
@@ -41,7 +48,9 @@ Diagnostics:
 
 ## Several targets
 
-Universal matrices and declared extra or group conflicts can produce several resolve targets. If any fails, nab writes no lock or requirements output. The failure report goes to stderr, with one labelled block per target:
+Universal matrices and declared extra or group conflicts can produce several resolve targets. If any
+fails, nab writes no lock or requirements output. The failure report goes to stderr, with one
+labelled block per target:
 
 ```
 error: resolution failed:
@@ -53,4 +62,6 @@ attrs==26.1.0
 #   so your project's requirements cannot be satisfied
 ```
 
-Successful targets show their pins; failed targets show an indented error and any `Diagnostics:` details. A failure in a conflict's base selection adds a `# base/<label>: FAILED` block; see [Conflicting selections](../explanation/conflicts.md).
+Successful targets show their pins; failed targets show an indented error and any `Diagnostics:`
+details. A failure in a conflict's base selection adds a `# base/<label>: FAILED` block; see
+[Conflicting selections](../explanation/conflicts.md).

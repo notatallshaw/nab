@@ -1,5 +1,5 @@
-# Paragraphs stay on one source line; rendered wrapping belongs to the reader.
-wrap = "no"
+# Wrap prose while preserving code blocks, table cells, and indivisible links.
+wrap = 100
 number = true
 end_of_line = "lf"
 validate = true

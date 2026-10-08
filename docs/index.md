@@ -1,26 +1,36 @@
 # nab
 
-nab resolves Python project dependencies and writes a PEP 751 lock or pinned requirements. It can download resolved artifacts, but it does not install them.
+nab resolves Python project dependencies and writes a PEP 751 lock or pinned requirements. It can
+download resolved artifacts, but it does not install them.
 
-Keep dependency ranges in `pyproject.toml`, use nab to select compatible versions, then review the lock before handing it to an installer. The lock includes transitive dependencies and records its target environments. Installing from it reuses the recorded selection; running nab again makes a fresh one.
+Keep dependency ranges in `pyproject.toml`, use nab to select compatible versions, then review the
+lock before handing it to an installer. The lock includes transitive dependencies and records its
+target environments. Installing from it reuses the recorded selection; running nab again makes a
+fresh one.
 
-Start with the Python and platform running nab, {ref}`declare a deployment target <the-resolve-environment>`, or [lock a matrix of environments](explanation/universal.md). Remote sources are read without building them by default; [build policy](reference/build-policy.md) controls when a backend may run.
+Start with the Python and platform running nab,
+{ref}`declare a deployment target <the-resolve-environment>`, or
+[lock a matrix of environments](explanation/universal.md). Remote sources are read without building
+them by default; [build policy](reference/build-policy.md) controls when a backend may run.
 
 ## Start with a task
 
 - [Make your first lock](tutorial/getting-started.md), then install its dependencies.
 - [Use a lock](how-to/use-the-lock.md) with pip, hashed requirements, or an offline wheelhouse.
 - [Configure a resolve](reference/configuration.md) and inspect effective values.
-- Use [local projects](how-to/local-sources.md), [git sources](how-to/vcs.md), [multiple indexes](how-to/multi-index.md), or [workspaces](how-to/workspaces.md).
+- Use [local projects](how-to/local-sources.md), [git sources](how-to/vcs.md),
+  [multiple indexes](how-to/multi-index.md), or [workspaces](how-to/workspaces.md).
 - [Use a direct archive source](how-to/archive-sources.md) with a required digest.
 - [Reason about PEP 508 markers](how-to/reason-about-markers.md) as sets of environments.
 - [Diagnose a failed resolve](reference/diagnostics.md) from its error and `Diagnostics:` section.
-- [Check the CLI](reference/cli.md), output [formats](reference/formats.md), or [cache](reference/cache.md).
+- [Check the CLI](reference/cli.md), output [formats](reference/formats.md), or
+  [cache](reference/cache.md).
 - [Embed the generic resolver](how-to/embed-the-resolver.md) in another tool.
 
 ## Status
 
-nab is experimental. The table below states the current boundary; feature pages carry their own stability warnings.
+nab is experimental. The table below states the current boundary; feature pages carry their own
+stability warnings.
 
 | Area                  | Current boundary                                                                                                                                                               |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
