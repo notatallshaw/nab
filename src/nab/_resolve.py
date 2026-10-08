@@ -313,6 +313,9 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
                     transport,
                     targets=targets,
                     inputs=config.resolve_inputs(),
+                    include_dependency_requirements=(
+                        printer().verbosity >= Verbosity.DEBUG
+                    ),
                     build_transport_factory=partial(_make_transport, http_backend),
                     cache_dir=cache_dir,
                     offline=offline,
@@ -378,7 +381,28 @@ def _resolve(  # noqa: PLR0913, PLR0912, C901 - one wrapper per resolve_for_targ
     if not result.success:
         _report_failures(result)
         sys.exit(1)
+    if printer().verbosity >= Verbosity.DEBUG:
+        _report_dependency_requirements(result)
     return result
+
+
+def _report_dependency_requirements(result: ResolveResult) -> None:
+    """Show each target's active parent declarations at debug verbosity."""
+    for target_result in result.target_results:
+        if target_result.lock is None:
+            continue
+        declarations = target_result.lock.dependency_requirements
+        if declarations is None:
+            continue
+        for parent in sorted(declarations):
+            prefix = (
+                f"{target_result.target.label}: {parent}=={target_result.pins[parent]}"
+            )
+            for child in sorted(declarations[parent]):
+                for requirement in declarations[parent][child]:
+                    printer().stderr_line(
+                        f"{prefix} requires {requirement}\n",
+                    )
 
 
 def _report_failures(result: ResolveResult) -> None:

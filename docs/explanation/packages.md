@@ -109,6 +109,12 @@ print(resolver.resolve({"app": VersionRange.full()}))
 `nab_project.resolve.resolve_for_targets` is the entry point that takes a project path; the provider
 has none.
 
+Pass `include_dependency_requirements=True` to retain each successful target's active parent
+declarations in `target_result.lock.dependency_requirements`. Canonical parent and child names index
+tuples of PEP 508 strings, with operators such as `~=` and markers preserved in normalized text. The
+map uses effective metadata after overrides; root requirements and user constraints remain separate.
+Omitted collection is `None`, and a collected graph with no edges is `{}`.
+
 ## Where the vendored packaging fork lives
 
 `nab-provider` carries nab's fork of `packaging` at `nab_provider._vendor.packaging`. `nab-project`

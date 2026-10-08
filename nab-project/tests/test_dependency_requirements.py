@@ -50,7 +50,7 @@ class _LocalTransport:
 def _write_wheel(
     directory: Path, name: str, version: str, declarations: Sequence[str]
 ) -> None:
-    """Write an installable wheel carrying the fixture's dependency metadata."""
+    """Write a wheel archive carrying the fixture's dependency metadata."""
     package = directory
     package.mkdir(parents=True, exist_ok=True)
     wheel_name = name.replace("-", "_")
