@@ -22,6 +22,7 @@ from ``build.env.IsolatedEnv``.
 
 from __future__ import annotations
 
+import asyncio
 import glob
 import json
 import logging
@@ -30,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 import venv
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -76,7 +78,7 @@ if TYPE_CHECKING:
     from installer.utils import Scheme
     from typing_extensions import Self
 
-    from nab_index.transport import AsyncHttpTransport
+    from nab_index.transport import AsyncHttpTransport, HttpResponse
     from nab_provider.overrides import IndexOverride, PackageOverride
     from nab_provider.tags import TagSet
 
@@ -164,6 +166,39 @@ class BuildEnvError(Exception):
     interpreter scheme probe, and the inner resolve, download, and
     install of ``[build-system].requires``.
     """
+
+
+class _OwnedBuildTransport:
+    """Close unclaimed build transports and leave used clients with their consumer."""
+
+    def __init__(self, transport: AsyncHttpTransport) -> None:
+        self._transport = transport
+        self._claimed = False
+        self._closed = False
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        if not self._claimed:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                executor.submit(self._close_unclaimed).result()
+
+    def _close_unclaimed(self) -> None:
+        """Close the unused client independently of a caller's running loop."""
+        asyncio.run(self.aclose())
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> HttpResponse:
+        self._claimed = True
+        return await self._transport.get(url, headers=headers)
+
+    async def aclose(self) -> None:
+        self._claimed = True
+        if not self._closed:
+            self._closed = True
+            await self._transport.aclose()
 
 
 @contextmanager
@@ -469,18 +504,16 @@ class NabBuildEnv:
 
         inner_inputs = _inner_resolve_inputs(self._config)
 
-        # Resolution and downloads each close their client on their own event loop.
-        transport = self._transport_factory()
+        transport = _OwnedBuildTransport(self._transport_factory())
         try:
-            result = resolve_for_targets(
-                synthetic,
-                transport,
-                targets=(ResolveTarget.for_host(),),
-                inputs=inner_inputs,
-            )
-            # The build env has one host target; its failure fails the
-            # resolve.
-            result.raise_for_failure()
+            with transport:
+                result = resolve_for_targets(
+                    synthetic,
+                    transport,
+                    targets=(ResolveTarget.for_host(),),
+                    inputs=inner_inputs,
+                )
+                result.raise_for_failure()
         except (
             UnsupportedVcsError,
             NotImplementedError,

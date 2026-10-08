@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gc
 import hashlib
 import io
 import json
@@ -38,6 +39,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import build
+import httpx
 import pyproject_hooks
 import pytest
 import tomli
@@ -55,6 +57,7 @@ from nab_project._build.env import (
     BuildEnvError,
     NabBuildEnv,
     _FastSchemeDictionaryDestination,
+    _OwnedBuildTransport,
     _PendingBuild,
     _remove_files,
     _venv_scheme_paths,
@@ -66,6 +69,7 @@ from nab_project._build.runner import (
     build_wheel_for_install,
     run_build_backend,
 )
+from nab_project.build_backend import extract_metadata
 from nab_project.download import DownloadError, DownloadResult, iter_artifacts
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
@@ -4335,6 +4339,7 @@ class _BuildTransport:
         self.requests: list[str] = []
         self.loop: asyncio.AbstractEventLoop | None = None
         self.closed = False
+        self.close_calls = 0
 
     async def get(
         self, url: str, *, headers: dict[str, str] | None = None
@@ -4347,6 +4352,7 @@ class _BuildTransport:
         return await self.transport.get(url, headers=headers)
 
     async def aclose(self) -> None:
+        self.close_calls += 1
         assert not self.closed
         assert self.loop is None or self.loop is asyncio.get_running_loop()
         self.closed = True
@@ -4487,6 +4493,104 @@ def test_build_transport_closes_after_failure(tmp_path: Path, failure: str) -> N
 
     assert len(factory.clients) == (1 if failure == "resolve" else 2)
     assert all(client.closed for client in factory.clients)
+
+
+@pytest.mark.parametrize("requirement_source", ["bootstrap", "hook"])
+@pytest.mark.parametrize("caller_context", ["sync", "async"])
+def test_build_transport_closes_after_invalid_requirement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    recwarn: pytest.WarningsRecorder,
+    requirement_source: str,
+    caller_context: str,
+) -> None:
+    source = _write_fake_backend_project(tmp_path)
+    if requirement_source == "bootstrap":
+        project = source / "pyproject.toml"
+        project.write_text(
+            project.read_text().replace("requires = []", 'requires = ["bad ???"]')
+        )
+
+    monkeypatch.setattr(env_mod.venv, "EnvBuilder", _StubEnvBuilder)
+    hook_calls: list[str] = []
+
+    def get_requires(_project: build.ProjectBuilder, distribution: str) -> set[str]:
+        hook_calls.append(distribution)
+        return {"bad ???"}
+
+    monkeypatch.setattr(build.ProjectBuilder, "get_requires_for_build", get_requires)
+    factory = _BuildTransportFactory(HttpxAsyncTransport)
+    scheme_probe = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=json.dumps({"paths": {}, "prefix": str(tmp_path), "py_version": "3.10"}),
+    )
+
+    async def extract_from_loop() -> None:
+        """Call the synchronous API while the caller's event loop is running."""
+        extract_metadata(source, config=ResolveInputs(), transport_factory=factory)
+
+    def extract_with_caller_context() -> None:
+        if caller_context == "async":
+            asyncio.run(extract_from_loop())
+        else:
+            extract_metadata(source, config=ResolveInputs(), transport_factory=factory)
+
+    with (
+        patch.object(env_mod.subprocess, "run", return_value=scheme_probe),
+        pytest.raises(
+            BuildBackendError,
+            match=r"build env resolve failed: invalid requirement in \[project\]\.dependencies",
+        ),
+    ):
+        extract_with_caller_context()
+
+    assert hook_calls == ([] if requirement_source == "bootstrap" else ["wheel"])
+    assert len(factory.clients) == 1
+
+    client = factory.clients[0]
+    assert client.requests == []
+
+    assert client.closed
+    assert client.close_calls == 1
+    assert isinstance(client.transport, HttpxAsyncTransport)
+    assert client.transport._client.is_closed
+
+    gc.collect()
+    assert not recwarn
+
+
+def test_build_transport_closes_once_on_consumer_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        assert request.headers["X-Build"] == "expected"
+        return httpx.Response(200, stream=httpx.ByteStream(b"metadata"))
+
+    mock_client = partial(httpx.AsyncClient, transport=httpx.MockTransport(respond))
+    monkeypatch.setattr(httpx, "AsyncClient", mock_client)
+    client = _BuildTransport(HttpxAsyncTransport())
+
+    async def consume() -> None:
+        """Keep both close attempts on the loop that handled the request."""
+        with _OwnedBuildTransport(client) as transport:
+            response = await transport.get(
+                "https://index.example/build", headers={"X-Build": "expected"}
+            )
+
+        assert response.content == b"metadata"
+        assert not client.closed
+
+        await transport.aclose()
+        await transport.aclose()
+
+    asyncio.run(consume())
+
+    assert client.requests == ["https://index.example/build"]
+    assert client.loop is not None
+
+    assert client.closed
+    assert client.close_calls == 1
 
 
 def test_offline_build_never_creates_a_transport(tmp_path: Path) -> None:
