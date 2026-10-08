@@ -56,42 +56,27 @@ extra-dependencies = [
 check = "pytest -m crosshair {args}"
 
 [envs.types]
-template = "types"
-workspace.members = [
-    "nab-resolver",
-    "nab-markersets",
-    "nab-provider",
-    "nab-project",
-    "nab-index",
-]
-dependencies = [
-    "pyright>=1.1.400",
-    "mypy>=1.19",
-    "ty>=0.0.20",
-    "pyrefly>=0.50",
-    "zuban>=0.6",
-    "pytest>=9.0",
-    "hypothesis>=6.100",
-    "pytest-timeout>=2.3",
-]
+detached = true
+dependency-groups = ["nox"]
 
 [envs.types.scripts]
-check-pyright = "pyright {args}"
-check-mypy = "mypy {args:nab-resolver/src}"
-check-ty = "ty check {args:nab-resolver/src}"
-check-pyrefly = "pyrefly check {args:nab-resolver/src}"
-check-zuban = "zuban check {args:nab-resolver/src}"
+check-pyright = "nox -s \"types(checker='pyright')\" {args}"
+check-mypy = "nox -s \"types(checker='mypy')\" {args}"
+check-ty = "nox -s \"types(checker='ty')\" {args}"
+check-pyrefly = "nox -s \"types(checker='pyrefly')\" {args}"
+check-zuban = "nox -s \"types(checker='zuban')\" {args}"
 all = ["check-pyright", "check-mypy", "check-ty", "check-pyrefly", "check-zuban"]
 
 [envs.lint]
 detached = true
-dependencies = ["ruff>=0.12"]
+python = "3.13"
+dependency-groups = ["lint"]
 
 [envs.lint.scripts]
-check = "ruff check ."
+check = ["ruff check .", "mdformat --check ."]
 fix = "ruff check --fix ."
-fmt = "ruff format ."
-fmt-check = "ruff format --check ."
+fmt = ["ruff format .", "mdformat ."]
+fmt-check = ["ruff format --check .", "mdformat --check ."]
 
 # nab locks the docs dependency group from pyproject.toml into
 # .github/requirements/pylock.docs.toml. CI and Read the Docs install
@@ -102,6 +87,7 @@ fmt-check = "ruff format --check ."
 # the environment it builds the docs from.
 [envs.docs]
 template = "docs"
+python = "3.13"
 skip-install = true
 dependency-groups = ["docs"]
 dependencies = [
@@ -109,7 +95,7 @@ dependencies = [
 ]
 
 [envs.docs.scripts]
-build = "sphinx-build -W -b html docs docs/_build/html {args}"
+build = "sphinx-build -n -W -b html docs docs/_build/html {args}"
 serve = "sphinx-autobuild docs docs/_build/html {args}"
 clean = "rm -rf docs/_build"
 

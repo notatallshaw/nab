@@ -947,7 +947,8 @@ def marker_matched_extras(
     """
     per_marker = provider.marker_extra_cache.get(marker_id)
     if per_marker is None:
-        per_marker = provider.marker_extra_cache[marker_id] = {}
+        per_marker = {}
+        provider.marker_extra_cache[marker_id] = per_marker
     env = provider.prepared_extra_environment
     matched: set[str] = set()
     for extra_name in provided_extras:
@@ -1106,6 +1107,7 @@ def effective_metadata(
         if override_deps is not None
         else list(metadata.requires_dist)
     )
+    provides_extra: list[str]
     if override_pe is not None:
         provides_extra = list(override_pe)
     elif override_deps is not None:

@@ -17,6 +17,7 @@ lookup. Run a single cell locally::
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import NamedTuple
 
 import nox
@@ -87,6 +88,14 @@ TYPED_TREES = [
 # error in whichever reads it first.
 CHECKED = [*TYPED_TREES, "tests/cli_bijection.py"]
 
+# ty's directory discovery omits _build even when ignore files are disabled.
+TYPED_FILES = sorted(
+    str(path)
+    for tree in TYPED_TREES
+    for path in Path(tree).rglob("*")
+    if path.suffix in {".py", ".pyi"} and "_vendor" not in path.parts
+)
+
 # checker -> command; pyright reads its targets from [tool.pyright] in
 # pyproject.toml, the rest take them on the command line. Paths on pyrefly's
 # command line switch off the excludes in its config, so the vendored tree is
@@ -94,7 +103,13 @@ CHECKED = [*TYPED_TREES, "tests/cli_bijection.py"]
 TYPE_CHECKERS = {
     "mypy": ["mypy", *CHECKED],
     "pyright": ["pyright"],
-    "ty": ["ty", "check", *CHECKED],
+    "ty": [
+        "ty",
+        "check",
+        "--no-respect-ignore-files",
+        *TYPED_FILES,
+        "tests/cli_bijection.py",
+    ],
     "pyrefly": ["pyrefly", "check", "--project-excludes", "**/_vendor/**", *CHECKED],
     "zuban": ["zuban", "check", *CHECKED],
 }

@@ -1075,7 +1075,10 @@ class Provider:
         )
 
     def _matching_package_override(
-        self, canonical_name: str, version: Version, sets_field: Callable[..., object]
+        self,
+        canonical_name: str,
+        version: Version,
+        sets_field: Callable[[PackageOverride], object],
     ) -> PackageOverride | None:
         """Return the per-package override for ``version`` that sets the field.
 

@@ -13,4 +13,4 @@ build:
       - python -m pip install -r .github/requirements/pylock.docs.toml
     build:
       html:
-        - python -m sphinx -W -b html docs $READTHEDOCS_OUTPUT/html
+        - python -m sphinx -n -W -b html docs $READTHEDOCS_OUTPUT/html

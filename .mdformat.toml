@@ -1,0 +1,7 @@
+# Paragraphs stay on one source line; rendered wrapping belongs to the reader.
+wrap = "no"
+number = true
+end_of_line = "lf"
+validate = true
+extensions = ["myst", "gfm_alerts", "deflist"]
+exclude = ["**/_vendor/**", "docs/_build/**", ".venv/**", ".nox/**"]

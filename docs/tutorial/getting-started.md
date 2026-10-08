@@ -1,7 +1,6 @@
 # Getting started
 
-This tutorial resolves a project against PyPI, writes a lock, and
-installs the locked dependencies.
+This tutorial resolves a project against PyPI, writes a lock, and installs the locked dependencies.
 
 ## Install
 
@@ -10,8 +9,7 @@ uv tool install nab
 nab --version
 ```
 
-For other install paths (extras, pipx, a checkout) see
-[Install nab](../how-to/install.md).
+For other install paths (extras, pipx, a checkout) see [Install nab](../how-to/install.md).
 
 ## A minimal `pyproject.toml`
 
@@ -55,15 +53,14 @@ typing-extensions==4.16.0
 typing-inspection==0.4.4
 ```
 
-`fastapi` resolves to 0.109.1 rather than its `<=0.115.2` cap because
-every later release requires a starlette that `<=0.36.0` excludes.
+`fastapi` resolves to 0.109.1 rather than its `<=0.115.2` cap because every later release requires a starlette that `<=0.36.0` excludes.
 
 This command resolves again; it does not export the existing lock. nab prefers the newest releases that satisfy the constraints. This block came from CPython 3.12 on Linux, so another target or a later resolve can differ.
 
-Names use their PEP 503 canonical form, so `typing_extensions`
-appears as `typing-extensions`.
+Names use their PEP 503 canonical form, so `typing_extensions` appears as `typing-extensions`.
 
 (install-the-locked-dependencies)=
+
 ## Install the locked dependencies
 
 Use a virtual environment whose Python and platform match the lock. If you do not have one, create it with your application's Python and activate it:
@@ -82,13 +79,11 @@ python -m pip install --upgrade 'pip>=26.1'
 python -m pip install -r pylock.toml
 ```
 
-pip selects the current environment, the lock's default dependency
-groups, and no extras. Its `pylock.toml` support is experimental.
+pip selects the current environment, the lock's default dependency groups, and no extras. Its `pylock.toml` support is experimental.
 
 This installs the dependencies, not your own project. For this example, confirm FastAPI is available with `python -c "import fastapi; print(fastapi.__version__)"`.
 
-See [Use a lock](../how-to/use-the-lock.md) for hashed requirements,
-an offline wheelhouse, and the limits of each path.
+See [Use a lock](../how-to/use-the-lock.md) for hashed requirements, an offline wheelhouse, and the limits of each path.
 
 ## Keep or refresh the result
 
@@ -98,9 +93,7 @@ When you change dependencies or want a fresh selection, run `nab lock pyproject.
 
 ## Where to next
 
-* [Configuration](../reference/configuration.md): configure the resolve.
-* [Resolution failures](../reference/diagnostics.md): read an error and
-  its recovery hints.
-* [Universal resolution](../explanation/universal.md): lock for several
-  Python and platform targets.
-* [CLI](../reference/cli.md): look up commands and flags.
+- [Configuration](../reference/configuration.md): configure the resolve.
+- [Resolution failures](../reference/diagnostics.md): read an error and its recovery hints.
+- [Universal resolution](../explanation/universal.md): lock for several Python and platform targets.
+- [CLI](../reference/cli.md): look up commands and flags.

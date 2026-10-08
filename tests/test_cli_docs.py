@@ -153,7 +153,7 @@ def _prose_chunks(text: str) -> list[str]:
     current: list[str] = []
     for raw in text.splitlines():
         line = raw.strip()
-        if current and (not line or raw.startswith("* ")):
+        if current and (not line or raw.startswith("- ")):
             chunks.append(" ".join(current))
             current = []
         if line:
@@ -559,7 +559,7 @@ def _include_rejected_chunks() -> list[str]:
 
 def _action_bullet(action: str) -> str:
     """The ``--include-rejected`` bullet for one ``nab config`` action."""
-    prefix = f"* `nab config {action}"
+    prefix = f"- `nab config {action}"
     return next(c for c in _include_rejected_chunks() if c.startswith(prefix))
 
 
@@ -817,7 +817,7 @@ def _requirements_lines(pins: Iterable[PinShape], *, with_hashes: bool) -> list[
 def _format_bullets(text: str) -> str:
     """The ``--format`` bullets of a stretch of page text, joined into one string."""
     return " ".join(
-        chunk for chunk in _prose_chunks(text) if chunk.startswith("* `--format")
+        chunk for chunk in _prose_chunks(text) if chunk.startswith("- `--format")
     )
 
 
@@ -898,7 +898,7 @@ class TestLockFormatSummaries:
             bullet = next(
                 chunk
                 for chunk in _prose_chunks(text)
-                if chunk.startswith("* `--format requirements`")
+                if chunk.startswith("- `--format requirements`")
             )
             normalized = bullet.lower().replace("`", "")
             assert "index pin" in normalized, source

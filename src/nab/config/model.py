@@ -1141,7 +1141,8 @@ def _environment_file_origin(entry: EffectiveValue) -> Origin | None:
     overlay is not a second declaration of the table.  The origin rather than
     a bare yes, so a message can name the table the way that file writes it.
     """
-    for origin, value in reversed(entry.stack):
+    stack: Sequence[tuple[Origin, object]] = entry.stack
+    for origin, value in reversed(stack):
         if value and origin.kind is not SourceKind.CLI:
             return origin
     return None

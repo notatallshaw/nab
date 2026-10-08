@@ -40,7 +40,7 @@ CAPABILITY_MODULES = {
 }
 
 # A Libraries bullet: the library it opens with, then everything it claims.
-_BULLET = re.compile(r"^\* `([^`\n]+)`:(.*?)(?=^\*|\Z)", re.MULTILINE | re.DOTALL)
+_BULLET = re.compile(r"^- `([^`\n]+)`:(.*?)(?=^- |\Z)", re.MULTILINE | re.DOTALL)
 
 
 def _project(directory: Path) -> dict[str, Any]:
@@ -70,7 +70,7 @@ def _bullet_list(lines: Iterable[str]) -> str:
     """
     listed: list[str] = []
     for line in lines:
-        if line.startswith("* ") or (listed and line.startswith("  ")):
+        if line.startswith("- ") or (listed and line.startswith("  ")):
             listed.append(line)
         elif listed:
             break

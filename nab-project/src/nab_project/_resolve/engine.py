@@ -285,7 +285,7 @@ def _resolve_slices(
     A fork's pass walks the whole matrix in order, folding in an unsplit
     target's first-pass pins rather than resolving it again.
     """
-    sliced = [
+    sliced: list[list[ResolveTarget]] = [
         slices_from_points(target, target_points) if target_points else []
         for target, target_points in zip(targets, points, strict=True)
     ]
