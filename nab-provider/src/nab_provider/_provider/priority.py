@@ -3,7 +3,8 @@
 Owns the tier/matching/culprit logic that backs ``prioritize``.
 Affected packages with high conflict counts get tier 0 (decide
 first inside a conflict cluster); runaway top culprits get tier 2
-(uv's deprioritise-on-conflict); everything else gets tier 1.
+(uv's deprioritise-on-conflict); ordinary packages otherwise get tier 1.
+Retained fatal override conflicts get tier -1.
 """
 
 from __future__ import annotations
@@ -11,6 +12,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from nab_provider._vendor.packaging.ranges import VersionRange
+
+from ..errors import OverrideConflictError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -28,6 +31,7 @@ CONFLICT_THRESHOLD = 5
 CULPRIT_DEMOTE_THRESHOLD = 5
 
 # Lower number = higher priority.
+TIER_FATAL = -1
 TIER_AFFECTED = 0
 TIER_NORMAL = 1
 TIER_CULPRIT = 2
@@ -73,8 +77,7 @@ def compute_matching(
     whole decision scan.
 
     Under :attr:`~nab_provider.provider.DecisionOrder.STABLE` it waits for the
-    listing. It returns that listing's match count when present and
-    :data:`_NO_LISTING_PRIOR` when absent.
+    listing. It retains override conflicts and returns zero for them.
     """
     per_pkg = provider.matching_cache.get(normalized)
     if per_pkg is not None:
@@ -96,7 +99,13 @@ def compute_matching(
             else provider.arrived_listing(normalized)
         )
         if files is not None:
-            versions = provider.filter_distributions(normalized, files)
+            try:
+                versions = provider.filter_distributions(normalized, files)
+            except OverrideConflictError as exc:
+                if not provider.settle_listings:
+                    raise
+                provider.priority_override_errors[normalized] = str(exc)
+                return 0
             provider.versions_cache[normalized] = versions
             provider.stats.listings_fetched += 1
             provider.speculative_prefetch(normalized, versions)
@@ -160,9 +169,8 @@ def prioritize(
 ) -> tuple[int, int, bool]:
     """Prioritize packages for resolution order.
 
-    Returns ``(tier, matching_count, is_base)``.  Extras proxies sort before
-    their base at equal tier so they pin the base version directly (avoids
-    the backtrack storm when the base is decided before the extras proxy).
+    Returns ``(tier, matching_count, is_base)``.
+    Extras proxies precede their base at equal non-fatal tiers.
 
     Blocks on I/O only under
     :attr:`~nab_provider.provider.DecisionOrder.STABLE`, which waits for a
@@ -205,6 +213,9 @@ def prioritize(
         force_backtracked=force_backtracked,
     )
     matching = compute_matching(provider, normalized, version_range)
+    if normalized in provider.priority_override_errors:
+        # Fatal errors precede every ordinary decision, with no base/extra bias.
+        return (TIER_FATAL, 0, False)
     priority = (tier, matching, extra is None)
 
     # Don't cache the in-flight placeholder; compute_matching's listing-arrival
