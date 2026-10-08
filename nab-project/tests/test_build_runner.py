@@ -26,7 +26,7 @@ import tarfile
 import tempfile
 import threading
 import zipfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -397,6 +397,63 @@ def _tempdir_denying(denied: str) -> Callable[..., tempfile.TemporaryDirectory[s
 def config() -> ResolveInputs:
     """A minimal :class:`ResolveInputs` for the tests."""
     return ResolveInputs()
+
+
+def _run_requirement_hook(
+    cmd: Sequence[str],
+    _cwd: str | None = None,
+    _extra_environ: Mapping[str, str] | None = None,
+    *,
+    requirements: list[object],
+) -> None:
+    """Write wheel requirements and valid metadata as hook subprocess responses."""
+    hook, control_dir = cmd[-2:]
+    control = Path(control_dir)
+    result: object
+    if hook == "get_requires_for_build_wheel":
+        result = requirements
+    elif hook == "get_requires_for_build_sdist":
+        result = []
+    elif hook == "prepare_metadata_for_build_wheel":
+        arguments = json.loads((control / "input.json").read_text(encoding="utf-8"))
+        result = "fake_pkg-1.0.dist-info"
+        metadata_dir = Path(arguments["kwargs"]["metadata_directory"]) / result
+        metadata_dir.mkdir()
+        (metadata_dir / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: fake-pkg\nVersion: 1.0\n",
+            encoding="utf-8",
+        )
+    else:
+        msg = f"unexpected build hook: {hook}"
+        raise AssertionError(msg)
+
+    (control / "output.json").write_text(
+        json.dumps({"return_val": result}), encoding="utf-8"
+    )
+
+
+@pytest.fixture
+def wheel_hook_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[list[object]], None]:
+    """Configure wheel-hook results for a real builder in a stubbed build environment."""
+    monkeypatch.setattr("venv.EnvBuilder", _StubEnvBuilder)
+    monkeypatch.setattr(
+        env_mod, "_venv_scheme_paths", lambda _python: {"purelib": str(tmp_path)}
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nrequires = []\nbuild-backend = "setuptools.build_meta"\n',
+        encoding="utf-8",
+    )
+
+    def configure(requirements: list[object]) -> None:
+        monkeypatch.setattr(
+            pyproject_hooks,
+            "quiet_subprocess_runner",
+            partial(_run_requirement_hook, requirements=requirements),
+        )
+
+    return configure
 
 
 class TestRunBuildBackend:
@@ -806,80 +863,29 @@ class TestRunBuildBackend:
         self,
         tmp_path: Path,
         config: ResolveInputs,
-        monkeypatch: pytest.MonkeyPatch,
+        wheel_hook_requirements: Callable[[list[object]], None],
     ) -> None:
         """A non-string build requirement is wrapped as BuildBackendError."""
-        from nab_project._build import env as env_mod
+        wheel_hook_requirements(["setuptools", None])
 
-        class _Builder:
-            def __init__(self, **_kw: object) -> None:
-                pass
-
-            def create(self, path: Path) -> None:
-                path.mkdir(parents=True, exist_ok=True)
-                (path / "bin").mkdir(exist_ok=True)
-                (path / "bin" / "python").touch()
-
-        import venv as venv_mod
-
-        monkeypatch.setattr(venv_mod, "EnvBuilder", _Builder)
-        monkeypatch.setattr(
-            env_mod, "_venv_scheme_paths", lambda _python: {"purelib": str(tmp_path)}
-        )
-
-        (tmp_path / "pyproject.toml").write_text(
-            '[build-system]\nrequires = []\nbuild-backend = "setuptools.build_meta"\n',
-            encoding="utf-8",
-        )
-
-        project = MagicMock()
-        project.get_requires_for_build.return_value = ["setuptools", None]
-
-        with (
-            patch(
-                "nab_project._build.runner.build.ProjectBuilder.from_isolated_env",
-                return_value=project,
-            ),
-            pytest.raises(BuildBackendError, match="non-string"),
-        ):
+        with pytest.raises(BuildBackendError, match="non-string"):
             run_build_backend(tmp_path, config=config)
 
     def test_unencodable_build_requirement_wrapped(
         self,
         tmp_path: Path,
         config: ResolveInputs,
-        monkeypatch: pytest.MonkeyPatch,
+        wheel_hook_requirements: Callable[[list[object]], None],
     ) -> None:
         """A build requirement with no UTF-8 encoding is wrapped.
 
-        A backend that derives a requirement from a filesystem name passes
-        on what ``os.fsdecode`` gave it, so a name that is not valid UTF-8
-        comes back as a lone surrogate.
+        A filesystem-derived requirement can contain a lone surrogate from ``os.fsdecode``.
         """
-        monkeypatch.setattr("venv.EnvBuilder", _StubEnvBuilder)
-        monkeypatch.setattr(
-            "nab_project._build.env._venv_scheme_paths",
-            lambda _python: {"purelib": str(tmp_path)},
+        wheel_hook_requirements(
+            ["setuptools", "pkg @ file:///vendor/p\udce9kg-1.0-py3-none-any.whl"]
         )
 
-        (tmp_path / "pyproject.toml").write_text(
-            '[build-system]\nrequires = []\nbuild-backend = "setuptools.build_meta"\n',
-            encoding="utf-8",
-        )
-
-        project = MagicMock()
-        project.get_requires_for_build.return_value = [
-            "setuptools",
-            "pkg @ file:///vendor/p\udce9kg-1.0-py3-none-any.whl",
-        ]
-
-        with (
-            patch(
-                "nab_project._build.runner.build.ProjectBuilder.from_isolated_env",
-                return_value=project,
-            ),
-            pytest.raises(BuildBackendError) as excinfo,
-        ):
+        with pytest.raises(BuildBackendError) as excinfo:
             run_build_backend(tmp_path, config=config)
 
         message = str(excinfo.value)
