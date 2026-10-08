@@ -40,12 +40,12 @@ if TYPE_CHECKING:
     from collections.abc import Set as AbstractSet
     from typing import TypeAlias
 
-    # packaging's parse tree, narrowed to what ``parse_marker`` builds. Its own
-    # ``MarkerAtom`` recurses through ``Sequence``, which admits a tuple and so
-    # blocks the isinstance narrowing the walkers below rely on.
+    from ._packaging import MarkerAtom, MarkerList
+
+    # The walkers read the parser's recursive node types without mutating them.
     MarkerOperand: TypeAlias = "Variable | Value"
     MarkerComparison: TypeAlias = "tuple[MarkerOperand, Op, MarkerOperand]"
-    MarkerNode: TypeAlias = "MarkerComparison | str | list[MarkerNode]"
+    MarkerNode: TypeAlias = "MarkerAtom | MarkerList | str"
 
     # An axis is a variable's domain, named by its kind. A node key is the
     # structural key two trees of the same shape share.
@@ -493,7 +493,7 @@ def _is_marker(source: object) -> bool:
     )
 
 
-def _parse_ast(source: object) -> list[MarkerNode] | None:
+def _parse_ast(source: object) -> Sequence[MarkerNode] | None:
     """Parse a marker with packaging; None for an empty marker."""
     if _is_marker(source):
         source = str(source)
@@ -507,7 +507,7 @@ def _parse_ast(source: object) -> list[MarkerNode] | None:
     if not source.strip():
         return None
     try:
-        return cast("list[MarkerNode]", parse_marker(source))
+        return parse_marker(source)
     except ParserSyntaxError as exc:
         # Match packaging: a malformed marker raises InvalidMarker.
         raise InvalidMarker(str(exc)) from exc
@@ -533,7 +533,7 @@ def variable_names(source: str | MarkerLike) -> frozenset[str]:
     return frozenset(names)
 
 
-def _collect_variables(node: list[MarkerNode], names: set[str]) -> None:
+def _collect_variables(node: Sequence[MarkerNode], names: set[str]) -> None:
     for item in node:
         if isinstance(item, str):
             continue
@@ -541,7 +541,8 @@ def _collect_variables(node: list[MarkerNode], names: set[str]) -> None:
             _collect_variables(item, names)
             continue
 
-        lhs, _op, rhs = item
+        # parse_marker builds tuples only for comparisons, never nested sequences.
+        lhs, _op, rhs = cast("MarkerComparison", item)
         if isinstance(lhs, Variable):
             names.add(lhs.value)
         if isinstance(rhs, Variable):
@@ -551,7 +552,7 @@ def _collect_variables(node: list[MarkerNode], names: set[str]) -> None:
             names.add(rhs.value)
 
 
-def _convert(node: list[MarkerNode]) -> Formula:
+def _convert(node: Sequence[MarkerNode]) -> Formula:
     or_groups: list[list[Formula]] = [[]]
     for item in node:
         if item == "or":

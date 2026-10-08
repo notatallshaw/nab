@@ -33,7 +33,7 @@ import venv
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 import tomli_w
 from installer import install as installer_install
@@ -68,7 +68,8 @@ from ..lockfile import IndexPin, strip_userinfo
 from .errors import BuildBackendError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping
+    from collections.abc import Callable, Generator, Iterable, Mapping
+    from typing import overload
 
     from installer.records import RecordEntry
     from installer.scripts import LauncherKind
@@ -80,8 +81,6 @@ if TYPE_CHECKING:
     from nab_provider.tags import TagSet
 
     from ..lockfile import LockInput, PinShape, SdistArtifact, TargetLock
-
-    _OverrideT = TypeVar("_OverrideT", PackageOverride, IndexOverride)
 
 __all__ = [
     "NabBuildEnv",
@@ -168,7 +167,7 @@ class BuildEnvError(Exception):
 
 
 @contextmanager
-def _as_build_env_error(action: str) -> Iterator[None]:
+def _as_build_env_error(action: str) -> Generator[None, None, None]:
     """Re-raise an ``OSError`` from the block as :class:`BuildEnvError`.
 
     ``action`` opens the message, so it names the entry point rather
@@ -746,13 +745,21 @@ def _no_wheel_clause(inputs: ResolveInputs, pin: IndexPin, label: str) -> str:
     )
 
 
-def _without_build_permission(override: _OverrideT) -> _OverrideT:
+if TYPE_CHECKING:
+
+    @overload
+    def _without_build_permission(override: PackageOverride) -> PackageOverride: ...
+
+    @overload
+    def _without_build_permission(override: IndexOverride) -> IndexOverride: ...
+
+
+def _without_build_permission(
+    override: PackageOverride | IndexOverride,
+) -> PackageOverride | IndexOverride:
     """Return ``override`` with any build permission it grants removed.
 
-    An override reaches the build env's own resolve, where the build
-    policy is ``never``.  Letting one raise it there would start a
-    backend invocation nothing counts against the depth budget, so a
-    permission is dropped and only a refusal survives.
+    Build-requirement resolves must not start builds outside the depth budget.
     """
     if override.build_policy in (None, BuildPolicy.NEVER):
         return override

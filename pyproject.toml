@@ -100,8 +100,6 @@ types = [
     {include-group = "tests"},
     "mypy>=1.19",
     "pyright>=1.1.400",
-    # Earlier versions report the `ty: ignore` in nab-resolver as unused, and
-    # 0.0.66 gives a dict narrowed by isinstance the key type Never.
     "ty>=0.0.70",
     "pyrefly>=0.50",
     "typing_extensions>=4.10",
