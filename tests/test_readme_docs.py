@@ -433,7 +433,7 @@ def test_lock_guide_carries_each_install_and_ci_workflow() -> None:
 
 def test_lock_guide_scopes_pip_selection() -> None:
     """Pip's current pylock selector boundary is documented."""
-    text = _text(USE_THE_LOCK).lower()
+    text = " ".join(_text(USE_THE_LOCK).split()).lower()
     for phrase in (
         "pip 26.1",
         "current interpreter and platform",
