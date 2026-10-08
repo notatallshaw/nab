@@ -4522,6 +4522,93 @@ class TestVcsRequestedRevision:
 class TestUploadTime:
     """PEP 751 ``packages.wheels/sdist.upload-time`` emission."""
 
+    @pytest.mark.parametrize("local", [False, True], ids=["url", "path"])
+    @pytest.mark.parametrize(
+        "timestamp",
+        [
+            datetime(
+                2026, 9, 1, 12, 34, 56, 123456, timezone(timedelta(hours=5, minutes=30))
+            ),
+            datetime(2026, 9, 1, 12, 34, 56, 123456, timezone(timedelta(hours=-7))),
+            datetime(2026, 9, 1, 12, 34, 56, 123456, timezone.utc),
+            None,
+        ],
+        ids=["positive-offset", "negative-offset", "utc", "missing"],
+    )
+    def test_writer_upload_times_in_utc(
+        self, tmp_path: Path, timestamp: datetime | None, *, local: bool
+    ) -> None:
+        wheel, sdist = _wheel(), _sdist()
+        for artifact in (wheel, sdist):
+            artifact.upload_time = timestamp
+            artifact.local_path = tmp_path / artifact.filename if local else None
+        pin = _index_pin().replace(wheels=(wheel,), sdist=sdist)
+        output = tmp_path / "pylock.toml"
+
+        text = write_lock(LockInput(targets=_one({"foo": pin})), output_path=output)
+        assert output.read_text() == text
+
+        package = tomllib.loads(text)["packages"][0]
+        for record in (package["wheels"][0], package["sdist"]):
+            assert ("path" in record) == local
+            if timestamp is None:
+                assert "upload-time" not in record
+            else:
+                emitted = record["upload-time"]
+                assert emitted == timestamp
+                assert emitted.utcoffset() == timedelta(0)
+
+    @pytest.mark.parametrize("local", [False, True], ids=["url", "path"])
+    @pytest.mark.parametrize(
+        "artifact_factory", [_wheel, _sdist], ids=["wheel", "sdist"]
+    )
+    @pytest.mark.parametrize(
+        ("timestamp", "message"),
+        [
+            (
+                datetime(2026, 9, 1, 12, 34, 56, tzinfo=timezone.utc).replace(
+                    tzinfo=None
+                ),
+                "upload-time must have a timezone",
+            ),
+            (
+                datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=1))),
+                "upload-time cannot be represented in UTC",
+            ),
+            (
+                datetime(
+                    9999, 12, 31, 23, 59, 59, tzinfo=timezone(timedelta(hours=-1))
+                ),
+                "upload-time cannot be represented in UTC",
+            ),
+        ],
+        ids=["naive", "utc-underflow", "utc-overflow"],
+    )
+    def test_writer_rejects_invalid_upload_time_before_writing(
+        self,
+        tmp_path: Path,
+        artifact_factory: Callable[[], WheelArtifact | SdistArtifact],
+        timestamp: datetime,
+        message: str,
+        *,
+        local: bool,
+    ) -> None:
+        artifact = artifact_factory()
+        artifact.upload_time = timestamp
+        artifact.local_path = tmp_path / artifact.filename if local else None
+        pin = IndexPin(
+            name="foo",
+            version="1.0",
+            index="pypi",
+            wheels=(artifact,) if isinstance(artifact, WheelArtifact) else (),
+            sdist=artifact if isinstance(artifact, SdistArtifact) else None,
+        )
+        output = tmp_path / "pylock.toml"
+
+        with pytest.raises(LockValidationError, match=message):
+            write_lock(LockInput(targets=_one({"foo": pin})), output_path=output)
+        assert not output.exists()
+
     def test_wheel_upload_time_emitted(self) -> None:
         ts = datetime(2026, 5, 1, 12, 0, 0, tzinfo=timezone.utc)
         pin = IndexPin(

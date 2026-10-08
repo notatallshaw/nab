@@ -14,6 +14,7 @@ import os
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field, replace
+from datetime import timezone
 from functools import lru_cache, reduce
 from itertools import product
 from pathlib import Path
@@ -53,6 +54,7 @@ from .groups import BASE_MEMBER
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
     from collections.abc import Set as AbstractSet
+    from datetime import datetime
 
     from nab_provider._vendor.packaging.utils import NormalizedName
     from nab_provider.target import ResolveTarget
@@ -526,6 +528,20 @@ def _pin_to_package(
     raise TypeError(msg)
 
 
+def _normalize_upload_time(upload_time: datetime | None) -> datetime | None:
+    """Return the artifact timestamp in UTC as required by PEP 751."""
+    if upload_time is None:
+        return None
+    if upload_time.utcoffset() is None:
+        msg = "upload-time must have a timezone"
+        raise LockValidationError(msg)
+    try:
+        return upload_time.astimezone(timezone.utc)
+    except (OverflowError, ValueError) as e:
+        msg = "upload-time cannot be represented in UTC"
+        raise LockValidationError(msg) from e
+
+
 def _wheel_to_package(wheel: WheelArtifact, *, lock_dir: Path) -> PackageWheel:
     """Convert a wheel artefact to its PEP 751 ``packages.wheels`` entry.
 
@@ -540,14 +556,14 @@ def _wheel_to_package(wheel: WheelArtifact, *, lock_dir: Path) -> PackageWheel:
             path=_relativize_path(wheel.local_path.resolve(), lock_dir),
             size=wheel.size,
             hashes=dict(sorted(wheel.hashes)),
-            upload_time=wheel.upload_time,
+            upload_time=_normalize_upload_time(wheel.upload_time),
         )
     return PackageWheel(
         name=wheel.filename,
         url=wheel.url,
         size=wheel.size,
         hashes=dict(sorted(wheel.hashes)),
-        upload_time=wheel.upload_time,
+        upload_time=_normalize_upload_time(wheel.upload_time),
     )
 
 
@@ -562,14 +578,14 @@ def _sdist_to_package(sdist: SdistArtifact, *, lock_dir: Path) -> PackageSdist:
             path=_relativize_path(sdist.local_path.resolve(), lock_dir),
             size=sdist.size,
             hashes=dict(sorted(sdist.hashes)),
-            upload_time=sdist.upload_time,
+            upload_time=_normalize_upload_time(sdist.upload_time),
         )
     return PackageSdist(
         name=sdist.filename,
         url=sdist.url,
         size=sdist.size,
         hashes=dict(sorted(sdist.hashes)),
-        upload_time=sdist.upload_time,
+        upload_time=_normalize_upload_time(sdist.upload_time),
     )
 
 
