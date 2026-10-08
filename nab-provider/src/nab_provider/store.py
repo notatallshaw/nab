@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 from nab_provider.metadata import metadata_header_block, metadata_without_description
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping, Sequence
+    from collections.abc import Generator, Mapping, Sequence
 
     from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 
@@ -136,7 +136,7 @@ class InMemoryIndex:
         self._built_metadata: dict[tuple[str, str], Any] = {}
 
     @contextmanager
-    def _publishing(self, key: str) -> Iterator[None]:
+    def _publishing(self, key: str) -> Generator[None, None, None]:
         """Hold the lock for a store write, then wake ``key``'s waiter.
 
         The wake is outside the lock, and a body that raises skips it.

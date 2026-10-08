@@ -34,7 +34,7 @@ from nab_provider.vcs_request import VcsCloneError, VcsRequest
 from .paths import PathState, path_state
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator
 
     from nab_index.transport import AsyncHttpTransport
     from nab_provider.fetch_port import FetchPort
@@ -78,7 +78,9 @@ class _CopyWithHardlinks:
 
 
 @contextmanager
-def _source_for_build(path: Path, persistent_root: Path | None) -> Iterator[Path]:
+def _source_for_build(
+    path: Path, persistent_root: Path | None
+) -> Generator[Path, None, None]:
     """Yield the matching path in a disposable copy of a persistent source tree."""
     if persistent_root is None:
         yield path

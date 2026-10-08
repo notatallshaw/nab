@@ -88,7 +88,7 @@ from .inputs import ResolveInputs
 from .lockfile import LockInput, TargetLock
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Generator, Mapping, Sequence
 
     from nab_index.transport import AsyncHttpTransport
     from nab_provider._vendor.packaging.requirements import Requirement
@@ -299,7 +299,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
 @contextmanager
 def _source_root(
     cache_dir: Path | None, inputs: ResolveInputs
-) -> Iterator[Path | None]:
+) -> Generator[Path | None, None, None]:
     """Yield the directory a declared VCS or archive source materialises under.
 
     With caching off there is no cache root, but the source still has to be

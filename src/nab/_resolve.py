@@ -60,7 +60,7 @@ from .config.model import (
 from .output import Verbosity, printer
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping
+    from collections.abc import Callable, Generator, Mapping
     from datetime import datetime
     from pathlib import Path
 
@@ -254,7 +254,7 @@ def _check_targets_or_exit(config: NabProjectConfig) -> None:
 
 
 @contextmanager
-def _collector_paused() -> Iterator[None]:
+def _collector_paused() -> Generator[None, None, None]:
     """Disable the cyclic collector for the duration of the resolve.
 
     Exit enables the collector and unfreezes rather than restoring what it

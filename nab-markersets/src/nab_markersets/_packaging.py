@@ -109,6 +109,10 @@ __all__ = [
 ]
 
 if TYPE_CHECKING:
+    from typing import TypeAlias
+
+    from packaging._parser import MarkerAtom as ParserMarkerAtom
+    from packaging._parser import MarkerList as ParserMarkerList
     from packaging._parser import Op, Value, Variable, parse_marker
     from packaging._tokenizer import ParserSyntaxError
     from packaging.markers import (
@@ -121,6 +125,9 @@ if TYPE_CHECKING:
     from packaging.specifiers import InvalidSpecifier, Specifier
     from packaging.utils import canonicalize_name
     from packaging.version import InvalidVersion, Version
+
+    MarkerAtom: TypeAlias = ParserMarkerAtom
+    MarkerList: TypeAlias = ParserMarkerList
 else:
     _parser = import_module(f"{BACKEND}._parser")
     _tokenizer = import_module(f"{BACKEND}._tokenizer")

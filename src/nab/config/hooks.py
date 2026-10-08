@@ -17,7 +17,7 @@ from . import values
 from .values import SourceConfigError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator, Mapping, Sequence
+    from collections.abc import Generator, Iterable, Mapping, Sequence
     from pathlib import Path
 
     from nab_provider.policy import (
@@ -87,7 +87,7 @@ def _current_anchor() -> datetime:
 
 
 @contextmanager
-def resolve_anchor(anchor: datetime | None) -> Iterator[None]:
+def resolve_anchor(anchor: datetime | None) -> Generator[None, None, None]:
     """Bind the ``P<n>D`` resolve anchor for one config merge."""
     token = _RESOLVE_ANCHOR.set(anchor)
     try:
@@ -97,7 +97,7 @@ def resolve_anchor(anchor: datetime | None) -> Iterator[None]:
 
 
 @contextmanager
-def inspector_anchor() -> Iterator[None]:
+def inspector_anchor() -> Generator[None, None, None]:
     """Pin one current-time anchor for an inspector merge.
 
     Override bodies resolve relative durations eagerly. Sharing one instant
@@ -111,13 +111,8 @@ def inspector_anchor() -> Iterator[None]:
 
 
 @contextmanager
-def declaring_dir(directory: Path) -> Iterator[None]:
-    """Bind the directory a relative path in the file being read resolves against.
-
-    The ladder wraps each TOML source's parse in this, so
-    :func:`parse_local_sources` resolves a relative ``local-sources`` path
-    against the declaring file's own directory rather than the cwd.
-    """
+def declaring_dir(directory: Path) -> Generator[None, None, None]:
+    """Bind the declaring file's directory for resolving relative paths."""
     token = _DECLARING_DIR.set(directory)
     try:
         yield
@@ -126,7 +121,7 @@ def declaring_dir(directory: Path) -> Iterator[None]:
 
 
 @contextmanager
-def matrix_table(table: str) -> Iterator[None]:
+def matrix_table(table: str) -> Generator[None, None, None]:
     """Bind the matrix table name for one file read."""
     token = _MATRIX_TABLE.set(table)
     try:

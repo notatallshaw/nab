@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator
 
 
 __all__ = [
@@ -41,7 +41,7 @@ def _default_mode() -> int:
 
 
 @contextmanager
-def _staged(path: Path) -> Iterator[int]:
+def _staged(path: Path) -> Generator[int, None, None]:
     """Yield a file descriptor for a temp file beside ``path``.
 
     On a clean exit the temp file is renamed over ``path``; on any exception it

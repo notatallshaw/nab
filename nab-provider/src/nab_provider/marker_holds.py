@@ -26,7 +26,7 @@ from .environment import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Generator, Mapping
     from collections.abc import Set as AbstractSet
 
     from nab_provider._vendor.packaging.markers import Marker
@@ -52,7 +52,7 @@ class IntractableMarkerError(ValueError):
 
 
 @contextmanager
-def intractable_as_error() -> Iterator[None]:
+def intractable_as_error() -> Generator[None, None, None]:
     """Report an intractable marker set as :class:`IntractableMarkerError`."""
     try:
         yield

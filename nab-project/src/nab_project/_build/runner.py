@@ -58,7 +58,7 @@ from .env import BuildChain, BuildEnvError, NabBuildEnv
 from .errors import BuildBackendError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Callable, Generator
 
     from nab_index.transport import AsyncHttpTransport
 
@@ -191,13 +191,10 @@ def _prepared_project(
     offline: bool,
     chain: BuildChain,
     transport_factory: Callable[[], AsyncHttpTransport] | None = None,
-) -> Iterator[tuple[build.ProjectBuilder, str]]:
-    """Yield a builder for ``source_dir`` in an env holding its build requirements.
+) -> Generator[tuple[build.ProjectBuilder, str], None, None]:
+    """Yield an isolated builder for ``source_dir`` and its backend name.
 
-    Yields the backend name beside the builder because every failure
-    message names it.  Failures from setting the env up and from the
-    caller's own block both come out as :class:`BuildBackendError`,
-    which is the contract both entry points advertise.
+    Wrap build failures from setup or the caller's block as :class:`BuildBackendError`.
     """
     backend, requires, backend_path = _read_build_system(data)
     _validate_backend_path(source_dir, backend_path)
