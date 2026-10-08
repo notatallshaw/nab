@@ -834,6 +834,31 @@ class Provider:
         """
         return _metadata_resolver.ExtraDepsMap(self, self._extra_deps)
 
+    def dependency_requirements_for(
+        self, package: str, version: Version, extras: frozenset[str] = frozenset()
+    ) -> tuple[Requirement, ...]:
+        """Return the effective declarations active for this release and its extras."""
+        metadata = self.metadata_cache[(canonicalize_name(package), version)]
+        provided: set[str] = {
+            canonicalize_name(extra) for extra in metadata.provides_extra
+        }
+        selected = provided & extras
+        active: list[Requirement] = []
+        for requirement in metadata.requires_dist:
+            if requirement.url is not None:
+                continue
+            kind = _metadata_resolver.requirement_gating(self, requirement)
+            if kind == "base":
+                active.append(requirement)
+            elif kind == "extra" and selected:
+                marker = requirement.marker
+                assert marker is not None
+                if _metadata_resolver.marker_matched_extras(
+                    self, marker, id(marker), selected
+                ):
+                    active.append(requirement)
+        return tuple(active)
+
     def defer_extra_deps(self, cache_key: tuple[str, Version]) -> None:
         """Record a release as parsed, with its per-extra split not built yet."""
         self._extra_deps[cache_key] = None

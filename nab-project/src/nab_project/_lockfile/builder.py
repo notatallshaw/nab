@@ -35,6 +35,7 @@ from .groups import BASE_MEMBER
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
+    from nab_provider._vendor.packaging.requirements import Requirement
     from nab_provider._vendor.packaging.utils import NormalizedName
     from nab_provider._vendor.packaging.version import Version
     from nab_provider.policy import ArchiveSource, LocalSource, VcsSource
@@ -62,6 +63,7 @@ __all__ = [
     "MissingSdistError",
     "MissingVcsCommitError",
     "build_target_lock",
+    "collect_dependency_requirements",
     "read_lockfile_anchor",
     "read_lockfile_packages",
     "require_artifact_hashes",
@@ -149,6 +151,16 @@ class LockInputProvider(Protocol):
 
     def tag_excluded_wheel_count(self, canonical_name: str, version: Version, /) -> int:
         """Return how many wheels the tag filter dropped at ``version``."""
+        ...
+
+
+class DependencyRequirementProvider(Protocol):
+    """Provider declarations consumed only when the caller requests them."""
+
+    def dependency_requirements_for(
+        self, package: str, version: Version, extras: frozenset[str] = frozenset()
+    ) -> tuple[Requirement, ...]:
+        """Return active effective declarations for the selected release."""
         ...
 
 
@@ -373,6 +385,33 @@ def build_target_lock(
             selector_roots=selector_roots or {},
         ),
     )
+
+
+def collect_dependency_requirements(
+    provider: DependencyRequirementProvider,
+    pins: Mapping[str, Version],
+    resolved_keys: Iterable[str],
+    dependencies: Mapping[str, tuple[str, ...]],
+) -> dict[str, dict[str, tuple[str, ...]]]:
+    """Return active declarations for the final dependency edges."""
+    extras: defaultdict[str, set[str]] = defaultdict(set)
+    for key in resolved_keys:
+        name, extra = split_extra(key)
+        if extra is not None:
+            extras[canonicalize_name(name)].add(extra)
+    result: dict[str, dict[str, tuple[str, ...]]] = {}
+    for name, children in dependencies.items():
+        records = provider.dependency_requirements_for(
+            name, pins[name], frozenset(extras[name])
+        )
+        child_names = set(children)
+        grouped: defaultdict[str, list[str]] = defaultdict(list)
+        for record in records:
+            child = canonicalize_name(record.name)
+            if child in child_names:
+                grouped[child].append(str(record))
+        result[name] = {child: tuple(grouped[child]) for child in sorted(children)}
+    return result
 
 
 def _membership_gates(
