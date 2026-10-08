@@ -19,8 +19,9 @@ def tool_nab_section(data: Mapping[str, Any]) -> Any:
     can chain ``.get`` safely. The value may itself be a non-table when
     ``[tool.nab]`` is malformed.
     """
-    tool = data.get("tool", {})
-    return tool.get("nab", {}) if isinstance(tool, dict) else {}
+    missing_table: dict[str, Any] = {}
+    tool = data.get("tool", missing_table)
+    return tool.get("nab", missing_table) if isinstance(tool, dict) else missing_table
 
 
 def parse_pyproject_table(text: str) -> dict[str, Any] | None:

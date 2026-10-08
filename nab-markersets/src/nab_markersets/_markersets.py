@@ -538,7 +538,8 @@ def _collect_variables(node: Sequence[MarkerNode], names: set[str]) -> None:
         if isinstance(item, str):
             continue
         if not isinstance(item, tuple):
-            _collect_variables(item, names)
+            # Zuban retains comparison tuples in the narrowed recursive alias.
+            _collect_variables(item, names)  # zuban: ignore[arg-type]
             continue
 
         # parse_marker builds tuples only for comparisons, never nested sequences.

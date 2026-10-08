@@ -1,114 +1,100 @@
 # On-disk cache
 
-nab caches PyPI Simple-API responses and wheel metadata on disk so a
-repeated resolve reuses what it already fetched. The root defaults to
-`~/.cache/nab` (or `$XDG_CACHE_HOME/nab`); `--cache-dir` and `--no-cache`
-override it, and `--offline` serves from it without any network. Inspect
-and reset it with [`nab cache`](cli.md).
+nab caches PyPI Simple-API responses and wheel metadata on disk so a repeated resolve reuses what it
+already fetched. The root defaults to `~/.cache/nab` (or `$XDG_CACHE_HOME/nab`); `--cache-dir` and
+`--no-cache` override it, and `--offline` serves from it without any network. Inspect and reset it
+with [`nab cache`](cli.md).
 
 ## Layout
 
-Each record nab writes is one file under a versioned bucket directory.
-Bumping a bucket's version suffix retires the old format: the stale
-directory is harmless and `nab cache clear` reclaims it. The one
-exception is `sdist-v1/`, which nab still reads.
+Each record nab writes is one file under a versioned bucket directory. Bumping a bucket's version
+suffix retires the old format: the stale directory is harmless and `nab cache clear` reclaims it.
+The one exception is `sdist-v1/`, which nab still reads.
 
-| Bucket | Holds |
-| ------ | ----- |
-| `simple-v2/` | the Simple-API listing body and a `.policy` sidecar |
-| `simple-parsed-v0/` | the parsed listing, an accelerator for the body |
-| `simple-neg-v0/` | a short-lived record that a name returned a 404 |
-| `metadata-v1/` | PEP 658 metadata and recovered wheel `METADATA`, immutable |
-| `sdist-v2/` | an sdist's `PKG-INFO` and `pyproject.toml`, immutable |
-| `sdist-v1/` | the same records in the retired JSON format |
+| Bucket              | Holds                                                      |
+| ------------------- | ---------------------------------------------------------- |
+| `simple-v2/`        | the Simple-API listing body and a `.policy` sidecar        |
+| `simple-parsed-v0/` | the parsed listing, an accelerator for the body            |
+| `simple-neg-v0/`    | a short-lived record that a name returned a 404            |
+| `metadata-v1/`      | PEP 658 metadata and recovered wheel `METADATA`, immutable |
+| `sdist-v2/`         | an sdist's `PKG-INFO` and `pyproject.toml`, immutable      |
+| `sdist-v1/`         | the same records in the retired JSON format                |
 
-A matching `sdist-v1/` record is copied into `sdist-v2/` when the newer bucket misses. The original remains in `sdist-v1/`.
+A matching `sdist-v1/` record is copied into `sdist-v2/` when the newer bucket misses. The original
+remains in `sdist-v1/`.
 
 Record buckets are keyed per index, so two indexes never share an entry.
 
-After upgrading, nab may need to download source archives again even if an older version cached them. If an offline resolve reports missing source metadata, run the same command without `--offline` once before trying offline again.
+After upgrading, nab may need to download source archives again even if an older version cached
+them. If an offline resolve reports missing source metadata, run the same command without
+`--offline` once before trying offline again.
 
-A listing body is stored as PEP 691 JSON; when the index answers in PEP
-503 HTML the stored body is nab's own JSON rendering of the page. An
-index pinned to one `serialization` gets its own listing directories,
-since the stored body records nothing about which form it came from.
+A listing body is stored as PEP 691 JSON; when the index answers in PEP 503 HTML the stored body is
+nab's own JSON rendering of the page. An index pinned to one `serialization` gets its own listing
+directories, since the stored body records nothing about which form it came from.
 
-A declared VCS or archive source (see [Configuration](configuration.md))
-fills a bucket of its own:
+A declared VCS or archive source (see [Configuration](configuration.md)) fills a bucket of its own:
 
-| Bucket | Holds |
-| ------ | ----- |
-| `vcs-v1/` | a shallow clone, at `vcs-v1/vcs/<repo key>/<commit sha>/` |
-| `archive-v1/` | an extracted archive, at `archive-v1/<archive digest>/` |
+| Bucket        | Holds                                                     |
+| ------------- | --------------------------------------------------------- |
+| `vcs-v1/`     | a shallow clone, at `vcs-v1/vcs/<repo key>/<commit sha>/` |
+| `archive-v1/` | an extracted archive, at `archive-v1/<archive digest>/`   |
 
-Both hold upstream files rather than nab records and are not keyed per
-index. Their bucket versions let nab retire trees whose reuse rules have
-changed.
+Both hold upstream files rather than nab records and are not keyed per index. Their bucket versions
+let nab retire trees whose reuse rules have changed.
 
-Resolves ignore the older unversioned `vcs/` and `archive/`
-buckets, while `nab cache clear` continues to remove them. Under
-`--no-cache` there is no root to write to, so the run materialises source
-trees in a temporary directory and discards them at the end.
+Resolves ignore the older unversioned `vcs/` and `archive/` buckets, while `nab cache clear`
+continues to remove them. Under `--no-cache` there is no root to write to, so the run materialises
+source trees in a temporary directory and discards them at the end.
 
 ## Freshness
 
-A listing follows a small subset of RFC 9111. The `.policy` sidecar
-records when the body was fetched and its `max-age`.
+A listing follows a small subset of RFC 9111. The `.policy` sidecar records when the body was
+fetched and its `max-age`.
 
-A fresh entry is
-served directly; a stale one is revalidated with `If-None-Match`, and a
-`304 Not Modified` slides the window forward without refetching the body.
-A listing the index marks `no-cache` or `no-store` gets no window at
-all, so every online read revalidates it unless an `assume-fresh-seconds`
-floor (see [Configuration](configuration.md)) still covers it.
+A fresh entry is served directly; a stale one is revalidated with `If-None-Match`, and a
+`304 Not Modified` slides the window forward without refetching the body. A listing the index marks
+`no-cache` or `no-store` gets no window at all, so every online read revalidates it unless an
+`assume-fresh-seconds` floor (see [Configuration](configuration.md)) still covers it.
 
-Metadata and sdist records are immutable: cached once, never revalidated.
-A 404 is remembered briefly so a repeated lookup of an absent name is
-answered from cache, offline included. One the index marks `no-cache` or
-`no-store` gets no window either, so an online repeat asks the index
-again while offline still answers from the record.
+Metadata and sdist records are immutable: cached once, never revalidated. A 404 is remembered
+briefly so a repeated lookup of an absent name is answered from cache, offline included. One the
+index marks `no-cache` or `no-store` gets no window either, so an online repeat asks the index again
+while offline still answers from the record.
 
 ## Parsed-listing accelerator
 
-Turning a listing body into records means a JSON decode plus wheel and
-sdist filename parsing, which a warm resolve would otherwise repeat on
-every run.
+Turning a listing body into records means a JSON decode plus wheel and sdist filename parsing, which
+a warm resolve would otherwise repeat on every run.
 
-The `simple-parsed-v0/` bucket stores those records so a warm
-hit rehydrates them and never reads the large raw body. A stale entry is
-served the same way once the index answers `304 Not Modified`, since that
-confirms the body the blob is bound to.
+The `simple-parsed-v0/` bucket stores those records so a warm hit rehydrates them and never reads
+the large raw body. A stale entry is served the same way once the index answers `304 Not Modified`,
+since that confirms the body the blob is bound to.
 
-Each parsed blob is bound to the exact body it came from by a `body_digest`
-that the `.policy` also carries. On a hit the two digests are compared;
-they match only while the body is unchanged, so any body update
-invalidates the blob by construction and forces a rebuild from the raw
-body.
+Each parsed blob is bound to the exact body it came from by a `body_digest` that the `.policy` also
+carries. On a hit the two digests are compared; they match only while the body is unchanged, so any
+body update invalidates the blob by construction and forces a rebuild from the raw body.
 
-A revalidation that lands on a different page retires the blob too,
-since a relative entry resolves against the page URL and a move changes
-every file URL the records hold. A blob is also rebuilt when it was
-written by a different nab build, or is corrupt.
+A revalidation that lands on a different page retires the blob too, since a relative entry resolves
+against the page URL and a move changes every file URL the records hold. A blob is also rebuilt when
+it was written by a different nab build, or is corrupt.
 
-The raw body remains authoritative. The accelerator is a derived copy,
-and a rebuild reparses the body on disk.
+The raw body remains authoritative. The accelerator is a derived copy, and a rebuild reparses the
+body on disk.
 
-Blobs are stored as JSON, so one entry serves every interpreter sharing
-the cache. A listing nab reads no files from gets no blob, since an empty
-one could never be served: only the raw body records whether the page held
-formats nab cannot read.
+Blobs are stored as JSON, so one entry serves every interpreter sharing the cache. A listing nab
+reads no files from gets no blob, since an empty one could never be served: only the raw body
+records whether the page held formats nab cannot read.
 
 ## Verifying and clearing
 
-`nab cache verify` walks the record buckets read-only and lists on stdout
-every entry that will not parse, including a parsed blob that is not
-decodable, exiting 1 when the listing is not empty.
+`nab cache verify` walks the record buckets read-only and lists on stdout every entry that will not
+parse, including a parsed blob that is not decodable, exiting 1 when the listing is not empty.
 
-It checks structure
-only, not freshness: a stale-but-valid parsed blob is not corrupt, since
-the digest binding retires it at read time. Clones and extracted archives
-hold no nab records, so `verify` skips them.
+It checks structure only, not freshness: a stale-but-valid parsed blob is not corrupt, since the
+digest binding retires it at read time. Clones and extracted archives hold no nab records, so
+`verify` skips them.
 
-`nab cache clear` removes every bucket, clones and archives included,
-returning the cache to cold. `verify` and `clear` both refuse a root that
-does not look like a nab cache and never follow a symlink out of it.
+`nab cache clear` removes every bucket, clones and archives included, returning the cache to cold.
+`verify` and `clear` both refuse a root that does not look like a nab cache and never follow a
+symlink out of it.

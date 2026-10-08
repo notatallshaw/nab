@@ -98,15 +98,22 @@ crosshair = [
 ]
 types = [
     {include-group = "tests"},
-    "mypy>=1.19",
-    "pyright>=1.1.400",
-    "ty>=0.0.70",
-    "pyrefly>=0.50",
+    "mypy>=2.4.0",
+    "pyright>=1.1.414",
+    "ty>=0.0.85",
+    "pyrefly>=1.3.2",
     "typing_extensions>=4.10",
-    "zuban>=0.6",
+    "zuban>=0.10.0",
+]
+lint = [
+    "ruff>=0.16.10",
+    "mdformat>=1.0.0",
+    "mdformat-myst>=0.3.0",
+    "mdformat-gfm-alerts>=2.1.0",
+    "mdformat-deflist>=0.1.4",
 ]
 pre-commit = [
-    "pre-commit>=4",
+    "pre-commit>=4.6.2",
 ]
 # Nox drives the workspace tests and the type-check matrix; see
 # noxfile.py. Each session installs its own lock (pylock.tests.toml or
@@ -119,7 +126,7 @@ nox = [
 # that carries the `alert` extension conf.py enables to render the GitHub alert
 # syntax the guides use; it needs Python 3.11 or newer.
 docs = [
-    "sphinx>=8",
+    "sphinx>=9.1.0",
     "furo>=2024.8",
     "myst-parser>=5.1",
     "linkify-it-py>=2",
@@ -287,6 +294,12 @@ nab = [
 # https://docs.astral.sh/ruff/settings/
 [tool.ruff]
 target-version = "py310"
+# Keep shipped _build modules in scope; exclude disposable outputs instead.
+exclude = [
+    ".bzr", ".direnv", ".eggs", ".git", ".git-rewrite", ".hg", ".mypy_cache",
+    ".nox", ".pants.d", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv",
+    "__pypackages__", "buck-out", "dist", "node_modules", "venv", "docs/_build",
+]
 extend-exclude = ["**/_vendor/**"]
 
 # https://docs.astral.sh/ruff/settings/#lintflake8-tidy-importsbanned-api
@@ -343,6 +356,9 @@ extend-exclude = ["**/_vendor/**"]
 
 # docs/conf.py sits outside any Python package by Sphinx convention.
 "docs/conf.py" = ["INP001"]
+# Backend paths are lexical: resolve() would follow symlinks, and Path joins
+# normalize paths passed to subprocesses. Each file needs its own error handler.
+"nab-project/src/nab_project/_build/runner.py" = ["PTH100", "PTH117", "PTH118", "PERF203"]
 
 # packaging names its marker exceptions for the bad condition and drops the
 # Error suffix (InvalidMarker, UndefinedComparison); these follow it, because
@@ -415,7 +431,58 @@ known-first-party = [
 # https://microsoft.github.io/pyright/#/configuration?id=main-pyright-settings
 [tool.pyright]
 pythonVersion = "3.10"
+# A custom strict profile permits the documented exceptions below. Pyright's
+# named strict mode prevents lowering any of its diagnostic defaults.
 typeCheckingMode = "standard"
+strictListInference = true
+strictDictionaryInference = true
+strictSetInference = true
+reportMissingModuleSource = "error"
+reportMissingTypeStubs = "error"
+reportPropertyTypeMismatch = "error"
+reportAssertAlwaysTrue = "error"
+reportInvalidStringEscapeSequence = "error"
+reportInvalidTypeVarUse = "error"
+reportSelfClsParameterName = "error"
+reportUnsupportedDunderAll = "error"
+reportUnusedExpression = "error"
+reportWildcardImportFromLibrary = "error"
+reportConstantRedefinition = "error"
+reportDeprecated = "error"
+reportDuplicateImport = "error"
+reportIncompleteStub = "error"
+reportInconsistentConstructor = "error"
+reportInvalidStubStatement = "error"
+reportMatchNotExhaustive = "error"
+reportMissingParameterType = "error"
+reportMissingTypeArgument = "error"
+reportTypeCommentUsage = "error"
+reportUnknownLambdaType = "error"
+reportUnnecessaryCast = "error"
+reportUnnecessaryComparison = "error"
+reportUnusedClass = "error"
+reportUnusedImport = "error"
+reportUnusedVariable = "error"
+reportUntypedBaseClass = "error"
+reportUntypedClassDecorator = "error"
+reportUntypedFunctionDecorator = "error"
+reportUntypedNamedTuple = "error"
+reportUnnecessaryContains = "error"
+# JSON/TOML validation and dynamic adapters intentionally carry unknown values.
+# Requiring casts for each narrowed container hides rather than checks that boundary.
+reportUnknownArgumentType = "none"
+reportUnknownMemberType = "none"
+reportUnknownParameterType = "none"
+reportUnknownVariableType = "none"
+# Internal compatibility helpers have callers outside the selected source trees;
+# import boundaries are enforced by tasks/check_boundaries.py.
+reportPrivateUsage = "none"
+reportUnusedFunction = "none"
+# Defensive checks also reject values supplied outside the annotated API.
+reportUnnecessaryIsInstance = "none"
+executionEnvironments = [
+    { root = "nab-resolver/tests", reportMissingParameterType = "none", reportMissingTypeArgument = "none", reportUnknownLambdaType = "none" },
+]
 # Pyright checks generated tests/cli_bijection.py; no command runs it.
 include = [
     "nab-resolver/src",
@@ -442,6 +509,8 @@ extraPaths = [
 
 # https://pyrefly.org/en/docs/configuration/
 [tool.pyrefly]
+preset = "all"
+min-severity = "warn"
 project-includes = [
     "nab-resolver/src",
     "nab-markersets/src",
@@ -452,7 +521,41 @@ project-includes = [
 ]
 project-excludes = ["**/_vendor/**"]
 
+[tool.pyrefly.errors]
+# Dynamic generic APIs explicitly use Any; side effects need no discard assignment.
+explicit-any = "ignore"
+no-any-return-explicit = "ignore"
+no-any-return-implicit = "ignore"
+unused-call-result = "ignore"
+# Keep ordinary Python truthiness and validated JSON/TOML container boundaries.
+implicit-bool = "ignore"
+unknown-argument-type = "ignore"
+unknown-variable-type = "ignore"
+# Existing TypedDict inputs do not promise PEP 728 closed dictionaries on Python 3.10.
+open-unpacking = "ignore"
+# Internal signal exceptions retain their context without an unused super call.
+missing-super-call = "ignore"
+# Mypy and ty need checked Literal conversions that Pyrefly can already infer.
+redundant-cast = "ignore"
+
+[[tool.pyrefly.sub-config]]
+matches = "nab-project/src/nab_project/build_backend.py"
+[tool.pyrefly.sub-config.errors]
+# Normalize strings at the caller-supplied project metadata boundary.
+unnecessary-type-conversion = "ignore"
+
 # https://docs.astral.sh/ty/reference/configuration/
+[tool.ty.rules]
+all = "error"
+# Gradual generic APIs and validated dynamic boundaries permit Any assignment.
+# Repeating runtime checks or adding casts only to restate those contracts is noise.
+unsound-assignment = "ignore"
+unsound-return-statement = "ignore"
+unsound-yield = "ignore"
+# Empty values and None intentionally share these branches; keep input guards.
+truthiness-test-of-none-union = "ignore"
+redundant-condition-strict = "ignore"
+
 [tool.ty.src]
 exclude = ["**/_vendor"]
 
@@ -460,6 +563,8 @@ exclude = ["**/_vendor"]
 [tool.mypy]
 python_version = "3.10"
 strict = true
+disallow_any_unimported = true
+warn_unused_configs = true
 namespace_packages = true
 explicit_package_bases = true
 # Each checked tree is a package base. Without "src" the umbrella resolves
@@ -479,6 +584,10 @@ enable_error_code = [
     "possibly-undefined",
     "explicit-override",
     "mutable-override",
+    "ignore-without-code",
+    "unused-awaitable",
+    "unimported-reveal",
+    "deprecated",
 ]
 
 [[tool.mypy.overrides]]

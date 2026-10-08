@@ -25,7 +25,7 @@ PYTHON="${REFRESH_PYTHON:-.venv/bin/python}"
 
 EXTRA_ARGS=("$@")
 
-# Only one interpreter ever builds the docs: Read the Docs and the CI docs job
+# Docs and Markdown formatting use Python 3.13; Read the Docs and the CI docs job
 # both pin 3.13. Locking that group across the project's universal matrix would
 # hold the toolchain to whatever still supports the 3.10 floor, so it gets a
 # single resolution for the version that actually builds it.  The platform axis
@@ -59,10 +59,10 @@ if len(set(declared.values())) > 1:
     )
 PY
 
-for group in tests types pre-commit crosshair release docs nox dists; do
+for group in tests types pre-commit crosshair release docs lint nox dists; do
     echo "==> Locking group: ${group}"
     group_args=()
-    if [[ "${group}" == "docs" ]]; then
+    if [[ "${group}" == "docs" || "${group}" == "lint" ]]; then
         group_args=(--project-mode specific --python "${DOCS_PYTHON}")
     fi
     "${NAB[@]}" lock \

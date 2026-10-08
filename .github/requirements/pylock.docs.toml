@@ -120,7 +120,7 @@ sha256 = "d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9"
 
 [[packages]]
 name = "build"
-version = "1.5.0"
+version = "1.6.1"
 requires-python = ">=3.10"
 dependencies = [
     { name = "packaging" },
@@ -129,22 +129,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "build-1.5.0.tar.gz"
-upload-time = 2026-04-30 03:18:25.170465+00:00
-url = "https://files.pythonhosted.org/packages/78/e0/df5e171f685f82f37b12e1f208064e24244911079d7b767447d1af7e0d70/build-1.5.0.tar.gz"
-size = 89796
+name = "build-1.6.1.tar.gz"
+upload-time = 2026-09-10 07:56:00.417084+00:00
+url = "https://files.pythonhosted.org/packages/bd/67/4898a44ea4f3f8e213b0954ec0aa0a16971d62a6212d6ea3931e97115b99/build-1.6.1.tar.gz"
+size = 113427
 
 [packages.sdist.hashes]
-sha256 = "302c22c3ba2a0fd5f3911918651341ebb3896176cbdec15bd421f80b1afc7647"
+sha256 = "51cc11666391ab6f092070437ac747002ff46f3e4113a3622177ee6b488bfc53"
 
 [[packages.wheels]]
-name = "build-1.5.0-py3-none-any.whl"
-upload-time = 2026-04-30 03:18:23.644906+00:00
-url = "https://files.pythonhosted.org/packages/0d/fe/6bea5c9162869c5beba5d9c8abbed835ec85bf1ec1fba05a3822325c45f3/build-1.5.0-py3-none-any.whl"
-size = 26018
+name = "build-1.6.1-py3-none-any.whl"
+upload-time = 2026-09-10 07:55:59.148398+00:00
+url = "https://files.pythonhosted.org/packages/ad/9b/9fb3585dabcd73a1b2a6267f63f62649347c9e6d072c9fde365b105abb2c/build-1.6.1-py3-none-any.whl"
+size = 31179
 
 [packages.wheels.hashes]
-sha256 = "13f3eecb844759ab66efec90ca17639bbf14dc06cb2fdf37a9010322d9c50a6f"
+sha256 = "ecd351a4be9d35a9eaaba244a7687143c9c7d4aea6ac964e7e7ddab20cbcf4e7"
 
 [[packages]]
 name = "certifi"
@@ -173,46 +173,46 @@ sha256 = "62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775"
 
 [[packages]]
 name = "charset-normalizer"
-version = "3.5.1"
+version = "3.5.2"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.7"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "charset_normalizer-3.5.1.tar.gz"
-upload-time = 2026-08-15 08:20:44.807628+00:00
-url = "https://files.pythonhosted.org/packages/e5/3f/143b048436775b0f76ac3eec145c019e8173ccc2885c8f20319b996d5e83/charset_normalizer-3.5.1.tar.gz"
-size = 171764
+name = "charset_normalizer-3.5.2.tar.gz"
+upload-time = 2026-09-30 04:39:23.398219+00:00
+url = "https://files.pythonhosted.org/packages/33/1c/f41d4e74c28ab327ff3acd36053f7ea506c55872d7a90b0fa71aa3ab0c89/charset_normalizer-3.5.2.tar.gz"
+size = 172659
 
 [packages.sdist.hashes]
-sha256 = "6117b84ea48435e5356dc737f5121485c30920ba43375fa7b434fd753df0eac3"
+sha256 = "39de2a259fc954455c57274dc94c79d5842774e1247a016aff30bc0efed0f4ef"
 
 [[packages.wheels]]
-name = "charset_normalizer-3.5.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2026-08-15 08:17:46.496792+00:00
-url = "https://files.pythonhosted.org/packages/fb/af/63240b0c0248c075c2535a1f1bd992821d8251b9f173abc13329661d09e4/charset_normalizer-3.5.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 250638
+name = "charset_normalizer-3.5.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2026-09-30 04:36:09.248266+00:00
+url = "https://files.pythonhosted.org/packages/4b/85/41d27f234b82e47c167a5f6c0f62501dc0c640585ff4aba79e08a390336a/charset_normalizer-3.5.2-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 254660
 
 [packages.wheels.hashes]
-sha256 = "62b55f6722735a6c472f88361cde6640608773d9443cebdbb51abf436a1fcdd3"
+sha256 = "7218e8f32b0956cfcd048fd42d9d5779809745ca1d86113ca56f66e7ae1549c4"
 
 [[packages.wheels]]
-name = "charset_normalizer-3.5.1-cp37-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-upload-time = 2026-08-15 08:19:52.654163+00:00
-url = "https://files.pythonhosted.org/packages/9f/2f/fe3f187327aac18e2d54e9d2b08e15d27bf9b642d9e51c219f130fc34d1a/charset_normalizer-3.5.1-cp37-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
-size = 253057
+name = "charset_normalizer-3.5.2-cp37-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+upload-time = 2026-09-30 04:38:28.032254+00:00
+url = "https://files.pythonhosted.org/packages/7e/84/371eac6b30bdbcbf2d632a1a01809103459216fcaae61b8b8d922c1bfb8a/charset_normalizer-3.5.2-cp37-abi3-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl"
+size = 253276
 
 [packages.wheels.hashes]
-sha256 = "a6dac12ff6b846103483683f60c5f8fee205121adc58ffd87e90a90a3af69e99"
+sha256 = "1c50fe28bbc2ced33386f298650d91218076c05420e6cbd790b913adc41659e7"
 
 [[packages.wheels]]
-name = "charset_normalizer-3.5.1-py3-none-any.whl"
-upload-time = 2026-08-15 08:20:43.306209+00:00
-url = "https://files.pythonhosted.org/packages/cc/61/d01fc49b8dea277640b55a9e15960dbca9fdc8c9fde18e572d39c59f4019/charset_normalizer-3.5.1-py3-none-any.whl"
-size = 68658
+name = "charset_normalizer-3.5.2-py3-none-any.whl"
+upload-time = 2026-09-30 04:39:21.828049+00:00
+url = "https://files.pythonhosted.org/packages/fc/ad/d07d7862a62ffa6d79d68074d14823243dd235a77c45262acbf6adeb28bf/charset_normalizer-3.5.2-py3-none-any.whl"
+size = 68872
 
 [packages.wheels.hashes]
-sha256 = "6df0ec430f9a831772c23ca5a224cba36517a58a84bb32c32bb59a9fa67c47f6"
+sha256 = "b6b751274acb69d77b3323d6b7dbaa3c7fdfc1eb829b7eb61d262f32e1af9685"
 
 [[packages]]
 name = "docutils"
@@ -273,28 +273,28 @@ sha256 = "bb0ead5309f9500130665a26bee87693c41ce4dbdff864dbfb6b0dae4673d24f"
 
 [[packages]]
 name = "idna"
-version = "3.19"
+version = "3.20"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "idna-3.19.tar.gz"
-upload-time = 2026-08-18 05:14:24.270231+00:00
-url = "https://files.pythonhosted.org/packages/5f/f7/abb373e5757eaec4b922b92f97ec8d6d7e057cf06778247604fbc4e7c3f3/idna-3.19.tar.gz"
-size = 215237
+name = "idna-3.20.tar.gz"
+upload-time = 2026-09-17 14:11:04.752193+00:00
+url = "https://files.pythonhosted.org/packages/f5/08/8eea9d4b8302028f3abb2c0813953f7aec26d33b7a8960ed760e65ff29fa/idna-3.20.tar.gz"
+size = 216463
 
 [packages.sdist.hashes]
-sha256 = "5e0811a4383b21dc5838069f801c4fb62113b7447663d2530d2bd6e77b49bf15"
+sha256 = "a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44"
 
 [[packages.wheels]]
-name = "idna-3.19-py3-none-any.whl"
-upload-time = 2026-08-18 05:14:22.343598+00:00
-url = "https://files.pythonhosted.org/packages/57/b0/0e52c878c53f245edd3a11020f20979b3f490f245af532c7cae3027754b5/idna-3.19-py3-none-any.whl"
-size = 68550
+name = "idna-3.20-py3-none-any.whl"
+upload-time = 2026-09-17 14:11:03.168153+00:00
+url = "https://files.pythonhosted.org/packages/58/a2/bb081bab032533a855d44de1d56f8e8426114ff1ba5d1f07a438a0a654f8/idna-3.20-py3-none-any.whl"
+size = 69583
 
 [packages.wheels.hashes]
-sha256 = "815e7be7a7806d54abb586dc943addc79e8b2ee16915059658cbeff4b1b43bf4"
+sha256 = "ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c"
 
 [[packages]]
 name = "imagesize"
@@ -375,31 +375,28 @@ sha256 = "85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67"
 
 [[packages]]
 name = "linkify-it-py"
-version = "2.1.1"
+version = "2.2.0"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.10"
-dependencies = [
-    { name = "uc-micro-py" },
-]
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "linkify_it_py-2.1.1.tar.gz"
-upload-time = 2026-08-24 17:16:57.028452+00:00
-url = "https://files.pythonhosted.org/packages/53/3e/79f35b8c31a1881893b7e62be80b2573f06e38db47c33065749293ee1b97/linkify_it_py-2.1.1.tar.gz"
-size = 30889
+name = "linkify_it_py-2.2.0.tar.gz"
+upload-time = 2026-08-29 07:07:08.305745+00:00
+url = "https://files.pythonhosted.org/packages/45/98/7a1a5f31fd5c7ba93e963b168e244b8e3dd705b3d2a718e3c3307583bf57/linkify_it_py-2.2.0.tar.gz"
+size = 32939
 
 [packages.sdist.hashes]
-sha256 = "a78f40fee177eb912e9d2375074108378523c38d3fde5d3ee804f465b6cfbfee"
+sha256 = "907acd2d17ac1fbb9ddb62c8957ccbd6158cac602231a15c3b0cd1e215f03cee"
 
 [[packages.wheels]]
-name = "linkify_it_py-2.1.1-py3-none-any.whl"
-upload-time = 2026-08-24 17:16:55.965173+00:00
-url = "https://files.pythonhosted.org/packages/eb/3d/e34b19cd144071c583317268c4feb2c59c03ac57eef69753410c7abb11c0/linkify_it_py-2.1.1-py3-none-any.whl"
-size = 20532
+name = "linkify_it_py-2.2.0-py3-none-any.whl"
+upload-time = 2026-08-29 07:07:07.164840+00:00
+url = "https://files.pythonhosted.org/packages/13/d4/1152d1c7ab42d8b908be64fd200ddc870dc9d4925e951198702084aa1a7d/linkify_it_py-2.2.0-py3-none-any.whl"
+size = 21971
 
 [packages.wheels.hashes]
-sha256 = "8539a6b470efce90ba9b69e39b848e5b15b7ad89f7f98ca17d3532c243f987dc"
+sha256 = "3adc40eb5af300b2605fcfdb968c24e1d780a90f1f2221af7c15e5111e94d443"
 
 [[packages]]
 name = "markdown-it-py"
@@ -431,28 +428,28 @@ sha256 = "9f7ebbcd14fe59494226453aed97c1070d83f8d24b6fc3a3bcf9a38092641c4a"
 
 [[packages]]
 name = "markupsafe"
-version = "3.0.3"
+version = "3.0.4"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.9"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "markupsafe-3.0.3.tar.gz"
-upload-time = 2025-09-27 18:37:40.426446+00:00
-url = "https://files.pythonhosted.org/packages/7e/99/7690b6d4034fffd95959cbe0c02de8deb3098cc577c67bb6a24fe5d7caa7/markupsafe-3.0.3.tar.gz"
-size = 80313
+name = "markupsafe-3.0.4.tar.gz"
+upload-time = 2026-10-02 23:07:22.290270+00:00
+url = "https://files.pythonhosted.org/packages/38/9b/e422a865e1d5d57d0e509b4e0bf1c1a70a7f6382c29a5aa428df994c8bc8/markupsafe-3.0.4.tar.gz"
+size = 153777
 
 [packages.sdist.hashes]
-sha256 = "722695808f4b6457b320fdc131280796bdceb04ab50fe1795cd540799ebe1698"
+sha256 = "2e9ad7dd851bf45fab9f75cbff4cb493fee9979e8d8c7c9c3ee119022518edd6"
 
 [[packages.wheels]]
-name = "markupsafe-3.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2025-09-27 18:36:45.385915+00:00
-url = "https://files.pythonhosted.org/packages/a9/21/9b05698b46f218fc0e118e1f8168395c65c8a2c750ae2bab54fc4bd4e0e8/markupsafe-3.0.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 22980
+name = "markupsafe-3.0.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2026-10-02 23:05:19.286064+00:00
+url = "https://files.pythonhosted.org/packages/63/e0/cec6865dfe88cb48fedd4b20aed6af5158e41092adcbf3e028bcc6ec2108/markupsafe-3.0.4-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 23017
 
 [packages.wheels.hashes]
-sha256 = "ccfcd093f13f0f0b7fdd0f198b90053bf7b2f02a3927a30e63f3ccc9df56b676"
+sha256 = "434139499bb20b502ed3baa1f169e618f924a97e7a777fea1a49446d80106cf6"
 
 [[packages]]
 name = "mdit-py-plugins"
@@ -591,27 +588,27 @@ sha256 = "2363c69b61c4a97c838da3b130dcd6468f4848992b21a82f2a63ec34377137d9"
 
 [[packages]]
 name = "pyproject-hooks"
-version = "1.2.0"
-requires-python = ">=3.7"
+version = "1.3.3"
+requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "pyproject_hooks-1.2.0.tar.gz"
-upload-time = 2024-09-29 09:24:13.293934+00:00
-url = "https://files.pythonhosted.org/packages/e7/82/28175b2414effca1cdac8dc99f76d660e7a4fb0ceefa4b4ab8f5f6742925/pyproject_hooks-1.2.0.tar.gz"
-size = 19228
+name = "pyproject_hooks-1.3.3.tar.gz"
+upload-time = 2026-09-16 08:58:03.999217+00:00
+url = "https://files.pythonhosted.org/packages/6d/5d/f2ddeef4a855a102aaae5e97826a0260007522ab504421b75addfdb1517c/pyproject_hooks-1.3.3.tar.gz"
+size = 21013
 
 [packages.sdist.hashes]
-sha256 = "1e859bd5c40fae9448642dd871adf459e5e2084186e8d2c2a79a824c970da1f8"
+sha256 = "defda19b854fa0d3bd4f76ea4ddcba8abd7dcfcdd585a6690ade050744fc5f43"
 
 [[packages.wheels]]
-name = "pyproject_hooks-1.2.0-py3-none-any.whl"
-upload-time = 2024-09-29 09:24:11.978642+00:00
-url = "https://files.pythonhosted.org/packages/bd/24/12818598c362d7f300f18e74db45963dbcb85150324092410c8b49405e42/pyproject_hooks-1.2.0-py3-none-any.whl"
-size = 10216
+name = "pyproject_hooks-1.3.3-py3-none-any.whl"
+upload-time = 2026-09-16 08:58:02.960279+00:00
+url = "https://files.pythonhosted.org/packages/85/11/044d1ae1b4ec0d7af88ee5bc91e081be1022533032b906a7bdabdbb60977/pyproject_hooks-1.3.3-py3-none-any.whl"
+size = 10724
 
 [packages.wheels.hashes]
-sha256 = "9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913"
+sha256 = "5fc53fdac9f7bd63fbcdc868fb5f90b4784d78a53a3d3388cd738b807441a20b"
 
 [[packages]]
 name = "pyyaml"
@@ -721,28 +718,28 @@ sha256 = "7e207fa178741da09cdee59d3ecec3827ad5f92b1fc5c9ff3755b639f71f5752"
 
 [[packages]]
 name = "soupsieve"
-version = "2.9.2"
+version = "2.10"
 marker = "\"docs\" in dependency_groups"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "soupsieve-2.9.2.tar.gz"
-upload-time = 2026-08-07 00:57:24.801188+00:00
-url = "https://files.pythonhosted.org/packages/69/99/a6ca3beb3ccacb41fb3321d8a60e5566f9e6467601ef8eba6a17e1b89778/soupsieve-2.9.2.tar.gz"
-size = 122445
+name = "soupsieve-2.10.tar.gz"
+upload-time = 2026-09-24 02:36:35.048514+00:00
+url = "https://files.pythonhosted.org/packages/71/c3/1b817965ac12dc002d7c9cd7dfffdd7d4fbf9b45763ef2ffe7b86ee94670/soupsieve-2.10.tar.gz"
+size = 124337
 
 [packages.sdist.hashes]
-sha256 = "4a55d8cf158a9c2e587fa4922f1bbb91d68ac829e2d6f25403a85747c71daf74"
+sha256 = "49e9380d7d2905463583bafe285e818c7366a9ed7b3aee221c1ac79c905d8bc0"
 
 [[packages.wheels]]
-name = "soupsieve-2.9.2-py3-none-any.whl"
-upload-time = 2026-08-07 00:57:23.524076+00:00
-url = "https://files.pythonhosted.org/packages/eb/dc/ad025c1ee131eba60c69f4dd5779b18fcf1e6b21a343e2162a84d5d133c7/soupsieve-2.9.2-py3-none-any.whl"
-size = 37370
+name = "soupsieve-2.10-py3-none-any.whl"
+upload-time = 2026-09-24 02:36:33.709594+00:00
+url = "https://files.pythonhosted.org/packages/66/87/5ed59e1d0290564e2027ed066c52b059892c4637741337fc0967183c8d4d/soupsieve-2.10-py3-none-any.whl"
+size = 38019
 
 [packages.wheels.hashes]
-sha256 = "8089a26fd974ca7a1f30276d3d8492ab266ab15af581642dfe8aa162e0c1c823"
+sha256 = "8596eb8967d744174820280fa62b4542a2e955bfaccca73ed8a13c6eb8e9b502"
 
 [[packages]]
 name = "sphinx"
@@ -1023,36 +1020,36 @@ sha256 = "6e2cb0eef194e10c27ec0023bfeb25badbbb5868244cf5bc5bdc04e4464bf331"
 
 [[packages]]
 name = "tomli"
-version = "2.4.1"
+version = "2.5.0"
 requires-python = ">=3.8"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "tomli-2.4.1.tar.gz"
-upload-time = 2026-03-25 20:22:03.828102+00:00
-url = "https://files.pythonhosted.org/packages/22/de/48c59722572767841493b26183a0d1cc411d54fd759c5607c4590b6563a6/tomli-2.4.1.tar.gz"
-size = 17543
+name = "tomli-2.5.0.tar.gz"
+upload-time = 2026-10-07 12:23:37.892554+00:00
+url = "https://files.pythonhosted.org/packages/b0/78/9ad63712633ed3ab5cc1a648d863d7e7da371e9425e209555a0fe711b695/tomli-2.5.0.tar.gz"
+size = 17662
 
 [packages.sdist.hashes]
-sha256 = "7c7e1a961a0b2f2472c1ac5b69affa0ae1132c39adcb67aba98568702b9cc23f"
+sha256 = "264507556cd8b8c8e7c6ee037cdf443a463f03f4c958e57195e3d369711b8ff6"
 
 [[packages.wheels]]
-name = "tomli-2.4.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-upload-time = 2026-03-25 20:21:36.012836+00:00
-url = "https://files.pythonhosted.org/packages/10/8f/d3ddb16c5a4befdf31a23307f72828686ab2096f068eaf56631e136c1fdd/tomli-2.4.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
-size = 251628
+name = "tomli-2.5.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+upload-time = 2026-10-07 12:22:42.222097+00:00
+url = "https://files.pythonhosted.org/packages/c0/d7/494fd1f0c37a621f1ad9975c2efadb523e8101f144ed6edb2e7fe64738f2/tomli-2.5.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl"
+size = 283595
 
 [packages.wheels.hashes]
-sha256 = "f3c6818a1a86dd6dca7ddcaaf76947d5ba31aecc28cb1b67009a5877c9a64f3f"
+sha256 = "5d8bac3d603c97e6854424e5b2b5b741bdbde387e09f162fb0446812b4a8362b"
 
 [[packages.wheels]]
-name = "tomli-2.4.1-py3-none-any.whl"
-upload-time = 2026-03-25 20:22:03.012768+00:00
-url = "https://files.pythonhosted.org/packages/7b/61/cceae43728b7de99d9b847560c262873a1f6c98202171fd5ed62640b494b/tomli-2.4.1-py3-none-any.whl"
-size = 14583
+name = "tomli-2.5.0-py3-none-any.whl"
+upload-time = 2026-10-07 12:23:36.875825+00:00
+url = "https://files.pythonhosted.org/packages/60/3f/3e3f8fd0919249b0200c80fbc4f9a1e70be19f9883da71dfb7f8b9ab8aca/tomli-2.5.0-py3-none-any.whl"
+size = 14765
 
 [packages.wheels.hashes]
-sha256 = "0d85819802132122da43cb86656f8d1f8c6587d54ae7dcaf30e90533028b49fe"
+sha256 = "32a7b79ac57a2e83670ce329ccf675798bc5a2094783a63676866b70503f2e2b"
 
 [[packages]]
 name = "tomli-w"
@@ -1127,57 +1124,32 @@ size = 45571
 sha256 = "481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"
 
 [[packages]]
-name = "uc-micro-py"
-version = "2.0.0"
-marker = "\"docs\" in dependency_groups"
-requires-python = ">=3.10"
-index = "https://pypi.org/simple/"
-
-[packages.sdist]
-name = "uc_micro_py-2.0.0.tar.gz"
-upload-time = 2026-03-01 06:31:27.526616+00:00
-url = "https://files.pythonhosted.org/packages/78/67/9a363818028526e2d4579334460df777115bdec1bb77c08f9db88f6389f2/uc_micro_py-2.0.0.tar.gz"
-size = 6611
-
-[packages.sdist.hashes]
-sha256 = "c53691e495c8db60e16ffc4861a35469b0ba0821fe409a8a7a0a71864d33a811"
-
-[[packages.wheels]]
-name = "uc_micro_py-2.0.0-py3-none-any.whl"
-upload-time = 2026-03-01 06:31:26.257412+00:00
-url = "https://files.pythonhosted.org/packages/61/73/d21edf5b204d1467e06500080a50f79d49ef2b997c79123a536d4a17d97c/uc_micro_py-2.0.0-py3-none-any.whl"
-size = 6383
-
-[packages.wheels.hashes]
-sha256 = "3603a3859af53e5a39bc7677713c78ea6589ff188d70f4fee165db88e22b242c"
-
-[[packages]]
 name = "urllib3"
-version = "2.7.0"
+version = "2.8.0"
 requires-python = ">=3.10"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "urllib3-2.7.0.tar.gz"
-upload-time = 2026-05-07 16:13:18.596909+00:00
-url = "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz"
-size = 433602
+name = "urllib3-2.8.0.tar.gz"
+upload-time = 2026-09-15 19:29:36.253420+00:00
+url = "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz"
+size = 458972
 
 [packages.sdist.hashes]
-sha256 = "231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c"
+sha256 = "63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"
 
 [[packages.wheels]]
-name = "urllib3-2.7.0-py3-none-any.whl"
-upload-time = 2026-05-07 16:13:17.151740+00:00
-url = "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl"
-size = 131087
+name = "urllib3-2.8.0-py3-none-any.whl"
+upload-time = 2026-09-15 19:29:34.577402+00:00
+url = "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl"
+size = 135717
 
 [packages.wheels.hashes]
-sha256 = "9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"
+sha256 = "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
 
 [tool.nab]
-nab-version = "0.0.16.dev0"
-created-at = 2026-09-02 00:02:56.540498+00:00
+nab-version = "0.0.19.dev0"
+created-at = 2026-10-08 21:07:18.185594+00:00
 command-line = [
     "nab",
     "lock",
@@ -1186,13 +1158,15 @@ command-line = [
     "--project-default-group",
     "docs",
     "--no-emit-workspace",
-    "--output",
-    ".github/requirements/pylock.docs.toml",
     "--project-mode",
     "specific",
     "--python",
     "3.13",
+    "--output",
+    ".github/requirements/pylock.docs.toml",
     "--upgrade",
+    "--project-uploaded-prior-to",
+    "P0D",
 ]
 input-path = "pyproject.toml"
 mode = "specific"
@@ -1200,4 +1174,6 @@ python-specifier = ">=3.10"
 cli-project-overrides = [
     "--project-mode=specific",
     "--project-default-group=docs",
+    "--project-uploaded-prior-to=P0D",
+    "--python=3.13",
 ]

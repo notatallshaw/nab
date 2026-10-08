@@ -223,7 +223,7 @@ def override_body_doc_bullet(key: str) -> str:
         raise AssertionError("no override-body list in configuration.md")
 
     bullet = re.search(
-        rf"^\* `{re.escape(key)}`:(.*?)(?=^\* |\Z)",
+        rf"^- `{re.escape(key)}`:(.*?)(?=^- |\Z)",
         section.group(1),
         flags=re.DOTALL | re.MULTILINE,
     )

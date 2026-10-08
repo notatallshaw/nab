@@ -54,10 +54,10 @@ def _how_to_section() -> str:
 def _build_policy_bullet() -> str:
     """The build-policy reference's local-checkout bullet under ``never``."""
     text = (_DOCS / "reference" / "build-policy.md").read_text(encoding="utf-8")
-    _, marker, rest = text.partition("\n* Local checkouts declared via")
+    _, marker, rest = text.partition("\n- Local checkouts declared via")
     if not marker:
         raise AssertionError("no local-checkout bullet in build-policy.md")
-    return rest.partition("\n* ")[0]
+    return rest.partition("\n- ")[0]
 
 
 _SECTIONS: dict[str, Callable[[], str]] = {

@@ -1,68 +1,56 @@
 # Embed the resolver in your own tool
 
-`nab-resolver` is the PubGrub core nab drives, published on its own and
-with no dependencies. It knows nothing about Python packaging: package
-identity, version ordering and dependency metadata all come from you,
-through a provider.
+`nab-resolver` is the PubGrub core nab drives, published on its own and with no dependencies. It
+knows nothing about Python packaging: package identity, version ordering and dependency metadata all
+come from you, through a provider.
 
-This page builds a provider over an in-memory graph, resolves with it,
-and reads the failure report.
+This page builds a provider over an in-memory graph, resolves with it, and reads the failure report.
 
 Install it with `pip install nab-resolver`.
 
 ## What you supply
 
-A provider answers eleven methods. `BaseProvider` supplies six of them,
-which leaves five to write:
+A provider answers eleven methods. `BaseProvider` supplies six of them, which leaves five to write:
 
 `choose_version`
-: Pick a version of a package inside a range, or return `None` when none
-  fits.
+: Pick a version of a package inside a range, or return `None` when none fits.
 
 `has_satisfying_version`
-: Answer whether `choose_version` would pick a version in the range you
-  are handed. It attributes failures, so restore decision-affecting
-  state; diagnostic-only evidence may remain.
+: Answer whether `choose_version` would pick a version in the range you are handed. It attributes
+  failures, so restore decision-affecting state; diagnostic-only evidence may remain.
 
 `get_dependencies`
 : Report what a version depends on, as a range per dependency.
 
 `prioritize`
-: Return a sort key deciding which undecided package to take next. Lower
-  goes first.
+: Return a sort key deciding which undecided package to take next. Lower goes first.
 
 `widen_decision`
-: Return a range that may replace a decided version in clauses,
-  or `None` for the version alone. `Range.full()` is unsound when two
-  versions differ: it assigns one version's dependencies to every
-  version and can make a solvable graph fail. A widening provider also
-  overrides `narrow_for_display`; otherwise reports name widened ranges.
+: Return a range that may replace a decided version in clauses, or `None` for the version alone.
+  `Range.full()` is unsound when two versions differ: it assigns one version's dependencies to every
+  version and can make a solvable graph fail. A widening provider also overrides
+  `narrow_for_display`; otherwise reports name widened ranges.
 
-`ResolverProvider` in `nab_resolver.resolver` documents all eleven, and
-its docstrings are the full contract. Subclassing is optional: the
-resolver accepts any object satisfying that protocol.
+`ResolverProvider` in `nab_resolver.resolver` documents all eleven, and its docstrings are the full
+contract. Subclassing is optional: the resolver accepts any object satisfying that protocol.
 
-Within one resolution, `get_dependencies(package, version)` must
-describe the same dependencies on every call. Keep each returned
-mapping unchanged until the resolution finishes, including result
-construction. Range values must be immutable. Returning a fresh equal
-mapping is allowed. Use distinct package/version keys for candidates
-with different dependencies, or start a new resolution.
-`widen_decision` may return a different parent range on a later
-decision, provided it still satisfies its contract.
+Within one resolution, `get_dependencies(package, version)` must describe the same dependencies on
+every call. Keep each returned mapping unchanged until the resolution finishes, including result
+construction. Range values must be immutable. Returning a fresh equal mapping is allowed. Use
+distinct package/version keys for candidates with different dependencies, or start a new resolution.
+`widen_decision` may return a different parent range on a later decision, provided it still
+satisfies its contract.
 
-The stability rule applies to dependency declarations, not candidate
-eligibility. Prerelease and yanked-release admission can depend on
-active requirements and host policy, and must be checked before
-preparing candidates. Widened ranges must remain valid for versions
-that may become eligible later in the same resolution.
+The stability rule applies to dependency declarations, not candidate eligibility. Prerelease and
+yanked-release admission can depend on active requirements and host policy, and must be checked
+before preparing candidates. Widened ranges must remain valid for versions that may become eligible
+later in the same resolution.
 
 ## A provider over an in-memory graph
 
-Packages are strings and versions are integers here. A package can be
-any hashable value. Versions must also be hashable and ordered by
-their range type. Their hashes must remain stable while retained by
-the resolver, and equal versions must have equal hashes.
+Packages are strings and versions are integers here. A package can be any hashable value. Versions
+must also be hashable and ordered by their range type. Their hashes must remain stable while
+retained by the resolver, and equal versions must have equal hashes.
 
 ```python
 from collections.abc import Mapping
@@ -111,18 +99,16 @@ class NewestFirstProvider(BaseProvider[str, int]):
         return None
 ```
 
-Counting the versions still in range is PubGrub's usual `prioritize`
-heuristic: the most constrained package gets decided first.
-`conflict_counts` tracks a package's own discarded decisions and
-`culprit_counts` the ones it caused elsewhere, for a provider that wants
-to move either kind to the front.
+Counting the versions still in range is PubGrub's usual `prioritize` heuristic: the most constrained
+package gets decided first. `conflict_counts` tracks a package's own discarded decisions and
+`culprit_counts` the ones it caused elsewhere, for a provider that wants to move either kind to the
+front.
 
 ## Resolving
 
-`solve` takes one range per required package and returns the pins, the
-dependency edges it crossed, and the roots you named. Its second
-argument, `constraints`, narrows a package that something else pulls in
-without requiring the package itself.
+`solve` takes one range per required package and returns the pins, the dependency edges it crossed,
+and the roots you named. Its second argument, `constraints`, narrows a package that something else
+pulls in without requiring the package itself.
 
 ```python
 graph: Graph = {
@@ -155,15 +141,14 @@ edge: http -> json
 
 `resolve` is the same call, returning `solution.pins` alone.
 
-`pins` holds only the packages reachable from the roots, so one decided
-on a branch the resolver later abandoned is filtered out. Building it
-walks the graph back through your provider, so cache `get_dependencies`
-by package and version.
+`pins` holds only the packages reachable from the roots, so one decided on a branch the resolver
+later abandoned is filtered out. Building it walks the graph back through your provider, so cache
+`get_dependencies` by package and version.
 
 ## Reading a failure
 
-The requirements below pin `http` to 2 and rule out the only `json` it
-can use. `ResolutionError` carries the finished report as its message.
+The requirements below pin `http` to 2 and rule out the only `json` it can use. `ResolutionError`
+carries the finished report as its message.
 
 ```python
 try:
@@ -182,31 +167,26 @@ because your project depends on http 2
 so your project's requirements cannot be satisfied
 ```
 
-A `so` line is the clause the lines above it prove, and what it names
-cannot hold: `so http 2` rules that version out rather than choosing it.
+A `so` line is the clause the lines above it prove, and what it names cannot hold: `so http 2` rules
+that version out rather than choosing it.
 
-That report has already been through the provider's `narrow_for_display`
-and the resolver's `format_range`, so re-rendering from
-`error.incompatibility` means supplying both again. Walk its
-`cause_left` and `cause_right` when you want the proof as a tree rather
-than as text.
+That report has already been through the provider's `narrow_for_display` and the resolver's
+`format_range`, so re-rendering from `error.incompatibility` means supplying both again. Walk its
+`cause_left` and `cause_right` when you want the proof as a tree rather than as text.
 
-Two failures arrive without a report: passing the resolver's
-`max_iterations`, which attaches no `incompatibility`, and a
-conflict-resolution loop that stops making progress, which attaches one
-but reports a resolver bug. Neither means the requirements are
-unsatisfiable.
+Two failures arrive without a report: passing the resolver's `max_iterations`, which attaches no
+`incompatibility`, and a conflict-resolution loop that stops making progress, which attaches one but
+reports a resolver bug. Neither means the requirements are unsatisfiable.
 
 ## Bringing your own range type
 
-`Range` orders whatever it is handed, so integers suit a toy graph and
-`packaging.version.Version` suits a real Python one.
+`Range` orders whatever it is handed, so integers suit a toy graph and `packaging.version.Version`
+suits a real Python one.
 
-A host with its own range algebra replaces `Range` outright: pass
-`Resolver` a `range_type` satisfying `RangeProtocol`, a `root_version`
-to decide the virtual root at, which `range_type.singleton()` has to
-accept, and a `format_range` unless that type's `str` already reads as a
-constraint. nab drives the resolver this way, with a PEP 440 range type.
+A host with its own range algebra replaces `Range` outright: pass `Resolver` a `range_type`
+satisfying `RangeProtocol`, a `root_version` to decide the virtual root at, which
+`range_type.singleton()` has to accept, and a `format_range` unless that type's `str` already reads
+as a constraint. nab drives the resolver this way, with a PEP 440 range type.
 
 ## The supported API
 
@@ -222,5 +202,5 @@ nab_resolver.types      Incompatibility, IncompatibilityCause,
                         RangeProtocol, RootRequirement, Term
 ```
 
-The package root binds no names, so importing `nab_resolver` pulls in no
-submodules. Anything else is internal and may move in any release.
+The package root binds no names, so importing `nab_resolver` pulls in no submodules. Anything else
+is internal and may move in any release.

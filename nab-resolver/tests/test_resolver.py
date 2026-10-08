@@ -3491,7 +3491,8 @@ class TestResolverStats:
         assert stats == ResolverStats(**counters)
         for name, value in counters.items():
             other = value + 1 if isinstance(value, int) else defaultdict(int, {"z": 9})
-            assert stats != ResolverStats(**{**counters, name: other}), name
+            changed: dict[str, Any] = {**counters, name: other}
+            assert stats != ResolverStats(**changed), name
 
         assert stats.__eq__("stats") is NotImplemented
 

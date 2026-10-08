@@ -82,9 +82,10 @@ def explain_incompatibility(
     # The flag marks a node whose children are already pushed: it renders after them.
     stack: list[tuple[Incompatibility[Any, Any], bool]] = [(incompatibility, False)]
 
-    needed, unstated = (
-        ({}, {}) if narrow is None else _unstated_ranges(incompatibility, narrow)
-    )
+    needed: dict[int, list[Any]] = {}
+    unstated: dict[Any, Any] = {}
+    if narrow is not None:
+        needed, unstated = _unstated_ranges(incompatibility, narrow)
 
     while stack:
         node, expanded = stack.pop()

@@ -288,8 +288,9 @@ def tool_nab_section(data: Mapping[str, Any]) -> Any:
     chain ``.get`` safely.  The value may itself be a non-table when
     ``[tool.nab]`` is malformed.
     """
-    tool = data.get("tool", {})
-    return tool.get("nab", {}) if isinstance(tool, dict) else {}
+    missing_table: dict[str, Any] = {}
+    tool = data.get("tool", missing_table)
+    return tool.get("nab", missing_table) if isinstance(tool, dict) else missing_table
 
 
 def reject_user_keys_in_pyproject(raw: Mapping[str, Any]) -> None:

@@ -1215,7 +1215,7 @@ class TestCacheReferenceLayout:
         end = text.index("\n## ", start + 1)
         section = text[start:end]
 
-        return set(re.findall(r"^\| `([^`]+)/` \|", section, flags=re.MULTILINE))
+        return set(re.findall(r"^\|\s+`([^`]+)/`\s+\|", section, flags=re.MULTILINE))
 
     def _record_buckets(self, cache: OnDiskCache) -> set[str]:
         """Return the root-level directories ``cache`` writes its records under.

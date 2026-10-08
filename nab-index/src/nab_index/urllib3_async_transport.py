@@ -207,12 +207,14 @@ class Urllib3AsyncTransport:
                 maxsize=self._maxsize,
                 ssl_context=_SSLContext(ssl.PROTOCOL_TLS_CLIENT),
             )
-            # urllib3 leaves the scheme map unannotated, so ty infers its
-            # value type as the two default pool classes and not a subclass.
-            pool.pool_classes_by_scheme = {  # ty: ignore[invalid-assignment]
+            classes: dict[
+                str,
+                type[urllib3.HTTPConnectionPool | urllib3.HTTPSConnectionPool],
+            ] = {
                 "http": _HTTPConnectionPool,
                 "https": _HTTPSConnectionPool,
             }
+            pool.pool_classes_by_scheme = classes  # ty: ignore[invalid-assignment]
             self._local.pool = pool
             with self._pools_lock:
                 self._pools.append(pool)

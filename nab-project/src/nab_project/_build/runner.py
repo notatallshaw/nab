@@ -39,7 +39,6 @@ import pyproject_hooks
 import tomli
 
 from nab_index.local_index import wheel_metadata_member
-from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name, parse_wheel_filename
 from nab_provider._vendor.packaging.version import Version
@@ -61,6 +60,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator
 
     from nab_index.transport import AsyncHttpTransport
+    from nab_provider._vendor.packaging.requirements import Requirement
 
     from ..inputs import ResolveInputs
 

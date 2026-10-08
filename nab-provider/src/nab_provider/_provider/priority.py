@@ -135,7 +135,8 @@ def compute_matching(
         return _NO_LISTING_PRIOR
 
     if per_pkg is None:
-        per_pkg = provider.matching_cache[normalized] = {}
+        per_pkg = {}
+        provider.matching_cache[normalized] = per_pkg
     per_pkg[version_range] = matching
     return matching
 

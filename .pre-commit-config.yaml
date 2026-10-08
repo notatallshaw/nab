@@ -40,3 +40,11 @@ repos:
     rev: 914e7df21a07ef503a81201c76d2b11c789d3fca  # frozen: v1.7.12
     hooks:
       - id: actionlint
+
+  - repo: https://github.com/executablebooks/mdformat
+    rev: 82912cdaea4fb830f751504486a7879c70526547  # frozen: 1.0.0
+    hooks:
+      - id: mdformat
+        language_version: python3.13
+        additional_dependencies: [mdformat-myst==0.3.0, mdformat-gfm-alerts==2.1.0, mdformat-deflist==0.1.4]
+        exclude: ^.*/_vendor/

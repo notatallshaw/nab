@@ -306,7 +306,13 @@ class _PrinterStream:
         self._printer.flush_stderr()
 
 
-class _NabLogHandler(logging.StreamHandler):  # type: ignore[type-arg]
+if TYPE_CHECKING:
+    _StreamHandler = logging.StreamHandler[_PrinterStream]
+else:
+    _StreamHandler = logging.StreamHandler
+
+
+class _NabLogHandler(_StreamHandler):
     """Marker subclass so a re-install can find and drop nab's own handler."""
 
     def __init__(self, printer: Printer) -> None:

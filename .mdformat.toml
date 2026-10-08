@@ -1,0 +1,7 @@
+# Wrap prose while preserving code blocks, table cells, and indivisible links.
+wrap = 100
+number = true
+end_of_line = "lf"
+validate = true
+extensions = ["myst", "gfm_alerts", "deflist"]
+exclude = ["**/_vendor/**", "docs/_build/**", ".venv/**", ".nox/**"]
