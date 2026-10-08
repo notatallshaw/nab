@@ -1,16 +1,10 @@
-"""File-URL helpers, in a module that imports no index client.
-
-:mod:`nab_index.local_index` reads listings and wheels, so importing it pulls
-in :mod:`zipfile` and the HTTP client.  Deciding whether a configured index URL
-is a ``file:`` one needs none of that, and that check runs while a command line
-is still being read, so the two live apart.
-"""
+"""File-URL helpers without index-client imports."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from urllib.parse import ParseResult, urlparse, urlsplit
+from urllib.parse import ParseResult, unquote, urlparse, urlsplit
 
 __all__ = ["is_file_url", "parse_file_url"]
 
@@ -30,10 +24,10 @@ def is_file_url(url: str) -> bool:
 def parse_file_url(url: str) -> Path:
     """Return the filesystem path named by a ``file:`` URL.
 
-    Uses :func:`urllib.request.url2pathname` to decode Windows drive paths and
-    percent escapes. An empty or ``localhost`` authority (RFC 8089) means the
-    local machine; any other host becomes a UNC share on Windows and is
-    rejected elsewhere.
+    POSIX percent escapes use the filesystem encoding with surrogateescape.
+    Windows paths use :func:`urllib.request.url2pathname`.
+    Empty and ``localhost`` authorities name local paths (RFC 8089).
+    Other hosts name UNC shares on Windows and are rejected elsewhere.
 
     Raise :class:`ValueError` for decoded null characters or paths rejected by
     :func:`urllib.request.url2pathname`.
@@ -68,7 +62,14 @@ def _parsed_file_url_path(parsed: ParseResult, url: str) -> Path:
         raise ValueError(msg)
 
     try:
-        path = url2pathname(netloc + url_path)
+        if sys.platform == "win32":
+            path = url2pathname(netloc + url_path)
+        else:
+            path = unquote(
+                url_path,
+                encoding=sys.getfilesystemencoding(),
+                errors="surrogateescape",
+            )
     except OSError as exc:
         msg = f"file:// URL {url!r} does not name a path: {exc}"
         raise ValueError(msg) from exc
