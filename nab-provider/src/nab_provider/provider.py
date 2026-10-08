@@ -672,6 +672,8 @@ class Provider:
         # Nested matching cache: prioritize is called many times per resolve
         # so the per-call (normalized, range) tuple alloc is worth avoiding.
         self.matching_cache: dict[str, dict[RangeProtocol[Version], int]] = {}
+        # Stable scans retain fatal conflicts until deterministic selection.
+        self.priority_override_errors: dict[str, str] = {}
 
         # Scan counter, plus the scan in which each name was last seen with its
         # listing still in flight.  See ``arrived_listing``.
@@ -1263,6 +1265,10 @@ class Provider:
         self.stats.choose_version_calls += 1
 
         base, extra, normalized = self.split_and_normalize(package)
+
+        priority_error = self.priority_override_errors.get(normalized)
+        if priority_error is not None:
+            raise OverrideConflictError(priority_error)
 
         preferred = self._preferred_version(
             package, base, extra, normalized, version_range
@@ -2707,10 +2713,12 @@ class Provider:
         Under :attr:`DecisionOrder.STABLE` it needs no blocking half of its
         own.  ``prioritize`` runs first in the same sort key and has already
         settled the listing into ``versions_cache``; what is left is a
-        failed listing or a package served from a local, VCS, or archive
-        source, and no listing is ever requested for those.
+        failed listing, a retained override conflict, or a package served from
+        a local, VCS, or archive source. A retained conflict is always ready.
         """
         _, extra, normalized = self.split_and_normalize(package)
+        if normalized in self.priority_override_errors:
+            return True
         if extra is not None:
             return normalized in self.versions_cache
         if normalized in self.versions_cache:
@@ -2730,7 +2738,8 @@ class Provider:
         with high ``conflict_counts`` are promoted to tier 0 so they
         decide first inside a conflict cluster; runaway culprits with
         high ``culprit_counts`` are demoted to tier 2 (uv's
-        deprioritise-on-conflict).  Everything else is tier 1.
+        deprioritise-on-conflict). Ordinary packages otherwise get tier 1;
+        retained fatal override conflicts get tier -1.
 
         See :mod:`nab_provider._provider.priority` for the implementation.
         """
