@@ -17,7 +17,33 @@ env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
+  select:
+    name: Select affected tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      workspaces: ${{ steps.select.outputs.workspaces }}
+      test-paths: ${{ steps.select.outputs.test-paths }}
+      resolver: ${{ steps.select.outputs.resolver }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Select workspaces from the PR changes
+        id: select
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python tasks/select_tests.py --base "$BASE_SHA" --head "$HEAD_SHA" --output "$GITHUB_OUTPUT"
+
   test:
+    needs: select
     name: ${{ matrix.os }} / ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}-latest
     timeout-minutes: 20
@@ -48,11 +74,13 @@ jobs:
       - name: Install nox
         run: pip install -r .github/requirements/pylock.nox.toml
 
-      # Test and coverage logic lives in noxfile.py. One session runs every
-      # workspace in one venv, each gated on its own packages, and reports
-      # every failure rather than stopping at the first.
-      - name: Test every workspace
-        run: nox -s tests
+      - name: Test affected workspaces
+        shell: bash
+        env:
+          WORKSPACES: ${{ needs.select.outputs.workspaces }}
+        run: |
+          read -r -a workspaces <<< "$WORKSPACES"
+          nox -s tests -- "${workspaces[@]}"
 
   benchmarks:
     name: benchmark harness / ${{ matrix.os }} / ${{ matrix.python-version }}
@@ -98,6 +126,7 @@ jobs:
         run: nox -s benchmarks
 
   property-tests:
+    needs: select
     name: Property tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -127,9 +156,15 @@ jobs:
       - name: Run property-based tests
         # CrossHair tests run in the dedicated crosshair-tests job; the
         # crosshair backend is not installed here, so skip that file.
-        run: python -m pytest -n auto --dist worksteal -m property --ignore=nab-resolver/tests/property/test_crosshair_ranges.py
+        env:
+          TEST_PATHS: ${{ needs.select.outputs.test-paths }}
+        run: |
+          read -r -a test_paths <<< "$TEST_PATHS"
+          python -m pytest -n auto --dist worksteal -m property --ignore=nab-resolver/tests/property/test_crosshair_ranges.py "${test_paths[@]}"
 
   crosshair-tests:
+    needs: select
+    if: needs.select.outputs.resolver == 'true'
     name: CrossHair property tests
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -156,7 +191,7 @@ jobs:
         run: pip install --no-deps -e nab-resolver -e nab-markersets -e nab-provider -e nab-project -e nab-index -e .
 
       - name: Run CrossHair property tests
-        run: python -m pytest -m crosshair
+        run: python -m pytest -m crosshair nab-resolver/tests
 
   dists:
     name: Build and install distributions
@@ -220,6 +255,7 @@ jobs:
     name: All tests pass
     if: always()
     needs:
+      - select
       - test
       - benchmarks
       - property-tests
@@ -232,4 +268,5 @@ jobs:
       - name: Decide whether the needed jobs succeeded or failed
         uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35  # v1.3.0
         with:
+          allowed-skips: ${{ needs.select.outputs.resolver == 'false' && 'crosshair-tests' || '' }}
           jobs: ${{ toJSON(needs) }}
