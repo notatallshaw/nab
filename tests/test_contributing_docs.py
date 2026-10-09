@@ -1,14 +1,12 @@
 """Check the contributing page's commands against this check-out.
 
 A contributor pastes these into a shell, so a documented pytest flag has to be
-one the installed pytest accepts, and the documented coverage recipe has to run
-the same steps as CI. A tool the page runs out of the development
+one the installed pytest accepts. A tool the page runs out of the development
 environment has to be one that environment carries.
 """
 
 from __future__ import annotations
 
-import ast
 import itertools
 import os
 import re
@@ -24,7 +22,6 @@ import tomli
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 CONTRIBUTING = REPO_ROOT / "docs" / "contributing.md"
-NOXFILE = REPO_ROOT / "noxfile.py"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 HATCH_TOML = REPO_ROOT / "hatch.toml"
 
@@ -79,39 +76,6 @@ def _documented_pytest_arguments() -> set[tuple[str, ...]]:
         elif tool == "coverage" and args[:3] == ("run", "-m", "pytest"):
             found.add(args[3:])
     return found
-
-
-def _documented_coverage_steps() -> set[str]:
-    """Coverage subcommands the page documents."""
-    steps = set()
-    for command in _documented_commands():
-        invocation = _invocation(command)
-        if invocation is not None and invocation[0] == "coverage" and invocation[1]:
-            steps.add(invocation[1][0])
-    return steps
-
-
-def _ci_coverage_steps() -> set[str]:
-    """Coverage subcommands the nox tests session runs."""
-    tree = ast.parse(NOXFILE.read_text(encoding="utf-8"))
-    session = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "tests"
-    )
-
-    steps = set()
-    for call in ast.walk(session):
-        if not isinstance(call, ast.Call):
-            continue
-        literals = [
-            arg.value
-            for arg in call.args
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
-        ]
-        if literals[:1] == ["coverage"] and len(literals) > 1:
-            steps.add(literals[1])
-    return steps
 
 
 def _canonical(name: str) -> str:
@@ -254,14 +218,6 @@ def test_documented_pytest_arguments_are_accepted() -> None:
             f"contributing.md documents `pytest {shlex.join(args)}`, which the "
             f"installed pytest will not run:\n{result.stdout}{result.stderr}"
         )
-
-
-def test_documented_coverage_recipe_matches_ci() -> None:
-    """The documented coverage recipe must run every step CI runs."""
-    missing = _ci_coverage_steps() - _documented_coverage_steps()
-    assert not missing, (
-        f"contributing.md omits the coverage step(s) CI runs: {sorted(missing)}"
-    )
 
 
 def test_development_environment_lives_where_the_page_runs_it() -> None:

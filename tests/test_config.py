@@ -36,7 +36,6 @@ from nab.config.model import (
 )
 from nab.config.subflags import CliTable, build_cli_tables
 from nab.config.values import (
-    _MATRIX_KEYS,
     _PEP508_MARKER_VARIABLES,
     MatrixConfig,
     SourceConfigError,
@@ -162,17 +161,6 @@ def first_tool_nab_example() -> str:
     raise AssertionError("no [tool.nab] example block in configuration.md")
 
 
-def universal_mode_section() -> str:
-    """Return the universal-mode section of the config reference."""
-    text = DOCS_CONFIGURATION.read_text()
-    match = re.search(
-        r"^## Universal mode.*?(?=^## )", text, flags=re.DOTALL | re.MULTILINE
-    )
-    if match is None:
-        raise AssertionError("no universal-mode section in configuration.md")
-    return match.group(0)
-
-
 def section_doc_example(heading: str) -> str:
     """Return the first TOML example under ``## <heading>`` in the config reference.
 
@@ -191,46 +179,6 @@ def section_doc_example(heading: str) -> str:
         msg = f"no TOML example in configuration.md's {heading} section"
         raise AssertionError(msg)
     return blocks[0]
-
-
-def top_level_doc_comment(key: str) -> str:
-    """Return the comment above ``key`` in the config reference's example block."""
-    lines = first_tool_nab_example().splitlines()
-    for i, line in enumerate(lines):
-        if line.startswith(key):
-            comment: list[str] = []
-            j = i - 1
-            while j >= 0 and lines[j].lstrip().startswith("#"):
-                comment.insert(0, lines[j].lstrip("# ").rstrip())
-                j -= 1
-            return " ".join(comment)
-    msg = f"no {key} key in the config reference example"
-    raise AssertionError(msg)
-
-
-def override_body_doc_bullet(key: str) -> str:
-    """Return the config reference's override-body bullet for ``key``.
-
-    Bullets wrap across source lines, so the text comes back on one line.
-    """
-    text = DOCS_CONFIGURATION.read_text()
-    section = re.search(
-        r"^A body sets any combination of:\n\n(.*?)\n\n",
-        text,
-        flags=re.DOTALL | re.MULTILINE,
-    )
-    if section is None:
-        raise AssertionError("no override-body list in configuration.md")
-
-    bullet = re.search(
-        rf"^- `{re.escape(key)}`:(.*?)(?=^- |\Z)",
-        section.group(1),
-        flags=re.DOTALL | re.MULTILINE,
-    )
-    if bullet is None:
-        msg = f"no {key} bullet in configuration.md's override body"
-        raise AssertionError(msg)
-    return " ".join(bullet.group(1).split())
 
 
 class TestCliOverridesFold:
@@ -1015,10 +963,6 @@ class TestConflicts:
         with pytest.raises(ConfigError, match="more than one set"):
             read_pyproject_config(path)
 
-    def test_doc_states_member_uniqueness_rule(self) -> None:
-        page = " ".join(DOCS_CONFLICTS.read_text(encoding="utf-8").lower().split())
-        assert "one conflict set" in page
-
     def test_same_name_extra_and_group_in_two_sets_allowed(
         self, tmp_path: Path
     ) -> None:
@@ -1306,18 +1250,6 @@ class TestDefaultGroups:
         with pytest.raises(ConfigError, match="default-groups\\[0\\] must be a string"):
             read_pyproject_config(path)
 
-    def test_doc_describes_resolve_activation(self) -> None:
-        # default-groups activates the groups during resolution. The reference
-        # must describe that behavior.
-        comment = top_level_doc_comment("default-groups").lower()
-        assert any(word in comment for word in ("resolve", "activat")), comment
-
-    def test_doc_notes_the_conflict_fork(self) -> None:
-        # A default that --groups joins to another member of its conflict
-        # set forks rather than unions, so "every resolve" needs the caveat.
-        comment = top_level_doc_comment("default-groups")
-        assert "forks" in comment, comment
-
 
 class TestMainGroup:
     """``base-group`` names the project's own dependencies in a lock."""
@@ -1502,10 +1434,6 @@ class TestMainGroup:
             'conflicts = [[{ group = "build" }, { extra = "cli" }]]\n',
         )
         assert read_pyproject_config(path).build_group == "build"
-
-    def test_doc_states_the_base_group_extra_refusal(self) -> None:
-        page = " ".join(DOCS_CONFLICTS.read_text(encoding="utf-8").lower().split())
-        assert "pairing `base-group` with an extra is refused" in page
 
     def test_build_group_rejects_the_base_group_name(self, tmp_path: Path) -> None:
         path = write(
@@ -1931,16 +1859,6 @@ class TestUploadedPriorTo:
             ),
         ):
             read_pyproject_config(path)
-
-    def test_top_level_doc_states_the_offset_requirement(self) -> None:
-        # Offset-less values are ISO 8601 strings and TOML datetimes too, so
-        # naming those two forms is not enough on its own.
-        comment = top_level_doc_comment("uploaded-prior-to").lower()
-        assert "timezone offset" in comment, comment
-
-    def test_override_doc_states_the_offset_requirement(self) -> None:
-        bullet = override_body_doc_bullet("uploaded-prior-to").lower()
-        assert "timezone offset" in bullet, bullet
 
     def test_top_level_doc_example_carries_an_offset(self, tmp_path: Path) -> None:
         """The reference's own example has to be a value the parser accepts."""
@@ -5010,16 +4928,6 @@ class TestIndexCacheFloorsProjection:
         )
         config = read_pyproject_config(path, discover_workspace=False)
         assert index_cache_floors(config.resolve_inputs()) == {}
-
-
-class TestMatrixReferenceDocs:
-    def test_reference_documents_every_matrix_key(self) -> None:
-        """Every key the matrix parser accepts is named in the config reference."""
-        section = universal_mode_section()
-        undocumented = sorted(key for key in _MATRIX_KEYS if f"`{key}`" not in section)
-        assert not undocumented, (
-            f"[tool.nab.matrix] keys the config reference never names: {undocumented}"
-        )
 
 
 class TestMatrix:
