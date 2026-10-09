@@ -395,26 +395,46 @@ def collect_dependency_requirements(
     dependencies: Mapping[str, tuple[str, ...]],
 ) -> dict[str, dict[str, tuple[DependencyDeclaration, ...]]]:
     """Return active declarations for the final dependency edges."""
+    selected_extras = _extras_by_package(resolved_keys)
+    declarations: dict[str, dict[str, tuple[DependencyDeclaration, ...]]] = {}
+
+    for parent, children in dependencies.items():
+        extras = selected_extras.get(parent, frozenset())
+        requirements = provider.dependency_requirements_for(
+            parent, pins[parent], extras
+        )
+        declarations[parent] = _declarations_by_child(requirements, children)
+
+    return declarations
+
+
+def _extras_by_package(resolved_keys: Iterable[str]) -> dict[str, frozenset[str]]:
+    """Group extras from resolved keys by canonical package name."""
     extras: defaultdict[str, set[str]] = defaultdict(set)
     for key in resolved_keys:
         name, extra = split_extra(key)
         if extra is not None:
             extras[canonicalize_name(name)].add(extra)
-    result: dict[str, dict[str, tuple[DependencyDeclaration, ...]]] = {}
-    for name, children in dependencies.items():
-        records = provider.dependency_requirements_for(
-            name, pins[name], frozenset(extras[name])
+    return {name: frozenset(values) for name, values in extras.items()}
+
+
+def _declarations_by_child(
+    requirements: Iterable[Requirement], children: Sequence[str]
+) -> dict[str, tuple[DependencyDeclaration, ...]]:
+    """Keep and group declarations for the graph's child names."""
+    child_names = set(children)
+    grouped: defaultdict[str, list[DependencyDeclaration]] = defaultdict(list)
+
+    for requirement in requirements:
+        child = canonicalize_name(requirement.name)
+        if child not in child_names:
+            continue
+        declaration = DependencyDeclaration(
+            text=str(requirement), specifier=str(requirement.specifier)
         )
-        child_names = set(children)
-        grouped: defaultdict[str, list[DependencyDeclaration]] = defaultdict(list)
-        for record in records:
-            child = canonicalize_name(record.name)
-            if child in child_names:
-                grouped[child].append(
-                    DependencyDeclaration(str(record), str(record.specifier))
-                )
-        result[name] = {child: tuple(grouped[child]) for child in sorted(children)}
-    return result
+        grouped[child].append(declaration)
+
+    return {child: tuple(grouped[child]) for child in sorted(children)}
 
 
 def _membership_gates(

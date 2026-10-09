@@ -109,14 +109,16 @@ print(resolver.resolve({"app": VersionRange.full()}))
 `nab_project.resolve.resolve_for_targets` is the entry point that takes a project path; the provider
 has none.
 
-Pass `include_dependency_requirements=True` to retain each successful target's active parent
-declarations in `target_result.lock.dependency_requirements`. Canonical parent and child names index
-tuples of immutable `nab_project.declarations.DependencyDeclaration` records. Each record has
-normalized PEP 508 `text` and a `specifier` string, with operators such as `~=` preserved. An empty
-specifier imposes no version restriction. The text retains markers already evaluated for that target
-and its activated extras. The map uses effective metadata after overrides; root requirements and
-user constraints remain separate. Omitted collection is `None`, and a collected graph with no edges
-is `{}`.
+Pass `include_dependency_requirements=True`, then read
+`target_result.lock.dependency_requirements[parent][child]` after success. Use canonical package
+names. Each immutable record has:
+
+- `text`: the full declaration with normalized formatting and markers.
+- `specifier`: the parent's version restriction, preserving `~=`. Empty means unrestricted.
+
+Declarations reflect the target, activated extras and metadata overrides. Root requirements and user
+constraints are separate. The field is `None` without collection, or `{}` for a collected empty
+graph.
 
 ## Where the vendored packaging fork lives
 
