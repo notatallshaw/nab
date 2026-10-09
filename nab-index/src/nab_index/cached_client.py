@@ -19,6 +19,8 @@ from dataclasses import dataclass, replace
 from datetime import timezone
 from typing import TYPE_CHECKING
 
+from packaging.utils import canonicalize_name
+
 from nab_provider.records import select_artifact_hash
 from nab_provider.serialization import SimpleSerialization, simple_accept_header
 from nab_provider.store import sdist_artifact_key
@@ -720,7 +722,7 @@ class CachedAsyncSimpleClient:
         and then to a full fetch; a 200 serves the replacement body and a 404
         serves nothing.
         """
-        url = f"{self._index_url}{package}/"
+        url = f"{self._index_url}{canonicalize_name(package)}/"
         headers = {"Accept": simple_accept_header(self._serialization)}
         if policy.etag is not None and is_sendable_etag(policy.etag):
             headers["If-None-Match"] = policy.etag
@@ -794,7 +796,7 @@ class CachedAsyncSimpleClient:
             task.exception()
 
     async def _fetch_simple(self, package: str) -> list[WheelFile | SdistFile]:
-        url = f"{self._index_url}{package}/"
+        url = f"{self._index_url}{canonicalize_name(package)}/"
         accept = simple_accept_header(self._serialization)
         response = await self._transport.get(url, headers={"Accept": accept})
         if response.status_code == _HTTP_NOT_FOUND:
