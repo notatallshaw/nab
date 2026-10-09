@@ -124,7 +124,7 @@ def run_build_backend(
             backend=backend,
             skip_prepare=_should_skip_prepare(backend, data),
         )
-        return _parse_metadata(metadata_dir / "METADATA")
+        return _parse_metadata(metadata_dir / "METADATA", output_dir=Path(out_str))
 
 
 def build_wheel_for_install(
@@ -482,19 +482,31 @@ def _build_wheel_and_extract(
     return output_directory / distinfo_dir
 
 
-def _parse_metadata(metadata_path: Path) -> WheelMetadata:
-    """Parse a ``METADATA`` file into :class:`WheelMetadata`."""
+def _metadata_display_path(metadata_path: Path, output_dir: Path | None) -> Path:
+    """Return a path relative to the build output, retaining external paths."""
+    if output_dir is not None and metadata_path.is_relative_to(output_dir):
+        return metadata_path.relative_to(output_dir)
+    return metadata_path
+
+
+def _parse_metadata(
+    metadata_path: Path, *, output_dir: Path | None = None
+) -> WheelMetadata:
+    """Parse METADATA, displaying paths inside ``output_dir`` relative to it."""
+    display_path = _metadata_display_path(metadata_path, output_dir)
+
     if not path_state(metadata_path).should_read:
-        msg = f"backend produced no METADATA file at {metadata_path}"
+        msg = f"backend produced no METADATA file at {display_path}"
         raise BuildBackendError(msg)
 
     try:
         text = metadata_path.read_text(encoding="utf-8")
     except OSError as exc:
-        msg = f"backend METADATA at {metadata_path} could not be read: {exc}"
+        detail = str(exc).replace(repr(str(metadata_path)), repr(str(display_path)))
+        msg = f"backend METADATA at {display_path} could not be read: {detail}"
         raise BuildBackendError(msg) from exc
     except UnicodeDecodeError as exc:
-        msg = f"backend METADATA at {metadata_path} is not valid UTF-8: {exc}"
+        msg = f"backend METADATA at {display_path} is not valid UTF-8: {exc}"
         raise BuildBackendError(msg) from exc
     msg_obj = message_from_string(text)
 
@@ -502,7 +514,7 @@ def _parse_metadata(metadata_path: Path) -> WheelMetadata:
     version_raw = msg_obj.get("Version")
     if not name_raw or not version_raw:
         msg = (
-            f"backend METADATA at {metadata_path} is missing Name or Version"
+            f"backend METADATA at {display_path} is missing Name or Version"
             f" (Name={name_raw!r}, Version={version_raw!r})"
         )
         raise BuildBackendError(msg)
