@@ -201,15 +201,9 @@ class MissingVcsCommitError(ValueError):
 def read_lockfile_anchor(path: Path) -> datetime | None:
     """Return the ``[tool.nab].created-at`` timestamp from ``path`` if any.
 
-    Used by ``nab lock`` to keep ``P<n>D`` durations stable across
-    re-locks: the anchor used for the previous resolve is read back
-    and reused unless the user passes ``--upgrade``.
-
-    Returns ``None`` when ``path`` does not exist, cannot be read, is
-    not valid TOML, is not a PEP 751-shaped pylock, or is missing the
-    ``[tool.nab]`` block.  Naive timestamps (no offset) are coerced to UTC
-    for symmetry with the writer; this is informational provenance, so
-    a missing offset is recoverable rather than fatal.
+    Returns ``None`` if TOML cannot be read or the timestamp is missing or invalid.
+    Extracts provenance without validating the lockfile.
+    Naive timestamps (no offset) are coerced to UTC.
     """
     if not path_state(path).should_read:
         return None
