@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from nab_provider.target import ResolveTarget
     from nab_resolver.types import Incompatibility, RangeProtocol
 
+    from ..declarations import DependencyDeclaration
     from ..fetch import FetchCoordinator
     from ..inputs import ResolveInputs
     from ..lockfile import TargetLock
@@ -156,6 +157,25 @@ class TargetResult:
     metadata_fetched: int = 0
     distributions_seen: int = 0
     wall_time: float = 0.0
+
+    def require_dependency_requirements(
+        self,
+    ) -> Mapping[str, Mapping[str, tuple[DependencyDeclaration, ...]]]:
+        """Return collected declarations, raising for a failed or uncollected target."""
+        if self.error is not None:
+            raise self.error
+        lock = self.lock
+        if lock is None:
+            message = f"No successful lock is available for target {self.target.label}"
+            raise RuntimeError(message)
+        requirements = lock.dependency_requirements
+        if requirements is None:
+            message = (
+                "Dependency requirements were not collected; "
+                "resolve with include_dependency_requirements=True"
+            )
+            raise ValueError(message)
+        return requirements
 
 
 @dataclass

@@ -15,17 +15,16 @@ from nab_index.transport import HttpResponse
 from nab_project.declarations import DependencyDeclaration
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import LockInput, drop_workspace_pins
-from nab_project.resolve import resolve_for_targets
+from nab_project.resolve import TargetResult, resolve_for_targets
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import LocalSource
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_provider.testing import pkg_override
+from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-    from nab_project.resolve import TargetResult
 
 DECLARATIONS = (
     'Child_Name ( <2 ) ; python_version < "3.10"',
@@ -163,6 +162,42 @@ def test_collection_is_optional(tmp_path: Path) -> None:
         selected.conflicts,
         selected.rounds,
     )
+
+
+@pytest.mark.parametrize("requirements", [(), ("child-name",), ("parent[feature]",)])
+def test_checked_requirements_return_collected_map(
+    tmp_path: Path, requirements: tuple[str, ...]
+) -> None:
+    selected = _resolve(tmp_path, requirements)
+    data = selected.require_dependency_requirements()
+    assert selected.lock is not None
+    assert data is selected.lock.dependency_requirements
+    if "parent[feature]" in requirements:
+        assert len(data["parent"]["child-name"]) == 2
+    else:
+        assert data == {}
+
+
+def test_checked_requirements_reject_omitted_collection(tmp_path: Path) -> None:
+    selected = _resolve(tmp_path, enabled=False)
+    with pytest.raises(ValueError, match="include_dependency_requirements=True"):
+        selected.require_dependency_requirements()
+
+
+def test_checked_requirements_raise_resolution_error(tmp_path: Path) -> None:
+    selected = _resolve(tmp_path, ("parent", "child-name<1"))
+    with pytest.raises(ResolutionError) as failure:
+        selected.require_dependency_requirements()
+    assert failure.value is selected.error
+
+
+def test_checked_requirements_reject_missing_lock() -> None:
+    target = ResolveTarget.for_declared(
+        python_version="3.11", spec=PlatformSpec("linux_x86_64")
+    )
+    selected = TargetResult(target=target, success=True)
+    with pytest.raises(RuntimeError, match="No successful lock"):
+        selected.require_dependency_requirements()
 
 
 def test_leaf_and_empty_resolves_have_collected_empty_maps(tmp_path: Path) -> None:

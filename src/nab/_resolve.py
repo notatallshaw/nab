@@ -395,6 +395,7 @@ def _report_dependency_requirements(result: ResolveResult) -> None:
         declarations = target_result.lock.dependency_requirements
         if declarations is None:
             continue
+        declarations = target_result.require_dependency_requirements()
         for parent in sorted(declarations):
             prefix = (
                 f"{target_result.target.label}: {parent}=={target_result.pins[parent]}"
