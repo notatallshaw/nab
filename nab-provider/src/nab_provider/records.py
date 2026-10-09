@@ -156,20 +156,6 @@ def _expand_table(held: object) -> object:
     return held
 
 
-class _MetadataUrlMemo:
-    """Slot holding :attr:`WheelFile.metadata_url` once it has been derived.
-
-    A slot rather than a dataclass field keeps the memo out of ``fields()``, so
-    it reaches neither equality, the repr, nor the pickled state. It sits on a
-    base class because ``@dataclass(slots=True)`` rejects a class that declares
-    ``__slots__`` in its own body.
-    """
-
-    __slots__ = ("_metadata_url",)
-
-    _metadata_url: str
-
-
 class _DeferredIntegrity:
     """Parses a record's ``hashes`` table the first time something reads it.
 
@@ -203,11 +189,15 @@ class _DeferredIntegrity:
             return None
 
 
-class _WheelIntegrity(_DeferredIntegrity, _MetadataUrlMemo):
-    """Carries a wheel's raw tables in slots of its own."""
+class _WheelIntegrity(_DeferredIntegrity):
+    """Hold raw tables and the metadata URL memo outside dataclass fields.
 
-    __slots__ = ("_raw_hashes", "_raw_metadata")
+    ``@dataclass(slots=True)`` rejects ``__slots__`` in the dataclass body.
+    """
 
+    __slots__ = ("_metadata_url", "_raw_hashes", "_raw_metadata")
+
+    _metadata_url: str
     _raw_metadata: object
 
     @override
