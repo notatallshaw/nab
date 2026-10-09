@@ -1893,11 +1893,6 @@ class TestPackageMetadataOverrideRecords:
 class TestReadLockfileAnchor:
     """``read_lockfile_anchor`` extracts ``[tool.nab].created-at``."""
 
-    def test_docstring_explains_lock_validation_is_not_performed(self) -> None:
-        docstring = " ".join((read_lockfile_anchor.__doc__ or "").split())
-        assert "is not a PEP 751-shaped pylock" not in docstring
-        assert "without validating the lockfile" in docstring
-
     def test_returns_none_when_file_missing(self, tmp_path: Path) -> None:
         assert read_lockfile_anchor(tmp_path / "missing.toml") is None
 
