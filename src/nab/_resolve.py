@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from nab_index.transport import AsyncHttpTransport, HttpResponse
+    from nab_project.declarations import DependencyDeclaration
     from nab_project.resolve import ResolveResult
     from nab_provider.provider import ResolutionStrategy
 
@@ -400,9 +401,18 @@ def _report_dependency_requirements(result: ResolveResult) -> None:
             )
             for child in sorted(declarations[parent]):
                 for requirement in declarations[parent][child]:
+                    text = _declaration_message(parent, requirement)
                     printer().stderr_line(
-                        f"{prefix} requires {requirement.text}\n",
+                        f"{prefix} requires {text}\n",
                     )
+
+
+def _declaration_message(parent: str, requirement: DependencyDeclaration) -> str:
+    """Show the requirement and the selected parent extras that contributed it."""
+    if not requirement.activated_by:
+        return requirement.text
+    sources = ", ".join(f"{parent}[{extra}]" for extra in requirement.activated_by)
+    return f"{requirement.text} (via {sources})"
 
 
 def _report_failures(result: ResolveResult) -> None:

@@ -14,8 +14,10 @@ import pytest
 from nab._resolve import _report_dependency_requirements
 from nab.cli import main
 from nab.output import Printer, Verbosity
+from nab_project.declarations import DependencyDeclaration
 from nab_project.lockfile import TargetLock
 from nab_project.resolve import ResolveResult, TargetResult
+from nab_provider._vendor.packaging.version import Version
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import ResolveTarget
 from nab_resolver.errors import ResolutionError
@@ -79,7 +81,7 @@ def test_only_debug_output_shows_active_requirements(
         assert len(declarations) == 2
         assert declarations[0].endswith("parent==1.0 requires child~=2.0")
         assert declarations[1].endswith(
-            'parent==1.0 requires child<2.5; extra == "feature"'
+            'parent==1.0 requires child<2.5; extra == "feature" (via parent[feature])'
         )
     else:
         assert declarations == []
@@ -107,3 +109,42 @@ def test_incomplete_and_uncollected_results_have_no_declaration_messages() -> No
     with patch("nab._resolve.printer", return_value=writer):
         _report_dependency_requirements(result)
     assert stderr.getvalue() == ""
+
+
+def test_messages_keep_base_requirements_separate_from_extra_sources() -> None:
+    target = ResolveTarget.for_declared(
+        python_version="3.11", spec=PlatformSpec("linux_x86_64")
+    )
+    records = (
+        DependencyDeclaration("child~=2.0", "~=2.0", name="child"),
+        DependencyDeclaration(
+            'child[other]<2.5; extra == "feature" or extra == "other"',
+            "<2.5",
+            name="child",
+            extras=("other",),
+            activated_by=("feature", "other"),
+        ),
+    )
+    result = ResolveResult(
+        targets=(target,),
+        target_results=[
+            TargetResult(
+                target=target,
+                success=True,
+                pins={"parent": Version("1.0")},
+                lock=TargetLock(
+                    target=target,
+                    pins={},
+                    dependency_requirements={"parent": {"child": records}},
+                ),
+            )
+        ],
+    )
+    stderr = io.StringIO()
+    writer = Printer(verbosity=Verbosity.DEBUG, stderr=stderr)
+    with patch("nab._resolve.printer", return_value=writer):
+        _report_dependency_requirements(result)
+    lines = stderr.getvalue().splitlines()
+    assert lines[0].endswith("parent==1.0 requires child~=2.0")
+    assert lines[1].endswith("(via parent[feature], parent[other])")
+    assert "child[other]<2.5" in lines[1]
