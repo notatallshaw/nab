@@ -13,6 +13,10 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ResolutionError",
+    "ResolutionInvariantError",
+    "ResolutionLimitError",
+    "ResolutionStalledError",
+    "ResolutionTerminatedError",
 ]
 
 
@@ -27,10 +31,9 @@ class ResolutionError(Exception):
     None where the resolver stopped before proving one. Walk ``cause_left`` and
     ``cause_right`` to trace the full proof.
 
-    Two paths raise without a report: exceeding ``max_iterations``, which
-    leaves ``incompatibility`` None, and a stalled conflict-resolution loop,
-    which attaches one but reports a resolver bug. Neither proves the
-    requirements unsatisfiable.
+    ``ResolutionTerminatedError`` identifies a limit or resolver fault.
+    Its incompatibility, when present, is diagnostic rather than a proof
+    that the requirements are unsatisfiable.
 
     ``verbose_message`` is the same report at more depth, set by whatever
     augments the error with what the resolve knows beyond the derivation.
@@ -49,3 +52,19 @@ class ResolutionError(Exception):
         super().__init__(message)
         self.incompatibility = incompatibility
         self.verbose_message: str | None = None
+
+
+class ResolutionTerminatedError(ResolutionError):
+    """Resolution stopped because of a resource limit or resolver fault."""
+
+
+class ResolutionLimitError(ResolutionTerminatedError):
+    """Resolution exhausted its work budget without proving unsatisfiability."""
+
+
+class ResolutionInvariantError(ResolutionTerminatedError):
+    """A provider or solver returned inconsistent state."""
+
+
+class ResolutionStalledError(ResolutionInvariantError):
+    """Conflict resolution stopped making progress; its graph is diagnostic."""

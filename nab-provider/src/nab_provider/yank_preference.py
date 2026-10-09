@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
-from nab_resolver.errors import ResolutionError
+from nab_resolver.errors import (
+    ResolutionError,
+    ResolutionInvariantError,
+    ResolutionLimitError,
+    ResolutionTerminatedError,
+)
 from nab_resolver.ranges import Range
 from nab_resolver.resolver import BaseProvider, Resolver, ResolverStats
 
@@ -94,7 +99,7 @@ class YankPreference:
         self.remaining -= steps
         if self.remaining < 0:
             message = "live preference analysis is incomplete: search limit reached"
-            raise IncompletePreferenceError(message)
+            raise ResolutionLimitError(message)
 
     def record_solver_stats(self, stats: ResolverStats[Any]) -> None:
         """Accumulate every scalar and package counter before a query is discarded."""
@@ -205,7 +210,7 @@ class YankPreference:
         if outcome is None:
             if not scope.live < query.live:
                 message = "live preference analysis is incomplete: cyclic query"
-                raise IncompletePreferenceError(message)
+                raise ResolutionInvariantError(message)
             raise _NeedLiveProofError(query)
         if outcome is PreparationStatus.INCOMPLETE:
             return outcome
@@ -226,7 +231,7 @@ class YankPreference:
             self.spend(0)
             if not self.remaining:
                 message = "live preference analysis is incomplete: search limit reached"
-                raise IncompletePreferenceError(message)
+                raise ResolutionLimitError(message)
             scope = stack[-1]
             try:
                 selected = callback(scope)
@@ -234,6 +239,8 @@ class YankPreference:
                 stack.append(request.scope)
             except _NeedContextProofError as request:
                 self.check_context(request.context)
+            except ResolutionTerminatedError:
+                raise
             except ResolutionError as exc:
                 if len(stack) == 1:
                     raise
@@ -250,7 +257,7 @@ class YankPreference:
                     message = (
                         "live preference analysis is incomplete: target disappeared"
                     )
-                    raise IncompletePreferenceError(message)
+                    raise ResolutionInvariantError(message)
                 return selected
 
     def explain(self, selected: Mapping[str, Candidate]) -> dict[str, tuple[str, ...]]:
@@ -275,7 +282,7 @@ class YankPreference:
                 message = (
                     f"cannot explain yanked admission: missing metadata for {package}"
                 )
-                raise IncompletePreferenceError(message)
+                raise ResolutionInvariantError(message)
             assert candidate is not None
             if candidate.withdrawn:
                 source = next(
@@ -304,7 +311,7 @@ class YankPreference:
                 pending.extend(waiting.pop(base, ()))
         if expanded != set(selected):
             message = "cannot explain yanked admission: selection is not rooted"
-            raise IncompletePreferenceError(message)
+            raise ResolutionInvariantError(message)
         return sources
 
     def adopt(
@@ -329,10 +336,10 @@ class YankPreference:
             solver.resolve(roots)
         except UnavailableMetadataError:
             pass
+        except ResolutionTerminatedError:
+            raise
         except ResolutionError as exc:
-            if exc.incompatibility is None or str(exc).startswith(
-                "Conflict resolution made no progress"
-            ):
+            if exc.incompatibility is None:
                 message = (
                     "live preference analysis is incomplete: context check stopped"
                 )
