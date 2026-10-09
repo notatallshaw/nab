@@ -30,6 +30,8 @@ A package that only a selected extra or group reaches is emitted with a `'X' in 
 `'X' in dependency_groups` marker, so an installer given neither leaves it out; see
 [Lockfiles](lockfile.md).
 
+(build-requirements)=
+
 ## Build requirements
 
 - `--build-requirements` locks the project's `[build-system].requires` instead of its dependencies,
@@ -56,6 +58,8 @@ A package that only a selected extra or group reaches is emitted with a `'X' in 
 - `[tool.nab].build-group` adds a selection marker to its packages. The two requirements formats
   cannot carry it, so they render build requirements as ordinary pins. Use `pylock` output, or this
   flag, when the two sets have to stay apart.
+
+(workspace-flags)=
 
 ## Workspace flags
 

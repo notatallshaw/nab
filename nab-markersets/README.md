@@ -1,8 +1,9 @@
 # nab-markersets
 
-A PEP 508 marker read as the set of environments it selects. `packaging` answers "does this marker
-hold here"; this answers "can these two ever both hold", "does one imply the other", and "is this a
-contradiction".
+A dependency marker is a condition such as `python_version < "3.11"` that controls when a
+requirement applies. This package compares PEP 508 markers as sets of environments. `packaging`
+answers "does this marker hold here"; this answers "can these two ever both hold", "does one imply
+the other", and "is this a contradiction".
 
 **Experimental.** The API can change in any release, so pin an exact version.
 

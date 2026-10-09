@@ -1,6 +1,6 @@
 """The declaration and the code that reads it say the same thing.
 
-``nab/optiontable.py`` names every flag, while each command module names its
+``nab/_cli/definition/options.py`` names every flag, while each command module names its
 parameters. These tests keep the declarations and readers in sync.
 """
 
@@ -14,13 +14,13 @@ from typing import Any, get_args, get_type_hints
 import pytest
 
 from nab._cli import spec as cli_spec
+from nab._cli.definition.model import COMMANDS, UNSET, Kind, Opt, Scope, VType
+from nab._cli.definition.options import ALL
 from nab._cli.parse import UsageError, parse
 from nab.cli import run
 from nab.config import values
 from nab.config.ladder import build_cli_layer
 from nab.flagtypes import ImplementationFlag, MatrixOrderFlag
-from nab.optiondefs import COMMANDS, UNSET, Kind, Opt, Scope, VType
-from nab.optiontable import ALL
 
 _TESTS = Path(__file__).resolve().parent
 _FLAG_SPELLINGS = _TESTS / "data" / "lockfile_flag_spellings.txt"

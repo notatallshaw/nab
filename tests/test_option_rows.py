@@ -4,7 +4,7 @@ The type parameter carries what a checker can police, and the cases below
 are what it cannot: a ``Literal`` widened past the enum it was copied from,
 a ladder starting outside its own choice set, one name bound twice in a
 table body, a value row written without its subscript, and a type parameter
-no token converts to.  Each raises as the declaration is lowered, naming the
+no token converts to.  Each raises as the declaration is built, naming the
 row that broke.
 """
 
@@ -16,9 +16,9 @@ from typing import Literal, NewType
 
 import pytest
 
-from nab.optiondefs import GLOBAL, Kind, Scope, Tokens, VType
-from nab.optionlower import lower, table_rows
-from nab.optionrows import (
+from nab._cli.definition.build import build_option, build_options
+from nab._cli.definition.model import GLOBAL, Kind, Scope, Tokens, VType
+from nab._cli.definition.rows import (
     Count,
     Eager,
     Item,
@@ -31,13 +31,12 @@ from nab.optionrows import (
     Row,
     Star,
     Switch,
-    Table,
     Tri,
     Value,
     Verb,
-    rows,
 )
-from nab.optiontypes import enum_label, shape, type_argument
+from nab._cli.definition.tables import Table, rows
+from nab._cli.definition.types import enum_label, shape, type_argument
 
 
 def _parse(value: object, _where: str) -> object:
@@ -97,9 +96,9 @@ def _only(table: type[Table]) -> Row:
 
 
 def _refused(table: type[Table]) -> str:
-    """The message lowering ``table`` raises."""
+    """Return the error raised when building options for ``table``."""
     with pytest.raises(ValueError) as caught:  # noqa: PT011 - the message is the check
-        table_rows(table)
+        build_options(table)
     return str(caught.value)
 
 
@@ -167,7 +166,7 @@ class TestWhatTheTypeParameterSays:
 class TestWhatEachKindLowersTo:
     """The kind, and the default a row that writes none is given."""
 
-    def test_every_kind_lowers_to_the_kind_the_parser_reads(self) -> None:
+    def test_built_options_match_the_parser_kinds(self) -> None:
         class Fixture(Table, on=GLOBAL, docs="reference/cli.md"):
             """One row of each kind that takes no configuration key."""
 
@@ -179,12 +178,12 @@ class TestWhatEachKindLowersTo:
             path = Operand[Path](default=Path("pyproject.toml"), help="the project")
             action = Verb[Literal["dir", "verify"]](help="what to do")
 
-        lowered = {row.name: row for row in table_rows(Fixture)}
-        assert lowered["verbose"].kind is Kind.COUNT
-        assert lowered["version"].kind is Kind.EAGER
-        assert lowered["action"].kind is Kind.VERB
-        assert lowered["action"].vtype is VType.STR
-        assert lowered["path"].default == "pyproject.toml"
+        built = {row.name: row for row in build_options(Fixture)}
+        assert built["verbose"].kind is Kind.COUNT
+        assert built["version"].kind is Kind.EAGER
+        assert built["action"].kind is Kind.VERB
+        assert built["action"].vtype is VType.STR
+        assert built["path"].default == "pyproject.toml"
 
     def test_a_flag_the_parser_may_leave_absent_hands_its_command_none(self) -> None:
         class Fixture(Table, on=GLOBAL, docs="reference/cli.md"):
@@ -192,7 +191,7 @@ class TestWhatEachKindLowersTo:
 
             python = Value[str | None](help="the interpreter")
 
-        assert table_rows(Fixture)[0].default is None
+        assert build_options(Fixture)[0].default is None
 
     def test_a_repeatable_row_prints_its_label_as_a_list(self) -> None:
         class Fixture(Table, on=GLOBAL, scope=Scope.PROJECT, docs="reference/cli.md"):
@@ -202,7 +201,7 @@ class TestWhatEachKindLowersTo:
                 key=_layer(rdefault=(), sample="attrs<24"), help="bound a package"
             )
 
-        assert table_rows(Fixture)[0].type_label == "list(requirement)"
+        assert build_options(Fixture)[0].type_label == "list(requirement)"
 
 
 class TestWhatIsRefusedAsTheTableIsBuilt:
@@ -238,7 +237,7 @@ class TestWhatIsRefusedAsTheTableIsBuilt:
                 key=_layer(rdefault=None), help="which version to prefer"
             )
 
-        assert table_rows(Fixture)[0].rdefault is None
+        assert build_options(Fixture)[0].rdefault is None
 
     def test_one_name_declared_twice_is_refused_as_the_body_binds_it(self) -> None:
         with pytest.raises(ValueError, match="locked is declared twice in one table"):
@@ -322,15 +321,15 @@ class TestTheRowsHelper:
         assert repr(_only(Fixture)) == "Count('no-progress')"
 
 
-def test_lowering_one_row_needs_no_table_of_its_own() -> None:
-    """``lower`` is the unit ``table_rows`` runs over."""
+def test_building_one_row_needs_no_table_of_its_own() -> None:
+    """``build_option`` is the unit ``build_options`` runs over."""
 
     class Fixture(Table, on=GLOBAL, docs="reference/cli.md"):
-        """One row lowered on its own."""
+        """One row built on its own."""
 
         verbose = Count(short="v", help="louder")
 
-    assert lower(_only(Fixture)).cli_flag == "--verbose"
+    assert build_option(_only(Fixture)).cli_flag == "--verbose"
 
 
 @pytest.mark.parametrize(
@@ -345,17 +344,17 @@ def test_lowering_one_row_needs_no_table_of_its_own() -> None:
 )
 def test_the_row_class_says_how_its_tokens_read(name: str, tokens: Tokens) -> None:
     """Each row's class is what says how the assembler reads its tokens."""
-    lowered = {row.name: row for row in table_rows(_matrix_fixture())}
+    built = {row.name: row for row in build_options(_matrix_fixture())}
 
-    assert lowered[name].tokens is tokens
-    assert lowered[name].under == "matrix"
+    assert built[name].tokens is tokens
+    assert built[name].under == "matrix"
 
 
 def test_the_table_says_which_of_its_rows_a_command_line_has_to_give() -> None:
-    lowered = {row.name: row for row in table_rows(_matrix_fixture())}
+    built = {row.name: row for row in build_options(_matrix_fixture())}
 
-    assert lowered["platforms"].opened_by == "id"
-    assert [name for name, row in lowered.items() if row.needed] == [
+    assert built["platforms"].opened_by == "id"
+    assert [name for name, row in built.items() if row.needed] == [
         "python",
         "platforms",
     ]
@@ -369,7 +368,7 @@ def test_a_row_under_no_key_reads_its_tokens_as_nothing() -> None:
 
         groups = Star[str](help="the groups")
 
-    assert lower(_only(Fixture)).tokens is None
+    assert build_option(_only(Fixture)).tokens is None
 
 
 def test_a_table_refuses_needs_without_under() -> None:

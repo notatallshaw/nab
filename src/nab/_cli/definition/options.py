@@ -27,9 +27,9 @@ from nab_provider.policy import (
 from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
 from nab_provider.vcs_admission import VcsConfig
 
-from .config import hooks, values
-from .config.values import MatrixConfig
-from .flagtypes import (
+from ...config import hooks, values
+from ...config.values import MatrixConfig
+from ...flagtypes import (
     BuildPolicyFlag,
     DecisionOrderFlag,
     DistPolicyFlag,
@@ -40,9 +40,10 @@ from .flagtypes import (
     ModeFlag,
     ResolutionFlag,
 )
-from .optiondefs import GLOBAL, Opt, Scope
-from .optionlower import table_rows
-from .optionrows import (
+from ...output import ColorChoice
+from .build import build_options
+from .model import GLOBAL, Opt, Scope
+from .rows import (
     Count,
     Eager,
     Item,
@@ -54,12 +55,11 @@ from .optionrows import (
     Pairs,
     Star,
     Switch,
-    Table,
     Tri,
     Value,
     Verb,
 )
-from .output import ColorChoice
+from .tables import Table
 
 Group = NewType("Group", str)
 Requirement = NewType("Requirement", str)
@@ -668,4 +668,4 @@ TABLES = (
     RunFlags,
 )
 
-ALL: tuple[Opt, ...] = table_rows(*TABLES)
+ALL: tuple[Opt, ...] = build_options(*TABLES)

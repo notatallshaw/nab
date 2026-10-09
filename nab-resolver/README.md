@@ -1,7 +1,8 @@
 # nab-resolver
 
-Generic PubGrub dependency resolver, parameterised over a `ResolverProvider` protocol. No
-Python-specific knowledge: this package is a SAT-style solver core. The Python provider lives in
+Find a combination of package versions that satisfies their dependency constraints, using the
+PubGrub algorithm. A `ResolverProvider` supplies the package rules, so the solver needs no
+Python-specific knowledge. The Python provider lives in
 [`nab-provider`](https://pypi.org/project/nab-provider/) and the user-facing CLI in
 [`nab`](https://pypi.org/project/nab/).
 

@@ -14,11 +14,11 @@ from pathlib import Path
 import pytest
 
 from nab._cli import spec as cli_spec
+from nab._cli.definition.options import ALL
 from nab._cli.parse import parse
 from nab._lock import lock
 from nab._resolve import _make_transport
 from nab.cli import run
-from nab.optiontable import ALL
 from nab.output import ColorChoice, Printer, ProgressReporter, Verbosity
 from nab_project.lockfile import (
     ArchivePin,

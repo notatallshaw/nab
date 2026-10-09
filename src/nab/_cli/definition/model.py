@@ -1,4 +1,4 @@
-"""Define lowered CLI options and validate option tables.
+"""Define CLI option records and validate option tables.
 
 ``Opt`` validates one row; :func:`validate` checks relationships across the table.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 import enum
 from typing import TYPE_CHECKING, Any
 
-from ._compat import override
+from ..._compat import override
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence

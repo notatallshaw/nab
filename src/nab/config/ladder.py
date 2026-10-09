@@ -1,7 +1,7 @@
 """Resolve layered configuration and render ``nab config`` reports.
 
-:data:`OPTIONS` is the keyed subset of :data:`nab.optiontable.ALL` in display
-order. Sources bind whole values by rank; the two project files share a rank.
+:data:`OPTIONS` contains the generated keyed options in display order.
+Sources bind whole values by rank; the two project files share a rank.
 CLI table-key flags replace only the keys they name.
 
 Reports show configured winners. With ``--include-rejected``, ``list`` and
@@ -22,7 +22,7 @@ from nab_project.paths import PathState, path_state, realpath
 from nab_project.value import ValueType
 
 from .. import env
-from ..optiondefs import Opt, Scope
+from .._cli.definition.model import Opt, Scope
 from .hooks import declaring_dir, matrix_table
 from .registry import OPTIONS
 from .subflags import (

@@ -1,7 +1,7 @@
 """Import boundaries for command invocations.
 
-Runtime code imports ``optiondefs`` through the generated configuration
-registry and never imports ``optiontable`` or ``optionrows``. Commands resolve
+Runtime code reads option records through the configuration registry.
+Declaration and builder modules belong to generation. Commands resolve
 their ``Literal`` aliases from ``flagtypes``. Fresh subprocesses keep earlier
 test imports from masking dependencies.
 """
@@ -12,11 +12,9 @@ import subprocess
 import sys
 
 _REPORT = """
-banned = [
-    name
-    for name in ("nab.optiondefs", "nab.optiontable", "nab.optionrows")
-    if name in sys.modules
-]
+banned = sorted(
+    name for name in sys.modules if name.startswith("nab._cli.definition.")
+)
 print(",".join(banned) if banned else "clean")
 print("nab.flagtypes" in sys.modules)
 """
@@ -36,18 +34,18 @@ def _after_importing(module: str) -> list[str]:
 
 
 def test_a_command_invocation_imports_no_option_module() -> None:
-    """Only the generators and the tests build the 64 rows."""
+    """CLI startup leaves schema construction unloaded."""
     assert _after_importing("nab.cli")[0] == "clean"
 
 
 def test_a_run_reads_the_registry_and_never_the_declaration() -> None:
-    """A run loads ``nab.optiondefs`` and no other option module."""
+    """A run loads ``nab._cli.definition.model`` and no other option module."""
     loaded = _probe(
         "import sys\n"
         "import nab._lock\n"
-        "print(sorted(n for n in sys.modules if n.startswith('nab.option')))\n"
+        "print(sorted(n for n in sys.modules if n.startswith('nab._cli.definition.')))\n"
     )
-    assert loaded == ["['nab.optiondefs']"]
+    assert loaded == ["['nab._cli.definition.model']"]
 
 
 def test_the_command_signatures_reach_their_aliases_through_a_leaf() -> None:

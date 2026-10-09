@@ -1,8 +1,9 @@
 # nab-project
 
-nab's own host for [`nab-provider`](https://pypi.org/project/nab-provider/): it supplies the
-provider's I/O over [`nab-index`](https://pypi.org/project/nab-index/), and adds the resolve
-orchestration, workspace discovery, the PEP 517 build path, the lockfile emitter and the downloader.
+The application layer that connects [`nab-provider`](https://pypi.org/project/nab-provider/) to
+networking and files. It supplies the provider's I/O through
+[`nab-index`](https://pypi.org/project/nab-index/), and adds the resolve orchestration, workspace
+discovery, the PEP 517 build path, the lockfile emitter and the downloader.
 
 ## When to use it
 
