@@ -29,6 +29,7 @@ from nab_provider.records import SdistFile, WheelFile
 
 from .. import toml_io
 from .._toml import tool_nab_section
+from ..declarations import DependencyDeclaration
 from ..paths import path_state
 from .groups import BASE_MEMBER
 
@@ -392,24 +393,26 @@ def collect_dependency_requirements(
     pins: Mapping[str, Version],
     resolved_keys: Iterable[str],
     dependencies: Mapping[str, tuple[str, ...]],
-) -> dict[str, dict[str, tuple[str, ...]]]:
+) -> dict[str, dict[str, tuple[DependencyDeclaration, ...]]]:
     """Return active declarations for the final dependency edges."""
     extras: defaultdict[str, set[str]] = defaultdict(set)
     for key in resolved_keys:
         name, extra = split_extra(key)
         if extra is not None:
             extras[canonicalize_name(name)].add(extra)
-    result: dict[str, dict[str, tuple[str, ...]]] = {}
+    result: dict[str, dict[str, tuple[DependencyDeclaration, ...]]] = {}
     for name, children in dependencies.items():
         records = provider.dependency_requirements_for(
             name, pins[name], frozenset(extras[name])
         )
         child_names = set(children)
-        grouped: defaultdict[str, list[str]] = defaultdict(list)
+        grouped: defaultdict[str, list[DependencyDeclaration]] = defaultdict(list)
         for record in records:
             child = canonicalize_name(record.name)
             if child in child_names:
-                grouped[child].append(str(record))
+                grouped[child].append(
+                    DependencyDeclaration(str(record), str(record.specifier))
+                )
         result[name] = {child: tuple(grouped[child]) for child in sorted(children)}
     return result
 

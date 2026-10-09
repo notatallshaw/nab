@@ -111,9 +111,12 @@ has none.
 
 Pass `include_dependency_requirements=True` to retain each successful target's active parent
 declarations in `target_result.lock.dependency_requirements`. Canonical parent and child names index
-tuples of PEP 508 strings, with operators such as `~=` and markers preserved in normalized text. The
-map uses effective metadata after overrides; root requirements and user constraints remain separate.
-Omitted collection is `None`, and a collected graph with no edges is `{}`.
+tuples of immutable `nab_project.declarations.DependencyDeclaration` records. Each record has
+normalized PEP 508 `text` and a `specifier` string, with operators such as `~=` preserved. An empty
+specifier imposes no version restriction. The text retains markers already evaluated for that target
+and its activated extras. The map uses effective metadata after overrides; root requirements and
+user constraints remain separate. Omitted collection is `None`, and a collected graph with no edges
+is `{}`.
 
 ## Where the vendored packaging fork lives
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from zipfile import ZipFile
@@ -101,6 +101,23 @@ def _resolve(
     return result.target_results[0]
 
 
+def _text_requirements(
+    selected: TargetResult,
+) -> dict[str, dict[str, tuple[str, ...]]] | None:
+    """Return declaration text for a successful target."""
+    assert selected.lock is not None
+    data = selected.lock.dependency_requirements
+    if data is None:
+        return None
+    return {
+        parent: {
+            child: tuple(item.text for item in items)
+            for child, items in children.items()
+        }
+        for parent, children in data.items()
+    }
+
+
 @pytest.mark.parametrize(
     ("root", "python", "version", "count"),
     [
@@ -120,7 +137,7 @@ def test_only_active_declarations(
     assert lock is not None
     assert lock.pins["child-name"].version == version
     assert lock.dependencies == {"parent": ("child-name",)}
-    declarations = lock.dependency_requirements
+    declarations = _text_requirements(selected)
     assert declarations is not None
     assert set(declarations) == {"parent"}
     assert set(declarations["parent"]) == {"child-name"}
@@ -137,7 +154,7 @@ def test_collection_is_optional(tmp_path: Path) -> None:
     assert omitted.success
     assert selected.success
     assert omitted.lock is not None
-    assert omitted.lock.dependency_requirements is None
+    assert _text_requirements(omitted) is None
     assert omitted.pins == selected.pins
     assert omitted.consulted == selected.consulted
     assert (omitted.decisions, omitted.conflicts, omitted.rounds) == (
@@ -152,14 +169,14 @@ def test_leaf_and_empty_resolves_have_collected_empty_maps(tmp_path: Path) -> No
         selected = _resolve(tmp_path, requirements, declarations=())
         assert selected.success
         assert selected.lock is not None
-        assert selected.lock.dependency_requirements == {}
+        assert _text_requirements(selected) == {}
 
 
 def test_repeated_declarations_remain_separate(tmp_path: Path) -> None:
     selected = _resolve(tmp_path, declarations=("child-name>=2", "child-name>=2"))
     assert selected.success
     assert selected.lock is not None
-    declarations = selected.lock.dependency_requirements
+    declarations = _text_requirements(selected)
     assert declarations is not None
     expected = ("child-name>=2", "child-name>=2")
     assert declarations == {"parent": {"child-name": expected}}
@@ -175,9 +192,7 @@ def test_inactive_url_is_excluded(tmp_path: Path) -> None:
     )
     assert selected.success
     assert selected.lock is not None
-    assert selected.lock.dependency_requirements == {
-        "parent": {"child-name": ("child-name",)}
-    }
+    assert _text_requirements(selected) == {"parent": {"child-name": ("child-name",)}}
 
 
 def test_constraints_are_separate_from_parent_declarations(tmp_path: Path) -> None:
@@ -185,7 +200,7 @@ def test_constraints_are_separate_from_parent_declarations(tmp_path: Path) -> No
     assert selected.success
     assert selected.lock is not None
     assert selected.lock.pins["child-name"].version == "2.4"
-    declarations = selected.lock.dependency_requirements
+    declarations = _text_requirements(selected)
     assert declarations is not None
     assert all("<2.5" not in value for value in declarations["parent"]["child-name"])
 
@@ -199,7 +214,7 @@ def test_metadata_override_supplies_effective_declarations(tmp_path: Path) -> No
     selected = _resolve(tmp_path, inputs=inputs)
     assert selected.success
     assert selected.lock is not None
-    assert selected.lock.dependency_requirements == {
+    assert _text_requirements(selected) == {
         "parent": {"child-name": ("child-name>=3",)}
     }
 
@@ -245,7 +260,7 @@ def test_selected_extra_with_an_excluded_environment_marker(tmp_path: Path) -> N
     selected = _resolve(tmp_path, ("parent[feature]",), declarations=declarations)
     assert selected.success
     assert selected.lock is not None
-    data = selected.lock.dependency_requirements
+    data = _text_requirements(selected)
     assert data is not None
     assert selected.lock.pins["child-name"].version == "2.8"
     assert len(data["parent"]["child-name"]) == 1
@@ -270,7 +285,7 @@ def test_matrix_keeps_each_targets_declarations(tmp_path: Path) -> None:
     for selected, version in zip(result.target_results, ("1.9", "2.8"), strict=True):
         assert selected.lock is not None
         assert selected.lock.pins["child-name"].version == version
-        data = selected.lock.dependency_requirements
+        data = _text_requirements(selected)
         assert data is not None
         values = data["parent"]["child-name"]
         assert len(values) == 1
@@ -288,7 +303,7 @@ def test_rejected_parent_keeps_only_the_selected_declarations(
     assert selected.lock is not None
     assert selected.lock.pins["parent"].version == "1.0"
     assert selected.metadata_fetched > len(selected.pins)
-    data = selected.lock.dependency_requirements
+    data = _text_requirements(selected)
     assert data is not None
     values = data["parent"]["child-name"]
     assert len(values) == 1
@@ -305,6 +320,44 @@ def test_local_source_keeps_its_effective_declarations(tmp_path: Path) -> None:
     selected = _resolve(tmp_path, inputs=inputs)
     assert selected.success
     assert selected.lock is not None
-    assert selected.lock.dependency_requirements == {
+    assert _text_requirements(selected) == {
         "parent": {"child-name": ("child-name>=2",)}
     }
+
+
+def test_records_are_detached_immutable_values(tmp_path: Path) -> None:
+    selected = _resolve(tmp_path)
+    assert selected.lock is not None
+    data = selected.lock.dependency_requirements
+    assert data is not None
+    record = data["parent"]["child-name"][0]
+    assert record.specifier == "~=2.0"
+    assert record.text == 'child-name~=2.0; python_version >= "3.10"'
+    with pytest.raises(FrozenInstanceError):
+        record.specifier = "==0"
+    again = _resolve(tmp_path)
+    assert _text_requirements(again) == _text_requirements(selected)
+
+
+@pytest.mark.parametrize(
+    ("declarations", "expected"),
+    [
+        (("child-name",), ("",)),
+        (("child-name~=2.0",), ("~=2.0",)),
+        (
+            ("child-name~=2.0", 'child-name<2.5 ; python_version >= "3.10"'),
+            ("~=2.0", "<2.5"),
+        ),
+    ],
+)
+def test_specifiers_exclude_names_and_evaluated_markers(
+    tmp_path: Path, declarations: tuple[str, ...], expected: tuple[str, ...]
+) -> None:
+    selected = _resolve(tmp_path, declarations=declarations)
+    assert selected.success
+    assert selected.lock is not None
+    data = selected.lock.dependency_requirements
+    assert data is not None
+    assert (
+        tuple(record.specifier for record in data["parent"]["child-name"]) == expected
+    )

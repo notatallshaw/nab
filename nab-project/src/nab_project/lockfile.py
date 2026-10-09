@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from nab_provider.target import ResolveTarget
 
     from .conflicts import ConflictSet
+    from .declarations import DependencyDeclaration
 
 
 __all__ = [
@@ -575,7 +576,8 @@ class TargetLock:
     conflict environment's no-member base-name set over these edges only.
 
     ``dependency_requirements`` records active PEP 508 declarations per edge.
-    Strings retain operators and markers with normalized formatting.
+    Each record has normalized ``text`` and a ``specifier`` string.
+    An empty specifier imposes no version restriction.
     Metadata overrides supply their effective declarations.
     ``None`` means collection was omitted; an empty mapping has no edges.
 
@@ -605,9 +607,9 @@ class TargetLock:
         default_factory=dict
     )
 
-    dependency_requirements: Mapping[str, Mapping[str, tuple[str, ...]]] | None = field(
-        default=None, kw_only=True
-    )
+    dependency_requirements: (
+        Mapping[str, Mapping[str, tuple[DependencyDeclaration, ...]]] | None
+    ) = field(default=None, kw_only=True)
 
 
 @dataclass

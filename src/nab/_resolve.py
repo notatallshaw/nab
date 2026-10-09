@@ -401,7 +401,7 @@ def _report_dependency_requirements(result: ResolveResult) -> None:
             for child in sorted(declarations[parent]):
                 for requirement in declarations[parent][child]:
                     printer().stderr_line(
-                        f"{prefix} requires {requirement}\n",
+                        f"{prefix} requires {requirement.text}\n",
                     )
 
 
