@@ -14,6 +14,8 @@ Three formats:
 - `--format requirements-without-hashes` writes the same output without separate `--hash` lines. An
   index pin is bare `name==version`; an archive URL still carries its digest.
 
+(output)=
+
 ## `--output`
 
 `--output` defaults to `pylock.toml` for `pylock` and `requirements.txt` for the requirements

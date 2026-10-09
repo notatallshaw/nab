@@ -364,6 +364,8 @@ A relative `P<n>D` cutoff is measured from `created-at`. Re-locking reuses the e
 timestamp; `--upgrade` moves the window. A first lock, stdout, requirements output, or a pylock
 without `created-at` anchors to the run time.
 
+(checking-the-lock-in-ci)=
+
 ## Checking the lock in CI
 
 `nab lock --locked` re-resolves project inputs and compares the result with the committed pylock

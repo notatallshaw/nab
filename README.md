@@ -166,6 +166,9 @@ nab publishes five component libraries for other tools:
 `nab-resolver` has stable public module paths. The other component APIs are experimental. See
 [how the distributions fit together][packages].
 
+To explore the code, start with the [package overview](docs/explanation/packages.md) and the
+[CLI walkthrough](src/nab/_cli/README.md).
+
 ## Project status
 
 nab is under active development. See the [status summary][status] for supported inputs and

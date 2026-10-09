@@ -17,19 +17,31 @@ Its parser and evaluator come from whichever `packaging` is installed, released 
 
 `nab-provider` is the resolution logic: the provider the solver asks for candidates, the target and
 tag model, marker evaluation, extras expansion, the metadata parser, packaging policies with their
-per-package and per-index overrides, and the result store. It does no I/O: everything arrives
-through `nab_provider.fetch_port.FetchPort`, which its host implements.
+per-package and per-index overrides, and the result store. It does no I/O: package data arrives
+through `nab_provider.fetch_port.FetchPort`, an interface implemented outside the provider.
 
 `nab-index` is the index client: the Simple API reader, the on-disk HTTP cache, the lazy-wheel range
 reader, the archive and VCS fetchers, and the local `file://` index.
 
-`nab-project` is nab's own host. It implements `FetchPort` over `nab-index` in
-`nab_project.fetch.FetchCoordinator`, then adds workspace discovery, the PEP 517 build path, the
-lockfile writer, the downloader, and resolve orchestration. Its host supplies a target list and
-`nab_project.inputs.ResolveInputs`.
+`nab-project` supplies the I/O that `nab-provider` needs. The application supplying this I/O is
+called the host. It implements `FetchPort` over `nab-index` in `nab_project.fetch.FetchCoordinator`,
+then adds workspace discovery, the PEP 517 build path, the lockfile writer, the downloader, and
+resolve orchestration. Its caller specifies the Python/platform environments to resolve for and
+project settings in `nab_project.inputs.ResolveInputs`.
 
-`nab` is the CLI. It owns the `[tool.nab]` config ladder in `nab.config`, reads the project options,
-and turns them into the targets and inputs `nab-project` resolves under.
+`nab` is the CLI. It combines configuration files, environment variables, and command-line flags in
+`nab.config`, and turns them into the targets and inputs `nab-project` resolves under.
+
+## Following a command
+
+For `nab lock`, `nab.cli` reads the command-line arguments and calls `nab._lock.lock`. That function
+reads the project configuration and passes the selected requirements and target environments to
+`nab_project.resolve.resolve_for_targets`.
+
+`nab-project` connects the provider to its fetch coordinator, which obtains package listings and
+metadata through `nab-index`. The provider supplies candidate versions and dependency constraints to
+`nab-resolver`; the solver searches for a compatible set. `nab-project` turns the selected packages
+into lockfile data, and the CLI writes the requested output.
 
 ## How they depend on each other
 

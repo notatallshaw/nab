@@ -820,6 +820,8 @@ nab lock --project-environment-python 3.12 \
 `--project-environment-platform` accepts one platform id and its tag settings; a second id is an
 error. Unspecified axes keep their file values or use the host.
 
+(cli-overrides)=
+
 ## CLI overrides
 
 The [CLI reference](cli.md) lists every flag. See [Selecting what to lock](selection.md) for groups,
@@ -832,6 +834,8 @@ override prints a notice and is recorded in the lockfile.
 
 `--project-dist-policy` takes a bare policy, so it replaces the whole `dist-policy` value and resets
 `trust-unverified-deps`; set the table form in a file to keep that flag.
+
+(layered-configuration-sources)=
 
 ## Layered configuration sources
 

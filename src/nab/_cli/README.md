@@ -1,24 +1,43 @@
-# CLI parsing and dispatch
+# How a command runs
 
-[definition/](definition/README.md) constructs the option schema. This directory's runtime modules
-read the generated tables.
+When you run `nab lock --offline`, nab reads the command name and flags before resolving any
+dependencies. The files here do that parsing, show help or errors, and call the Python function for
+the chosen command.
 
 ```mermaid
 flowchart TD
-    parse[Parse argv] --> page[Help or version]
+    parse[Read command line] --> page[Help or version]
     parse --> error[Usage error]
-    parse --> command[Run handler]
+    parse --> command[Call command function]
 ```
 
-- [`spec.py`](spec.py): generated rows, help text, and command destinations.
-- [`parse.py`](parse.py): token parsing and value conversion.
-- [`render.py`](render.py): help pages.
-- [`diagnose.py`](diagnose.py): usage errors and suggestions.
-- [`dispatch.py`](dispatch.py): output setup, path conversion, and handler calls.
+## Following `nab lock --offline`
 
-[`nab.cli`](../cli.py) selects the path shown above and reports its status. `Parsed` separates
-command values from global output options. Help and version stop parsing before ordinary conversion.
+[`nab.cli`](../cli.py) passes the command-line words to `parse.py`. The parser identifies `lock` and
+converts `--offline` to `True`. `dispatch.py` then calls [`nab._lock.lock`](../_lock.py), passing
+`offline=True` among its arguments.
 
-Keep declaration imports off this path: help and usage errors must work without loading command
-dependencies. Handlers and configuration live in the parent package; dispatch imports only the
-selected handler. Commands write through [`nab.output`](../output.py).
+The command function reads project configuration and uses `nab_project` to resolve dependencies and
+write the lock. [The package overview](../../../docs/explanation/packages.md) explains the resolver
+libraries beneath that call.
+
+## The files
+
+- [`spec.py`](spec.py): a generated list of accepted flags, their help text, and the function for
+  each command.
+- [`parse.py`](parse.py): read command-line words and convert values to types such as integers and
+  booleans.
+- [`render.py`](render.py): format help pages.
+- [`diagnose.py`](diagnose.py): format usage errors and suggestions.
+- [`dispatch.py`](dispatch.py): set up output, convert path arguments, and call the command
+  function.
+
+The parser returns a `Parsed` object. It keeps global output flags, such as `-v`, separate from
+command arguments, such as `--offline`. `cli.py` handles help, version, and error results before
+importing any command function. Command functions write through [`nab.output`](../output.py).
+
+## Where flags come from
+
+[definition/](definition/README.md) contains the Python declarations used to add or change a flag.
+Development scripts turn those declarations into `spec.py` and the configuration option list. The
+installed CLI reads these prepared files rather than rebuilding the declarations on each run.

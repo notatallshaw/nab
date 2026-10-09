@@ -118,27 +118,21 @@ def _reference_text() -> str:
         msg = f"{_REFERENCE.name} has lost the generated block's markers"
         raise SystemExit(msg)
 
-    return head + opened + "\n" + _flag_table() + "\n" + closed + tail
+    return head + opened + "\n" + _global_flags() + "\n" + closed + tail
 
 
-def _flag_table() -> str:
-    """Write the global flags as a markdown table, in declaration order."""
-    rows = [("Flag", "Effect")]
+def _global_flags() -> str:
+    """Write global option names and help as a Markdown list."""
+    entries: list[str] = []
     for row in ALL:
         if not row.is_global:
             continue
         flag = f"`{row.cli_flag}`"
         if row.short:
             flag = f"`-{row.short}`, {flag}"
-        rows.append((flag, row.help))
+        entries.append(f"- {flag}: {row.help}")
 
-    flag_width = max(len(flag) for flag, _effect in rows)
-    effect_width = max(len(effect) for _flag, effect in rows)
-    lines = [
-        f"| {flag:<{flag_width}} | {effect:<{effect_width}} |" for flag, effect in rows
-    ]
-    lines.insert(1, f"| {'-' * flag_width} | {'-' * effect_width} |")
-    return "\n".join(lines) + "\n"
+    return "\n".join(entries) + "\n"
 
 
 def _check_pages() -> None:

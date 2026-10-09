@@ -104,14 +104,13 @@ def test_the_generated_module_is_literals_alone() -> None:
 def test_the_reference_page_lists_every_global_flag() -> None:
     """The block restates the seven root rows, and nothing else."""
     block = _REFERENCE.read_text(encoding="utf-8").partition("<!-- generated")[2]
-    rows = [
-        line
+    entries = [
+        line[2:].split(": ", 1)
         for line in block.partition("<!-- /generated")[0].splitlines()
-        if line.startswith("|")
-    ][2:]
-
-    listed = [row.split("|")[1].strip() for row in rows if row.startswith("|")]
-    helps = [row.split("|")[2].strip() for row in rows if row.startswith("|")]
+        if line.startswith("- ")
+    ]
+    listed = [flag for flag, _help in entries]
+    helps = [help_text for _flag, help_text in entries]
     declared = [row for row in ALL if row.is_global]
 
     assert listed == [

@@ -98,3 +98,9 @@ digest binding retires it at read time. Clones and extracted archives hold no na
 `nab cache clear` removes every bucket, clones and archives included, returning the cache to cold.
 `verify` and `clear` both refuse a root that does not look like a nab cache and never follow a
 symlink out of it.
+
+## Cache write failures
+
+If the cache is read-only, full, or over quota, nab warns once and continues index fetches without
+storing new records. Existing readable records can still be used. Cloning a VCS source or extracting
+an archive requires a writable cache directory and fails without one.
