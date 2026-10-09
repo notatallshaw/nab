@@ -12,6 +12,7 @@ import pytest
 
 from nab_index.multi_index import IndexConfig
 from nab_index.transport import HttpResponse
+from nab_project.declarations import DependencyDeclaration
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import LockInput, drop_workspace_pins
 from nab_project.resolve import resolve_for_targets
@@ -331,6 +332,7 @@ def test_records_are_detached_immutable_values(tmp_path: Path) -> None:
     data = selected.lock.dependency_requirements
     assert data is not None
     record = data["parent"]["child-name"][0]
+    assert isinstance(record, DependencyDeclaration)
     assert record.specifier == "~=2.0"
     assert record.text == 'child-name~=2.0; python_version >= "3.10"'
     with pytest.raises(FrozenInstanceError):
