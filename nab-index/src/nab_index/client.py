@@ -487,7 +487,7 @@ class AsyncSimpleClient:
         A body that will not decode becomes a
         :class:`MalformedSimpleResponseError`, not a raw decode error.
         """
-        url = f"{self._index_url}{package}/"
+        url = f"{self._index_url}{canonicalize_name(package)}/"
         accept = simple_accept_header(SimpleSerialization.NEGOTIATE)
         response = await self._transport.get(url, headers={"Accept": accept})
         if response.status_code == _HTTP_NOT_FOUND:
