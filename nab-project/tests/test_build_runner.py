@@ -193,6 +193,23 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
     return wheel_name
 '''
 
+_METADATA_ERROR_BACKEND_SRC = """\
+from pathlib import Path
+
+
+def get_requires_for_build_wheel(config_settings=None):
+    return []
+
+
+def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
+    target = Path(metadata_directory) / "custom-1.0.dist-info"
+    target.mkdir()
+    body = {body!r}
+    if body is not None:
+        (target / "METADATA").write_bytes(body)
+    return target.name
+"""
+
 
 # The backend shipped inside a buildable sdist fixture.  Writes a real,
 # installer-valid wheel, since the point is that the build env installs it.
@@ -619,6 +636,113 @@ class TestRunBuildBackend:
         with pytest.raises(BuildBackendError, match="missing Name or Version"):
             run_build_backend(tmp_path, config=config)
 
+    @pytest.mark.parametrize(
+        ("body", "expected", "cause_type"),
+        [
+            pytest.param(
+                None,
+                "backend produced no METADATA file at {path}",
+                None,
+                id="missing-file",
+            ),
+            pytest.param(
+                b"Name: custom\n",
+                "backend METADATA at {path} is missing Name or Version "
+                "(Name='custom', Version=None)",
+                None,
+                id="missing-version",
+            ),
+            pytest.param(
+                b"Version: 1.0\n",
+                "backend METADATA at {path} is missing Name or Version "
+                "(Name=None, Version='1.0')",
+                None,
+                id="missing-name",
+            ),
+            pytest.param(
+                b"\xff",
+                "backend METADATA at {path} is not valid UTF-8: "
+                "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+                UnicodeDecodeError,
+                id="invalid-utf8",
+            ),
+        ],
+    )
+    def test_backend_metadata_errors_are_repeatable(
+        self,
+        tmp_path: Path,
+        config: ResolveInputs,
+        body: bytes | None,
+        expected: str,
+        cause_type: type[BaseException] | None,
+    ) -> None:
+        _write_fake_backend_project(tmp_path)
+        (tmp_path / "nab_test_backend.py").write_text(
+            _METADATA_ERROR_BACKEND_SRC.format(body=body), encoding="utf-8"
+        )
+
+        errors = []
+        for _ in range(2):
+            with pytest.raises(BuildBackendError) as caught:
+                extract_metadata(tmp_path, config=config, offline=True)
+            errors.append(str(caught.value))
+
+            if cause_type is None:
+                assert caught.value.__cause__ is None
+            else:
+                assert isinstance(caught.value.__cause__, cause_type)
+
+        assert errors[0] == errors[1]
+
+        path = Path("custom-1.0.dist-info") / "METADATA"
+        assert errors[0] == expected.format(path=path)
+
+    def test_backend_metadata_read_errors_are_repeatable(
+        self,
+        tmp_path: Path,
+        config: ResolveInputs,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Read-error text handles quoted paths while its cause retains the filename."""
+        temporary_root = tmp_path / "quoted'root\\nested"
+        temporary_root.mkdir(parents=True)
+        monkeypatch.setattr(tempfile, "tempdir", str(temporary_root))
+        _write_fake_backend_project(tmp_path)
+        (tmp_path / "nab_test_backend.py").write_text(
+            _METADATA_ERROR_BACKEND_SRC.format(body=b"Name: custom\nVersion: 1.0\n"),
+            encoding="utf-8",
+        )
+
+        read_text = Path.read_text
+        denied_paths: list[Path] = []
+
+        def deny_metadata(path: Path, *args: Any, **kwargs: Any) -> str:
+            if path.name == "METADATA":
+                denied_paths.append(path)
+                raise PermissionError(13, "Permission denied", str(path))
+            return read_text(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", deny_metadata)
+        errors = []
+        for _ in range(2):
+            with pytest.raises(BuildBackendError) as caught:
+                extract_metadata(tmp_path, config=config, offline=True)
+            errors.append(str(caught.value))
+
+            cause = caught.value.__cause__
+            assert isinstance(cause, PermissionError)
+            assert cause.errno == 13
+            assert cause.filename == str(denied_paths[-1])
+
+        assert denied_paths[0] != denied_paths[1]
+        assert errors[0] == errors[1]
+
+        path = Path("custom-1.0.dist-info") / "METADATA"
+        assert errors[0] == (
+            f"backend METADATA at {path} could not be read: "
+            f"[Errno 13] Permission denied: {str(path)!r}"
+        )
+
     def test_hatchling_with_dynamic_deps_skips_prepare(
         self,
         tmp_path: Path,
@@ -1037,6 +1161,19 @@ class TestParseMetadata:
 
         with pytest.raises(BuildBackendError, match="no METADATA file"):
             _parse_metadata(tmp_path / "DOES-NOT-EXIST")
+
+    def test_metadata_outside_output_dir_retains_path(self, tmp_path: Path) -> None:
+        path = tmp_path / "external.dist-info" / "METADATA"
+        path.parent.mkdir()
+        path.write_text("Name: external\n", encoding="utf-8")
+
+        with pytest.raises(BuildBackendError) as caught:
+            runner_mod._parse_metadata(path, output_dir=tmp_path / "output")
+
+        assert str(caught.value) == (
+            f"backend METADATA at {path} is missing Name or Version "
+            "(Name='external', Version=None)"
+        )
 
     def test_unreadable_metadata_reports_the_errno(
         self,
@@ -3610,7 +3747,9 @@ class TestNabBuildEnvLifecycle:
             side_effect=KeyboardInterrupt if cancel else None,
         )
         monkeypatch.setattr(runner_mod, "_extract_metadata_dir", extract)
-        monkeypatch.setattr(runner_mod, "_parse_metadata", lambda _path: metadata)
+        monkeypatch.setattr(
+            runner_mod, "_parse_metadata", lambda _path, **_kwargs: metadata
+        )
 
         if cancel:
             with pytest.raises(KeyboardInterrupt):
