@@ -174,9 +174,11 @@ That report has already been through the provider's `narrow_for_display` and the
 `format_range`, so re-rendering from `error.incompatibility` means supplying both again. Walk its
 `cause_left` and `cause_right` when you want the proof as a tree rather than as text.
 
-Two failures arrive without a report: passing the resolver's `max_iterations`, which attaches no
-`incompatibility`, and a conflict-resolution loop that stops making progress, which attaches one but
-reports a resolver bug. Neither means the requirements are unsatisfiable.
+Catch `ResolutionTerminatedError` before `ResolutionError` to handle limits and resolver faults
+separately from conflicts. `ResolutionLimitError` reports an exhausted work budget;
+`ResolutionInvariantError` reports inconsistent provider or solver state, including a
+`ResolutionStalledError` when a conflict loop stops making progress. A stalled error can carry a
+diagnostic `incompatibility`, and these errors do not prove the requirements unsatisfiable.
 
 ## Bringing your own range type
 
@@ -193,7 +195,9 @@ as a constraint. nab drives the resolver this way, with a PEP 440 range type.
 These module paths will not move without a major version bump:
 
 ```text
-nab_resolver.errors     ResolutionError
+nab_resolver.errors     ResolutionError, ResolutionInvariantError,
+                        ResolutionLimitError,
+                        ResolutionStalledError, ResolutionTerminatedError
 nab_resolver.ranges     Range
 nab_resolver.resolver   BaseProvider, DEFAULT_MAX_ITERATIONS, Resolver,
                         ResolverObserver, ResolverProvider, Solution

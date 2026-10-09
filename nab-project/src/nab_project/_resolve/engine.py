@@ -23,7 +23,7 @@ from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.provider import ListingFilterCache, Provider, join_extra, split_extra
 from nab_provider.resolver_inputs import ProxyConstraints, build_resolver_inputs
 from nab_provider.target import micro_boundary_points, slices_from_points
-from nab_resolver.errors import ResolutionError
+from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 from nab_resolver.resolver import Resolver, ResolverObserver
 from nab_resolver.types import IncompatibilityCause
 
@@ -787,7 +787,7 @@ def _augment_resolution_error(exc: ResolutionError, provider: Provider) -> None:
 
     Combine repeated packages' ranges before filtering permanent bans.
     """
-    if exc.incompatibility is None:
+    if isinstance(exc, ResolutionTerminatedError) or exc.incompatibility is None:
         return
 
     failed: dict[str, RangeProtocol[Version]] = {}

@@ -25,6 +25,7 @@ from nab_project._resolve.engine import (
     _walk_no_versions_packages,
 )
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
+from nab_project._testing.yanking import graph_port
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -82,7 +83,13 @@ from nab_provider.requirements_file import (
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
 from nab_provider.vcs_admission import VcsPolicy
-from nab_resolver.errors import ResolutionError
+from nab_resolver.errors import (
+    ResolutionError,
+    ResolutionInvariantError,
+    ResolutionLimitError,
+    ResolutionStalledError,
+    ResolutionTerminatedError,
+)
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
@@ -7531,3 +7538,26 @@ class TestFetchWidth:
         path = self._project(tmp_path)
 
         assert self._width(path, max_concurrency=3) == 3
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [ResolutionLimitError, ResolutionStalledError, ResolutionInvariantError],
+)
+def test_terminal_solver_graphs_do_not_acquire_no_versions_diagnostics(
+    error_type: type[ResolutionTerminatedError],
+) -> None:
+    provider = Provider(graph_port([("missing-pkg", "1", False, [])]))
+    bounds = VersionRange.singleton(V("2"))
+    assert provider.choose_version("missing-pkg", bounds) is None
+    assert provider.get_no_versions_reason("missing-pkg", bounds) is not None
+    clause = Incompatibility(
+        [Term("missing-pkg", bounds, positive=True)],
+        cause=IncompatibilityCause.NO_VERSIONS,
+    )
+    error = error_type("solver stopped", clause)
+
+    _augment_resolution_error(error, provider)
+
+    assert str(error) == "solver stopped"
+    assert error.verbose_message is None
