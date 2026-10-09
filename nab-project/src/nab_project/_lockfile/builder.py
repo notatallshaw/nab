@@ -29,20 +29,19 @@ from nab_provider.records import SdistFile, WheelFile
 
 from .. import toml_io
 from .._toml import tool_nab_section
-from ..declarations import DependencyDeclaration
 from ..paths import path_state
 from .groups import BASE_MEMBER
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
-    from nab_provider._vendor.packaging.requirements import Requirement
     from nab_provider._vendor.packaging.utils import NormalizedName
     from nab_provider._vendor.packaging.version import Version
     from nab_provider.policy import ArchiveSource, LocalSource, VcsSource
     from nab_provider.records import IndexConfig
     from nab_provider.target import ResolveTarget
 
+    from ..declarations import DependencyDeclaration
     from ..lockfile import (
         ArchivePin,
         IndexPin,
@@ -160,7 +159,7 @@ class DependencyRequirementProvider(Protocol):
 
     def dependency_requirements_for(
         self, package: str, version: Version, extras: frozenset[str] = frozenset()
-    ) -> tuple[Requirement, ...]:
+    ) -> tuple[DependencyDeclaration, ...]:
         """Return active effective declarations for the selected release."""
         ...
 
@@ -419,20 +418,17 @@ def _extras_by_package(resolved_keys: Iterable[str]) -> dict[str, frozenset[str]
 
 
 def _declarations_by_child(
-    requirements: Iterable[Requirement], children: Sequence[str]
+    requirements: Iterable[DependencyDeclaration], children: Sequence[str]
 ) -> dict[str, tuple[DependencyDeclaration, ...]]:
     """Keep and group declarations for the graph's child names."""
     child_names = set(children)
     grouped: defaultdict[str, list[DependencyDeclaration]] = defaultdict(list)
 
     for requirement in requirements:
-        child = canonicalize_name(requirement.name)
+        child = requirement.name
         if child not in child_names:
             continue
-        declaration = DependencyDeclaration(
-            text=str(requirement), specifier=str(requirement.specifier)
-        )
-        grouped[child].append(declaration)
+        grouped[child].append(requirement)
 
     return {child: tuple(grouped[child]) for child in sorted(children)}
 

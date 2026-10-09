@@ -115,6 +115,11 @@ names. Each immutable record has:
 
 - `text`: the full declaration with normalized formatting and markers.
 - `specifier`: the parent's version restriction, preserving `~=`. Empty means unrestricted.
+- `name`: the child's canonical package name.
+- `extras`: optional features requested on the child, such as `socks` in `requests[socks]`.
+- `marker`: the requirement's condition as text, or `None` when there is no condition.
+- `activated_by`: selected parent extras that made the requirement apply. Empty means it applies
+  without a parent extra.
 
 Declarations reflect the target, activated extras and metadata overrides. Root requirements and user
 constraints are separate. The field is `None` without collection, or `{}` for a collected empty

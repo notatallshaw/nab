@@ -340,6 +340,98 @@ def test_records_are_detached_immutable_values(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("root", "expected"),
+    [
+        ("parent", ()),
+        ("parent[feature]", ("feature",)),
+        ("parent[feature,other]", ("feature", "other")),
+    ],
+)
+def test_matching_parent_extras_are_reported(
+    tmp_path: Path, root: str, expected: tuple[str, ...]
+) -> None:
+    selected = _resolve(tmp_path, (root,))
+    assert selected.lock is not None
+    data = selected.lock.dependency_requirements
+    assert data is not None
+    records = data["parent"]["child-name"]
+    assert records[0].name == "child-name"
+    assert records[0].extras == ()
+    assert records[0].activated_by == ()
+    assert records[0].marker == 'python_version >= "3.10"'
+    if expected:
+        assert records[1].activated_by == expected
+        assert records[1].marker == 'extra == "feature" or extra == "other"'
+    else:
+        assert len(records) == 1
+
+
+def test_base_marker_is_not_attributed_to_an_extra(tmp_path: Path) -> None:
+    selected = _resolve(
+        tmp_path,
+        ("parent[feature]",),
+        declarations=('child-name; extra == "feature" or python_version >= "3.10"',),
+    )
+    assert selected.lock is not None
+    data = selected.lock.dependency_requirements
+    assert data is not None
+    assert data["parent"]["child-name"][0].activated_by == ()
+
+
+def test_inactive_extra_is_not_reported_as_a_cause(tmp_path: Path) -> None:
+    selected = _resolve(
+        tmp_path,
+        ("parent[feature,other]",),
+        declarations=('child-name; extra == "feature"',),
+    )
+    assert selected.lock is not None
+    data = selected.lock.dependency_requirements
+    assert data is not None
+    assert data["parent"]["child-name"][0].activated_by == ("feature",)
+
+
+def test_child_extras_are_distinct_from_parent_activation(tmp_path: Path) -> None:
+    inputs = ResolveInputs(
+        package_overrides=(
+            pkg_override("child-name", provides_extra=("feature", "other")),
+        )
+    )
+    selected = _resolve(
+        tmp_path,
+        ("parent[feature]",),
+        declarations=('Child_Name[Other,FEATURE]>=2; extra == "feature"',),
+        inputs=inputs,
+    )
+    assert selected.success
+    assert selected.lock is not None
+    data = selected.lock.dependency_requirements
+    assert data is not None
+    record = data["parent"]["child-name"][0]
+    assert record.name == "child-name"
+    assert record.extras == ("feature", "other")
+    assert record.activated_by == ("feature",)
+    assert record.specifier == ">=2"
+    assert record.marker == 'extra == "feature"'
+
+
+def test_extra_activation_respects_the_target_environment(tmp_path: Path) -> None:
+    declaration = 'child-name; extra == "feature" and python_version < "3.10"'
+    older = _resolve(
+        tmp_path, ("parent[feature]",), declarations=(declaration,), python="3.9"
+    )
+    newer = _resolve(
+        tmp_path, ("parent[feature]",), declarations=(declaration,), python="3.11"
+    )
+    assert older.lock is not None
+    assert newer.lock is not None
+    assert older.lock.dependency_requirements is not None
+    assert older.lock.dependency_requirements["parent"]["child-name"][
+        0
+    ].activated_by == ("feature",)
+    assert newer.lock.dependency_requirements == {}
+
+
+@pytest.mark.parametrize(
     ("declarations", "expected"),
     [
         (("child-name",), ("",)),

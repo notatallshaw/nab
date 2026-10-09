@@ -28,6 +28,7 @@ from ._provider import metadata_resolver as _metadata_resolver
 from ._provider import priority as _priority
 from ._provider import sources as _sources
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
+from .declarations import DependencyDeclaration
 from .environment import host_environment
 from .errors import (
     ForeignMetadataError,
@@ -72,7 +73,7 @@ from .vcs_admission import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
     from datetime import datetime
     from pathlib import Path
 
@@ -164,6 +165,22 @@ def _replay(stats: ProviderStats, delta: tuple[int, ...]) -> None:
     for name, count in zip(_STAT_FIELDS, delta, strict=True):
         if count:
             setattr(stats, name, getattr(stats, name) + count)
+
+
+def _dependency_declaration(
+    requirement: Requirement, activated_by: Iterable[str]
+) -> DependencyDeclaration:
+    """Detach an active requirement and its matching parent extras from metadata."""
+    return DependencyDeclaration(
+        text=str(requirement),
+        specifier=str(requirement.specifier),
+        name=canonicalize_name(requirement.name),
+        extras=tuple(
+            sorted({canonicalize_name(extra) for extra in requirement.extras})
+        ),
+        marker=None if requirement.marker is None else str(requirement.marker),
+        activated_by=tuple(sorted(activated_by)),
+    )
 
 
 def _since(before: tuple[int, ...], stats: ProviderStats) -> tuple[int, ...]:
@@ -836,27 +853,28 @@ class Provider:
 
     def dependency_requirements_for(
         self, package: str, version: Version, extras: frozenset[str] = frozenset()
-    ) -> tuple[Requirement, ...]:
+    ) -> tuple[DependencyDeclaration, ...]:
         """Return the effective declarations active for this release and its extras."""
         metadata = self.metadata_cache[(canonicalize_name(package), version)]
         provided: set[str] = {
             canonicalize_name(extra) for extra in metadata.provides_extra
         }
-        selected = provided & extras
-        active: list[Requirement] = []
+        selected = provided & {canonicalize_name(extra) for extra in extras}
+        active: list[DependencyDeclaration] = []
         for requirement in metadata.requires_dist:
             if requirement.url is not None:
                 continue
             kind = _metadata_resolver.requirement_gating(self, requirement)
             if kind == "base":
-                active.append(requirement)
+                active.append(_dependency_declaration(requirement, ()))
             elif kind == "extra" and selected:
                 marker = requirement.marker
                 assert marker is not None
-                if _metadata_resolver.marker_matched_extras(
+                matched = _metadata_resolver.marker_matched_extras(
                     self, marker, id(marker), selected
-                ):
-                    active.append(requirement)
+                )
+                if matched:
+                    active.append(_dependency_declaration(requirement, matched))
         return tuple(active)
 
     def defer_extra_deps(self, cache_key: tuple[str, Version]) -> None:
