@@ -1,7 +1,7 @@
 """Define the typed row classes used by :mod:`nab._cli.definition.options`.
 
-Descriptor overloads exist only during type checking. Runtime lowering still sees
-the row objects on each table class.
+Descriptor overloads exist only during type checking. The builder reads the row
+objects on each table class.
 """
 
 from __future__ import annotations
@@ -21,14 +21,14 @@ C = TypeVar("C")
 
 # The marker for a field the row does not write.  It is typed Any so an
 # omitted default checks against any T while a written one is checked;
-# nab._cli.definition.lower turns it into the Opt sentinel or into None.
+# nab._cli.definition.build turns it into the Opt sentinel or into None.
 OMITTED: Any = object()
 
 
 class Layer(Generic[C]):
     """Configuration hooks and a built-in default of type ``C``.
 
-    The type parameter checks the hooks and default; runtime lowering does
+    The type parameter checks the hooks and default; the builder does
     not read it. ``sample`` supplies a token for free-form values, and
     ``label`` overrides the inferred display type.
     """

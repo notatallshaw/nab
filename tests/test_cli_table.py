@@ -25,8 +25,8 @@ from nab_provider import policy
 
 _PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
-# The declared rows, paired with the ``Opt`` each lowers to: ``table_rows``
-# lowers them in this order, so the two lists index each other.
+# Keep declaration order aligned with the options in ALL.
+# build_options preserves this order.
 _DECLARED = [row for table in TABLES for row in rows(table)]
 
 # The bool-valued kinds, which a ``--no-`` form negates.
@@ -291,7 +291,7 @@ class TestTheDeclaredTable:
     def test_dist_policy_is_the_one_rung_zero_outside_its_own_tokens(self) -> None:
         """Its rung 0 is a policy and whether the flag was written.
 
-        That is the row the rung-0 check in :mod:`nab._cli.definition.lower` steps
+        That is the row the rung-0 check in :mod:`nab._cli.definition.build` steps
         over, and it steps over no other.
         """
         compound = [
@@ -336,13 +336,13 @@ class TestTheEnumBackedChoiceRows:
             if isinstance(candidate, type) and issubclass(candidate, enum.Enum)
         }
 
-        for row, lowered in zip(_DECLARED, ALL, strict=True):
-            twin = by_tokens.get(lowered.choices)
+        for row, built in zip(_DECLARED, ALL, strict=True):
+            twin = by_tokens.get(built.choices)
             if twin is None:
                 continue
 
-            assert row.mirrors is not None, lowered.name
-            assert row.mirrors.__name__ == twin, lowered.name
+            assert row.mirrors is not None, built.name
+            assert row.mirrors.__name__ == twin, built.name
 
 
 class TestDerivedSpellings:

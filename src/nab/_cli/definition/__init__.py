@@ -1,1 +1,1 @@
-"""Typed option declarations and their lowering to generated CLI tables."""
+"""Typed option declarations and builders for the CLI schema."""

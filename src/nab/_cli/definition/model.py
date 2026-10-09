@@ -1,4 +1,4 @@
-"""Define lowered CLI options and validate option tables.
+"""Define CLI option records and validate option tables.
 
 ``Opt`` validates one row; :func:`validate` checks relationships across the table.
 """

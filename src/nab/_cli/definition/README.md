@@ -5,26 +5,23 @@ Start in [`options.py`](options.py). It declares the named option tables in help
 ## From declarations to generated files
 
 ```mermaid
-flowchart TD
-    options[options.py: TABLES] --> lower[lower.py: rows to Opt]
-    lower --> cli[tasks/gen_cli.py]
-    cli --> spec["_cli/spec.py: parsing and help"]
-    cli --> registry["config/registry.py: configuration keys"]
-    cli --> docs["docs/reference/cli.md: global flags"]
-    options --> bindings[tasks/gen_bijection.py]
-    bindings --> calls["tests/cli_bijection.py: typed handler calls"]
+flowchart LR
+    declarations[Declarations] --> records[Opt records]
+    records --> files[Generated files]
 ```
+
+`build.py` turns declarations into `Opt` records. `gen_cli.py` writes the parser tables,
+configuration registry, and global-flags reference. `gen_bijection.py` writes typed calls that check
+handler signatures.
 
 ## Where each rule lives
 
-| File         | Job                                                                 |
-| ------------ | ------------------------------------------------------------------- |
-| `options.py` | The shipped declarations.                                           |
-| `rows.py`    | Typed constructors such as `Value`, `Tri`, `Many`, and `Layer`.     |
-| `tables.py`  | Apply table defaults; reject duplicate declarations.                |
-| `types.py`   | Infer scalar types, choices, and nullability.                       |
-| `lower.py`   | Combine row metadata and inferred types into `Opt`.                 |
-| `model.py`   | Define `Opt`, derive flag names, and validate option relationships. |
+- [`options.py`](options.py): the shipped declarations.
+- [`rows.py`](rows.py): typed constructors such as `Value`, `Tri`, `Many`, and `Layer`.
+- [`tables.py`](tables.py): table defaults and duplicate checks.
+- [`types.py`](types.py): scalar types, choices, and nullability.
+- [`build.py`](build.py): combine row metadata and inferred types into `Opt`.
+- [`model.py`](model.py): `Opt`, flag names, and option validation.
 
 ## Reading a declaration
 

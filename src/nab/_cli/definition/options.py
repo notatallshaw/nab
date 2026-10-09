@@ -41,7 +41,7 @@ from ...flagtypes import (
     ResolutionFlag,
 )
 from ...output import ColorChoice
-from .lower import table_rows
+from .build import build_options
 from .model import GLOBAL, Opt, Scope
 from .rows import (
     Count,
@@ -668,4 +668,4 @@ TABLES = (
     RunFlags,
 )
 
-ALL: tuple[Opt, ...] = table_rows(*TABLES)
+ALL: tuple[Opt, ...] = build_options(*TABLES)

@@ -1,6 +1,6 @@
 """Read a row's value shape and label from its type argument.
 
-Generic metadata appears after construction; lowering reads it afterwards.
+Generic metadata appears after construction, so the builder reads it.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Import boundaries for command invocations.
 
-Runtime code reads the lowered ``model`` through the configuration registry.
-The declaration and lowering modules belong to generation. Commands resolve
+Runtime code reads option records through the configuration registry.
+Declaration and builder modules belong to generation. Commands resolve
 their ``Literal`` aliases from ``flagtypes``. Fresh subprocesses keep earlier
 test imports from masking dependencies.
 """

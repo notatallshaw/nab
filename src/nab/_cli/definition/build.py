@@ -1,4 +1,4 @@
-"""Lower declared rows into :class:`nab._cli.definition.model.Opt` values.
+"""Build option records from typed row declarations.
 
 Checks that need both the row declaration and inferred value shape live here.
 """
@@ -37,7 +37,7 @@ _TOKENS: dict[type[Row], Tokens] = {
 }
 
 
-def lower(row: Row) -> Opt:
+def build_option(row: Row) -> Opt:
     """Build the ``Opt`` for one declared row."""
     read = _read(row)
     _check_mirror(row, read)
@@ -84,9 +84,9 @@ def _tokens(row: Row) -> Tokens | None:
     return _TOKENS.get(type(row), Tokens.SCALAR)
 
 
-def table_rows(*tables: type[Table]) -> tuple[Opt, ...]:
-    """Lower every row of every table, in declaration order."""
-    return tuple(lower(row) for table in tables for row in rows(table))
+def build_options(*tables: type[Table]) -> tuple[Opt, ...]:
+    """Build options for every row of every table, in declaration order."""
+    return tuple(build_option(row) for table in tables for row in rows(table))
 
 
 def _read(row: Row) -> Shape:
@@ -140,7 +140,7 @@ def _check_rung_zero(row: Row, read: Shape) -> None:
 
 
 def _default(row: Row, read: Shape) -> Any:
-    """Lower the default an unwritten one leaves to the kind.
+    """Choose the default for a row that declares none.
 
     A row with no command line has no default at all, and a flag the parser
     can leave absent hands its command ``None``.
@@ -156,7 +156,7 @@ def _label(row: Row, read: Shape) -> str:
 
 
 def _token(default: Any, read: Shape) -> Any:
-    """Lower a declared default to the token the parser stores.
+    """Convert a declared default to the token the parser stores.
 
     A path row declares ``Path("pyproject.toml")``, which is what the
     command parameter takes, while the parser holds the word it was written

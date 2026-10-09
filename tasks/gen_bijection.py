@@ -11,7 +11,7 @@ import difflib
 import sys
 from pathlib import Path
 
-from nab._cli.definition.lower import lower
+from nab._cli.definition.build import build_option
 from nab._cli.definition.model import COMMANDS, Opt
 from nab._cli.definition.options import TABLES
 from nab._cli.definition.tables import rows
@@ -95,7 +95,7 @@ def _module_text() -> str:
 def _row_names() -> list[tuple[str, Opt]]:
     """Pair each generated row name with its Opt."""
     return [
-        (f"{table.__name__}.{row.name.replace('-', '_')}", lower(row))
+        (f"{table.__name__}.{row.name.replace('-', '_')}", build_option(row))
         for table in TABLES
         for row in rows(table)
     ]
