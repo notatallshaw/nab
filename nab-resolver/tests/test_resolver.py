@@ -21,6 +21,11 @@ from nab_resolver.conflict import (
     try_force_resolution_step,
     update_culprit_counts,
 )
+from nab_resolver.errors import (
+    ResolutionLimitError,
+    ResolutionStalledError,
+    ResolutionTerminatedError,
+)
 from nab_resolver.incompat_index import (
     add_incompatibility,
     dependency_merge_key,
@@ -749,7 +754,7 @@ class TestMaxIterations:
             }
         )
         resolver = Resolver(provider, max_iterations=3)
-        with pytest.raises(ResolutionError, match="exceeded"):
+        with pytest.raises(ResolutionLimitError, match="exceeded"):
             resolver.resolve({"root": Range.singleton(1)})
 
 
@@ -818,6 +823,8 @@ class TestConflictProgressGuard:
         with pytest.raises(ResolutionError) as excinfo:
             conflict_resolution(resolver, stalled)
 
+        assert isinstance(excinfo.value, ResolutionStalledError)
+        assert isinstance(excinfo.value, ResolutionTerminatedError)
         message = str(excinfo.value)
         assert "no progress in 32 steps" in message
         assert "resolver bug" in message
@@ -832,7 +839,7 @@ class TestConflictProgressGuard:
         resolver.solution = solution
         assert solution.trail_length == 32
 
-        with pytest.raises(ResolutionError, match="no progress in 128 steps"):
+        with pytest.raises(ResolutionStalledError, match="no progress in 128 steps"):
             conflict_resolution(resolver, stalled)
 
     def test_backtracking_resolve_stays_far_inside_the_budget(self) -> None:
@@ -2258,6 +2265,8 @@ class TestResolutionErrorMessageContract:
         with pytest.raises(ResolutionError) as excinfo:
             resolver.resolve({"root": Range.singleton(1)})
 
+        assert isinstance(excinfo.value, ResolutionLimitError)
+        assert isinstance(excinfo.value, ResolutionTerminatedError)
         assert excinfo.value.incompatibility is None
         assert str(excinfo.value) == "Resolution exceeded 1 iterations"
 
@@ -3720,3 +3729,12 @@ class TestRecordedDependencies:
 
         assert first.pins == {"d": 1, "e": 1}
         assert second.pins == {"d": 1, "e": 2}
+
+
+def test_unsatisfiable_graph_is_not_classified_as_solver_termination() -> None:
+    resolver = Resolver(DictProvider({}))
+
+    with pytest.raises(ResolutionError) as captured:
+        resolver.resolve({"missing": Range.singleton(1)})
+    assert type(captured.value) is ResolutionError
+    assert captured.value.incompatibility is not None

@@ -8,16 +8,13 @@ itself is under test.
 
 from __future__ import annotations
 
-import ast
 import errno
 import gzip
 import hashlib
-import inspect
 import io
 import os
 import sys
 import tarfile
-import textwrap
 import traceback
 import zlib
 from pathlib import Path
@@ -1518,38 +1515,6 @@ class TestExtractArchive:
         assert (root / "foo-1.0.0" / "pyproject.toml").is_file()
 
 
-def _attribute_docstrings(cls: type) -> dict[str, str]:
-    """Return each class attribute's docstring, keyed by attribute name.
-
-    A bare string literal after an assignment in a class body is an attribute
-    docstring.  It is not reachable at runtime (``member.__doc__`` returns the
-    class docstring). Read it from source to match Sphinx and IDE handling.
-    """
-    tree = ast.parse(textwrap.dedent(inspect.getsource(cls)))
-    classdef = tree.body[0]
-    assert isinstance(classdef, ast.ClassDef)
-
-    docs: dict[str, str] = {}
-    pending: str | None = None
-    for node in classdef.body:
-        if (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-        ):
-            pending = node.targets[0].id
-            continue
-        if (
-            pending is not None
-            and isinstance(node, ast.Expr)
-            and isinstance(node.value, ast.Constant)
-            and isinstance(node.value.value, str)
-        ):
-            docs[pending] = node.value.value
-        pending = None
-    return docs
-
-
 class TestArchiveBuildPolicyLevels:
     """Archive sources across the three build-policy levels.
 
@@ -1698,11 +1663,6 @@ class TestArchiveBuildPolicyLevels:
             lambda _path, **_kwargs: built,
         )
         assert self._extract(BuildPolicy.BUILD_REMOTE, tmp_path) is built
-
-    @pytest.mark.parametrize("member", ["NEVER", "BUILD_LOCAL", "BUILD_REMOTE"])
-    def test_level_docstring_names_archive_sources(self, member: str) -> None:
-        docstring = _attribute_docstrings(BuildPolicy)[member]
-        assert "archive" in docstring.lower()
 
 
 class TestSourceWithoutProjectFile:

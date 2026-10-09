@@ -529,7 +529,8 @@ class TestClauseText:
             " to false there lifts it"
             "\nnote: the project-level uploaded-prior-to set that cutoff; pkg<2"
             " already sets uploaded-prior-to over another version range, so widen"
-            " that entry over this version or drop the project-level cutoff"
+            " that entry over this version and set uploaded-prior-to = false there,"
+            " or drop the project-level cutoff"
         )
 
     def test_two_cutoffs_over_files_with_no_upload_time_read_as_two_clauses(
@@ -573,7 +574,8 @@ class TestClauseText:
             ' "wheel-or-sdist" there admits both formats'
             "\nnote: the project-level dist-policy set that policy; pkg==1.0"
             " already sets dist-policy over another version range, so widen that"
-            " entry over this version or drop the project-level policy"
+            ' entry over this version and set dist-policy = "wheel-or-sdist" there,'
+            " or drop the project-level policy"
         )
 
     def test_sdist_install_without_an_sdist(self) -> None:
@@ -852,13 +854,7 @@ class TestTheRemedyNamesTheLayer:
     def test_a_package_that_already_scopes_the_cutoff_is_offered_no_entry(
         self,
     ) -> None:
-        """The project level answered, but a second package entry would conflict.
-
-        The ``pkg<2`` entry sets ``uploaded-prior-to`` over another range, and
-        the config layer refuses two per-package entries setting one field over
-        overlapping versions.  A bare-name entry overlaps everything, so the
-        remedy names the project-level cutoff and stops.
-        """
+        """The note edits the existing entry because a bare-name entry would overlap."""
         assert reason_for(
             [wheel("1.0", upload_time=BETWEEN), wheel("2.0", upload_time=AFTER)],
             uploaded_prior_to=CUTOFF,
@@ -866,7 +862,8 @@ class TestTheRemedyNamesTheLayer:
         ).endswith(
             "\nnote: the project-level uploaded-prior-to set that cutoff; pkg<2"
             " already sets uploaded-prior-to over another version range, so widen"
-            " that entry over this version or drop the project-level cutoff"
+            " that entry over this version and set uploaded-prior-to = false there,"
+            " or drop the project-level cutoff"
         )
 
     def test_a_package_scoping_another_field_still_gets_the_entry(self) -> None:
@@ -988,7 +985,8 @@ class TestTheRemedyNamesTheLayer:
             "\nnote: the project-level uploaded-prior-to set that cutoff;"
             " package-rules[0], which matches 2 packages, already sets"
             " uploaded-prior-to over another version range, so widen that entry"
-            " over this version or drop the project-level cutoff"
+            " over this version and set uploaded-prior-to = false there, or drop"
+            " the project-level cutoff"
         )
 
     def test_a_rule_matching_one_package_says_nothing_about_its_width(self) -> None:
@@ -1172,20 +1170,18 @@ class TestTheTryLine:
         assert diagnostic is not None
         assert diagnostic.remedy == f"set index.{key}.uploaded-prior-to = false"
 
-    def test_a_package_that_already_scopes_the_cutoff_is_told_to_widen_it(
+    def test_a_scoped_cutoff_is_told_to_widen_and_disable_it(
         self,
     ) -> None:
-        """A second entry would overlap the first, so there is nothing to set.
-
-        The project cutoff is what refused 2.0; the ``pkg<2`` entry does not
-        reach it, and a bare-name entry beside that one is two per-package
-        entries setting one field over overlapping versions.
-        """
+        """Widening alone would apply the scoped entry's restrictive cutoff."""
         assert remedy_for(
             [wheel("2.0", upload_time=AFTER)],
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
-        ) == ("widen pkg<2 over this version, or drop the project cutoff")
+        ) == (
+            "widen pkg<2 over this version and set uploaded-prior-to = false there,"
+            " or drop the project cutoff"
+        )
 
     def test_a_package_whose_table_exists_is_told_to_add_the_key(self) -> None:
         """The line has to name the table, since a second one is a TOML error.
@@ -1327,10 +1323,10 @@ class TestTheTryLine:
             'set index."corp mirror".dist-policy = "wheel-or-sdist"'
         )
 
-    def test_a_package_that_already_scopes_the_policy_is_told_to_widen_it(
+    def test_a_scoped_policy_is_told_to_widen_and_allow_both_formats(
         self,
     ) -> None:
-        """A second entry would overlap the first, so there is nothing to set."""
+        """The hint changes the existing entry's selector and policy together."""
         assert remedy_for(
             [wheel("2.0")],
             target=_LINUX312,
@@ -1338,7 +1334,10 @@ class TestTheTryLine:
             package_overrides=[
                 pkg_override("pkg<2", dist_policy=DistPolicy.WHEEL_OR_SDIST)
             ],
-        ) == ("widen pkg<2 over this version, or drop the project dist-policy")
+        ) == (
+            'widen pkg<2 over this version and set dist-policy = "wheel-or-sdist"'
+            " there, or drop the project dist-policy"
+        )
 
     def test_the_first_rung_in_report_order_answers(self) -> None:
         """Two rungs fired and the earlier one holds the line.

@@ -53,6 +53,7 @@ from nab.config.ladder import SourceRoots
 from nab.config.model import read_pyproject_config
 from nab.output import Printer, ProgressReporter, Verbosity
 from nab_index.atomic import atomic_write_text
+from nab_index.client import AsyncSimpleClient
 from nab_index.httpx2_async_transport import Httpx2AsyncTransport
 from nab_index.httpx_async_transport import HttpxAsyncTransport
 from nab_index.local_index import LocalIndexClient, UnreadableLocalIndexError
@@ -2190,6 +2191,121 @@ class TestLockCommandSpecific:
         err = capsys.readouterr().err
         assert "config error:" in err
         assert "typoo" in err
+
+
+class TestScopedDiagnosticRemedies:
+    """Scoped hints name edits that admit the file the project filter refused."""
+
+    @pytest.mark.parametrize(
+        ("field", "restrictive", "permissive", "diagnosis"),
+        [
+            (
+                "uploaded-prior-to",
+                "2015-01-01T00:00:00Z",
+                "false",
+                "uploaded-prior-to excluded every file",
+            ),
+            (
+                "dist-policy",
+                '"sdist-only"',
+                '"wheel-or-sdist"',
+                'dist-policy = "sdist-only" excluded every file',
+            ),
+        ],
+        ids=["cutoff", "dist-policy"],
+    )
+    @pytest.mark.parametrize("verbose", [False, True], ids=["default", "verbose"])
+    @pytest.mark.parametrize(
+        "entry",
+        [
+            '[tool.nab.packages."foo<2"]\n',
+            '[[tool.nab.package-rules]]\nmatch = ["foo<2"]\n',
+        ],
+        ids=["package-table", "rule"],
+    )
+    def test_scoped_remedies_admit_the_refused_file(
+        self,
+        hermetic_roots: Path,
+        capsys: pytest.CaptureFixture[str],
+        field: str,
+        restrictive: str,
+        permissive: str,
+        diagnosis: str,
+        verbose: bool,
+        entry: str,
+    ) -> None:
+        """Widening alone leaves the file excluded; each complete remedy admits it."""
+        wheel_url = "https://files.example.com/foo-2.0-py3-none-any.whl"
+        listing = {
+            "meta": {"api-version": "1.2"},
+            "name": "foo",
+            "files": [
+                {
+                    "filename": "foo-2.0-py3-none-any.whl",
+                    "url": wheel_url,
+                    "upload-time": "2030-01-01T00:00:00Z",
+                    "core-metadata": True,
+                }
+            ],
+        }
+
+        transport = _SidecarTransport(
+            {"https://pypi.org/simple/foo/": json.dumps(listing).encode()}
+        )
+        files = asyncio.run(AsyncSimpleClient(transport).get_files("foo"))
+        coordinator = make_coordinator(files, package="foo", auto_metadata=True)
+
+        project = (
+            '[project]\nname = "proj"\nversion = "0"\ndependencies = ["foo==2.0"]\n'
+            f'[tool.nab]\nbuild-policy = "never"\n{field} = {restrictive}\n'
+        )
+        body = project + entry + f"{field} = {restrictive}\n"
+        pyproject = _make_pyproject(hermetic_roots, body)
+
+        arguments = (
+            *(("-v",) if verbose else ()),
+            "lock",
+            str(pyproject),
+            "--no-cache",
+            "--no-workspace-discovery",
+            "--no-progress",
+            "--python",
+            "3.12",
+            "--format",
+            "requirements-without-hashes",
+            "--output",
+            "-",
+        )
+        with patch(
+            "nab_project.resolve.FetchCoordinator",
+            return_value=contextlib.nullcontext(coordinator),
+        ):
+            _cli(*arguments, status=1)
+            refused = capsys.readouterr()
+            assert diagnosis in refused.err
+            assert "widen " in refused.err
+            assert (
+                f"over this version and set {field} = {permissive} there" in refused.err
+            )
+
+            widened = body.replace("foo<2", "foo<=2")
+            pyproject.write_text(widened)
+            _cli(*arguments, status=1)
+            assert diagnosis in capsys.readouterr().err
+
+            pyproject.write_text(
+                project + entry.replace("foo<2", "foo<=2") + f"{field} = {permissive}\n"
+            )
+            _cli(*arguments)
+            assert capsys.readouterr().out == "foo==2.0\n"
+
+            pyproject.write_text(
+                project.replace(f"{field} = {restrictive}\n", "")
+                + entry
+                + f"{field} = {restrictive}\n"
+            )
+            _cli(*arguments)
+            assert capsys.readouterr().out == "foo==2.0\n"
 
 
 class TestPythonFlag:

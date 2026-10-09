@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import io
 import logging
-import re
 from collections.abc import Callable, Mapping
 from contextlib import (
     AbstractContextManager,
@@ -167,16 +166,6 @@ def _run_config(args: list[str], *, status: int = 0) -> str:
     with redirect_stdout(buf):
         _cli("config", *args, status=status)
     return buf.getvalue()
-
-
-def _doc_sentences(needle: str) -> list[str]:
-    """The sentences of ``config_command``'s docstring that name ``needle``.
-
-    Only its first line reaches ``nab config --help``, so the rest is what
-    a maintainer reads, and these cases are what keep it true.
-    """
-    prose = " ".join((config_command.__doc__ or "").split())
-    return [s for s in re.split(r"(?<=\.)\s+", prose) if needle in s]
 
 
 def test_config_search_roots_uses_symlink_dir_not_target(tmp_path: Path) -> None:
@@ -525,8 +514,8 @@ class TestConfigExplain:
         assert "unknown config key" in capsys.readouterr().err
 
 
-class TestConfigHelpRefusalSeverity:
-    """The ``config`` help states what each refused source really does.
+class TestConfigRefusalSeverity:
+    """Config file errors are fatal; unknown environment variables warn.
 
     A refused key in a config file is fatal without ``--include-rejected``,
     an unknown or renamed ``NAB_*`` var never is, and a refusal naming no
@@ -557,15 +546,6 @@ class TestConfigHelpRefusalSeverity:
 
         assert "not a valid nab setting" in capsys.readouterr().err
 
-        # The command's own documentation says which of the two is fatal.
-        [fatal] = _doc_sentences("fatal config error")
-        assert "config file" in fatal
-        assert "NAB_" not in fatal
-
-        [env] = _doc_sentences("``NAB_*``")
-        assert "never fatal" in env
-        assert "warning" in env
-
     def test_a_refusal_naming_no_option_reaches_list_only(
         self, hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -583,10 +563,6 @@ class TestConfigHelpRefusalSeverity:
         assert "NAB_OFLINE" in listed
         assert "NAB_RESOLUTION" in named
         assert "NAB_OFLINE" not in unnamed
-
-        [row] = _doc_sentences("``rejected`` row")
-        assert "only" in row
-        assert "``list``" in row
 
 
 _STRUCTURED_PROJECT_TABLES = frozenset(

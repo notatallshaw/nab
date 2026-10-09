@@ -25,6 +25,7 @@ from nab_project._resolve.engine import (
     _walk_no_versions_packages,
 )
 from nab_project._testing.coordinator_fake import FakeFetchPort, make_coordinator
+from nab_project._testing.yanking import graph_port
 from nab_project.conflicts import (
     ConflictKind,
     ConflictMember,
@@ -82,12 +83,18 @@ from nab_provider.requirements_file import (
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
 from nab_provider.vcs_admission import VcsPolicy
-from nab_resolver.errors import ResolutionError
+from nab_resolver.errors import (
+    ResolutionError,
+    ResolutionInvariantError,
+    ResolutionLimitError,
+    ResolutionStalledError,
+    ResolutionTerminatedError,
+)
 from nab_resolver.ranges import Range
 from nab_resolver.types import Incompatibility, IncompatibilityCause, Term
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from contextlib import AbstractContextManager
 
 V = Version
@@ -258,6 +265,19 @@ def _malformed_group_pyproject(tmp_path: Path) -> Path:
     return pyproject
 
 
+@pytest.fixture
+def conflict_fetch_port() -> Iterator[FakeFetchPort]:
+    """Serve foo 1.0 and 2.0 for conflict-selection resolves."""
+    coordinator = make_coordinator(
+        listings={"foo": _index_wheels("foo", "1.0", "2.0")},
+        auto_metadata=True,
+    )
+    with patch(
+        "nab_project.resolve.FetchCoordinator", return_value=nullcontext(coordinator)
+    ):
+        yield coordinator
+
+
 class TestSpecificModeConflictValidation:
     """Conflict handling in specific mode: direct co-selection forks, an
     umbrella that reaches two members without selecting either fails fast."""
@@ -330,28 +350,19 @@ class TestSpecificModeConflictValidation:
         assert V("2.0") not in root_reqs["foo"]
         assert _pins(result) == {"foo": V("1.0")}
 
+    @pytest.mark.usefixtures("conflict_fetch_port")
     def test_unselected_malformed_group_still_resolves(self, tmp_path: Path) -> None:
-        """Conflict planning closes the group table over ``include-group``,
-        so it walks groups the resolve never selects."""
+        """An unselected malformed group does not block extra selection."""
         pyproject = _malformed_group_pyproject(tmp_path)
-        with (
-            patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_project._resolve.engine.Provider") as mock_provider_cls,
-            patch("nab_project._resolve.engine.build_target_lock"),
-        ):
-            mock_coord_cls.return_value.__enter__ = lambda s: s
-            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            mock_provider = mock_provider_cls.return_value
-            mock_provider.choose_version.return_value = V("1.0")
-            mock_provider.get_dependencies.return_value = {}
-            mock_provider.prioritize.return_value = 1
-            result = _resolved(
-                pyproject,
-                _FAKE_TRANSPORT,
-                extras=("cpu",),
-                python_version="3.12.0",
-                inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
-            )
+
+        result = _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            extras=("cpu",),
+            python_version="3.12.0",
+            inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
+        )
+
         assert _pins(result) == {"foo": V("1.0")}
 
     def test_selected_malformed_group_reports_loader_error(
@@ -549,6 +560,7 @@ class TestSpecificModeConflictValidation:
                 inputs=ResolveInputs(conflicts=(_groups_conflict("b22", "b23"),)),
             )
 
+    @pytest.mark.usefixtures("conflict_fetch_port")
     def test_umbrella_extra_reaching_one_member_resolves(self, tmp_path: Path) -> None:
         """An umbrella reaching only one member stays satisfiable."""
         pyproject = tmp_path / "pyproject.toml"
@@ -562,26 +574,15 @@ class TestSpecificModeConflictValidation:
             "[tool.nab]\n"
             'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
         )
-        with (
-            patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_project._resolve.engine.Provider") as mock_provider_cls,
-            patch("nab_project._resolve.engine.build_target_lock"),
-        ):
-            mock_coord_cls.return_value.__enter__ = lambda s: s
-            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            mock_provider = mock_provider_cls.return_value
-            mock_provider.choose_version.return_value = V("1.0")
-            mock_provider.get_dependencies.return_value = {}
-            mock_provider.prioritize.return_value = 1
-            result = _resolved(
-                pyproject,
-                _FAKE_TRANSPORT,
-                extras=("accel",),
-                python_version="3.12.0",
-                inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
-            )
-        # Reaching here means the conflict check did not raise; cpu's dep
-        # is pulled in through the self-reference.
+
+        result = _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            extras=("accel",),
+            python_version="3.12.0",
+            inputs=ResolveInputs(conflicts=(_extras_conflict("cpu", "gpu"),)),
+        )
+
         assert _pins(result)["foo"] == V("1.0")
 
     def test_umbrella_extra_disjoint_markers_resolve(self, tmp_path: Path) -> None:
@@ -693,10 +694,10 @@ class TestSpecificModeConflictValidation:
                 ),
             )
 
+    @pytest.mark.usefixtures("conflict_fetch_port")
     def test_specific_mode_exactly_one_with_one_member_resolves(
         self, tmp_path: Path
     ) -> None:
-        # The happy path for exactly_one: one member selected, resolve runs.
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\nname = "x"\nversion = "0"\n'
@@ -709,35 +710,23 @@ class TestSpecificModeConflictValidation:
             '{ members = [{ extra = "cpu" }, { extra = "gpu" }], policy = "exactly-one" }'
             "]\n"
         )
-        with (
-            patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_project._resolve.engine.Provider") as mock_provider_cls,
-            patch("nab_project._resolve.engine.build_target_lock"),
-        ):
-            mock_coord_cls.return_value.__enter__ = lambda s: s
-            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            mock_provider = mock_provider_cls.return_value
-            mock_provider.choose_version.return_value = V("1.0")
-            mock_provider.get_dependencies.return_value = {}
-            mock_provider.prioritize.return_value = 1
-            result = _resolved(
-                pyproject,
-                _FAKE_TRANSPORT,
-                extras=("cpu",),
-                python_version="3.12.0",
-                inputs=ResolveInputs(
-                    conflicts=(
-                        _extras_conflict(
-                            "cpu", "gpu", policy=ConflictPolicy.EXACTLY_ONE
-                        ),
-                    )
-                ),
-            )
+
+        result = _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            extras=("cpu",),
+            python_version="3.12.0",
+            inputs=ResolveInputs(
+                conflicts=(
+                    _extras_conflict("cpu", "gpu", policy=ConflictPolicy.EXACTLY_ONE),
+                )
+            ),
+        )
+
         assert _pins(result) == {"foo": V("1.0")}
 
+    @pytest.mark.usefixtures("conflict_fetch_port")
     def test_default_groups_satisfy_exactly_one(self, tmp_path: Path) -> None:
-        # ``default-groups`` activates ``a`` on every default install, so
-        # the exactly-one minimum is met without any ``--groups`` flag.
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             '[project]\nname = "x"\nversion = "0"\n'
@@ -751,28 +740,19 @@ class TestSpecificModeConflictValidation:
             '{ members = [{ group = "a" }, { group = "b" }], policy = "exactly-one" }'
             "]\n"
         )
-        with (
-            patch("nab_project.resolve.FetchCoordinator") as mock_coord_cls,
-            patch("nab_project._resolve.engine.Provider") as mock_provider_cls,
-            patch("nab_project._resolve.engine.build_target_lock"),
-        ):
-            mock_coord_cls.return_value.__enter__ = lambda s: s
-            mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            mock_provider = mock_provider_cls.return_value
-            mock_provider.choose_version.return_value = V("1.0")
-            mock_provider.get_dependencies.return_value = {}
-            mock_provider.prioritize.return_value = 1
-            result = _resolved(
-                pyproject,
-                _FAKE_TRANSPORT,
-                python_version="3.12.0",
-                inputs=ResolveInputs(
-                    conflicts=(
-                        _groups_conflict("a", "b", policy=ConflictPolicy.EXACTLY_ONE),
-                    ),
-                    default_groups=("a",),
+
+        result = _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            python_version="3.12.0",
+            inputs=ResolveInputs(
+                conflicts=(
+                    _groups_conflict("a", "b", policy=ConflictPolicy.EXACTLY_ONE),
                 ),
-            )
+                default_groups=("a",),
+            ),
+        )
+
         assert _pins(result) == {"foo": V("1.0")}
 
     def test_default_groups_deps_are_loaded(self, tmp_path: Path) -> None:
@@ -7531,3 +7511,26 @@ class TestFetchWidth:
         path = self._project(tmp_path)
 
         assert self._width(path, max_concurrency=3) == 3
+
+
+@pytest.mark.parametrize(
+    "error_type",
+    [ResolutionLimitError, ResolutionStalledError, ResolutionInvariantError],
+)
+def test_terminal_solver_graphs_do_not_acquire_no_versions_diagnostics(
+    error_type: type[ResolutionTerminatedError],
+) -> None:
+    provider = Provider(graph_port([("missing-pkg", "1", False, [])]))
+    bounds = VersionRange.singleton(V("2"))
+    assert provider.choose_version("missing-pkg", bounds) is None
+    assert provider.get_no_versions_reason("missing-pkg", bounds) is not None
+    clause = Incompatibility(
+        [Term("missing-pkg", bounds, positive=True)],
+        cause=IncompatibilityCause.NO_VERSIONS,
+    )
+    error = error_type("solver stopped", clause)
+
+    _augment_resolution_error(error, provider)
+
+    assert str(error) == "solver stopped"
+    assert error.verbose_message is None

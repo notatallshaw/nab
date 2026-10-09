@@ -23,9 +23,15 @@ from nab_provider.yank_preference import (
     _Context,
     _KnownFacts,
 )
-from nab_resolver.errors import ResolutionError
+from nab_resolver.errors import (
+    ResolutionError,
+    ResolutionInvariantError,
+    ResolutionLimitError,
+    ResolutionStalledError,
+    ResolutionTerminatedError,
+)
 from nab_resolver.ranges import Range
-from nab_resolver.resolver import ResolverStats
+from nab_resolver.resolver import Resolver, ResolverStats
 
 
 def preference(
@@ -279,7 +285,7 @@ def test_callback_unwinds_and_spends_before_running_the_next_query() -> None:
             policy.spend(2)
         pytest.fail("the root needs a live query")
 
-    with pytest.raises(IncompletePreferenceError, match="search limit"):
+    with pytest.raises(ResolutionLimitError, match="search limit"):
         policy.run(trial)
     assert visits == [PreferenceScope()]
     assert policy.remaining == 0
@@ -300,20 +306,18 @@ def test_context_request_also_unwinds_before_spending_its_budget() -> None:
             policy.spend(1)
         pytest.fail("a context proof must be requested")
 
-    with pytest.raises(
-        IncompletePreferenceError, match="search limit|context check stopped"
-    ):
+    with pytest.raises(ResolutionTerminatedError, match="search limit|exceeded"):
         policy.run(trial)
     assert policy.remaining <= 0
 
 
-def test_excess_budget_and_cyclic_queries_are_incomplete() -> None:
+def test_excess_budget_and_cyclic_queries_have_distinct_terminal_types() -> None:
     policy = preference(
         [("a", "1", False, []), ("a", "1", True, [])], ["a==1"], max_steps=1
     )
-    with pytest.raises(IncompletePreferenceError, match="search limit"):
+    with pytest.raises(ResolutionLimitError, match="search limit"):
         policy.spend(2)
-    with pytest.raises(IncompletePreferenceError, match="cyclic query"):
+    with pytest.raises(ResolutionInvariantError, match="cyclic query"):
         policy.check(
             item("a", withdrawn=True), {}, PreferenceScope(live=frozenset({"a"}))
         )
@@ -328,7 +332,7 @@ def test_successful_nested_query_must_still_require_its_target() -> None:
         policy.check(item("a", withdrawn=True), {}, scope)
         pytest.fail("a live proof must be requested")
 
-    with pytest.raises(IncompletePreferenceError, match="target disappeared"):
+    with pytest.raises(ResolutionInvariantError, match="target disappeared"):
         policy.run(trial)
 
 
@@ -465,7 +469,7 @@ def test_explain_extra_pin_names_the_selected_extra() -> None:
     }
     del selected["app[x]"]
     policy.roots = {"app": VersionRange.full(), "dep": VersionRange.full()}
-    with pytest.raises(IncompletePreferenceError, match="not rooted"):
+    with pytest.raises(ResolutionInvariantError, match="not rooted"):
         policy.explain(selected)
 
 
@@ -478,7 +482,7 @@ def test_only_rooted_cycles_have_admission_explanations(root: str) -> None:
     for candidate in selected.values():
         assert policy.catalogue.prepare(candidate) is not None
     if root == "a":
-        with pytest.raises(IncompletePreferenceError, match="not rooted"):
+        with pytest.raises(ResolutionInvariantError, match="not rooted"):
             policy.adopt(selected)
         assert policy.catalogue.provider.yank_admission_sources is None
         assert not policy.catalogue.provider.yank_admissions
@@ -499,7 +503,7 @@ def test_missing_selected_metadata_or_required_dependency_is_not_explained(
     selected = {"app": item("app")}
     if prepared:
         assert policy.catalogue.prepare(selected["app"]) is not None
-    with pytest.raises(IncompletePreferenceError, match="missing metadata"):
+    with pytest.raises(ResolutionInvariantError, match="missing metadata"):
         policy.explain(selected)
 
 
@@ -508,7 +512,7 @@ def test_unreachable_selection_cannot_be_explained_by_a_constraint() -> None:
     policy.input_pins = [Requirement("a==1")]
     selected = {"a": item("a", withdrawn=True)}
     assert policy.catalogue.prepare(selected["a"]) is not None
-    with pytest.raises(IncompletePreferenceError, match="not rooted"):
+    with pytest.raises(ResolutionInvariantError, match="not rooted"):
         policy.explain(selected)
     assert policy.explain({}) == {}
 
@@ -645,3 +649,48 @@ def test_root_and_extra_intersection_can_refute_every_artifact() -> None:
         is PreparationStatus.IMPOSSIBLE
     )
     assert not policy.catalogue.facts
+
+
+@pytest.mark.parametrize(
+    "error", [ResolutionLimitError("limit"), ResolutionStalledError("stall")]
+)
+def test_nested_terminal_failures_do_not_refute_live_choices(
+    error: ResolutionTerminatedError,
+) -> None:
+    policy = preference([("a", "1", False, []), ("a", "1", True, [])], ["a==1"])
+
+    def trial(scope: PreferenceScope) -> dict[str, Candidate]:
+        if scope.target:
+            raise error
+        policy.check(item("a", withdrawn=True), {}, scope)
+        pytest.fail("a live proof must be requested")
+
+    with pytest.raises(type(error), match=str(error)):
+        policy.run(trial)
+    assert policy.outcomes == {}
+
+
+def test_context_budget_limit_is_terminal_and_preserves_the_unproven_context() -> None:
+    policy = preference([("a", "1", False, [])], ["a==1"], max_steps=0)
+    context = _Context(PreferenceScope(), frozenset())
+
+    with pytest.raises(ResolutionLimitError, match="exceeded 0 iterations"):
+        policy.check_context(context)
+    assert policy.refuted == set()
+    assert policy.possible == {}
+
+
+def test_untagged_context_failure_without_a_derivation_remains_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy = preference([], [])
+    context = _Context(PreferenceScope(), frozenset())
+
+    def stop(*_args: object, **_kwargs: object) -> None:
+        raise ResolutionError("context interrupted")
+
+    monkeypatch.setattr(Resolver, "resolve", stop)
+    with pytest.raises(IncompletePreferenceError, match="context check stopped"):
+        policy.check_context(context)
+    assert policy.refuted == set()
+    assert policy.possible == {}

@@ -27,7 +27,7 @@ import tarfile
 import tempfile
 import threading
 import zipfile
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -192,6 +192,23 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
         zf.writestr(f"{distinfo}/RECORD", "")
     return wheel_name
 '''
+
+_METADATA_ERROR_BACKEND_SRC = """\
+from pathlib import Path
+
+
+def get_requires_for_build_wheel(config_settings=None):
+    return []
+
+
+def prepare_metadata_for_build_wheel(metadata_directory, config_settings=None):
+    target = Path(metadata_directory) / "custom-1.0.dist-info"
+    target.mkdir()
+    body = {body!r}
+    if body is not None:
+        (target / "METADATA").write_bytes(body)
+    return target.name
+"""
 
 
 # The backend shipped inside a buildable sdist fixture.  Writes a real,
@@ -403,6 +420,63 @@ def config() -> ResolveInputs:
     return ResolveInputs()
 
 
+def _run_requirement_hook(
+    cmd: Sequence[str],
+    _cwd: str | None = None,
+    _extra_environ: Mapping[str, str] | None = None,
+    *,
+    requirements: list[object],
+) -> None:
+    """Write wheel requirements and valid metadata as hook subprocess responses."""
+    hook, control_dir = cmd[-2:]
+    control = Path(control_dir)
+    result: object
+    if hook == "get_requires_for_build_wheel":
+        result = requirements
+    elif hook == "get_requires_for_build_sdist":
+        result = []
+    elif hook == "prepare_metadata_for_build_wheel":
+        arguments = json.loads((control / "input.json").read_text(encoding="utf-8"))
+        result = "fake_pkg-1.0.dist-info"
+        metadata_dir = Path(arguments["kwargs"]["metadata_directory"]) / result
+        metadata_dir.mkdir()
+        (metadata_dir / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: fake-pkg\nVersion: 1.0\n",
+            encoding="utf-8",
+        )
+    else:
+        msg = f"unexpected build hook: {hook}"
+        raise AssertionError(msg)
+
+    (control / "output.json").write_text(
+        json.dumps({"return_val": result}), encoding="utf-8"
+    )
+
+
+@pytest.fixture
+def wheel_hook_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[list[object]], None]:
+    """Configure wheel-hook results for a real builder in a stubbed build environment."""
+    monkeypatch.setattr("venv.EnvBuilder", _StubEnvBuilder)
+    monkeypatch.setattr(
+        env_mod, "_venv_scheme_paths", lambda _python: {"purelib": str(tmp_path)}
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        '[build-system]\nrequires = []\nbuild-backend = "setuptools.build_meta"\n',
+        encoding="utf-8",
+    )
+
+    def configure(requirements: list[object]) -> None:
+        monkeypatch.setattr(
+            pyproject_hooks,
+            "quiet_subprocess_runner",
+            partial(_run_requirement_hook, requirements=requirements),
+        )
+
+    return configure
+
+
 class TestRunBuildBackend:
     def test_prepare_metadata_happy_path(
         self, tmp_path: Path, config: ResolveInputs
@@ -561,6 +635,113 @@ class TestRunBuildBackend:
         )
         with pytest.raises(BuildBackendError, match="missing Name or Version"):
             run_build_backend(tmp_path, config=config)
+
+    @pytest.mark.parametrize(
+        ("body", "expected", "cause_type"),
+        [
+            pytest.param(
+                None,
+                "backend produced no METADATA file at {path}",
+                None,
+                id="missing-file",
+            ),
+            pytest.param(
+                b"Name: custom\n",
+                "backend METADATA at {path} is missing Name or Version "
+                "(Name='custom', Version=None)",
+                None,
+                id="missing-version",
+            ),
+            pytest.param(
+                b"Version: 1.0\n",
+                "backend METADATA at {path} is missing Name or Version "
+                "(Name=None, Version='1.0')",
+                None,
+                id="missing-name",
+            ),
+            pytest.param(
+                b"\xff",
+                "backend METADATA at {path} is not valid UTF-8: "
+                "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+                UnicodeDecodeError,
+                id="invalid-utf8",
+            ),
+        ],
+    )
+    def test_backend_metadata_errors_are_repeatable(
+        self,
+        tmp_path: Path,
+        config: ResolveInputs,
+        body: bytes | None,
+        expected: str,
+        cause_type: type[BaseException] | None,
+    ) -> None:
+        _write_fake_backend_project(tmp_path)
+        (tmp_path / "nab_test_backend.py").write_text(
+            _METADATA_ERROR_BACKEND_SRC.format(body=body), encoding="utf-8"
+        )
+
+        errors = []
+        for _ in range(2):
+            with pytest.raises(BuildBackendError) as caught:
+                extract_metadata(tmp_path, config=config, offline=True)
+            errors.append(str(caught.value))
+
+            if cause_type is None:
+                assert caught.value.__cause__ is None
+            else:
+                assert isinstance(caught.value.__cause__, cause_type)
+
+        assert errors[0] == errors[1]
+
+        path = Path("custom-1.0.dist-info") / "METADATA"
+        assert errors[0] == expected.format(path=path)
+
+    def test_backend_metadata_read_errors_are_repeatable(
+        self,
+        tmp_path: Path,
+        config: ResolveInputs,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Read-error text handles quoted paths while its cause retains the filename."""
+        temporary_root = tmp_path / "quoted'root\\nested"
+        temporary_root.mkdir(parents=True)
+        monkeypatch.setattr(tempfile, "tempdir", str(temporary_root))
+        _write_fake_backend_project(tmp_path)
+        (tmp_path / "nab_test_backend.py").write_text(
+            _METADATA_ERROR_BACKEND_SRC.format(body=b"Name: custom\nVersion: 1.0\n"),
+            encoding="utf-8",
+        )
+
+        read_text = Path.read_text
+        denied_paths: list[Path] = []
+
+        def deny_metadata(path: Path, *args: Any, **kwargs: Any) -> str:
+            if path.name == "METADATA":
+                denied_paths.append(path)
+                raise PermissionError(13, "Permission denied", str(path))
+            return read_text(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", deny_metadata)
+        errors = []
+        for _ in range(2):
+            with pytest.raises(BuildBackendError) as caught:
+                extract_metadata(tmp_path, config=config, offline=True)
+            errors.append(str(caught.value))
+
+            cause = caught.value.__cause__
+            assert isinstance(cause, PermissionError)
+            assert cause.errno == 13
+            assert cause.filename == str(denied_paths[-1])
+
+        assert denied_paths[0] != denied_paths[1]
+        assert errors[0] == errors[1]
+
+        path = Path("custom-1.0.dist-info") / "METADATA"
+        assert errors[0] == (
+            f"backend METADATA at {path} could not be read: "
+            f"[Errno 13] Permission denied: {str(path)!r}"
+        )
 
     def test_hatchling_with_dynamic_deps_skips_prepare(
         self,
@@ -810,80 +991,29 @@ class TestRunBuildBackend:
         self,
         tmp_path: Path,
         config: ResolveInputs,
-        monkeypatch: pytest.MonkeyPatch,
+        wheel_hook_requirements: Callable[[list[object]], None],
     ) -> None:
         """A non-string build requirement is wrapped as BuildBackendError."""
-        from nab_project._build import env as env_mod
+        wheel_hook_requirements(["setuptools", None])
 
-        class _Builder:
-            def __init__(self, **_kw: object) -> None:
-                pass
-
-            def create(self, path: Path) -> None:
-                path.mkdir(parents=True, exist_ok=True)
-                (path / "bin").mkdir(exist_ok=True)
-                (path / "bin" / "python").touch()
-
-        import venv as venv_mod
-
-        monkeypatch.setattr(venv_mod, "EnvBuilder", _Builder)
-        monkeypatch.setattr(
-            env_mod, "_venv_scheme_paths", lambda _python: {"purelib": str(tmp_path)}
-        )
-
-        (tmp_path / "pyproject.toml").write_text(
-            '[build-system]\nrequires = []\nbuild-backend = "setuptools.build_meta"\n',
-            encoding="utf-8",
-        )
-
-        project = MagicMock()
-        project.get_requires_for_build.return_value = ["setuptools", None]
-
-        with (
-            patch(
-                "nab_project._build.runner.build.ProjectBuilder.from_isolated_env",
-                return_value=project,
-            ),
-            pytest.raises(BuildBackendError, match="non-string"),
-        ):
+        with pytest.raises(BuildBackendError, match="non-string"):
             run_build_backend(tmp_path, config=config)
 
     def test_unencodable_build_requirement_wrapped(
         self,
         tmp_path: Path,
         config: ResolveInputs,
-        monkeypatch: pytest.MonkeyPatch,
+        wheel_hook_requirements: Callable[[list[object]], None],
     ) -> None:
         """A build requirement with no UTF-8 encoding is wrapped.
 
-        A backend that derives a requirement from a filesystem name passes
-        on what ``os.fsdecode`` gave it, so a name that is not valid UTF-8
-        comes back as a lone surrogate.
+        A filesystem-derived requirement can contain a lone surrogate from ``os.fsdecode``.
         """
-        monkeypatch.setattr("venv.EnvBuilder", _StubEnvBuilder)
-        monkeypatch.setattr(
-            "nab_project._build.env._venv_scheme_paths",
-            lambda _python: {"purelib": str(tmp_path)},
+        wheel_hook_requirements(
+            ["setuptools", "pkg @ file:///vendor/p\udce9kg-1.0-py3-none-any.whl"]
         )
 
-        (tmp_path / "pyproject.toml").write_text(
-            '[build-system]\nrequires = []\nbuild-backend = "setuptools.build_meta"\n',
-            encoding="utf-8",
-        )
-
-        project = MagicMock()
-        project.get_requires_for_build.return_value = [
-            "setuptools",
-            "pkg @ file:///vendor/p\udce9kg-1.0-py3-none-any.whl",
-        ]
-
-        with (
-            patch(
-                "nab_project._build.runner.build.ProjectBuilder.from_isolated_env",
-                return_value=project,
-            ),
-            pytest.raises(BuildBackendError) as excinfo,
-        ):
+        with pytest.raises(BuildBackendError) as excinfo:
             run_build_backend(tmp_path, config=config)
 
         message = str(excinfo.value)
@@ -1031,6 +1161,19 @@ class TestParseMetadata:
 
         with pytest.raises(BuildBackendError, match="no METADATA file"):
             _parse_metadata(tmp_path / "DOES-NOT-EXIST")
+
+    def test_metadata_outside_output_dir_retains_path(self, tmp_path: Path) -> None:
+        path = tmp_path / "external.dist-info" / "METADATA"
+        path.parent.mkdir()
+        path.write_text("Name: external\n", encoding="utf-8")
+
+        with pytest.raises(BuildBackendError) as caught:
+            runner_mod._parse_metadata(path, output_dir=tmp_path / "output")
+
+        assert str(caught.value) == (
+            f"backend METADATA at {path} is missing Name or Version "
+            "(Name='external', Version=None)"
+        )
 
     def test_unreadable_metadata_reports_the_errno(
         self,
@@ -3604,7 +3747,9 @@ class TestNabBuildEnvLifecycle:
             side_effect=KeyboardInterrupt if cancel else None,
         )
         monkeypatch.setattr(runner_mod, "_extract_metadata_dir", extract)
-        monkeypatch.setattr(runner_mod, "_parse_metadata", lambda _path: metadata)
+        monkeypatch.setattr(
+            runner_mod, "_parse_metadata", lambda _path, **_kwargs: metadata
+        )
 
         if cancel:
             with pytest.raises(KeyboardInterrupt):

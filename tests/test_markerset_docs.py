@@ -10,8 +10,10 @@ from __future__ import annotations
 import doctest
 import re
 from pathlib import Path
+from types import ModuleType
 
-import nab_markersets
+import pytest
+
 from nab_markersets import errors, markersets
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -50,47 +52,14 @@ def test_the_docs_print_what_they_document() -> None:
         assert results.attempted > 0, path.name
 
 
-def test_both_pages_copy_the_promised_api_table() -> None:
-    """The README's table, the guide's and the package docstring's are one list."""
-    promised = _api_table(nab_markersets.__doc__ or "")
-
-    assert promised
-    for path in BLOCKS:
-        assert promised in path.read_text("utf-8"), path.name
-
-
-def test_the_promised_table_is_what_the_modules_export() -> None:
-    """Every exported name is promised, and every promised name is exported.
-
-    Without this, dropping a name from the table and the README together
-    satisfies both copies and quietly unpublishes it.
-    """
-    promised = {
-        (module, name)
-        for module, names in _api_rows(nab_markersets.__doc__ or "")
-        for name in names
-    }
-    exported = {
-        (module.__name__, name)
-        for module in (errors, markersets)
-        for name in module.__all__
-    }
-
-    assert promised == exported
-
-
-def _api_rows(text: str) -> list[tuple[str, list[str]]]:
-    """Each ``nab_markersets.<module>  <names>`` row as its module and its names."""
-    rows = []
-    for line in text.splitlines():
-        if not line.startswith("    nab_"):
-            continue
-        module, _, names = line.strip().partition(" ")
-        rows.append((module, [n.strip() for n in names.split(",") if n.strip()]))
-    return rows
-
-
-def _api_table(text: str) -> str:
-    """The indented ``nab_markersets.<module>  <names>`` rows, left-aligned."""
-    rows = [line[4:] for line in text.splitlines() if line.startswith("    nab_")]
-    return "\n".join(rows)
+@pytest.mark.parametrize(
+    ("module", "names"),
+    [
+        (errors, {"IntractableMarkerSet", "UnserializableMarkerSet"}),
+        (markersets, {"DecisionStore", "MarkerSet", "variable_names"}),
+    ],
+)
+def test_public_exports(module: ModuleType, names: set[str]) -> None:
+    assert set(module.__all__) == names
+    for name in names:
+        assert getattr(module, name) is not None

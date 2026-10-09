@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .errors import ResolutionError
+from .errors import ResolutionError, ResolutionStalledError
 from .incompat_index import add_incompatibility
 from .partial_solution import PartialSolution
 from .report import format_error, prior_cause
@@ -201,7 +201,9 @@ def conflict_resolution(
         "a resolver bug rather than an unsatisfiable requirement. Stalled on "
         f"{current_incompatibility!r}"
     )
-    raise ResolutionError(stalled_message, incompatibility=current_incompatibility)
+    raise ResolutionStalledError(
+        stalled_message, incompatibility=current_incompatibility
+    )
 
 
 def update_culprit_counts(
