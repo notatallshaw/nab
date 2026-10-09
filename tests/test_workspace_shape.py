@@ -13,13 +13,17 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import os
 import re
+import shutil
+import subprocess
 import sys
 from itertools import chain
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
 import tomli
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -324,15 +328,51 @@ def test_nox_gates_every_released_package_at_full_coverage() -> None:
     assert gated == set(MODULES)
 
 
-def test_ci_runs_every_nox_workspace() -> None:
-    """CI runs ``nox -s tests`` unfiltered, which runs every workspace.
-
-    A filtered run still passes, leaving the packages the other checks cover
-    unmeasured.
-    """
+def _workflow_arguments(job: str, executable: str, **environment: str) -> list[str]:
+    """Execute a workflow's shell block with its external command replaced by a recorder."""
     text = TEST_WORKFLOW.read_text(encoding="utf-8")
+    match = re.search(rf"\n  {job}:\n(.*?)(?=\n  [\w-]+:\n|\Z)", text, re.DOTALL)
+    assert match is not None
+    blocks = re.findall(r"(?m)^        run: \|\n((?:          .*\n)+)", match.group(1))
+    assert len(blocks) == 1
+    script = "\n".join(
+        line.removeprefix("          ") for line in blocks[0].splitlines()
+    )
+    bash = shutil.which("bash")
+    assert bash is not None
+    command = executable + "() { printf '%s\\n' \"$@\"; };\n" + script
+    result = subprocess.check_output(  # noqa: S603 - executes the CI shell command with its external command replaced
+        [bash, "-c", command], env={**os.environ, **environment}, text=True
+    )
+    return result.splitlines()
 
-    assert re.search(r"^\s*run: nox -s tests$", text, re.MULTILINE)
+
+@pytest.mark.parametrize(
+    "selected", ["resolver provider project umbrella", "project umbrella", "umbrella"]
+)
+def test_ci_passes_selected_workspaces_to_nox(selected: str) -> None:
+    assert _workflow_arguments("test", "nox", WORKSPACES=selected) == [
+        "-s",
+        "tests",
+        "--",
+        *selected.split(),
+    ]
+
+
+def test_ci_passes_selected_paths_to_properties() -> None:
+    selected = "nab-provider/tests nab-project/tests nab-index/tests tests"
+    assert _workflow_arguments("property-tests", "python", TEST_PATHS=selected) == [
+        "-m",
+        "pytest",
+        "-n",
+        "auto",
+        "--dist",
+        "worksteal",
+        "-m",
+        "property",
+        "--ignore=nab-resolver/tests/property/test_crosshair_ranges.py",
+        *selected.split(),
+    ]
 
 
 def test_coverage_measures_every_released_package() -> None:
