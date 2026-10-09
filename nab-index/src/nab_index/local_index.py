@@ -24,6 +24,7 @@ import errno
 import os
 import re
 import stat
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 from urllib.parse import unquote, urljoin, urlparse, urlsplit
@@ -532,18 +533,22 @@ def _scan_flat_wheelhouse(
             if (version := zip_sdist_version(entry.name, canonical)) is not None:
                 zip_sdists.add(version)
             continue
-        requires_python = _flat_requires_python(entry, canonical)
         record = _make_record(
             entry.name,
             entry.as_uri(),
             entry,
-            requires_python,
+            None,
             (),
             canonical,
             has_metadata=False,
         )
         if record is not None:
-            files.append(record)
+            requires_python = (
+                _read_wheel_requires_python(entry, canonical)
+                if isinstance(record, WheelFile)
+                else _read_sdist_requires_python(entry)
+            )
+            files.append(replace(record, requires_python=requires_python))
     return _ScanResult(
         files,
         unreadable=bool(zip_sdists),
@@ -552,19 +557,6 @@ def _scan_flat_wheelhouse(
         named_files=False,
         zip_sdists=frozenset(zip_sdists),
     )
-
-
-def _flat_requires_python(entry: Path, canonical: str) -> str | None:
-    """Read a flat-wheelhouse dist's ``Requires-Python``; not in the filename."""
-    wheel = _parse_wheel_filename(entry.name)
-    if wheel is not None:
-        if wheel[0] != canonical:
-            return None
-        return _read_wheel_requires_python(entry, canonical)
-    sdist = _parse_sdist_filename(entry.name)
-    if sdist is not None and sdist[0] == canonical:
-        return _read_sdist_requires_python(entry)
-    return None
 
 
 def _read_sdist_requires_python(sdist_path: Path) -> str | None:
