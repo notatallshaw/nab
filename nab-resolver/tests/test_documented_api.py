@@ -23,7 +23,13 @@ assert loaded == [], f"imported submodules: {loaded}"
 
 
 SUPPORTED_API = {
-    "nab_resolver.errors": {"ResolutionError"},
+    "nab_resolver.errors": {
+        "ResolutionError",
+        "ResolutionInvariantError",
+        "ResolutionLimitError",
+        "ResolutionStalledError",
+        "ResolutionTerminatedError",
+    },
     "nab_resolver.ranges": {"Range"},
     "nab_resolver.resolver": {
         "BaseProvider",
@@ -80,9 +86,10 @@ def test_supported_names_are_importable() -> None:
 
 def test_public_exports_are_accounted_for() -> None:
     supported = set().union(*SUPPORTED_API.values())
-    for module in SUPPORTED_API:
-        declared = importlib.import_module(module).__all__
-        assert set(declared) - supported == EXTRA_EXPORTS.get(module, set())
+    for module, names in SUPPORTED_API.items():
+        declared = set(importlib.import_module(module).__all__)
+        assert names <= declared
+        assert declared - supported == EXTRA_EXPORTS.get(module, set())
 
 
 def test_package_root_exports_nothing() -> None:
