@@ -22,6 +22,12 @@ Ruff and the docs toolchain live in their own hatch environments, reached throug
 
 ## Running the tests
 
+Test executable behavior. Do not assert wording in docstrings, comments, Markdown pages or READMEs,
+or compare copies of prose. Documentation-only corrections need no regression test. When removing a
+wording check, inspect existing behavioral coverage and add a focused test only for a missing
+contract. Prove new behavioral tests fail under a relevant code mutation. Keep executable examples,
+doctests, documentation builds and tests of documentation generators.
+
 The default suite covers every module under `nab_resolver`, `nab_markersets`, `nab_provider`,
 `nab_project`, `nab_index`, and `nab`:
 

@@ -8,11 +8,8 @@ from __future__ import annotations
 
 import io
 import re
-import textwrap
 from contextlib import redirect_stdout
 from pathlib import Path
-
-import nab_resolver
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GUIDE = REPO_ROOT / "docs" / "how-to" / "embed-the-resolver.md"
@@ -56,17 +53,6 @@ def _example() -> list[tuple[str, str | None]]:
     ]
 
 
-def _promised_api_table() -> str:
-    """The API table lifted out of ``nab_resolver.__doc__``, left-aligned.
-
-    The rows and their wrapped continuations are the docstring's only indented
-    block, so the slice runs from the first indented line to the last.
-    """
-    lines = (nab_resolver.__doc__ or "").splitlines()
-    indented = [index for index, line in enumerate(lines) if line.startswith(" ")]
-    return textwrap.dedent("\n".join(lines[indented[0] : indented[-1] + 1]))
-
-
 def test_the_guide_prints_what_it_documents() -> None:
     """Every block runs, and each documented output is the one it produced.
 
@@ -88,17 +74,3 @@ def test_the_guide_prints_what_it_documents() -> None:
             assert printed.getvalue() == expected, (
                 f"{GUIDE.name} python block {position} no longer prints this output"
             )
-
-
-def test_the_guide_copies_the_promised_api_table() -> None:
-    """The page's supported-API table is the package docstring's, verbatim."""
-    tables = [
-        body
-        for language, body in _fences()
-        if language == "text" and body.startswith("nab_resolver.")
-    ]
-
-    assert len(tables) == 1, f"{GUIDE.name} carries {len(tables)} API tables, want 1"
-    assert tables[0].rstrip("\n") == _promised_api_table(), (
-        f"{GUIDE.name}'s API table is not the one nab_resolver.__doc__ promises"
-    )

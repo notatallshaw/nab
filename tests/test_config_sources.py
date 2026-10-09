@@ -945,7 +945,7 @@ class TestRenderers:
         assert "rejected" in out
         assert "project-scope" in out
 
-    def test_render_explain_docstring_names_every_status(self, tmp_path: Path) -> None:
+    def test_render_explain_emits_every_status(self, tmp_path: Path) -> None:
         # One source per status: the user file is rejected (project-scope
         # key), the pyproject binding is shadowed, the CLI wins, and a
         # narrowed matrix marks the file table it was laid over.
@@ -969,10 +969,8 @@ class TestRenderers:
             eff, "resolution", include_rejected=True
         ) + render_explain(eff, "matrix")
 
-        doc = render_explain.__doc__ or ""
         for status in ("winner", "shadowed", "rejected", "merged"):
             assert status in printed, status
-            assert f"``{status}``" in doc, status
 
 
 class TestReproducibilityNotice:

@@ -1,4 +1,4 @@
-"""Check nab's entry journeys and user-facing policy claims."""
+"""Build-policy routing, parsed examples and documentation links."""
 
 from __future__ import annotations
 
@@ -29,9 +29,7 @@ TUTORIAL = ROOT / "docs" / "tutorial" / "getting-started.md"
 USE_THE_LOCK = ROOT / "docs" / "how-to" / "use-the-lock.md"
 ARCHIVE_SOURCES = ROOT / "docs" / "how-to" / "archive-sources.md"
 VCS_GUIDE = ROOT / "docs" / "how-to" / "vcs.md"
-BUILD_POLICY_REFERENCE = ROOT / "docs" / "reference" / "build-policy.md"
 
-ENTRY_PAGES = (README, TUTORIAL)
 SITE_PAGES = (INDEX, TUTORIAL, USE_THE_LOCK, ARCHIVE_SOURCES)
 
 PINNED_URL = f"git+https://github.com/myorg/pkg.git@{'0' * 40}"
@@ -42,14 +40,6 @@ TABLE_KINDS = {
     "archive-sources": "archive",
 }
 
-WORKSPACE_MEMBERS = "workspace member"
-BUILD_ROUTE_PHRASES = {
-    "[[tool.nab.local-sources]]": "local",
-    WORKSPACE_MEMBERS: "local",
-    "vcs clones": "vcs",
-    "archive sources": "archive",
-}
-INDEX_SDIST_PHRASE = "remote pypi sdists"
 
 DYNAMIC_PYPROJECT = '[project]\nname = "pkg"\ndynamic = ["dependencies"]\n'
 INDEX_SDIST = SdistFile(
@@ -68,21 +58,8 @@ _FENCE = re.compile(
     r"^```(?P<language>\w*)\n(?P<body>.*?)^```", re.DOTALL | re.MULTILINE
 )
 _MARKDOWN_LINK = re.compile(r"\[[^]]+\]\((?P<target>[^)#]+\.md)(?:#[^)]*)?\)")
-_REFERENCE_LINK = re.compile(r"\[[^]]+\]\[(?P<label>[^]]+)\]")
-_REFERENCE_DEFINITION = re.compile(
-    r"^\[(?P<label>[^]]+)\]: (?P<target>\S+)$", re.MULTILINE
-)
 _STABLE_DOCS_ROOT = "https://nab.readthedocs.io/en/stable/"
 _STABLE_DOCS_LINK = re.compile(rf"{re.escape(_STABLE_DOCS_ROOT)}[^)\s>]*")
-_WHY_DOCS_TARGETS = {
-    f"{_STABLE_DOCS_ROOT}reference/build-policy.html",
-    f"{_STABLE_DOCS_ROOT}how-to/archive-sources.html",
-    f"{_STABLE_DOCS_ROOT}how-to/vcs.html",
-    f"{_STABLE_DOCS_ROOT}reference/configuration.html#overrides",
-    f"{_STABLE_DOCS_ROOT}reference/configuration.html#the-resolve-environment",
-    f"{_STABLE_DOCS_ROOT}reference/lockfile.html",
-    f"{_STABLE_DOCS_ROOT}reference/lockfile.html#checking-the-lock-in-ci",
-}
 
 
 def _text(path: Path) -> str:
@@ -138,16 +115,6 @@ def _fenced_blocks(text: str, language: str) -> list[str]:
     ]
 
 
-def _blocks(path: Path, language: str) -> list[str]:
-    """Return fenced blocks of one language in page order."""
-    return _fenced_blocks(_text(path), language)
-
-
-def _commands(path: Path) -> str:
-    """Return shell blocks with line continuations joined."""
-    return "\n".join(re.sub(r"\\\n\s*", " ", block) for block in _blocks(path, "bash"))
-
-
 def _documented_vcs_default() -> VcsConfig:
     """Parse the default VCS block through nab's configuration registry."""
     blocks = _fenced_blocks(_section(VCS_GUIDE, "Default posture"), "toml")
@@ -167,50 +134,6 @@ def test_documented_vcs_default_refuses_a_pinned_url() -> None:
     """The documented default refuses even a commit-pinned URL."""
     with pytest.raises(UnsupportedVcsError, match=r'vcs\.policy is "block"'):
         admit_vcs_url(PINNED_URL, _documented_vcs_default())
-
-
-def _build_policy_sections() -> dict[BuildPolicy, str]:
-    """Return the three policy sections keyed by their runtime values."""
-    return {
-        policy: _section(BUILD_POLICY_REFERENCE, policy.value) for policy in BuildPolicy
-    }
-
-
-def _before(text: str, marker: str, *, section: str) -> str:
-    """Return text before a required marker."""
-    normalized = re.sub(r"\s+", " ", text.casefold())
-    body, separator, _ = normalized.partition(marker)
-    assert separator, f"the {section} section has no {marker!r} boundary"
-    return body
-
-
-def _documented_build_claims() -> dict[BuildPolicy, str]:
-    """Return only each section's positive backend-permission claims."""
-    sections = _build_policy_sections()
-    never = re.sub(r"\s+", " ", sections[BuildPolicy.NEVER].casefold())
-    assert "runs no build backend" in never
-
-    return {
-        BuildPolicy.NEVER: "",
-        BuildPolicy.BUILD_LOCAL: _before(
-            sections[BuildPolicy.BUILD_LOCAL],
-            "remote pypi sdists",
-            section=BuildPolicy.BUILD_LOCAL.value,
-        ),
-        BuildPolicy.BUILD_REMOTE: _before(
-            sections[BuildPolicy.BUILD_REMOTE],
-            "a backend failure",
-            section=BuildPolicy.BUILD_REMOTE.value,
-        ),
-    }
-
-
-def _documented_build_routes() -> dict[BuildPolicy, frozenset[str]]:
-    """Return the source routes each section says start building."""
-    return {
-        policy: frozenset(phrase for phrase in BUILD_ROUTE_PHRASES if phrase in body)
-        for policy, body in _documented_build_claims().items()
-    }
 
 
 def _admitted_kinds(policy: BuildPolicy, tree: Path) -> frozenset[str]:
@@ -253,30 +176,17 @@ def admitted_additions(
     return additions
 
 
-def test_build_policy_sections_name_each_source_route_the_level_adds(
+def test_build_policy_admits_source_routes(
     admitted_additions: dict[BuildPolicy, frozenset[str]],
 ) -> None:
-    """The documented route additions match the build-policy behavior."""
-    expected = {
-        policy: frozenset(
-            phrase for phrase, kind in BUILD_ROUTE_PHRASES.items() if kind in kinds
-        )
-        for policy, kinds in admitted_additions.items()
+    assert admitted_additions == {
+        BuildPolicy.NEVER: frozenset(),
+        BuildPolicy.BUILD_LOCAL: frozenset({"local"}),
+        BuildPolicy.BUILD_REMOTE: frozenset({"vcs", "archive"}),
     }
-    assert _documented_build_routes() == expected
 
 
-def test_every_source_table_the_registry_defines_is_documented() -> None:
-    """The build-policy reference names every registered source table."""
-    registered = {option.key for option in OPTIONS if option.key.endswith("-sources")}
-    assert set(TABLE_KINDS) == registered
-
-    text = _text(BUILD_POLICY_REFERENCE)
-    documented = {key for key in TABLE_KINDS if f"[[tool.nab.{key}]]" in text}
-    assert documented == registered
-
-
-def test_workspace_member_takes_its_documented_build_route(
+def test_workspace_member_uses_local_build_policy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Workspace discovery reaches the local-source build policy."""
@@ -311,12 +221,7 @@ def test_workspace_member_takes_its_documented_build_route(
         assert materialized.metadata is BUILT
         admitting.add(policy)
 
-    documented_kind = BUILD_ROUTE_PHRASES[WORKSPACE_MEMBERS]
-    assert admitting == {
-        policy
-        for policy in BuildPolicy
-        if documented_kind in _admitted_kinds(policy, member)
-    }
+    assert admitting == {BuildPolicy.BUILD_LOCAL, BuildPolicy.BUILD_REMOTE}
 
 
 @pytest.fixture
@@ -342,16 +247,10 @@ def index_sdist_builders(monkeypatch: pytest.MonkeyPatch) -> frozenset[BuildPoli
     return frozenset(building)
 
 
-def test_only_the_level_that_builds_index_sdists_names_them(
+def test_only_build_remote_builds_index_sdists(
     index_sdist_builders: frozenset[BuildPolicy],
 ) -> None:
-    """The index-sdist claim belongs to exactly the policies that build one."""
-    naming = {
-        policy
-        for policy, body in _documented_build_claims().items()
-        if INDEX_SDIST_PHRASE in body
-    }
-    assert naming == index_sdist_builders
+    assert index_sdist_builders == {BuildPolicy.BUILD_REMOTE}
 
 
 def test_readme_project_is_valid_toml() -> None:
@@ -365,16 +264,6 @@ def test_readme_project_is_valid_toml() -> None:
         "version": "0.1.0",
         "dependencies": ["starlette<=0.36.0", "fastapi<=0.115.2"],
     }
-
-
-def test_readme_routes_each_reason_to_maintained_documentation() -> None:
-    """The value proposition links to the pages that define its contracts."""
-    definitions = dict(_REFERENCE_DEFINITION.findall(_text(README)))
-    section = _section(README, "Why nab?")
-    labels = _REFERENCE_LINK.findall(section)
-
-    assert set(labels) <= definitions.keys()
-    assert {definitions[label] for label in labels} == _WHY_DOCS_TARGETS
 
 
 def test_readme_stable_documentation_links_exist_locally() -> None:
@@ -391,86 +280,6 @@ def test_readme_stable_documentation_links_exist_locally() -> None:
             missing.append(url)
 
     assert missing == []
-
-
-@pytest.mark.parametrize("page", ENTRY_PAGES, ids=lambda path: path.name)
-def test_entry_page_completes_the_first_lock(page: Path) -> None:
-    """Each entry path locks first, then hands the result to pip."""
-    commands = _commands(page)
-    lock = "nab lock pyproject.toml"
-    install = "python -m pip install -r pylock.toml"
-
-    assert lock in commands
-    assert install in commands
-    assert commands.index(lock) < commands.index(install)
-
-
-@pytest.mark.parametrize("page", ENTRY_PAGES, ids=lambda path: path.name)
-def test_entry_page_names_pip_pylock_support(page: Path) -> None:
-    """The version floor and experimental boundary sit beside the command."""
-    text = _text(page).lower()
-    assert "pip 26.1" in text
-    assert "pylock.toml" in text
-    assert "experimental" in text
-
-
-def test_lock_guide_carries_each_install_and_ci_workflow() -> None:
-    """The guide carries the pylock, hashed, wheelhouse, and CI commands."""
-    commands = _commands(USE_THE_LOCK)
-    expected = (
-        "python -m pip install -r pylock.toml",
-        "nab lock --format requirements pyproject.toml",
-        "python -m pip install --require-hashes -r requirements.txt",
-        "python -m pip download --only-binary=:all: --require-hashes",
-        "--dest wheelhouse -r requirements.txt",
-        "python -m pip install --no-index --find-links wheelhouse",
-        "--require-hashes -r requirements.txt",
-        "nab lock --locked pyproject.toml",
-    )
-    for command in expected:
-        assert command in commands
-
-
-def test_lock_guide_scopes_pip_selection() -> None:
-    """Pip's current pylock selector boundary is documented."""
-    text = " ".join(_text(USE_THE_LOCK).split()).lower()
-    for phrase in (
-        "pip 26.1",
-        "current interpreter and platform",
-        "default dependency groups",
-        "no extras",
-    ):
-        assert phrase in text
-
-
-def test_lock_guide_does_not_call_nab_download_lock_consumption() -> None:
-    """The guide distinguishes a fresh download resolve from consuming a file."""
-    text = _text(USE_THE_LOCK)
-    assert "resolves the project again" in text
-    assert "does not read `pylock.toml`" in text
-
-
-def test_archive_guide_locks_before_installing() -> None:
-    """The archive task reaches a consumed lock after declaring its source."""
-    commands = _commands(ARCHIVE_SOURCES)
-    lock = "nab lock pyproject.toml"
-    install = "python -m pip install -r pylock.toml"
-
-    assert lock in commands
-    assert install in commands
-    assert commands.index(lock) < commands.index(install)
-
-
-def test_index_carries_the_project_boundary() -> None:
-    """A reader can judge the CLI before choosing a task."""
-    text = _text(INDEX)
-    for phrase in (
-        "nab is experimental",
-        "CPython 3.10 and newer",
-        "Neither command installs packages",
-        "Project-root `name @ git+...` requirements are not resolved yet",
-    ):
-        assert phrase in text
 
 
 @pytest.mark.parametrize("page", SITE_PAGES, ids=lambda path: path.name)
