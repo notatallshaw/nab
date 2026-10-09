@@ -8,7 +8,7 @@ from __future__ import annotations
 import enum
 from typing import TYPE_CHECKING, Any
 
-from ._compat import override
+from ..._compat import override
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence

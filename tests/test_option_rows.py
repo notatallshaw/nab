@@ -16,9 +16,9 @@ from typing import Literal, NewType
 
 import pytest
 
-from nab.optiondefs import GLOBAL, Kind, Scope, Tokens, VType
-from nab.optionlower import lower, table_rows
-from nab.optionrows import (
+from nab._cli.definition.lower import lower, table_rows
+from nab._cli.definition.model import GLOBAL, Kind, Scope, Tokens, VType
+from nab._cli.definition.rows import (
     Count,
     Eager,
     Item,
@@ -31,13 +31,12 @@ from nab.optionrows import (
     Row,
     Star,
     Switch,
-    Table,
     Tri,
     Value,
     Verb,
-    rows,
 )
-from nab.optiontypes import enum_label, shape, type_argument
+from nab._cli.definition.tables import Table, rows
+from nab._cli.definition.types import enum_label, shape, type_argument
 
 
 def _parse(value: object, _where: str) -> object:

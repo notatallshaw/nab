@@ -1,4 +1,4 @@
-"""Define the typed row classes used by :mod:`nab.optiontable`.
+"""Define the typed row classes used by :mod:`nab._cli.definition.options`.
 
 Descriptor overloads exist only during type checking. Runtime lowering still sees
 the row objects on each table class.
@@ -8,35 +8,29 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
-from ._compat import override
+from ..._compat import override
 
 if TYPE_CHECKING:
     import enum
     from collections.abc import Callable
 
-    from .optiondefs import Scope
+    from .model import Scope
 
 T = TypeVar("T")
 C = TypeVar("C")
 
 # The marker for a field the row does not write.  It is typed Any so an
 # omitted default checks against any T while a written one is checked;
-# nab.optionlower turns it into the Opt sentinel or into None.
+# nab._cli.definition.lower turns it into the Opt sentinel or into None.
 OMITTED: Any = object()
 
 
 class Layer(Generic[C]):
-    """The configuration ladder's half of a row, in the value's own type.
+    """Configuration hooks and a built-in default of type ``C``.
 
-    ``C`` is what a source parses to and what rung 0 holds, so a ``parse``
-    hook that cannot produce ``rdefault`` is a checker error rather than a
-    wrong report at run time.  Nothing reads the parameter back, unlike a
-    row's own, so the subscript hands the class straight back and builds no
-    alias.  ``parse`` and ``render`` are the hooks the ladder reads a source
-    with and prints the winner with.  ``sample`` is a token the row accepts,
-    written down for a value whose type names no token set of its own, and
-    ``label`` overrides the printed type where the type parameter cannot
-    spell it.
+    The type parameter checks the hooks and default; runtime lowering does
+    not read it. ``sample`` supplies a token for free-form values, and
+    ``label`` overrides the inferred display type.
     """
 
     __slots__ = ("label", "parse", "rdefault", "render", "sample")
@@ -419,87 +413,3 @@ class Key(Row):
     ) -> None:
         """Record one row; the table names it and fills its defaults."""
         super().__init__(help=help, docs=docs, key=layer, deprecated=deprecated)
-
-
-class _Body(dict[str, object]):
-    """A class body that refuses a name bound twice where either is a row.
-
-    A row rebound to something that is not one would leave the table
-    without it and raise nothing, so the guard reads both sides.
-    """
-
-    @override
-    def __setitem__(self, name: str, value: object) -> None:
-        """Bind one name, raising when a row stands on either side of it."""
-        if name in self and (isinstance(value, Row) or isinstance(self[name], Row)):
-            msg = f"{name} is declared twice in one table"
-            raise ValueError(msg)
-        super().__setitem__(name, value)
-
-
-class _TableMeta(type):
-    """The metaclass whose prepared body catches a name declared twice."""
-
-    @override
-    @classmethod
-    def __prepare__(
-        cls, name: str, bases: tuple[type, ...], /, **kwds: object
-    ) -> dict[str, object]:
-        """Return the mapping the class body writes its names into."""
-        return _Body()
-
-
-class Table(metaclass=_TableMeta):
-    """A group of rows that share a command set, a scope and a page.
-
-    The class keywords are the table's defaults, and a row overrides the
-    command set with ``on=`` or the page with ``docs=`` where it differs.
-    ``under`` names the configuration key the rows spell one key each of,
-    and ``needs`` the ones a command line has to give when it spells any
-    and no file declares the table.
-    """
-
-    _on: tuple[str, ...] = ()
-    _scope: Scope | None = None
-    _docs = ""
-
-    @override
-    def __init_subclass__(
-        cls,
-        *,
-        on: tuple[str, ...] = (),
-        scope: Scope | None = None,
-        docs: str = "",
-        under: str = "",
-        needs: tuple[str, ...] = (),
-    ) -> None:
-        """Apply the table's command set, scope, page and parent key to its rows."""
-        super().__init_subclass__()
-        cls._on = on
-        cls._scope = scope
-        cls._docs = docs
-
-        if needs and not under:
-            msg = f"{cls.__name__} declares needs without under"
-            raise ValueError(msg)
-
-        declared = {row.name for row in cls.__dict__.values() if isinstance(row, Row)}
-        unknown = [name for name in needs if name not in declared]
-        if unknown:
-            msg = f"{cls.__name__} needs {unknown[0]!r}, which it does not declare"
-            raise ValueError(msg)
-
-        for row in cls.__dict__.values():
-            if isinstance(row, Row):
-                # A key with no command line takes no command set.
-                if row.kind:
-                    row.on = row.on or on
-                row.scope = scope
-                row.docs = row.docs or docs
-                row.under = under
-                row.needed = row.name in needs
-
-
-def rows(table: type[Table]) -> list[Row]:
-    """Return one table's rows, in declaration order."""
-    return [row for row in table.__dict__.values() if isinstance(row, Row)]

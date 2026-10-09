@@ -1,7 +1,7 @@
 """The option table's own rules, proved on tables planted to break them.
 
 Every rule runs against a fixture table rather than against
-:data:`nab.optiontable.ALL`, so a case is a few local rows and never a
+:data:`nab._cli.definition.options.ALL`, so a case is a few local rows and never a
 mutation of a shipped module.  The declared table is checked once, at the
 top, for the shape the rest of the CLI derives from it.
 """
@@ -15,12 +15,12 @@ from typing import Any
 import pytest
 import tomli
 
-from nab import optiondefs
+from nab._cli.definition import model as optiondefs
+from nab._cli.definition.model import COMMANDS, GLOBAL, UNSET, Kind, Opt, Scope, VType
+from nab._cli.definition.options import ALL, TABLES
+from nab._cli.definition.tables import rows
 from nab.config import hooks, values
 from nab.config.ladder import SourceKind, docs_path, docs_url
-from nab.optiondefs import COMMANDS, GLOBAL, UNSET, Kind, Opt, Scope, VType
-from nab.optionrows import rows
-from nab.optiontable import ALL, TABLES
 from nab_provider import policy
 
 _PYPROJECT = Path(__file__).resolve().parents[1] / "pyproject.toml"
@@ -291,7 +291,7 @@ class TestTheDeclaredTable:
     def test_dist_policy_is_the_one_rung_zero_outside_its_own_tokens(self) -> None:
         """Its rung 0 is a policy and whether the flag was written.
 
-        That is the row the rung-0 check in :mod:`nab.optionlower` steps
+        That is the row the rung-0 check in :mod:`nab._cli.definition.lower` steps
         over, and it steps over no other.
         """
         compound = [

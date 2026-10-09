@@ -15,6 +15,7 @@ from typing import Any, NamedTuple
 
 import pytest
 
+from nab._cli.definition.model import Kind, Opt, Scope, VType
 from nab.config import hooks, ladder, model, values
 from nab.config.ladder import (
     EffectiveValue,
@@ -27,7 +28,6 @@ from nab.config.ladder import (
 from nab.config.model import EnvironmentConfig, NabProjectConfig
 from nab.config.subflags import CliKey, CliTable
 from nab.config.values import MatrixConfig
-from nab.optiondefs import Kind, Opt, Scope, VType
 from nab_project import conflicts, inputs, lockfile
 from nab_project.conflicts import (
     ConflictFork,
@@ -726,7 +726,7 @@ def test_an_undeclared_name_cannot_be_set(case: Case) -> None:
 def _comparable(instance: ValueType) -> object:
     """``instance``, or a field map when it holds a declaration row.
 
-    ``EffectiveValue`` holds an :class:`~nab.optiondefs.Opt`, which carries no
+    ``EffectiveValue`` holds an :class:`~nab._cli.definition.model.Opt`, which carries no
     equality of its own, so a copied one compares equal to nothing.  Reading
     its slots out compares the row a copy produced field by field; every other
     case compares with :meth:`~nab_project.value.ValueType.__eq__`.

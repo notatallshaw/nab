@@ -1,4 +1,4 @@
-"""Lower declared rows into :class:`nab.optiondefs.Opt` values.
+"""Lower declared rows into :class:`nab._cli.definition.model.Opt` values.
 
 Checks that need both the row declaration and inferred value shape live here.
 """
@@ -9,8 +9,8 @@ import enum
 from pathlib import Path
 from typing import Any
 
-from .optiondefs import UNSET, Kind, Opt, Tokens, VType
-from .optionrows import (
+from .model import UNSET, Kind, Opt, Tokens, VType
+from .rows import (
     OMITTED,
     Item,
     Items,
@@ -18,12 +18,11 @@ from .optionrows import (
     Pairs,
     Row,
     Star,
-    Table,
     Tri,
     Verb,
-    rows,
 )
-from .optiontypes import Shape, shape, type_argument
+from .tables import Table, rows
+from .types import Shape, shape, type_argument
 
 # What a row with no value at all reads as: a flag, a counter or a key.
 _NO_VALUE = Shape("", (), "", nullable=False)

@@ -9,7 +9,7 @@ generator to run and no page to check.
 ``--check`` alone only proves that a file agrees with the generator, so
 it passes on a generator that maps the declaration wrongly.  The cases
 below restate the mapping and compare the shipped tables against
-:mod:`nab.optiondefs` directly, which is what makes a wrong literal in
+:mod:`nab._cli.definition.model` directly, which is what makes a wrong literal in
 ``gen_cli.py`` visible.
 """
 
@@ -25,18 +25,18 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from nab import optiondefs
 from nab._cli import parse as parse_module
 from nab._cli import spec
+from nab._cli.definition import model as optiondefs
+from nab._cli.definition.options import ALL
 from nab._cli.parse import Row, build
 from nab.config import hooks, registry, values
-from nab.optiontable import ALL
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from types import ModuleType
 
-    from nab.optiondefs import Opt
+    from nab._cli.definition.model import Opt
 
 _ROOT = Path(__file__).resolve().parents[1]
 _GENERATOR = _ROOT / "tasks" / "gen_cli.py"

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from ..optiondefs import Opt, Tokens
+from .._cli.definition.model import Opt, Tokens
 from .registry import SUB_ROWS
 from .values import CliTableError
 
