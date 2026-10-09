@@ -116,13 +116,16 @@ def test_messages_keep_base_requirements_separate_from_extra_sources() -> None:
         python_version="3.11", spec=PlatformSpec("linux_x86_64")
     )
     records = (
-        DependencyDeclaration("child~=2.0", "~=2.0", name="child"),
+        DependencyDeclaration(
+            "child~=2.0", "~=2.0", parent_name="parent", dependency_name="child"
+        ),
         DependencyDeclaration(
             'child[other]<2.5; extra == "feature" or extra == "other"',
             "<2.5",
-            name="child",
-            extras=("other",),
-            activated_by=("feature", "other"),
+            parent_name="parent",
+            dependency_name="child",
+            dependency_extras=("other",),
+            required_for_parent_extras=("feature", "other"),
         ),
     )
     result = ResolveResult(

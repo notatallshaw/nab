@@ -112,7 +112,7 @@ def _text_requirements(
         return None
     return {
         parent: {
-            child: tuple(item.text for item in items)
+            child: tuple(item.requirement_text for item in items)
             for child, items in children.items()
         }
         for parent, children in data.items()
@@ -333,10 +333,10 @@ def test_records_are_detached_immutable_values(tmp_path: Path) -> None:
     assert data is not None
     record = data["parent"]["child-name"][0]
     assert isinstance(record, DependencyDeclaration)
-    assert record.specifier == "~=2.0"
-    assert record.text == 'child-name~=2.0; python_version >= "3.10"'
+    assert record.dependency_specifier == "~=2.0"
+    assert record.requirement_text == 'child-name~=2.0; python_version >= "3.10"'
     with pytest.raises(FrozenInstanceError):
-        record.specifier = "==0"
+        record.dependency_specifier = "==0"
     again = _resolve(tmp_path)
     assert _text_requirements(again) == _text_requirements(selected)
 
@@ -357,13 +357,17 @@ def test_matching_parent_extras_are_reported(
     data = selected.lock.dependency_requirements
     assert data is not None
     records = data["parent"]["child-name"]
-    assert records[0].name == "child-name"
-    assert records[0].extras == ()
-    assert records[0].activated_by == ()
-    assert records[0].marker == 'python_version >= "3.10"'
+    assert records[0].dependency_name == "child-name"
+    assert records[0].dependency_extras == ()
+    assert records[0].required_for_parent_extras == ()
+    assert records[0].required_without_parent_extras
+    assert records[0].requirement_condition == 'python_version >= "3.10"'
     if expected:
-        assert records[1].activated_by == expected
-        assert records[1].marker == 'extra == "feature" or extra == "other"'
+        assert records[1].required_for_parent_extras == expected
+        assert not records[1].required_without_parent_extras
+        assert (
+            records[1].requirement_condition == 'extra == "feature" or extra == "other"'
+        )
     else:
         assert len(records) == 1
 
@@ -377,7 +381,7 @@ def test_base_marker_is_not_attributed_to_an_extra(tmp_path: Path) -> None:
     assert selected.lock is not None
     data = selected.lock.dependency_requirements
     assert data is not None
-    assert data["parent"]["child-name"][0].activated_by == ()
+    assert data["parent"]["child-name"][0].required_for_parent_extras == ()
 
 
 def test_inactive_extra_is_not_reported_as_a_cause(tmp_path: Path) -> None:
@@ -389,7 +393,7 @@ def test_inactive_extra_is_not_reported_as_a_cause(tmp_path: Path) -> None:
     assert selected.lock is not None
     data = selected.lock.dependency_requirements
     assert data is not None
-    assert data["parent"]["child-name"][0].activated_by == ("feature",)
+    assert data["parent"]["child-name"][0].required_for_parent_extras == ("feature",)
 
 
 def test_child_extras_are_distinct_from_parent_activation(tmp_path: Path) -> None:
@@ -409,11 +413,12 @@ def test_child_extras_are_distinct_from_parent_activation(tmp_path: Path) -> Non
     data = selected.lock.dependency_requirements
     assert data is not None
     record = data["parent"]["child-name"][0]
-    assert record.name == "child-name"
-    assert record.extras == ("feature", "other")
-    assert record.activated_by == ("feature",)
-    assert record.specifier == ">=2"
-    assert record.marker == 'extra == "feature"'
+    assert record.parent_name == "parent"
+    assert record.dependency_name == "child-name"
+    assert record.dependency_extras == ("feature", "other")
+    assert record.required_for_parent_extras == ("feature",)
+    assert record.dependency_specifier == ">=2"
+    assert record.requirement_condition == 'extra == "feature"'
 
 
 def test_extra_activation_respects_the_target_environment(tmp_path: Path) -> None:
@@ -429,7 +434,7 @@ def test_extra_activation_respects_the_target_environment(tmp_path: Path) -> Non
     assert older.lock.dependency_requirements is not None
     assert older.lock.dependency_requirements["parent"]["child-name"][
         0
-    ].activated_by == ("feature",)
+    ].required_for_parent_extras == ("feature",)
     assert newer.lock.dependency_requirements == {}
 
 
@@ -453,5 +458,6 @@ def test_specifiers_exclude_names_and_evaluated_markers(
     data = selected.lock.dependency_requirements
     assert data is not None
     assert (
-        tuple(record.specifier for record in data["parent"]["child-name"]) == expected
+        tuple(record.dependency_specifier for record in data["parent"]["child-name"])
+        == expected
     )

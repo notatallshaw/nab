@@ -576,7 +576,7 @@ class TargetLock:
     conflict environment's no-member base-name set over these edges only.
 
     ``dependency_requirements`` records active PEP 508 declarations per edge.
-    Each record has normalized ``text`` and a ``specifier`` string.
+    Records retain the full requirement and its dependency version limits.
     An empty specifier imposes no version restriction.
     Metadata overrides supply their effective declarations.
     ``None`` means collection was omitted; an empty mapping has no edges.

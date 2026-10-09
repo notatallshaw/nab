@@ -184,7 +184,8 @@ Inspect or clear the [on-disk cache](cache.md).
 
 ## Output control
 
-At `-vv`, successful resolves show dependency requirements on stderr, including which parent extras contributed them.
+At `-vv`, successful resolves show dependency requirements on stderr, including which parent extras
+contributed them.
 
 `--color` accepts `auto` (default), `always`, or `never`. `auto` decides separately for each stream.
 Verbose and quiet flags combine as the number of `-v` flags minus `-q` flags. Progress appears on

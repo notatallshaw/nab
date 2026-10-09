@@ -158,7 +158,10 @@ class DependencyRequirementProvider(Protocol):
     """Provider declarations consumed only when the caller requests them."""
 
     def dependency_requirements_for(
-        self, package: str, version: Version, extras: frozenset[str] = frozenset()
+        self,
+        parent_name: str,
+        parent_version: Version,
+        selected_parent_extras: frozenset[str] = frozenset(),
     ) -> tuple[DependencyDeclaration, ...]:
         """Return active effective declarations for the selected release."""
         ...
@@ -425,7 +428,7 @@ def _declarations_by_child(
     grouped: defaultdict[str, list[DependencyDeclaration]] = defaultdict(list)
 
     for requirement in requirements:
-        child = requirement.name
+        child = requirement.dependency_name
         if child not in child_names:
             continue
         grouped[child].append(requirement)
