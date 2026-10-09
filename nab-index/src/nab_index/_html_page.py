@@ -49,34 +49,26 @@ class Anchor:
 
 
 def _anchor(attrs: list[tuple[str, str | None]]) -> Anchor | None:
-    """Build an :class:`Anchor` from a tag's attributes, or ``None`` if hrefless."""
-    href: str | None = None
-    requires_python: str | None = None
-    yanked: bool | str = False
-    core_metadata: str | None = None
-    legacy_metadata: str | None = None
-    upload_time: str | None = None
-
-    for name, value in attrs:
-        if name == "href":
-            href = value
-        elif name == _REQUIRES_PYTHON_ATTR:
-            requires_python = value
-        elif name == _YANKED_ATTR:
-            yanked = value or True
-        elif name == _CORE_METADATA_ATTR:
-            core_metadata = value
-        elif name == _LEGACY_METADATA_ATTR:
-            legacy_metadata = value
-        elif name == _UPLOAD_TIME_ATTR:
-            upload_time = value
-
+    """Return an :class:`Anchor`, or ``None`` if ``href`` is absent or bare."""
+    fields = dict(attrs)
+    href = fields.get("href")
     if href is None:
         return None
 
-    metadata = core_metadata if core_metadata is not None else legacy_metadata
+    metadata = fields.get(_CORE_METADATA_ATTR)
+    if metadata is None:
+        metadata = fields.get(_LEGACY_METADATA_ATTR)
+
+    yanked = fields.get(_YANKED_ATTR, False)
+    if yanked is None or yanked == "":
+        yanked = True
+
     return Anchor(
-        href.strip(_HTML_WHITESPACE), requires_python, metadata, yanked, upload_time
+        href.strip(_HTML_WHITESPACE),
+        fields.get(_REQUIRES_PYTHON_ATTR),
+        metadata,
+        yanked,
+        fields.get(_UPLOAD_TIME_ATTR),
     )
 
 
