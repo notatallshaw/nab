@@ -72,6 +72,7 @@ caption: Reference
 ---
 reference/cli
 reference/selection
+reference/yanking
 reference/formats
 reference/diagnostics
 reference/configuration
