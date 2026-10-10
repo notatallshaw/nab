@@ -228,6 +228,7 @@ def _expected_distinct_stats(packages_resolved: int) -> dict[str, int]:
     tied to the counter it names.
     """
     return {
+        "yanked_proxy_rounds": 0,
         "rounds": 201,
         "decisions": 202,
         "conflicts": 203,
@@ -2987,6 +2988,7 @@ def test_resolve_scenario_reports_the_counters_a_real_resolve_raised(
     stats = dict(result["stats"])
     assert isinstance(stats.pop("wall_time_seconds"), float)
     assert stats == {
+        "yanked_proxy_rounds": 0,
         "rounds": 4,
         "decisions": 4,
         "conflicts": 0,
