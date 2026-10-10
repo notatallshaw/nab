@@ -169,7 +169,7 @@ def test_checked_requirements_return_collected_map(
     tmp_path: Path, requirements: tuple[str, ...]
 ) -> None:
     selected = _resolve(tmp_path, requirements)
-    data = selected.require_dependency_requirements()
+    data = selected.dependency_requirements()
     assert selected.lock is not None
     assert data is selected.lock.dependency_requirements
     if "parent[feature]" in requirements:
@@ -181,13 +181,13 @@ def test_checked_requirements_return_collected_map(
 def test_checked_requirements_reject_omitted_collection(tmp_path: Path) -> None:
     selected = _resolve(tmp_path, enabled=False)
     with pytest.raises(ValueError, match="include_dependency_requirements=True"):
-        selected.require_dependency_requirements()
+        selected.dependency_requirements()
 
 
 def test_checked_requirements_raise_resolution_error(tmp_path: Path) -> None:
     selected = _resolve(tmp_path, ("parent", "child-name<1"))
     with pytest.raises(ResolutionError) as failure:
-        selected.require_dependency_requirements()
+        selected.dependency_requirements()
     assert failure.value is selected.error
 
 
@@ -197,7 +197,7 @@ def test_checked_requirements_reject_missing_lock() -> None:
     )
     selected = TargetResult(target=target, success=True)
     with pytest.raises(RuntimeError, match="No successful lock"):
-        selected.require_dependency_requirements()
+        selected.dependency_requirements()
 
 
 def test_leaf_and_empty_resolves_have_collected_empty_maps(tmp_path: Path) -> None:

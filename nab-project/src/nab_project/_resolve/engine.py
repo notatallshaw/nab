@@ -158,7 +158,7 @@ class TargetResult:
     distributions_seen: int = 0
     wall_time: float = 0.0
 
-    def require_dependency_requirements(
+    def dependency_requirements(
         self,
     ) -> Mapping[str, Mapping[str, tuple[DependencyDeclaration, ...]]]:
         """Return collected declarations, raising for a failed or uncollected target."""
