@@ -138,6 +138,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     groups: Sequence[str] = (),
     extras: Sequence[str] = (),
     build_requirements: bool = False,
+    include_dependency_requirements: bool = False,
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressSink | None = None,
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
@@ -155,6 +156,9 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     ``groups`` and ``extras`` name PEP 735 groups and
     ``[project.optional-dependencies]`` keys to fold in;
     ``resolution_strategy`` overrides ``inputs.resolution`` when set.
+
+    ``include_dependency_requirements`` retains active declarations on each
+    successful target's lock. Roots and constraints remain separate.
 
     ``build_requirements`` resolves ``[build-system].requires`` instead of
     the project's dependencies; neither ``groups`` nor ``extras`` mean
@@ -213,6 +217,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             resolution_strategy=resolution_strategy,
             progress=progress,
             release_refused_wheels=True,
+            include_dependency_requirements=include_dependency_requirements,
         )
 
 
@@ -231,8 +236,12 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     progress: ProgressSink | None = None,
     marker_holds: MarkerHolds | None = None,
     release_refused_wheels: bool = False,
+    include_dependency_requirements: bool = False,
 ) -> ResolveResult:
     """Resolve ``targets`` against an already-open coordinator.
+
+    ``include_dependency_requirements`` retains active declarations on each
+    successful target's lock. Roots and constraints remain separate.
 
     With ``forks`` every target is resolved once per fork, each fork's
     ``selection`` stamped onto the target; without them the resolve runs
@@ -275,6 +284,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
                 dependency_marker_holds if marker_holds is None else marker_holds
             ),
             progress=progress,
+            include_dependency_requirements=include_dependency_requirements,
             listing_filter_cache=ListingFilterCache(
                 len({target.python_full_version for target in targets})
             ),

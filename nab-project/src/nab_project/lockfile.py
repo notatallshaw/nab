@@ -27,6 +27,7 @@ from ._lockfile.builder import (
     MissingSdistError,
     MissingVcsCommitError,
     build_target_lock,
+    collect_dependency_requirements,
     read_lockfile_anchor,
     read_lockfile_packages,
     strip_userinfo,
@@ -63,6 +64,7 @@ if TYPE_CHECKING:
     from nab_provider.target import ResolveTarget
 
     from .conflicts import ConflictSet
+    from .declarations import DependencyDeclaration
 
 
 __all__ = [
@@ -93,6 +95,7 @@ __all__ = [
     "build_pylock",
     "build_target_lock",
     "check_locked",
+    "collect_dependency_requirements",
     "drop_workspace_pins",
     "is_valid_pylock_path",
     "package_metadata_override_records",
@@ -572,6 +575,12 @@ class TargetLock:
     before any activated extra folds its deps in.  The writer closes a
     conflict environment's no-member base-name set over these edges only.
 
+    ``dependency_requirements`` records active PEP 508 declarations per edge.
+    Records retain the full requirement and its dependency version limits.
+    An empty specifier imposes no version restriction.
+    Metadata overrides supply their effective declarations.
+    ``None`` means collection was omitted; an empty mapping has no edges.
+
     ``target`` is the environment the pins hold for.  The writer reads
     its markers and its
     :attr:`~nab_provider.target.ResolveTarget.selection` rather than being
@@ -597,6 +606,10 @@ class TargetLock:
     package_gates: Mapping[str, tuple[tuple[str, str], ...]] = field(
         default_factory=dict
     )
+
+    dependency_requirements: (
+        Mapping[str, Mapping[str, tuple[DependencyDeclaration, ...]]] | None
+    ) = field(default=None, kw_only=True)
 
 
 @dataclass
@@ -706,6 +719,17 @@ def drop_workspace_pins(lock_input: LockInput, exclude: frozenset[str]) -> LockI
                 for name, deps in lock.dependencies.items()
                 if keep(name) and (kept := tuple(dep for dep in deps if keep(dep)))
             },
+            dependency_requirements=(
+                None
+                if lock.dependency_requirements is None
+                else {
+                    name: {
+                        child: reqs for child, reqs in children.items() if keep(child)
+                    }
+                    for name, children in lock.dependency_requirements.items()
+                    if keep(name) and any(keep(child) for child in children)
+                }
+            ),
             package_gates={
                 name: gate for name, gate in lock.package_gates.items() if keep(name)
             },

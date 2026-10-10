@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from nab_provider.records import IndexConfig
     from nab_provider.target import ResolveTarget
 
+    from ..declarations import DependencyDeclaration
     from ..lockfile import (
         ArchivePin,
         IndexPin,
@@ -62,6 +63,7 @@ __all__ = [
     "MissingSdistError",
     "MissingVcsCommitError",
     "build_target_lock",
+    "collect_dependency_requirements",
     "read_lockfile_anchor",
     "read_lockfile_packages",
     "require_artifact_hashes",
@@ -149,6 +151,19 @@ class LockInputProvider(Protocol):
 
     def tag_excluded_wheel_count(self, canonical_name: str, version: Version, /) -> int:
         """Return how many wheels the tag filter dropped at ``version``."""
+        ...
+
+
+class DependencyRequirementProvider(Protocol):
+    """Provider declarations consumed only when the caller requests them."""
+
+    def dependency_requirements_for(
+        self,
+        parent_name: str,
+        parent_version: Version,
+        selected_parent_extras: frozenset[str] = frozenset(),
+    ) -> tuple[DependencyDeclaration, ...]:
+        """Return active effective declarations for the selected release."""
         ...
 
 
@@ -373,6 +388,52 @@ def build_target_lock(
             selector_roots=selector_roots or {},
         ),
     )
+
+
+def collect_dependency_requirements(
+    provider: DependencyRequirementProvider,
+    pins: Mapping[str, Version],
+    resolved_keys: Iterable[str],
+    dependencies: Mapping[str, tuple[str, ...]],
+) -> dict[str, dict[str, tuple[DependencyDeclaration, ...]]]:
+    """Return active declarations for the final dependency edges."""
+    selected_extras = _extras_by_package(resolved_keys)
+    declarations: dict[str, dict[str, tuple[DependencyDeclaration, ...]]] = {}
+
+    for parent, children in dependencies.items():
+        extras = selected_extras.get(parent, frozenset())
+        requirements = provider.dependency_requirements_for(
+            parent, pins[parent], extras
+        )
+        declarations[parent] = _declarations_by_child(requirements, children)
+
+    return declarations
+
+
+def _extras_by_package(resolved_keys: Iterable[str]) -> dict[str, frozenset[str]]:
+    """Group extras from resolved keys by canonical package name."""
+    extras: defaultdict[str, set[str]] = defaultdict(set)
+    for key in resolved_keys:
+        name, extra = split_extra(key)
+        if extra is not None:
+            extras[canonicalize_name(name)].add(extra)
+    return {name: frozenset(values) for name, values in extras.items()}
+
+
+def _declarations_by_child(
+    requirements: Iterable[DependencyDeclaration], children: Sequence[str]
+) -> dict[str, tuple[DependencyDeclaration, ...]]:
+    """Keep and group declarations for the graph's child names."""
+    child_names = set(children)
+    grouped: defaultdict[str, list[DependencyDeclaration]] = defaultdict(list)
+
+    for requirement in requirements:
+        child = requirement.dependency_name
+        if child not in child_names:
+            continue
+        grouped[child].append(requirement)
+
+    return {child: tuple(grouped[child]) for child in sorted(children)}
 
 
 def _membership_gates(

@@ -109,6 +109,26 @@ print(resolver.resolve({"app": VersionRange.full()}))
 `nab_project.resolve.resolve_for_targets` is the entry point that takes a project path; the provider
 has none.
 
+Pass `include_dependency_requirements=True`, then call
+`target_result.require_dependency_requirements()`. It returns a map keyed by parent and dependency,
+or raises for a failed target or omitted collection. Use canonical package names. Each immutable
+record has:
+
+- `requirement_text`: the full declaration with normalized formatting and markers.
+- `dependency_specifier`: the parent's version restriction, preserving `~=`. Empty means
+  unrestricted.
+- `parent_name`: the package declaring the requirement.
+- `dependency_name`: the package being required.
+- `dependency_extras`: features requested on the dependency, such as `socks` in `requests[socks]`.
+- `requirement_condition`: the requirement's condition as text, or `None` when there is no
+  condition.
+- `required_for_parent_extras`: selected features of the parent for which this requirement applies.
+  `required_without_parent_extras` is true when the parent requires it without selecting an extra.
+
+Declarations reflect the target, activated extras and metadata overrides. Root requirements and user
+constraints are separate. An empty graph returns `{}`. The underlying `lock.dependency_requirements`
+field is `None` without collection.
+
 ## Where the vendored packaging fork lives
 
 `nab-provider` carries nab's fork of `packaging` at `nab_provider._vendor.packaging`. `nab-project`

@@ -14,7 +14,7 @@ import itertools
 import logging
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
@@ -28,7 +28,7 @@ from nab_resolver.resolver import Resolver, ResolverObserver
 from nab_resolver.types import IncompatibilityCause
 
 from .._compat import override
-from ..lockfile import ArtifactMemo, build_target_lock
+from ..lockfile import ArtifactMemo, build_target_lock, collect_dependency_requirements
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from nab_provider.target import ResolveTarget
     from nab_resolver.types import Incompatibility, RangeProtocol
 
+    from ..declarations import DependencyDeclaration
     from ..fetch import FetchCoordinator
     from ..inputs import ResolveInputs
     from ..lockfile import TargetLock
@@ -156,6 +157,25 @@ class TargetResult:
     metadata_fetched: int = 0
     distributions_seen: int = 0
     wall_time: float = 0.0
+
+    def require_dependency_requirements(
+        self,
+    ) -> Mapping[str, Mapping[str, tuple[DependencyDeclaration, ...]]]:
+        """Return collected declarations, raising for a failed or uncollected target."""
+        if self.error is not None:
+            raise self.error
+        lock = self.lock
+        if lock is None:
+            message = f"No successful lock is available for target {self.target.label}"
+            raise RuntimeError(message)
+        requirements = lock.dependency_requirements
+        if requirements is None:
+            message = (
+                "Dependency requirements were not collected; "
+                "resolve with include_dependency_requirements=True"
+            )
+            raise ValueError(message)
+        return requirements
 
 
 @dataclass
@@ -502,6 +522,7 @@ class _EngineSettings:
     # Whether the wheel-tag filter may release what it refuses; see
     # ``resolve_with_coordinator``.
     release_refused_wheels: bool = False
+    include_dependency_requirements: bool = False
 
     # The (kind, text) pairs already reported, so an entry read once per
     # target per fork and again in the base pass warns once.
@@ -647,21 +668,28 @@ def _resolve_one_target(
     base_roots, selector_roots = _install_context_roots(
         contexts, environment, settings.marker_holds
     )
+    lock = build_target_lock(
+        provider,
+        target,
+        pins,
+        indexes=settings.coordinator.indexes,
+        resolved_keys=raw,
+        base_roots=base_roots,
+        selector_roots=selector_roots,
+        artifacts=settings.artifacts,
+    )
+    if settings.include_dependency_requirements:
+        declarations = collect_dependency_requirements(
+            provider, pins, raw, lock.dependencies
+        )
+        lock = replace(lock, dependency_requirements=declarations)
+
     return TargetResult(
         target=target,
         success=True,
         pins=pins,
         consulted=_consulted_markers(provider, requirements, constraints),
-        lock=build_target_lock(
-            provider,
-            target,
-            pins,
-            indexes=settings.coordinator.indexes,
-            resolved_keys=raw,
-            base_roots=base_roots,
-            selector_roots=selector_roots,
-            artifacts=settings.artifacts,
-        ),
+        lock=lock,
         wall_time=elapsed,
         **_target_stats(resolver, provider),
     )
