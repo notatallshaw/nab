@@ -109,10 +109,9 @@ print(resolver.resolve({"app": VersionRange.full()}))
 `nab_project.resolve.resolve_for_targets` is the entry point that takes a project path; the provider
 has none.
 
-Pass `include_dependency_requirements=True`, then call
-`target_result.require_dependency_requirements()`. It returns a map keyed by parent and dependency,
-or raises for a failed target or omitted collection. Use canonical package names. Each immutable
-record has:
+Pass `include_dependency_requirements=True`, then call `target_result.dependency_requirements()`. It
+returns a map keyed by parent and dependency, or raises for a failed target or omitted collection.
+Use canonical package names. Each immutable record has:
 
 - `requirement_text`: the full declaration with normalized formatting and markers.
 - `dependency_specifier`: the parent's version restriction, preserving `~=`. Empty means
