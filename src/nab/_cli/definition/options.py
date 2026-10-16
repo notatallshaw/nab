@@ -14,15 +14,13 @@ from typing import Any, Literal, NewType
 
 from nab_project.conflicts import ConflictSet
 from nab_project.workspace import WorkspaceConfig
+from nab_provider.archive_admission import ArchiveConfig
 from nab_provider.policy import (
-    ArchiveSource,
     BuildPolicy,
     DecisionOrder,
     DistPolicy,
-    LocalSource,
     ResolutionStrategy,
     ResolveMode,
-    VcsSource,
 )
 from nab_provider.records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
 from nab_provider.vcs_admission import VcsConfig
@@ -113,7 +111,7 @@ class Root(Table, on=GLOBAL, docs="reference/cli.md"):
 class ProjectKeys(
     Table, on=_LAYERED, scope=Scope.PROJECT, docs="reference/configuration.md"
 ):
-    """The project's own settings: twelve carry a flag, thirteen are file-only."""
+    """Project settings and the CLI overrides that expose them."""
 
     resolution = Value[ResolutionFlag | None](
         mirrors=ResolutionStrategy,
@@ -263,6 +261,17 @@ class ProjectKeys(
         help="PEP 508 marker variables, set one at a time",
     )
 
+    archive = Key(
+        Layer[ArchiveConfig](
+            rdefault=ArchiveConfig(),
+            parse=values.parse_archive,
+            render=hooks.render_archive,
+            label="table(archive-policy)",
+        ),
+        help="which direct archive and wheel URLs may be fetched",
+        docs="how-to/archive-sources.md",
+    )
+
     vcs = Key(
         Layer[VcsConfig](
             rdefault=VcsConfig(),
@@ -294,38 +303,6 @@ class ProjectKeys(
         ),
         help="the package indexes, consulted in the order declared",
         docs="how-to/multi-index.md",
-    )
-
-    local_sources = Key(
-        Layer[tuple[LocalSource, ...]](
-            rdefault=(),
-            parse=hooks.parse_local_sources,
-            render=hooks.render_local_sources,
-            label="array-of-tables(name,path)",
-        ),
-        help="a directory that becomes the only candidate for a named package",
-        docs="how-to/local-sources.md",
-    )
-
-    vcs_sources = Key(
-        Layer[tuple[VcsSource, ...]](
-            rdefault=(),
-            parse=values.parse_vcs_sources,
-            render=hooks.render_vcs_sources,
-            label="array-of-tables(name,url)",
-        ),
-        help="a repository that becomes the only candidate for a named package",
-        docs="how-to/vcs.md",
-    )
-
-    archive_sources = Key(
-        Layer[tuple[ArchiveSource, ...]](
-            rdefault=(),
-            parse=values.parse_archive_sources,
-            render=hooks.render_archive_sources,
-            label="array-of-tables(name,url)",
-        ),
-        help="a hashed .tar.gz URL a named package is pinned to",
     )
 
     packages = Key(
@@ -603,6 +580,13 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         negatable=True,
         help="select every extra",
         docs="reference/selection.md",
+    )
+
+    sources = Switch(
+        default=True,
+        negatable=True,
+        help="apply the [develop.sources] table",
+        docs="how-to/local-sources.md",
     )
 
     workspace_discovery = Switch(

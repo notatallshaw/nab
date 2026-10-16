@@ -67,7 +67,6 @@ from nab_project.conflicts import (
 )
 from nab_project.workspace import WorkspaceConfig
 from nab_provider.provider import (
-    ArchiveSource,
     BuildPolicy,
     DecisionOrder,
     DistPolicy,
@@ -75,7 +74,6 @@ from nab_provider.provider import (
     ResolveMode,
     VcsConfig,
     VcsPolicy,
-    VcsSource,
 )
 from nab_provider.serialization import SimpleSerialization
 from nab_provider.tags import PlatformSpec
@@ -1507,12 +1505,10 @@ class TestParserFoldHelpers:
                 "build-requires-depth",
                 "environment",
                 "marker-environment",
+                "archive",
                 "vcs",
                 "workspace",
                 "indexes",
-                "local-sources",
-                "vcs-sources",
-                "archive-sources",
                 "packages",
                 "package-rules",
                 "index",
@@ -1989,7 +1985,7 @@ class TestTableProjectOptions:
     def test_vcs_default_render(self, tmp_path: Path) -> None:
         _project(tmp_path)
         eff = _resolve(SourceRoots(project_dir=tmp_path))
-        assert eff["vcs"].spec.render(VcsConfig()) == "policy=block"
+        assert eff["vcs"].spec.render(VcsConfig()) == "policy=declared"
 
     def test_vcs_render_full(self) -> None:
         spec = next(s for s in OPTIONS if s.key == "vcs")
@@ -2260,8 +2256,7 @@ class TestArrayProjectOptions:
 
 
 class TestArrayOfTablesSources:
-    """The array-of-tables PROJECT sources: indexes, local-sources,
-    vcs-sources.  Each reuses the single-environment parser per layer
+    """Index declarations reuse the single-environment parser per layer
     (shape/key/dup messages match the pyproject path), is gated
     PROJECT-only and file-only, and is visible in ``nab config``.  The
     declaring file owns the whole list, so the same-name dup check is a
@@ -2419,153 +2414,8 @@ class TestArrayOfTablesSources:
         assert value[0].serialization is SimpleSerialization.NEGOTIATE
         assert value[1].serialization is SimpleSerialization.HTML
 
-    def test_local_sources_from_pyproject(self, tmp_path: Path) -> None:
-        _project(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "pkg"\npath = "./libs/pkg"\n',
-        )
-        eff = _resolve(SourceRoots(project_dir=tmp_path))
-        value = eff["local-sources"].value
-        assert [s.name for s in value] == ["pkg"]
-        # Path resolves relative to the declaring file's directory.
-        assert value[0].path == str((tmp_path / "libs" / "pkg").resolve())
-        assert eff["local-sources"].origin.kind is SourceKind.PYPROJECT
-
-    def test_local_sources_from_project_nab_toml(self, tmp_path: Path) -> None:
-        _project(tmp_path)
-        _write(
-            tmp_path / "nab.toml",
-            '[[local-sources]]\nname = "pkg"\npath = "./pkg"\n',
-        )
-        eff = _resolve(SourceRoots(project_dir=tmp_path))
-        value = eff["local-sources"].value
-        assert value[0].path == str((tmp_path / "pkg").resolve())
-        assert eff["local-sources"].origin.kind is SourceKind.PROJECT_TOML
-
-    def test_local_sources_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
-        _project(tmp_path)
-        user = _write(
-            tmp_path / "usr" / "nab.toml",
-            '[[local-sources]]\nname = "pkg"\npath = "./pkg"\n',
-        )
-        roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
-
-    def test_nab_local_sources_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
-            _resolve(
-                SourceRoots(project_dir=tmp_path),
-                environ={"NAB_LOCAL_SOURCES": "x"},
-            )
-        assert "NAB_LOCAL_SOURCES" in caplog.text
-        assert "not env-settable" in caplog.text
-
-    def test_local_sources_bad_shape_keeps_message(self, tmp_path: Path) -> None:
-        _project(tmp_path, 'local-sources = "pkg"\n')
-        with pytest.raises(SourceConfigError, match="must be an array of tables"):
-            _resolve(SourceRoots(project_dir=tmp_path))
-
-    def test_local_sources_cross_file_conflict(self, tmp_path: Path) -> None:
-        _project(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "a"\npath = "./a"\n',
-        )
-        _write(
-            tmp_path / "nab.toml",
-            '[[local-sources]]\nname = "b"\npath = "./b"\n',
-        )
-        with pytest.raises(SourceConfigError, match="conflicting values"):
-            _resolve(SourceRoots(project_dir=tmp_path))
-
-    def test_local_sources_render(self, tmp_path: Path) -> None:
-        spec = next(s for s in OPTIONS if s.key == "local-sources")
-        assert spec.render(()) == "<none>"
-        _project(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "pkg"\npath = "./pkg"\n',
-        )
-        eff = _resolve(SourceRoots(project_dir=tmp_path))
-        out = render_get(eff, "local-sources")
-        assert out.startswith("pkg@")
-
-    def test_vcs_sources_from_pyproject(self, tmp_path: Path) -> None:
-        _project(
-            tmp_path,
-            '[[tool.nab.vcs-sources]]\nname = "pkg"\n'
-            'url = "git+https://example/pkg.git@deadbeef"\n',
-        )
-        eff = _resolve(SourceRoots(project_dir=tmp_path))
-        assert [s.name for s in eff["vcs-sources"].value] == ["pkg"]
-        assert eff["vcs-sources"].origin.kind is SourceKind.PYPROJECT
-
-    def test_vcs_sources_from_project_nab_toml(self, tmp_path: Path) -> None:
-        _project(tmp_path)
-        _write(
-            tmp_path / "nab.toml",
-            '[[vcs-sources]]\nname = "pkg"\nurl = "git+https://example/pkg.git@abc"\n',
-        )
-        eff = _resolve(SourceRoots(project_dir=tmp_path))
-        assert [s.name for s in eff["vcs-sources"].value] == ["pkg"]
-        assert eff["vcs-sources"].origin.kind is SourceKind.PROJECT_TOML
-
-    def test_vcs_sources_in_system_nab_toml_errors(self, tmp_path: Path) -> None:
-        _project(tmp_path)
-        sys_toml = _write(
-            tmp_path / "etc" / "nab.toml",
-            '[[vcs-sources]]\nname = "pkg"\nurl = "git+https://e/p.git@a"\n',
-        )
-        roots = SourceRoots(system_toml=sys_toml, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
-
-    def test_nab_vcs_sources_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
-            _resolve(
-                SourceRoots(project_dir=tmp_path),
-                environ={"NAB_VCS_SOURCES": "x"},
-            )
-        assert "NAB_VCS_SOURCES" in caplog.text
-        assert "not env-settable" in caplog.text
-
-    def test_vcs_sources_bad_shape_keeps_message(self, tmp_path: Path) -> None:
-        _project(tmp_path, 'vcs-sources = "pkg"\n')
-        with pytest.raises(SourceConfigError, match="must be an array of tables"):
-            _resolve(SourceRoots(project_dir=tmp_path))
-
-    def test_vcs_sources_cross_file_conflict(self, tmp_path: Path) -> None:
-        _project(
-            tmp_path,
-            '[[tool.nab.vcs-sources]]\nname = "a"\nurl = "git+https://e/a.git@1"\n',
-        )
-        _write(
-            tmp_path / "nab.toml",
-            '[[vcs-sources]]\nname = "b"\nurl = "git+https://e/b.git@2"\n',
-        )
-        with pytest.raises(SourceConfigError, match="conflicting values"):
-            _resolve(SourceRoots(project_dir=tmp_path))
-
-    def test_vcs_sources_render(self) -> None:
-        spec = next(s for s in OPTIONS if s.key == "vcs-sources")
-        assert spec.render(()) == "<none>"
-        rendered = spec.render((VcsSource(name="pkg", url="git+https://e/p.git@a"),))
-        assert rendered == "pkg@git+https://e/p.git@a"
-
-    def test_archive_sources_render(self) -> None:
-        spec = next(s for s in OPTIONS if s.key == "archive-sources")
-        assert spec.render(()) == "<none>"
-        url = "https://e/p.tar.gz#sha256=abc"
-        rendered = spec.render((ArchiveSource(name="pkg", url=url),))
-        assert rendered == f"pkg@{url}"
-
     def test_array_of_tables_rows_are_file_only(self) -> None:
-        for key in ("indexes", "local-sources", "vcs-sources"):
+        for key in ("indexes",):
             spec = next(s for s in OPTIONS if s.key == key)
             assert spec.cli_flag is None
             assert spec.cli_param is None
@@ -2573,14 +2423,10 @@ class TestArrayOfTablesSources:
     def test_array_of_tables_keys_visible_in_config(self, tmp_path: Path) -> None:
         _project(
             tmp_path,
-            '[[tool.nab.indexes]]\nname = "pypi"\nurl = "https://pypi.org/simple/"\n'
-            '[[tool.nab.local-sources]]\nname = "pkg"\npath = "./pkg"\n'
-            '[[tool.nab.vcs-sources]]\nname = "v"\nurl = "git+https://e/v.git@a"\n',
+            '[[tool.nab.indexes]]\nname="pypi"\nurl="https://pypi.org/simple/"\n',
         )
         eff = _resolve(SourceRoots(project_dir=tmp_path))
-        out = render_list(eff)
-        for key in ("indexes", "local-sources", "vcs-sources"):
-            assert key in out
+        assert "indexes" in render_list(eff)
 
 
 class TestOverrideTables:

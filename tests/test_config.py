@@ -63,6 +63,7 @@ from nab_project.workspace import WorkspaceConfig
 from nab_provider._vendor.packaging.markers import Marker, default_environment
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.archive_admission import ArchiveConfig, ArchivePolicy
 from nab_provider.errors import ConfigError
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import ArchiveSource, ResolveMode
@@ -3298,10 +3299,10 @@ class TestVcs:
         assert vcs.allowed_repos == ("github.com/me/x",)
         assert vcs.require_pin is False
 
-    def test_default_block(self, tmp_path: Path) -> None:
+    def test_default_declared(self, tmp_path: Path) -> None:
         path = write(tmp_path, "[tool.nab.vcs]\n")
         vcs = read_pyproject_config(path).vcs
-        assert vcs.policy is VcsPolicy.BLOCK
+        assert vcs.policy is VcsPolicy.DECLARED
         assert vcs.require_pin is True
 
     def test_must_be_table(self, tmp_path: Path) -> None:
@@ -3371,489 +3372,6 @@ class TestVcsDocExample:
         opened = replace(read_pyproject_config(path).vcs, policy=VcsPolicy.ALLOW)
         pinned = f"git+https://github.com/me/x@{'a' * 40}"
         assert admit_vcs_url(pinned, opened) == "git+https"
-
-
-class TestLocalSources:
-    def test_relative_path_resolved_against_pyproject(self, tmp_path: Path) -> None:
-        sibling = tmp_path.parent / "my-fork"
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "my-fork"\npath = "../my-fork"\n',
-        )
-        srcs = read_pyproject_config(path).local_sources
-        assert srcs == (LocalSource(name="my-fork", path=str(sibling.resolve())),)
-
-    def test_relative_path_base_is_symlink_dir(self, tmp_path: Path) -> None:
-        # A relative local-sources path resolves against the symlink's own
-        # directory, not the symlink target's directory.
-        target_dir = tmp_path / "real"
-        target_dir.mkdir()
-        link_dir = tmp_path / "link_dir"
-        link_dir.mkdir()
-        real_pyproject = target_dir / "pyproject.toml"
-        real_pyproject.write_text(
-            '[[tool.nab.local-sources]]\nname = "foo"\npath = "./libs/foo"\n'
-        )
-        link_pyproject = link_dir / "pyproject.toml"
-        link_pyproject.symlink_to(real_pyproject)
-        srcs = read_pyproject_config(
-            link_pyproject, discover_workspace=False
-        ).local_sources
-        assert srcs == (
-            LocalSource(name="foo", path=str((link_dir / "libs" / "foo").resolve())),
-        )
-
-    def test_absolute_path_unchanged(self, tmp_path: Path) -> None:
-        abs_dir = tmp_path / "abs-fork"
-        abs_dir.mkdir()
-        # POSIX form avoids ``\U`` escapes in the TOML on Windows.
-        path = write(
-            tmp_path,
-            f'[[tool.nab.local-sources]]\nname = "abs-fork"\n'
-            f'path = "{abs_dir.as_posix()}"\n',
-        )
-        srcs = read_pyproject_config(path).local_sources
-        assert srcs == (LocalSource(name="abs-fork", path=str(abs_dir.resolve())),)
-
-    def test_must_be_array(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\nlocal-sources = "x"\n')
-        with pytest.raises(ConfigError, match="local-sources must be an array"):
-            read_pyproject_config(path)
-
-    def test_entry_must_be_table(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\nlocal-sources = ["x"]\n')
-        with pytest.raises(ConfigError, match="local-sources\\[0\\] must be a table"):
-            read_pyproject_config(path)
-
-    def test_missing_keys(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[[tool.nab.local-sources]]\nname = "x"\n')
-        with pytest.raises(ConfigError, match="missing required key 'path'"):
-            read_pyproject_config(path)
-
-    def test_field_types(self, tmp_path: Path) -> None:
-        path = write(tmp_path, "[[tool.nab.local-sources]]\nname = 1\npath = 2\n")
-        with pytest.raises(ConfigError, match="name and path must be strings"):
-            read_pyproject_config(path)
-
-    def test_editable_defaults_false(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\n',
-        )
-        srcs = read_pyproject_config(path).local_sources
-        assert srcs[0].editable is False
-
-    def test_editable_parsed(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\neditable = true\n',
-        )
-        srcs = read_pyproject_config(path).local_sources
-        assert srcs[0].editable is True
-
-    def test_editable_must_be_bool(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\neditable = "y"\n',
-        )
-        with pytest.raises(ConfigError, match="editable must be a boolean"):
-            read_pyproject_config(path)
-
-    def test_subdirectory_defaults_none(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\n',
-        )
-        srcs = read_pyproject_config(path).local_sources
-        assert srcs[0].subdirectory is None
-
-    def test_subdirectory_parsed(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.local-sources]]\n"
-            'name = "x"\npath = "../x"\nsubdirectory = "pkg/lib"\n',
-        )
-        srcs = read_pyproject_config(path).local_sources
-        assert srcs[0].subdirectory == "pkg/lib"
-
-    def test_subdirectory_must_be_string(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\nsubdirectory = 1\n',
-        )
-        with pytest.raises(ConfigError, match="subdirectory must be a string"):
-            read_pyproject_config(path)
-
-    def test_subdirectory_parent_escape_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.local-sources]]\n"
-            'name = "x"\npath = "../x"\nsubdirectory = "../../../../etc"\n',
-        )
-        with pytest.raises(ConfigError, match="escapes the source tree"):
-            read_pyproject_config(path)
-
-    def test_subdirectory_absolute_escape_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.local-sources]]\n"
-            'name = "x"\npath = "../x"\nsubdirectory = "/etc/secrets"\n',
-        )
-        with pytest.raises(ConfigError, match="escapes the source tree"):
-            read_pyproject_config(path)
-
-    @pytest.mark.parametrize(
-        "subdirectory", ["../source-root/demo", r"..\source-root\demo"]
-    )
-    def test_subdirectory_source_root_named_parent_escape_rejected(
-        self, tmp_path: Path, subdirectory: str
-    ) -> None:
-        path = write(
-            tmp_path,
-            "[[tool.nab.local-sources]]\n"
-            'name = "x"\npath = "../x"\n'
-            f"subdirectory = '{subdirectory}'\n",
-        )
-        with pytest.raises(ConfigError, match="escapes the source tree"):
-            read_pyproject_config(path)
-
-    def test_path_through_a_symlink_loop_parses(self, tmp_path: Path) -> None:
-        """A loop is a bad tree, not a bad config, so parsing accepts it."""
-        (tmp_path / "loop").symlink_to("loop")
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "x"\npath = "loop"\n',
-        )
-        srcs = read_pyproject_config(path).local_sources
-        assert srcs[0].path == str(tmp_path.resolve() / "loop")
-
-    def test_unknown_key_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "x"\npath = "../x"\nbogus = 1\n',
-        )
-        with pytest.raises(ConfigError, match=r"local-sources\[0\] has unknown keys"):
-            read_pyproject_config(path)
-
-    def test_path_with_nul_rejected(self, tmp_path: Path) -> None:
-        # An embedded NUL is valid TOML, so the parser hands it through.
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "x"\npath = "../\\u0000x"\n',
-        )
-        with pytest.raises(ConfigError, match="is not a usable filesystem path"):
-            read_pyproject_config(path)
-
-    def test_duplicate_canonical_name_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "Foo-Bar"\npath = "../a"\n'
-            '[[tool.nab.local-sources]]\nname = "foo_bar"\npath = "../b"\n',
-        )
-        with pytest.raises(ConfigError, match="duplicate canonical name"):
-            read_pyproject_config(path)
-
-    @pytest.mark.parametrize(
-        "name", ["", "my pkg", "mypkg ", " mypkg", "my!pkg", "my/pkg"]
-    )
-    def test_invalid_name_rejected(self, tmp_path: Path, name: str) -> None:
-        path = write(
-            tmp_path,
-            f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "../a"\n',
-        )
-        with pytest.raises(ConfigError, match="is not a valid package name"):
-            read_pyproject_config(path)
-
-    def test_name_needing_canonicalisation_accepted(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "My_Fork"\npath = "../a"\n',
-        )
-        (source,) = read_pyproject_config(path).local_sources
-        assert source.name == "My_Fork"
-
-
-class TestVcsSources:
-    def test_round_trip(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[tool.nab.vcs]\npolicy = "allow"\n'
-            "[[tool.nab.vcs-sources]]\n"
-            'name = "my-fork"\n'
-            'url = "git+https://github.com/me/x.git@abc"\n',
-        )
-        srcs = read_pyproject_config(path).vcs_sources
-        assert srcs == (
-            VcsSource(name="my-fork", url="git+https://github.com/me/x.git@abc"),
-        )
-
-    def test_declared_under_block_policy_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.vcs-sources]]\nname = "pkg"\n'
-            'url = "git+https://github.com/org/pkg.git@abc"\n',
-        )
-        with pytest.raises(ConfigError, match=r'\[tool\.nab\.vcs\]\.policy = "allow"'):
-            read_pyproject_config(path)
-
-    def test_nab_toml_sources_under_block_named_at_top_level(
-        self, tmp_path: Path
-    ) -> None:
-        """The error names top-level keys when nab.toml declares the sources."""
-        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
-        nab_toml = tmp_path / "nab.toml"
-        sources = (
-            '[[vcs-sources]]\nname = "pkg"\n'
-            'url = "git+https://github.com/org/pkg.git@abc"\n'
-        )
-        nab_toml.write_text(sources, encoding="utf-8")
-
-        with pytest.raises(ConfigError) as excinfo:
-            read_pyproject_config(path, discover_workspace=False)
-
-        message = str(excinfo.value)
-        assert "[[vcs-sources]] is declared" in message
-        assert '[vcs].policy = "allow"' in message
-        assert "tool.nab" not in message
-
-        nab_toml.write_text(sources + '[vcs]\npolicy = "allow"\n', encoding="utf-8")
-        config = read_pyproject_config(path, discover_workspace=False)
-        assert config.vcs_sources == (
-            VcsSource(name="pkg", url="git+https://github.com/org/pkg.git@abc"),
-        )
-
-    def test_policy_named_in_the_file_that_set_it(self, tmp_path: Path) -> None:
-        """The policy's source file owns the repair.
-
-        Both project files sit at the same precedence rank, so writing the
-        policy into nab.toml as well would conflict rather than override.
-        """
-        pyproject = '[project]\nname = "x"\nversion = "0"\n[tool.nab.vcs]\npolicy = '
-        path = write(tmp_path, pyproject + '"block"\n')
-        (tmp_path / "nab.toml").write_text(
-            '[[vcs-sources]]\nname = "pkg"\n'
-            'url = "git+https://github.com/org/pkg.git@abc"\n',
-            encoding="utf-8",
-        )
-
-        with pytest.raises(ConfigError) as excinfo:
-            read_pyproject_config(path, discover_workspace=False)
-
-        message = str(excinfo.value)
-        assert "[[vcs-sources]] is declared" in message
-        assert '[tool.nab.vcs].policy = "allow"' in message
-
-        write(tmp_path, pyproject + '"allow"\n')
-        config = read_pyproject_config(path, discover_workspace=False)
-        assert config.vcs.policy is VcsPolicy.ALLOW
-
-    def test_must_be_array(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\nvcs-sources = "x"\n')
-        with pytest.raises(ConfigError, match="vcs-sources must be an array"):
-            read_pyproject_config(path)
-
-    def test_entry_must_be_table(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\nvcs-sources = ["x"]\n')
-        with pytest.raises(ConfigError, match="vcs-sources\\[0\\] must be a table"):
-            read_pyproject_config(path)
-
-    def test_missing_keys(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[[tool.nab.vcs-sources]]\nname = "x"\n')
-        with pytest.raises(ConfigError, match="missing required key 'url'"):
-            read_pyproject_config(path)
-
-    def test_field_types(self, tmp_path: Path) -> None:
-        path = write(tmp_path, "[[tool.nab.vcs-sources]]\nname = 1\nurl = 2\n")
-        with pytest.raises(ConfigError, match="name and url must be strings"):
-            read_pyproject_config(path)
-
-    def test_unknown_key_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.vcs-sources]]\nname = "x"\nurl = "git+https://h/x@a"\nbogus = 1\n',
-        )
-        with pytest.raises(ConfigError, match=r"vcs-sources\[0\] has unknown keys"):
-            read_pyproject_config(path)
-
-    def test_duplicate_canonical_name_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.vcs-sources]]\nname = "Foo-Bar"\n'
-            'url = "git+https://github.com/me/a.git@abc"\n'
-            '[[tool.nab.vcs-sources]]\nname = "foo_bar"\n'
-            'url = "git+https://github.com/me/b.git@def"\n',
-        )
-        with pytest.raises(ConfigError, match="duplicate canonical name"):
-            read_pyproject_config(path)
-
-    def test_invalid_name_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[tool.nab.vcs]\npolicy = "allow"\n'
-            '[[tool.nab.vcs-sources]]\nname = "my pkg"\n'
-            'url = "git+https://github.com/me/x.git@abc"\n',
-        )
-        with pytest.raises(ConfigError, match="is not a valid package name"):
-            read_pyproject_config(path)
-
-    def test_canonical_name_collides_with_local_source(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.local-sources]]\nname = "Foo-Bar"\npath = "../a"\n'
-            '[[tool.nab.vcs-sources]]\nname = "foo_bar"\n'
-            'url = "git+https://github.com/me/b.git@abc"\n',
-        )
-        with pytest.raises(ConfigError, match="duplicate canonical name"):
-            read_pyproject_config(path)
-
-    def test_duplicate_name_message_names_no_table(self, tmp_path: Path) -> None:
-        """The three key names read the same in both project files."""
-        path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
-        (tmp_path / "nab.toml").write_text(
-            '[[local-sources]]\nname = "Foo-Bar"\npath = "../a"\n'
-            '[[vcs-sources]]\nname = "foo_bar"\n'
-            'url = "git+https://github.com/me/b.git@abc"\n',
-            encoding="utf-8",
-        )
-
-        with pytest.raises(ConfigError) as excinfo:
-            read_pyproject_config(path, discover_workspace=False)
-
-        message = str(excinfo.value)
-        assert "local-sources/vcs-sources/archive-sources declare" in message
-        assert "tool.nab" not in message
-
-
-class TestArchiveSources:
-    _URL = "https://ex.com/foo-1.0.tar.gz#sha256=" + "e" * 64
-
-    def test_round_trip(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            f'[[tool.nab.archive-sources]]\nname = "foo"\nurl = "{self._URL}"\n',
-        )
-        (source,) = read_pyproject_config(path).archive_sources
-        assert source.name == "foo"
-        assert source.url == self._URL
-
-    def test_invalid_name_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            f'[[tool.nab.archive-sources]]\nname = "my pkg"\nurl = "{self._URL}"\n',
-        )
-        with pytest.raises(ConfigError, match="is not a valid package name"):
-            read_pyproject_config(path)
-
-    def test_must_be_array(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\narchive-sources = "x"\n')
-        with pytest.raises(ConfigError, match="archive-sources must be an array"):
-            read_pyproject_config(path)
-
-    def test_entry_must_be_table(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[tool.nab]\narchive-sources = ["x"]\n')
-        with pytest.raises(ConfigError, match=r"archive-sources\[0\] must be a table"):
-            read_pyproject_config(path)
-
-    def test_missing_keys(self, tmp_path: Path) -> None:
-        path = write(tmp_path, '[[tool.nab.archive-sources]]\nname = "x"\n')
-        with pytest.raises(ConfigError, match="missing required key 'url'"):
-            read_pyproject_config(path)
-
-    def test_field_types(self, tmp_path: Path) -> None:
-        path = write(tmp_path, "[[tool.nab.archive-sources]]\nname = 1\nurl = 2\n")
-        with pytest.raises(ConfigError, match="name and url must be strings"):
-            read_pyproject_config(path)
-
-    def test_unknown_key_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            f'[[tool.nab.archive-sources]]\nname = "x"\nurl = "{self._URL}"\nbogus = 1\n',
-        )
-        with pytest.raises(ConfigError, match=r"archive-sources\[0\] has unknown keys"):
-            read_pyproject_config(path)
-
-    def test_no_hash_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.archive-sources]]\nname = "x"\n'
-            'url = "https://ex.com/foo-1.0.tar.gz"\n',
-        )
-        with pytest.raises(ConfigError, match="has no hash"):
-            read_pyproject_config(path)
-
-    def test_empty_digest_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.archive-sources]]\nname = "x"\n'
-            'url = "https://ex.com/foo-1.0.tar.gz#sha256="\n',
-        )
-        with pytest.raises(ConfigError, match="has no hash"):
-            read_pyproject_config(path)
-
-    def test_non_hex_digest_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.archive-sources]]\nname = "x"\n'
-            'url = "https://ex.com/foo-1.0.tar.gz#sha256=not-a-digest"\n',
-        )
-        with pytest.raises(ConfigError, match="is not hexadecimal"):
-            read_pyproject_config(path)
-
-    def test_non_targz_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.archive-sources]]\nname = "x"\n'
-            'url = "https://ex.com/foo-1.0.whl#sha256=' + "e" * 64 + '"\n',
-        )
-        with pytest.raises(ConfigError, match="not a .tar.gz archive"):
-            read_pyproject_config(path)
-
-    def test_malformed_fragment_rejected(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.archive-sources]]\nname = "x"\n'
-            'url = "https://ex.com/foo-1.0.tar.gz#egg=foo"\n',
-        )
-        with pytest.raises(ConfigError, match="unknown archive URL fragment"):
-            read_pyproject_config(path)
-
-    @pytest.mark.parametrize(
-        "url",
-        [
-            "https://[::1/foo-1.0.tar.gz",
-            "https://ex.com]/foo-1.0.tar.gz",
-            "https://exa\N{ACCOUNT OF}mple.com/foo-1.0.tar.gz",
-        ],
-    )
-    def test_malformed_authority_rejected(self, tmp_path: Path, url: str) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.archive-sources]]\nname = "x"\n'
-            f'url = "{url}#sha256=' + "e" * 64 + '"\n',
-        )
-        with pytest.raises(
-            ConfigError, match=r"archive-sources\[0\] url .* does not parse"
-        ):
-            read_pyproject_config(path)
-
-    def test_bracketed_ipv6_authority_accepted(self, tmp_path: Path) -> None:
-        url = "https://[2001:db8::1]/foo-1.0.tar.gz#sha256=" + "e" * 64
-        path = write(
-            tmp_path,
-            f'[[tool.nab.archive-sources]]\nname = "x"\nurl = "{url}"\n',
-        )
-        (source,) = read_pyproject_config(path).archive_sources
-        assert source.url == url
-
-    def test_duplicate_collides_with_vcs_source(self, tmp_path: Path) -> None:
-        path = write(
-            tmp_path,
-            '[[tool.nab.vcs-sources]]\nname = "Foo-Bar"\n'
-            'url = "git+https://github.com/me/b.git@abc"\n'
-            f'[[tool.nab.archive-sources]]\nname = "foo_bar"\nurl = "{self._URL}"\n',
-        )
-        with pytest.raises(ConfigError, match="duplicate canonical name"):
-            read_pyproject_config(path)
 
 
 class TestPackageSugar:
@@ -5933,7 +5451,7 @@ class TestWorkspaceDiscoveryIntegration:
         )
         assert config.build_policy is BuildPolicy.BUILD_LOCAL
 
-    def test_explicit_local_source_wins_over_workspace_member(
+    def test_workspace_fallback_and_standard_entry_cross_the_seam(
         self, tmp_path: Path
     ) -> None:
         member = self._ws(tmp_path)
@@ -5941,50 +5459,62 @@ class TestWorkspaceDiscoveryIntegration:
         explicit = (tmp_path / "explicit-alpha").resolve()
         member.write_text(
             '[project]\nname = "alpha"\nversion = "0"\n'
-            "[tool.nab]\n"
-            "[[tool.nab.local-sources]]\n"
-            'name = "alpha"\n'
-            f'path = "{explicit.as_posix()}"\n',
+            "[develop.sources]\n"
+            f'alpha = {{path="{explicit.as_posix()}"}}\n',
         )
         config = read_pyproject_config(member)
-        assert config.local_sources == (LocalSource(name="alpha", path=str(explicit)),)
+        assert config.local_sources == (
+            LocalSource(name="alpha", path=str(member.parent), editable=True),
+        )
+        assert config.develop_sources[0].location == str(explicit)
+        assert config.resolve_inputs().workspace_member_names == frozenset({"alpha"})
 
-    def test_shadowed_member_excluded_from_workspace_member_names(
+    def test_standard_entry_does_not_remove_workspace_membership(
         self, tmp_path: Path
     ) -> None:
         member = self._ws(tmp_path)
         explicit = (tmp_path / "explicit-alpha").resolve()
         member.write_text(
             '[project]\nname = "alpha"\nversion = "0"\n'
-            "[tool.nab]\n"
-            "[[tool.nab.local-sources]]\n"
-            'name = "alpha"\n'
-            f'path = "{explicit.as_posix()}"\n',
+            "[develop.sources]\n"
+            f'alpha = {{path="{explicit.as_posix()}"}}\n',
         )
         config = read_pyproject_config(member)
-        assert config.workspace_member_names == frozenset()
+        assert config.workspace_member_names == frozenset({"alpha"})
 
-    def test_member_colliding_with_vcs_source_rejected(self, tmp_path: Path) -> None:
-        """A discovered member sharing a vcs-source name is rejected at parse."""
+    def test_standard_vcs_entry_preserves_workspace_member(
+        self, tmp_path: Path
+    ) -> None:
+        """A standard source leaves the workspace membership available."""
         root = tmp_path / "pyproject.toml"
         root.write_text(
-            '[project]\nname = "ws"\nversion = "0"\n'
-            "[tool.nab.workspace]\n"
-            'members = ["pkg"]\n'
-            '[tool.nab.vcs]\npolicy = "allow"\n'
-            "[[tool.nab.vcs-sources]]\n"
-            'name = "Alpha"\n'
-            'url = "git+https://github.com/me/alpha.git@abc"\n',
+            """[project]
+name = "ws"
+version = "0"
+
+[tool.nab.workspace]
+members = [
+    "pkg",
+]
+
+[tool.nab.vcs]
+policy = "allow"
+
+[develop.sources.Alpha]
+git = "https://github.com/me/alpha.git"
+rev = "abc"
+""",
         )
         member_dir = tmp_path / "pkg"
         member_dir.mkdir()
         (member_dir / "pyproject.toml").write_text(
             '[project]\nname = "alpha"\nversion = "0"\n',
         )
-        with pytest.raises(ConfigError, match="duplicate canonical name"):
-            read_pyproject_config(root)
+        config = read_pyproject_config(root)
+        assert config.workspace_member_names == frozenset({"alpha"})
+        assert len(config.develop_sources) == 1
 
-    def test_member_colliding_with_archive_source_rejected(
+    def test_standard_archive_entry_preserves_workspace_member(
         self, tmp_path: Path
     ) -> None:
         root = tmp_path / "pyproject.toml"
@@ -5992,17 +5522,19 @@ class TestWorkspaceDiscoveryIntegration:
             '[project]\nname = "ws"\nversion = "0"\n'
             "[tool.nab.workspace]\n"
             'members = ["pkg"]\n'
-            "[[tool.nab.archive-sources]]\n"
-            'name = "alpha"\n'
-            'url = "https://ex.com/alpha-1.0.tar.gz#sha256=' + "e" * 64 + '"\n',
+            "[develop.sources]\n"
+            'alpha = {url="https://ex.com/alpha-1.0.tar.gz",hashes={sha256="'
+            + "e" * 64
+            + '"}}\n',
         )
         member_dir = tmp_path / "pkg"
         member_dir.mkdir()
         (member_dir / "pyproject.toml").write_text(
             '[project]\nname = "alpha"\nversion = "0"\n',
         )
-        with pytest.raises(ConfigError, match="duplicate canonical name"):
-            read_pyproject_config(root)
+        config = read_pyproject_config(root)
+        assert config.workspace_member_names == frozenset({"alpha"})
+        assert len(config.develop_sources) == 1
 
     def test_workspace_keeps_an_explicit_never(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
@@ -6488,7 +6020,6 @@ _STAYS_IN_NAB = frozenset(
         "mode",
         "requires_python_source",
         "workspace",
-        "workspace_member_names",
     }
 )
 
@@ -6500,6 +6031,12 @@ def _config_off_every_slot_default(tmp_path: Path) -> NabProjectConfig:
     that failed to cross would read back as the one it was meant to carry.
     """
     return NabProjectConfig(
+        archive=ArchiveConfig(
+            policy=ArchivePolicy.ALLOW,
+            allowed_urls=("https://example.invalid/",),
+            require_hashes=False,
+        ),
+        workspace_member_names=frozenset({"member"}),
         archive_sources=(
             ArchiveSource("blob", "https://example.invalid/b-1.0.tar.gz"),
         ),

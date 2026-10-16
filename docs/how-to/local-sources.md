@@ -1,66 +1,98 @@
 # Use a local checkout as a source
 
-`[[tool.nab.local-sources]]` lets you treat a directory on disk as the only candidate for a named
-package. The typical use case is iterating on a fork of a dependency without publishing wheels or
-pushing to a VCS host.
+## Declare development sources
 
-## Declaring a local source
+Use `[develop.sources]` to select a local checkout for a dependency:
 
 ```toml
-[[tool.nab.local-sources]]
-name = "my-fork"
-path = "../my-fork"
+[develop.sources]
+my-fork = { path = "../my-fork", editable = true }
 ```
 
-Relative `path` entries resolve against the directory holding `pyproject.toml`, not the process's
-current working directory. Absolute paths are recorded as-is.
+The directory entry counts as opt-in to that checkout. Build policy still controls backend
+execution.
 
-The target project's name must canonicalise to the declared `name`. A `path` that lands on a
-different project fails the resolve.
+The package becomes the only candidate for that name. nab does not fall back to an index if the
+checkout cannot be read or its version does not satisfy the dependency. The checkout's
+`[project].name` must match the source key after name normalization.
 
-The directory is read once. nab reads the version from `[project].version` in the local
-pyproject.toml. A `version` listed in `[project].dynamic` comes from the build backend instead, one
-of the cases under "Dynamic metadata" below.
+Relative paths use the directory containing the declaration. `editable` defaults to `false`; set it
+to `true` to record an editable install. Use `subdirectory` to select a project below the source
+root.
 
-The named package becomes the only candidate the resolver will consider for that name; the resolver
-does not fall back to PyPI for it. This is the same single-source semantics as
-`[[tool.nab.vcs-sources]]`.
+The table also supports Git repositories, wheels, ZIP/tar source archives and package indexes. An
+index entry restricts the named package to an [index selected for that package](multi-index.md). Git
+retains its [commit-pin requirement](vcs.md); direct wheels and archives retain
+[expected-hash requirements](archive-sources.md). VCS systems other than Git are unsupported.
 
-## Reading static metadata
+## Select sources for different environments
 
-Reading static metadata from a local pyproject works at every `build-policy` level:
+Alternatives are considered in order; nab uses the first entry whose selectors match:
 
 ```toml
-[tool.nab]
-# build-policy defaults to "build-local"; "never" is the strictest setting.
-
-[[tool.nab.local-sources]]
-name = "my-fork"
-path = "../my-fork"
+[develop.sources]
+my-fork = [
+    { path = "../my-fork-py310", marker = "python_version < '3.11'" },
+    { path = "../my-fork" },
+]
 ```
 
-See [build policy](../reference/build-policy.md) for the full ladder.
+An entry can also select an `extra` or dependency `group`. An entry cannot select both. A resolution
+that selects different sources for the same package fails; mutually exclusive extras or groups can
+produce separate valid locks.
 
-## Dynamic metadata
+## Use a direct reference
 
-When the static read of the checkout's pyproject.toml comes up empty, nab builds the project
-instead. That needs `build-policy = "build-local"` (the default) or `"build-remote"`. Empty means a
-missing or malformed `[project]`, or a `dynamic` list covering `version`, `requires-python`,
-`dependencies`, or `optional-dependencies`.
+A dependency can name a wheel, source archive or Git repository directly:
 
-nab spins up an isolated venv, installs the declared build requirements, and asks the PEP 517
-backend for the wheel `METADATA`, building the wheel when the backend does not supply that metadata
-on its own.
+```toml
+[project]
+dependencies = ["my-fork @ https://example.com/my_fork-1.0-py3-none-any.whl#sha256=<hex>"]
 
-Setting `"never"` instead ends the resolve. nab reads the source while listing its one version, so
-there is no candidate to reject. The error names the source and the policy that forbade the build.
+```
+
+Direct references take precedence over matching source entries and still apply with `--no-sources`.
+Archive and VCS permissions still apply with `--no-sources`. Active references to the same package
+must agree on the URL. Git references require the [VCS allowlists](vcs.md).
+
+If a dependency declares another direct reference, repeat it in your project or select that package
+in `[develop.sources]`. Matching references reuse the selected source; conflicting URLs fail.
+
+## Control which declarations apply
+
+nab reads the target project's table and the invocation directory's table when the target is beneath
+that directory. Target entries take precedence. Other ancestor directories and source tables inside
+dependencies are not read.
+
+Keep `[tool.nab.workspace].members` for workspace discovery and `--no-emit-workspace`. Members
+supply fallback local sources; matching `[develop.sources]` entries select the source instead. If no
+entry matches the current target or selection, the workspace source remains available.
+
+`--no-emit-workspace` omits local pins at the declared member directories. A replacement from
+another checkout, wheel, repository or index stays in the lock, even when its name matches a member.
+
+Pass `--no-sources` to `nab lock` or `nab download` to ignore `[develop.sources]`. Workspace
+settings still apply.
+
+Sources whose selectors apply but match no resolved dependency produce a warning.
+
+Build requirements ignore `[develop.sources]`. A `build-group` lock fails if a build dependency
+would use this table; use a separate `--build-requirements` lock instead.
+
+## Read metadata without building
+
+Static `[project]` metadata is read at every build-policy level. A `version` listed in
+`[project].dynamic` comes from the build backend instead.
+
+When metadata is missing or dynamic, a local checkout needs `build-policy = "build-local"` or
+`"build-remote"`. nab creates an isolated environment, installs `[build-system].requires` and asks
+the PEP 517 backend for wheel metadata. Under `"never"`, the source ends the resolve with an error.
+See [Build policy](../reference/build-policy.md).
 
 ## Lockfile shape
 
-Local pins land in the lockfile as `LocalPin` records. The path is written with POSIX separators,
-relative to the lockfile's own directory, so a committed lockfile keeps working on another machine
-as long as the checkout moves with it. The records carry no `sha256` (the contents are not under
-nab's control), so `nab download` skips them.
+Local sources are recorded as directory entries in `pylock.toml`, with paths relative to the
+lockfile. They have no content hash, and `nab download` skips them. The `editable` and
+`subdirectory` values are retained for the installer.
 
-See [Portable paths](../reference/lockfile.md) for the two cases where the path is not relative to
-the lockfile.
+See [Portable paths](../reference/lockfile.md) for cases where a path is absolute.

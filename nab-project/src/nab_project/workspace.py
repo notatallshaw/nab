@@ -153,7 +153,7 @@ def workspace_local_sources(
 
     Members are marked ``editable``; a workspace member installs
     editably by default, matching uv.  Explicit
-    ``[[tool.nab.local-sources]]`` entries default to non-editable.
+    Path entries in ``[develop.sources]`` default to non-editable.
     """
     sources: list[LocalSource] = []
     seen: dict[str, str] = {}
@@ -277,7 +277,7 @@ def merge_workspace_local_sources(
 ) -> tuple[LocalSource, ...]:
     """Combine explicit and workspace-discovered local sources.
 
-    Explicit ``[[tool.nab.local-sources]]`` entries always win.  When a
+    Explicit local sources always win.  When a
     discovered member shares a canonical name with an explicit entry,
     the discovered entry is dropped and one INFO log line records the
     shadow so the user can audit what was overridden.  The order is
@@ -290,8 +290,7 @@ def merge_workspace_local_sources(
     for src in discovered:
         if canonicalize_name(src.name) in explicit_names:
             logger.info(
-                "workspace member %r at %s shadowed by explicit"
-                " [[tool.nab.local-sources]]",
+                "workspace member %r at %s shadowed by explicit local source",
                 src.name,
                 src.path,
             )

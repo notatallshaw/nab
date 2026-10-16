@@ -92,7 +92,7 @@ _WARM_SYNC_MIN_BLOB_BYTES = 64 * 1024
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from nab_index.transport import AsyncHttpTransport
+    from nab_index.transport import AsyncHttpTransport, HttpResponse
     from nab_provider.metadata import WheelMetadata
     from nab_provider.policy import SourceRequest
 
@@ -106,6 +106,27 @@ def _done_event() -> threading.Event:
     event = threading.Event()
     event.set()
     return event
+
+
+class _BorrowedTransport:
+    """Send a scoped coordinator's HTTP work to its owner's event loop."""
+
+    def __init__(
+        self, loop: asyncio.AbstractEventLoop, transport: AsyncHttpTransport
+    ) -> None:
+        self.loop = loop
+        self.transport = transport
+
+    async def get(
+        self, url: str, *, headers: dict[str, str] | None = None
+    ) -> HttpResponse:
+        future = asyncio.run_coroutine_threadsafe(
+            self.transport.get(url, headers=headers), self.loop
+        )
+        return await asyncio.wrap_future(future)
+
+    async def aclose(self) -> None:
+        """Leave the transport open for its owning coordinator."""
 
 
 class FetchKind(enum.Enum):
@@ -250,6 +271,7 @@ class FetchCoordinator:
         cache_backend: CacheBackend | None = None,
         offline: bool = False,
         index_routes: list[IndexRoute] | None = None,
+        exclusive_indexes: frozenset[str] = frozenset(),
         index_cache_floors: Mapping[str, int] | None = None,
         on_fetch: Callable[[], None] | None = None,
         build_config: ResolveInputs | None = None,
@@ -260,7 +282,8 @@ class FetchCoordinator:
         ``indexes`` is ordered and its names must be unique. It defaults to
         PyPI when omitted.
 
-        ``index_routes`` pins package listings to named indexes.
+        ``index_routes`` pins package listings to named indexes. ``exclusive_indexes``
+        excludes source-only indexes from the fallback search for other packages.
         ``index_cache_floors`` maps index names to read-time freshness floors
         in seconds. Local ``file:`` indexes do not use a cache or floor.
 
@@ -287,6 +310,7 @@ class FetchCoordinator:
             msg = f"duplicate index names: {duplicates}"
             raise ValueError(msg)
         self.indexes = list(indexes)
+        self._exclusive_indexes = exclusive_indexes
         self._transport = transport
         self._max_concurrency = max_concurrency
         self._offline = offline
@@ -370,6 +394,32 @@ class FetchCoordinator:
     def __exit__(self, *args: object) -> None:
         """Shut the fetcher thread down on context exit."""
         self.shutdown()
+
+    def scoped_sources(
+        self,
+        inputs: ResolveInputs,
+        build_inputs: ResolveInputs,
+        *,
+        cache_dir: Path | None,
+    ) -> FetchCoordinator:
+        """Isolate source state and retain the owning transport settings."""
+        if self._loop is None:
+            msg = "cannot scope sources from a stopped coordinator"
+            raise RuntimeError(msg)
+        return FetchCoordinator(
+            _BorrowedTransport(self._loop, self._transport),
+            indexes=list(inputs.indexes),
+            cache_dir=cache_dir,
+            offline=self._offline,
+            index_routes=index_routes(inputs),
+            exclusive_indexes=frozenset(index.name for index in inputs.indexes)
+            - frozenset(index.name for index in build_inputs.indexes),
+            index_cache_floors=index_cache_floors(inputs),
+            max_concurrency=self._max_concurrency,
+            on_fetch=self._on_fetch,
+            build_config=build_inputs,
+            build_transport_factory=self._build_transport_factory,
+        )
 
     @property
     def parsed_cache_stats(self) -> ParsedCacheStats:
@@ -708,7 +758,7 @@ class FetchCoordinator:
     ) -> threading.Event:
         """Request the bytes of an archive named by URL rather than by an index.
 
-        Used by ``[[tool.nab.archive-sources]]``, whose URL is declared
+        Used by declared archive sources, whose URL is selected
         independently of every index, so the URL's own scheme decides how it is
         read.  The bytes land unverified in the same slot as
         :meth:`request_sdist_archive`; the caller checks the declared hashes.
@@ -834,7 +884,9 @@ class FetchCoordinator:
         clients_by_name: dict[str, CachedAsyncSimpleClient | LocalIndexClient] = {}
         for cfg in self.indexes:
             clients_by_name[cfg.name] = self._build_index_client(cfg)
-        order = [cfg.name for cfg in self.indexes]
+        order = [
+            cfg.name for cfg in self.indexes if cfg.name not in self._exclusive_indexes
+        ]
         return MultiIndexClient(
             clients_by_name,
             order,

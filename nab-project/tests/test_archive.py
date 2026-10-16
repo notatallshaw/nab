@@ -1,4 +1,4 @@
-"""Tests for direct-URL archive sources (``[[tool.nab.archive-sources]]``).
+"""Tests for materializing and locking direct-URL archive sources.
 
 Most tests pre-seed the in-memory index with the archive bytes rather than
 hitting the network, and exercise the extract-then-materialise path on real
@@ -44,6 +44,11 @@ from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.archive import ArchiveRequest, ArchiveRequestError
+from nab_provider.archive_admission import (
+    ArchiveConfig,
+    ArchivePolicy,
+    UnsupportedArchiveError,
+)
 from nab_provider.metadata import WheelMetadata
 from nab_provider.provider import (
     ArchiveSource,
@@ -154,6 +159,12 @@ def _provider(
     return Provider(
         make_coordinator(offline=offline),
         archive_sources=archive_sources,
+        archive_config=ArchiveConfig(
+            policy=ArchivePolicy.ALLOW,
+            allowed_urls=tuple(
+                ArchiveRequest.parse(source.url).url for source in archive_sources
+            ),
+        ),
         archive_cache_dir=cache_dir,
         build_policy=build_policy,
     )
@@ -166,6 +177,10 @@ def _fetching_provider(
     return Provider(
         coordinator,
         archive_sources=[source],
+        archive_config=ArchiveConfig(
+            policy=ArchivePolicy.ALLOW,
+            allowed_urls=(ArchiveRequest.parse(source.url).url,),
+        ),
         archive_cache_dir=cache_dir,
         build_policy=BuildPolicy.NEVER,
     )
@@ -420,9 +435,9 @@ class TestArchiveIndexing:
         assert provider.archive_source_for("foo_bar") is source
 
     def test_hashless_url_rejected_at_index(self) -> None:
-        # config parse also rejects this, but a directly-built Provider must
-        # not slip through to an IndexError at materialisation.
-        with pytest.raises(ValueError, match="no hash"):
+        with pytest.raises(
+            UnsupportedArchiveError, match="requires an expected digest"
+        ):
             _provider(
                 [ArchiveSource(name="foo", url="https://ex.com/foo-1.0.tar.gz")],
                 None,
@@ -436,6 +451,9 @@ class TestArchiveIndexing:
             Provider(
                 make_coordinator(),
                 local_sources=[LocalSource(name="foo", path=str(tmp_path))],
+                archive_config=ArchiveConfig(
+                    policy=ArchivePolicy.ALLOW, allowed_urls=("https://ex.com/",)
+                ),
                 archive_sources=[
                     ArchiveSource(
                         name="foo",
@@ -846,7 +864,7 @@ class TestArchiveMaterialize:
             seen_mid_extract.append(target.exists())
             return extract_sdist_archive(payload, target_dir)
 
-        monkeypatch.setattr(sources, "extract_sdist_archive", watching_extract)
+        monkeypatch.setattr(sources, "extract_source_archive", watching_extract)
         provider = _provider([source], cache)
         provider.coordinator.index.store_sdist_archive("foo", digest, data)
 
@@ -881,7 +899,7 @@ class TestArchiveMaterialize:
             (target / "tree" / "WINNER").write_text("", encoding="utf-8")
             return root
 
-        monkeypatch.setattr(sources, "extract_sdist_archive", racing_extract)
+        monkeypatch.setattr(sources, "extract_source_archive", racing_extract)
         provider = _provider([source], cache)
         provider.coordinator.index.store_sdist_archive("foo", digest, data)
 
@@ -908,7 +926,7 @@ class TestArchiveMaterialize:
             extract_sdist_archive(payload, target_dir)
             raise KeyboardInterrupt
 
-        monkeypatch.setattr(sources, "extract_sdist_archive", interrupted_extract)
+        monkeypatch.setattr(sources, "extract_source_archive", interrupted_extract)
 
         with pytest.raises(KeyboardInterrupt):
             sources._extract_archive(cache, digest, data, (("sha256", digest),))
@@ -1230,6 +1248,19 @@ class TestArchiveFetch:
 
 
 class TestArchiveDownload:
+    @pytest.mark.parametrize(
+        "filename", ["bad.whl", "foo%2Fbar.whl", "foo%5Cbar.whl", "foo%3Abar.whl"]
+    )
+    def test_invalid_decoded_wheel_filename_is_rejected(self, filename: str) -> None:
+        pin = ArchivePin(
+            name="foo",
+            version="1.0",
+            url=f"https://ex.com/{filename}",
+            hashes=(("sha256", "e" * 64),),
+        )
+        with pytest.raises(DownloadError, match="invalid wheel filename"):
+            list(iter_artifacts(_lock_input({"foo": pin})))
+
     def test_archive_pin_yields_download_entry(self) -> None:
         pin = ArchivePin(
             name="foo",

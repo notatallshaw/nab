@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field, replace
 from datetime import timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nab_provider._vendor.packaging.pylock import is_valid_pylock_path
@@ -57,7 +58,6 @@ from .value import ValueType
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
-    from pathlib import Path
 
     from nab_provider._vendor.packaging.markers import Marker
     from nab_provider.overrides import PackageOverride
@@ -296,7 +296,7 @@ class LocalPin(ValueType):
 
     ``editable`` records a PEP 660 editable install request;
     ``subdirectory`` is a path under ``path`` for monorepo layouts.
-    Both come from the ``[[tool.nab.local-sources]]`` entry.
+    Both come from the selected local source.
     """
 
     __slots__ = __match_args__ = ("name", "version", "path", "editable", "subdirectory")
@@ -693,46 +693,71 @@ class LockInput:
         return {label: lock.target.marker_env for label, lock in self.targets.items()}
 
 
-def drop_workspace_pins(lock_input: LockInput, exclude: frozenset[str]) -> LockInput:
-    """Return a copy of ``lock_input`` with the ``exclude`` pins removed.
-
-    ``exclude`` holds canonical workspace member names; pin keys are already
-    canonical.  An empty set returns ``lock_input`` unchanged.  Each target's
-    pins, forward dependency graph, and membership map are filtered. No
-    emitted edge or selector names a dropped member with no
-    ``[[packages]]`` entry.  ``base_dependencies`` carries through untouched:
-    it is never emitted, and cutting the member out of it would strip base
-    status from everything reached only through that member.
-    """
-    if not exclude:
-        return lock_input
+def _without_target_pins(lock: TargetLock, exclude: frozenset[str]) -> TargetLock:
+    """Remove pins and emitted references, retaining the base dependency closure."""
 
     def keep(name: str) -> bool:
         return canonicalize_name(name) not in exclude
 
+    return replace(
+        lock,
+        pins={name: pin for name, pin in lock.pins.items() if keep(name)},
+        dependencies={
+            name: kept
+            for name, deps in lock.dependencies.items()
+            if keep(name) and (kept := tuple(dep for dep in deps if keep(dep)))
+        },
+        dependency_requirements=(
+            None
+            if lock.dependency_requirements is None
+            else {
+                name: {child: reqs for child, reqs in children.items() if keep(child)}
+                for name, children in lock.dependency_requirements.items()
+                if keep(name) and any(keep(child) for child in children)
+            }
+        ),
+        package_gates={
+            name: gate for name, gate in lock.package_gates.items() if keep(name)
+        },
+    )
+
+
+def _member_pins(
+    lock: TargetLock, exclude: frozenset[str], member_paths: Mapping[str, str]
+) -> frozenset[str]:
+    """Find local pins rooted at the declared workspace directories in one target."""
+    return frozenset(
+        name
+        for name, pin in lock.pins.items()
+        if name in exclude
+        and isinstance(pin, LocalPin)
+        and name in member_paths
+        and (Path(pin.path) / (pin.subdirectory or ".")).resolve()
+        == Path(member_paths[name]).resolve()
+    )
+
+
+def drop_workspace_pins(
+    lock_input: LockInput,
+    exclude: frozenset[str],
+    *,
+    member_paths: Mapping[str, str] | None = None,
+) -> LockInput:
+    """Omit workspace pins and their emitted references, keeping the base closure.
+
+    ``exclude`` holds canonical member names.
+    With ``member_paths``, omit only local pins at the declared directories.
+    An empty exclusion set returns the input unchanged.
+    """
+    if not exclude:
+        return lock_input
+
     targets = {
-        label: replace(
+        label: _without_target_pins(
             lock,
-            pins={name: pin for name, pin in lock.pins.items() if keep(name)},
-            dependencies={
-                name: kept
-                for name, deps in lock.dependencies.items()
-                if keep(name) and (kept := tuple(dep for dep in deps if keep(dep)))
-            },
-            dependency_requirements=(
-                None
-                if lock.dependency_requirements is None
-                else {
-                    name: {
-                        child: reqs for child, reqs in children.items() if keep(child)
-                    }
-                    for name, children in lock.dependency_requirements.items()
-                    if keep(name) and any(keep(child) for child in children)
-                }
-            ),
-            package_gates={
-                name: gate for name, gate in lock.package_gates.items() if keep(name)
-            },
+            exclude
+            if member_paths is None
+            else _member_pins(lock, exclude, member_paths),
         )
         for label, lock in lock_input.targets.items()
     }

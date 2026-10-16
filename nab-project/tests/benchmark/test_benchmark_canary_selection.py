@@ -605,7 +605,7 @@ def test_selection_validates_unknown_settings_across_the_whole_selection(
         ),
         (
             {"vcs_policy": "permit"},
-            "quick:first: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+            "quick:first: vcs_policy must be one of ['allow', 'block', 'declared'], got 'permit'",
         ),
         (
             {"vcs_allowed_schemes": {"git+https": False}},
@@ -661,7 +661,7 @@ def test_selection_validates_vcs_settings_before_project_metadata(
         (
             {"vcs_allowed_schemes": {"git+https": False}},
             {"vcs_policy": "permit"},
-            "quick:second: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+            "quick:second: vcs_policy must be one of ['allow', 'block', 'declared'], got 'permit'",
         ),
         (
             {"vcs_allowed_repos": {"https://example.test/repo": False}},

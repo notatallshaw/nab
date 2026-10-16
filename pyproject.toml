@@ -182,6 +182,13 @@ dists = [
 
 # `nab lock` config: universal mode resolves the full matrix in one
 # pass, P7D matches the 7-day Dependabot cooldown.
+[develop.sources]
+nab-resolver = { path = "nab-resolver", editable = true }
+nab-markersets = { path = "nab-markersets", editable = true }
+nab-provider = { path = "nab-provider", editable = true }
+nab-project = { path = "nab-project", editable = true }
+nab-index = { path = "nab-index", editable = true }
+
 [tool.nab.workspace]
 members = [
     "nab-resolver",

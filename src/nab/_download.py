@@ -59,6 +59,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     python: str | None = None,
     max_concurrency: int | None = None,
     workspace_discovery: bool = True,
+    sources: bool = True,
     groups: tuple[str, ...] = (),
     all_groups: bool = False,
     extras: tuple[str, ...] = (),
@@ -147,6 +148,7 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     config = _load_config(
         path,
         discover_workspace=workspace_discovery,
+        use_sources=sources,
         cli_overrides=project_overrides,
     )
     settings = _layered_run_settings_or_exit(ladder, produces_lock=False)

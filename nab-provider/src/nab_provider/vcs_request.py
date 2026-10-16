@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import unquote
 
 from ._value import SlottedValue
 from .subdir import subdirectory_escapes
@@ -86,7 +87,7 @@ class VcsRequest(SlottedValue):
         for fragment_part in fragment.split("&"):
             key, _, value = fragment_part.partition("=")
             if key == "subdirectory":
-                subdirectory = value
+                subdirectory = unquote(value)
         if subdirectory_escapes(subdirectory):
             msg = f"unsafe VCS subdirectory {subdirectory!r} in {url!r}"
             raise VcsCloneError(msg)

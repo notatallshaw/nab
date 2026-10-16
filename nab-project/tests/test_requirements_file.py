@@ -163,12 +163,13 @@ class TestReadPyprojectDependencies:
         with pytest.raises(FileNotFoundError):
             read_pyproject_dependencies(p)
 
-    def test_missing_project_section_raises(self, tmp_path: object) -> None:
-        """Raise KeyError when [project] section is missing."""
+    def test_missing_project_section_has_no_dependencies(
+        self, tmp_path: object
+    ) -> None:
+        """A group-only project has no base dependencies."""
         p = Path(str(tmp_path)) / "pyproject.toml"
         p.write_text("[build-system]\n")
-        with pytest.raises(KeyError):
-            read_pyproject_dependencies(p)
+        assert read_pyproject_dependencies(p) == []
 
     def test_missing_dependencies_key_returns_empty(self, tmp_path: object) -> None:
         """An absent dependencies key reads as no base deps (PEP 621 optional)."""

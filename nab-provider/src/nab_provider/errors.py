@@ -36,7 +36,7 @@ __all__ = [
 
 
 class ConfigError(ValueError):
-    """Raised when ``[tool.nab]`` configuration is invalid."""
+    """Raised when project configuration is invalid."""
 
 
 class OverrideConflictError(ConfigError):

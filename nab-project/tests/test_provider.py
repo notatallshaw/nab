@@ -3977,9 +3977,9 @@ class TestTransitiveDirectUrlDep:
             provider.get_dependencies("foo", V("1.0"))
 
     def test_vcs_url_dep_blocked_by_default(self) -> None:
-        """A VCS dep is refused under the default BLOCK policy."""
+        """A dependency URL needs a source selected by the project."""
         provider = self._provider_for("git+https://example.com/bar.git@" + "a" * 40)
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
             provider.get_dependencies("foo", V("1.0"))
 
     def test_admitted_vcs_url_dep_raises_not_implemented(self) -> None:
@@ -4069,7 +4069,7 @@ class TestTransitiveDirectUrlDep:
             "git+https://example.com/bar.git@" + "a" * 40
         )
         provider.get_dependencies("foo", V("1.0"))
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
             provider.get_dependencies("foo[uvloop]", V("1.0"))
 
     def test_selected_extra_admitted_vcs_url_raises_not_implemented(self) -> None:

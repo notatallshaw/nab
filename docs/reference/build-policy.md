@@ -8,8 +8,8 @@ Three levels, strictest first. Each level reads static metadata from every sourc
 difference is what is permitted to fall through to a backend invocation when the static read returns
 nothing usable.
 
-An sdist below means a `.tar.gz`. nab drops every other format when it parses an index listing, so
-no policy sees one.
+An indexed sdist below means a `.tar.gz`; other index sdist formats are omitted. Explicit source
+archives support ZIP and other tar compression formats.
 
 The default is `build-local`: local checkouts and workspace members may invoke a backend, but remote
 sources (PyPI sdists, VCS clones, archive sources) are read statically only. Lift a specific package
@@ -27,23 +27,23 @@ Static metadata only, from any source:
 - Other sdists: nab reads the bundled `pyproject.toml` when `[project].dynamic` leaves dependencies
   and optional dependencies static. Otherwise look-ahead skips the candidate.
   `trust-unverified-deps` instead trusts pre-2.2 `PKG-INFO`; see [Configuration](configuration.md).
-- Local checkouts declared via `[[tool.nab.local-sources]]`: the directory's `pyproject.toml` is
-  read statically. A missing or malformed `[project]`, or a `dynamic` list covering `version`,
+- Local checkouts declared via path entries in `[develop.sources]`: the directory's `pyproject.toml`
+  is read statically. A missing or malformed `[project]`, or a `dynamic` list covering `version`,
   `requires-python`, `dependencies`, or `optional-dependencies`, ends the resolve.
-- VCS clones declared via `[[tool.nab.vcs-sources]]`: the clone is fetched and its `pyproject.toml`
-  is read statically. Same failure when the static read comes up empty.
-- Archive sources declared via `[[tool.nab.archive-sources]]`: the `.tar.gz` is downloaded,
-  hash-verified, and extracted, then its `pyproject.toml` is read statically. Same failure when the
-  static read comes up empty.
+- VCS clones declared via Git entries in `[develop.sources]`: the clone is fetched and its
+  `pyproject.toml` is read statically. Same failure when the static read comes up empty.
+- Archive files from `[develop.sources]`: nab checks declared hashes before extraction, then reads
+  static `pyproject.toml` metadata from the extracted tree. Missing static metadata ends the
+  resolve.
 
 `never` runs no build backend unless a per-package or per-index override raises the policy. It still
 reads configured indexes and source files.
 
 ## `build-local` (default)
 
-Adds PEP 517 backend invocation for `[[tool.nab.local-sources]]` and workspace members. When static
-metadata is unavailable, the project's backend runs in an isolated environment and nab reads the
-resulting wheel metadata.
+Adds PEP 517 backend invocation for path entries in `[develop.sources]` and workspace members. When
+static metadata is unavailable, the project's backend runs in an isolated environment and nab reads
+the resulting wheel metadata.
 
 Static metadata is unavailable when `[project]` is missing or malformed, or when `[project].dynamic`
 names `version`, `requires-python`, `dependencies`, or `optional-dependencies`. Remote PyPI sdists,
@@ -54,8 +54,8 @@ VCS clones, and archives remain static-only.
 Builds extend to VCS clones, archive sources, and remote PyPI sdists. On top of `build-local`:
 
 - VCS-cloned trees with dynamic deps have the backend invoked on the clone.
-- Archive sources declared via `[[tool.nab.archive-sources]]` with dynamic deps have the backend
-  invoked on the extracted tree; the bytes are network-fetched, so they count as remote.
+- Archive sources declared via URL entries in `[develop.sources]` with dynamic deps have the backend
+  invoked on the extracted tree; archives use the remote build policy, including `file://` sources.
 - PyPI sdists are downloaded, extracted to a temp directory, and built when their `PKG-INFO` deps
   are not PEP 643 static and the bundled `pyproject.toml` offers no static fallback.
 
@@ -92,9 +92,10 @@ The override permits a backend only for that package. If its dependencies are kn
 ## Building a build requirement
 
 A backend runs in a venv holding its project's `[build-system].requires`, and a venv takes wheels.
-When the version a requirement resolves to publishes none this host can install, satisfying it means
-building that first. `build-requires-depth` counts the build environments nab may open beneath the
-first one:
+Direct wheel URL requirements are supported. Direct source-archive, directory and VCS pins cannot be
+installed there; use a wheel URL or an index distribution instead. When the version a requirement
+resolves to publishes none this host can install, satisfying it means building that first.
+`build-requires-depth` counts the build environments nab may open beneath the first one:
 
 ```toml
 [tool.nab]

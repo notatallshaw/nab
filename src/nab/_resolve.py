@@ -224,6 +224,7 @@ def _load_config(
     path: Path,
     *,
     discover_workspace: bool = True,
+    use_sources: bool = True,
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, object] | None = None,
 ) -> NabProjectConfig:
@@ -233,6 +234,7 @@ def _load_config(
         return read_pyproject_config(
             path,
             discover_workspace=discover_workspace,
+            use_sources=use_sources,
             anchor=anchor,
             cli_overrides=cli_overrides,
         )

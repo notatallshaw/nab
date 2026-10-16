@@ -36,6 +36,7 @@ from nab_project.conflicts import (
     ConflictPolicy,
     ConflictSet,
 )
+from nab_project.develop import DevelopSource
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
     ArchivePin,
@@ -49,6 +50,7 @@ from nab_project.lockfile import (
 from nab_project.value import ValueType
 from nab_project.workspace import WorkspaceConfig
 from nab_provider._vendor.packaging.requirements import Requirement
+from nab_provider.archive_admission import ArchiveConfig, ArchivePolicy
 from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.policy import (
     ArchiveSource,
@@ -260,6 +262,7 @@ CASES = [
     Case(
         ResolveInputs,
         {
+            "archive": ArchiveConfig(policy=ArchivePolicy.ALLOW),
             "archive_sources": (ArchiveSource("acme", "https://acme.test/a-1.zip"),),
             "base_group": "project",
             "build_group": "build",
@@ -270,6 +273,7 @@ CASES = [
             "decision_order": DecisionOrder.STABLE,
             "default_groups": ("dev",),
             "dist_policy": DistPolicy.WHEEL_ONLY,
+            "develop_sources": (DevelopSource("foo", "path", "/foo"),),
             "index_overrides": {
                 "private": IndexOverride(build_policy=BuildPolicy.NEVER)
             },
@@ -284,8 +288,10 @@ CASES = [
             "uploaded_prior_to": datetime(2026, 1, 1, tzinfo=timezone.utc),
             "vcs": VcsConfig(policy=VcsPolicy.ALLOW),
             "vcs_sources": (VcsSource("beta", "git+https://beta.test/beta"),),
+            "workspace_member_names": frozenset({"alpha"}),
         },
         {
+            "archive": ArchiveConfig(),
             "archive_sources": (ArchiveSource("acme", "https://acme.test/a-2.zip"),),
             "base_group": "runtime",
             "build_group": "buildreqs",
@@ -296,6 +302,7 @@ CASES = [
             "decision_order": DecisionOrder.ARRIVAL,
             "default_groups": ("docs",),
             "dist_policy": DistPolicy.SDIST_ONLY,
+            "develop_sources": (),
             "index_overrides": {"private": IndexOverride(build_policy=None)},
             "indexes": (IndexConfig("public", "https://public.test/simple/"),),
             "local_sources": (LocalSource("beta", "beta"),),
@@ -306,6 +313,7 @@ CASES = [
             "uploaded_prior_to": None,
             "vcs": VcsConfig(policy=VcsPolicy.BLOCK),
             "vcs_sources": (VcsSource("beta", "git+https://beta.test/gamma"),),
+            "workspace_member_names": frozenset(),
         },
         hashable=False,
         positional=False,
@@ -343,7 +351,9 @@ CASES = [
             "vcs": VcsConfig(policy=VcsPolicy.ALLOW),
             "local_sources": (LocalSource("alpha", "alpha"),),
             "vcs_sources": (VcsSource("beta", "git+https://beta.test/beta"),),
+            "archive": ArchiveConfig(policy=ArchivePolicy.ALLOW),
             "archive_sources": (ArchiveSource("acme", "https://acme.test/a-1.zip"),),
+            "develop_sources": (DevelopSource("foo", "path", "/foo"),),
             "matrix": None,
             "resolution": ResolutionStrategy.LOWEST,
             "decision_order": DecisionOrder.STABLE,
@@ -373,7 +383,9 @@ CASES = [
             "vcs": VcsConfig(policy=VcsPolicy.BLOCK),
             "local_sources": (LocalSource("beta", "beta"),),
             "vcs_sources": (VcsSource("beta", "git+https://beta.test/gamma"),),
+            "archive": ArchiveConfig(),
             "archive_sources": (ArchiveSource("acme", "https://acme.test/a-2.zip"),),
+            "develop_sources": (),
             "matrix": MATRIX,
             "resolution": ResolutionStrategy.HIGHEST,
             "decision_order": DecisionOrder.ARRIVAL,
@@ -584,6 +596,7 @@ DEFAULTS = [
             "vcs": VcsConfig(),
             "local_sources": (),
             "vcs_sources": (),
+            "archive": ArchiveConfig(),
             "archive_sources": (),
             "matrix": None,
             "resolution": ResolutionStrategy.HIGHEST,

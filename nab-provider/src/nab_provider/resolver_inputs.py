@@ -154,12 +154,13 @@ def build_resolver_inputs(
     marker_holds: MarkerHolds,
     kind: str = "requirement",
     warned: set[tuple[str, str]] | None = None,
+    resolved_direct_urls: frozenset[tuple[str, str]] = frozenset(),
 ) -> _ResolverInputs:
     """Convert PEP 508 requirements to the resolver's input shape.
 
     A requirement whose marker ``marker_holds`` rejects under ``environment``
-    is skipped.  A direct-URL or VCS one is checked against ``vcs`` by
-    :func:`admit_vcs_url` and then raises ``NotImplementedError``.
+    is skipped. A URL in ``resolved_direct_urls`` is bound to a source by the host.
+    Other direct references retain VCS admission and the unsupported-path error.
 
     Each surviving requirement becomes its own
     :class:`~nab_resolver.types.RootRequirement`, tagged with the string the
@@ -189,7 +190,8 @@ def build_resolver_inputs(
             _warn_dropped_membership_marker(req, already_warned, kind=kind)
             continue
 
-        if req.url is not None:
+        name = str(canonicalize_name(req.name))
+        if req.url is not None and (name, req.url) not in resolved_direct_urls:
             admit_vcs_url(req.url, vcs)
             msg = (
                 f"VCS {kind} admitted by policy but resolver path is not"
@@ -197,7 +199,6 @@ def build_resolver_inputs(
             )
             raise NotImplementedError(msg)
 
-        name = str(canonicalize_name(req.name))
         previous = resolver_requirements.get(name, VersionRange.full())
         term = (
             req.specifier.to_range()

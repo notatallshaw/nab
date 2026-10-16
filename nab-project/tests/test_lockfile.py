@@ -3071,6 +3071,9 @@ class _FakeProvider:
     def archive_source_for(self, canonical: str) -> ArchiveSource | None:
         return self._archive.get(canonical)
 
+    def archive_pin_for(self, canonical: str) -> None:
+        return None
+
     def vcs_pin_for(self, canonical: str) -> str | None:
         return self._vcs_pins.get(canonical)
 
@@ -7118,3 +7121,76 @@ class TestMarkerCoverage:
         )
         pylock = build_pylock(lock_input)
         assert pylock.environments is not None
+
+
+@pytest.mark.parametrize("subdirectory", [None, "member"])
+def test_workspace_omission_checks_each_targets_resolved_directory(
+    tmp_path: Path, subdirectory: str | None
+) -> None:
+    member = tmp_path / "member"
+    alternate = tmp_path / "alternate"
+    member.mkdir()
+    alternate.mkdir()
+    first, second = _target("3.12"), _target("3.13")
+    member_pin = LocalPin(
+        "core",
+        "1",
+        str(member if subdirectory is None else tmp_path),
+        subdirectory=subdirectory,
+    )
+    external_pin = LocalPin("core", "2", str(alternate))
+    leaf = LocalPin("leaf", "1", str(tmp_path / "leaf"))
+    dependencies = {"core": ("leaf",)}
+    original = LockInput(
+        targets={
+            target.label: TargetLock(
+                target=target,
+                pins={"core": pin, "leaf": leaf},
+                dependencies=dependencies,
+                base_dependencies=dependencies,
+                package_gates={
+                    "core": (("group", "dev"),),
+                    "leaf": (("group", "dev"),),
+                },
+                dependency_requirements={},
+            )
+            for target, pin in [(first, member_pin), (second, external_pin)]
+        }
+    )
+    result = drop_workspace_pins(
+        original, frozenset({"core"}), member_paths={"core": str(member)}
+    )
+    omitted, retained = result.targets[first.label], result.targets[second.label]
+    assert set(omitted.pins) == {"leaf"}
+    assert omitted.dependencies == {}
+    assert set(omitted.package_gates) == {"leaf"}
+    assert omitted.base_dependencies == dependencies
+    assert omitted.dependency_requirements == {}
+
+    assert set(retained.pins) == {"core", "leaf"}
+    assert retained.dependencies == dependencies
+    assert set(retained.package_gates) == {"core", "leaf"}
+    assert retained.base_dependencies == dependencies
+    assert set(original.targets[first.label].pins) == {"core", "leaf"}
+
+
+@pytest.mark.parametrize("kind", ["index", "archive", "vcs", "unknown-directory"])
+def test_workspace_omission_keeps_other_origins(tmp_path: Path, kind: str) -> None:
+    pins: dict[str, PinShape] = {
+        "index": _index_pin("core", "1"),
+        "archive": ArchivePin(
+            "core", "1", "https://example.org/core.zip", (("sha256", "a" * 64),)
+        ),
+        "vcs": VcsPin(
+            "core",
+            "1",
+            "git+https://example.org/core.git@" + "a" * 40,
+            "https://example.org/core.git",
+            "a" * 40,
+        ),
+        "unknown-directory": LocalPin("core", "1", str(tmp_path)),
+    }
+    original = LockInput(targets=_one({"core": pins[kind]}))
+    paths = {} if kind == "unknown-directory" else {"core": str(tmp_path)}
+    result = drop_workspace_pins(original, frozenset({"core"}), member_paths=paths)
+    assert result.targets[_HOST.label].pins == original.targets[_HOST.label].pins

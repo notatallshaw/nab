@@ -61,15 +61,12 @@ def project_dependencies(document: Mapping[str, Any]) -> list[Requirement]:
     """Read [project].dependencies from a parsed pyproject.
 
     PEP 621 makes the key optional, so an absent ``dependencies`` reads as an
-    empty list.  A missing ``[project]`` raises :class:`KeyError` and one that
-    is not a table :class:`InvalidProjectTableError`.  A malformed dependency
+    empty list.  A missing ``[project]`` contributes no dependencies; a value that
+    is not a table raises :class:`InvalidProjectTableError`.  A malformed dependency
     string raises :class:`InvalidProjectRequirementError`, as does a dynamic
     ``dependencies``.
     """
-    project = document["project"]
-    if not isinstance(project, dict):
-        msg = f"[project] must be a table, got {type(project).__name__}"
-        raise InvalidProjectTableError(msg)
+    project = _project_table(document)
 
     source = "[project].dependencies"
     if "dependencies" not in project:

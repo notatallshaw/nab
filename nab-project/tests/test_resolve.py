@@ -35,7 +35,7 @@ from nab_project.conflicts import (
 )
 from nab_project.fetch import DEFAULT_MAX_CONCURRENCY
 from nab_project.inputs import ResolveInputs
-from nab_project.lockfile import LockInput, PinShape, build_pylock
+from nab_project.lockfile import LockInput, PinShape, VcsPin, build_pylock
 from nab_project.pyproject_files import (
     read_pyproject_groups,
     read_pyproject_name,
@@ -83,6 +83,7 @@ from nab_provider.requirements_file import (
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
 from nab_provider.vcs_admission import VcsPolicy
+from nab_provider.vcs_request import VcsClone
 from nab_resolver.errors import (
     ResolutionError,
     ResolutionInvariantError,
@@ -2743,7 +2744,7 @@ class TestResolveUniversalPyproject:
 class TestResolvePyprojectVcs:
     """VCS direct-URL requirements get admission-checked before drop."""
 
-    def test_block_default_refuses_vcs_dependency(self, tmp_path: Path) -> None:
+    def test_explicit_block_refuses_vcs_dependency(self, tmp_path: Path) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
             f"[project]\ndependencies = "
@@ -2751,10 +2752,15 @@ class TestResolvePyprojectVcs:
         )
 
         with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
-            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                inputs=ResolveInputs(vcs=VcsConfig(policy=VcsPolicy.BLOCK)),
+            )
 
-    def test_admitted_vcs_dependency_raises_not_implemented(
-        self, tmp_path: Path
+    def test_admitted_vcs_dependency_resolves_the_pinned_clone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
@@ -2766,13 +2772,23 @@ class TestResolvePyprojectVcs:
             'allowed-repos = ["https://github.com/"]\n',
         )
 
-        with pytest.raises(NotImplementedError, match="not implemented"):
-            _resolved(
-                pyproject,
-                _FAKE_TRANSPORT,
-                python_version="3.12.0",
-                inputs=ResolveInputs(vcs=_GITHUB_HTTPS),
-            )
+        clone = tmp_path / "checkout"
+        clone.mkdir()
+        (clone / "pyproject.toml").write_text('[project]\nname="foo"\nversion="1"\n')
+        monkeypatch.setattr(
+            "nab_index.vcs.prepare_clone",
+            lambda *args, **kwargs: VcsClone(clone, _FORTY),
+        )
+        result = _resolved(
+            pyproject,
+            _FAKE_TRANSPORT,
+            python_version="3.12.0",
+            inputs=ResolveInputs(vcs=_GITHUB_HTTPS),
+        )
+        assert result.target_results[0].lock is not None
+        pin = result.target_results[0].lock.pins["foo"]
+        assert isinstance(pin, VcsPin)
+        assert pin.commit_id == _FORTY
 
     def test_refused_dependency_closes_the_transport(
         self, caplog: pytest.LogCaptureFixture, tmp_path: Path
@@ -2786,7 +2802,12 @@ class TestResolvePyprojectVcs:
         closes_before = _FAKE_TRANSPORT.aclose.await_count
 
         with pytest.raises(UnsupportedVcsError):
-            _resolved(pyproject, _FAKE_TRANSPORT, python_version="3.12.0")
+            _resolved(
+                pyproject,
+                _FAKE_TRANSPORT,
+                python_version="3.12.0",
+                inputs=ResolveInputs(vcs=VcsConfig(policy=VcsPolicy.BLOCK)),
+            )
 
         fetch_errors = [
             record.getMessage()
@@ -5271,9 +5292,17 @@ class TestLocalVcsRequiresPython:
         )
         root = tmp_path / "pyproject.toml"
         root.write_text(
-            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
-            "[[tool.nab.local-sources]]\n"
-            'name = "foo"\npath = "foo"\n',
+            """[project]
+name = "proj"
+dependencies = [
+    "foo",
+]
+
+[tool.nab]
+
+[develop.sources.foo]
+path = "foo"
+""",
             encoding="utf-8",
         )
         fake = make_coordinator([], package="foo")
@@ -5309,11 +5338,21 @@ class TestLocalVcsRequiresPython:
         )
         root = tmp_path / "pyproject.toml"
         root.write_text(
-            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
-            '[tool.nab]\nbuild-policy = "never"\n'
-            "[tool.nab.environment]\n"
-            'python = "3.12.1"\n'
-            '[[tool.nab.local-sources]]\nname = "foo"\npath = "foo"\n',
+            """[project]
+name = "proj"
+dependencies = [
+    "foo",
+]
+
+[tool.nab]
+build-policy = "never"
+
+[tool.nab.environment]
+python = "3.12.1"
+
+[develop.sources.foo]
+path = "foo"
+""",
             encoding="utf-8",
         )
         fake = make_coordinator([], package="foo")
@@ -5484,10 +5523,17 @@ class TestLocalSourceExtrasMarkers:
                 ),
             )
 
-    _ROOT_FOO_GPU = (
-        '[project]\nname = "proj"\ndependencies = ["foo[gpu]"]\n'
-        '[[tool.nab.local-sources]]\nname = "foo"\npath = "foo"\n'
-    )
+    _ROOT_FOO_GPU = """[project]
+name = "proj"
+dependencies = [
+    "foo[gpu]",
+]
+
+[tool.nab]
+
+[develop.sources.foo]
+path = "foo"
+"""
 
     def test_extra_pulls_its_dependency(self, tmp_path: Path) -> None:
         coordinator = make_coordinator(
@@ -5544,8 +5590,17 @@ class TestLocalSourceExtrasMarkers:
         )
         result = self._resolve(
             tmp_path,
-            '[project]\nname = "proj"\ndependencies = ["foo"]\n'
-            '[[tool.nab.local-sources]]\nname = "foo"\npath = "foo"\n',
+            """[project]
+name = "proj"
+dependencies = [
+    "foo",
+]
+
+[tool.nab]
+
+[develop.sources.foo]
+path = "foo"
+""",
             {
                 "foo": '[project]\nname = "foo"\nversion = "1.0"\n'
                 "dependencies = [\"bar ; python_version < '3.10'\"]\n",
@@ -5563,8 +5618,17 @@ class TestLocalSourceExtrasMarkers:
         with pytest.raises(ResolutionError):
             self._resolve(
                 tmp_path,
-                '[project]\nname = "proj"\ndependencies = ["foo>=2.0"]\n'
-                '[[tool.nab.local-sources]]\nname = "foo"\npath = "foo"\n',
+                """[project]
+name = "proj"
+dependencies = [
+    "foo>=2.0",
+]
+
+[tool.nab]
+
+[develop.sources.foo]
+path = "foo"
+""",
                 {"foo": '[project]\nname = "foo"\nversion = "1.0"\n'},
                 coordinator,
                 "3.12.0",
@@ -5864,8 +5928,9 @@ class TestExtraAndGroupMembershipMarkers:
         '[project]\nname = "app"\nversion = "1.0"\ndependencies = ["core"]\n'
         '[project.optional-dependencies]\ncli = ["mytool"]\n'
         '[dependency-groups]\ndev = ["mydev"]\n'
+        "[develop.sources]\n"
         + "".join(
-            f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
+            f'{name} = {{path = "{name}"}}\n'
             for name in ("core", "mytool", "mydev", "subtool")
         )
     )
@@ -6236,10 +6301,8 @@ class TestConflictMemberMembershipMarkers:
         'docs = ["shared-lib", "sphinx"]\n'
         "[tool.nab]\n"
         'conflicts = [[{ extra = "cpu" }, { extra = "gpu" }]]\n'
-        + "".join(
-            f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
-            for name in _NAMES
-        )
+        "[develop.sources]\n"
+        + "".join(f'{name} = {{path = "{name}"}}\n' for name in _NAMES)
     )
 
     def _lock(self, tmp_path: Path) -> Pylock:
@@ -6950,9 +7013,9 @@ class TestBuildGroupMarkers:
         '[project]\nname = "app"\nversion = "1.0"\ndependencies = ["core"]\n'
         '[dependency-groups]\ndev = ["mydev"]\n'
         '[build-system]\nrequires = ["builder"]\n'
+        "[develop.sources]\n"
         + "".join(
-            f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
-            for name in ("core", "mydev", "builder")
+            f'{name} = {{path = "{name}"}}\n' for name in ("core", "mydev", "builder")
         )
     )
 
@@ -7405,10 +7468,8 @@ class TestConfiguredGroupConflictMarkers:
         'base-group = "main"\n'
         'build-group = "build"\n'
         'conflicts = [[{ group = "main" }, { group = "build" }]]\n'
-        + "".join(
-            f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
-            for name in ("core", "builder")
-        )
+        "[develop.sources]\n"
+        + "".join(f'{name} = {{path = "{name}"}}\n' for name in ("core", "builder"))
     )
 
     def _lock(self, tmp_path: Path) -> Pylock:
@@ -7589,12 +7650,19 @@ class TestBuildConfigPlumbing:
 
         pyproject = tmp_path / "pyproject.toml"
         pyproject.write_text(
-            '[project]\nname = "proj"\nversion = "0"\ndependencies = ["dyn"]\n'
-            "[tool.nab]\n"
-            'build-policy = "build-local"\n'
-            "[[tool.nab.local-sources]]\n"
-            'name = "dyn"\n'
-            'path = "dyn"\n',
+            """[project]
+name = "proj"
+version = "0"
+dependencies = [
+    "dyn",
+]
+
+[tool.nab]
+build-policy = "build-local"
+
+[develop.sources.dyn]
+path = "dyn"
+""",
             encoding="utf-8",
         )
         return pyproject

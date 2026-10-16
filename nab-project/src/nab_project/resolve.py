@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider.archive import is_archive_url
 from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.pep508 import parse_requirement
@@ -57,17 +58,18 @@ from nab_provider.target import (
     micro_boundary_points,
     slices_from_points,
 )
+from nab_provider.vcs_admission import split_vcs_scheme
 from nab_resolver.errors import ResolutionError
 
 from . import pyproject_files, toml_io
 from ._resolve.engine import (
+    EngineSettings,
     EnvSignature,
     InstallContexts,
     ProgressSink,
     ResolveFork,
     ResolveResult,
     TargetResult,
-    _EngineSettings,
     _resolve_with_micro_narrowing,
     env_signature,
 )
@@ -80,6 +82,7 @@ from .conflicts import (
     validate_conflict_exclusions,
     validate_conflict_minimums,
 )
+from .develop_resolution import SourceContexts
 from .fetch import (
     DEFAULT_MAX_CONCURRENCY,
     FetchCoordinator,
@@ -141,6 +144,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
     extras: Sequence[str] = (),
     build_requirements: bool = False,
     include_dependency_requirements: bool = False,
+    allow_source_declarations: bool = True,
     resolution_strategy: ResolutionStrategy | None = None,
     progress: ProgressSink | None = None,
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY,
@@ -161,6 +165,8 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
 
     ``include_dependency_requirements`` retains active declarations on each
     successful target's lock. Roots and constraints remain separate.
+    Set ``allow_source_declarations=False`` for requirements derived from dependency
+    metadata, which do not carry the project's permission to acquire their URLs.
 
     ``build_requirements`` resolves ``[build-system].requires`` instead of
     the project's dependencies; neither ``groups`` nor ``extras`` mean
@@ -185,7 +191,7 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             groups, inputs.default_groups, inputs.base_group, inputs.build_group
         )
 
-        forks, base_requirements = _plan_forks(
+        forks, base_requirements, base_contexts = _plan_forks(
             path,
             tables,
             inputs,
@@ -220,10 +226,12 @@ def resolve_for_targets(  # noqa: PLR0913 - the knobs of a project resolve
             cache_dir=cache_dir,
             forks=forks,
             base_requirements=base_requirements,
+            base_contexts=base_contexts,
             resolution_strategy=resolution_strategy,
             progress=progress,
             release_refused_wheels=True,
             include_dependency_requirements=include_dependency_requirements,
+            allow_source_declarations=allow_source_declarations,
         )
 
 
@@ -243,6 +251,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     cache_dir: Path | None = None,
     forks: Sequence[ResolveFork] | None = None,
     base_requirements: Sequence[Requirement] | None = None,
+    base_contexts: InstallContexts | None = None,
     resolution_strategy: ResolutionStrategy | None = None,
     align_across_targets: bool = True,
     preferences: Mapping[str, Version] | None = None,
@@ -250,11 +259,14 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     marker_holds: MarkerHolds | None = None,
     release_refused_wheels: bool = False,
     include_dependency_requirements: bool = False,
+    allow_source_declarations: bool = True,
 ) -> ResolveResult:
     """Resolve ``targets`` against an already-open coordinator.
 
     ``include_dependency_requirements`` retains active declarations on each
     successful target's lock. Roots and constraints remain separate.
+    Set ``allow_source_declarations=False`` for requirements derived from dependency
+    metadata, which do not carry the project's permission to acquire their URLs.
 
     With ``forks`` every target is resolved once per fork, each fork's
     ``selection`` stamped onto the target; without them the resolve runs
@@ -268,6 +280,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     ``base_requirements`` are the no-member requirements (the project
     deps plus any non-conflicting selection).  When given, a final base
     pass resolves them per target; pass it only when conflict forks ran.
+    ``base_contexts`` retains their extra and group source selectors.
 
     ``marker_holds`` decides whether a root requirement's marker holds for
     a target's environment, defaulting to
@@ -282,10 +295,35 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     target's refusal is another target's candidate.
     """
     inputs = ResolveInputs() if inputs is None else inputs
-    with _source_root(cache_dir, inputs) as source_root:
-        settings = _EngineSettings(
+    marker_predicate = dependency_marker_holds if marker_holds is None else marker_holds
+    fork_list = (
+        list(forks) if forks is not None else [ResolveFork((), tuple(requirements))]
+    )
+    root_occurrences = itertools.chain.from_iterable(
+        fork.requirements for fork in fork_list
+    )
+    direct_sources = any(
+        req.url is not None
+        and (is_archive_url(req.url) or split_vcs_scheme(req.url)[0] is not None)
+        and any(
+            req.marker is None or marker_predicate(req.marker, target.marker_env)
+            for target in targets
+        )
+        for req in itertools.chain(root_occurrences, base_requirements or ())
+    )
+    source_contexts = SourceContexts(
+        cache_dir, allow_declarations=allow_source_declarations
+    )
+    with _source_root(cache_dir, inputs, direct_sources=direct_sources) as source_root:
+        settings = EngineSettings(
             coordinator=coordinator,
             inputs=inputs,
+            base_contexts=base_contexts,
+            source_context=(
+                source_contexts.scope
+                if inputs.develop_sources or direct_sources
+                else None
+            ),
             source_root=source_root,
             align=align_across_targets,
             resolution=(
@@ -293,9 +331,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
                 if resolution_strategy is not None
                 else inputs.resolution
             ),
-            marker_holds=(
-                dependency_marker_holds if marker_holds is None else marker_holds
-            ),
+            marker_holds=marker_predicate,
             progress=progress,
             include_dependency_requirements=include_dependency_requirements,
             listing_filter_cache=ListingFilterCache(
@@ -304,12 +340,9 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
             release_refused_wheels=release_refused_wheels and len(targets) == 1,
         )
 
-        fork_list = (
-            list(forks) if forks is not None else [ResolveFork((), tuple(requirements))]
-        )
         constraints = [parse_requirement(text) for text in inputs.constraints]
 
-        return _resolve_with_micro_narrowing(
+        result = _resolve_with_micro_narrowing(
             list(targets),
             fork_list,
             constraints,
@@ -317,11 +350,14 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
             preferences,
             base_requirements,
         )
+        if result.success:
+            source_contexts.warn_unmatched_sources()
+        return result
 
 
 @contextmanager
 def _source_root(
-    cache_dir: Path | None, inputs: ResolveInputs
+    cache_dir: Path | None, inputs: ResolveInputs, *, direct_sources: bool = False
 ) -> Generator[Path | None, None, None]:
     """Yield the directory a declared VCS or archive source materialises under.
 
@@ -329,7 +365,12 @@ def _source_root(
     materialised to read its version and dependencies, so the run gets a
     temporary directory.
     """
-    if cache_dir is not None or not (inputs.vcs_sources or inputs.archive_sources):
+    if cache_dir is not None or not (
+        inputs.vcs_sources
+        or inputs.archive_sources
+        or inputs.develop_sources
+        or direct_sources
+    ):
         yield cache_dir
         return
 
@@ -559,6 +600,7 @@ def inputs_for_build_requirements(inputs: ResolveInputs) -> ResolveInputs:
     and ``build-group``'s roots already are the build requirements.
     """
     return inputs.replace(
+        develop_sources=(),
         conflicts=(),
         default_groups=(),
         base_group=None,
@@ -581,7 +623,7 @@ def _plan_forks(
     *,
     extras: tuple[str, ...],
     groups: tuple[str, ...],
-) -> tuple[list[ResolveFork], list[Requirement] | None]:
+) -> tuple[list[ResolveFork], list[Requirement] | None, InstallContexts | None]:
     """Plan the resolves a selection needs, plus their base pass.
 
     An engaged conflict forks: one resolve per choice of member, each
@@ -589,8 +631,8 @@ def _plan_forks(
     selection named directly, so the exclusion check below still refuses a
     selection that reaches two members without naming either.
 
-    The second element is the no-member requirement list, needed only when
-    the plan forked; see :func:`resolve_with_coordinator`.
+    The remaining elements preserve the no-member requirements and their
+    install contexts when the plan forks; see :func:`resolve_with_coordinator`.
     """
     configured = _configured_group_names(inputs)
     project_context, selector_contexts = _configured_contexts(inputs, tables)
@@ -652,6 +694,7 @@ def _plan_forks(
 
     # With more than one fork the lock writer needs the no-member pins too.
     base_requirements = None
+    base_contexts = None
     if len(plan) > 1:
         base_fork = _base_fork(plan[0])
         base_project, base_carried = _carried_by(
@@ -660,7 +703,14 @@ def _plan_forks(
         base_requirements = _fork_requirements(
             path, tables, base_fork, project=base_project, selectors=base_carried
         )
-    return forks, base_requirements
+        base_contexts = InstallContexts(
+            project=base_project,
+            selectors=_selector_requirements(
+                path, tables, base_fork, contexts=base_carried
+            ),
+            name_project=inputs.base_group is not None,
+        )
+    return forks, base_requirements, base_contexts
 
 
 def _selector_requirements(

@@ -80,7 +80,7 @@ ALLOWED_REPOS = [
 
 configs = st.builds(
     VcsConfig,
-    policy=st.sampled_from([VcsPolicy.BLOCK, VcsPolicy.ALLOW]),
+    policy=st.sampled_from(list(VcsPolicy)),
     allowed_schemes=st.frozensets(st.sampled_from(VALID_SCHEMES), max_size=5),
     allowed_repos=st.lists(st.sampled_from(ALLOWED_REPOS), max_size=2).map(tuple),
     require_pin=st.booleans(),
@@ -274,7 +274,7 @@ def _oracle(url: str, config: VcsConfig) -> str:
     scheme = next((s for s in VALID_SCHEMES if url.startswith(f"{s}://")), None)
     if scheme is None:
         return "refuse"
-    if config.policy is VcsPolicy.BLOCK:
+    if config.policy is not VcsPolicy.ALLOW:
         return "refuse"
     if scheme not in config.allowed_schemes:
         return "refuse"

@@ -20,7 +20,7 @@ them by default; [build policy](reference/build-policy.md) controls when a backe
 - [Configure a resolve](reference/configuration.md) and inspect effective values.
 - Use [local projects](how-to/local-sources.md), [git sources](how-to/vcs.md),
   [multiple indexes](how-to/multi-index.md), or [workspaces](how-to/workspaces.md).
-- [Use a direct archive source](how-to/archive-sources.md) with a required digest.
+- [Use a direct archive source](how-to/archive-sources.md) and check its expected digest.
 - [Reason about PEP 508 markers](how-to/reason-about-markers.md) as sets of environments.
 - [Diagnose a failed resolve](reference/diagnostics.md) from its error and `Diagnostics:` section.
 - [Check the CLI](reference/cli.md), output [formats](reference/formats.md), or
@@ -36,7 +36,7 @@ stability warnings.
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Runtime               | CPython 3.10 and newer. Other interpreters are not tested.                                                                                                                     |
 | Commands              | `nab lock` resolves and writes a lock. `nab download` resolves again and fetches artifacts. Neither command installs packages.                                                 |
-| Sources               | Simple indexes, local checkouts, declared git sources, hash-pinned `.tar.gz` archives, and workspace members. Project-root `name @ git+...` requirements are not resolved yet. |
+| Sources               | `[develop.sources]`, direct project references and workspace members. Sources include indexes, directories, Git, wheels and ZIP/tar archives. Other VCS types are unsupported. |
 | Output                | PEP 751 `pylock.toml`, requirements with recorded index hashes, and requirements without those hashes.                                                                         |
 | Experimental features | Universal locks, multiple indexes, and workspaces. Their feature pages state the current boundary.                                                                             |
 | Embedding             | `nab-resolver` has a path-stable public API. `nab-markersets` documents its supported surface but remains experimental; the other component APIs are experimental.             |

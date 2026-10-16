@@ -25,30 +25,30 @@ from nab_project.conflicts import (
     ConflictPolicy,
     ConflictSet,
 )
-from nab_project.paths import is_usable_path_name, resolve_path
+from nab_project.paths import is_usable_path_name
 from nab_project.value import ValueType
 from nab_project.workspace import WorkspaceConfig
 from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
 from nab_provider._vendor.packaging.utils import InvalidName, canonicalize_name
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.archive import ArchiveRequest, ArchiveRequestError
+from nab_provider.archive_admission import (
+    ArchiveConfig,
+    ArchivePolicy,
+    validate_archive_prefix,
+)
 from nab_provider.errors import ConfigError
 from nab_provider.iso8601 import parse_iso_datetime
 from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import (
-    ArchiveSource,
     BuildPolicy,
     DecisionOrder,
     DistPolicy,
-    LocalSource,
     ResolutionStrategy,
     ResolveMode,
-    VcsSource,
 )
 from nab_provider.records import IndexConfig
 from nab_provider.serialization import SimpleSerialization
-from nab_provider.subdir import subdirectory_escapes
 from nab_provider.tags import (
     DEFAULT_LIBC,
     LIBC_MAJOR,
@@ -77,7 +77,7 @@ __all__ = [
     "check_package_override_overlap",
     "environment_platform_spec",
     "matrix_from_config",
-    "parse_archive_sources",
+    "parse_archive",
     "parse_base_group",
     "parse_build_group",
     "parse_build_policy",
@@ -90,7 +90,6 @@ __all__ = [
     "parse_environment",
     "parse_index_overrides",
     "parse_indexes",
-    "parse_local_sources",
     "parse_marker_environment",
     "parse_matrix",
     "parse_mode",
@@ -101,7 +100,6 @@ __all__ = [
     "parse_string_list",
     "parse_uploaded_prior_to",
     "parse_vcs",
-    "parse_vcs_sources",
     "parse_workspace",
     "validate_environment_values",
 ]
@@ -1362,6 +1360,35 @@ def _parse_override_index(entry: dict[str, Any], where: str) -> str | None:
     return route
 
 
+def parse_archive(value: object, where: str) -> ArchiveConfig:
+    """Read direct archive permissions without granting backend execution."""
+    if not isinstance(value, dict):
+        msg = f"{where} must be a table, got {type(value).__name__}"
+        raise SourceConfigError(msg)
+    allowed = {"policy", "allowed-urls", "require-hashes"}
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        msg = f"{where} has unknown keys: {unknown!r}; expected {sorted(allowed)!r}"
+        raise SourceConfigError(msg)
+    policy = parse_enum(
+        value.get("policy"), f"{where}.policy", ArchivePolicy, ArchivePolicy.DECLARED
+    )
+    urls = parse_string_list(value.get("allowed-urls", []), f"{where}.allowed-urls")
+    try:
+        for url in urls:
+            validate_archive_prefix(url)
+    except ValueError as exc:
+        msg = f"{where}.allowed-urls: {exc}"
+        raise SourceConfigError(msg) from exc
+    require_hashes = value.get("require-hashes", True)
+    if not isinstance(require_hashes, bool):
+        msg = f"{where}.require-hashes must be a boolean"
+        raise SourceConfigError(msg)
+    return ArchiveConfig(
+        policy=policy, allowed_urls=tuple(urls), require_hashes=require_hashes
+    )
+
+
 def parse_vcs(value: object, where: str) -> VcsConfig:
     """Read ``[tool.nab.vcs]`` into the policy VCS sources are admitted under."""
     if not isinstance(value, dict):
@@ -1373,7 +1400,7 @@ def parse_vcs(value: object, where: str) -> VcsConfig:
         msg = f"{where} has unknown keys: {unknown!r}; expected {allowed!r}"
         raise SourceConfigError(msg)
     policy = parse_enum(
-        value.get("policy"), f"{where}.policy", VcsPolicy, VcsPolicy.BLOCK
+        value.get("policy"), f"{where}.policy", VcsPolicy, VcsPolicy.DECLARED
     )
     allowed_schemes = parse_string_list(
         value.get("allowed-schemes", []), f"{where}.allowed-schemes"
@@ -1417,144 +1444,6 @@ def _validate_allowed_repo(repo: str) -> None:
     except ValueError as exc:
         msg = f"vcs.allowed-repos entry {repo!r} does not parse: {exc}"
         raise SourceConfigError(msg) from exc
-
-
-def _validate_source_name(where: str, index: int, name: str) -> None:
-    """Reject a declared source ``name`` that is not a valid package name.
-
-    A source is matched to a requirement by canonical name, so a name
-    that is not a package name can never match one.
-    """
-    try:
-        canonicalize_name(name, validate=True)
-    except InvalidName as exc:
-        msg = f"{where}[{index}] name {name!r} is not a valid package name"
-        raise SourceConfigError(msg) from exc
-
-
-_LOCAL_SOURCE_KEYS = frozenset({"name", "path", "editable", "subdirectory"})
-
-
-def _parse_local_source(
-    entry: object, where: str, i: int, *, pyproject_dir: Path
-) -> LocalSource:
-    if not isinstance(entry, dict):
-        msg = f"{where}[{i}] must be a table, got {type(entry).__name__}"
-        raise SourceConfigError(msg)
-
-    unknown = sorted(set(entry) - _LOCAL_SOURCE_KEYS)
-    if unknown:
-        msg = (
-            f"{where}[{i}] has unknown keys: {unknown!r};"
-            f" expected {sorted(_LOCAL_SOURCE_KEYS)!r}"
-        )
-        raise SourceConfigError(msg)
-
-    try:
-        name = entry["name"]
-        path_value = entry["path"]
-    except KeyError as missing:
-        msg = f"{where}[{i}] missing required key {missing!s}"
-        raise SourceConfigError(msg) from None
-    if not isinstance(name, str) or not isinstance(path_value, str):
-        msg = f"{where}[{i}] name and path must be strings"
-        raise SourceConfigError(msg)
-
-    _validate_source_name(where, i, name)
-
-    editable = entry.get("editable", False)
-    if not isinstance(editable, bool):
-        msg = f"{where}[{i}] editable must be a boolean"
-        raise SourceConfigError(msg)
-
-    subdirectory = entry.get("subdirectory")
-    if subdirectory is not None and not isinstance(subdirectory, str):
-        msg = f"{where}[{i}] subdirectory must be a string"
-        raise SourceConfigError(msg)
-    if subdirectory is not None and subdirectory_escapes(subdirectory):
-        msg = f"{where}[{i}] subdirectory {subdirectory!r} escapes the source tree"
-        raise SourceConfigError(msg)
-
-    resolved = resolve_path(pyproject_dir, path_value)
-    if resolved is None:
-        msg = f"{where}[{i}] path {path_value!r} is not a usable filesystem path"
-        raise SourceConfigError(msg)
-
-    return LocalSource(
-        name=name,
-        path=str(resolved),
-        editable=editable,
-        subdirectory=subdirectory,
-    )
-
-
-def parse_local_sources(
-    value: object, where: str, *, pyproject_dir: Path
-) -> tuple[LocalSource, ...]:
-    """Read ``local-sources``, resolving each path against ``pyproject_dir``."""
-    if not isinstance(value, list):
-        msg = f"{where} must be an array of tables, got {type(value).__name__}"
-        raise SourceConfigError(msg)
-    return tuple(
-        _parse_local_source(entry, where, i, pyproject_dir=pyproject_dir)
-        for i, entry in enumerate(value)
-    )
-
-
-def parse_vcs_sources(value: object, where: str) -> tuple[VcsSource, ...]:
-    """Read ``vcs-sources``, one name and url per table."""
-    out: list[VcsSource] = []
-    for entry in _iter_name_url_tables(where, value):
-        _validate_source_name(where, entry.position, entry.name)
-        out.append(VcsSource(name=entry.name, url=entry.url))
-    return tuple(out)
-
-
-def parse_archive_sources(value: object, where: str) -> tuple[ArchiveSource, ...]:
-    """Read ``archive-sources``, one name and url per table, each url validated."""
-    out: list[ArchiveSource] = []
-    for entry in _iter_name_url_tables(where, value):
-        _validate_source_name(where, entry.position, entry.name)
-        _validate_archive_url(where, entry.position, entry.url)
-        out.append(ArchiveSource(name=entry.name, url=entry.url))
-    return tuple(out)
-
-
-def _validate_archive_url(where: str, index: int, url: str) -> None:
-    """Reject an archive URL that is malformed, has no hash, or is not a .tar.gz.
-
-    PEP 751 ``packages.archive.hashes`` is required, so nab requires the
-    hash in the URL fragment and verifies the download against it.  Only
-    ``.tar.gz`` source archives are supported today; wheels and zips are
-    refused loudly rather than mis-handled.  :func:`urlsplit` raises
-    ValueError on an authority it cannot parse, such as an unterminated
-    IPv6 bracket, so that surfaces as a ConfigError here too.
-    """
-    try:
-        request = ArchiveRequest.parse(url)
-    except ArchiveRequestError as exc:
-        msg = f"{where}[{index}] url: {exc}"
-        raise SourceConfigError(msg) from exc
-
-    if not request.has_usable_hash:
-        msg = (
-            f"{where}[{index}] url {url!r} has no hash; add a"
-            " '#sha256=<hex>' fragment (PEP 751 requires an archive hash)"
-        )
-        raise SourceConfigError(msg)
-
-    try:
-        path = urlsplit(request.url).path
-    except ValueError as exc:
-        msg = f"{where}[{index}] url {url!r} does not parse: {exc}"
-        raise SourceConfigError(msg) from exc
-
-    if not path.endswith(".tar.gz"):
-        msg = (
-            f"{where}[{index}] url {url!r} is not a .tar.gz archive;"
-            " only .tar.gz source archives are supported"
-        )
-        raise SourceConfigError(msg)
 
 
 def _parse_python_patches(value: object, where: str) -> dict[str, str] | None:

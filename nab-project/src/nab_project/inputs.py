@@ -8,6 +8,7 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from nab_provider.archive_admission import ArchiveConfig
 from nab_provider.policy import (
     BuildPolicy,
     DecisionOrder,
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from nab_provider.policy import ArchiveSource, LocalSource, VcsSource
 
     from .conflicts import ConflictSet
+    from .develop import DevelopSource
 
 __all__ = ["ResolveInputs"]
 
@@ -34,12 +36,14 @@ __all__ = ["ResolveInputs"]
 _DEFAULT_INDEXES = (IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),)
 _NO_INDEX_OVERRIDES: Mapping[str, IndexOverride] = MappingProxyType({})
 _DEFAULT_VCS = VcsConfig()
+_DEFAULT_ARCHIVE = ArchiveConfig()
 
 
 class ResolveInputs(ValueType):
     """The settings one resolve runs under."""
 
     __slots__ = __match_args__ = (
+        "archive",
         "archive_sources",
         "base_group",
         "build_group",
@@ -50,6 +54,7 @@ class ResolveInputs(ValueType):
         "decision_order",
         "default_groups",
         "dist_policy",
+        "develop_sources",
         "index_overrides",
         "indexes",
         "local_sources",
@@ -60,8 +65,10 @@ class ResolveInputs(ValueType):
         "uploaded_prior_to",
         "vcs",
         "vcs_sources",
+        "workspace_member_names",
     )
 
+    archive: ArchiveConfig
     archive_sources: tuple[ArchiveSource, ...]
     base_group: str | None
     build_group: str | None
@@ -72,6 +79,7 @@ class ResolveInputs(ValueType):
     decision_order: DecisionOrder
     default_groups: tuple[str, ...]
     dist_policy: DistPolicy
+    develop_sources: tuple[DevelopSource, ...]
     index_overrides: Mapping[str, IndexOverride]
     indexes: tuple[IndexConfig, ...]
     local_sources: tuple[LocalSource, ...]
@@ -82,10 +90,13 @@ class ResolveInputs(ValueType):
     uploaded_prior_to: datetime | None
     vcs: VcsConfig
     vcs_sources: tuple[VcsSource, ...]
+    # Local sources with these canonical names are implicit workspace fallbacks.
+    workspace_member_names: frozenset[str]
 
     def __init__(  # noqa: PLR0913 - one keyword per setting a resolve reads
         self,
         *,
+        archive: ArchiveConfig = _DEFAULT_ARCHIVE,
         archive_sources: tuple[ArchiveSource, ...] = (),
         base_group: str | None = None,
         build_group: str | None = None,
@@ -96,6 +107,7 @@ class ResolveInputs(ValueType):
         decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
         default_groups: tuple[str, ...] = (),
         dist_policy: DistPolicy = DistPolicy.WHEEL_OR_SDIST,
+        develop_sources: tuple[DevelopSource, ...] = (),
         index_overrides: Mapping[str, IndexOverride] = _NO_INDEX_OVERRIDES,
         indexes: tuple[IndexConfig, ...] = _DEFAULT_INDEXES,
         local_sources: tuple[LocalSource, ...] = (),
@@ -106,8 +118,10 @@ class ResolveInputs(ValueType):
         uploaded_prior_to: datetime | None = None,
         vcs: VcsConfig = _DEFAULT_VCS,
         vcs_sources: tuple[VcsSource, ...] = (),
+        workspace_member_names: frozenset[str] = frozenset(),
     ) -> None:
         """Record the settings, each defaulting to what a bare project gets."""
+        self.archive = archive
         self.archive_sources = archive_sources
         self.base_group = base_group
         self.build_group = build_group
@@ -118,6 +132,7 @@ class ResolveInputs(ValueType):
         self.decision_order = decision_order
         self.default_groups = default_groups
         self.dist_policy = dist_policy
+        self.develop_sources = develop_sources
         self.index_overrides = index_overrides
         self.indexes = indexes
         self.local_sources = local_sources
@@ -128,6 +143,7 @@ class ResolveInputs(ValueType):
         self.uploaded_prior_to = uploaded_prior_to
         self.vcs = vcs
         self.vcs_sources = vcs_sources
+        self.workspace_member_names = workspace_member_names
 
     def replace(self, **changes: object) -> ResolveInputs:
         """Return a copy with ``changes`` applied, as ``dataclasses.replace`` would."""

@@ -24,19 +24,20 @@ from nab_project.conflicts import (
     ConflictSet,
     conflict_exclusion_groups,
 )
+from nab_project.develop import DevelopSource, read_develop_sources
 from nab_project.inputs import ResolveInputs
 from nab_project.paths import realpath
 from nab_project.value import ValueType
 from nab_project.workspace import (
     WorkspaceConfig,
     discover_workspace_root,
-    merge_workspace_local_sources,
     read_workspace_members,
     workspace_local_sources,
 )
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.archive_admission import ArchiveConfig
 from nab_provider.errors import ConfigError
 from nab_provider.policy import (
     ArchiveSource,
@@ -57,7 +58,7 @@ from nab_provider.target import (
     names_a_micro,
     python_axis_environment,
 )
-from nab_provider.vcs_admission import VcsConfig, VcsPolicy
+from nab_provider.vcs_admission import VcsConfig
 
 from .hooks import resolve_anchor
 from .ladder import (
@@ -111,6 +112,7 @@ _PROJECT_REQUIRES_PYTHON = "[project] requires-python"
 _DEFAULT_INDEXES = (IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),)
 _NO_INDEX_OVERRIDES: Mapping[str, IndexOverride] = MappingProxyType({})
 _DEFAULT_VCS = VcsConfig()
+_DEFAULT_ARCHIVE = ArchiveConfig()
 
 
 class EnvironmentConfig(ValueType):
@@ -158,7 +160,9 @@ class NabProjectConfig(ValueType):
         "vcs",
         "local_sources",
         "vcs_sources",
+        "archive",
         "archive_sources",
+        "develop_sources",
         "matrix",
         "resolution",
         "decision_order",
@@ -195,6 +199,8 @@ class NabProjectConfig(ValueType):
     vcs: VcsConfig
     local_sources: tuple[LocalSource, ...]
     vcs_sources: tuple[VcsSource, ...]
+    develop_sources: tuple[DevelopSource, ...]
+    archive: ArchiveConfig
     archive_sources: tuple[ArchiveSource, ...]
     matrix: MatrixConfig | None
     resolution: ResolutionStrategy
@@ -212,10 +218,7 @@ class NabProjectConfig(ValueType):
     # declared index name.  Each applies to every package served from
     # that index; no routing, no version scope.
     index_overrides: Mapping[str, IndexOverride]
-    # Canonical names of workspace members. Populated by
-    # _apply_workspace_discovery; empty otherwise. Distinct from
-    # ``local_sources``, which also carries explicit
-    # ``[[tool.nab.local-sources]]`` entries.
+    # Canonical names discovered through the workspace declaration.
     workspace_member_names: frozenset[str]
 
     def __init__(  # noqa: PLR0913 - one keyword per [tool.nab] key
@@ -238,7 +241,9 @@ class NabProjectConfig(ValueType):
         vcs: VcsConfig = _DEFAULT_VCS,
         local_sources: tuple[LocalSource, ...] = (),
         vcs_sources: tuple[VcsSource, ...] = (),
+        archive: ArchiveConfig = _DEFAULT_ARCHIVE,
         archive_sources: tuple[ArchiveSource, ...] = (),
+        develop_sources: tuple[DevelopSource, ...] = (),
         matrix: MatrixConfig | None = None,
         resolution: ResolutionStrategy = ResolutionStrategy.HIGHEST,
         decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
@@ -266,7 +271,9 @@ class NabProjectConfig(ValueType):
         self.vcs = vcs
         self.local_sources = local_sources
         self.vcs_sources = vcs_sources
+        self.archive = archive
         self.archive_sources = archive_sources
+        self.develop_sources = develop_sources
         self.matrix = matrix
         self.resolution = resolution
         self.decision_order = decision_order
@@ -295,6 +302,8 @@ def read_pyproject_config(
     path: Path,
     *,
     discover_workspace: bool = True,
+    use_sources: bool = True,
+    invocation_root: Path | None = None,
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, Any] | None = None,
 ) -> NabProjectConfig:
@@ -347,6 +356,12 @@ def read_pyproject_config(
     if discover_workspace:
         config = _apply_workspace_discovery(
             path, config, declared_in=effective["workspace"].origin.label
+        )
+    if use_sources:
+        config = config.replace(
+            develop_sources=read_develop_sources(
+                path, invocation_root=invocation_root, document=document
+            )
         )
     return config
 
@@ -443,13 +458,7 @@ def _config_from_effective(
         conflicts, effective["base-group"].value, effective["build-group"].value
     )
 
-    local_sources = effective["local-sources"].value
-    vcs_sources = effective["vcs-sources"].value
-    archive_sources = effective["archive-sources"].value
-    _reject_duplicate_source_names(local_sources, vcs_sources, archive_sources)
-
     vcs_config = effective["vcs"].value
-    _reject_vcs_sources_under_block(effective["vcs-sources"], effective["vcs"])
 
     del pyproject_dir  # paths were resolved per-layer by the registry.
     return NabProjectConfig(
@@ -468,9 +477,7 @@ def _config_from_effective(
         environment=environment,
         indexes=indexes,
         vcs=vcs_config,
-        local_sources=local_sources,
-        vcs_sources=vcs_sources,
-        archive_sources=archive_sources,
+        archive=effective["archive"].value,
         matrix=matrix,
         resolution=effective["resolution"].value,
         decision_order=effective["decision-order"].value,
@@ -609,15 +616,10 @@ def _apply_workspace_discovery(
     if not discovered:
         return config
 
-    merged = merge_workspace_local_sources(config.local_sources, discovered)
-    _reject_duplicate_source_names(merged, config.vcs_sources, config.archive_sources)
-    explicit_names = {canonicalize_name(src.name) for src in config.local_sources}
     return config.replace(
-        local_sources=merged,
+        local_sources=tuple(discovered),
         workspace_member_names=frozenset(
-            canonicalize_name(src.name)
-            for src in discovered
-            if canonicalize_name(src.name) not in explicit_names
+            canonicalize_name(source.name) for source in discovered
         ),
     )
 
@@ -1152,37 +1154,6 @@ def _environment_file_origin(entry: EffectiveValue) -> Origin | None:
     return None
 
 
-def _reject_duplicate_source_names(
-    local_sources: tuple[LocalSource, ...],
-    vcs_sources: tuple[VcsSource, ...],
-    archive_sources: tuple[ArchiveSource, ...],
-) -> None:
-    """Reject a canonical name claimed by more than one declared source.
-
-    The provider enforces this while indexing, but as a bare ValueError raised
-    after the resolve starts; raising ConfigError here surfaces it at parse
-    time like every other config error.
-    """
-    seen: dict[str, str] = {}
-    # The three types share only SlottedValue, which declares no name, so the
-    # joined tuple needs an explicit element union.
-    declared: tuple[LocalSource | VcsSource | ArchiveSource, ...] = (
-        *local_sources,
-        *vcs_sources,
-        *archive_sources,
-    )
-    for source in declared:
-        canonical = canonicalize_name(source.name)
-        if canonical in seen:
-            msg = (
-                "local-sources/vcs-sources/archive-sources declare duplicate"
-                f" canonical name {canonical!r} via {seen[canonical]!r}"
-                f" and {source.name!r}"
-            )
-            raise ConfigError(msg)
-        seen[canonical] = source.name
-
-
 def _environment_source(
     effective: Mapping[str, EffectiveValue],
 ) -> EffectiveValue:
@@ -1194,52 +1165,6 @@ def _environment_source(
 def _declared_table(value: EffectiveValue) -> str:
     """Return the table path the file that declared ``value`` writes for its key."""
     return project_key_path(value.spec.name, value.origin.kind)
-
-
-def _reject_vcs_sources_under_block(
-    vcs_sources: EffectiveValue,
-    vcs: EffectiveValue,
-) -> None:
-    """Reject vcs-sources declared while the VCS policy blocks cloning.
-
-    Cloning is opt-in, so a declared source under the default
-    ``policy = "block"`` is contradictory. Raising ConfigError here fails
-    at parse time and names the token to set.
-
-    Each table is named for the file that has to carry the repair: the
-    sources for the file declaring them, the policy for the file that set
-    it. The two project files share a precedence rank, so a policy written
-    into the other one conflicts instead of overriding.
-
-    ``policy = "allow"`` permits checks but does not on its own admit a
-    URL: ``allowed-schemes`` and ``allowed-repos`` are empty by default
-    and each denies every URL until an entry is added, so the message
-    names all settings instead of promising that one key is enough.
-    """
-    sources: tuple[VcsSource, ...] = vcs_sources.value
-    config: VcsConfig = vcs.value
-    if not sources or config.policy is not VcsPolicy.BLOCK:
-        return
-
-    # The default policy sits in no file, so its repair goes in the one that
-    # declared the sources.
-    policy_kind = (
-        vcs_sources.origin.kind
-        if vcs.origin.kind is SourceKind.DEFAULT
-        else vcs.origin.kind
-    )
-    sources_table = project_key_path("vcs-sources", vcs_sources.origin.kind)
-    vcs_table = project_key_path("vcs", policy_kind)
-
-    msg = (
-        f"[[{sources_table}]] is declared but [{vcs_table}].policy is"
-        f" {config.policy.value!r}, which refuses every clone; remove"
-        f' the sources, or set [{vcs_table}].policy = "allow" and'
-        " configure the remaining VCS filters (vcs.allowed-schemes and"
-        " vcs.allowed-repos are"
-        " empty by default and each denies every URL)"
-    )
-    raise ConfigError(msg)
 
 
 def _validate_default_groups_against_conflicts(

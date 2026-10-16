@@ -1,15 +1,7 @@
-"""Direct-URL / VCS requirement admission for the provider.
+"""Validate Git acquisition before the host clones or reads a cached repository.
 
-Cloning a remote repo is one short step from arbitrary code
-execution because modern Python projects build via PEP 517
-backends, which run user code.  This module owns the policy types
-(:class:`VcsPolicy`, :class:`VcsConfig`), the URL classifier
-(:func:`split_vcs_scheme`, :func:`has_full_commit_sha`), and the
-admit-or-refuse decision (:func:`admit_vcs_url`) called eagerly
-during requirement ingestion.
-
-The actual clone path lives in :mod:`nab_index.vcs` and runs only
-after admission lets the URL through.
+Project-selected sources permit only their selected URLs. Pin requirements and
+explicit blocks apply independently; other URLs need scheme/repository allowlists.
 """
 
 from __future__ import annotations
@@ -34,15 +26,18 @@ class VcsPolicy(enum.Enum):
 
     Cloning a remote repo is one short step from arbitrary code execution
     (modern Python projects build via PEP 517 backends, which run user
-    code).  Default posture is :attr:`BLOCK`; opt-in is per-protocol via
-    ``vcs.allowed-schemes`` and per-repo via ``vcs.allowed-repos``.
+    code). The default permits project-selected repositories. Explicit blocks,
+    commit-pin requirements and build policies still apply.
     """
 
+    DECLARED = "declared"
+    """Permit only Git sources selected by the project."""
+
     BLOCK = "block"
-    """Refuse any requirement whose URL is non-empty."""
+    """Refuse VCS requirements and declarations."""
 
     ALLOW = "allow"
-    """Honor VCS subject to scheme + repo allowlists.
+    """Also permit URLs matching scheme and repository allowlists.
 
     Cloning a repo is staged in two phases: admission (this enum decides
     whether a URL is even considered) and materialisation (the clone
@@ -63,11 +58,10 @@ class UnsupportedVcsError(Exception):
 class VcsConfig:
     """Bundle of VCS opt-in knobs passed through the resolver stack.
 
-    Default is fully restrictive (``BLOCK`` policy, empty allowlists,
-    pin required).
+    Defaults permit only project-selected sources, with a full commit pin.
     """
 
-    policy: VcsPolicy = VcsPolicy.BLOCK
+    policy: VcsPolicy = VcsPolicy.DECLARED
     allowed_schemes: frozenset[str] = frozenset()
     allowed_repos: tuple[str, ...] = ()
     require_pin: bool = True
@@ -252,7 +246,29 @@ def _malformed_vcs_error(url: str) -> UnsupportedVcsError:
     )
 
 
-def admit_vcs_url(url: str, config: VcsConfig) -> str:
+def _check_vcs_policy(url: str, config: VcsConfig, *, declared: bool) -> None:
+    """Check explicit blocks and permission to select a repository."""
+    if config.policy is VcsPolicy.BLOCK:
+        msg = (
+            "refusing VCS requirement\n"
+            f"    {url}\n"
+            '    reason: vcs.policy is "block".\n'
+            '    to permit project-selected sources, set vcs.policy = "declared".'
+        )
+        raise UnsupportedVcsError(msg)
+
+    if config.policy is VcsPolicy.DECLARED and not declared:
+        msg = (
+            "refusing VCS URL without a selected source\n"
+            '    reason: vcs.policy is "declared" (default).\n'
+            "    declare the repository in [develop.sources] or a project dependency.\n"
+            '    for backend or library URLs, set policy="allow" '
+            "with scheme/repository allowlists."
+        )
+        raise UnsupportedVcsError(msg)
+
+
+def admit_vcs_url(url: str, config: VcsConfig, *, declared: bool = False) -> str:
     """Admit a direct-URL requirement, or raise :class:`UnsupportedVcsError`.
 
     Returns the recognized VCS scheme on success.  Called eagerly when
@@ -270,17 +286,9 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
         )
         raise UnsupportedVcsError(msg)
 
-    if config.policy is VcsPolicy.BLOCK:
-        msg = (
-            "refusing VCS requirement\n"
-            f"    {url}\n"
-            '    reason: vcs.policy is "block" (default).\n'
-            '    to allow: set vcs.policy = "allow" with appropriate\n'
-            "              vcs.allowed-schemes (and vcs.allowed-repos)."
-        )
-        raise UnsupportedVcsError(msg)
+    _check_vcs_policy(url, config, declared=declared)
 
-    if scheme not in config.allowed_schemes:
+    if not declared and scheme not in config.allowed_schemes:
         allowed_str = ", ".join(sorted(config.allowed_schemes)) or "<empty>"
         msg = (
             "refusing VCS scheme\n"
@@ -317,18 +325,17 @@ def admit_vcs_url(url: str, config: VcsConfig) -> str:
     # Stripping userinfo can unbalance an IPv6 bracket, so the match may raise
     # on a netloc that parsed whole above.
     try:
+        prefixes = (inner_url,) if declared else config.allowed_repos
         repo_admitted = any(
             _repo_prefix_matches(
                 _without_userinfo(inner_url), _without_userinfo(prefix)
             )
-            for prefix in config.allowed_repos
+            for prefix in prefixes
         )
     except ValueError:
         raise _malformed_vcs_error(url) from None
 
-    # An empty allowed-repos denies every repo (deny-all), matching
-    # allowed-schemes: under policy = "allow" the user must list at least
-    # one repo prefix.
+    # Additional repositories need an allowlist; declarations grant only themselves.
     if not repo_admitted:
         allowed_str = ", ".join(sorted(config.allowed_repos)) or "<empty>"
         msg = (

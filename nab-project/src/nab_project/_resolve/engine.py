@@ -1,7 +1,7 @@
 """The resolve engine: targets and forked requirements in, per-target pins out.
 
 :func:`nab_project.resolve.resolve_with_coordinator` builds the
-:class:`_EngineSettings` one run shares and calls in here; nothing here
+:class:`EngineSettings` one run shares and calls in here; nothing here
 imports it back, so a host can vendor the engine without it.
 ``tasks/check_engine_markersets.py`` walks from
 :func:`_resolve_with_micro_narrowing` and keeps ``nab_markersets`` off
@@ -40,6 +40,7 @@ from ..lockfile import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from nab_provider._vendor.packaging.markers import Marker
@@ -248,7 +249,7 @@ def _resolve_with_micro_narrowing(
     targets: Sequence[ResolveTarget],
     fork_list: Sequence[ResolveFork],
     constraints: Sequence[Requirement],
-    settings: _EngineSettings,
+    settings: EngineSettings,
     preferences: Mapping[str, Version] | None,
     base_requirements: Sequence[Requirement] | None,
 ) -> ResolveResult:
@@ -304,7 +305,7 @@ def _resolve_slices(
     points: Sequence[Sequence[Version]],
     fork_list: Sequence[ResolveFork],
     constraints: Sequence[Requirement],
-    settings: _EngineSettings,
+    settings: EngineSettings,
     preferences: Mapping[str, Version] | None,
     base_requirements: Sequence[Requirement] | None,
     first_pass: ResolveResult,
@@ -427,7 +428,7 @@ def _resolve_passes(
     targets: Sequence[ResolveTarget],
     fork_list: Sequence[ResolveFork],
     constraints: Sequence[Requirement],
-    settings: _EngineSettings,
+    settings: EngineSettings,
     preferences: Mapping[str, Version] | None,
     base_requirements: Sequence[Requirement] | None,
 ) -> ResolveResult:
@@ -469,7 +470,7 @@ def _base_pass(
     targets: Sequence[ResolveTarget],
     base_requirements: Sequence[Requirement] | None,
     constraints: Sequence[Requirement],
-    settings: _EngineSettings,
+    settings: EngineSettings,
     preferences: Mapping[str, Version],
 ) -> tuple[list[TargetResult], dict[EnvSignature, frozenset[str]]]:
     """Resolve the no-member requirements per target, if there are any.
@@ -480,7 +481,12 @@ def _base_pass(
         return [], {}
 
     results = _run_pass(
-        list(targets), base_requirements, constraints, settings, preferences
+        list(targets),
+        base_requirements,
+        constraints,
+        settings,
+        preferences,
+        settings.base_contexts,
     )
 
     env_base_names: dict[EnvSignature, frozenset[str]] = {}
@@ -505,7 +511,7 @@ def env_signature(target: ResolveTarget) -> EnvSignature:
 
 
 @dataclass(frozen=True, slots=True)
-class _EngineSettings:
+class EngineSettings:
     """What every per-target resolve in one run shares."""
 
     coordinator: FetchCoordinator
@@ -521,6 +527,26 @@ class _EngineSettings:
     # Injected rather than imported, so the marker-set dependency stays above
     # this module.
     marker_holds: MarkerHolds
+
+    base_contexts: InstallContexts | None = None
+
+    source_context: (
+        Callable[
+            [
+                ResolveTarget,
+                Sequence[Requirement],
+                InstallContexts | None,
+                EngineSettings,
+            ],
+            AbstractContextManager[EngineSettings],
+        ]
+        | None
+    ) = None
+    source_markers: frozenset[Marker] = frozenset()
+    redirected_dependencies: frozenset[str] = frozenset()
+    resolved_direct_urls: frozenset[tuple[str, str]] = frozenset()
+    declared_sources: frozenset[tuple[str, str]] = frozenset()
+    source_validator: Callable[[TargetLock], None] | None = None
 
     progress: ProgressSink | None = None
 
@@ -539,6 +565,9 @@ class _EngineSettings:
 
     # Lock artifacts shared by the targets of one resolve.
     artifacts: ArtifactMemo = field(default_factory=ArtifactMemo)
+
+
+_EngineSettings = EngineSettings
 
 
 def _threaded_preferences(
@@ -560,7 +589,7 @@ def _run_pass(
     targets: Sequence[ResolveTarget],
     requirements: Sequence[Requirement],
     constraints: Sequence[Requirement],
-    settings: _EngineSettings,
+    settings: EngineSettings,
     preferences: Mapping[str, Version],
     contexts: InstallContexts | None = None,
 ) -> list[TargetResult]:
@@ -580,7 +609,7 @@ def _run_pass(
 
 
 def _make_target_provider(
-    settings: _EngineSettings,
+    settings: EngineSettings,
     target: ResolveTarget,
     resolver_requirements: dict[str, VersionRange],
     resolver_constraints: Mapping[str, VersionRange],
@@ -590,6 +619,16 @@ def _make_target_provider(
     """Construct the metadata provider from one target's active inputs and policies."""
     inputs = settings.inputs
     source_root = settings.source_root
+    routed_members = inputs.workspace_member_names.intersection(
+        override.name
+        for override in inputs.package_overrides
+        if override.index is not None
+    )
+    local_sources = [
+        source
+        for source in inputs.local_sources
+        if canonicalize_name(source.name) not in routed_members
+    ]
     return Provider(
         settings.coordinator,
         target=target,
@@ -603,7 +642,8 @@ def _make_target_provider(
         index_overrides=inputs.index_overrides,
         trust_unverified_sdist_deps=inputs.trust_unverified_sdist_deps,
         vcs_config=inputs.vcs,
-        local_sources=list(inputs.local_sources) or None,
+        archive_config=inputs.archive,
+        local_sources=local_sources or None,
         vcs_sources=list(inputs.vcs_sources) or None,
         vcs_cache_dir=source_root / VCS_BUCKET if source_root is not None else None,
         archive_sources=list(inputs.archive_sources) or None,
@@ -619,6 +659,9 @@ def _make_target_provider(
         listing_filter_cache=settings.listing_filter_cache,
         release_refused_wheels=settings.release_refused_wheels,
         defer_yanked=True,
+        redirected_dependencies=settings.redirected_dependencies,
+        resolved_direct_urls=settings.resolved_direct_urls,
+        declared_sources=settings.declared_sources,
     )
 
 
@@ -626,11 +669,20 @@ def _resolve_one_target(
     target: ResolveTarget,
     requirements: Sequence[Requirement],
     constraints: Sequence[Requirement],
-    settings: _EngineSettings,
+    settings: EngineSettings,
     preferences: Mapping[str, Version],
     contexts: InstallContexts | None = None,
 ) -> TargetResult:
     """Run one single-environment resolve for ``target``."""
+    if settings.source_context is not None:
+        with settings.source_context(
+            target, requirements, contexts, settings
+        ) as scoped:
+            result = _resolve_one_target(
+                target, requirements, constraints, scoped, preferences, contexts
+            )
+            result.consulted |= scoped.source_markers
+            return result
     inputs = settings.inputs
     environment = target.marker_env
     try:
@@ -640,6 +692,7 @@ def _resolve_one_target(
             environment=environment,
             marker_holds=settings.marker_holds,
             warned=settings.warned_dropped_markers,
+            resolved_direct_urls=settings.resolved_direct_urls,
         )
         constraint_inputs = build_resolver_inputs(
             constraints,
@@ -733,6 +786,8 @@ def _resolve_one_target(
         selector_roots=selector_roots,
         artifacts=artifacts,
     )
+    if settings.source_validator is not None:
+        settings.source_validator(target_lock)
     if settings.include_dependency_requirements:
         declarations = collect_dependency_requirements(
             provider, pins, raw, target_lock.dependencies
@@ -754,7 +809,8 @@ def _resolve_one_target(
         target=target,
         success=True,
         pins=pins,
-        consulted=_consulted_markers(provider, requirements, constraints),
+        consulted=_consulted_markers(provider, requirements, constraints)
+        | settings.source_markers,
         lock=target_lock,
         wall_time=elapsed,
         **_target_stats(resolver, provider),

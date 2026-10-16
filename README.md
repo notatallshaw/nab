@@ -65,19 +65,21 @@ matrix of targets for several platforms. Dependency markers and wheel compatibil
 for those targets, and the lock records where it applies. If any declared target cannot be resolved,
 nab fails without writing a lock.
 
-### Security via build and VCS policies
+### Choose which sources nab may fetch and build
 
 Reading dependency metadata can require running a package's build backend. nab
 [reads remote sources without building them by default][build-policy]; local checkouts may build
 when their metadata needs it. If a remote package requires a build, you can opt in for that package.
-[Direct archives][archive-sources] also require a verified digest.
+A local directory entry in `[develop.sources]` selects that checkout without another opt-in. Build
+policy still controls whether its backend may run.
 
-nab blocks [VCS dependencies][vcs] by default and supports only Git. To allow them, set
-`policy = "allow"` under `[tool.nab.vcs]` and list both the permitted URL schemes and repository
-prefixes in `allowed-schemes` and `allowed-repos`. By default, `require-pin = true` requires a full
-40-character commit SHA; branch and tag references are rejected. Declare dependencies in
-`[[tool.nab.vcs-sources]]`. Allowing a repository permits cloning and reading static metadata;
-running its build backend still requires opting in to remote builds.
+A [wheel or archive entry][archive-sources] permits the URL it names. Expected hashes are required
+by default; accepting a downloaded hash instead requires an explicit `require-hashes = false`.
+
+A [Git entry][vcs] permits that repository without repeating it in an allowlist. By default,
+`require-pin = true` requires a full 40-character commit SHA; branch and tag references are
+rejected. Fetching a source does not permit running its backend. Set `policy = "block"` under
+`[tool.nab.vcs]` or `[tool.nab.archive]` to refuse those sources, including declared ones.
 
 ### Override global policies for specific packages and indexes
 

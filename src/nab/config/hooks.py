@@ -1,6 +1,6 @@
 """Parse and render configuration values that need ladder-owned state.
 
-Context variables supply time, path, and table-name state to fixed-arity
+Context variables supply time and table-name state to fixed-arity
 parser hooks.
 """
 
@@ -14,31 +14,22 @@ from typing import TYPE_CHECKING, Any
 from nab_provider.serialization import SimpleSerialization
 
 from . import values
-from .values import SourceConfigError
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Mapping, Sequence
-    from pathlib import Path
 
-    from nab_provider.policy import (
-        ArchiveSource,
-        LocalSource,
-        VcsSource,
-    )
     from nab_provider.records import IndexConfig
     from nab_provider.target import ImplementationOverride
 
 __all__ = [
-    "declaring_dir",
     "inspector_anchor",
     "matrix_table",
     "parse_index_overrides",
-    "parse_local_sources",
     "parse_matrix",
     "parse_package_rules",
     "parse_packages",
     "parse_uploaded_prior_to",
-    "render_archive_sources",
+    "render_archive",
     "render_bool",
     "render_cache_dir",
     "render_conflicts",
@@ -47,7 +38,6 @@ __all__ = [
     "render_environment",
     "render_index_list",
     "render_index_overrides",
-    "render_local_sources",
     "render_marker_environment",
     "render_matrix",
     "render_optional_text",
@@ -56,7 +46,6 @@ __all__ = [
     "render_text",
     "render_uploaded_prior_to",
     "render_vcs",
-    "render_vcs_sources",
     "render_workspace",
     "resolve_anchor",
 ]
@@ -65,12 +54,6 @@ __all__ = [
 _RESOLVE_ANCHOR: ContextVar[datetime | None] = ContextVar(
     "_RESOLVE_ANCHOR", default=None
 )
-
-# The directory of the TOML file currently being parsed.  Relative
-# ``local-sources`` paths resolve against the declaring file's directory;
-# carried structurally on a ContextVar (bound by :func:`declaring_dir`)
-# rather than re-derived by splitting a human-facing ``where`` label.
-_DECLARING_DIR: ContextVar[Path | None] = ContextVar("_DECLARING_DIR", default=None)
 
 # The matrix table name for the file being parsed.
 _MATRIX_TABLE: ContextVar[str] = ContextVar("_MATRIX_TABLE", default="tool.nab.matrix")
@@ -112,16 +95,6 @@ def inspector_anchor() -> Generator[None, None, None]:
 
 
 @contextmanager
-def declaring_dir(directory: Path) -> Generator[None, None, None]:
-    """Bind the declaring file's directory for resolving relative paths."""
-    token = _DECLARING_DIR.set(directory)
-    try:
-        yield
-    finally:
-        _DECLARING_DIR.reset(token)
-
-
-@contextmanager
 def matrix_table(table: str) -> Generator[None, None, None]:
     """Bind the matrix table name for one file read."""
     token = _MATRIX_TABLE.set(table)
@@ -153,28 +126,6 @@ def parse_uploaded_prior_to(value: Any, where: str) -> Any:
         return value
     # An absolute datetime ignores the anchor, but the parser requires one.
     return values.parse_uploaded_prior_to(value, where, anchor=_current_anchor())
-
-
-def parse_local_sources(value: Any, where: str) -> tuple[LocalSource, ...]:
-    """Return the ``local-sources`` row's sources."""
-    # One file's array-of-tables (name, path, editable, subdirectory).  Paths
-    # resolve relative to the declaring file's directory (both legal sources
-    # share the project dir).  The cross-source local/vcs/archive name check
-    # is a whole-config pass on the resolve path.
-    return values.parse_local_sources(
-        value, where, pyproject_dir=_current_declaring_dir()
-    )
-
-
-def _current_declaring_dir() -> Path:
-    # local-sources is a file-only row (no CLI/env), so its per-layer parse
-    # is only ever reached from a TOML layer, which sets _DECLARING_DIR to
-    # the file's directory.  Paths in the file resolve relative to it.
-    base = _DECLARING_DIR.get()
-    if base is None:  # pragma: no cover - per-layer parse always sets it
-        msg = "local-sources parsed without a declaring directory"
-        raise SourceConfigError(msg)
-    return base
 
 
 def parse_matrix(value: Any, where: str) -> values.MatrixConfig:
@@ -300,27 +251,6 @@ def _render_index_pin(index: IndexConfig) -> str:
     return f" serialization={index.serialization.value}"
 
 
-def render_local_sources(value: Sequence[LocalSource]) -> str:
-    """Render each source as ``name@path``, or ``<none>``."""
-    if not value:
-        return "<none>"
-    return ", ".join(f"{s.name}@{s.path}" for s in value)
-
-
-def render_vcs_sources(value: Sequence[VcsSource]) -> str:
-    """Render each source as ``name@url``, or ``<none>``."""
-    if not value:
-        return "<none>"
-    return ", ".join(f"{s.name}@{s.url}" for s in value)
-
-
-def render_archive_sources(value: Sequence[ArchiveSource]) -> str:
-    """Render each source as ``name@url``, or ``<none>``."""
-    if not value:
-        return "<none>"
-    return ", ".join(f"{s.name}@{s.url}" for s in value)
-
-
 def render_string_tuple(value: Sequence[str]) -> str:
     """Render a list row as a comma-separated line, or ``<none>``."""
     return "<none>" if not value else ", ".join(value)
@@ -349,6 +279,16 @@ def _render_environment_axis(value: Any) -> str:
     knobs = ", ".join(f"{k}={v}" for k, v in sorted(value.items()) if k != "id")
     platform_id = value["id"]
     return f"{platform_id}[{knobs}]" if knobs else str(platform_id)
+
+
+def render_archive(value: Any) -> str:
+    """Render archive acquisition permission and its URL and hash constraints."""
+    parts = [f"policy={value.policy.value}"]
+    if value.allowed_urls:
+        parts.append(f"allowed-urls={list(value.allowed_urls)}")
+    if not value.require_hashes:
+        parts.append("require-hashes=false")
+    return ", ".join(parts)
 
 
 def render_vcs(value: Any) -> str:

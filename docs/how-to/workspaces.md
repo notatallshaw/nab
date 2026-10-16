@@ -48,8 +48,8 @@ nab walks upwards from the member's directory for the first ancestor that declar
 file: `[tool.nab.workspace]` in its `pyproject.toml`, or `[workspace]` in its `nab.toml`. The
 `pyproject.toml` is checked first.
 
-Each member of the matched workspace contributes a local source. The provider prefers those local
-sources over PyPI for any requirement whose canonical name matches.
+Each member of the matched workspace contributes a fallback local source. It is used instead of PyPI
+when no explicit source selects that package.
 
 ## Members lock as editable installs
 
@@ -57,15 +57,31 @@ Each member is recorded as an editable install by default, matching uv. Its pin 
 editable entry: `editable = true` in `pylock.toml`, and `-e file://...` in the two requirements
 formats.
 
-An explicit `[[tool.nab.local-sources]]` entry defaults the other way, non-editable, and becomes
-editable only when its `editable` key is set to `true`.
+A path entry in `[develop.sources]` defaults to non-editable; set `editable = true` when the
+installer should use an editable checkout.
 
-## Interaction with `[[tool.nab.local-sources]]`
+## Interaction with development sources
 
-Explicit `[[tool.nab.local-sources]]` entries always win. When a workspace-discovered member shares
-a canonical name with an explicit entry, the discovered entry is dropped and the override is logged
-at INFO so it can be audited. Use this to point a workspace member at a checkout outside the tree
-without removing it from the `members` list.
+Matching `[develop.sources]` entries override the implicit member sources. They control the selected
+path, editability and other source options. An entry whose selectors do not match leaves the
+workspace fallback available. The standard table keeps its own file-discovery rules; workspace
+discovery does not inherit an ancestor's standard table.
+
+For example, keep the workspace declaration above and select another checkout for `myorg-core`:
+
+```toml
+[develop.sources]
+myorg-core = { path = "../core-fix" }
+```
+
+`--no-emit-workspace` omits pins from the actual member directories. The replacement checkout stays
+in the lock, as do replacements from a wheel, repository or index. Selecting a member's own
+directory through the standard table still lets the option omit it, regardless of editability or
+whether the entry reaches it through `subdirectory`.
+
+`--no-sources` ignores the standard table and retains workspace fallbacks.
+`--no-workspace-discovery` disables those fallbacks and member omission; standard entries still
+apply.
 
 ## Build policy
 
@@ -80,8 +96,8 @@ metadata to lock a workspace with no backend invocations.
 ## Scope of `[tool.nab]` keys
 
 Only the discovered workspace members flow from an ancestor root; nab adds them to the locked
-project's `local-sources`. Every other `[tool.nab]` setting stays local to the pyproject being
-locked. Thus `nab lock packages/core/pyproject.toml` ignores the root's settings.
+project's local resolution inputs. Every other `[tool.nab]` setting stays local to the pyproject
+being locked. Thus `nab lock packages/core/pyproject.toml` ignores the root's settings.
 
 Declare conflicts and default-groups on each member that needs them. The same applies to
 constraints: a root-level constraint table does not constrain a member resolve.

@@ -5,11 +5,13 @@ Parses a pip-style archive URL such as
 its bare URL, the declared hashes, and any subdirectory.
 
 The download happens in the fetch coordinator, which reads the URL by its
-own scheme; which archives are permitted is a policy decision in
-:mod:`nab.config.model`.
+own scheme; acquisition permissions live in :mod:`nab_provider.archive_admission`.
 """
 
 from __future__ import annotations
+
+import posixpath
+from urllib.parse import unquote, urlsplit
 
 from ._value import SlottedValue
 from .digest import is_hex_digest
@@ -19,7 +21,13 @@ from .subdir import subdirectory_escapes
 __all__ = [
     "ArchiveRequest",
     "ArchiveRequestError",
+    "is_archive_url",
 ]
+
+
+def is_archive_url(url: str) -> bool:
+    """Whether a reference uses HTTP(S) or the filesystem."""
+    return url.partition(":")[0].lower() in {"http", "https", "file"}
 
 
 class ArchiveRequestError(Exception):
@@ -58,6 +66,11 @@ class ArchiveRequest(SlottedValue):
         """
         return bool(self.hashes) and all(digest for _, digest in self.hashes)
 
+    @property
+    def filename(self) -> str:
+        """Return the decoded filename from the archive URL's path."""
+        return unquote(posixpath.basename(urlsplit(self.url).path))
+
     @classmethod
     def parse(cls, raw_url: str) -> ArchiveRequest:
         """Split ``raw_url`` into its URL, hashes, and subdirectory.
@@ -67,8 +80,7 @@ class ArchiveRequest(SlottedValue):
         or ``subdirectory``.  An unescaped space in the URL, an unrecognised
         fragment key, or a digest that is not hexadecimal raises
         :class:`ArchiveRequestError`; requiring a hash at all is left to the
-        config layer so the error names the
-        offending source.
+        acquisition policy.
         """
         url, _, fragment = raw_url.partition("#")
         if " " in url:
@@ -89,7 +101,7 @@ class ArchiveRequest(SlottedValue):
                 msg = f"malformed archive URL fragment {part!r} in {raw_url!r}"
                 raise ArchiveRequestError(msg)
             if key == "subdirectory":
-                subdirectory = value
+                subdirectory = unquote(value)
             elif key in ACCEPTED_HASH_ALGORITHMS:
                 # An empty digest is the missing-hash case, left to config.
                 if value and not is_hex_digest(value):

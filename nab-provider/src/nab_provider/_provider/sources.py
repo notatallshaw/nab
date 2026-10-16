@@ -2,20 +2,27 @@
 
 A declared source becomes the only candidate for its package: PyPI is not
 consulted.  The clone, the download and the directory read are the host's,
-behind :meth:`~nab_provider.fetch_port.FetchPort.request_source_listing`; what
-comes back becomes one synthetic ``SdistFile`` whose version the host read
-from ``[project].version`` or took from the build backend.
+behind :meth:`~nab_provider.fetch_port.FetchPort.request_source_listing`; tree
+metadata becomes a synthetic ``SdistFile``. A direct wheel retains its
+``WheelFile`` record.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from nab_provider._vendor.packaging.utils import canonicalize_name
+from nab_provider._vendor.packaging.utils import (
+    InvalidWheelFilename,
+    canonicalize_name,
+    parse_wheel_filename,
+)
 from nab_provider.archive import ArchiveRequest
-from nab_provider.records import SdistFile
+from nab_provider.archive_admission import UnsupportedArchiveError, admit_archive_url
+from nab_provider.errors import UnsupportedWheelError
+from nab_provider.records import DistFile, SdistFile, WheelFile
 
 from ..errors import SourceNameMismatchError
+from ..policy import DistPolicy
 from ..vcs_admission import VcsPolicy, admit_vcs_url
 
 if TYPE_CHECKING:
@@ -56,7 +63,9 @@ def seed_synthetic_listing(
     path: Path,
     metadata: WheelMetadata,
     descriptor: str,
-) -> list[tuple[Version, SdistFile]]:
+    *,
+    wheel: WheelFile | None = None,
+) -> list[tuple[Version, DistFile]]:
     """Produce a one-version listing for a materialised source."""
     actual = canonicalize_name(metadata.name)
     if actual != normalized:
@@ -66,6 +75,10 @@ def seed_synthetic_listing(
             f" not provide a different project"
         )
         raise SourceNameMismatchError(msg)
+
+    if wheel is not None:
+        provider.metadata_cache[(normalized, metadata.version)] = metadata
+        return [(metadata.version, wheel)]
 
     synthetic_file = SdistFile(
         filename=f"{normalized}-{metadata.version}.tar.gz",
@@ -84,24 +97,65 @@ def seed_synthetic_listing(
     return [(version, synthetic_file)]
 
 
+def validate_archive_source(provider: Provider, source: ArchiveSource) -> None:
+    """Check acquisition policy and add source context to refusals."""
+    try:
+        admit_archive_url(
+            source.url,
+            provider.archive_config,
+            declared=(canonicalize_name(source.name), source.url)
+            in provider.declared_sources,
+        )
+    except UnsupportedArchiveError as exc:
+        msg = f"{source.descriptor}: {exc}"
+        raise UnsupportedArchiveError(msg) from exc
+
+
+def validate_archive_wheel(provider: Provider, source: ArchiveSource) -> None:
+    """Refuse a declared wheel the target cannot use before requesting its bytes."""
+    filename = ArchiveRequest.parse(source.url).filename
+    if not filename.endswith(".whl"):
+        return
+    try:
+        wheel_name, version, _, _ = parse_wheel_filename(filename)
+    except InvalidWheelFilename as exc:
+        msg = f"{source.descriptor}: {exc}"
+        raise UnsupportedWheelError(msg) from exc
+    if wheel_name != canonicalize_name(source.name):
+        msg = f"{source.descriptor}: wheel filename declares {wheel_name!r}"
+        raise SourceNameMismatchError(msg)
+    tags = provider.wheel_tags
+    if tags is not None and not tags.accepts(filename):
+        msg = f"{source.descriptor}: wheel {filename!r} is incompatible with target"
+        raise UnsupportedWheelError(msg)
+    if provider.effective_dist_policy(canonicalize_name(source.name), version) in {
+        DistPolicy.SDIST_ONLY,
+        DistPolicy.SDIST_INSTALL,
+    }:
+        msg = f"{source.descriptor}: wheel {filename!r} conflicts with sdist policy"
+        raise UnsupportedWheelError(msg)
+
+
 def index_vcs_sources(
     provider: Provider,
     sources: list[VcsSource],
 ) -> dict[str, VcsSource]:
-    """Validate VCS sources and return a canonical-name map.
-
-    Admitted at every :class:`~nab_provider.provider.BuildPolicy` level, like a
-    local source.  ``VcsPolicy.BLOCK`` still refuses any declaration up-front:
-    whether VCS fetching is permitted at all is a separate decision.
-
-    Each URL is passed through :func:`admit_vcs_url` so the scheme, repo, and
-    pin allowlists apply to ``[[tool.nab.vcs-sources]]`` just like project-root
-    direct-URL requirements.
-    """
+    """Register VCS sources, deferring unused standard entries' permission checks."""
     if not sources:
         return {}
 
-    if provider.vcs_config.policy is VcsPolicy.BLOCK:
+    native_sources = [
+        src
+        for src in sources
+        if canonicalize_name(src.name) not in provider.redirected_dependencies
+    ]
+    if (
+        any(
+            (canonicalize_name(src.name), src.url) not in provider.declared_sources
+            for src in native_sources
+        )
+        and provider.vcs_config.policy is not VcsPolicy.ALLOW
+    ):
         msg = (
             "vcs_sources require VcsPolicy.ALLOW; current policy is"
             f" {provider.vcs_config.policy.value}.  Set vcs_config to"
@@ -111,8 +165,13 @@ def index_vcs_sources(
 
     out: dict[str, VcsSource] = {}
     for src in sources:
-        admit_vcs_url(src.url, provider.vcs_config)
         canonical = canonicalize_name(src.name)
+        if canonical not in provider.redirected_dependencies:
+            admit_vcs_url(
+                src.url,
+                provider.vcs_config,
+                declared=(canonical, src.url) in provider.declared_sources,
+            )
         if canonical in out or canonical in provider.local_sources:
             msg = f"duplicate source declared for {src.name!r}"
             raise ValueError(msg)
@@ -124,25 +183,14 @@ def index_archive_sources(
     provider: Provider,
     sources: list[ArchiveSource],
 ) -> dict[str, ArchiveSource]:
-    """Validate archive sources and return a canonical-name map.
-
-    Admitted at every :class:`~nab_provider.provider.BuildPolicy` level, like a
-    local source. There is no ``VcsPolicy`` counterpart: the download is
-    hash-verified, and which archive URLs are permitted is decided at config
-    parse.
-    """
+    """Register sources, checking acquisition permissions for native declarations."""
     if not sources:
         return {}
     out: dict[str, ArchiveSource] = {}
     for src in sources:
-        # Guarantee a usable hash at the provider layer (config parse already
-        # checks it, but a directly-built Provider would otherwise IndexError
-        # when materialisation reads the first digest, or verify an empty one).
-        if not ArchiveRequest.parse(src.url).has_usable_hash:
-            msg = f"archive source {src.name!r} has no hash in its URL: {src.url!r}"
-            raise ValueError(msg)
-
         canonical = canonicalize_name(src.name)
+        if canonical not in provider.redirected_dependencies:
+            validate_archive_source(provider, src)
         if (
             canonical in out
             or canonical in provider.local_sources

@@ -34,6 +34,7 @@ from nab_provider.policy import (
     SourceRequest,
     VcsSource,
 )
+from nab_provider.records import WheelFile
 from nab_provider.vcs_request import VcsClone, VcsRequest
 
 SHA = "0" * 40
@@ -99,6 +100,7 @@ CASES = [
             Path("/vcs"),
             Path("/archive"),
             True,
+            True,
         ),
         (
             "other",
@@ -107,15 +109,30 @@ CASES = [
             Path("/vcs2"),
             Path("/archive2"),
             False,
+            False,
         ),
-        {},
-        keyword_only=frozenset({"require_pin"}),
+        {"require_hashes": True},
+        keyword_only=frozenset({"require_pin", "require_hashes"}),
     ),
     Case(
         SourceMaterialization,
-        (Path("/tree"), METADATA, None),
-        (Path("/other"), OTHER_METADATA, SHA),
-        {},
+        (Path("/tree"), METADATA, None, None, None),
+        (
+            Path("/other"),
+            OTHER_METADATA,
+            SHA,
+            WheelFile(
+                filename="other-2.0-py3-none-any.whl",
+                url="https://e/other.whl",
+                version="2.0",
+                requires_python=None,
+                has_metadata=False,
+                upload_time=None,
+            ),
+            ArchiveRequest("https://e/other.whl", (("sha256", "0" * 64),)),
+        ),
+        {"wheel": None, "archive": None},
+        keyword_only=frozenset({"wheel", "archive"}),
         hashable=False,
     ),
     Case(

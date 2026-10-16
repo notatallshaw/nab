@@ -66,6 +66,7 @@ from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.archive_admission import ArchiveConfig, ArchivePolicy
 from nab_provider.errors import ConfigError
 from nab_provider.marker_holds import dependency_marker_holds
 from nab_provider.metadata import WheelMetadata
@@ -1400,7 +1401,7 @@ class TestBuildResolverInputs:
     def test_vcs_url_refused_by_default_policy(self) -> None:
         """A git+https requirement is refused under the default BLOCK policy."""
         env = _linux_311().marker_env
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
             build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 VcsConfig(),
@@ -1411,7 +1412,7 @@ class TestBuildResolverInputs:
     def test_url_constraint_refused(self) -> None:
         """A direct-URL constraint is refused the same way as a requirement."""
         env = _linux_311().marker_env
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
             build_resolver_inputs(
                 _reqs(f"pkg @ git+https://example.com/pkg.git@{_FORTY_SHA}"),
                 VcsConfig(),
@@ -2727,7 +2728,12 @@ class TestArchiveSourceAcrossTargets:
                 python=">=3.11, <3.13", platforms=(PlatformSpec("linux_x86_64"),)
             ).expand(),
             _reqs("foo"),
-            inputs=ResolveInputs(archive_sources=(source,)),
+            inputs=ResolveInputs(
+                archive_sources=(source,),
+                archive=ArchiveConfig(
+                    policy=ArchivePolicy.ALLOW, allowed_urls=("https://ex.com/",)
+                ),
+            ),
             cache_dir=tmp_path,
         )
 
@@ -2762,7 +2768,12 @@ class TestArchiveSourceAcrossTargets:
             coord,
             _one_target(),
             _reqs("foo"),
-            inputs=ResolveInputs(archive_sources=(source,)),
+            inputs=ResolveInputs(
+                archive_sources=(source,),
+                archive=ArchiveConfig(
+                    policy=ArchivePolicy.ALLOW, allowed_urls=("https://ex.com/",)
+                ),
+            ),
             cache_dir=tmp_path,
         )
 
@@ -2789,7 +2800,12 @@ class TestArchiveSourceAcrossTargets:
             coord,
             _one_target(),
             _reqs("foo"),
-            inputs=ResolveInputs(archive_sources=(source,)),
+            inputs=ResolveInputs(
+                archive_sources=(source,),
+                archive=ArchiveConfig(
+                    policy=ArchivePolicy.ALLOW, allowed_urls=("https://ex.com/",)
+                ),
+            ),
             cache_dir=None,
         )
 
@@ -2814,7 +2830,12 @@ class TestArchiveSourceAcrossTargets:
             coord,
             Matrix(python="==3.10", platforms=(PlatformSpec("linux_x86_64"),)).expand(),
             _reqs("foo"),
-            inputs=ResolveInputs(archive_sources=(source,)),
+            inputs=ResolveInputs(
+                archive_sources=(source,),
+                archive=ArchiveConfig(
+                    policy=ArchivePolicy.ALLOW, allowed_urls=("https://ex.com/",)
+                ),
+            ),
             cache_dir=tmp_path,
         )
 

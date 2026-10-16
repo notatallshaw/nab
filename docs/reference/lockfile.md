@@ -324,7 +324,7 @@ sorts by algorithm and digest rather than artifact.
 Output therefore does not depend on discovery order. Continuation backslashes match pip-compile.
 
 Local and VCS pins have no hashes. Editable local pins use `-e`; workspace members are editable by
-default, while `[[tool.nab.local-sources]]` entries are not unless configured. A subdirectory uses
+default, while path entries in `[develop.sources]` are not unless configured. A subdirectory uses
 `#subdirectory=`.
 
 Archive pins put their accepted digests in the URL fragment, with any subdirectory appended by `&`.

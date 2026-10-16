@@ -1,50 +1,40 @@
 # Add a VCS dependency
 
-nab resolves dependencies pulled from git URLs through `[tool.nab.vcs]` and
-`[[tool.nab.vcs-sources]]`. Only git is supported; hg, svn, and bzr are not. The default posture is
-fully restrictive: nothing VCS-shaped resolves without an explicit policy.
+Use `[develop.sources]` to select and permit a Git repository. No second repository or scheme
+allowlist is needed for that entry. Only Git is supported; Mercurial, Subversion and Bazaar are not.
 
 ## Default posture
 
 ```toml
 [tool.nab.vcs]
-policy = "block"
+policy = "declared"
 allowed-schemes = []
 allowed-repos = []
 require-pin = true
 ```
 
-`policy = "block"` means every VCS URL is rejected. Switching to `"allow"` is necessary but not
-sufficient: you also have to declare allowlists.
-
-## Layered allowlist
-
-```toml
-[tool.nab.vcs]
-policy = "allow"
-allowed-schemes = ["git+https"]
-allowed-repos = ["https://github.com/myorg/"]
-require-pin = true
-```
-
-Three layers, each AND-checked:
-
-1. `allowed-schemes`: the supported pip-style prefixes are `git+https`, `git+ssh`, `git+http`,
-   `git+file`, and `git+git`. Empty means "no scheme is allowed". `git+http` and `git+git` are
-   unauthenticated; prefer `git+https` or `git+ssh`.
-2. `allowed-repos`: prefix match against the URL after the `git+` prefix is stripped, so the value
-   includes the inner scheme. `https://github.com/myorg/` matches every HTTPS repo under that org.
-   Empty means "no repo is allowed".
-3. `require-pin`: when `true`, the URL must include a 40-char hex commit SHA after `@`. Branch and
-   tag references are rejected because they are mutable.
-
-Everything after the final `@` is the ref, so the URL has to name a repository ahead of it:
-`git+https://github.com` and `git+https://github.com@<sha>` are both refused;
-`git+https://github.com/myorg/pkg@<sha>` is not.
+`policy = "declared"` permits only repositories selected by the project. `require-pin = true`
+requires a full 40-character commit SHA. A declaration does not waive the pin or build policy. Set
+`policy = "block"` to refuse even declared Git sources.
 
 ## Pinned VCS sources
 
-The supported entry point is `[[tool.nab.vcs-sources]]`:
+```toml
+[develop.sources]
+my-fork = { git = "https://github.com/myorg/my-fork.git", rev = "<sha>" }
+```
+
+The entry permits this repository and revision only. A dependency's source table does not grant
+permission to clone other repositories. To select a branch or tag deliberately, set
+`require-pin = false` under `[tool.nab.vcs]`; the lock still records the resolved commit.
+
+Reading static metadata works at every build-policy level. Dynamic metadata needs
+`build-policy = "build-remote"`. See [Build policy](../reference/build-policy.md).
+
+## Additional URLs in backends and library callers
+
+Backend requirements come from dependency metadata and do not grant permission to acquire their
+URLs. Those requirements and library callers can use explicit allowlists:
 
 ```toml
 [tool.nab.vcs]
@@ -52,23 +42,16 @@ policy = "allow"
 allowed-schemes = ["git+https"]
 allowed-repos = ["https://github.com/myorg/"]
 require-pin = true
-
-[[tool.nab.vcs-sources]]
-name = "my-fork"
-url  = "git+https://github.com/myorg/my-fork.git@<sha>"
 ```
 
-The named package becomes a single-version source at the specified commit. nab clones the
-repository, reads its static metadata, and treats the result as a normal dependency. The URL uses
-the same admission as a project-root requirement, so it must pass `allowed-schemes`,
-`allowed-repos`, and `require-pin`.
+Both allowlists must match for an additional URL. Supported schemes are `git+https`, `git+ssh`,
+`git+http`, `git+file` and `git+git`; HTTP and the Git protocol are unauthenticated. An empty list
+permits no additional URLs. These allowlists do not need to repeat repositories already selected by
+the project. Pin and build policies still apply.
 
-Reading static metadata from the cloned tree works at any `build-policy` level. When the static read
-comes up empty, nab builds the clone instead, which needs `build-policy = "build-remote"` (a clone
-counts as remote because the source bytes are network-fetched, even though they end up on disk
-before the backend runs).
-
-The [build policy](../reference/build-policy.md) page lists what counts as empty.
+Everything after the final `@` is the ref. A URL must name a repository before it:
+`git+https://github.com@<sha>` is refused; `git+https://github.com/myorg/pkg@<sha>` names a
+repository.
 
 ## Offline runs
 
@@ -90,9 +73,9 @@ PEP 508 lets you write a direct-URL requirement under `[project].dependencies`:
 dependencies = ["my-fork @ git+https://github.com/myorg/my-fork.git@<sha>"]
 ```
 
-The admission check (allowed schemes, allowed repos, required pin) fires on this form too, but the
-resolver path is not implemented for the project-root case: nab raises `NotImplementedError`. Use a
-`[[tool.nab.vcs-sources]]` entry instead.
+This form permits the specified repository and uses the same pin and build checks as a Git source
+entry. The lock records the resolved commit. A matching `[develop.sources]` entry does not replace
+the direct reference.
 
 ## Lockfile shape
 

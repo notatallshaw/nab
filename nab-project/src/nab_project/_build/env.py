@@ -51,7 +51,13 @@ from nab_provider._vendor.packaging.utils import (
     parse_wheel_filename,
 )
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.errors import MissingExtraError
+from nab_provider.archive import ArchiveRequest
+from nab_provider.errors import (
+    ConfigError,
+    MetadataError,
+    MissingExtraError,
+    SourceNameMismatchError,
+)
 from nab_provider.marker_holds import (
     IntractableMarkerError,
     UnevaluableMarkerError,
@@ -66,7 +72,7 @@ from nab_provider.vcs_admission import UnsupportedVcsError
 from .._compat import override
 from ..download import DownloadError, download_lock
 from ..inputs import ResolveInputs
-from ..lockfile import IndexPin, strip_userinfo
+from ..lockfile import ArchivePin, IndexPin, strip_userinfo
 from .errors import BuildBackendError
 
 if TYPE_CHECKING:
@@ -512,6 +518,7 @@ class NabBuildEnv:
                     transport,
                     targets=(ResolveTarget.for_host(),),
                     inputs=inner_inputs,
+                    allow_source_declarations=False,
                 )
                 result.raise_for_failure()
         except (
@@ -519,11 +526,11 @@ class NabBuildEnv:
             NotImplementedError,
             InvalidProjectRequirementError,
             MissingExtraError,
+            ConfigError,
+            MetadataError,
+            SourceNameMismatchError,
         ) as exc:
-            # A build requirement nab cannot resolve: a direct-URL/VCS pin, an
-            # invalid PEP 508 string, or an extra the resolved version does not
-            # declare. Wrap it so the outer resolve skips this sdist rather
-            # than aborting on the raw error.
+            # An unavailable backend rejects the outer sdist candidate.
             msg = f"build env resolve failed: {exc}"
             raise BuildEnvError(msg) from exc
 
@@ -600,8 +607,17 @@ class NabBuildEnv:
         install has none of those outs: it must be the wheel
         :pep:`425` ranks highest.
         """
-        if not isinstance(pin, IndexPin):
+        if isinstance(pin, ArchivePin) and ArchiveRequest.parse(
+            pin.url
+        ).filename.endswith(".whl"):
             return pin
+        if not isinstance(pin, IndexPin):
+            label = chain_label(pin.name, pin.version)
+            msg = (
+                f"build requirement {label} is not an installable wheel "
+                "or index distribution"
+            )
+            raise BuildEnvError(msg)
 
         preferred = tags.pick(pin.wheels) if pin.wheels else None
         if preferred is not None:
@@ -800,15 +816,10 @@ def _without_build_permission(
 
 
 def _inner_resolve_inputs(inputs: ResolveInputs) -> ResolveInputs:
-    """Return the settings the build-requires resolve runs under.
-
-    Only the fields named here cross into it: build deps come from the
-    configured indexes alone, so the outer run's own requirements and
-    sources stay out.  The cutoff and the decision order cross because
-    this resolve picks the backend that writes the metadata the outer
-    resolve reads, and a lock reproduces only if this search does too.
-    """
+    """Forward policies without project sources or metadata-build permission."""
     return ResolveInputs(
+        archive=inputs.archive,
+        vcs=inputs.vcs,
         indexes=inputs.indexes,
         package_overrides=tuple(
             _without_build_permission(override) for override in inputs.package_overrides

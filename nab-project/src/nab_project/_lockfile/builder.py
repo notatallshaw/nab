@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
     from nab_provider._vendor.packaging.utils import NormalizedName
     from nab_provider._vendor.packaging.version import Version
+    from nab_provider.archive import ArchiveRequest
     from nab_provider.policy import ArchiveSource, LocalSource, VcsSource
     from nab_provider.records import IndexConfig
     from nab_provider.target import ResolveTarget
@@ -131,6 +132,10 @@ class LockInputProvider(Protocol):
 
     def vcs_pin_for(self, canonical_name: str, /) -> str | None:
         """Return the resolved 40-char SHA captured during materialisation."""
+        ...
+
+    def archive_pin_for(self, canonical_name: str, /) -> ArchiveRequest | None:
+        """Return verified archive data produced by the host, if available."""
         ...
 
     def dist_files_for(
@@ -368,7 +373,10 @@ def build_target_lock(
         archive_source = provider.archive_source_for(canonical)
         if archive_source is not None:
             lock_pins[canonical] = _archive_pin_from_source(
-                canonical, version, archive_source
+                canonical,
+                version,
+                archive_source,
+                resolved=provider.archive_pin_for(canonical),
             )
             continue
         lock_pins[canonical] = _index_pin_from_listing(
@@ -838,20 +846,17 @@ def _archive_pin_from_source(
     canonical: str,
     version: Version,
     source: ArchiveSource,
+    *,
+    resolved: ArchiveRequest | None = None,
 ) -> ArchivePin:
-    """Build an :class:`ArchivePin` from an :class:`ArchiveSource`.
-
-    The URL, hashes, and subdirectory come from the source declaration,
-    which config parse validated (a hash is required), so the pin records
-    the exact archive the resolve used.  The URL is stripped of any
-    credential userinfo, like every other pin, so a committed lockfile
-    never carries a token.
-    """
+    """Pin expected hashes, or the host's observed hash when policy permitted it."""
     from nab_provider.archive import ArchiveRequest
 
     from ..lockfile import ArchivePin
 
     request = ArchiveRequest.parse(source.url)
+    if not request.hashes and resolved is not None:
+        request = resolved
     return ArchivePin(
         name=canonical,
         version=str(version),

@@ -59,12 +59,10 @@ _PAGES = (
     ("build-requires-depth", "reference/build-policy.md"),
     ("environment", "reference/configuration.md"),
     ("marker-environment", "reference/configuration.md"),
+    ("archive", "how-to/archive-sources.md"),
     ("vcs", "how-to/vcs.md"),
     ("workspace", "how-to/workspaces.md"),
     ("indexes", "how-to/multi-index.md"),
-    ("local-sources", "how-to/local-sources.md"),
-    ("vcs-sources", "how-to/vcs.md"),
-    ("archive-sources", "reference/configuration.md"),
     ("packages", "reference/configuration.md"),
     ("package-rules", "reference/configuration.md"),
     ("index", "how-to/multi-index.md"),
@@ -96,6 +94,7 @@ _PAGES = (
     ("all-groups", "reference/selection.md"),
     ("extras", "reference/selection.md"),
     ("all-extras", "reference/selection.md"),
+    ("sources", "how-to/local-sources.md"),
     ("workspace-discovery", "how-to/workspaces.md"),
     ("build-requirements", "reference/selection.md"),
     ("no-emit-workspace", "how-to/workspaces.md"),
@@ -111,11 +110,9 @@ _WRITTEN_LABELS = {
     "environment": "table(python,platform[,knobs],implementation)",
     "marker-environment": "table(marker-var=str)",
     "vcs": "table(vcs-policy)",
+    "archive": "table(archive-policy)",
     "workspace": "table(members)",
     "indexes": "array-of-tables(name,url,serialization)",
-    "local-sources": "array-of-tables(name,path)",
-    "vcs-sources": "array-of-tables(name,url)",
-    "archive-sources": "array-of-tables(name,url)",
     "packages": "table(package-override)",
     "package-rules": "array-of-tables(match,policy)",
     "index": "table(index-override)",
@@ -179,13 +176,13 @@ class TestTheDeclaredTable:
         command = [row for row in ALL if row.commands and not row.is_global]
         file_only = [row for row in ALL if not row.commands]
 
-        assert (len(root), len(command), len(file_only)) == (7, 44, 13)
-        assert len(root) + len(command) + len(file_only) == len(ALL) == 64
+        assert (len(root), len(command), len(file_only)) == (7, 45, 11)
+        assert len(root) + len(command) + len(file_only) == len(ALL) == 63
 
         keyed = [row for row in ALL if row.key]
-        assert len(keyed) == 29
+        assert len(keyed) == 27
         assert sum(1 for row in keyed if row.cli_flag) == 16
-        assert sum(1 for row in keyed if not row.commands) == 13
+        assert sum(1 for row in keyed if not row.commands) == 11
 
     def test_the_sub_rows_spell_the_two_tables(self) -> None:
         """A sub-row carries no key, so only ``under`` says which one it spells."""
@@ -211,7 +208,7 @@ class TestTheDeclaredTable:
     def test_the_layered_rows_split_by_scope_as_the_registry_does(self) -> None:
         keyed = [row for row in ALL if row.key]
 
-        assert sum(row.scope is Scope.PROJECT for row in keyed) == 25
+        assert sum(row.scope is Scope.PROJECT for row in keyed) == 23
         assert sum(row.scope is Scope.USER for row in keyed) == 4
 
     def test_the_environment_names_are_the_four_user_keys(self) -> None:
@@ -284,7 +281,7 @@ class TestTheDeclaredTable:
         """
         negatable = [row for row in ALL if row.kind in _BOOL_KINDS]
 
-        assert len(negatable) == 12
+        assert len(negatable) == 13
         for row in negatable:
             assert row.negatable is not row.name.startswith("no-"), row.name
 

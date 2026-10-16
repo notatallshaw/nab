@@ -533,11 +533,7 @@ def test_the_dists_check_imports_every_released_package() -> None:
 
 
 def test_lock_config_covers_every_released_package() -> None:
-    """``nab lock`` resolves every distribution from the tree and skips its cooldown.
-
-    A member missing from the workspace table locks against the published copy
-    instead of the source tree.
-    """
+    """Lock local packages, omit workspace pins on request, and skip their cooldown."""
     config = _toml(PYPROJECT)["tool"]["nab"]
     exempt = {
         name
@@ -546,6 +542,9 @@ def test_lock_config_covers_every_released_package() -> None:
         for name in rule["match"]
     }
 
+    assert _toml(PYPROJECT)["develop"]["sources"] == {
+        name: {"path": name, "editable": True} for name in MEMBERS
+    }
     assert sorted(config["workspace"]["members"]) == MEMBERS
     assert exempt == set(PACKAGES)
 

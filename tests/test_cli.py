@@ -415,10 +415,8 @@ def test_source_build_python_lock(
             tmp_path,
             '[project]\nname = "root"\nversion = "0"\n'
             "dependencies = ['first; python_version >= \"3.9\"']\n"
-            + "".join(
-                f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
-                for name in ("first", "second")
-            )
+            "[develop.sources]\n"
+            + "".join(f'{name} = {{path = "{name}"}}\n' for name in ("first", "second"))
             + (
                 '[tool.nab.environment]\nplatform = "linux_x86_64"\n'
                 if declared_platform
@@ -426,11 +424,7 @@ def test_source_build_python_lock(
             ),
         )
         out = tmp_path / "pylock.toml"
-        with patch(
-            "nab_project.resolve.FetchCoordinator",
-            return_value=contextlib.nullcontext(make_coordinator([])),
-        ):
-            _lock_cli(str(pyproject), "--offline", "--no-cache", "--output", str(out))
+        _lock_cli(str(pyproject), "--offline", "--no-cache", "--output", str(out))
         written = tomli.loads(out.read_text())
         assert [pkg["name"] for pkg in written["packages"]] == ["first", "second"]
         (target,) = plan_targets(read_pyproject_config(pyproject))
@@ -458,8 +452,8 @@ def _make_archive_source_project(
     pyproject = _make_pyproject(
         tmp_path,
         '[project]\nname = "probe"\nversion = "0.1"\ndependencies = ["foo"]\n'
-        '[[tool.nab.archive-sources]]\nname = "foo"\n'
-        f'url = "{source_url}"\n',
+        "[develop.sources]\n"
+        f'foo = {{url="{url}",hashes={{sha256="{digest}"}}}}\n',
     )
     return pyproject, source_url
 
@@ -490,13 +484,18 @@ def _mismatched_local_source_project(tmp_path: Path) -> str:
     member = tmp_path / "bar"
     member.mkdir()
     (member / "pyproject.toml").write_text('[project]\nname = "bar"\nversion = "1.0"\n')
-    return (
-        '[project]\nname = "root"\nversion = "0"\n'
-        'dependencies = ["foo"]\n'
-        "[[tool.nab.local-sources]]\n"
-        'name = "foo"\n'
-        'path = "bar"\n'
-    )
+    return """[project]
+name = "root"
+version = "0"
+dependencies = [
+    "foo",
+]
+
+[tool.nab]
+
+[develop.sources.foo]
+path = "bar"
+"""
 
 
 def _source_name_mismatch_message(tmp_path: Path, prefix: str) -> str:
@@ -936,10 +935,7 @@ class TestLockCommandSpecific:
             tmp_path,
             '[project]\nname = "proj"\ndependencies = ["runtime-only"]\n'
             '[build-system]\nrequires = ["builder"]\n'
-            + "".join(
-                f'[[tool.nab.local-sources]]\nname = "{name}"\npath = "{name}"\n'
-                for name in ("runtime-only", "builder")
-            ),
+            '[tool.nab.workspace]\nmembers = ["runtime-only", "builder"]\n',
         )
         for name in ("runtime-only", "builder"):
             member = tmp_path / name
@@ -1765,13 +1761,19 @@ class TestLockCommandSpecific:
         )
         pyproject = _make_pyproject(
             tmp_path,
-            '[project]\nname = "root"\nversion = "0"\n'
-            'dependencies = ["mylocal"]\n'
-            "[tool.nab]\n"
-            'build-policy = "never"\n'
-            "[[tool.nab.local-sources]]\n"
-            'name = "mylocal"\n'
-            'path = "mylocal"\n',
+            """[project]
+name = "root"
+version = "0"
+dependencies = [
+    "mylocal",
+]
+
+[tool.nab]
+build-policy = "never"
+
+[develop.sources.mylocal]
+path = "mylocal"
+""",
         )
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject, offline=True, output=Path("-"), cache=False)
@@ -1795,13 +1797,19 @@ class TestLockCommandSpecific:
         )
         pyproject = _make_pyproject(
             tmp_path,
-            '[project]\nname = "root"\nversion = "0"\n'
-            'dependencies = ["mylocal"]\n'
-            "[tool.nab]\n"
-            'build-policy = "never"\n'
-            "[[tool.nab.local-sources]]\n"
-            'name = "mylocal"\n'
-            'path = "mylocal"\n',
+            """[project]
+name = "root"
+version = "0"
+dependencies = [
+    "mylocal",
+]
+
+[tool.nab]
+build-policy = "never"
+
+[develop.sources.mylocal]
+path = "mylocal"
+""",
         )
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject, offline=True, output=Path("-"), cache=False)
@@ -1826,11 +1834,18 @@ class TestLockCommandSpecific:
         )
         pyproject = _make_pyproject(
             tmp_path,
-            '[project]\nname = "root"\nversion = "0"\n'
-            'dependencies = ["mylocal"]\n'
-            "[[tool.nab.local-sources]]\n"
-            'name = "mylocal"\n'
-            'path = "mylocal"\n',
+            """[project]
+name = "root"
+version = "0"
+dependencies = [
+    "mylocal",
+]
+
+[tool.nab]
+
+[develop.sources.mylocal]
+path = "mylocal"
+""",
         )
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject, offline=True, output=Path("-"), cache=False)
@@ -1857,11 +1872,18 @@ class TestLockCommandSpecific:
         )
         pyproject = _make_pyproject(
             tmp_path,
-            '[project]\nname = "root"\nversion = "0"\n'
-            'dependencies = ["mylocal"]\n'
-            "[[tool.nab.local-sources]]\n"
-            'name = "mylocal"\n'
-            'path = "mylocal"\n',
+            """[project]
+name = "root"
+version = "0"
+dependencies = [
+    "mylocal",
+]
+
+[tool.nab]
+
+[develop.sources.mylocal]
+path = "mylocal"
+""",
         )
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject, offline=True, output=Path("-"), cache=False)
@@ -1884,13 +1906,19 @@ class TestLockCommandSpecific:
         (member / "README").write_text("nothing to build here\n")
         pyproject = _make_pyproject(
             tmp_path,
-            '[project]\nname = "root"\nversion = "0"\n'
-            'dependencies = ["mylocal"]\n'
-            "[tool.nab]\n"
-            'build-policy = "never"\n'
-            "[[tool.nab.local-sources]]\n"
-            'name = "mylocal"\n'
-            'path = "mylocal"\n',
+            """[project]
+name = "root"
+version = "0"
+dependencies = [
+    "mylocal",
+]
+
+[tool.nab]
+build-policy = "never"
+
+[develop.sources.mylocal]
+path = "mylocal"
+""",
         )
         with pytest.raises(SystemExit, match="1"):
             lock(pyproject, offline=True, output=Path("-"), cache=False)
@@ -4503,17 +4531,28 @@ class TestNoEmitWorkspace:
     """``--no-emit-workspace`` drops workspace pins from the lockfile."""
 
     @staticmethod
-    def _alpha_and_foo_result() -> ResolveResult:
-        """A single-environment result with a workspace pin (alpha) and foo."""
-        return _stub_resolve_result(pins={"alpha": V("0"), "foo": V("1.0")})
-
-    @staticmethod
-    def _alpha_and_foo_universal() -> ResolveResult:
-        """A universal result with alpha + foo on a single tuple."""
-        tup = _target()
+    def _alpha_and_foo_result(
+        member_dir: Path,
+        target: ResolveTarget,
+        *,
+        dependencies: dict[str, tuple[str, ...]] | None = None,
+    ) -> ResolveResult:
+        """A local workspace member and an indexed dependency for one target."""
+        versions = {"alpha": V("0"), "foo": V("1.0")}
+        pins = _index_pins({"foo": V("1.0")})
+        pins["alpha"] = LocalPin("alpha", "0", str(member_dir.resolve()), editable=True)
         return ResolveResult(
-            targets=(tup,),
-            target_results=[_resolved(tup, {"alpha": V("0"), "foo": V("1.0")})],
+            targets=(target,),
+            target_results=[
+                TargetResult(
+                    target=target,
+                    success=True,
+                    pins=versions,
+                    lock=TargetLock(
+                        target=target, pins=pins, dependencies=dependencies or {}
+                    ),
+                )
+            ],
         )
 
     def test_specific_pylock_drops_workspace_pin(self, tmp_path: Path) -> None:
@@ -4522,7 +4561,9 @@ class TestNoEmitWorkspace:
         out = tmp_path / "pylock.toml"
         with patch(
             "nab._resolve.resolve_for_targets",
-            return_value=self._alpha_and_foo_result(),
+            return_value=self._alpha_and_foo_result(
+                tmp_path / "alpha", ResolveTarget.for_host()
+            ),
         ):
             lock(pyproject, output=out, no_emit_workspace=True)
         text = out.read_text()
@@ -4535,7 +4576,9 @@ class TestNoEmitWorkspace:
         out = tmp_path / "pylock.toml"
         with patch(
             "nab._resolve.resolve_for_targets",
-            return_value=self._alpha_and_foo_result(),
+            return_value=self._alpha_and_foo_result(
+                tmp_path / "alpha", ResolveTarget.for_host()
+            ),
         ):
             lock(pyproject, output=out)
         text = out.read_text()
@@ -4549,7 +4592,9 @@ class TestNoEmitWorkspace:
         out = tmp_path / "pylock.toml"
         with patch(
             "nab._resolve.resolve_for_targets",
-            return_value=self._alpha_and_foo_result(),
+            return_value=self._alpha_and_foo_result(
+                tmp_path / "alpha", ResolveTarget.for_host()
+            ),
         ):
             lock(pyproject, output=out, no_emit_workspace=True)
         assert "(1 packages)" in capsys.readouterr().err
@@ -4560,7 +4605,9 @@ class TestNoEmitWorkspace:
         out = tmp_path / "requirements.txt"
         with patch(
             "nab._resolve.resolve_for_targets",
-            return_value=self._alpha_and_foo_result(),
+            return_value=self._alpha_and_foo_result(
+                tmp_path / "alpha", ResolveTarget.for_host()
+            ),
         ):
             lock(pyproject, output=out, format="requirements", no_emit_workspace=True)
         text = out.read_text()
@@ -4573,7 +4620,7 @@ class TestNoEmitWorkspace:
         out = tmp_path / "pylock.toml"
         with patch(
             "nab._resolve.resolve_for_targets",
-            return_value=self._alpha_and_foo_universal(),
+            return_value=self._alpha_and_foo_result(tmp_path / "alpha", _target()),
         ):
             lock(pyproject, output=out, no_emit_workspace=True)
         text = out.read_text()
@@ -4587,7 +4634,7 @@ class TestNoEmitWorkspace:
         pyproject = _workspace_pyproject(tmp_path, universal=True)
         with patch(
             "nab._resolve.resolve_for_targets",
-            return_value=self._alpha_and_foo_universal(),
+            return_value=self._alpha_and_foo_result(tmp_path / "alpha", _target()),
         ):
             lock(
                 pyproject,
@@ -4607,7 +4654,7 @@ class TestNoEmitWorkspace:
         out = tmp_path / "constraints-{python_version}.txt"
         with patch(
             "nab._resolve.resolve_for_targets",
-            return_value=self._alpha_and_foo_universal(),
+            return_value=self._alpha_and_foo_result(tmp_path / "alpha", _target()),
         ):
             lock(
                 pyproject,
@@ -4627,7 +4674,7 @@ class TestNoEmitWorkspace:
         out = tmp_path / "requirements.txt"
         with patch(
             "nab._resolve.resolve_for_targets",
-            return_value=self._alpha_and_foo_universal(),
+            return_value=self._alpha_and_foo_result(tmp_path / "alpha", _target()),
         ):
             lock(
                 pyproject,
@@ -4646,7 +4693,7 @@ class TestNoEmitWorkspace:
         out = tmp_path / "pylock.toml"
         with patch(
             "nab._resolve.resolve_for_targets",
-            return_value=self._alpha_and_foo_result(),
+            return_value=_stub_resolve_result(pins={"alpha": V("0"), "foo": V("1.0")}),
         ):
             lock(pyproject, output=out, no_emit_workspace=True)
         text = out.read_text()
@@ -4658,17 +4705,8 @@ class TestNoEmitWorkspace:
     ) -> None:
         """A retained package keeps no forward edge to the dropped member."""
         target = ResolveTarget.for_host()
-        pins = {"alpha": V("0"), "foo": V("1.0")}
-        result = ResolveResult(
-            targets=(target,),
-            target_results=[
-                TargetResult(
-                    target=target,
-                    success=True,
-                    pins=pins,
-                    lock=_target_lock(target, pins, {"foo": ("alpha",)}),
-                )
-            ],
+        result = self._alpha_and_foo_result(
+            tmp_path / "alpha", target, dependencies={"foo": ("alpha",)}
         )
         pyproject = _workspace_pyproject(tmp_path)
         out = tmp_path / "pylock.toml"
@@ -4911,11 +4949,20 @@ class TestConfigErrors:
         project.mkdir()
         pyproject = _make_pyproject(
             project,
-            '[project]\nname = "application"\nversion = "0"\n'
-            'dependencies = ["demo==2.0"]\n'
-            '[tool.nab]\nbuild-policy = "never"\n'
-            '[[tool.nab.local-sources]]\nname = "demo"\npath = "../base"\n'
-            'subdirectory = "../source-root/demo"\n',
+            """[project]
+name = "application"
+version = "0"
+dependencies = [
+    "demo==2.0",
+]
+
+[tool.nab]
+build-policy = "never"
+
+[develop.sources.demo]
+path = "../base"
+subdirectory = "../source-root/demo"
+""",
         )
         output = project / "pylock.toml"
 
@@ -5664,9 +5711,18 @@ class TestLockedFlag:
 
         pyproject = _make_pyproject(
             tmp_path,
-            '[project]\nname = "root"\nversion = "0"\ndependencies = ["foo"]\n'
-            "[[tool.nab.local-sources]]\n"
-            'name = "foo"\npath = "vendor"\n',
+            """[project]
+name = "root"
+version = "0"
+dependencies = [
+    "foo",
+]
+
+[tool.nab]
+
+[develop.sources.foo]
+path = "vendor"
+""",
         )
 
         out = tmp_path / "sub" / "pylock.toml"

@@ -1595,9 +1595,7 @@ def test_parse_vcs_policy_normalizes_type_errors() -> None:
         def __repr__(self) -> str:
             return "<invalid policy>"
 
-    message = (
-        "example: vcs_policy must be one of ['allow', 'block'], got <invalid policy>"
-    )
+    message = "example: vcs_policy must be one of ['allow', 'block', 'declared'], got <invalid policy>"
     with pytest.raises(ValueError, match=re.escape(message)) as exc_info:
         module.parse_vcs_policy("example", {"vcs_policy": InvalidPolicy()})
 
@@ -4300,7 +4298,7 @@ requirements = []
 unsupported_reason = "not runnable"
 vcs_policy = "permit"
 """,
-            "other:other: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+            "other:other: vcs_policy must be one of ['allow', 'block', 'declared'], got 'permit'",
         ),
         (
             """
@@ -4311,7 +4309,7 @@ unsupported_reason = "not runnable"
 vcs_policy = { allow = false }
 """,
             (
-                "other:other: vcs_policy must be one of ['allow', 'block'], "
+                "other:other: vcs_policy must be one of ['allow', 'block', 'declared'], "
                 "got {'allow': False}"
             ),
         ),
@@ -4485,7 +4483,7 @@ def test_profile_runner_accepts_an_explicit_strategy() -> None:
         (
             "vcs_policy",
             "permit",
-            "example: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+            "example: vcs_policy must be one of ['allow', 'block', 'declared'], got 'permit'",
         ),
         (
             "vcs_allowed_schemes",
@@ -5022,8 +5020,9 @@ def test_standard_canary_and_profile_use_valid_vcs_pin_settings(
         ({}, "block"),
         ({"vcs_policy": "block"}, "block"),
         ({"vcs_policy": "allow"}, "allow"),
+        ({"vcs_policy": "declared"}, "declared"),
     ],
-    ids=("implicit", "block", "allow"),
+    ids=("implicit", "block", "allow", "declared"),
 )
 def test_vcs_policy_matches_across_parser_and_runners(
     vcs_setting: dict[str, object],
@@ -5133,7 +5132,7 @@ def test_standard_canary_and_profile_reject_non_boolean_vcs_require_pin() -> Non
                 "vcs_allowed_schemes": {"git+https": False},
                 "vcs_allowed_repos": {"https://example.test/repo": False},
             },
-            "example: vcs_policy must be one of ['allow', 'block'], got 'permit'",
+            "example: vcs_policy must be one of ['allow', 'block', 'declared'], got 'permit'",
         ),
         (
             {

@@ -27,6 +27,12 @@ from ._provider import lookahead as _lookahead
 from ._provider import metadata_resolver as _metadata_resolver
 from ._provider import priority as _priority
 from ._provider import sources as _sources
+from .archive import ArchiveRequest
+from .archive_admission import (
+    ArchiveConfig,
+    ArchivePolicy,
+    UnsupportedArchiveError,
+)
 from .conflict_kind import EMPTY_MEMBERSHIP_SETS
 from .declarations import DependencyDeclaration
 from .environment import host_environment
@@ -70,6 +76,7 @@ from .vcs_admission import (
     UnsupportedVcsError,
     VcsConfig,
     VcsPolicy,
+    admit_vcs_url,
 )
 
 if TYPE_CHECKING:
@@ -89,6 +96,8 @@ if TYPE_CHECKING:
     from .target import ResolveTarget
 
 __all__ = [
+    "ArchiveConfig",
+    "ArchivePolicy",
     "ArchiveSource",
     "BuildPolicy",
     "DecisionOrder",
@@ -107,6 +116,7 @@ __all__ = [
     "ResolutionStrategy",
     "SiblingMetadataDivergenceError",
     "SourceNameMismatchError",
+    "UnsupportedArchiveError",
     "UnsupportedSdistError",
     "UnsupportedVcsError",
     "VcsConfig",
@@ -461,6 +471,9 @@ class Provider:
     their admission. It does not permit metadata preparation by itself.
     Like dist policy, this setting must agree across a shared listing filter cache.
 
+    ``redirected_dependencies`` names applied development origins. Their transitive
+    direct references are replaced, and their VCS policy is checked on use.
+
     ``release_refused_wheels`` lets the wheel-tag filter drop the payload
     of the wheels it refuses
     (:func:`nab_provider.records.release_wheel_payload`).  Only the caller
@@ -531,6 +544,7 @@ class Provider:
         package_overrides: Sequence[PackageOverride] = (),
         index_overrides: Mapping[str, IndexOverride] | None = None,
         vcs_config: VcsConfig | None = None,
+        archive_config: ArchiveConfig | None = None,
         local_sources: list[LocalSource] | None = None,
         vcs_sources: list[VcsSource] | None = None,
         vcs_cache_dir: Path | None = None,
@@ -546,6 +560,9 @@ class Provider:
         decision_order: DecisionOrder = DecisionOrder.ARRIVAL,
         release_refused_wheels: bool = False,
         defer_yanked: bool = False,
+        redirected_dependencies: frozenset[str] = frozenset(),
+        resolved_direct_urls: frozenset[tuple[str, str]] = frozenset(),
+        declared_sources: frozenset[tuple[str, str]] = frozenset(),
     ) -> None:
         """Construct the provider; see the class docstring for parameters."""
         if isinstance(resolution_strategy, str):
@@ -568,6 +585,9 @@ class Provider:
 
         self.release_refused_wheels = release_refused_wheels
         self.defer_yanked = defer_yanked
+        self.redirected_dependencies = redirected_dependencies
+        self.resolved_direct_urls = resolved_direct_urls
+        self.declared_sources = declared_sources
 
         self.extras_mode = extras_mode
         self.root_extras = root_extras or set()
@@ -605,6 +625,8 @@ class Provider:
         )
 
         self.vcs_config = vcs_config or VcsConfig()
+        self.archive_config = archive_config or ArchiveConfig()
+        self.archive_pins: dict[str, ArchiveRequest] = {}
         self.local_sources = _sources.index_local_sources(self, local_sources or [])
         self.vcs_cache_dir = vcs_cache_dir
         self.vcs_pins: dict[str, str] = {}
@@ -1212,6 +1234,19 @@ class Provider:
         The build policy is resolved here, out of the provider's overrides; the
         directory read, the clone and the download are the host's.
         """
+        if isinstance(source, VcsSource) and normalized in self.redirected_dependencies:
+            try:
+                admit_vcs_url(
+                    source.url,
+                    self.vcs_config,
+                    declared=(normalized, source.url) in self.declared_sources,
+                )
+            except UnsupportedVcsError as exc:
+                msg = f"{source.descriptor}: {exc}\n    check [tool.nab.vcs]"
+                raise UnsupportedVcsError(msg) from exc
+        if isinstance(source, ArchiveSource):
+            _sources.validate_archive_source(self, source)
+            _sources.validate_archive_wheel(self, source)
         request = SourceRequest(
             package=normalized,
             source=source,
@@ -1219,6 +1254,7 @@ class Provider:
             vcs_cache_dir=self.vcs_cache_dir,
             archive_cache_dir=self.archive_cache_dir,
             require_pin=self.vcs_config.require_pin,
+            require_hashes=self.archive_config.require_hashes,
         )
 
         try:
@@ -1232,6 +1268,23 @@ class Provider:
         materialized = self.coordinator.index.get_source(normalized)
         assert materialized is not None
 
+        if (
+            isinstance(source, ArchiveSource)
+            and not ArchiveRequest.parse(source.url).filename.endswith(".whl")
+            and self.effective_dist_policy(normalized, materialized.metadata.version)
+            is DistPolicy.WHEEL_ONLY
+        ):
+            msg = (
+                f"{source.descriptor}: dist-policy='wheel-only' "
+                "refuses a source archive; "
+                "select a wheel or change "
+                f'[tool.nab.packages."{normalized}"].dist-policy'
+            )
+            raise UnsupportedSdistError(msg)
+
+        if materialized.archive is not None:
+            self.archive_pins[normalized] = materialized.archive
+
         if materialized.commit_sha is not None:
             self.vcs_pins[normalized] = materialized.commit_sha
 
@@ -1242,9 +1295,14 @@ class Provider:
             materialized.path,
             materialized.metadata,
             source.descriptor,
+            wheel=materialized.wheel,
         ):
             result.append((version, sdist))
         return result
+
+    def archive_pin_for(self, canonical_name: str, /) -> ArchiveRequest | None:
+        """Return the verified archive outcome without changing its declaration."""
+        return self.archive_pins.get(canonical_name)
 
     def versions_only(
         self,

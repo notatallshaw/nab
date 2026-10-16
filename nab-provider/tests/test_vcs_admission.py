@@ -158,8 +158,8 @@ class TestHasFullCommitSha:
 
 
 class TestAdmitVcsUrlBlock:
-    def test_block_default_refuses_vcs(self) -> None:
-        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+    def test_default_requires_a_declared_source(self) -> None:
+        with pytest.raises(UnsupportedVcsError, match='vcs.policy is "declared"'):
             admit_vcs_url(
                 f"git+https://github.com/foo/bar.git@{_FORTY}",
                 VcsConfig(),
@@ -1046,3 +1046,37 @@ class TestAdmitVcsUrlRealWorldShapes:
         )
         scheme = admit_vcs_url(f"git+file:///srv/repos/pkg@{_FORTY}", config)
         assert scheme == "git+file"
+
+
+def test_selected_vcs_source_needs_no_duplicate_allowlist() -> None:
+    assert (
+        admit_vcs_url(
+            f"git+https://example.org/core.git@{_FORTY}", VcsConfig(), declared=True
+        )
+        == "git+https"
+    )
+
+
+def test_selected_vcs_source_still_obeys_explicit_block() -> None:
+    with pytest.raises(UnsupportedVcsError, match='vcs.policy is "block"'):
+        admit_vcs_url(
+            f"git+https://example.org/core.git@{_FORTY}",
+            VcsConfig(policy=VcsPolicy.BLOCK),
+            declared=True,
+        )
+
+
+def test_selected_vcs_source_still_needs_a_commit_pin() -> None:
+    with pytest.raises(UnsupportedVcsError, match="require-pin is true"):
+        admit_vcs_url(
+            "git+https://example.org/core.git@main", VcsConfig(), declared=True
+        )
+
+
+def test_selected_vcs_source_cannot_use_a_rewritten_path() -> None:
+    with pytest.raises(UnsupportedVcsError, match="refusing VCS repo"):
+        admit_vcs_url(
+            f"git+https://example.org/allowed/../core.git@{_FORTY}",
+            VcsConfig(),
+            declared=True,
+        )

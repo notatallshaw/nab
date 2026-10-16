@@ -44,6 +44,21 @@ index = "torch-cpu"
 A routing entry must use bare-name selectors: the routing decision happens before any version is
 known, so a version specifier alongside `index` is rejected, and a package may have only one route.
 
+## Route through development sources
+
+For shared source selection, replace the native package route and its `torch-cpu` index declaration
+with:
+
+```toml
+[develop.sources]
+torch = { index = "https://download.pytorch.org/whl/cpu" }
+```
+
+An index introduced by this entry is used for `torch` only, outside the fallback search for other
+packages. If the URL already matches a configured index, nab reuses its name, serialization and
+per-index policies; its existing fallback role remains. Explicit native package routes take
+precedence over standard entries and implicit workspace members.
+
 ## How nab routes the request
 
 - `numpy` has no routing override, so nab walks `[pypi, torch-cpu]` and picks the first index that

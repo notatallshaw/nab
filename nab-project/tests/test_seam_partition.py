@@ -14,7 +14,9 @@ import pytest
 
 from nab_project._build.env import _inner_resolve_inputs, _without_build_permission
 from nab_project.conflicts import ConflictKind, ConflictMember, ConflictSet
+from nab_project.develop import DevelopSource
 from nab_project.inputs import ResolveInputs
+from nab_provider.archive_admission import ArchiveConfig, ArchivePolicy
 from nab_provider.overrides import IndexOverride
 from nab_provider.policy import (
     ArchiveSource,
@@ -37,6 +39,8 @@ if TYPE_CHECKING:
 # forward the outer value, pin a fixed one, or leave the default.
 _INNER_FORWARDS = frozenset(
     {
+        "archive",
+        "vcs",
         "decision_order",
         "index_overrides",
         "indexes",
@@ -58,12 +62,13 @@ _INNER_DROPS = frozenset(
         "conflicts",
         "constraints",
         "default_groups",
+        "develop_sources",
         "local_sources",
         "requires_python",
         "resolution",
         "trust_unverified_sdist_deps",
-        "vcs",
         "vcs_sources",
+        "workspace_member_names",
     }
 )
 
@@ -78,6 +83,12 @@ def _inputs_off_every_default(tmp_path: Path) -> ResolveInputs:
     that failed to cross would read back as the one it was meant to carry.
     """
     return ResolveInputs(
+        archive=ArchiveConfig(
+            policy=ArchivePolicy.ALLOW,
+            allowed_urls=("https://example.invalid/",),
+            require_hashes=False,
+        ),
+        workspace_member_names=frozenset({"plugin"}),
         archive_sources=(
             ArchiveSource("blob", "https://example.invalid/b-1.0.tar.gz"),
         ),
@@ -89,6 +100,7 @@ def _inputs_off_every_default(tmp_path: Path) -> ResolveInputs:
         constraints=("setuptools<70",),
         decision_order=DecisionOrder.STABLE,
         default_groups=("dev",),
+        develop_sources=(DevelopSource("tool", "path", str(tmp_path / "tool")),),
         dist_policy=DistPolicy.SDIST_ONLY,
         index_overrides={
             "internal": IndexOverride(

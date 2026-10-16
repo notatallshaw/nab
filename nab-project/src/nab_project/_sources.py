@@ -11,24 +11,39 @@ Reached only through
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import stat
 import tempfile
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nab_index import vcs
-from nab_index.client import extract_sdist_archive, verify_sdist_hash
+from nab_index.atomic import atomic_write
+from nab_index.client import verify_sdist_hash
+from nab_index.source_archives import extract_source_archive, read_wheel_metadata_bytes
+from nab_provider._vendor.packaging.utils import (
+    InvalidWheelFilename,
+    canonicalize_name,
+    parse_wheel_filename,
+)
 from nab_provider.archive import ArchiveRequest
-from nab_provider.errors import SourceBuildPolicyError, UnsupportedSdistError
+from nab_provider.errors import (
+    SourceBuildPolicyError,
+    UnsupportedSdistError,
+    UnsupportedWheelError,
+)
+from nab_provider.metadata import parse_metadata
 from nab_provider.policy import (
     BuildPolicy,
     LocalSource,
     SourceMaterialization,
     VcsSource,
 )
+from nab_provider.records import WheelFile
 from nab_provider.vcs_request import VcsCloneError, VcsRequest
 
 from .paths import PathState, path_state
@@ -145,8 +160,111 @@ def materialize_source(
             port=port,
             transport_factory=transport_factory,
         )
+    parsed = ArchiveRequest.parse(source.url)
+    if request.require_hashes and not parsed.has_usable_hash:
+        msg = f"{source.descriptor}: an expected archive hash is required"
+        raise UnsupportedSdistError(msg)
+    if parsed.filename.endswith(".whl"):
+        return _materialize_wheel(request, source, port=port)
     return _materialize_archive(
         request, source, build_config, port=port, transport_factory=transport_factory
+    )
+
+
+@dataclass(slots=True)
+class _WheelPayload:
+    """Verified wheel bytes and their cache location for one materialization."""
+
+    path: Path
+    request: ArchiveRequest
+    data: bytes
+
+
+def _wheel_payload(
+    request: SourceRequest,
+    source: ArchiveSource,
+    parsed: ArchiveRequest,
+    *,
+    port: FetchPort,
+) -> _WheelPayload:
+    """Read and verify a cached wheel or atomically publish its downloaded bytes."""
+    cache_dir = request.archive_cache_dir
+    filename = parsed.filename
+    if cache_dir is None:
+        msg = f"{source.descriptor}: no archive cache directory was supplied"
+        raise UnsupportedWheelError(msg)
+    path = cache_dir / parsed.hashes[0][1] / filename if parsed.hashes else None
+    try:
+        if path is not None and path_state(path) is PathState.FILE:
+            data = path.read_bytes()
+            for pinned_hash in parsed.hashes:
+                verify_sdist_hash(data, pinned_hash)
+        else:
+            data = _fetch_archive_bytes(request.package, source, parsed, port=port)
+            parsed = _record_archive_hash(parsed, data)
+            path = cache_dir / parsed.hashes[0][1] / filename
+            path.parent.mkdir(parents=True, exist_ok=True)
+            atomic_write(path, data)
+    except OSError as exc:
+        msg = f"{source.descriptor}: could not cache wheel {filename!r}: {exc}"
+        raise UnsupportedWheelError(msg) from exc
+    return _WheelPayload(path, parsed, data)
+
+
+def _materialize_wheel(
+    request: SourceRequest, source: ArchiveSource, *, port: FetchPort
+) -> SourceMaterialization:
+    """Materialize a direct wheel without invoking a build backend."""
+    parsed = ArchiveRequest.parse(source.url)
+    filename = parsed.filename
+    if "/" in filename or "\\" in filename or ":" in filename:
+        msg = f"{source.descriptor}: invalid wheel filename {filename!r}"
+        raise UnsupportedWheelError(msg)
+    try:
+        name, version, _, _ = parse_wheel_filename(filename)
+    except InvalidWheelFilename as exc:
+        msg = f"{source.descriptor}: {exc}"
+        raise UnsupportedWheelError(msg) from exc
+    if parsed.subdirectory:
+        msg = f"{source.descriptor}: a wheel cannot have a subdirectory"
+        raise UnsupportedWheelError(msg)
+    payload = _wheel_payload(request, source, parsed, port=port)
+    try:
+        metadata = parse_metadata(read_wheel_metadata_bytes(payload.data, name))
+    except ValueError as exc:
+        msg = f"{source.descriptor}: invalid wheel metadata: {exc}"
+        raise UnsupportedWheelError(msg) from exc
+    if metadata.version != version or canonicalize_name(metadata.name) != name:
+        msg = (
+            f"{source.descriptor}: metadata does not match wheel filename {filename!r}"
+        )
+        raise UnsupportedWheelError(msg)
+    wheel = WheelFile(
+        filename=filename,
+        url=payload.request.url,
+        version=str(version),
+        requires_python=(
+            str(metadata.requires_python)
+            if metadata.requires_python is not None
+            else None
+        ),
+        has_metadata=False,
+        upload_time=None,
+        hashes=payload.request.hashes,
+        size=len(payload.data),
+        local_path=payload.path,
+    )
+    return SourceMaterialization(
+        payload.path, metadata, None, wheel=wheel, archive=payload.request
+    )
+
+
+def _record_archive_hash(parsed: ArchiveRequest, data: bytes) -> ArchiveRequest:
+    """Retain observed output hashes separately from the source declaration."""
+    if parsed.hashes:
+        return parsed
+    return ArchiveRequest(
+        parsed.url, (("sha256", hashlib.sha256(data).hexdigest()),), parsed.subdirectory
     )
 
 
@@ -311,13 +429,17 @@ def _fetch_archive_bytes(
     *,
     port: FetchPort,
 ) -> bytes:
-    """Return the hash-verified bytes of ``source``'s archive.
+    """Return archive bytes after checking each declared digest.
 
     Raises before returning if the fetch recorded a failure, produced no
     bytes, or the bytes fail their hash.  The port reads the declared URL
     without verifying it, so every declared hash is checked here.
     """
-    digest = request.hashes[0][1]
+    digest = (
+        request.hashes[0][1]
+        if request.hashes
+        else hashlib.sha256(request.url.encode()).hexdigest()
+    )
     index = port.index
 
     event = port.request_direct_archive(package, digest, request.url)
@@ -361,6 +483,11 @@ def _prepare_archive_tree(
         raise UnsupportedSdistError(msg)
 
     parsed = ArchiveRequest.parse(source.url)
+    if not parsed.hashes:
+        data = _fetch_archive_bytes(request.package, source, parsed, port=port)
+        digest = hashlib.sha256(data).hexdigest()
+        parsed = _record_archive_hash(parsed, data)
+        return _extract_archive(cache_dir, digest, data, parsed.hashes), parsed
 
     # The version is unknown until the tree is extracted, so key the cache by
     # the first declared digest: unique and known up-front.  The fragment
@@ -439,7 +566,9 @@ def _materialize_archive(
         transport_factory=transport_factory,
         persistent_root=root,
     )
-    return SourceMaterialization(path=path, metadata=metadata, commit_sha=None)
+    return SourceMaterialization(
+        path=path, metadata=metadata, commit_sha=None, archive=parsed
+    )
 
 
 def _extract_archive(
@@ -478,7 +607,7 @@ def _extract_archive(
             unpacked.mkdir()
 
             try:
-                root = extract_sdist_archive(data, unpacked)
+                root = extract_source_archive(data, unpacked)
             except ValueError as exc:
                 msg = f"archive could not be extracted: {exc}"
                 raise UnsupportedSdistError(msg) from exc

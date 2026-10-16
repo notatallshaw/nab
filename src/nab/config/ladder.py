@@ -23,7 +23,7 @@ from nab_project.value import ValueType
 
 from .. import env
 from .._cli.definition.model import Opt, Scope
-from .hooks import declaring_dir, matrix_table
+from .hooks import matrix_table
 from .registry import OPTIONS
 from .subflags import (
     BY_PARENT,
@@ -315,7 +315,7 @@ def _load_toml_layer(
     values: dict[str, Any] = {}
     raw_tables: dict[str, Any] = {}
     # Bind file-specific state used by parse hooks.
-    with declaring_dir(path.parent), matrix_table(project_key_path("matrix", kind)):
+    with matrix_table(project_key_path("matrix", kind)):
         for key, value in raw.items():
             spec = BY_KEY.get(key)
             if spec is None:
@@ -505,8 +505,7 @@ def config_search_roots(pyproject: Path) -> SourceRoots:
     reads that exact file even when its name is not ``pyproject.toml``, and
     the project-dir ``nab.toml`` is looked up beside it.  The root keeps
     that file's resolved directory rather than the resolved file, so a
-    relative ``local-sources`` path resolves against the symlink's
-    directory the way the resolve does.
+    project-directory lookup stays beside the symlink.
     """
     base = env.config_root()
     user_dir = Path(base) if base else Path.home() / ".config"

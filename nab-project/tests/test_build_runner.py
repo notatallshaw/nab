@@ -73,6 +73,7 @@ from nab_project.build_backend import extract_metadata
 from nab_project.download import DownloadError, DownloadResult, iter_artifacts
 from nab_project.inputs import ResolveInputs
 from nab_project.lockfile import (
+    ArchivePin,
     IndexPin,
     LocalPin,
     LockInput,
@@ -86,6 +87,7 @@ from nab_provider._provider.metadata_resolver import pick_dist
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider._vendor.packaging.version import Version
+from nab_provider.archive_admission import ArchiveConfig, ArchivePolicy
 from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.provider import (
     BuildPolicy,
@@ -2301,23 +2303,63 @@ class TestResolveAndDownload:
 
         assert inner.decision_order is DecisionOrder.ARRIVAL
 
-    def test_url_build_requirement_wrapped(self, tmp_path: Path) -> None:
-        """A direct-URL build requirement the inner resolve refuses is
-        wrapped as BuildEnvError, so the outer resolve skips the
-        unbuildable sdist instead of aborting on the raw
-        UnsupportedVcsError.
-        """
+    def test_blocked_vcs_build_requirement_is_wrapped(self, tmp_path: Path) -> None:
+        """An unadmitted backend reference rejects the outer sdist candidate."""
         env = NabBuildEnv(
-            requires=["plugin @ https://example.com/plugin-1.0.tar.gz"],
+            requires=["plugin @ git+https://example.test/backend.git@" + "a" * 40],
             config=ResolveInputs(),
         )
-        env._tmpdir = MagicMock()  # type: ignore[attr-defined]
-        env._venv_path = tmp_path / "venv"  # type: ignore[attr-defined]
-        env._python_executable = tmp_path / "venv" / "bin" / "python"  # type: ignore[attr-defined]
         wheel_dir = tmp_path / "wheels"
         wheel_dir.mkdir()
         with pytest.raises(BuildEnvError, match="build env resolve"):
             env._resolve_and_download(wheel_dir)
+
+    def test_failed_archive_build_requirement_is_wrapped(self, tmp_path: Path) -> None:
+        artifact = tmp_path / "plugin-1.0-py3-none-any.whl"
+        env = NabBuildEnv(
+            requires=[f"plugin @ {artifact.as_uri()}"], config=ResolveInputs()
+        )
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        with pytest.raises(BuildEnvError, match="build env resolve"):
+            env._resolve_and_download(wheel_dir)
+
+    def test_direct_wheel_build_requirement_is_downloaded(self, tmp_path: Path) -> None:
+        artifact = tmp_path / "plugin-1.0-py3-none-any.whl"
+        _make_installable_wheel(artifact, "plugin", "1.0")
+        url = artifact.as_uri().replace(".whl", ".wh%6c")
+        env = NabBuildEnv(
+            requires=[f"plugin @ {url}"],
+            config=ResolveInputs(
+                archive=ArchiveConfig(
+                    policy=ArchivePolicy.ALLOW,
+                    allowed_urls=(artifact.as_uri(),),
+                    require_hashes=False,
+                )
+            ),
+        )
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        downloaded = env._resolve_and_download(wheel_dir)
+        assert [path.name for path in downloaded] == [artifact.name]
+        assert downloaded[0].read_bytes() == artifact.read_bytes()
+
+    @pytest.mark.parametrize("policy", [ArchivePolicy.DECLARED, ArchivePolicy.BLOCK])
+    def test_backend_metadata_does_not_permit_an_archive_url(
+        self, tmp_path: Path, policy: ArchivePolicy
+    ) -> None:
+        artifact = tmp_path / "plugin-1.0-py3-none-any.whl"
+        _make_installable_wheel(artifact, "plugin", "1.0")
+        digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        env = NabBuildEnv(
+            requires=[f"plugin @ {artifact.as_uri()}#sha256={digest}"],
+            config=ResolveInputs(archive=ArchiveConfig(policy=policy)),
+        )
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        with pytest.raises(BuildEnvError, match=f'archive.policy="{policy.value}"'):
+            env._resolve_and_download(wheel_dir)
+        assert list(wheel_dir.iterdir()) == []
 
     def test_control_char_build_requirement_wrapped(self, tmp_path: Path) -> None:
         """A control character makes a build requirement invalid PEP 508, so
@@ -3011,11 +3053,22 @@ class TestInstallPickIsNotTheMetadataPick:
         with pytest.raises(BuildEnvError, match="cyclic build requirement: demo 1.0"):
             env._planned_pin(self._sdist_pin(), self._tags(), [])
 
-    def test_a_pin_that_is_not_from_an_index_passes_through(self) -> None:
-        """A local pin carries no artifacts to choose between."""
-        pin = LocalPin(name="demo", version="1.0", path="/src/demo")
-
-        assert self._env()._planned_pin(pin, self._tags(), []) is pin
+    @pytest.mark.parametrize("kind", ["local", "archive"])
+    def test_unsupported_build_sources_are_not_silently_skipped(
+        self, kind: str
+    ) -> None:
+        pin = (
+            LocalPin(name="demo", version="1.0", path="/src/demo")
+            if kind == "local"
+            else ArchivePin(
+                name="demo",
+                version="1.0",
+                url="https://example.test/demo.tar.gz",
+                hashes=(("sha256", "0" * 64),),
+            )
+        )
+        with pytest.raises(BuildEnvError, match="not an installable wheel"):
+            self._env()._planned_pin(pin, self._tags(), [])
 
     def test_a_refusal_names_the_builds_that_led_to_it(self) -> None:
         """Nested refusals are unreadable without the path that reached them."""

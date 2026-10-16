@@ -10,7 +10,9 @@ from ._value import SlottedValue
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from .archive import ArchiveRequest
     from .metadata import WheelMetadata
+    from .records import WheelFile
 
 __all__ = [
     "ArchiveSource",
@@ -98,7 +100,7 @@ class BuildPolicy(enum.Enum):
     BUILD_LOCAL = "build-local"
     """Static metadata everywhere, plus PEP 517 builds on local checkouts (default).
 
-    Adds backend invocation for ``[[tool.nab.local-sources]]`` entries and
+    Adds backend invocation for local directory sources and
     workspace members when their ``pyproject.toml`` cannot be read
     statically.  VCS clones, archive sources, and remote PyPI sdists remain
     static-only.
@@ -198,10 +200,10 @@ class VcsSource(SlottedValue):
 class ArchiveSource(SlottedValue):
     """A direct-URL archive used as the only candidate for a package.
 
-    ``url`` carries the archive's hash, and an optional subdirectory, in its
+    ``url`` carries optional expected hashes and a subdirectory in its
     fragment: ``https://example.com/x-1.0.tar.gz#sha256=<hex>``.  The archive
-    is hash-verified and extracted, then read for metadata as a
-    :class:`LocalSource` is.
+    is hash-verified. Source trees are extracted; wheels supply static metadata.
+    Acquisition permissions and expected-hash requirements belong to archive policy.
     """
 
     __slots__ = ("name", "url")
@@ -230,6 +232,7 @@ class SourceRequest(SlottedValue):
         "archive_cache_dir",
         "build_policy",
         "package",
+        "require_hashes",
         "require_pin",
         "source",
         "vcs_cache_dir",
@@ -241,6 +244,7 @@ class SourceRequest(SlottedValue):
         "vcs_cache_dir",
         "archive_cache_dir",
         "require_pin",
+        "require_hashes",
     )
 
     def __init__(
@@ -252,6 +256,7 @@ class SourceRequest(SlottedValue):
         archive_cache_dir: Path | None,
         *,
         require_pin: bool,
+        require_hashes: bool = True,
     ) -> None:
         """Record what a host needs to materialise ``source`` for ``package``."""
         self.package = package
@@ -260,23 +265,33 @@ class SourceRequest(SlottedValue):
         self.vcs_cache_dir = vcs_cache_dir
         self.archive_cache_dir = archive_cache_dir
         self.require_pin = require_pin
+        self.require_hashes = require_hashes
 
 
 class SourceMaterialization(SlottedValue):
     """What a host produced for one declared source.
 
-    ``path`` is the directory the metadata was read from.  ``commit_sha`` is
+    ``path`` is the source directory or cached wheel file. ``wheel`` retains a
+    direct wheel's artifact record. ``commit_sha`` is
     the resolved commit of a VCS clone, and ``None`` for a local directory or
-    an archive.
+    an archive. ``archive`` retains verified hashes without changing the input URL.
     """
 
-    __slots__ = ("commit_sha", "metadata", "path")
-    __match_args__ = ("path", "metadata", "commit_sha")
+    __slots__ = ("archive", "commit_sha", "metadata", "path", "wheel")
+    __match_args__ = ("path", "metadata", "commit_sha", "wheel", "archive")
 
     def __init__(
-        self, path: Path, metadata: WheelMetadata, commit_sha: str | None
+        self,
+        path: Path,
+        metadata: WheelMetadata,
+        commit_sha: str | None,
+        *,
+        wheel: WheelFile | None = None,
+        archive: ArchiveRequest | None = None,
     ) -> None:
-        """Record the tree at ``path`` and the metadata read out of it."""
+        """Record metadata and its materialized source path."""
         self.path = path
         self.metadata = metadata
         self.commit_sha = commit_sha
+        self.wheel = wheel
+        self.archive = archive

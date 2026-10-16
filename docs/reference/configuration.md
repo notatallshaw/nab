@@ -569,80 +569,46 @@ satisfy every requirement.
 
 ## VCS policy
 
-`[tool.nab.vcs]` controls whether nab clones a VCS URL. It blocks cloning by default. The form that
-resolves is a `[[tool.nab.vcs-sources]]` entry, described under "Pinned VCS sources" below.
+`[tool.nab.vcs]` controls Git acquisition. The default `policy = "declared"` permits repositories
+selected by `[develop.sources]` or project-root direct references. Commit-pin and build requirements
+still apply. `policy = "block"` refuses even selected sources. `policy = "allow"` also permits other
+URLs matching `allowed-schemes` and `allowed-repos`. See [Add a VCS dependency](../how-to/vcs.md).
 
-A direct-URL requirement (`pkg @ git+https://...`) at the project root or in a dependency's metadata
-passes the same policy checks, then fails the resolve, because nab has no resolver path for that
-form. A requirement whose marker excludes it, or one behind an extra the resolve never requests,
-never reaches those checks. See [Add a VCS dependency](../how-to/vcs.md).
+A direct Git reference in the project uses the same policy checks. A requirement excluded by its
+marker or an unselected extra does not reach those checks. Direct references inside dependencies
+need a matching project reference or source declaration. See
+[Add a VCS dependency](../how-to/vcs.md).
 
 ```toml
 [tool.nab.vcs]
-policy = "block"                # "block" | "allow"
+policy = "declared"             # "declared" | "block" | "allow"
 allowed-schemes = ["git+https"]
 allowed-repos = ["https://github.com/me/x"]
 require-pin = true
 ```
 
-## Local checkouts as sources
+## Development sources
 
-`[[tool.nab.local-sources]]` treats a directory on disk as the only candidate for the named package.
-
-```toml
-[[tool.nab.local-sources]]
-name = "my-fork"
-path = "../my-fork"
-```
-
-`editable` defaults to `false`; set it to `true` to record a PEP 660 editable install. Discovered
-workspace members instead default to editable; see [Lock a workspace](../how-to/workspaces.md).
-`subdirectory` locates the package below `path` in a monorepo.
-
-Reading static metadata from a local pyproject.toml works at every `build-policy` level. When the
-static read comes up empty, nab builds the checkout instead, which needs
-`build-policy = "build-local"` or `"build-remote"`. See [Build policy](build-policy.md) for what
-counts as empty.
-
-## Pinned VCS sources
-
-`[[tool.nab.vcs-sources]]` pins a package to a VCS URL. Declaring one while `vcs.policy` is left at
-its default `block` is a contradiction and is rejected when the config is read, before any resolve
-starts.
-
-Each URL must satisfy the same `[tool.nab.vcs]` policy as a direct-URL requirement. Beyond
-`vcs.policy = "allow"`, its scheme must be in `vcs.allowed-schemes`, its repository in
-`vcs.allowed-repos`, and it must pin a 40-char commit hash unless `vcs.require-pin = false`. Both
-allow lists are empty by default, so each denies every URL until configured.
-
-Reading static metadata works at any `build-policy`. Building a clone whose static read comes up
-empty needs `build-policy = "build-remote"`; see [Build policy](build-policy.md).
+Declare dependency sources in `[develop.sources]`:
 
 ```toml
-[[tool.nab.vcs-sources]]
-name = "my-fork"
-url  = "git+https://github.com/me/x.git@<sha>"
+[develop.sources]
+my-fork = { path = "../my-fork", editable = true }
+internal = { index = "https://pypi.internal.example.com/simple" }
+
 ```
 
-## Archive sources
+Directory paths are relative to the declaring file. A source key selects the named package; it does
+not add a dependency. Sources can also use Git repositories, wheels and ZIP/tar source archives. See
+[Local sources](../how-to/local-sources.md), [Git sources](../how-to/vcs.md) and
+[Archive sources](../how-to/archive-sources.md).
 
-`[[tool.nab.archive-sources]]` pins a package to a direct `.tar.gz` URL. The URL fragment must carry
-a `sha256` (or `sha384`/`sha512`) hash; nab downloads the archive, verifies it against the hash, and
-fails the resolve on a mismatch.
-
-```toml
-[[tool.nab.archive-sources]]
-name = "my-fork"
-url  = "https://example.com/my-fork-1.0.tar.gz#sha256=<hex>"
-```
-
-Only `.tar.gz` source archives are supported; other formats are refused. A `&subdirectory=` fragment
-selects a package below the archive root. Static metadata works at every policy, but a backend needs
-`build-policy = "build-remote"`; see [Build policy](build-policy.md).
-
-The URL's own scheme applies: `file://` reads from disk and every other archive uses HTTP. The
-extracted tree is cached with its verified hashes and can be reused offline. A new hash triggers
-another download.
+Sources are read from `pyproject.toml`, not from `nab.toml`. `[tool.nab.workspace]` still declares
+workspace members, whose implicit local sources are fallbacks for matching standard entries. VCS and
+archive acquisition permissions and build policy remain `[tool.nab]` settings. Local directory
+entries need no extra activation. Archive and Git entries permit only their selected URLs, retaining
+hash and revision-pin checks. An index entry permits that index for the named package only. Matching
+configured indexes retain their names and per-index policies.
 
 ## Universal mode
 
@@ -976,7 +942,7 @@ url = "https://pypi.example.com/simple/"
 Project-directory discovery is the directory of the `pyproject.toml` only; there is no walk-up.
 
 `nab config` reports configured rather than derived values. `build-policy` is forced to `never` in
-universal mode, and `local-sources` gains discovered workspace members only during a resolve.
+universal mode, and workspace members are discovered only during a resolve.
 
 ### Environment variables
 

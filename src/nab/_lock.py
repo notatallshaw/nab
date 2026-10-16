@@ -63,6 +63,7 @@ from nab_project.resolve import (
     build_lock_input,
     inputs_for_build_requirements,
 )
+from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     InvalidProjectTableError,
@@ -162,6 +163,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     all_extras: bool = False,
     build_requirements: bool = False,
     workspace_discovery: bool = True,
+    sources: bool = True,
     no_emit_workspace: bool = False,
     project_resolution: ResolutionFlag | None = None,
     project_mode: ModeFlag | None = None,
@@ -199,7 +201,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     or ``build-requirements.txt``.
 
     ``--no-emit-workspace`` omits workspace member pins from the output while
-    still using them during resolution. Use it for hashed requirements, then
+    still using them during resolution. Same-name replacements outside the
+    member directories remain in the lock. Use it for hashed requirements, then
     install those members separately from pip's ``--require-hashes`` run.
 
     Universal requirements output needs a template that renders to a distinct
@@ -268,6 +271,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     config = _load_config(
         path,
         discover_workspace=workspace_discovery,
+        use_sources=sources,
         anchor=anchor,
         cli_overrides=project_overrides,
     )
@@ -313,6 +317,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         offline=offline,
         build_requirements=build_requirements,
         workspace_discovery=workspace_discovery,
+        sources=sources,
         no_emit_workspace=no_emit_workspace,
         cli_overrides=overrides,
         upgrade=upgrade,
@@ -348,6 +353,10 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
             dependency_groups=selected_groups,
         ),
         workspace_to_drop,
+        member_paths={
+            canonicalize_name(source.name): source.path
+            for source in config.local_sources
+        },
     )
     lock_input.provenance = provenance
 
@@ -506,6 +515,7 @@ class _LockRun:
     no_emit_workspace: bool
     cli_overrides: Mapping[str, object]
     upgrade: bool
+    sources: bool = True
 
     def refresh_command(self) -> str:
         """Render this run without ``--locked``, ready to paste into a shell."""
@@ -555,6 +565,8 @@ class _LockRun:
 
         if self.build_requirements:
             arguments.append("--build-requirements")
+        if not self.sources:
+            arguments.append("--no-sources")
         if not self.workspace_discovery:
             arguments.append("--no-workspace-discovery")
         if self.no_emit_workspace:

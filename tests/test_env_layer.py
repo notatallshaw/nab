@@ -36,7 +36,7 @@ _ENVIRONMENT_READERS = {
     "nab": {"nab/env.py", "nab/_cli/render.py"},
     "nab_index": {"nab_index/vcs.py"},
     "nab_markersets": set[str](),
-    "nab_project": {"nab_project/_build/env.py"},
+    "nab_project": {"nab_project/_build/env.py", "nab_project/develop.py"},
     "nab_provider": set[str](),
     "nab_resolver": set[str](),
 }

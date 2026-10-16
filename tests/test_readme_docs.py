@@ -35,9 +35,9 @@ SITE_PAGES = (INDEX, TUTORIAL, USE_THE_LOCK, ARCHIVE_SOURCES)
 PINNED_URL = f"git+https://github.com/myorg/pkg.git@{'0' * 40}"
 
 TABLE_KINDS = {
-    "local-sources": "local",
-    "vcs-sources": "vcs",
-    "archive-sources": "archive",
+    "path": "local",
+    "git": "vcs",
+    "url": "archive",
 }
 
 
@@ -132,7 +132,7 @@ def test_documented_vcs_default_is_the_shipped_default() -> None:
 
 def test_documented_vcs_default_refuses_a_pinned_url() -> None:
     """The documented default refuses even a commit-pinned URL."""
-    with pytest.raises(UnsupportedVcsError, match=r'vcs\.policy is "block"'):
+    with pytest.raises(UnsupportedVcsError, match=r'vcs\.policy is "declared"'):
         admit_vcs_url(PINNED_URL, _documented_vcs_default())
 
 

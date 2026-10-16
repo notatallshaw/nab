@@ -2058,7 +2058,7 @@ class TestArtifactContentEncoding:
     def test_direct_archive_keeps_the_served_bytes(
         self, make_transport: Callable[[], AsyncHttpTransport]
     ) -> None:
-        """The ``archive-sources`` path, whose caller checks the declared hash."""
+        """The direct archive path, whose caller checks the declared hash."""
         with (
             _artifact_stub_index(SDIST_BODY) as server,
             FetchCoordinator(transport=make_transport()) as coord,

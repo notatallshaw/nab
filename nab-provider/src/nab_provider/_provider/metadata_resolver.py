@@ -22,6 +22,7 @@ from nab_provider.records import RangeOutcome, SdistFile, WheelFile
 from .._compat import override
 from ..environment import UnevaluableMarkerError, evaluate_prepared
 from ..errors import (
+    ConfigError,
     ForeignMetadataError,
     IncompatiblePythonError,
     MetadataError,
@@ -37,6 +38,7 @@ from ..metadata import (
     metadata_deps_are_static,
     parse_metadata,
 )
+from ..pep508 import parse_requirement
 from ..policy import BuildPolicy
 from ..project_requirements import (
     InvalidProjectRequirementError,
@@ -1078,12 +1080,19 @@ def _reject_incompatible_python(
     raise IncompatiblePythonError(msg)
 
 
+def redirect_requirement(req: Requirement) -> Requirement:
+    """Remove a transitive URL while preserving its extras and environment marker."""
+    extras = "[" + ",".join(sorted(req.extras)) + "]" if req.extras else ""
+    marker = f"; {req.marker}" if req.marker is not None else ""
+    return parse_requirement(f"{req.name}{extras}{req.specifier}{marker}")
+
+
 def effective_metadata(
     provider: Provider,
     cache_key: tuple[str, Version],
     metadata: WheelMetadata,
 ) -> WheelMetadata:
-    """Apply the per-package metadata override, or return ``metadata`` as is.
+    """Apply metadata overrides and development URL redirects to the resolver view.
 
     A fresh record rather than a mutation: the raw parse is shared across
     tuples via ``store_parsed_metadata``, so mutating would leak one tuple's
@@ -1094,7 +1103,13 @@ def effective_metadata(
     override_deps, override_rp, override_pe = provider.effective_metadata_override(
         package, version
     )
-    if override_deps is None and override_rp is None and override_pe is None:
+    if (
+        override_deps is None
+        and override_rp is None
+        and override_pe is None
+        and not provider.redirected_dependencies
+        and not provider.resolved_direct_urls
+    ):
         return metadata
 
     requires_python = (
@@ -1107,6 +1122,16 @@ def effective_metadata(
         if override_deps is not None
         else list(metadata.requires_dist)
     )
+    requires_dist = [
+        redirect_requirement(req)
+        if req.url is not None
+        and (
+            canonicalize_name(req.name) in provider.redirected_dependencies
+            or (canonicalize_name(req.name), req.url) in provider.resolved_direct_urls
+        )
+        else req
+        for req in requires_dist
+    ]
     provides_extra: list[str]
     if override_pe is not None:
         provides_extra = list(override_pe)
@@ -1282,6 +1307,10 @@ def _url_dep_is_active(provider: Provider, package: str, req_extras: set[str]) -
 
 def refuse_url_dep(provider: Provider, req: Requirement, url: str) -> None:
     """Refuse a direct-URL requirement, or raise ``NotImplementedError``."""
+    name = canonicalize_name(req.name)
+    if any(known == name for known, _ in provider.resolved_direct_urls):
+        msg = f"conflicting direct sources for {name!r}"
+        raise ConfigError(msg)
     admit_vcs_url(url, provider.vcs_config)
     msg = (
         f"VCS dependency admitted by policy but resolver path is not"

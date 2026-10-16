@@ -21,11 +21,15 @@ import posixpath
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from nab_index.atomic import atomic_write
 from nab_index.client import AsyncSimpleClient
 from nab_index.local_index import parse_file_url
+from nab_provider._vendor.packaging.utils import (
+    InvalidWheelFilename,
+    parse_wheel_filename,
+)
 from nab_provider.errors import HttpError
 
 from .lockfile import ArchivePin, IndexPin, LocalPin, LockInput, VcsPin
@@ -111,10 +115,22 @@ def _entries_for_pin(canonical: str, pin: PinShape) -> Iterable[DownloadEntry]:
         algo, digest = pin.primary_digest
         parts = urlsplit(pin.url)
         local_path = parse_file_url(pin.url) if parts.scheme == "file" else None
+        filename = posixpath.basename(parts.path)
+        decoded = unquote(filename)
+        if decoded.endswith(".whl"):
+            if "/" in decoded or "\\" in decoded or ":" in decoded:
+                msg = f"invalid wheel filename {decoded!r}"
+                raise DownloadError(msg)
+            try:
+                parse_wheel_filename(decoded)
+            except InvalidWheelFilename as exc:
+                msg = f"invalid wheel filename {decoded!r}: {exc}"
+                raise DownloadError(msg) from exc
+            filename = decoded
         yield DownloadEntry(
             package=canonical,
             version=pin.version,
-            filename=posixpath.basename(parts.path),
+            filename=filename,
             url=pin.url,
             hash_algo=algo,
             digest=digest.lower(),

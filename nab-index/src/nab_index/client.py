@@ -43,6 +43,7 @@ from .transport import IDENTITY_HEADERS, raise_unless_ok
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+    from typing import Literal
 
     from packaging.utils import NormalizedName
     from typing_extensions import Self
@@ -895,7 +896,10 @@ def _sdist_member_top_level(name: str) -> tuple[int, str, str]:
 # cannot reach the extraction path. Drop the pragma when that cell moves to a
 # build carrying the filter or 3.10 reaches EOL (2026-10).
 def extract_sdist_archive(
-    data: bytes, target_dir: Path
+    data: bytes,
+    target_dir: Path,
+    *,
+    mode: Literal["r:gz", "r:*"] = "r:gz",
 ) -> Path:  # pragma: no cover (tar data filter)
     """Extract a .tar.gz sdist into ``target_dir`` and return the source root.
 
@@ -927,7 +931,7 @@ def extract_sdist_archive(
 
     target_dir = target_dir.resolve()
     try:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        with tarfile.open(fileobj=io.BytesIO(data), mode=mode) as tar:
             tar.extractall(target_dir, filter="data")
     except tarfile.FilterError as exc:
         msg = f"unsafe sdist member: {exc}"

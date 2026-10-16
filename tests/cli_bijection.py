@@ -67,7 +67,7 @@ def _config_command() -> None:
 
 
 def _lock() -> None:
-    """``nab lock``: 37 parameters."""
+    """``nab lock``: 38 parameters."""
     lock(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -101,6 +101,7 @@ def _lock() -> None:
         all_groups=RunFlags.all_groups,
         extras=RunFlags.extras,
         all_extras=RunFlags.all_extras,
+        sources=RunFlags.sources,
         workspace_discovery=RunFlags.workspace_discovery,
         build_requirements=RunFlags.build_requirements,
         no_emit_workspace=RunFlags.no_emit_workspace,
@@ -110,7 +111,7 @@ def _lock() -> None:
 
 
 def _download() -> None:
-    """``nab download``: 33 parameters."""
+    """``nab download``: 34 parameters."""
     download(
         ConfigWords.path,
         project_resolution=ProjectKeys.resolution,
@@ -144,5 +145,6 @@ def _download() -> None:
         all_groups=RunFlags.all_groups,
         extras=RunFlags.extras,
         all_extras=RunFlags.all_extras,
+        sources=RunFlags.sources,
         workspace_discovery=RunFlags.workspace_discovery,
     )

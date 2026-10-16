@@ -170,7 +170,7 @@ def _run_config(args: list[str], *, status: int = 0) -> str:
 
 def test_config_search_roots_uses_symlink_dir_not_target(tmp_path: Path) -> None:
     # A symlinked pyproject keeps the symlink's own directory as the
-    # local-sources base, matching the resolve path (not the target's dir).
+    # The project-directory lookup stays beside the symlink.
     real = tmp_path / "real"
     real.mkdir()
     (real / "pyproject.toml").write_text('[project]\nname = "x"\n')
@@ -567,18 +567,16 @@ class TestConfigRefusalSeverity:
 
 _STRUCTURED_PROJECT_TABLES = frozenset(
     {
-        "archive-sources",
         "conflicts",
         "environment",
         "index",
         "indexes",
-        "local-sources",
         "marker-environment",
         "matrix",
         "package-rules",
         "packages",
+        "archive",
         "vcs",
-        "vcs-sources",
         "workspace",
     }
 )
