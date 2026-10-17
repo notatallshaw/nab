@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import threading
 import weakref
+from enum import Enum, auto
 from functools import lru_cache
 from itertools import islice, pairwise, product
 from math import prod
@@ -68,6 +69,9 @@ DOMAIN_SET = "set"
 
 _MASK_PROBE_MIN_CELLS = 64
 _EARLY_CELL_LIMIT = 4
+_PATTERN_WORD_BITS = 64
+# Reserve slots for buffer roots, result records and loop temporaries.
+_PATTERN_FIXED_UNITS = 64
 
 # Every variable in packaging's marker grammar, typed to a domain. The twins
 # dispatch as versions yet may hold an arbitrary string, so they also carry the
@@ -2025,6 +2029,13 @@ class _RowPattern(NamedTuple):
     bits: int
 
 
+class _RowStatus(Enum):
+    """Distinguish varying predicates from a refused row admission."""
+
+    VARYING = auto()
+    OVER_CAP = auto()
+
+
 class _CoverCube(NamedTuple):
     """A retained conjunction and the observed patterns it covers."""
 
@@ -2038,6 +2049,14 @@ class _CoverInput(NamedTuple):
     tree: Formula
     atoms: tuple[Atom, ...]
     leaf_count: int
+
+
+class _RowTruth(NamedTuple):
+    """Source columns and the residual universe for one admitted row."""
+
+    columns: tuple[int, ...]
+    within: int
+    size: int
 
 
 def _canonical_cover_atom(atom: Atom) -> Atom:
@@ -2105,15 +2124,15 @@ def _charge_formula_work(node: Formula) -> None:
 
 def _fixed_row_pattern(
     atoms: Sequence[Atom], row: _Row, max_cells: int, store: Memo
-) -> _RowPattern | None:
-    """Return constant predicate values, or None for varying or oversized rows."""
+) -> _RowPattern | _RowStatus:
+    """Return constant predicate values or the reason the row needs another path."""
     charge_work(len(atoms) + 1)
     restricted = [restrict_tree(AtomLeaf(atom), row.pins) for atom in atoms]
     residual = [atom for node in restricted for atom in collect_atoms(node)]
     bound_atoms = collect_atoms(row.bound)
     bound_axes = {atom.axis() for atom in bound_atoms}
     if any(atom.axis() not in bound_axes for atom in residual):
-        return None
+        return _RowStatus.VARYING
 
     partition_atoms = dict.fromkeys((*residual, *bound_atoms))
     try:
@@ -2123,7 +2142,7 @@ def _fixed_row_pattern(
     except IntractableMarkerSet:
         if _work_meter.remaining < 0:
             raise
-        return None
+        return _RowStatus.OVER_CAP
     count = prod(map(len, space.partitions))
     truth, full = _cell_truth_masks(space, count)
     charge_work(count * (len(bound_atoms) + 1))
@@ -2138,7 +2157,7 @@ def _fixed_row_pattern(
         if value == within:
             pattern |= 1 << index
         elif value:
-            return None
+            return _RowStatus.VARYING
     return _RowPattern(nonempty=True, bits=pattern)
 
 
@@ -2245,22 +2264,8 @@ def _project_patterns(
     return projected
 
 
-def _fixed_row_cover(
-    source: _CoverInput, rows: Sequence[_Row], max_cells: int, store: Memo
-) -> Formula | None:
-    """Build a stable cover by projecting out predicates the cover no longer uses."""
-    if isinstance(source.tree, BoolConst):
-        return source.tree
-    patterns: set[int] = set()
-    for row in rows:
-        pattern = _fixed_row_pattern(source.atoms, row, max_cells, store)
-        if pattern is None:
-            return None
-        if pattern.nonempty:
-            patterns.add(pattern.bits)
-            if len(patterns) * len(source.atoms) > max_cells:
-                return None
-
+def _stabilize_cover(source: _CoverInput, patterns: AbstractSet[int]) -> Formula:
+    """Extract a stable cover by projecting away discarded predicate columns."""
     while True:
         cubes = _cover_patterns(source, patterns)
         result = _factor_clauses([cube.atoms for cube in cubes])
@@ -2269,6 +2274,159 @@ def _fixed_row_cover(
             return result
         patterns = _project_patterns(patterns, source.atoms, refined.atoms)
         source = refined
+
+
+def _row_cover(
+    source: _CoverInput, rows: Sequence[_Row], max_cells: int, store: Memo
+) -> Formula | None:
+    """Build a stable cover by projecting out predicates the cover no longer uses."""
+    if isinstance(source.tree, BoolConst):
+        return source.tree
+    patterns: set[int] = set()
+    for index, row in enumerate(rows):
+        pattern = _fixed_row_pattern(source.atoms, row, max_cells, store)
+        if pattern is _RowStatus.OVER_CAP:
+            return None
+        if pattern is _RowStatus.VARYING:
+            return _varying_row_cover(
+                source, rows, max_cells, store, start=index, patterns=patterns
+            )
+        if pattern.nonempty:
+            patterns.add(pattern.bits)
+            if len(patterns) * len(source.atoms) > max_cells:
+                return None
+
+    return _stabilize_cover(source, patterns)
+
+
+def _pattern_axes_fit(atoms: list[Atom], max_cells: int) -> bool:
+    """Reject set axes whose required column work already exceeds the cap."""
+    charge_work(len(atoms))
+    for axis, predicates in _atoms_by_axis(atoms).items():
+        if axis[0] == AXIS_SET:
+            names = {atom.literal for atom in predicates}
+            if (1 << len(names)) * len(predicates) > max_cells:
+                return False
+    return True
+
+
+def _row_pattern_columns(
+    atoms: Sequence[Atom], row: _Row, max_cells: int, store: Memo
+) -> _RowTruth | None:
+    """Compile a row's source columns and release its temporary lookup map."""
+    charge_work(len(atoms) + 1)
+    restricted = [restrict_tree(AtomLeaf(atom), row.pins) for atom in atoms]
+    residual = [atom for node in restricted for atom in collect_atoms(node)]
+    bound_atoms = collect_atoms(row.bound)
+    charge_work(len(residual) + len(bound_atoms))
+    partition_atoms = list(dict.fromkeys((*residual, *bound_atoms)))
+    if not _pattern_axes_fit(partition_atoms, max_cells):
+        return None
+    try:
+        space = _cell_space(
+            make_and(AtomLeaf(atom) for atom in partition_atoms), max_cells, store
+        )
+    except IntractableMarkerSet:
+        if _work_meter.remaining < 0:
+            raise
+        return None
+    count = prod(map(len, space.partitions))
+    if count * (len(atoms) + 1) > max_cells:
+        return None
+    truth, full = _cell_truth_masks(space, count)
+    charge_work(count * (len(bound_atoms) + 1))
+    within = _eval_mask(row.bound, truth, full)
+    if not within:
+        return _RowTruth((), 0, count)
+    charge_work(count * len(restricted))
+    columns = tuple(_eval_mask(node, truth, full) for node in restricted)
+    return _RowTruth(columns, within, count)
+
+
+def _pattern_buffer_units(
+    *, columns: int, cell_words: int, prefix_words: int, regions: int, existing: int
+) -> int:
+    """Price additional container slots and 64-bit integer payload units."""
+    # Old regions and doubled output need at most three records per input.
+    records = 3 * regions * (3 + cell_words + prefix_words)
+    sets = (existing + 2 * regions) * (1 + prefix_words)
+    temporaries = (columns + 6) * cell_words + 3 * prefix_words
+    return _PATTERN_FIXED_UNITS + columns + records + sets + temporaries
+
+
+def _split_row_patterns(
+    row: _RowTruth, existing: int, max_cells: int
+) -> set[int] | None:
+    """Enumerate every source truth pattern, including source-false witnesses."""
+    if not row.within:
+        return set()
+    cell_words = max(1, (row.size + _PATTERN_WORD_BITS) // _PATTERN_WORD_BITS)
+    prefix_words = max(
+        1, (len(row.columns) + _PATTERN_WORD_BITS - 1) // _PATTERN_WORD_BITS
+    )
+    minimum = _pattern_buffer_units(
+        columns=len(row.columns),
+        cell_words=cell_words,
+        prefix_words=prefix_words,
+        regions=1,
+        existing=existing,
+    )
+    if minimum > max_cells:
+        return None
+    regions = [(0, row.within)]
+    for position, value in enumerate(row.columns):
+        units = _pattern_buffer_units(
+            columns=len(row.columns),
+            cell_words=cell_words,
+            prefix_words=prefix_words,
+            regions=len(regions),
+            existing=existing,
+        )
+        if units > max_cells:
+            return None
+        charge_work(
+            row.size
+            + len(regions) * (2 * cell_words + 2 * prefix_words + 3)
+            + prefix_words
+        )
+        bit = 1 << position
+        complement = ~value
+        refined = []
+        for prefix, region in regions:
+            positive = region & value
+            negative = region & complement
+            if positive:
+                refined.append((prefix | bit, positive))
+            if negative:
+                refined.append((prefix, negative))
+        regions = refined
+    charge_work(len(regions) * (len(row.columns) + prefix_words + 1))
+    return {prefix for prefix, _ in regions}
+
+
+def _varying_row_cover(
+    source: _CoverInput,
+    rows: Sequence[_Row],
+    max_cells: int,
+    store: Memo,
+    *,
+    start: int,
+    patterns: set[int],
+) -> Formula | None:
+    """Extend the proven constant prefix with patterns from all remaining rows."""
+    for index in range(start, len(rows)):
+        row = rows[index]
+        columns = _row_pattern_columns(source.atoms, row, max_cells, store)
+        if columns is None:
+            return None
+        observed = _split_row_patterns(columns, len(patterns), max_cells)
+        if observed is None:
+            return None
+        patterns.update(observed)
+        if len(patterns) * len(source.atoms) > max_cells:
+            return None
+        del columns, observed
+    return _stabilize_cover(source, patterns)
 
 
 def _simplify_greedy(
@@ -2299,7 +2457,7 @@ def simplify_within(
 ) -> Formula:
     """Return a tree equivalent to ``node`` on every point of ``universe``.
 
-    Rows with constant source predicates admit a direct cover.
+    Admitted row truth patterns allow a direct cover.
     Other inputs use greedy clause and atom removal.
     Neither path guarantees the smallest tree.
 
@@ -2318,13 +2476,13 @@ def simplify_within(
             if isinstance(source.tree, BoolConst)
             else _decompose_rows(universe, shared)
         )
-        direct = _fixed_row_cover(source, rows, max_cells, shared)
+        direct = _row_cover(source, rows, max_cells, shared)
         if direct is not None:
             return direct
         greedy = _simplify_greedy(source.tree, rows, max_cells, shared)
         refined = _prepare_cover(greedy)
         if len(refined.atoms) < len(source.atoms):
-            direct = _fixed_row_cover(refined, rows, max_cells, shared)
+            direct = _row_cover(refined, rows, max_cells, shared)
             if direct is not None:
                 return direct
         return greedy

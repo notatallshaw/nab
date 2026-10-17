@@ -457,7 +457,7 @@ class MarkerSet:
         ...     'python_version >= "3.9" and python_version < "3.12"'
         ... )
         >>> wide.simplify(within=supported).to_marker_string()
-        'python_version == "3.10" or python_version == "3.11"'
+        'python_version >= "3.10"'
 
         :raises ValueError: if ``within`` is the empty set, which makes every set
             vacuously equivalent.

@@ -98,12 +98,11 @@ supports.
 ... )
 >>> supported = MarkerSet.from_marker('python_version >= "3.9" and python_version < "3.12"')
 >>> wide.simplify(within=supported).to_marker_string()
-'python_version == "3.10" or python_version == "3.11"'
+'python_version >= "3.10"'
 ```
 
-`MarkerSet.full()` as the universe gives a context-free factoring instead. The result is not the
-smallest equivalent set, and it is not always shorter: clauses are expanded before any come off, so
-a factored marker whose clauses are all needed comes back expanded.
+`MarkerSet.full()` as the universe gives a context-free factoring instead. The result need not be
+the smallest equivalent set and may be longer than the input.
 
 ## Write a set back out
 
