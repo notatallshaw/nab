@@ -7,7 +7,7 @@ named list, is what lets the resolve path be read as one piece.
 Two rules, both computed statically over the shipped ``src`` trees.
 
 ``use``
-    No definition in either marker-set module may be reachable through the
+    No definition in a marker-set module may be reachable through the
     use graph from the engine entry point.
 
 ``import``
@@ -44,7 +44,11 @@ TREES = {
 }
 
 MARKER_SET_MODULES = frozenset(
-    {"nab_markersets.markersets", "nab_markersets._markersets"}
+    {
+        "nab_markersets.markersets",
+        "nab_markersets._markersets",
+        "nab_markersets.conversions",
+    }
 )
 
 # The engine entry point: what the walk reaches from here is what a host takes

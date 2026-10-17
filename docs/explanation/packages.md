@@ -12,7 +12,8 @@ embedding them.
 with no knowledge of Python packaging. It does not import `packaging`.
 
 `nab-markersets` is the marker algebra: a PEP 508 marker read as the set of environments it selects.
-Its parser and evaluator come from whichever `packaging` is installed, released or nab's fork.
+It owns parsing, algebra and bounded conversion reuse. Callers own the lifetime of that reuse. Its
+parser and evaluator come from whichever `packaging` is installed, released or nab's fork.
 [Reasoning about markers](../how-to/reason-about-markers.md) works through it.
 
 `nab-provider` is the resolution logic: the provider the solver asks for candidates, the target and

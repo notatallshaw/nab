@@ -12,9 +12,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from nab_markersets.conversions import MarkerSetCache
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import MarkerSet
 from nab_provider._vendor.packaging.markers import (
+    Marker,
     UndefinedComparison,
 )
 
@@ -29,10 +31,8 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Mapping
     from collections.abc import Set as AbstractSet
 
-    from nab_provider._vendor.packaging.markers import Marker
-
-
 __all__ = [
+    "DependencyMarkerEvaluator",
     "IntractableMarkerError",
     "UnevaluableMarkerError",
     "dependency_marker_holds",
@@ -88,9 +88,39 @@ def dependency_marker_holds(
     A clause no comparison decides raises :class:`UnevaluableMarkerError`, and
     a marker that overruns a budget raises :class:`IntractableMarkerError`.
     """
-    env: dict[str, str | AbstractSet[str]] = {"extra": frozenset()}
-    env.update(environment)
-    env.update(EMPTY_MEMBERSHIP_SETS)
+    env = _dependency_environment(environment)
 
     with intractable_as_error():
         return marker_set(marker).evaluate(env)
+
+
+def _dependency_environment(
+    environment: Mapping[str, str | AbstractSet[str]],
+) -> dict[str, str | AbstractSet[str]]:
+    """Supply dependency-marker membership defaults without changing the input."""
+    env: dict[str, str | AbstractSet[str]] = {"extra": frozenset()}
+    env.update(environment)
+    env.update(EMPTY_MEMBERSHIP_SETS)
+    return env
+
+
+class DependencyMarkerEvaluator:
+    """Reuse short root marker conversions during one resolve on one thread."""
+
+    __slots__ = ("_conversions",)
+
+    def __init__(self) -> None:
+        """Start an empty cache for one resolve."""
+        self._conversions = MarkerSetCache()
+
+    def __call__(
+        self, marker: Marker, environment: Mapping[str, str | AbstractSet[str]]
+    ) -> bool:
+        """Evaluate a dependency marker with the membership defaults."""
+        env = _dependency_environment(environment)
+        with intractable_as_error():
+            try:
+                converted = self._conversions.from_marker(marker)
+            except UndefinedComparison as exc:
+                raise marker_evaluation_error(marker, exc) from exc
+            return converted.evaluate(env)

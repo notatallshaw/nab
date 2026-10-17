@@ -23,6 +23,7 @@ from nab_index import vcs as vcs_mod
 from nab_index.cache import ARCHIVE_BUCKET, VCS_BUCKET
 from nab_index.client import SdistFile, WheelFile
 from nab_index.multi_index import IndexConfig
+from nab_markersets.markersets import MarkerSet
 from nab_project import resolve as resolve_mod
 from nab_project._resolve import engine as engine_mod
 from nab_project._resolve.engine import _EngineSettings, _resolve_one_target, _run_pass
@@ -67,7 +68,7 @@ from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import Requirement
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.errors import ConfigError
-from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.marker_holds import DependencyMarkerEvaluator, dependency_marker_holds
 from nab_provider.metadata import WheelMetadata
 from nab_provider.overrides import IndexOverride, PackageOverride
 from nab_provider.provider import (
@@ -92,7 +93,8 @@ from nab_provider.target import Matrix, ResolveTarget
 from nab_resolver.errors import ResolutionError
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
+    from collections.abc import Set as AbstractSet
 
     from nab_index.vcs import VcsClone, VcsRequest
 
@@ -176,6 +178,64 @@ def _windows_311() -> ResolveTarget:
     return ResolveTarget.for_declared(
         python_version="3.11", spec=PlatformSpec("windows_amd64")
     )
+
+
+def test_default_root_evaluator_is_shared_only_within_one_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    targets = Matrix(
+        python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+    ).expand()
+    requirements = _reqs('demo; python_version < "3.12"')
+    owners: list[DependencyMarkerEvaluator] = []
+    converted: list[str | Marker] = []
+    original = MarkerSet.from_marker
+
+    class ObservedEvaluator(DependencyMarkerEvaluator):
+        __slots__ = ()
+
+        def __init__(self) -> None:
+            super().__init__()
+            owners.append(self)
+
+    def observed(_cls: type[MarkerSet], source: str | Marker) -> MarkerSet:
+        converted.append(source)
+        return original(source)
+
+    monkeypatch.setattr(resolve_mod, "DependencyMarkerEvaluator", ObservedEvaluator)
+    monkeypatch.setattr(MarkerSet, "from_marker", classmethod(observed))
+    for _ in range(2):
+        coordinator = _make_coordinator({"demo": [_make_wheel("1.0", package="demo")]})
+        result = resolve_with_coordinator(
+            coordinator, targets, requirements, inputs=_no_build()
+        )
+        assert result.success
+        assert {tuple(row.pins) for row in result.target_results} == {("demo",), ()}
+
+    assert len(owners) == 2
+    assert owners[0] is not owners[1]
+    assert len(converted) == 2
+
+    received: list[Mapping[str, str | AbstractSet[str]]] = []
+
+    def custom(
+        _marker: Marker, environment: Mapping[str, str | AbstractSet[str]]
+    ) -> bool:
+        received.append(environment)
+        return False
+
+    coordinator = _make_coordinator({"demo": [_make_wheel("1.0", package="demo")]})
+    result = resolve_with_coordinator(
+        coordinator, targets, requirements, inputs=_no_build(), marker_holds=custom
+    )
+    assert result.success
+    assert all(not row.pins for row in result.target_results)
+    assert {environment["python_version"] for environment in received} == {
+        "3.11",
+        "3.12",
+    }
+    assert len(owners) == 2
+    assert len(converted) == 2
 
 
 def _extra_set(*names: str) -> ConflictSet:
