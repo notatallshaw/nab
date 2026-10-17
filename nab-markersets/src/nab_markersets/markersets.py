@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 # Resource caps, not semantic parameters: no answer depends on their value, so
 # neither reaches the public surface. `_MAX_CELLS` bounds one decision and
-# `_MAX_WORK` the greedy loop `simplify` runs over many of them.
+# `_MAX_WORK` the complete simplification across those decisions.
 _MAX_CELLS = 100_000
 _MAX_WORK = 100_000_000
 
@@ -446,9 +446,8 @@ class MarkerSet:
 
         Pass the union of a lock's declared environments as ``within`` for a
         universe-aware result, or :meth:`full` for a context-free factoring.
-        Clauses and atoms come off greedily to a fixpoint, so the result is not
-        the smallest equivalent set, and a factored input whose clauses are all
-        needed comes back expanded.
+        The result need not be the smallest equivalent set.
+        It may differ outside ``within``.
 
         >>> wide = MarkerSet.from_marker(
         ...     'python_version == "3.10" or python_version == "3.11"'
@@ -464,8 +463,8 @@ class MarkerSet:
             vacuously equivalent.
         :raises UnserializableMarkerSet: if the set holds the complement of a
             version comparison, which has no negation in the grammar.
-        :raises IntractableMarkerSet: if deciding a removal exceeds the internal
-            cell budget, if the greedy loop exceeds the internal work budget,
+        :raises IntractableMarkerSet: if a decision exceeds the internal
+            cell budget, if simplification exceeds the internal work budget,
             or if the marker nests past the stack.
         """
         if _markersets.universe_is_empty(within._tree, _MAX_CELLS, store):
