@@ -3,8 +3,7 @@
 A marker parses into a normalised op-tree over typed atoms, and a value atom's
 denotation is packaging's own ``_eval_op``, so a marker means here what it means
 there. A decision partitions each axis the tree names into cells on which every
-atom is constant, enumerates their product under ``max_cells``, and evaluates
-the tree once per cell.
+atom is constant and evaluates the tree over their bounded product.
 """
 
 from __future__ import annotations
@@ -13,7 +12,8 @@ import re
 import threading
 import weakref
 from functools import lru_cache
-from itertools import pairwise, product
+from itertools import islice, pairwise, product
+from math import prod
 from typing import TYPE_CHECKING, Literal, NamedTuple, Protocol, cast
 
 from ._compat import get_int_max_str_digits
@@ -65,6 +65,9 @@ DOMAIN_VERSION = "version"
 DOMAIN_STRING = "string"
 DOMAIN_TWIN = "version_or_string"
 DOMAIN_SET = "set"
+
+_MASK_PROBE_MIN_CELLS = 64
+_EARLY_CELL_LIMIT = 4
 
 # Every variable in packaging's marker grammar, typed to a domain. The twins
 # dispatch as versions yet may hold an arbitrary string, so they also carry the
@@ -1395,9 +1398,67 @@ def _enumerate_cells(
 def _decide_empty(node: Formula, max_cells: int, store: Memo) -> _Decision:
     """Decide emptiness, returning the verdict with the work charged for it."""
     space = _cell_space(node, max_cells, store)
-    return _Decision(
-        next(_enumerate_cells(node, space), _MISSING) is _MISSING, space.units
-    )
+    size = prod(len(partition) for partition in space.partitions)
+    if size >= _MASK_PROBE_MIN_CELLS and _has_early_cell(node, space):
+        return _Decision(empty=False, units=space.units)
+    truth, full = _cell_truth_masks(space, size)
+    return _Decision(not _eval_mask(node, truth, full), space.units)
+
+
+def _has_early_cell(node: Formula, space: _CellSpace) -> bool:
+    """Look for a quick witness before building a large product's truth masks."""
+    for combo in islice(product(*space.partitions), _EARLY_CELL_LIMIT):
+        truth = {
+            atom: value
+            for atoms, cell in zip(space.atomlists, combo, strict=True)
+            for atom, value in zip(atoms, cell.vector, strict=True)
+        }
+        if _eval_cell(node, truth):
+            return True
+    return False
+
+
+def _cell_truth_masks(space: _CellSpace, size: int) -> tuple[dict[Atom, int], int]:
+    """Encode atom truths over the Cartesian cell product, one bit per cell."""
+    full = (1 << size) - 1
+    truth: dict[Atom, int] = {}
+    stride = size
+    for atoms, cells in zip(space.atomlists, space.partitions, strict=True):
+        period = stride
+        stride //= len(cells)
+        run = (1 << stride) - 1
+        # The quotient repeats this axis's period across preceding axes.
+        repeat = full // ((1 << period) - 1)
+        for column, atom in enumerate(atoms):
+            pattern = 0
+            for index, cell in enumerate(cells):
+                if cell.vector[column]:
+                    pattern |= run << (index * stride)
+            truth[atom] = pattern * repeat
+    return truth, full
+
+
+def _eval_mask(node: Formula, truth: Mapping[Atom, int], full: int) -> int:
+    """Return the cells on which a formula holds, bounded by ``full``."""
+    if isinstance(node, BoolConst):
+        return full if node.value else 0
+    if isinstance(node, AtomLeaf):
+        return truth[node.atom]
+    if isinstance(node, NotNode):
+        return full ^ _eval_mask(node.child, truth, full)
+    if isinstance(node, AndNode):
+        result = full
+        for child in node.children:
+            result &= _eval_mask(child, truth, full)
+            if not result:
+                break
+    else:
+        result = 0
+        for child in node.children:
+            result |= _eval_mask(child, truth, full)
+            if result == full:
+                break
+    return result
 
 
 def is_empty(node: Formula, max_cells: int, store: Memo | None = None) -> bool:
