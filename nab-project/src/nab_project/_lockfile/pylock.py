@@ -1317,10 +1317,14 @@ def _fork_projections(
             _PROJECTION_CACHE_UNITS_PER_FORK * len(axes.targets),
         ),
     )
+    dependents: dict[tuple[str, str], set[tuple[str, str]]] | None = None
     stale = set(same_pin)
     while stale:
+        changed: set[tuple[str, str]] = set()
         for name, label in stale:
-            projections[name, label] = _project_fork(
+            key = (name, label)
+            previous = projections[key] if dependents is not None else None
+            current = _project_fork(
                 axes,
                 name,
                 label,
@@ -1331,14 +1335,39 @@ def _fork_projections(
                     name, axes.env_signatures[label], env_fork_counts, env_base_names
                 ),
             )
-        narrowed = {
-            (name, label): limit
-            & _dependency_drops(axes, projections, label, edges[name, label])
-            for (name, label), limit in limits.items()
-        }
-        stale = {key for key, limit in narrowed.items() if limit != limits[key]}
-        limits = narrowed
+            projections[key] = current
+            if previous is not None and previous.dropped != current.dropped:
+                changed.add(key)
+
+        # Unchanged dependency drops are already reflected in the current limits.
+        affected = (
+            limits.keys()
+            if dependents is None
+            else {parent for child in changed for parent in dependents.get(child, ())}
+        )
+        stale = set()
+        for name, label in affected:
+            key = (name, label)
+            narrowed = limits[key] & _dependency_drops(
+                axes, projections, label, edges[key]
+            )
+            if narrowed != limits[key]:
+                stale.add(key)
+                limits[key] = narrowed
+        if stale and dependents is None:
+            dependents = _fork_dependents(edges)
     return projections
+
+
+def _fork_dependents(
+    edges: Mapping[tuple[str, str], AbstractSet[str]],
+) -> dict[tuple[str, str], set[tuple[str, str]]]:
+    """Index parents by dependency and fork for later synchronous rounds."""
+    parents: dict[tuple[str, str], set[tuple[str, str]]] = defaultdict(set)
+    for key, dependencies in edges.items():
+        for dependency in dependencies:
+            parents[dependency, key[1]].add(key)
+    return parents
 
 
 def _dependency_drops(
