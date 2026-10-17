@@ -9,10 +9,10 @@ holds the import closure to a named list this module is on.
 
 from __future__ import annotations
 
-import sys
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from nab_markersets.conversions import MarkerSetCache
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import MarkerSet
 from nab_provider._vendor.packaging.markers import (
@@ -40,11 +40,6 @@ __all__ = [
     "intractable_as_error",
     "marker_set",
 ]
-
-_MARKER_SET_CACHE_SIZE = 128
-# Admitted literals fit the minimum enabled integer conversion limit.
-_MARKER_SET_CACHE_MAX_CHARS = 256
-_NATIVE_MARKER_STR: object = Marker.__str__
 
 
 class IntractableMarkerError(ValueError):
@@ -112,11 +107,11 @@ def _dependency_environment(
 class DependencyMarkerEvaluator:
     """Reuse short root marker conversions during one resolve on one thread."""
 
-    __slots__ = ("_sets",)
+    __slots__ = ("_conversions",)
 
     def __init__(self) -> None:
         """Start an empty cache for one resolve."""
-        self._sets: dict[tuple[str, int], MarkerSet] = {}
+        self._conversions = MarkerSetCache()
 
     def __call__(
         self, marker: Marker, environment: Mapping[str, str | AbstractSet[str]]
@@ -124,33 +119,8 @@ class DependencyMarkerEvaluator:
         """Evaluate a dependency marker with the membership defaults."""
         env = _dependency_environment(environment)
         with intractable_as_error():
-            return self._marker_set(marker).evaluate(env)
-
-    def _marker_set(self, marker: Marker) -> MarkerSet:
-        """Reuse eligible conversions under the current recursion limit."""
-        if type(marker) is not Marker or Marker.__str__ is not _NATIVE_MARKER_STR:
-            return marker_set(marker)
-
-        key = None
-        try:
-            text = str(marker)
-            if (
-                len(text) <= _MARKER_SET_CACHE_MAX_CHARS
-                and "\\" not in text
-                and "(" not in text
-                and ")" not in text
-            ):
-                key = (text, sys.getrecursionlimit())
-                cached = self._sets.get(key)
-                if cached is not None:
-                    return cached
-            parsed = MarkerSet.from_marker(text)
-        except UndefinedComparison as exc:
-            raise marker_evaluation_error(marker, exc) from exc
-        except RecursionError as exc:
-            msg = "marker nests too deeply to decide"
-            raise IntractableMarkerSet(msg) from exc
-
-        if key is not None and len(self._sets) < _MARKER_SET_CACHE_SIZE:
-            self._sets[key] = parsed
-        return parsed
+            try:
+                converted = self._conversions.from_marker(marker)
+            except UndefinedComparison as exc:
+                raise marker_evaluation_error(marker, exc) from exc
+            return converted.evaluate(env)

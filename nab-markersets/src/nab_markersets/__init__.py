@@ -3,6 +3,7 @@
 The supported API is the module paths below. Everything else in the package is
 internal and may be renamed or relocated in any release.
 
+    nab_markersets.conversions  MarkerSetCache
     nab_markersets.errors       IntractableMarkerSet, UnserializableMarkerSet
     nab_markersets.markersets   DecisionStore, MarkerSet, variable_names
 

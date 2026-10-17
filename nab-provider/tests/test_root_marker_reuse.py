@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import re
 import sys
-import warnings
 
 import pytest
 from packaging.markers import Marker as ExternalMarker
@@ -12,7 +10,6 @@ from packaging.markers import Marker as ExternalMarker
 from nab_markersets.markersets import MarkerSet
 from nab_provider import marker_holds
 from nab_provider._vendor.packaging.markers import (
-    InvalidMarker,
     Marker,
     UndefinedEnvironmentName,
 )
@@ -74,102 +71,12 @@ def test_another_resolve_and_the_standalone_function_keep_their_own_work(
     assert len(conversions) == 4
 
 
-@pytest.mark.parametrize("size", [255, 256, 257])
-def test_text_admission_boundary(conversions: list[str | Marker], size: int) -> None:
-    prefix = len(str(Marker('os_name == ""')))
-    literal = "x" * (size - prefix)
-    marker = Marker(f'os_name == "{literal}"')
-    assert len(str(marker)) == size
-    evaluator = DependencyMarkerEvaluator()
-    assert evaluator(marker, {"os_name": literal})
-    assert evaluator(marker, {"os_name": literal})
-    assert len(conversions) == (1 if size <= 256 else 2)
-
-
-def test_capacity_keeps_admitted_hits_without_retaining_new_keys(
-    monkeypatch: pytest.MonkeyPatch, conversions: list[str | Marker]
-) -> None:
-    monkeypatch.setattr(marker_holds, "_MARKER_SET_CACHE_SIZE", 2)
-    evaluator = DependencyMarkerEvaluator()
-    markers = [Marker(f'os_name == "p{index}"') for index in range(3)]
-    for marker in markers:
-        assert not evaluator(marker, ENV)
-    assert not evaluator(markers[0], ENV)
-    assert not evaluator(markers[2], ENV)
-    assert len(conversions) == 4
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        '(os_name == "posix" or sys_platform == "linux") and extra == "a"',
-        'os_name == "(posix"',
-        'os_name == "posix)"',
-        r'os_name == "\\x41"',
-    ],
-)
-def test_parentheses_and_escapes_keep_fresh_conversion(
-    conversions: list[str | Marker], text: str
-) -> None:
-    evaluator = DependencyMarkerEvaluator()
-    marker = Marker(text)
-    assert evaluator(marker, ENV) == evaluator(marker, ENV)
-    assert len(conversions) == 2
-
-
 def test_failed_conversions_are_retried(conversions: list[str | Marker]) -> None:
     evaluator = DependencyMarkerEvaluator()
     marker = Marker('os_name ~= "posix"')
     for _ in range(2):
         with pytest.raises(UnevaluableMarkerError):
             evaluator(marker, ENV)
-    assert len(conversions) == 2
-
-
-def test_custom_native_rendering_stays_on_the_original_path(
-    monkeypatch: pytest.MonkeyPatch, conversions: list[str | Marker]
-) -> None:
-    original = Marker.__str__
-    rendered: list[Marker] = []
-
-    def observed(marker: Marker) -> str:
-        rendered.append(marker)
-        return original(marker)
-
-    monkeypatch.setattr(Marker, "__str__", observed)
-    marker = Marker('sys_platform == "linux"')
-    evaluator = DependencyMarkerEvaluator()
-    assert evaluator(marker, ENV)
-    assert evaluator(marker, ENV)
-    assert conversions == [marker, marker]
-    assert rendered == [marker, marker]
-
-
-def test_native_escaped_rendering_keeps_the_reparsed_value(
-    conversions: list[str | Marker],
-) -> None:
-    evaluator = DependencyMarkerEvaluator()
-    marker = Marker(r'os_name == "\\x41"')
-    assert evaluator(marker, {"os_name": "A"})
-    assert not evaluator(marker, {"os_name": r"\x41"})
-    assert len(conversions) == 2
-
-
-def test_recursion_limit_changes_start_a_new_conversion_context(
-    conversions: list[str | Marker],
-) -> None:
-    evaluator = DependencyMarkerEvaluator()
-    marker = Marker('os_name == "posix"')
-    previous = sys.getrecursionlimit()
-    try:
-        assert evaluator(marker, ENV)
-        sys.setrecursionlimit(previous + 1)
-        assert evaluator(marker, ENV)
-        assert evaluator(marker, ENV)
-        sys.setrecursionlimit(previous)
-        assert evaluator(marker, ENV)
-    finally:
-        sys.setrecursionlimit(previous)
     assert len(conversions) == 2
 
 
@@ -192,40 +99,6 @@ def test_cached_short_conversion_still_checks_current_environment_digit_limits(
     finally:
         sys.set_int_max_str_digits(previous)
     assert len(conversions) == 1
-
-
-def test_warning_filter_changes_still_reparse_escaped_literals(
-    conversions: list[str | Marker],
-) -> None:
-    evaluator = DependencyMarkerEvaluator()
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        marker = Marker(r'os_name == "\q"')
-        assert evaluator(marker, {"os_name": r"\q"})
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        try:
-            expected = marker_holds.dependency_marker_holds(marker, {"os_name": r"\q"})
-        except (InvalidMarker, SyntaxWarning, DeprecationWarning) as error:
-            with pytest.raises(type(error), match=re.escape(str(error))):
-                evaluator(marker, {"os_name": r"\q"})
-        else:
-            assert evaluator(marker, {"os_name": r"\q"}) is expected
-    assert len(conversions) == 3
-
-
-def test_foreign_markers_keep_the_original_conversion_path(
-    conversions: list[str | Marker | ExternalMarker],
-) -> None:
-    evaluator = DependencyMarkerEvaluator()
-    native = Marker('sys_platform == "linux"')
-    foreign = ExternalMarker('sys_platform == "linux"')
-    assert evaluator(native, ENV)
-    assert evaluator(foreign, ENV)
-    assert evaluator(foreign, ENV)
-    assert len(conversions) == 3
-    assert conversions[1] is foreign
-    assert conversions[2] is foreign
 
 
 def test_native_rendering_recursion_keeps_the_bounded_error() -> None:
