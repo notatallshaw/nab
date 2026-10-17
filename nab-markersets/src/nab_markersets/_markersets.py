@@ -1170,14 +1170,21 @@ def partition_value_axis(
     )
 
 
-def partition_set_axis(atoms: Sequence[Atom], max_cells: int, memo: Memo) -> list[Cell]:
-    """Cells of a set axis: the powerset over the mentioned names (guarded)."""
+def _checked_set_names(atoms: Sequence[Atom], max_cells: int) -> list[str]:
+    """Return a set axis's names after its powerset and vector-work guards."""
     names = _mentioned_names(atoms)
     count = len(names)
     if (1 << count) > max_cells:
         msg = f"set powerset over {count} names exceeds max_cells={max_cells}"
         raise IntractableMarkerSet(msg)
     _check_axis_work(1 << count, len(atoms), max_cells)
+    return names
+
+
+def partition_set_axis(atoms: Sequence[Atom], max_cells: int, memo: Memo) -> list[Cell]:
+    """Cells of a set axis: the powerset over the mentioned names (guarded)."""
+    names = _checked_set_names(atoms, max_cells)
+    count = len(names)
     subsets = [
         frozenset(names[i] for i in range(count) if mask & (1 << i))
         for mask in range(1 << count)
@@ -1361,25 +1368,58 @@ class _CellSpace(NamedTuple):
     units: int
 
 
+def _cell_partitions(
+    axes: Sequence[Axis],
+    atomlists: Sequence[Sequence[Atom]],
+    leaf_count: int,
+    max_cells: int,
+    store: Memo,
+) -> tuple[list[list[Cell]], int]:
+    """Return partitions and work, deferring cold sets past the product guard."""
+    partitions: list[list[Cell]] = []
+    deferred: dict[int, int] | None = None
+    for axis, axis_atoms in zip(axes, atomlists, strict=True):
+        if axis[0] == AXIS_SET:
+            cached = store.partitions.get((axis, tuple(axis_atoms), max_cells))
+            if cached is None:
+                names = _checked_set_names(axis_atoms, max_cells)
+                if deferred is None:
+                    deferred = {}
+                # Distinct mentioned names give distinct membership vectors.
+                deferred[len(partitions)] = 1 << len(names)
+                partitions.append([])
+                continue
+            partitions.append(cached)
+        else:
+            partitions.append(partition_axis(axis, axis_atoms, max_cells, store))
+
+    # Repeated atoms inflate the per-cell walk without inflating the cell
+    # product, so the guard counts leaf occurrences too.
+    sizes = [len(part) for part in partitions]
+    if deferred is not None:
+        for index, size in deferred.items():
+            sizes[index] = size
+    units = guarded_product_size((*sizes, leaf_count), max_cells)
+
+    if deferred is not None:
+        for index in deferred:
+            partitions[index] = partition_axis(
+                axes[index], atomlists[index], max_cells, store
+            )
+
+    return partitions, units
+
+
 def _cell_space(node: Formula, max_cells: int, store: Memo) -> _CellSpace:
     """Partition each axis a tree mentions and charge the enumeration it implies."""
     atoms = collect_atoms(node)
     grouped = _atoms_by_axis(atoms)
     axes = list(grouped)
     atomlists = [grouped[axis] for axis in axes]
-    partitions = [
-        partition_axis(axis, axis_atoms, max_cells, store)
-        for axis, axis_atoms in zip(axes, atomlists, strict=True)
-    ]
-
     if not axes:
-        return _CellSpace(axes, atomlists, partitions, 0)
+        return _CellSpace(axes, atomlists, [], 0)
 
-    # Repeated atoms inflate the per-cell walk without inflating the cell
-    # product, so the guard counts leaf occurrences too.
-    units = guarded_product_size(
-        (*(len(part) for part in partitions), len(atoms)), max_cells
-    )
+    partitions, units = _cell_partitions(axes, atomlists, len(atoms), max_cells, store)
     charge_work(units)
     return _CellSpace(axes, atomlists, partitions, units)
 
