@@ -754,6 +754,16 @@ class _Decision(NamedTuple):
     units: int
 
 
+_RAW_WORK_BITS = 64
+
+
+class _RowWork(NamedTuple):
+    """One key already owned by prepared rows and its raw cost, when known."""
+
+    key: NodeKey
+    units: int | None
+
+
 class Memo:
     """The results and preparation that related decisions reuse.
 
@@ -770,6 +780,7 @@ class Memo:
         "partitions",
         "pool_remaining",
         "pools",
+        "row_work",
         "rows",
         "truths",
         "version_pool_seen",
@@ -787,6 +798,7 @@ class Memo:
         self.pools: dict[frozenset[str], tuple[str, ...]] | None = None
         self.pool_remaining = _VERSION_POOL_MAX_UNITS
         self.rows: dict[NodeKey, list[_Row]] = {}
+        self.row_work: _RowWork | None = None
         self.truths: dict[tuple[Atom, str], bool] = {}
         self.versions: dict[str, Version | None] = {}
 
@@ -1737,6 +1749,14 @@ def _restrict_value(atom: Atom, env: Mapping[str, object]) -> bool | None:
     return atom.holds(value)
 
 
+def _restrict_cover_atom(atom: Atom, env: Mapping[str, object]) -> Formula:
+    """Restrict a cover predicate, wrapping it only when it remains unresolved."""
+    resolved = _restrict_value(atom, env)
+    if resolved is None:
+        return AtomLeaf(atom)
+    return TRUE if resolved else FALSE
+
+
 def _restrict_atom(leaf: AtomLeaf, env: Mapping[str, object]) -> Formula:
     resolved = _restrict_value(leaf.atom, env)
     if resolved is None:
@@ -2044,18 +2064,28 @@ def _universe_disjuncts(universe: Formula) -> tuple[Formula, ...]:
     return node.children if isinstance(node, OrNode) else (node,)
 
 
-def _decompose_rows(universe: Formula, store: Memo) -> list[_Row]:
-    """Split a universe into pinned rows, reusing the operation's prepared rows."""
+def _decompose_rows(
+    universe: Formula, store: Memo, *, raw_work: int | None = None
+) -> list[_Row]:
+    """Split a universe into pinned rows, retaining one owned raw traversal cost."""
     key = universe.key()
-    hit = store.rows.get(key)
-    if hit is not None:
-        return hit
-
-    rows: list[_Row] = []
-    for disjunct in _universe_disjuncts(universe):
-        pins = _row_pins(disjunct)
-        rows.append(_Row(pins, restrict_tree(disjunct, pins)))
-    store.rows[key] = rows
+    rows = store.rows.get(key)
+    units = (
+        raw_work
+        if raw_work is not None and raw_work.bit_length() <= _RAW_WORK_BITS
+        else None
+    )
+    if rows is None:
+        rows = []
+        for disjunct in _universe_disjuncts(universe):
+            pins = _row_pins(disjunct)
+            rows.append(_Row(pins, restrict_tree(disjunct, pins)))
+        store.rows[key] = rows
+        store.row_work = _RowWork(key, units)
+    elif units is not None:
+        record = store.row_work
+        if record is not None and record.key is key and record.units is None:
+            store.row_work = _RowWork(key, units)
     return rows
 
 
@@ -2300,12 +2330,25 @@ def _charge_formula_work(node: Formula) -> None:
             pending.extend(current.children)
 
 
+def _charge_universe_work(universe: Formula, store: Memo) -> int:
+    """Price a raw universe traversal inside the active simplify meter."""
+    record = store.row_work
+    if record is not None:
+        key = universe._key  # noqa: SLF001 - key() can traverse an uncharged tree.
+        if record.key is key and record.units is not None:
+            charge_work(record.units)
+            return record.units
+    before = _work_meter.remaining
+    _charge_formula_work(universe)
+    return cast("int", before - _work_meter.remaining)
+
+
 def _fixed_row_pattern(
     atoms: Sequence[Atom], row: _Row, max_cells: int, store: Memo
 ) -> _RowPattern | _RowStatus:
     """Return constant predicate values or the reason the row needs another path."""
     charge_work(len(atoms) + 1)
-    restricted = [restrict_tree(AtomLeaf(atom), row.pins) for atom in atoms]
+    restricted = [_restrict_cover_atom(atom, row.pins) for atom in atoms]
     residual = [atom for node in restricted for atom in collect_atoms(node)]
     bound_atoms = collect_atoms(row.bound)
     bound_axes = {atom.axis() for atom in bound_atoms}
@@ -2496,7 +2539,7 @@ def _row_pattern_columns(
 ) -> _RowTruth | None:
     """Compile a row's source columns and release its temporary lookup map."""
     charge_work(len(atoms) + 1)
-    restricted = [restrict_tree(AtomLeaf(atom), row.pins) for atom in atoms]
+    restricted = [_restrict_cover_atom(atom, row.pins) for atom in atoms]
     residual = [atom for node in restricted for atom in collect_atoms(node)]
     bound_atoms = collect_atoms(row.bound)
     charge_work(len(residual) + len(bound_atoms))
@@ -2653,12 +2696,12 @@ def simplify_within(
     _work_meter.remaining = max_work
     try:
         _charge_formula_work(node)
-        _charge_formula_work(universe)
+        universe_work = _charge_universe_work(universe, shared)
         source = _prepare_cover(to_nnf(node))
         rows = (
             ()
             if isinstance(source.tree, BoolConst)
-            else _decompose_rows(universe, shared)
+            else _decompose_rows(universe, shared, raw_work=universe_work)
         )
         direct = _row_cover(source, rows, max_cells, shared)
         if direct is not None:
