@@ -29,7 +29,10 @@ from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import DecisionStore, MarkerSet
 from nab_project._lockfile import disjointness, pylock
 from nab_project._lockfile.coverage import CoverageError
-from nab_project._lockfile.disjointness import validate_marker_disjointness
+from nab_project._lockfile.disjointness import (
+    PreparedMarkerSets,
+    validate_marker_disjointness,
+)
 from nab_project._lockfile.pylock import (
     UnsoundSimplificationError,
     _collapsed_env_marker,
@@ -696,9 +699,11 @@ class TestFinalizeMemo:
             within: MarkerSet,
             name: str = "",
             store: DecisionStore | None = None,
+            *,
+            prepared_sets: PreparedMarkerSets | None = None,
         ) -> Marker | None:
             calls.append(name)
-            return real(raw, within, name, store)
+            return real(raw, within, name, store, prepared_sets=prepared_sets)
 
         monkeypatch.setattr(pylock, "_finalize_marker", counting)
         targets: dict[str, TargetLock] = {}
@@ -722,6 +727,78 @@ class TestFinalizeMemo:
             is None
         )
         assert memo == {}
+
+
+def test_single_entry_names_skip_handoff_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared: list[Marker] = []
+
+    class ObservedOwner(PreparedMarkerSets):
+        __slots__ = ()
+
+        def prepare(self, marker: Marker) -> MarkerSet:
+            prepared.append(marker)
+            return super().prepare(marker)
+
+    monkeypatch.setattr(pylock, "PreparedMarkerSets", ObservedOwner)
+    emitted = build_pylock(_span_lock())
+    assert any(package.marker is not None for package in emitted.packages)
+    assert prepared == []
+
+
+def test_finalized_sets_reach_sorted_validation_only_within_their_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owners: list[PreparedMarkerSets] = []
+    validations: list[tuple[PreparedMarkerSets, int]] = []
+    calls: list[str | Marker] = []
+    original = MarkerSet.from_marker
+
+    class ObservedOwner(PreparedMarkerSets):
+        __slots__ = ()
+
+        def __init__(self) -> None:
+            super().__init__()
+            owners.append(self)
+
+        def convert(self, marker: Marker | None) -> MarkerSet:
+            before = len(calls)
+            result = super().convert(marker)
+            validations.append((self, len(calls) - before))
+            return result
+
+    def observed(_cls: type[MarkerSet], marker: str | Marker) -> MarkerSet:
+        calls.append(marker)
+        return original(marker)
+
+    monkeypatch.setattr(pylock, "PreparedMarkerSets", ObservedOwner)
+    monkeypatch.setattr(MarkerSet, "from_marker", classmethod(observed))
+    linux, windows = _target("3.11"), _target("3.11", "windows_amd64")
+    targets = {
+        windows.label: TargetLock(
+            target=windows, pins={"foo": _index_pin("foo", "1.0")}
+        ),
+        linux.label: TargetLock(target=linux, pins={"foo": _index_pin("foo", "2.0")}),
+    }
+    lock_input = LockInput(targets=targets, environments=[_row(windows), _row(linux)])
+    for _ in range(2):
+        emitted = build_pylock(lock_input)
+        assert [str(package.version) for package in emitted.packages] == ["1.0", "2.0"]
+        for package, target in zip(emitted.packages, (windows, linux), strict=True):
+            assert package.marker is not None
+            assert MarkerSet.from_marker(package.marker).evaluate(target.marker_env)
+
+    assert len(owners) == 2
+    assert owners[0] is not owners[1]
+    assert len(validations) == 4
+    assert [owner for owner, _ in validations] == [
+        owners[0],
+        owners[0],
+        owners[1],
+        owners[1],
+    ]
+    assert all(additional == 0 for _, additional in validations)
 
 
 _LOCK_MARKERS = json.loads(
@@ -1176,10 +1253,12 @@ class TestFactoringReachesEmission:
             within: MarkerSet,
             name: str = "",
             store: DecisionStore | None = None,
+            *,
+            prepared_sets: PreparedMarkerSets | None = None,
         ) -> Marker | None:
             if raw is not None:
                 handed[name] = str(raw)
-            return real(raw, within, name, store)
+            return real(raw, within, name, store, prepared_sets=prepared_sets)
 
         monkeypatch.setattr(pylock, "_finalize_marker", capture)
         assert _marker_of(_span_lock(), "foo") == 'sys_platform == "linux"'
