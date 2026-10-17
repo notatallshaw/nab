@@ -83,6 +83,8 @@ _MASK_CACHE_BITS_PER_UNIT = 64
 _MASK_CACHE_FIXED_UNITS = 14
 _VERSION_GAP_MAX_UNITS = 4096
 _VERSION_GAP_FIXED_UNITS = 8
+_VERSION_POOL_MAX_UNITS = 4096
+_VERSION_POOL_FIXED_UNITS = 12
 
 # Every variable in packaging's marker grammar, typed to a domain. The twins
 # dispatch as versions yet may hold an arbitrary string, so they also carry the
@@ -766,6 +768,8 @@ class Memo:
         "mask_remaining",
         "masks",
         "partitions",
+        "pool_remaining",
+        "pools",
         "rows",
         "truths",
         "version_pool_seen",
@@ -780,6 +784,8 @@ class Memo:
         self.masks: dict[MaskKey, MaskTable] | None = None
         self.mask_remaining = _MASK_CACHE_MAX_UNITS
         self.partitions: dict[tuple[Axis, tuple[Atom, ...], int], list[Cell]] = {}
+        self.pools: dict[frozenset[str], tuple[str, ...]] | None = None
+        self.pool_remaining = _VERSION_POOL_MAX_UNITS
         self.rows: dict[NodeKey, list[_Row]] = {}
         self.truths: dict[tuple[Atom, str], bool] = {}
         self.versions: dict[str, Version | None] = {}
@@ -980,6 +986,29 @@ def _cached_version_gap(
     return result
 
 
+def _pool_cache_key(seen: set[str], memo: Memo) -> frozenset[str] | None:
+    """Return an endpoint key whose extra references fit the pool budget."""
+    # Retained keys remain eligible after the budget is spent.
+    ceiling = _VERSION_POOL_MAX_UNITS if memo.pools is not None else memo.pool_remaining
+    if _VERSION_POOL_FIXED_UNITS + len(seen) > ceiling:
+        return None
+    return frozenset(seen)
+
+
+def _remember_version_pool(memo: Memo, key: frozenset[str], points: list[str]) -> None:
+    """Retain completed pool text within the operation's reference/character budget."""
+    units = _VERSION_POOL_FIXED_UNITS + len(key) + len(points)
+    if units > memo.pool_remaining:
+        return
+    units += sum(map(len, key)) + sum(map(len, points))
+    if units > memo.pool_remaining:
+        return
+    if memo.pools is None:
+        memo.pools = {}
+    memo.pools[key] = tuple(points)
+    memo.pool_remaining -= units
+
+
 def _version_pool(
     entries: Iterable[tuple[Version, str]],
     *,
@@ -993,10 +1022,16 @@ def _version_pool(
             continue
         seen.add(text)
         parsed.append((version, text))
-    parsed.sort()
 
     # Defer cache setup until the operation needs a second pool.
     reuse = memo.version_pool_seen
+    key = _pool_cache_key(seen, memo) if reuse else None
+    if key is not None and memo.pools is not None:
+        cached = memo.pools.get(key)
+        if cached is not None:
+            return list(cached)
+
+    parsed.sort()
     memo.version_pool_seen = True
     extra: list[str] = []
     for (vlow, slow), (vhigh, shigh) in pairwise(parsed):
@@ -1009,7 +1044,10 @@ def _version_pool(
         if mid is not None:
             extra.append(mid)
 
-    return [text for _, text in parsed] + extra
+    result = [text for _, text in parsed] + extra
+    if key is not None:
+        _remember_version_pool(memo, key, result)
+    return result
 
 
 def _membership_candidates(atom: Atom, memo: Memo) -> list[str]:

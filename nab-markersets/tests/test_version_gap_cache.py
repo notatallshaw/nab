@@ -107,6 +107,12 @@ def test_completed_negative_gap_is_reused(monkeypatch: pytest.MonkeyPatch) -> No
     assert store.gaps[low, high] is None
     after = len(calls)
     assert engine._version_pool(entries, memo=store) == expected
+    assert (
+        engine._cached_version_gap(
+            engine.Version(low), low, engine.Version(high), high, store
+        )
+        is None
+    )
     assert len(calls) == after
 
 
@@ -190,6 +196,7 @@ def test_public_witnesses_reuse_gaps_across_axes(
             "python_full_version",
         )
     ]
+    markers[-1] &= MarkerSet.from_marker('python_full_version != "7.0"')
     monkeypatch.setattr(engine, "_VERSION_GAP_MAX_UNITS", 0)
     monkeypatch.setattr(engine._work_meter, "remaining", 1_000_000, raising=False)
     uncached = DecisionStore()
