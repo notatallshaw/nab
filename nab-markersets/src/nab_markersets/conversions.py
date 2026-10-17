@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 from typing import TYPE_CHECKING
 
@@ -11,11 +12,15 @@ from .markersets import MarkerSet
 if TYPE_CHECKING:
     from ._markersets import MarkerLike
 
-__all__ = ["MarkerSetCache"]
+__all__ = ["MarkerSetCache", "PreparedMarkerSets"]
 
 _SHORT_SET_LIMIT = 128
 # Short source literals fit the minimum enabled integer conversion limit.
 _SHORT_TEXT_LIMIT = 256
+_PREPARED_SET_LIMIT = 32
+_PREPARED_TEXT_LIMIT = 65_536
+_PREPARED_LITERAL_LIMIT = 64
+_QUOTED_LITERAL = re.compile(r"""(?:"[^"]*"|'[^']*')""")
 _NATIVE_MARKER_STR: object = Marker.__str__
 
 
@@ -65,3 +70,54 @@ class MarkerSetCache:
         ):
             self._sets[key] = parsed
         return parsed
+
+
+class PreparedMarkerSets:
+    """Prepare native marker conversions for reuse within one operation.
+
+    Strings and non-native renderers are converted afresh.
+    """
+
+    __slots__ = ("_characters", "_sets")
+
+    def __init__(self) -> None:
+        """Start an empty operation-owned conversion handoff."""
+        self._sets: dict[tuple[str, int], MarkerSet] = {}
+        self._characters = 0
+
+    def prepare(self, marker: str | MarkerLike) -> MarkerSet:
+        """Convert afresh, retaining eligible successful results for the consumer."""
+        text = _native_marker_text(marker)
+        limit = sys.getrecursionlimit()
+        converted = MarkerSet.from_marker(marker if text is None else text)
+        if text is not None and limit == sys.getrecursionlimit():
+            self._remember(text, converted, limit)
+        return converted
+
+    def _remember(self, text: str, converted: MarkerSet, limit: int) -> None:
+        """Retain a bounded source and its conversion for the consumer."""
+        if "\\" in text:
+            return
+        key = (text, limit)
+        if (
+            key in self._sets
+            or len(self._sets) >= _PREPARED_SET_LIMIT
+            or self._characters + len(text) > _PREPARED_TEXT_LIMIT
+        ):
+            return
+        # Check original literals, including any the converted formula folded away.
+        if any(
+            match.end() - match.start() - 2 > _PREPARED_LITERAL_LIMIT
+            for match in _QUOTED_LITERAL.finditer(text)
+        ):
+            return
+        self._sets[key] = converted
+        self._characters += len(text)
+
+    def convert(self, marker: str | MarkerLike) -> MarkerSet:
+        """Use a matching prepared conversion, or convert afresh without retention."""
+        text = _native_marker_text(marker)
+        if text is None:
+            return MarkerSet.from_marker(marker)
+        converted = self._sets.get((text, sys.getrecursionlimit()))
+        return MarkerSet.from_marker(text) if converted is None else converted

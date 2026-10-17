@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from collections.abc import Set as AbstractSet
 
+    from nab_markersets.conversions import PreparedMarkerSets
     from nab_provider._vendor.packaging.markers import Marker
     from nab_provider._vendor.packaging.pylock import Package
 
@@ -74,6 +75,7 @@ def validate_marker_disjointness(
     groups: Sequence[str],
     exclusive_groups: Sequence[AbstractSet[tuple[str, str]]] = (),
     declared_groups: Sequence[AbstractSet[tuple[str, str]]] = (),
+    prepared_sets: PreparedMarkerSets | None = None,
 ) -> None:
     """Confirm same-name ``[[packages]]`` entries are pairwise disjoint.
 
@@ -108,6 +110,8 @@ def validate_marker_disjointness(
     so the hint can distinguish an undeclared collision (suggest adding
     a declaration) from one already declared under ``at-least-one``
     (suggest tightening to ``at-most-one`` or ``exactly-one``).
+
+    ``prepared_sets`` supplies matching conversions already built for this lock.
     """
     if not environments:
         return
@@ -124,7 +128,9 @@ def validate_marker_disjointness(
     declared_members = _declared_membership_literals(extras, groups)
 
     for entries in same_name_entries:
-        marker_sets = [_marker_set(pkg.marker) for pkg in entries]
+        marker_sets = [
+            _marker_set(pkg.marker, prepared_sets=prepared_sets) for pkg in entries
+        ]
         literals = [ms.set_memberships() for ms in marker_sets]
         for i, j in itertools.combinations(range(len(entries)), 2):
             names = literals[i] | literals[j]
@@ -163,11 +169,17 @@ def _distinct_environments(
     return distinct
 
 
-def _marker_set(marker: Marker | None) -> MarkerSet:
+def _marker_set(
+    marker: Marker | None, *, prepared_sets: PreparedMarkerSets | None = None
+) -> MarkerSet:
     """Return the algebra set for ``marker``; the full set when absent."""
     if marker is None:
         return MarkerSet.full()
-    return MarkerSet.from_marker(marker)
+    return (
+        MarkerSet.from_marker(marker)
+        if prepared_sets is None
+        else prepared_sets.convert(marker)
+    )
 
 
 def _canonical_exclusion_sets(

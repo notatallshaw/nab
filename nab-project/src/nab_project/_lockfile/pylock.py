@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import tomli_w
 
 from nab_index.atomic import atomic_write_text
+from nab_markersets.conversions import PreparedMarkerSets
 from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
 from nab_markersets.markersets import DecisionStore, MarkerSet
 from nab_provider._vendor.packaging.markers import (
@@ -312,8 +313,15 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
         MarkerSet.from_marker(marker) for marker in lock_input.environments
     ]
     universe, env_rows = _emission_scope(lock_input, store, rows=environment_rows)
+    prepared_sets = PreparedMarkerSets()
     package_records = _build_packages(
-        lock_input, base, exclusion_groups, universe, env_rows, store
+        lock_input,
+        base,
+        exclusion_groups,
+        universe,
+        env_rows,
+        store,
+        prepared_sets=prepared_sets,
     )
     package_records.sort(key=_package_sort_key)
     validate_marker_disjointness(
@@ -323,6 +331,7 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
         groups=lock_input.active_groups,
         exclusive_groups=exclusion_groups,
         declared_groups=conflict_member_groups(lock_input.conflicts),
+        prepared_sets=prepared_sets,
     )
     validate_marker_coverage(
         [lock.target for lock in lock_input.targets.values()],
@@ -658,6 +667,8 @@ def _finalize_marker(
     within: MarkerSet,
     name: str = "",
     store: DecisionStore | None = None,
+    *,
+    prepared_sets: PreparedMarkerSets | None = None,
 ) -> Marker | None:
     """Return ``raw`` in its shortest form equivalent over ``within``.
 
@@ -675,14 +686,13 @@ def _finalize_marker(
     """
     if raw is None:
         return None
+    convert = MarkerSet.from_marker if prepared_sets is None else prepared_sets.prepare
     try:
-        source = MarkerSet.from_marker(raw)
+        source = convert(raw)
         simplified = source.simplify(within=within, store=store)
         text = simplified.to_marker_string(store=store)
         rebuilt = None if text is None else _parsed_marker(text)
-        emitted = (
-            MarkerSet.full() if rebuilt is None else MarkerSet.from_marker(rebuilt)
-        )
+        emitted = MarkerSet.full() if rebuilt is None else convert(rebuilt)
         shown = "no marker" if rebuilt is None else str(rebuilt)
         sound = source.equivalent_within(emitted, within, store=store)
     except (IntractableMarkerSet, UnserializableMarkerSet):
@@ -702,6 +712,8 @@ def _finalize_cached(
     name: str,
     memo: dict[str, Marker | None],
     store: DecisionStore,
+    *,
+    prepared_sets: PreparedMarkerSets | None = None,
 ) -> Marker | None:
     """:func:`_finalize_marker` memoised for the span of one lock.
 
@@ -713,7 +725,9 @@ def _finalize_cached(
         return None
     key = str(raw)
     if key not in memo:
-        memo[key] = _finalize_marker(raw, within, name, store)
+        memo[key] = _finalize_marker(
+            raw, within, name, store, prepared_sets=prepared_sets
+        )
     return memo[key]
 
 
@@ -724,6 +738,8 @@ def _build_packages(
     universe: MarkerSet,
     env_rows: tuple[Mapping[str, str], ...] | None,
     store: DecisionStore,
+    *,
+    prepared_sets: PreparedMarkerSets | None = None,
 ) -> list[Package]:
     """Collapse the per-target pins into Package entries with markers.
 
@@ -814,7 +830,14 @@ def _build_packages(
                 axes,
                 projections,
             )
-            marker = _finalize_parts(parts, universe, canonical_name, shortened, store)
+            marker = _finalize_parts(
+                parts,
+                universe,
+                canonical_name,
+                shortened,
+                store,
+                prepared_sets=prepared_sets if len(groups) > 1 else None,
+            )
             out.append(
                 _pin_to_package(
                     _merge_pins_in_group(pins),
@@ -1488,6 +1511,8 @@ def _finalize_parts(
     name: str,
     memo: dict[str, Marker | None],
     store: DecisionStore,
+    *,
+    prepared_sets: PreparedMarkerSets | None = None,
 ) -> Marker | None:
     """Simplify each condition's environments, then assemble the marker.
 
@@ -1498,7 +1523,9 @@ def _finalize_parts(
     """
     assembled: list[Marker] = []
     for part in parts:
-        simplified = _finalize_cached(part.marker, universe, name, memo, store)
+        simplified = _finalize_cached(
+            part.marker, universe, name, memo, store, prepared_sets=prepared_sets
+        )
         if not part.gate:
             if simplified is None:
                 return None
@@ -1509,7 +1536,9 @@ def _finalize_parts(
     # One ungated part is already what the second pass would return.
     if len(parts) == 1 and not parts[0].gate:
         return assembled[0]
-    return _finalize_cached(_or_markers(assembled), universe, name, memo, store)
+    return _finalize_cached(
+        _or_markers(assembled), universe, name, memo, store, prepared_sets=prepared_sets
+    )
 
 
 def _gated_marker(marker: Marker | None, gate: Sequence[tuple[str, str]]) -> Marker:
