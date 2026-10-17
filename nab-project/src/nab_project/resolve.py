@@ -35,7 +35,7 @@ from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.errors import ConfigError
-from nab_provider.marker_holds import dependency_marker_holds
+from nab_provider.marker_holds import DependencyMarkerEvaluator, dependency_marker_holds
 from nab_provider.pep508 import parse_requirement
 from nab_provider.provider import ListingFilterCache
 from nab_provider.requirements_file import (
@@ -270,9 +270,9 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
     pass resolves them per target; pass it only when conflict forks ran.
 
     ``marker_holds`` decides whether a root requirement's marker holds for
-    a target's environment, defaulting to
-    :func:`~nab_provider.marker_holds.dependency_marker_holds`.  A host
-    with its own marker machinery passes that instead and keeps
+    a target's environment. Without one, roots use
+    :func:`~nab_provider.marker_holds.dependency_marker_holds` semantics.
+    A host with its own marker machinery passes that instead and keeps
     ``nab_markersets`` off the engine's path.
 
     ``release_refused_wheels`` drops the URL, hashes and sidecar
@@ -294,7 +294,7 @@ def resolve_with_coordinator(  # noqa: PLR0913 - the knobs of a bare resolve
                 else inputs.resolution
             ),
             marker_holds=(
-                dependency_marker_holds if marker_holds is None else marker_holds
+                DependencyMarkerEvaluator() if marker_holds is None else marker_holds
             ),
             progress=progress,
             include_dependency_requirements=include_dependency_requirements,
