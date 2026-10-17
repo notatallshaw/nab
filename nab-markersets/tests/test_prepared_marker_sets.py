@@ -366,3 +366,22 @@ assert not converted.evaluate({"sys_platform": "win32"})
         check=False,
     )
     assert done.returncode == 0, done.stderr
+
+
+def test_strings_and_subclasses_keep_fresh_preparation_and_conversion(
+    conversions: list[str | Marker | ExternalMarker],
+) -> None:
+    class Source(str):
+        """A supported string with its concrete type retained at the factory."""
+
+        __slots__ = ()
+
+    owner = PreparedMarkerSets()
+    for source in ('sys_platform == "linux"', Source('sys_platform == "linux"')):
+        prepared = owner.prepare(source)
+        converted = owner.convert(source)
+        assert prepared is not converted
+        assert prepared.evaluate({"sys_platform": "linux"})
+        assert not converted.evaluate({"sys_platform": "win32"})
+    assert len(conversions) == 4
+    assert type(conversions[-1]) is Source

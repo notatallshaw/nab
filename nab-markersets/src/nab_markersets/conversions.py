@@ -73,7 +73,10 @@ class MarkerSetCache:
 
 
 class PreparedMarkerSets:
-    """Hand successful fresh conversions to a consumer within one operation."""
+    """Prepare native marker conversions for reuse within one operation.
+
+    Strings and non-native renderers are converted afresh.
+    """
 
     __slots__ = ("_characters", "_sets")
 
