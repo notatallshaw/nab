@@ -714,18 +714,14 @@ def test_simplify_keeps_its_partitions_to_one_call(
 def test_one_operation_reads_each_atom_truth_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An atom's truth on one point is evaluated once per operation.
-
-    Partitions of one axis over overlapping atom sets re-read the same atom on the
-    same point.
-    """
+    """Partitioning and row restriction share scalar truths within a decision."""
     left = ms('python_version < "3.12"' + _SPREAD)
     right = ms('python_version < "3.12" and sys_platform != "aix"' + _SPREAD)
 
     truths = _truth_counter(monkeypatch)
     assert left.equivalent_within(right, _row_universe()) is True
 
-    assert truths() == 132
+    assert truths() == 124
 
 
 def test_atoms_keep_no_truths_between_operations(
@@ -842,7 +838,7 @@ def test_a_shared_store_serves_the_next_decision(
 def test_a_shared_store_serves_the_next_decision_its_truths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Only the right operand's six pinned comparisons repeat on a warm store."""
+    """A warm store avoids new predicate evaluations for this decision."""
     universe = _row_universe()
     left = ms('python_version < "3.12"' + _SPREAD)
     right = ms('python_version < "3.12" and sys_platform != "aix"' + _SPREAD)
@@ -853,8 +849,8 @@ def test_a_shared_store_serves_the_next_decision_its_truths(
     first = truths()
     left.equivalent_within(right, universe, store=store)
 
-    assert first == 132
-    assert truths() - first == 6
+    assert first == 124
+    assert truths() == first
 
 
 def test_a_shared_store_serves_a_repeated_simplify(
