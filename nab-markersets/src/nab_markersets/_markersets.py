@@ -1120,6 +1120,15 @@ def _value_candidates(
     )
 
 
+def _check_axis_work(point_count: int, atom_count: int, max_cells: int) -> None:
+    """Refuse point-by-atom work before building its truth vectors."""
+    if point_count * atom_count > max_cells:
+        msg = (
+            f"axis work {point_count}x{atom_count} atoms exceeds max_cells={max_cells}"
+        )
+        raise IntractableMarkerSet(msg)
+
+
 def _reduce_cells(
     points: Iterable[object], atoms: Sequence[Atom], max_cells: int, memo: Memo
 ) -> list[Cell]:
@@ -1130,11 +1139,7 @@ def _reduce_cells(
     """
     points = list(points)
 
-    if len(points) * len(atoms) > max_cells:
-        msg = (
-            f"axis work {len(points)}x{len(atoms)} atoms exceeds max_cells={max_cells}"
-        )
-        raise IntractableMarkerSet(msg)
+    _check_axis_work(len(points), len(atoms), max_cells)
 
     representatives: dict[tuple[bool, ...], object] = {}
     for point in points:
@@ -1172,6 +1177,7 @@ def partition_set_axis(atoms: Sequence[Atom], max_cells: int, memo: Memo) -> lis
     if (1 << count) > max_cells:
         msg = f"set powerset over {count} names exceeds max_cells={max_cells}"
         raise IntractableMarkerSet(msg)
+    _check_axis_work(1 << count, len(atoms), max_cells)
     subsets = [
         frozenset(names[i] for i in range(count) if mask & (1 << i))
         for mask in range(1 << count)

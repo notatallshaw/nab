@@ -13,6 +13,7 @@ import pickle
 import sys
 import traceback
 import weakref
+from collections.abc import Iterable
 
 import pytest
 
@@ -1425,13 +1426,52 @@ def test_guard_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
         marker.is_empty()
 
 
-def test_guard_set_axis_work(monkeypatch: pytest.MonkeyPatch) -> None:
-    # A set axis clears the powerset cap (two subsets) yet its subsets x atoms
-    # product does not, so the per-axis reduce guard fires.
-    monkeypatch.setattr(markersets, "_MAX_CELLS", 3)
+@pytest.mark.parametrize(
+    ("max_cells", "error"),
+    [
+        (1, "set powerset over 1 names exceeds max_cells=1"),
+        (2, "axis work 2x2 atoms exceeds max_cells=2"),
+        (3, "axis work 2x2 atoms exceeds max_cells=3"),
+        (4, None),
+    ],
+)
+def test_guard_set_axis_work(
+    monkeypatch: pytest.MonkeyPatch, max_cells: int, error: str | None
+) -> None:
+    monkeypatch.setattr(markersets, "_MAX_CELLS", max_cells)
     marker = ms('extra == "a" and extra != "a"')
-    with pytest.raises(IntractableMarkerSet):
-        marker.is_empty()
+    monkeypatch.setattr(_markersets._work_meter, "remaining", 123, raising=False)
+    subsets: list[frozenset[str]] = []
+
+    def observed_subset(elements: Iterable[str]) -> frozenset[str]:
+        subset = frozenset(elements)
+        subsets.append(subset)
+        return subset
+
+    monkeypatch.setattr(_markersets, "frozenset", observed_subset, raising=False)
+    if error is None:
+        assert marker.is_empty()
+        assert subsets == [frozenset(), frozenset({"a"})]
+        assert _markersets._work_meter.remaining == 119
+    else:
+        with pytest.raises(IntractableMarkerSet, match=error):
+            marker.is_empty()
+        assert subsets == []
+        assert _markersets._work_meter.remaining == 123
+
+
+def test_axis_work_materializes_points_before_refusing() -> None:
+    atoms = _markersets.collect_atoms(ms('sys_platform == "linux"')._tree)
+    yielded: list[str] = []
+
+    def points() -> Iterable[str]:
+        for point in ("linux", "win32"):
+            yielded.append(point)
+            yield point
+
+    with pytest.raises(IntractableMarkerSet, match="axis work 2x1 atoms"):
+        _markersets._reduce_cells(points(), atoms, 1, _markersets.Memo())
+    assert yielded == ["linux", "win32"]
 
 
 def test_guard_version_axis_literal_count(monkeypatch: pytest.MonkeyPatch) -> None:
