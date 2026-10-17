@@ -6632,6 +6632,75 @@ def _projection_references(memo: projection_engine._ProjectionMemo) -> int:
     return references
 
 
+def _synchronous_fork_projections(
+    axes: projection_engine._ForkAxes,
+    pin_groups: Mapping[str, Sequence[tuple[list[PinShape], list[str]]]],
+    env_fork_counts: Mapping[projection_engine._EnvSignature, int],
+    env_base_names: Mapping[projection_engine._EnvSignature, frozenset[str]],
+) -> dict[tuple[str, str], projection_engine._Projection]:
+    """Reference propagation that intersects every dependency after each full round."""
+    same_pin, edges = {}, {}
+    for name, groups in pin_groups.items():
+        for _, labels in groups:
+            peers = frozenset(labels)
+            declared = frozenset(
+                dependency
+                for peer in labels
+                for dependency in axes.targets[peer].dependencies.get(name, ())
+            )
+            for label in labels:
+                same_pin[name, label] = peers
+                edges[name, label] = declared
+    limits = {key: frozenset(axes.targets[key[1]].target.selection) for key in same_pin}
+    projections = {}
+    memo = projection_engine._ProjectionMemo(axes, 0)
+    stale = set(same_pin)
+    while stale:
+        for name, label in stale:
+            projections[name, label] = projection_engine._project_fork(
+                axes,
+                name,
+                label,
+                limits[name, label],
+                same_pin[name, label],
+                memo,
+                is_base=projection_engine._is_base(
+                    name, axes.env_signatures[label], env_fork_counts, env_base_names
+                ),
+            )
+        narrowed = {}
+        for (name, label), limit in limits.items():
+            shared = frozenset(axes.targets[label].target.selection)
+            for dependency in edges[name, label]:
+                child = projections.get((dependency, label))
+                shared &= child.dropped if child is not None else frozenset()
+            narrowed[name, label] = limit & shared
+        stale = {key for key in limits if narrowed[key] != limits[key]}
+        limits = narrowed
+    return projections
+
+
+def _check_projection_rounds(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Compare complete projections with the all-edge reference on real lock inputs."""
+    checked = []
+    original = projection_engine._fork_projections
+
+    def compare(
+        axes: projection_engine._ForkAxes,
+        pin_groups: Mapping[str, Sequence[tuple[list[PinShape], list[str]]]],
+        counts: Mapping[projection_engine._EnvSignature, int],
+        base_names: Mapping[projection_engine._EnvSignature, frozenset[str]],
+    ) -> dict[tuple[str, str], projection_engine._Projection]:
+        expected = _synchronous_fork_projections(axes, pin_groups, counts, base_names)
+        result = original(axes, pin_groups, counts, base_names)
+        assert result == expected
+        checked.append(len(result))
+        return result
+
+    monkeypatch.setattr(projection_engine, "_fork_projections", compare)
+    return checked
+
+
 class TestConflictSetCrossGating:
     """Two engaged conflict sets condition a package on the set it varies over.
 
@@ -7072,6 +7141,196 @@ class TestConflictSetCrossGating:
         assert self._dangling(pylock) == []
         assert self._select(pylock, ["a1"]) == set()
         assert self._select(pylock, ["a1", "b1"]) == {"attrs 24.0", "idna 3.7"}
+
+    def test_one_round_needs_no_reverse_index(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def unexpected_index(
+            _edges: Mapping[tuple[str, str], frozenset[str]],
+        ) -> dict[tuple[str, str], set[tuple[str, str]]]:
+            pytest.fail("An independent projection needs no dependency index")
+
+        monkeypatch.setattr(projection_engine, "_fork_dependents", unexpected_index)
+        checked = _check_projection_rounds(monkeypatch)
+        pylock = self._lock()
+        assert checked == [18]
+        assert self._dangling(pylock) == []
+
+    def test_dependency_chain_fanout_cycle_skips_unrelated_entries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        calls: dict[tuple[frozenset[str], str], int] = {}
+        original = projection_engine._dependency_drops
+
+        def intersect(
+            axes: projection_engine._ForkAxes,
+            projections: Mapping[tuple[str, str], projection_engine._Projection],
+            label: str,
+            declared: frozenset[str],
+        ) -> frozenset[tuple[str, str]]:
+            key = (declared, label)
+            calls[key] = calls.get(key, 0) + 1
+            return original(axes, projections, label, declared)
+
+        monkeypatch.setattr(projection_engine, "_dependency_drops", intersect)
+        checked = _check_projection_rounds(monkeypatch)
+
+        def contribution(
+            a: str, b: str
+        ) -> tuple[dict[str, PinShape], dict[str, tuple[tuple[str, str], ...]]]:
+            versions = {
+                "attrs": "24.0",
+                "charset-normalizer": "3.0",
+                "certifi": "2024.1",
+                "packaging": "24.0",
+                "idna": self._B[b],
+                "six": self._A[a],
+            }
+            return (
+                {
+                    name: _selection_pin(name, version)
+                    for name, version in versions.items()
+                },
+                dict.fromkeys(versions, (("group", a),)),
+            )
+
+        pylock = self._forked_lock(
+            contribution,
+            edges=lambda _a, _b: {
+                "attrs": ("idna",),
+                "charset-normalizer": ("attrs",),
+                "certifi": ("attrs", "packaging"),
+                "packaging": ("charset-normalizer", "certifi"),
+            },
+        )
+        assert checked == [36]
+        assert (
+            sum(value for (dependencies, _), value in calls.items() if not dependencies)
+            == 12
+        )
+        expected_calls = {
+            frozenset(): 2,
+            frozenset({"idna"}): 1,
+            frozenset({"attrs"}): 2,
+            frozenset({"attrs", "packaging"}): 3,
+            frozenset({"charset-normalizer", "certifi"}): 2,
+        }
+        assert all(
+            value == expected_calls[dependencies]
+            for (dependencies, _), value in calls.items()
+        )
+
+        assert self._dangling(pylock) == []
+        assert self._select(pylock, ["a1"]) == {"six 1.16.0"}
+        assert self._select(pylock, ["a1", "b1"]) == {
+            "attrs 24.0",
+            "charset-normalizer 3.0",
+            "certifi 2024.1",
+            "packaging 24.0",
+            "idna 3.7",
+            "six 1.16.0",
+        }
+
+    def test_narrower_allowance_can_exchange_dropped_axes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        histories: dict[
+            tuple[str, str],
+            list[tuple[frozenset[tuple[str, str]], frozenset[tuple[str, str]]]],
+        ] = {}
+        original = projection_engine._project_fork
+
+        def project(
+            axes: projection_engine._ForkAxes,
+            name: str,
+            label: str,
+            limit: frozenset[tuple[str, str]],
+            same_pin: frozenset[str],
+            memo: projection_engine._ProjectionMemo,
+            *,
+            is_base: bool,
+        ) -> projection_engine._Projection:
+            result = original(axes, name, label, limit, same_pin, memo, is_base=is_base)
+            histories.setdefault((name, label), []).append((limit, result.dropped))
+            return result
+
+        monkeypatch.setattr(projection_engine, "_project_fork", project)
+        checked = _check_projection_rounds(monkeypatch)
+
+        def contribution(
+            a: str, b: str
+        ) -> tuple[dict[str, PinShape], dict[str, tuple[tuple[str, str], ...]]]:
+            return (
+                {
+                    "attrs": _selection_pin(
+                        "attrs", "1" if a == "a1" or b == "b1" else "2"
+                    ),
+                    "idna": _selection_pin("idna", self._A[a]),
+                    "six": _selection_pin("six", "1.16.0"),
+                },
+                dict.fromkeys(("attrs", "idna", "six"), (("group", a), ("group", b))),
+            )
+
+        pylock = self._forked_lock(
+            contribution,
+            edges=lambda _a, _b: {"attrs": ("idna",), "six": ("attrs",)},
+        )
+        assert checked == [18]
+        assert any(
+            after_limit < before_limit
+            and before_dropped - after_dropped
+            and after_dropped - before_dropped
+            for (name, _), history in histories.items()
+            if name == "attrs"
+            for (before_limit, before_dropped), (
+                after_limit,
+                after_dropped,
+            ) in itertools.pairwise(history)
+        )
+        assert self._dangling(pylock) == []
+        for a, b in itertools.product(self._A, self._B):
+            assert self._select(pylock, [a, b]) == {
+                f"attrs {'1' if a == 'a1' or b == 'b1' else '2'}",
+                f"idna {self._A[a]}",
+                "six 1.16.0",
+            }
+
+    @pytest.mark.parametrize("seed", range(16))
+    def test_projection_rounds_match_with_varying_pins_and_edges(
+        self, seed: int, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checked = _check_projection_rounds(monkeypatch)
+        generator = random.Random(seed)  # noqa: S311 - reproducible test matrices contain no secrets
+        names = ("attrs", "idna", "six", "certifi")
+        versions = {
+            (a, b): {name: str(generator.randint(1, 2)) for name in names}
+            for a, b in itertools.product(self._A, self._B)
+        }
+        dependencies = {
+            (a, b): {
+                name: tuple(child for child in names if generator.randrange(4) == 0)
+                for name in names
+            }
+            for a, b in itertools.product(self._A, self._B)
+        }
+
+        def contribution(
+            a: str, b: str
+        ) -> tuple[dict[str, PinShape], dict[str, tuple[tuple[str, str], ...]]]:
+            return (
+                {
+                    name: _selection_pin(name, version)
+                    for name, version in versions[a, b].items()
+                },
+                dict.fromkeys(names, (("group", a), ("group", b))),
+            )
+
+        pylock = self._forked_lock(contribution, edges=lambda a, b: dependencies[a, b])
+        assert checked == [24]
+        for a, b in itertools.product(self._A, self._B):
+            assert self._select(pylock, [a, b]) == {
+                f"{name} {version}" for name, version in versions[a, b].items()
+            }
 
     def test_an_edge_only_one_fork_carries_holds_the_whole_entry(self) -> None:
         # The entry's edges are the union over its forks, so the idna
