@@ -48,7 +48,7 @@ def test_cover_predicates_keep_generic_restriction_semantics(
 ) -> None:
     leaf = engine.parse(text)
     assert isinstance(leaf, engine.AtomLeaf)
-    actual = engine._restrict_cover_atom(leaf.atom, environment)
+    actual = engine._restrict_cover_atom(leaf.atom, environment, engine.Memo())
     expected = engine.restrict_tree(leaf, environment)
     assert actual.key() == expected.key()
 

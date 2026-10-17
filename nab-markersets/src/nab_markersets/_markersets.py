@@ -113,6 +113,8 @@ _MISSING = object()
 _MEMBERSHIP = frozenset({"in", "not in"})
 _ORDERED_UNDEFINED = frozenset({"~=", "==="})
 _PYTHON_RELEASE_PARTS = 3
+_RESTRICTION_TRUTH_MAX_ENTRIES = 1024
+_RESTRICTION_TRUTH_MAX_CHARS = 256
 
 
 def _domain(variable: str) -> str:
@@ -1786,9 +1788,35 @@ def _restrict_value(atom: Atom, env: Mapping[str, object]) -> bool | None:
     return atom.holds(value)
 
 
-def _restrict_cover_atom(atom: Atom, env: Mapping[str, object]) -> Formula:
-    """Restrict a cover predicate, wrapping it only when it remains unresolved."""
-    resolved = _restrict_value(atom, env)
+def _restrict_row_value(
+    atom: Atom, env: Mapping[str, object], store: Memo
+) -> bool | None:
+    """Read a row predicate through cached truths for string pins."""
+    if (
+        atom.kind == AXIS_VALUE
+        and not atom.derive_mm
+        and DOMAIN_REGISTRY[atom.variable] == DOMAIN_STRING
+    ):
+        value = env.get(atom.variable, _MISSING)
+        if value is _MISSING:
+            return None
+        if type(value) is str:
+            key = (atom, value)
+            resolved = store.truths.get(key)
+            if resolved is None:
+                resolved = atom.holds(value)
+                if (
+                    len(store.truths) < _RESTRICTION_TRUTH_MAX_ENTRIES
+                    and len(value) + len(atom.literal) <= _RESTRICTION_TRUTH_MAX_CHARS
+                ):
+                    store.truths[key] = resolved
+            return resolved
+    return _restrict_value(atom, env)
+
+
+def _restrict_cover_atom(atom: Atom, env: Mapping[str, object], store: Memo) -> Formula:
+    """Restrict a cover predicate, wrapping unresolved atoms."""
+    resolved = _restrict_row_value(atom, env, store)
     if resolved is None:
         return AtomLeaf(atom)
     return TRUE if resolved else FALSE
@@ -1812,6 +1840,24 @@ def restrict_tree(node: Formula, env: Mapping[str, object]) -> Formula:
     if isinstance(node, AndNode):
         return make_and(restrict_tree(child, env) for child in node.children)
     return make_or(restrict_tree(child, env) for child in node.children)
+
+
+def _restrict_row_tree(
+    node: Formula, env: Mapping[str, object], store: Memo
+) -> Formula:
+    """Restrict a row tree through its operation-owned string truths."""
+    if isinstance(node, BoolConst):
+        return node
+    if isinstance(node, AtomLeaf):
+        resolved = _restrict_row_value(node.atom, env, store)
+        return node if resolved is None else (TRUE if resolved else FALSE)
+    if isinstance(node, NotNode):
+        return make_not(_restrict_row_tree(node.child, env, store))
+    if isinstance(node, AndNode):
+        return make_and(
+            _restrict_row_tree(child, env, store) for child in node.children
+        )
+    return make_or(_restrict_row_tree(child, env, store) for child in node.children)
 
 
 # ------------------------------------------------------------------- evaluate
@@ -2116,7 +2162,7 @@ def _decompose_rows(
         rows = []
         for disjunct in _universe_disjuncts(universe):
             pins = _row_pins(disjunct)
-            rows.append(_Row(pins, restrict_tree(disjunct, pins)))
+            rows.append(_Row(pins, _restrict_row_tree(disjunct, pins, store)))
         store.rows[key] = rows
         store.row_work = _RowWork(key, units)
     elif units is not None:
@@ -2139,7 +2185,7 @@ def _rows_equivalent(
     the whole-matrix product.
     """
     for row, right in zip(rows, right_by_row, strict=True):
-        left_r = restrict_tree(left, row.pins)
+        left_r = _restrict_row_tree(left, row.pins, store)
         if not is_empty(
             make_and((left_r, row.bound, make_not(right))), max_cells, store
         ):
@@ -2172,7 +2218,7 @@ def equivalent_within_rows(
     """Whether two trees agree on every point of ``universe``, decided per row."""
     shared = Memo() if store is None else store
     rows = _decompose_rows(universe, shared)
-    right_by_row = [restrict_tree(right, row.pins) for row in rows]
+    right_by_row = [_restrict_row_tree(right, row.pins, shared) for row in rows]
     return _rows_equivalent(left, rows, right_by_row, max_cells, shared)
 
 
@@ -2195,7 +2241,7 @@ def _rows_within(
 ) -> bool:
     """Whether ``left`` stays inside the already-restricted right on every row."""
     for row, right in zip(rows, right_by_row, strict=True):
-        left_r = restrict_tree(left, row.pins)
+        left_r = _restrict_row_tree(left, row.pins, store)
         if not is_empty(
             make_and((left_r, row.bound, make_not(right))), max_cells, store
         ):
@@ -2212,7 +2258,7 @@ def _rows_cover(
 ) -> bool:
     """Whether ``left`` still reaches everything the already-restricted right does."""
     for row, right in zip(rows, right_by_row, strict=True):
-        left_r = restrict_tree(left, row.pins)
+        left_r = _restrict_row_tree(left, row.pins, store)
         if not is_empty(
             make_and((right, row.bound, make_not(left_r))), max_cells, store
         ):
@@ -2416,7 +2462,7 @@ def _fixed_row_pattern(
 ) -> _RowPattern | _RowStatus | _PreparedRow:
     """Return a fixed pattern, a prepared varying row, or a row status."""
     charge_work(len(atoms) + 1)
-    restricted = [_restrict_cover_atom(atom, row.pins) for atom in atoms]
+    restricted = [_restrict_cover_atom(atom, row.pins, store) for atom in atoms]
     residual = [atom for node in restricted for atom in collect_atoms(node)]
     bound_atoms = collect_atoms(row.bound)
     bound_axes = {atom.axis() for atom in bound_atoms}
@@ -2636,7 +2682,7 @@ def _row_pattern_columns(
 ) -> _RowTruth | None:
     """Compile a row's source columns and release its temporary lookup map."""
     charge_work(len(atoms) + 1)
-    restricted = [_restrict_cover_atom(atom, row.pins) for atom in atoms]
+    restricted = [_restrict_cover_atom(atom, row.pins, store) for atom in atoms]
     residual = [atom for node in restricted for atom in collect_atoms(node)]
     bound_atoms = collect_atoms(row.bound)
     charge_work(len(residual) + len(bound_atoms))
@@ -2784,7 +2830,7 @@ def _simplify_greedy(
     """Remove an NNF tree's clauses and atoms to a fixpoint over the universe's rows."""
     clauses = _dedupe(_to_clauses(nnf, max_cells))
     original = _disjunction(clauses)
-    original_by_row = [restrict_tree(original, row.pins) for row in rows]
+    original_by_row = [_restrict_row_tree(original, row.pins, store) for row in rows]
     while True:
         before = _canonical(clauses)
         clauses = _drop_clauses(clauses, rows, original_by_row, max_cells, store)
