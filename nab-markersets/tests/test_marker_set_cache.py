@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 import warnings
 
@@ -336,3 +337,30 @@ def test_context_change_during_conversion_is_not_retained(
     finally:
         sys.setrecursionlimit(previous)
     assert calls == 3
+
+
+def test_cache_works_with_released_packaging_without_provider() -> None:
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+sys.modules["nab_provider"] = None
+from packaging.markers import Marker
+from nab_markersets._packaging import BACKEND
+from nab_markersets.conversions import MarkerSetCache
+assert BACKEND == "packaging"
+cache = MarkerSetCache()
+first = cache.from_marker(Marker('sys_platform == "linux"'))
+second = cache.from_marker(Marker('sys_platform == "linux"'))
+assert first is second
+assert second.evaluate({"sys_platform": "linux"})
+assert not second.evaluate({"sys_platform": "win32"})
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
