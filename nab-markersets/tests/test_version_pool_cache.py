@@ -103,7 +103,7 @@ def test_equal_versions_with_different_text_keep_distinct_pools() -> None:
         assert result == engine._version_pool(_entries(low, high), memo=engine.Memo())
 
 
-@pytest.mark.parametrize("budget", [0, 12, 64, 512, 4096])
+@pytest.mark.parametrize("budget", [0, 12, 20, 64, 512, 4096])
 def test_pool_budget_prices_retained_key_and_result_text(
     monkeypatch: pytest.MonkeyPatch, budget: int
 ) -> None:
