@@ -81,6 +81,8 @@ _MASK_CACHE_MAX_UNITS = 16_384
 _MASK_CACHE_BITS_PER_UNIT = 64
 # Key/table tuple fields and dictionary entries receive a fixed reference allowance.
 _MASK_CACHE_FIXED_UNITS = 14
+_VERSION_GAP_MAX_UNITS = 4096
+_VERSION_GAP_FIXED_UNITS = 8
 
 # Every variable in packaging's marker grammar, typed to a domain. The twins
 # dispatch as versions yet may hold an arbitrary string, so they also carry the
@@ -759,16 +761,22 @@ class Memo:
 
     __slots__ = (
         "decisions",
+        "gap_remaining",
+        "gaps",
         "mask_remaining",
         "masks",
         "partitions",
         "rows",
         "truths",
+        "version_pool_seen",
         "versions",
     )
 
     def __init__(self) -> None:
         self.decisions: dict[tuple[NodeKey, int], _Decision] = {}
+        self.gaps: dict[tuple[str, str], str | None] | None = None
+        self.gap_remaining = _VERSION_GAP_MAX_UNITS
+        self.version_pool_seen = False
         self.masks: dict[MaskKey, MaskTable] | None = None
         self.mask_remaining = _MASK_CACHE_MAX_UNITS
         self.partitions: dict[tuple[Axis, tuple[Atom, ...], int], list[Cell]] = {}
@@ -949,11 +957,35 @@ _POOL_ANCHORS: tuple[tuple[Version, str], ...] = tuple(
 )
 
 
+def _cached_version_gap(
+    vlow: Version, low: str, vhigh: Version, high: str, memo: Memo
+) -> str | None:
+    """Reuse completed gap candidates within the operation's later pools."""
+    # Pool endpoint text preserves the full release width, unlike Version equality.
+    key = (low, high)
+    if memo.gaps is not None:
+        try:
+            return memo.gaps[key]
+        except KeyError:
+            pass
+
+    result = _between(vlow, low, vhigh, memo)
+    # Units cover retained references and text characters, not bytes.
+    units = _VERSION_GAP_FIXED_UNITS + len(low) + len(high) + len(result or "")
+    if units <= memo.gap_remaining:
+        if memo.gaps is None:
+            memo.gaps = {}
+        memo.gaps[key] = result
+        memo.gap_remaining -= units
+    return result
+
+
 def _version_pool(
     entries: Iterable[tuple[Version, str]],
     *,
     memo: Memo,
 ) -> list[str]:
+    """Build ordered candidates from endpoints paired with their full version text."""
     parsed: list[tuple[Version, str]] = list(_POOL_ANCHORS)
     seen: set[str] = {text for _, text in _POOL_ANCHORS}
     for version, text in entries:
@@ -963,11 +995,17 @@ def _version_pool(
         parsed.append((version, text))
     parsed.sort()
 
+    # Defer cache setup until the operation needs a second pool.
+    reuse = memo.version_pool_seen
+    memo.version_pool_seen = True
     extra: list[str] = []
-    for (vlow, slow), (vhigh, _shigh) in pairwise(parsed):
+    for (vlow, slow), (vhigh, shigh) in pairwise(parsed):
         if vlow == vhigh:
             continue
-        mid = _between(vlow, slow, vhigh, memo)
+        if reuse:
+            mid = _cached_version_gap(vlow, slow, vhigh, shigh, memo)
+        else:
+            mid = _between(vlow, slow, vhigh, memo)
         if mid is not None:
             extra.append(mid)
 
