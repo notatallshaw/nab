@@ -2012,6 +2012,278 @@ def _canonical(clauses: list[frozenset[Atom]]) -> tuple[ClauseKey, ...]:
     return tuple(sorted(_clause_key(clause) for clause in clauses))
 
 
+class _RowPattern(NamedTuple):
+    """Source-predicate truth bits and emptiness for one eligible row."""
+
+    nonempty: bool
+    bits: int
+
+
+class _CoverCube(NamedTuple):
+    """A retained conjunction and the observed patterns it covers."""
+
+    atoms: frozenset[Atom]
+    mask: int
+
+
+class _CoverInput(NamedTuple):
+    """An NNF tree, its ordered predicates and its evaluation leaf count."""
+
+    tree: Formula
+    atoms: tuple[Atom, ...]
+    leaf_count: int
+
+
+def _canonical_cover_atom(atom: Atom) -> Atom:
+    """Match the operator encoding that serializing and reparsing a predicate uses."""
+    if atom.kind == AXIS_SET and atom.origin == "extra":
+        op = "==" if atom.positive else "!="
+    elif atom.kind in (AXIS_SET, AXIS_CONTAINS):
+        op = "in" if atom.positive else "not in"
+    else:
+        return atom
+    return atom if atom.op == op else atom.replaced(op=op)
+
+
+def _replace_cover_atoms(node: Formula, replacements: Mapping[Atom, Atom]) -> Formula:
+    """Replace predicates in a nonconstant NNF tree by equivalent encodings."""
+    if isinstance(node, AtomLeaf):
+        return AtomLeaf(replacements.get(node.atom, node.atom))
+    if isinstance(node, AndNode):
+        return make_and(
+            _replace_cover_atoms(child, replacements) for child in node.children
+        )
+    disjunction = cast("OrNode", node)
+    return make_or(
+        _replace_cover_atoms(child, replacements) for child in disjunction.children
+    )
+
+
+def _prepare_cover(node: Formula) -> _CoverInput:
+    """Collect canonical predicates and price their traversal and ordering."""
+    leaves = collect_atoms(node)
+    charge_work(len(leaves))
+    unique = set(leaves)
+    charge_work(len(unique) * max(1, len(unique).bit_length()))
+    replacements = {}
+    for atom in unique:
+        canonical = _canonical_cover_atom(atom)
+        if canonical is not atom:
+            replacements[atom] = canonical
+    if replacements:
+        node = _replace_cover_atoms(node, replacements)
+        unique = {replacements.get(atom, atom) for atom in unique}
+    return _CoverInput(node, tuple(sorted(unique, key=_atom_key)), len(leaves))
+
+
+def _charge_formula_work(node: Formula) -> None:
+    """Price traversal and child-stack allocation before preparing a direct cover."""
+    pending = [node]
+    while pending:
+        charge_work(1)
+        current = pending.pop()
+        if isinstance(current, AtomLeaf):
+            charge_work(
+                sum(
+                    len(value)
+                    for value in _atom_key(current.atom)
+                    if isinstance(value, str)
+                )
+            )
+        elif isinstance(current, NotNode):
+            pending.append(current.child)
+        elif isinstance(current, (AndNode, OrNode)):
+            charge_work(len(current.children))
+            pending.extend(current.children)
+
+
+def _fixed_row_pattern(
+    atoms: Sequence[Atom], row: _Row, max_cells: int, store: Memo
+) -> _RowPattern | None:
+    """Return constant predicate values, or None for varying or oversized rows."""
+    charge_work(len(atoms) + 1)
+    restricted = [restrict_tree(AtomLeaf(atom), row.pins) for atom in atoms]
+    residual = [atom for node in restricted for atom in collect_atoms(node)]
+    bound_atoms = collect_atoms(row.bound)
+    bound_axes = {atom.axis() for atom in bound_atoms}
+    if any(atom.axis() not in bound_axes for atom in residual):
+        return None
+
+    partition_atoms = dict.fromkeys((*residual, *bound_atoms))
+    try:
+        space = _cell_space(
+            make_and(AtomLeaf(atom) for atom in partition_atoms), max_cells, store
+        )
+    except IntractableMarkerSet:
+        if _work_meter.remaining < 0:
+            raise
+        return None
+    count = prod(map(len, space.partitions))
+    truth, full = _cell_truth_masks(space, count)
+    charge_work(count * (len(bound_atoms) + 1))
+    within = _eval_mask(row.bound, truth, full)
+    if not within:
+        return _RowPattern(nonempty=False, bits=0)
+
+    pattern = 0
+    for index, node in enumerate(restricted):
+        charge_work(count)
+        value = _eval_mask(node, truth, full) & within
+        if value == within:
+            pattern |= 1 << index
+        elif value:
+            return None
+    return _RowPattern(nonempty=True, bits=pattern)
+
+
+def _cube_mask(atoms: Iterable[Atom], truth: Mapping[Atom, int], full: int) -> int:
+    """Intersect the predicates retained in a source-atom cube."""
+    covered = full
+    for atom in atoms:
+        covered &= truth[atom]
+    return covered
+
+
+def _grow_cover_cube(
+    atoms: Sequence[Atom],
+    truth: Mapping[Atom, int],
+    full: int,
+    forbidden: int,
+    point: int,
+) -> _CoverCube:
+    """Drop predicates while the cube avoids every forbidden observed pattern."""
+    size = full.bit_length()
+    charge_work(size * (len(atoms) + 1))
+    # Every satisfied NNF clause is contained in the initial cube.
+    cube = [atom for atom in atoms if truth[atom] & point]
+    covered = _cube_mask(cube, truth, full)
+    for atom in tuple(cube):
+        charge_work(size * (len(cube) + 1))
+        trial = [other for other in cube if other != atom]
+        widened = _cube_mask(trial, truth, full)
+        if not widened & forbidden:
+            cube = trial
+            covered = widened
+    return _CoverCube(frozenset(cube), covered)
+
+
+def _remove_covered_cubes(cubes: Sequence[_CoverCube], full: int) -> list[_CoverCube]:
+    """Remove a cube only while the other retained cubes cover all its patterns."""
+    size = full.bit_length()
+    charge_work(size * (len(cubes) + 1) * max(1, len(cubes).bit_length()))
+    kept = sorted(cubes, key=lambda cube: _clause_key(cube.atoms))
+    for cube in tuple(kept):
+        charge_work(size * (len(kept) + 1))
+        others = 0
+        for other in kept:
+            if other is not cube:
+                others |= other.mask
+        if not cube.mask & ~others:
+            kept.remove(cube)
+    return kept
+
+
+def _factor_clauses(clauses: Sequence[frozenset[Atom]]) -> Formula:
+    """Render clauses in stable order with their common atoms factored out."""
+    if not clauses:
+        return FALSE
+    common: frozenset[Atom] = frozenset.intersection(*clauses)
+    residual = sorted((clause - common for clause in clauses), key=_clause_key)
+    lead = [AtomLeaf(atom) for atom in sorted(common, key=_atom_key)]
+    return make_and([*lead, _disjunction(residual)])
+
+
+def _cover_patterns(
+    source: _CoverInput, patterns: AbstractSet[int]
+) -> list[_CoverCube]:
+    """Extract irredundant cubes over the observed predicate patterns."""
+    atoms = source.atoms
+    size = len(patterns)
+    charge_work(size * (len(atoms) + max(1, size.bit_length())))
+    truth = dict.fromkeys(atoms, 0)
+    for index, pattern_bits in enumerate(sorted(patterns)):
+        for position, atom in enumerate(atoms):
+            if pattern_bits & (1 << position):
+                truth[atom] |= 1 << index
+    full = (1 << size) - 1
+    charge_work(size * (source.leaf_count + 1))
+    selected = _eval_mask(source.tree, truth, full)
+
+    cubes: list[_CoverCube] = []
+    required = selected
+    while required:
+        cube = _grow_cover_cube(
+            atoms, truth, full, full ^ selected, required & -required
+        )
+        cubes.append(cube)
+        required &= full ^ cube.mask
+    kept = _remove_covered_cubes(cubes, full)
+    charge_work(size * (sum(len(cube.atoms) for cube in kept) + 1))
+    return kept
+
+
+def _project_patterns(
+    patterns: AbstractSet[int], atoms: Sequence[Atom], retained: Sequence[Atom]
+) -> set[int]:
+    """Project every observed pattern onto the predicates a cover retains."""
+    charge_work(len(patterns) * (len(atoms) + len(retained) + 1))
+    positions = {atom: index for index, atom in enumerate(atoms)}
+    columns = [positions[atom] for atom in retained]
+    projected = set()
+    for pattern in patterns:
+        compact = 0
+        for index, position in enumerate(columns):
+            if pattern & (1 << position):
+                compact |= 1 << index
+        projected.add(compact)
+    return projected
+
+
+def _fixed_row_cover(
+    source: _CoverInput, rows: Sequence[_Row], max_cells: int, store: Memo
+) -> Formula | None:
+    """Build a stable cover by projecting out predicates the cover no longer uses."""
+    if isinstance(source.tree, BoolConst):
+        return source.tree
+    patterns: set[int] = set()
+    for row in rows:
+        pattern = _fixed_row_pattern(source.atoms, row, max_cells, store)
+        if pattern is None:
+            return None
+        if pattern.nonempty:
+            patterns.add(pattern.bits)
+            if len(patterns) * len(source.atoms) > max_cells:
+                return None
+
+    while True:
+        cubes = _cover_patterns(source, patterns)
+        result = _factor_clauses([cube.atoms for cube in cubes])
+        refined = _prepare_cover(result)
+        if not refined.atoms or len(refined.atoms) == len(source.atoms):
+            return result
+        patterns = _project_patterns(patterns, source.atoms, refined.atoms)
+        source = refined
+
+
+def _simplify_greedy(
+    nnf: Formula,
+    rows: Sequence[_Row],
+    max_cells: int,
+    store: Memo,
+) -> Formula:
+    """Remove an NNF tree's clauses and atoms to a fixpoint over the universe's rows."""
+    clauses = _dedupe(_to_clauses(nnf, max_cells))
+    original = _disjunction(clauses)
+    original_by_row = [restrict_tree(original, row.pins) for row in rows]
+    while True:
+        before = _canonical(clauses)
+        clauses = _drop_clauses(clauses, rows, original_by_row, max_cells, store)
+        clauses = _dedupe(_drop_atoms(clauses, rows, original_by_row, max_cells, store))
+        if _canonical(clauses) == before:
+            break
+    return _factor_clauses(clauses)
+
+
 def simplify_within(
     node: Formula,
     universe: Formula,
@@ -2021,48 +2293,30 @@ def simplify_within(
 ) -> Formula:
     """Return a tree equivalent to ``node`` on every point of ``universe``.
 
-    Greedy: expand to clauses, drop each clause and then each atom whose removal
-    preserves within-universe equivalence, to a fixpoint, then factor the atoms
-    common to every survivor into a leading conjunction. Each removal is decided
-    per universe row, which is what keeps a wide multi-platform universe
-    decidable, and a total atom order fixes the output.
+    Rows with constant source predicates admit a direct cover.
+    Other inputs use greedy clause and atom removal.
+    Neither path guarantees the smallest tree.
 
-    The result is not the smallest equivalent tree, and need not be smaller than
-    ``node``: the clause expansion runs first, so a factored input whose clauses
-    are all needed comes back expanded.
-
-    ``max_cells`` bounds one decision. ``max_work`` meters the greedy loop,
-    where a wide matrix runs many cheap decisions and a large membership
-    powerset runs few expensive ones. Either overrun raises
-    :class:`IntractableMarkerSet`.
+    ``max_cells`` bounds each decision and the direct truth-table payload.
+    ``max_work`` covers the direct attempt and greedy fallback together.
     """
-    nnf = to_nnf(node)
-    clauses = _dedupe(_to_clauses(nnf, max_cells))
-    original = _disjunction(clauses)
-    rows = _decompose_rows(universe)
-    original_by_row = [restrict_tree(original, row.pins) for row in rows]
-    if store is None:
-        store = Memo()
+    shared = Memo() if store is None else store
     previous_work = getattr(_work_meter, "remaining", None)
     _work_meter.remaining = max_work
     try:
-        while True:
-            before = _canonical(clauses)
-            clauses = _drop_clauses(clauses, rows, original_by_row, max_cells, store)
-            clauses = _dedupe(
-                _drop_atoms(clauses, rows, original_by_row, max_cells, store)
-            )
-            if _canonical(clauses) == before:
-                break
+        _charge_formula_work(node)
+        _charge_formula_work(universe)
+        source = _prepare_cover(to_nnf(node))
+        rows = () if isinstance(source.tree, BoolConst) else _decompose_rows(universe)
+        direct = _fixed_row_cover(source, rows, max_cells, shared)
+        if direct is not None:
+            return direct
+        greedy = _simplify_greedy(source.tree, rows, max_cells, shared)
+        refined = _prepare_cover(greedy)
+        if len(refined.atoms) < len(source.atoms):
+            direct = _fixed_row_cover(refined, rows, max_cells, shared)
+            if direct is not None:
+                return direct
+        return greedy
     finally:
         _work_meter.remaining = previous_work
-    if not clauses:
-        return FALSE
-    clauses = sorted(clauses, key=_clause_key)
-    common: frozenset[Atom] = frozenset.intersection(*clauses)
-    residual = sorted((clause - common for clause in clauses), key=_clause_key)
-    lead = [AtomLeaf(atom) for atom in sorted(common, key=_atom_key)]
-    inner = make_or(
-        _clause_formula(sorted(clause, key=_atom_key)) for clause in residual
-    )
-    return make_and([*lead, inner])
