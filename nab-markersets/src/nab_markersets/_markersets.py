@@ -2304,6 +2304,37 @@ class _RowTruth(NamedTuple):
     size: int
 
 
+class _PreparedRow:
+    """A varying row's temporary lookup and charges for this cover attempt."""
+
+    __slots__ = (
+        "evaluation_units",
+        "masks",
+        "restricted",
+        "setup_units",
+        "size",
+        "within",
+    )
+
+    def __init__(
+        self,
+        *,
+        restricted: Sequence[Formula],
+        masks: MaskTable,
+        within: int,
+        size: int,
+        setup_units: int,
+        evaluation_units: int,
+    ) -> None:
+        self.restricted = restricted
+        self.masks = masks
+        self.within = within
+        self.size = size
+
+        self.setup_units = setup_units
+        self.evaluation_units = evaluation_units
+
+
 def _canonical_cover_atom(atom: Atom) -> Atom:
     """Match the operator encoding that serializing and reparsing a predicate uses."""
     if atom.kind == AXIS_SET and atom.origin == "extra":
@@ -2382,8 +2413,8 @@ def _charge_universe_work(universe: Formula, store: Memo) -> int:
 
 def _fixed_row_pattern(
     atoms: Sequence[Atom], row: _Row, max_cells: int, store: Memo
-) -> _RowPattern | _RowStatus:
-    """Return constant predicate values or the reason the row needs another path."""
+) -> _RowPattern | _RowStatus | _PreparedRow:
+    """Return a fixed pattern, a prepared varying row, or a row status."""
     charge_work(len(atoms) + 1)
     restricted = [_restrict_cover_atom(atom, row.pins) for atom in atoms]
     residual = [atom for node in restricted for atom in collect_atoms(node)]
@@ -2418,7 +2449,23 @@ def _fixed_row_pattern(
         if value == within:
             pattern |= 1 << index
         elif value:
-            return _RowStatus.VARYING
+            setup = (
+                len(atoms)
+                + 1
+                + len(residual)
+                + len(bound_atoms)
+                + len(partition_atoms)
+                + space.units
+            )
+            evaluation = count * (len(bound_atoms) + 1 + len(restricted))
+            return _PreparedRow(
+                restricted=restricted,
+                masks=(truth, full),
+                within=within,
+                size=count,
+                setup_units=setup,
+                evaluation_units=evaluation,
+            )
     return _RowPattern(nonempty=True, bits=pattern)
 
 
@@ -2547,17 +2594,30 @@ def _row_cover(
     for index, row in enumerate(rows):
         pattern = _fixed_row_pattern(source.atoms, row, max_cells, store)
         if pattern is _RowStatus.OVER_CAP:
-            return None
+            break
         if pattern is _RowStatus.VARYING:
             return _varying_row_cover(
                 source, rows, max_cells, store, start=index, patterns=patterns
             )
+        if isinstance(pattern, _PreparedRow):
+            columns = _prepared_row_columns(pattern, max_cells)
+            # The split budget excludes the prepared lookup.
+            del pattern
+            if columns is None or not _add_row_patterns(
+                columns, patterns, atom_count=len(source.atoms), max_cells=max_cells
+            ):
+                break
+            del columns
+            return _varying_row_cover(
+                source, rows, max_cells, store, start=index + 1, patterns=patterns
+            )
         if pattern.nonempty:
             patterns.add(pattern.bits)
             if len(patterns) * len(source.atoms) > max_cells:
-                return None
-
-    return _stabilize_cover(source, patterns)
+                break
+    else:
+        return _stabilize_cover(source, patterns)
+    return None
 
 
 def _pattern_axes_fit(atoms: list[Atom], max_cells: int) -> bool:
@@ -2605,6 +2665,17 @@ def _row_pattern_columns(
     charge_work(count * len(restricted))
     columns = tuple(_eval_mask(node, truth, full) for node in restricted)
     return _RowTruth(columns, within, count)
+
+
+def _prepared_row_columns(prepared: _PreparedRow, max_cells: int) -> _RowTruth | None:
+    """Build prepared columns with the full preparation work charge."""
+    charge_work(prepared.setup_units)
+    if prepared.size * (len(prepared.restricted) + 1) > max_cells:
+        return None
+    charge_work(prepared.evaluation_units)
+    truth, full = prepared.masks
+    columns = tuple(_eval_mask(node, truth, full) for node in prepared.restricted)
+    return _RowTruth(columns, prepared.within, prepared.size)
 
 
 def _pattern_buffer_units(
@@ -2668,6 +2739,17 @@ def _split_row_patterns(
     return {prefix for prefix, _ in regions}
 
 
+def _add_row_patterns(
+    columns: _RowTruth, patterns: set[int], *, atom_count: int, max_cells: int
+) -> bool:
+    """Add one row's observed patterns within the aggregate predicate cap."""
+    observed = _split_row_patterns(columns, len(patterns), max_cells)
+    if observed is None:
+        return False
+    patterns.update(observed)
+    return len(patterns) * atom_count <= max_cells
+
+
 def _varying_row_cover(
     source: _CoverInput,
     rows: Sequence[_Row],
@@ -2677,7 +2759,7 @@ def _varying_row_cover(
     start: int,
     patterns: set[int],
 ) -> Formula | None:
-    """Extend the proven constant prefix with patterns from all remaining rows."""
+    """Extend the accumulated patterns with all remaining rows."""
     for index in range(start, len(rows)):
         row = rows[index]
         columns = _row_pattern_columns(source.atoms, row, max_cells, store)
