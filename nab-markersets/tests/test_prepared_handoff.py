@@ -182,6 +182,13 @@ def test_source_column_cap_still_follows_setup_charges(max_cells: int) -> None:
     assert engine._work_meter.remaining == remaining
     assert (expected is not None) is (max_cells >= 36)
 
+    engine._work_meter.remaining = 1_000_000
+    source = engine._prepare_cover(
+        engine.to_nnf(engine.parse(f'{fixed} and "a" in extras'))
+    )
+    result = engine._row_cover(source, [row], max_cells, engine.Memo())
+    assert (result is not None) is (max_cells >= 36)
+
 
 def test_aggregate_pattern_cap_can_refuse_an_admitted_table() -> None:
     masks = (0b10101010, 0b11001100, 0b11110000)
