@@ -620,6 +620,52 @@ def _row_universe() -> MarkerSet:
     )
 
 
+def _row_preparation_counter(monkeypatch: pytest.MonkeyPatch) -> Callable[[], int]:
+    """Count universe disjuncts whose pins are prepared rather than reused."""
+    calls = 0
+    original = engine._row_pins
+
+    def counting(node: engine.Formula) -> dict[str, str]:
+        nonlocal calls
+        calls += 1
+        return original(node)
+
+    monkeypatch.setattr(engine, "_row_pins", counting)
+    return lambda: calls
+
+
+def test_shared_rows_serve_simplification_and_its_equivalence_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    marker = ms('python_version < "3.12"')
+    universe = _row_universe()
+    store = DecisionStore()
+    prepared = _row_preparation_counter(monkeypatch)
+
+    result = marker.simplify(within=universe, store=store)
+    assert prepared() == 6
+    assert marker.equivalent_within(result, universe, store=store)
+    assert prepared() == 6
+
+    text = universe.to_marker_string()
+    assert text is not None
+    rebuilt = ms(text)
+    assert rebuilt is not universe
+    assert marker.equivalent_within(result, rebuilt, store=store)
+    assert prepared() == 6
+
+    assert marker.equivalent_within(result, rebuilt)
+    assert prepared() == 12
+
+
+def test_shared_rows_keep_distinct_universes_separate() -> None:
+    marker = ms('sys_platform == "linux"')
+    store = DecisionStore()
+
+    assert marker.simplify(within=marker, store=store).is_full()
+    assert marker.simplify(within=ms('sys_platform == "win32"'), store=store).is_empty()
+
+
 # Operands reaching all three axis kinds: a version axis, a set axis through
 # ``extra``, and an opaque contains axis. A universe row pins ``sys_platform`` away,
 # so a scenario without the last two would exercise the value axis alone.
@@ -796,11 +842,7 @@ def test_a_shared_store_serves_the_next_decision(
 def test_a_shared_store_serves_the_next_decision_its_truths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A decision handed the previous one's store re-reads no stored atom truth.
-
-    Only restriction repeats, one read for each of the six rows' two operands,
-    against 132 for the decision itself.
-    """
+    """Only the right operand's six pinned comparisons repeat on a warm store."""
     universe = _row_universe()
     left = ms('python_version < "3.12"' + _SPREAD)
     right = ms('python_version < "3.12" and sys_platform != "aix"' + _SPREAD)
@@ -812,7 +854,7 @@ def test_a_shared_store_serves_the_next_decision_its_truths(
     left.equivalent_within(right, universe, store=store)
 
     assert first == 132
-    assert truths() - first == 12
+    assert truths() - first == 6
 
 
 def test_a_shared_store_serves_a_repeated_simplify(

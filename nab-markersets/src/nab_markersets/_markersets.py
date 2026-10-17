@@ -738,17 +738,18 @@ class _Decision(NamedTuple):
 
 
 class Memo:
-    """The verdicts, partitions, atom truths and version parses a decision re-reads.
+    """The verdicts, rows, partitions, truths and versions related decisions reuse.
 
     A decision makes its own unless the caller passes one to share; see
     :class:`~nab_markersets.markersets.DecisionStore`.
     """
 
-    __slots__ = ("decisions", "partitions", "truths", "versions")
+    __slots__ = ("decisions", "partitions", "rows", "truths", "versions")
 
     def __init__(self) -> None:
         self.decisions: dict[tuple[NodeKey, int], _Decision] = {}
         self.partitions: dict[tuple[Axis, tuple[Atom, ...], int], list[Cell]] = {}
+        self.rows: dict[NodeKey, list[_Row]] = {}
         self.truths: dict[tuple[Atom, str], bool] = {}
         self.versions: dict[str, Version | None] = {}
 
@@ -1861,12 +1862,18 @@ def _universe_disjuncts(universe: Formula) -> tuple[Formula, ...]:
     return node.children if isinstance(node, OrNode) else (node,)
 
 
-def _decompose_rows(universe: Formula) -> list[_Row]:
-    """Split a universe into rows: each top-level disjunct with its pins."""
+def _decompose_rows(universe: Formula, store: Memo) -> list[_Row]:
+    """Split a universe into pinned rows, reusing the operation's prepared rows."""
+    key = universe.key()
+    hit = store.rows.get(key)
+    if hit is not None:
+        return hit
+
     rows: list[_Row] = []
     for disjunct in _universe_disjuncts(universe):
         pins = _row_pins(disjunct)
         rows.append(_Row(pins, restrict_tree(disjunct, pins)))
+    store.rows[key] = rows
     return rows
 
 
@@ -1914,11 +1921,10 @@ def equivalent_within_rows(
     store: Memo | None = None,
 ) -> bool:
     """Whether two trees agree on every point of ``universe``, decided per row."""
-    rows = _decompose_rows(universe)
+    shared = Memo() if store is None else store
+    rows = _decompose_rows(universe, shared)
     right_by_row = [restrict_tree(right, row.pins) for row in rows]
-    return _rows_equivalent(
-        left, rows, right_by_row, max_cells, Memo() if store is None else store
-    )
+    return _rows_equivalent(left, rows, right_by_row, max_cells, shared)
 
 
 def _dedupe(clauses: list[frozenset[Atom]]) -> list[frozenset[Atom]]:
@@ -2307,7 +2313,11 @@ def simplify_within(
         _charge_formula_work(node)
         _charge_formula_work(universe)
         source = _prepare_cover(to_nnf(node))
-        rows = () if isinstance(source.tree, BoolConst) else _decompose_rows(universe)
+        rows = (
+            ()
+            if isinstance(source.tree, BoolConst)
+            else _decompose_rows(universe, shared)
+        )
         direct = _fixed_row_cover(source, rows, max_cells, shared)
         if direct is not None:
             return direct
