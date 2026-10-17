@@ -66,7 +66,15 @@ def test_row_predicates_avoid_generic_tree_dispatch(
         calls.append(node)
         return original(node, env)
 
+    constructed: list[engine.Atom] = []
+    original_init = engine.AtomLeaf.__init__
+
+    def initialize(leaf: engine.AtomLeaf, predicate: engine.Atom) -> None:
+        constructed.append(predicate)
+        original_init(leaf, predicate)
+
     monkeypatch.setattr(engine, "restrict_tree", restrict)
+    monkeypatch.setattr(engine.AtomLeaf, "__init__", initialize)
     monkeypatch.setattr(engine._work_meter, "remaining", 100_000, raising=False)
     if varying:
         result = engine._row_pattern_columns((atom,), row, 100_000, engine.Memo())
@@ -77,6 +85,7 @@ def test_row_predicates_avoid_generic_tree_dispatch(
         result = engine._fixed_row_pattern((atom,), row, 100_000, engine.Memo())
         assert result == engine._RowPattern(nonempty=True, bits=1)
     assert calls == []
+    assert constructed == []
 
 
 def test_related_public_simplifications_share_only_the_universe_walk(
@@ -108,6 +117,12 @@ def test_unknown_owned_cost_is_completed_once(monkeypatch: pytest.MonkeyPatch) -
     rows = engine._decompose_rows(universe, store)
     assert store.row_work is not None
     assert store.row_work.units is None
+    record = store.row_work
+    equal = engine.parse('sys_platform == "linux" or sys_platform == "win32"')
+    assert equal.key() == universe.key()
+    assert equal.key() is not universe.key()
+    assert engine._decompose_rows(equal, store, raw_work=123) is rows
+    assert store.row_work is record
     calls = _walks(monkeypatch)
     monkeypatch.setattr(engine._work_meter, "remaining", 10_000, raising=False)
     units = engine._charge_universe_work(universe, store)
@@ -175,17 +190,22 @@ def test_retained_work_cost_has_a_bounded_integer_payload(units: int) -> None:
     assert store.row_work.units == (units if units.bit_length() <= 64 else None)
 
 
+@pytest.mark.parametrize("preowned", [False, True])
 def test_failed_raw_walk_never_builds_a_key_or_record(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, *, preowned: bool
 ) -> None:
     universe = engine.parse('sys_platform == "linux" or sys_platform == "win32"')
     store = engine.Memo()
+    if preowned:
+        engine._decompose_rows(engine.parse('os_name == "posix"'), store, raw_work=100)
+    record = store.row_work
+    row_count = len(store.rows)
     monkeypatch.setattr(engine._work_meter, "remaining", 0, raising=False)
     with pytest.raises(engine.IntractableMarkerSet, match="work exceeds"):
         engine._charge_universe_work(universe, store)
     assert universe._key is None
-    assert store.row_work is None
-    assert store.rows == {}
+    assert store.row_work is record
+    assert len(store.rows) == row_count
 
 
 def test_failed_row_preparation_preserves_the_last_owned_record(
