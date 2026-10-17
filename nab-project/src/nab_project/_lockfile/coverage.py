@@ -71,6 +71,7 @@ def validate_marker_coverage(
     environments: Sequence[Marker],
     store: DecisionStore | None = None,
     environment_sets: Sequence[MarkerSet] | None = None,
+    uses_implementation_version: bool | None = None,
 ) -> None:
     """Confirm the emitted rows cover every target the resolve ran.
 
@@ -83,6 +84,8 @@ def validate_marker_coverage(
 
     ``environment_sets`` are ``environments`` already built as sets; they are
     built here when omitted.
+
+    ``uses_implementation_version`` supplies the prepared rows' raw-variable flag.
     """
     if not environments:
         return
@@ -90,7 +93,12 @@ def validate_marker_coverage(
     if environment_sets is None:
         environment_sets = [MarkerSet.from_marker(marker) for marker in environments]
     covered = reduce(MarkerSet.union, environment_sets, MarkerSet.empty())
-    covered = _project_implementation_version(covered, environments, targets)
+    covered = _project_implementation_version(
+        covered,
+        environments,
+        targets,
+        uses_implementation_version=uses_implementation_version,
+    )
 
     for pins, references in _references_by_pins(targets).items():
         env = dict(pins)
@@ -142,6 +150,8 @@ def _project_implementation_version(
     covered: MarkerSet,
     environments: Sequence[Marker],
     targets: Sequence[ResolveTarget],
+    *,
+    uses_implementation_version: bool | None = None,
 ) -> MarkerSet:
     """Drop ``implementation_version`` from ``covered`` when a row mirrors it.
 
@@ -157,7 +167,11 @@ def _project_implementation_version(
     axis, and the union over the targets' ``python_full_version`` reassembles
     the minor.  Runs only when a row names ``implementation_version``.
     """
-    if not any("implementation_version" in variable_names(row) for row in environments):
+    if uses_implementation_version is None:
+        uses_implementation_version = any(
+            "implementation_version" in variable_names(row) for row in environments
+        )
+    if not uses_implementation_version:
         return covered
     reps = {target.python_full_version for target in targets}
     return reduce(
