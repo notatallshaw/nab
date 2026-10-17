@@ -55,6 +55,10 @@ if TYPE_CHECKING:
     NodeKey: TypeAlias = "tuple[object, ...]"
     AtomKey: TypeAlias = "tuple[str, str, str, bool, bool, str, str, bool]"
     ClauseKey: TypeAlias = "tuple[AtomKey, ...]"
+    MaskKey: TypeAlias = (
+        "tuple[tuple[tuple[Axis, tuple[Atom, ...], int], ...], int, int]"
+    )
+    MaskTable: TypeAlias = "tuple[dict[Atom, int], int]"
 
 
 # Axis kinds. Atoms on one axis share a partition and are constant on each cell.
@@ -72,6 +76,11 @@ _EARLY_CELL_LIMIT = 4
 _PATTERN_WORD_BITS = 64
 # Reserve slots for buffer roots, result records and loop temporaries.
 _PATTERN_FIXED_UNITS = 64
+_MASK_CACHE_MIN_CELLS = 64
+_MASK_CACHE_MAX_UNITS = 16_384
+_MASK_CACHE_BITS_PER_UNIT = 64
+# Key/table tuple fields and dictionary entries receive a fixed reference allowance.
+_MASK_CACHE_FIXED_UNITS = 14
 
 # Every variable in packaging's marker grammar, typed to a domain. The twins
 # dispatch as versions yet may hold an arbitrary string, so they also carry the
@@ -742,16 +751,26 @@ class _Decision(NamedTuple):
 
 
 class Memo:
-    """The verdicts, rows, partitions, truths and versions related decisions reuse.
+    """The results and preparation that related decisions reuse.
 
     A decision makes its own unless the caller passes one to share; see
     :class:`~nab_markersets.markersets.DecisionStore`.
     """
 
-    __slots__ = ("decisions", "partitions", "rows", "truths", "versions")
+    __slots__ = (
+        "decisions",
+        "mask_remaining",
+        "masks",
+        "partitions",
+        "rows",
+        "truths",
+        "versions",
+    )
 
     def __init__(self) -> None:
         self.decisions: dict[tuple[NodeKey, int], _Decision] = {}
+        self.masks: dict[MaskKey, MaskTable] | None = None
+        self.mask_remaining = _MASK_CACHE_MAX_UNITS
         self.partitions: dict[tuple[Axis, tuple[Atom, ...], int], list[Cell]] = {}
         self.rows: dict[NodeKey, list[_Row]] = {}
         self.truths: dict[tuple[Atom, str], bool] = {}
@@ -1361,6 +1380,7 @@ class _CellSpace(NamedTuple):
     atomlists: list[list[Atom]]
     partitions: list[list[Cell]]
     units: int
+    max_cells: int
 
 
 def _cell_space(node: Formula, max_cells: int, store: Memo) -> _CellSpace:
@@ -1375,7 +1395,7 @@ def _cell_space(node: Formula, max_cells: int, store: Memo) -> _CellSpace:
     ]
 
     if not axes:
-        return _CellSpace(axes, atomlists, partitions, 0)
+        return _CellSpace(axes, atomlists, partitions, 0, max_cells)
 
     # Repeated atoms inflate the per-cell walk without inflating the cell
     # product, so the guard counts leaf occurrences too.
@@ -1383,7 +1403,7 @@ def _cell_space(node: Formula, max_cells: int, store: Memo) -> _CellSpace:
         (*(len(part) for part in partitions), len(atoms)), max_cells
     )
     charge_work(units)
-    return _CellSpace(axes, atomlists, partitions, units)
+    return _CellSpace(axes, atomlists, partitions, units, max_cells)
 
 
 def _enumerate_cells(
@@ -1406,7 +1426,10 @@ def _decide_empty(node: Formula, max_cells: int, store: Memo) -> _Decision:
     size = prod(len(partition) for partition in space.partitions)
     if size >= _MASK_PROBE_MIN_CELLS and _has_early_cell(node, space):
         return _Decision(empty=False, units=space.units)
-    truth, full = _cell_truth_masks(space, size)
+    if size < _MASK_CACHE_MIN_CELLS:
+        truth, full = _compile_cell_truth_masks(space, size)
+    else:
+        truth, full = _cell_truth_masks(space, size, store=store)
     return _Decision(not _eval_mask(node, truth, full), space.units)
 
 
@@ -1423,7 +1446,7 @@ def _has_early_cell(node: Formula, space: _CellSpace) -> bool:
     return False
 
 
-def _cell_truth_masks(space: _CellSpace, size: int) -> tuple[dict[Atom, int], int]:
+def _compile_cell_truth_masks(space: _CellSpace, size: int) -> MaskTable:
     """Encode atom truths over the Cartesian cell product, one bit per cell."""
     full = (1 << size) - 1
     truth: dict[Atom, int] = {}
@@ -1441,6 +1464,83 @@ def _cell_truth_masks(space: _CellSpace, size: int) -> tuple[dict[Atom, int], in
                     pattern |= run << (index * stride)
             truth[atom] = pattern * repeat
     return truth, full
+
+
+def _mask_cache_key(space: _CellSpace, size: int) -> MaskKey:
+    """Identify an admitted partition's ordered axes and predicate columns."""
+    layout = tuple(
+        (axis, tuple(atoms), len(cells))
+        for axis, atoms, cells in zip(
+            space.axes, space.atomlists, space.partitions, strict=True
+        )
+    )
+    return layout, size, space.max_cells
+
+
+def _remember_masks(store: Memo, key: MaskKey, table: MaskTable) -> None:
+    """Bound cache-owned container references and mask bits for this operation."""
+    layout, size, max_cells = key
+    truth, full = table
+    units = (
+        _MASK_CACHE_FIXED_UNITS
+        + len(layout)
+        + sum(3 + len(axis) + len(atoms) for axis, atoms, _ in layout)
+        + 2 * len(truth)
+    )
+    if units > store.mask_remaining:
+        return
+
+    # A unit covers one reference or up to 64 integer payload bits, not bytes.
+    units += sum(
+        max(
+            1,
+            (mask.bit_length() + _MASK_CACHE_BITS_PER_UNIT - 1)
+            // _MASK_CACHE_BITS_PER_UNIT,
+        )
+        for mask in truth.values()
+    )
+    units += sum(
+        max(
+            1,
+            (value.bit_length() + _MASK_CACHE_BITS_PER_UNIT - 1)
+            // _MASK_CACHE_BITS_PER_UNIT,
+        )
+        for value in (
+            full,
+            size,
+            max_cells,
+            *(cells for _, _, cells in layout),
+        )
+    )
+    if units > store.mask_remaining:
+        return
+
+    if store.masks is None:
+        store.masks = {}
+    store.masks[key] = table
+    store.mask_remaining -= units
+
+
+def _cell_truth_masks(
+    space: _CellSpace, size: int, *, store: Memo | None = None
+) -> MaskTable:
+    """Reuse predicates in the operation store that prepared this space."""
+    if (
+        store is None
+        or size < _MASK_CACHE_MIN_CELLS
+        or (store.masks is None and store.mask_remaining == 0)
+    ):
+        return _compile_cell_truth_masks(space, size)
+
+    key = _mask_cache_key(space, size)
+    if store.masks is not None:
+        cached = store.masks.get(key)
+        if cached is not None:
+            return cached
+
+    table = _compile_cell_truth_masks(space, size)
+    _remember_masks(store, key, table)
+    return table
 
 
 def _eval_mask(node: Formula, truth: Mapping[Atom, int], full: int) -> int:
@@ -1473,7 +1573,9 @@ def is_empty(node: Formula, max_cells: int, store: Memo | None = None) -> bool:
     does not depend on the memo.
     """
     if store is None:
-        return _decide_empty(node, max_cells, Memo()).empty
+        one_off = Memo()
+        one_off.mask_remaining = 0
+        return _decide_empty(node, max_cells, one_off).empty
 
     key = (node.key(), max_cells)
     decided = store.decisions.get(key)
@@ -2144,7 +2246,10 @@ def _fixed_row_pattern(
             raise
         return _RowStatus.OVER_CAP
     count = prod(map(len, space.partitions))
-    truth, full = _cell_truth_masks(space, count)
+    if count < _MASK_CACHE_MIN_CELLS:
+        truth, full = _compile_cell_truth_masks(space, count)
+    else:
+        truth, full = _cell_truth_masks(space, count, store=store)
     charge_work(count * (len(bound_atoms) + 1))
     within = _eval_mask(row.bound, truth, full)
     if not within:
@@ -2333,7 +2438,10 @@ def _row_pattern_columns(
     count = prod(map(len, space.partitions))
     if count * (len(atoms) + 1) > max_cells:
         return None
-    truth, full = _cell_truth_masks(space, count)
+    if count < _MASK_CACHE_MIN_CELLS:
+        truth, full = _compile_cell_truth_masks(space, count)
+    else:
+        truth, full = _cell_truth_masks(space, count, store=store)
     charge_work(count * (len(bound_atoms) + 1))
     within = _eval_mask(row.bound, truth, full)
     if not within:
