@@ -1450,6 +1450,10 @@ def _walk(node: Formula, out: list[Atom]) -> None:
 
 def collect_atoms(node: Formula) -> list[Atom]:
     """Every atom mentioned by a tree, in encounter order."""
+    if isinstance(node, AtomLeaf):
+        return [node.atom]
+    if isinstance(node, BoolConst):
+        return []
     out: list[Atom] = []
     _walk(node, out)
     return out
@@ -2186,6 +2190,11 @@ def _rows_equivalent(
     """
     for row, right in zip(rows, right_by_row, strict=True):
         left_r = _restrict_row_tree(left, row.pins, store)
+        if isinstance(left_r, BoolConst) and left_r is right:
+            # Retain the zero-work decision and negative-budget refusal.
+            is_empty(FALSE, max_cells, store)
+            charge_work(0)
+            continue
         if not is_empty(
             make_and((left_r, row.bound, make_not(right))), max_cells, store
         ):
