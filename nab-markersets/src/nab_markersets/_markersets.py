@@ -2340,7 +2340,7 @@ def _charge_universe_work(universe: Formula, store: Memo) -> int:
             return record.units
     before = _work_meter.remaining
     _charge_formula_work(universe)
-    return before - _work_meter.remaining
+    return cast("int", before - _work_meter.remaining)
 
 
 def _fixed_row_pattern(
