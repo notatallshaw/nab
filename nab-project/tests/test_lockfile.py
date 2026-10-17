@@ -7,7 +7,7 @@ import logging
 import random
 import re
 import sys
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractContextManager
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -27,6 +27,7 @@ from nab_index.client import SdistFile, WheelFile, _parse_files
 from nab_index.multi_index import IndexConfig
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import MarkerSet
+from nab_project._lockfile import pylock as projection_engine
 from nab_project._lockfile.builder import _common_requires_python
 from nab_project._lockfile.coverage import (
     CoverageError,
@@ -6568,6 +6569,69 @@ class TestConflictForkNegatedEmission:
             assert torch_markers[f"2.{5 + i}.0"] == raw_marker(names)
 
 
+def _projection_work(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Count actual peer products and shared-condition computations."""
+    counts = {"products": 0, "conditions": 0, "empty": 0, "refused": 0}
+    original_product = projection_engine.product
+    original_condition = projection_engine._merged_fork_gate
+
+    def products(
+        *values: Iterable[tuple[str, str]],
+    ) -> Iterator[tuple[tuple[str, str], ...]]:
+        counts["products"] += 1
+        return original_product(*values)
+
+    def condition(
+        axes: projection_engine._ForkAxes,
+        name: str,
+        peers: Sequence[str],
+        erased: frozenset[tuple[str, str]],
+    ) -> frozenset[tuple[str, str]] | None:
+        counts["conditions"] += 1
+        result = original_condition(axes, name, peers, erased)
+        if result is None:
+            counts["refused"] += 1
+        elif not result:
+            counts["empty"] += 1
+        return result
+
+    monkeypatch.setattr(projection_engine, "product", products)
+    monkeypatch.setattr(projection_engine, "_merged_fork_gate", condition)
+    return counts
+
+
+def _projection_memos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[projection_engine._ProjectionMemo]:
+    """Observe the real projection stores a lock operation constructs."""
+    stores = []
+    original = projection_engine._ProjectionMemo
+
+    def create(
+        axes: projection_engine._ForkAxes, budget: int
+    ) -> projection_engine._ProjectionMemo:
+        store = original(axes, budget)
+        stores.append(store)
+        return store
+
+    monkeypatch.setattr(projection_engine, "_ProjectionMemo", create)
+    return stores
+
+
+def _projection_references(memo: projection_engine._ProjectionMemo) -> int:
+    """Count cached record references without following already-owned input axes."""
+    members = memo.member_axes or ()
+    references = len(members) + sum(len(axis) for axis in members)
+    for (_, held, groups), cube in memo.cubes.items():
+        references += 5 + len(held) + len(groups)
+        if cube is not None:
+            references += 3 + len(cube.erased) + len(cube.peers)
+    for (_, cube), condition in memo.conditions.items():
+        assert any(cube is stored for stored in memo.cubes.values())
+        references += 4 + len(condition or ())
+    return references
+
+
 class TestConflictSetCrossGating:
     """Two engaged conflict sets condition a package on the set it varies over.
 
@@ -6607,6 +6671,8 @@ class TestConflictSetCrossGating:
         ],
         base_names: frozenset[str] = frozenset(),
         edges: Callable[[str, str], dict[str, tuple[str, ...]]] | None = None,
+        *,
+        additional_groups: Sequence[str] = (),
     ) -> Pylock:
         """Emit the 2x3 product of the a and b sets, one fork per point."""
         targets: dict[str, TargetLock] = {}
@@ -6623,7 +6689,7 @@ class TestConflictSetCrossGating:
             LockInput(
                 targets=targets,
                 env_base_names={_env_signature(self._BASE): base_names},
-                dependency_groups=(*self._A, *self._B),
+                dependency_groups=(*self._A, *self._B, *additional_groups),
                 conflicts=self._conflicts,
             )
         )
@@ -6646,6 +6712,195 @@ class TestConflictSetCrossGating:
             )
 
         return self._forked_lock(contribution, base_names=frozenset({"packaging"}))
+
+    def test_shared_subcubes_and_conditions_are_prepared_once_per_lock(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        work = _projection_work(monkeypatch)
+        first = self._lock()
+        assert work["products"] == 6
+        assert work["conditions"] == 9
+        assert self._dangling(first) == []
+
+        second = self._lock()
+        assert work["products"] == 12
+        assert work["conditions"] == 18
+        for a, b in itertools.product([None, *self._A], [None, *self._B]):
+            groups = tuple(member for member in (a, b) if member is not None)
+            assert self._select(first, groups) == self._select(second, groups)
+
+    def test_failed_and_empty_shared_conditions_are_both_reused(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        work = _projection_work(monkeypatch)
+        pylock = self._forked_lock(
+            lambda _a, b: (
+                {"attrs": _selection_pin("attrs", "24.0")},
+                {} if b == "b1" else {"attrs": (("group", b),)},
+            )
+        )
+
+        assert work["refused"] == 1
+        assert work["empty"] == 1
+        assert self._select(pylock, ["b1"]) == {"attrs 24.0"}
+        assert self._select(pylock, ["a1"]) == set()
+
+    @pytest.mark.parametrize("budget", [0, 2, 26, 38, 64, 1_024])
+    def test_projection_cache_retains_only_budgeted_references(
+        self, monkeypatch: pytest.MonkeyPatch, budget: int
+    ) -> None:
+        memo_type = projection_engine._ProjectionMemo
+        stores = _projection_memos(monkeypatch)
+        self._lock()
+        axes = stores[0].axes
+        signature = next(iter(axes.env_signatures.values()))
+        erased = frozenset().union(*axes.exclusion_groups)
+        memo = memo_type(axes, budget)
+
+        cube = memo.cube(signature, frozenset(), (0, 1), erased)
+        assert cube is not None
+        assert len(cube.peers) == 6
+        for name in ("packaging", "six", "idna"):
+            memo.condition(name, cube)
+
+        assert _projection_references(memo) <= budget
+        assert memo.remaining >= 0
+
+    def test_subcube_peers_keep_the_environment_and_held_members(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        memo_type = projection_engine._ProjectionMemo
+        stores = _projection_memos(monkeypatch)
+        self._lock()
+        axes = stores[0].axes
+        targets = dict(axes.targets)
+        counterparts = {}
+        for label, lock in axes.targets.items():
+            target = _target(python_version="3.11").with_selection(
+                lock.target.selection
+            )
+            targets[target.label] = replace(lock, target=target)
+            counterparts[label] = target.label
+
+        signatures = {
+            label: _env_signature(lock.target) for label, lock in targets.items()
+        }
+        expanded = replace(
+            axes,
+            targets=targets,
+            env_signatures=signatures,
+            forks=projection_engine._fork_index(targets, signatures),
+            markers={
+                **axes.markers,
+                **{
+                    counterparts[label]: marker
+                    for label, marker in axes.markers.items()
+                },
+            },
+            gates={
+                **axes.gates,
+                **{
+                    (name, counterparts[label]): condition
+                    for (name, label), condition in axes.gates.items()
+                },
+            },
+            environment_markers={},
+        )
+        memo = memo_type(expanded, 4_096)
+        varying, fixed = axes.exclusion_groups
+        for signature in set(signatures.values()):
+            for member in fixed:
+                held = frozenset({member})
+                cube = memo.cube(signature, held, (0,), frozenset(varying))
+                assert cube is not None
+                expected = {
+                    label
+                    for (environment, selection), label in expanded.forks.items()
+                    if environment == signature and selection - varying == held
+                }
+                assert set(cube.peers) == expected
+
+    @pytest.mark.parametrize("budget", [0, 1_024])
+    def test_incomplete_subcube_refuses_and_reuses_the_refusal(
+        self, monkeypatch: pytest.MonkeyPatch, budget: int
+    ) -> None:
+        memo_type = projection_engine._ProjectionMemo
+        stores = _projection_memos(monkeypatch)
+        self._lock()
+        axes = stores[0].axes
+        missing = next(iter(axes.forks))
+        partial = replace(
+            axes,
+            forks={key: value for key, value in axes.forks.items() if key != missing},
+        )
+        memo = memo_type(partial, budget)
+        work = _projection_work(monkeypatch)
+        signature = missing[0]
+        erased = frozenset().union(*axes.exclusion_groups)
+
+        assert memo.cube(signature, frozenset(), (0, 1), erased) is None
+        assert memo.cube(signature, frozenset(), (0, 1), erased) is None
+        assert work["products"] == (1 if budget else 2)
+        assert _projection_references(memo) <= budget
+
+    def test_subcube_conditions_remain_package_specific(self) -> None:
+        def contribution(
+            a: str, b: str
+        ) -> tuple[dict[str, PinShape], dict[str, tuple[tuple[str, str], ...]]]:
+            pins: dict[str, PinShape] = {}
+            conditions: dict[str, tuple[tuple[str, str], ...]] = {}
+            if a == "a1" or b == "b1":
+                pins["attrs"] = _selection_pin("attrs", "24.0")
+                conditions["attrs"] = tuple(
+                    ("group", member) for member in (a, b) if member in {"a1", "b1"}
+                )
+            if b == "b1":
+                pins["idna"] = _selection_pin("idna", "3.7")
+                conditions["idna"] = (("group", b),)
+            return pins, conditions
+
+        pylock = self._forked_lock(contribution)
+        assert self._select(pylock, ["a1"]) == {"attrs 24.0"}
+        assert self._select(pylock, ["b1"]) == {"attrs 24.0", "idna 3.7"}
+        assert self._select(pylock, ["a2", "b2"]) == set()
+
+    def test_shared_conditions_keep_nonconflicting_group_requirements(self) -> None:
+        pylock = self._forked_lock(
+            lambda _a, _b: (
+                {
+                    "attrs": _selection_pin("attrs", "24.0"),
+                    "idna": _selection_pin("idna", "3.7"),
+                },
+                {
+                    "attrs": (("group", "keep-a"),),
+                    "idna": (("group", "keep-b"),),
+                },
+            ),
+            additional_groups=("keep-a", "keep-b"),
+        )
+
+        assert self._select(pylock, ["keep-a"]) == {"attrs 24.0"}
+        assert self._select(pylock, ["keep-b"]) == {"idna 3.7"}
+        assert self._select(pylock, ["keep-a", "keep-b"]) == {"attrs 24.0", "idna 3.7"}
+        assert self._select(pylock, ["a1"]) == set()
+        assert self._select(pylock, []) == set()
+
+    @pytest.mark.parametrize("budget", [0, 2, 26])
+    def test_exhausted_projection_cache_keeps_emitted_packages_and_selections(
+        self, monkeypatch: pytest.MonkeyPatch, budget: int
+    ) -> None:
+        expected = self._lock()
+        monkeypatch.setattr(projection_engine, "_PROJECTION_CACHE_MIN_UNITS", budget)
+        monkeypatch.setattr(projection_engine, "_PROJECTION_CACHE_UNITS_PER_FORK", 0)
+        work = _projection_work(monkeypatch)
+        actual = self._lock()
+
+        assert actual.to_dict()["packages"] == expected.to_dict()["packages"]
+        assert work["products"] > 6
+        assert self._dangling(actual) == []
+        for a, b in itertools.product([None, *self._A], [None, *self._B]):
+            groups = tuple(member for member in (a, b) if member is not None)
+            assert self._select(actual, groups) == self._select(expected, groups)
 
     def _select(self, pylock: Pylock, groups: Sequence[str]) -> set[str]:
         return {

@@ -81,8 +81,14 @@ __all__ = [
 _EnvSignature: TypeAlias = "tuple[tuple[str, str], ...]"
 _Members: TypeAlias = "frozenset[tuple[str, str]]"
 _ForkKey: TypeAlias = "tuple[_EnvSignature, _Members]"
+_CubeKey: TypeAlias = "tuple[_EnvSignature, _Members, tuple[int, ...]]"
 
 _NO_MEMBERS: _Members = frozenset()
+_PROJECTION_CACHE_MIN_UNITS = 1_024
+_PROJECTION_CACHE_UNITS_PER_FORK = 8
+# Table entries, tuple keys and record fields receive conservative reference allowances.
+_CUBE_CACHE_FIXED_UNITS = 12
+_CONDITION_CACHE_FIXED_UNITS = 6
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,6 +154,92 @@ class _Projection:
 
     dropped: _Members
     gate: _Members
+
+
+class _ProjectionCube:
+    """Peer labels and erased selectors for one complete candidate subcube."""
+
+    __slots__ = ("erased", "peers", "retained")
+
+    def __init__(self, erased: _Members, peers: tuple[str, ...]) -> None:
+        self.erased = erased
+        self.peers = peers
+        self.retained = False
+
+
+class _ProjectionMemo:
+    """Bound temporary subcube reuse by retained references, rather than bytes."""
+
+    __slots__ = ("axes", "conditions", "cubes", "member_axes", "remaining")
+
+    def __init__(self, axes: _ForkAxes, budget: int) -> None:
+        self.axes = axes
+        self.remaining = budget
+        self.cubes: dict[_CubeKey, _ProjectionCube | None] = {}
+        self.conditions: dict[tuple[str, _ProjectionCube], _Members | None] = {}
+        self.member_axes: tuple[tuple[tuple[str, str], ...], ...] | None = None
+
+        units = len(axes.exclusion_groups) + sum(
+            len(group) for group in axes.exclusion_groups
+        )
+        if self._reserve(units):
+            self.member_axes = tuple(
+                tuple(sorted(group)) for group in axes.exclusion_groups
+            )
+
+    def _reserve(self, units: int) -> bool:
+        """Account for retained containers and their member or peer references."""
+        if units > self.remaining:
+            return False
+        self.remaining -= units
+        return True
+
+    def cube(
+        self,
+        signature: _EnvSignature,
+        held: _Members,
+        groups: tuple[int, ...],
+        erased: _Members,
+    ) -> _ProjectionCube | None:
+        """Return all candidate peers, or None if any point lacks a fork."""
+        key = (signature, held, groups)
+        if key in self.cubes:
+            return self.cubes[key]
+
+        members = self.member_axes
+        choices = (
+            (tuple(sorted(self.axes.exclusion_groups[index])) for index in groups)
+            if members is None
+            else (members[index] for index in groups)
+        )
+        units = _CUBE_CACHE_FIXED_UNITS + len(held) + len(groups) + len(erased)
+        peers = []
+        for swap in product(*choices):
+            label = self.axes.forks.get((signature, held | frozenset(swap)))
+            if label is None:
+                if self._reserve(units):
+                    self.cubes[key] = None
+                return None
+            peers.append(label)
+
+        cube = _ProjectionCube(erased, tuple(peers))
+        if self._reserve(units + len(peers)):
+            cube.retained = True
+            self.cubes[key] = cube
+        return cube
+
+    def condition(self, name: str, cube: _ProjectionCube) -> _Members | None:
+        """Return the package's common condition over a complete subcube."""
+        key = (name, cube)
+        if cube.retained and key in self.conditions:
+            return self.conditions[key]
+        result = _merged_fork_gate(self.axes, name, cube.peers, cube.erased)
+        # Condition keys retain their cube, so its payload needs its own reservation.
+        if cube.retained and self._reserve(
+            _CONDITION_CACHE_FIXED_UNITS + len(result or ())
+        ):
+            self.conditions[key] = result
+        return result
 
 
 def _fork_index(
@@ -1218,6 +1310,13 @@ def _fork_projections(
 
     limits = {key: frozenset(axes.targets[key[1]].target.selection) for key in same_pin}
     projections: dict[tuple[str, str], _Projection] = {}
+    memo = _ProjectionMemo(
+        axes,
+        max(
+            _PROJECTION_CACHE_MIN_UNITS,
+            _PROJECTION_CACHE_UNITS_PER_FORK * len(axes.targets),
+        ),
+    )
     stale = set(same_pin)
     while stale:
         for name, label in stale:
@@ -1227,6 +1326,7 @@ def _fork_projections(
                 label,
                 limits[name, label],
                 same_pin[name, label],
+                memo,
                 is_base=_is_base(
                     name, axes.env_signatures[label], env_fork_counts, env_base_names
                 ),
@@ -1266,6 +1366,7 @@ def _project_fork(
     label: str,
     limit: _Members,
     same_pin: frozenset[str],
+    memo: _ProjectionMemo,
     *,
     is_base: bool,
 ) -> _Projection:
@@ -1292,27 +1393,26 @@ def _project_fork(
 
     dropped: _Members = frozenset()
     gate = own_gate
-    varying: list[AbstractSet[tuple[str, str]]] = []
-    for group in axes.exclusion_groups:
+    varying: tuple[int, ...] = ()
+    erased = _NO_MEMBERS
+    for index, group in enumerate(axes.exclusion_groups):
         member = group & selection & limit
         if len(member) != 1:
             continue
 
-        candidate = [*varying, group]
-        erased = _NO_MEMBERS.union(*candidate)
-        held = selection - erased
-        keys = [
-            (signature, held | frozenset(swap))
-            for swap in product(*(sorted(members) for members in candidate))
-        ]
-        peers = [axes.forks[key] for key in keys if key in axes.forks]
-        if len(peers) != len(keys) or not same_pin.issuperset(peers):
+        candidate = (*varying, index)
+        candidate_erased = frozenset(group) if not varying else erased | group
+        cube = memo.cube(
+            signature, selection - candidate_erased, candidate, candidate_erased
+        )
+        if cube is None or not same_pin.issuperset(cube.peers):
             continue
 
-        merged = _merged_fork_gate(axes, name, peers, erased)
+        merged = memo.condition(name, cube)
         if merged is None:
             continue
         varying = candidate
+        erased = candidate_erased
         dropped |= member
         gate = merged
 
