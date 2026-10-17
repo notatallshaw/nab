@@ -288,6 +288,22 @@ def _check_extra_names(extras: Sequence[str]) -> None:
             raise LockValidationError(msg)
 
 
+def _prepare_environment_rows(
+    environments: Sequence[Marker],
+) -> tuple[list[MarkerSet], bool]:
+    """Build rows and report whether their raw syntax names implementation_version."""
+    rows: list[MarkerSet] = []
+    uses_implementation_version = False
+    for marker in environments:
+        if uses_implementation_version:
+            converted = MarkerSet.from_marker(marker)
+        else:
+            converted, names = MarkerSet.from_marker_with_variables(marker)
+            uses_implementation_version = "implementation_version" in names
+        rows.append(converted)
+    return rows, uses_implementation_version
+
+
 def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylock:
     """Build a :class:`Pylock` from the input shape.
 
@@ -309,9 +325,9 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
     exclusion_groups = conflict_exclusion_groups(lock_input.conflicts)
     store = DecisionStore()
     # Build once for the universe and coverage check.
-    environment_rows = [
-        MarkerSet.from_marker(marker) for marker in lock_input.environments
-    ]
+    environment_rows, uses_implementation_version = _prepare_environment_rows(
+        lock_input.environments
+    )
     universe, env_rows = _emission_scope(lock_input, store, rows=environment_rows)
     prepared_sets = PreparedMarkerSets()
     package_records = _build_packages(
@@ -338,6 +354,7 @@ def build_pylock(lock_input: LockInput, *, lock_dir: Path | None = None) -> Pylo
         environments=lock_input.environments,
         store=store,
         environment_sets=environment_rows,
+        uses_implementation_version=uses_implementation_version,
     )
     tool: dict[str, Any] | None = (
         {"nab": lock_input.provenance.to_block()}

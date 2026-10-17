@@ -162,6 +162,19 @@ class MarkerSet:
         return cls._wrap(_markersets.parse(marker))
 
     @classmethod
+    @_bounded
+    def from_marker_with_variables(
+        cls, marker: str | MarkerLike
+    ) -> tuple[MarkerSet, frozenset[str]]:
+        """Return a marker set and the variable names from the same parsed syntax.
+
+        Names include variables removed by normalization, as in ``variable_names``.
+        Marker objects are rendered once. Conversion failures match ``from_marker``.
+        """
+        tree, names = _markersets.parse_with_variables(marker)
+        return cls._wrap(tree), names
+
+    @classmethod
     def full(cls) -> MarkerSet:
         """Return the full set: every environment (an absent, always-true marker)."""
         return cls._wrap(_markersets.TRUE)

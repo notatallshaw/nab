@@ -521,6 +521,20 @@ def parse(source: str | MarkerLike) -> Formula:
     return TRUE if parsed is None else _convert(parsed)
 
 
+def parse_with_variables(
+    source: str | MarkerLike,
+) -> tuple[Formula, frozenset[str]]:
+    """Convert a marker and collect names from its original parsed syntax."""
+    parsed = _parse_ast(source)
+    if parsed is None:
+        return TRUE, frozenset[str]()
+
+    tree = _convert(parsed)
+    names: set[str] = set()
+    _collect_variables(parsed, names)
+    return tree, frozenset(names)
+
+
 def variable_names(source: str | MarkerLike) -> frozenset[str]:
     """Return every marker variable ``source`` names, as parsed.
 

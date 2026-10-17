@@ -65,6 +65,9 @@ nab_markersets.markersets   DecisionStore, MarkerSet, variable_names
 
 The package root binds no names, so importing `nab_markersets` pulls in no submodules.
 
+`MarkerSet.from_marker_with_variables` returns a set and its original variable names from one parse.
+Names include variables removed by normalization.
+
 `pickle.dumps` can write a `MarkerSet`, but `pickle.loads` fails because direct construction is
 refused. `==` compares construction trees; use `equivalent` to compare the environments two sets
 select.
