@@ -1235,15 +1235,39 @@ def _value_candidates(
     )
 
 
+def _scalar_truth_vector(
+    atoms: Sequence[Atom], point: object, memo: Memo
+) -> tuple[bool, ...]:
+    """Read a scalar point's value-atom vector through the existing truth cache."""
+    truths = memo.truths
+    text = str(point)
+    vector = []
+    for atom in atoms:
+        key = (atom, text)
+        value = truths.get(key)
+        if value is None:
+            value = truths[key] = atom.holds(point)
+        vector.append(value)
+    return tuple(vector)
+
+
 def _reduce_cells(
-    points: Iterable[object], atoms: Sequence[Atom], max_cells: int, memo: Memo
+    points: Iterable[object],
+    atoms: Sequence[Atom],
+    max_cells: int,
+    memo: Memo,
+    *,
+    value_points: bool = False,
 ) -> list[Cell]:
     """Return one cell per distinct truth vector ``atoms`` take over ``points``.
 
     Points agreeing on every atom decide the same way, so the first of them
     stands for the rest.
+
+    ``value_points`` permits reuse of owned plain-string candidates.
     """
-    points = list(points)
+    if not value_points or type(points) is not list:
+        points = list(points)
 
     if len(points) * len(atoms) > max_cells:
         msg = (
@@ -1251,9 +1275,18 @@ def _reduce_cells(
         )
         raise IntractableMarkerSet(msg)
 
+    scalar = (
+        value_points
+        and len(atoms) > 1
+        and all(atom.kind == AXIS_VALUE for atom in atoms)
+    )
     representatives: dict[tuple[bool, ...], object] = {}
     for point in points:
-        vector = tuple(_truth(atom, point, memo) for atom in atoms)
+        vector = (
+            _scalar_truth_vector(atoms, point, memo)
+            if scalar
+            else tuple(_truth(atom, point, memo) for atom in atoms)
+        )
         representatives.setdefault(vector, point)
         # With all 2**len(atoms) vectors represented, later points only repeat one.
         if len(representatives) == 1 << len(atoms):
@@ -1276,7 +1309,11 @@ def partition_value_axis(
 ) -> list[Cell]:
     """Cells of a version/string value axis."""
     return _reduce_cells(
-        _value_candidates(variable, atoms, max_cells, memo), atoms, max_cells, memo
+        _value_candidates(variable, atoms, max_cells, memo),
+        atoms,
+        max_cells,
+        memo,
+        value_points=True,
     )
 
 
