@@ -18,7 +18,7 @@ import pytest
 
 from nab_markersets import _markersets as engine
 from nab_markersets._packaging import Marker
-from nab_markersets.errors import IntractableMarkerSet
+from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
 from nab_markersets.markersets import _MAX_CELLS, _MAX_WORK, DecisionStore, MarkerSet
 
 if TYPE_CHECKING:
@@ -858,15 +858,10 @@ def test_the_store_reaches_the_engine_from_simplify(
     assert partitions() == first
 
 
-def test_the_store_reaches_both_emptiness_decisions_under_serialisation(
+def test_the_store_reaches_every_decision_under_serialisation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The store :meth:`MarkerSet.to_marker_string` is handed reaches its two decisions.
-
-    Warmed by an :meth:`MarkerSet.is_full` over the same three axes, the pair
-    partitions none of them again; the three left are the round-trip check's, which
-    keeps a memo of its own.
-    """
+    """Serialization and its round-trip check reuse the supplied partitions."""
     marker = ms('python_version < "3.12"' + _SPREAD)
     text = marker.to_marker_string()
 
@@ -879,8 +874,21 @@ def test_the_store_reaches_both_emptiness_decisions_under_serialisation(
     before = partitions()
     assert marker.to_marker_string(store=warm) == text
 
-    assert cold == 6
-    assert partitions() - before == 3
+    assert cold == 3
+    assert partitions() == before
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_serialisation_rejects_an_inequivalent_round_trip(
+    monkeypatch: pytest.MonkeyPatch, *, shared: bool
+) -> None:
+    marker = ms('os_name == "posix"')
+    store = DecisionStore() if shared else None
+    assert marker.to_marker_string(store=store) == 'os_name == "posix"'
+    monkeypatch.setattr(engine, "serialize", lambda _node: 'os_name == "nt"')
+
+    with pytest.raises(UnserializableMarkerSet, match="not round-trip sound"):
+        marker.to_marker_string(store=store)
 
 
 def test_a_shared_store_answers_what_fresh_stores_answer() -> None:
