@@ -505,8 +505,7 @@ class MarkerSet:
 
         text = _markersets.serialize(_markersets.to_nnf(self._tree))
         rebuilt = MarkerSet.from_marker(text)
-        if not self.equivalent(rebuilt):  # pragma: no cover
-            # Unreachable: the per-atom complements are sound by construction.
+        if not self.equivalent(rebuilt, store=store):
             msg = "serialisation is not round-trip sound"
             raise UnserializableMarkerSet(msg)
         return text
