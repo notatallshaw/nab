@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 import tomli_w
 
 from nab_index.atomic import atomic_write_text
+from nab_markersets.conversions import PreparedMarkerSets
 from nab_markersets.errors import IntractableMarkerSet, UnserializableMarkerSet
 from nab_markersets.markersets import DecisionStore, MarkerSet
 from nab_provider._vendor.packaging.markers import (
@@ -48,7 +49,7 @@ from nab_provider.marker_holds import intractable_as_error
 from ..conflicts import conflict_exclusion_groups, conflict_member_groups
 from .builder import require_artifact_hashes, validate_artifact_hashes
 from .coverage import validate_marker_coverage
-from .disjointness import PreparedMarkerSets, validate_marker_disjointness
+from .disjointness import validate_marker_disjointness
 from .groups import BASE_MEMBER
 
 if TYPE_CHECKING:

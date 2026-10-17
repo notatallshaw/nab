@@ -21,14 +21,11 @@ the ``powerset(extras) x powerset(groups)`` grid.
 from __future__ import annotations
 
 import itertools
-import re
-import sys
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import MarkerSet
-from nab_provider._vendor.packaging.markers import Marker
 from nab_provider._vendor.packaging.utils import canonicalize_name
 from nab_provider.conflict_kind import KIND_EXTRA, KIND_GROUP, MARKER_VARIABLE_FOR_KIND
 
@@ -36,12 +33,13 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from collections.abc import Set as AbstractSet
 
+    from nab_markersets.conversions import PreparedMarkerSets
+    from nab_provider._vendor.packaging.markers import Marker
     from nab_provider._vendor.packaging.pylock import Package
 
 
 __all__ = [
     "DisjointnessError",
-    "PreparedMarkerSets",
 ]
 
 # Two or more active members of a conflict set is the illegitimate case
@@ -51,70 +49,6 @@ _MUTUALLY_EXCLUSIVE_LIMIT = 2
 # The selection walk fails loud past this many conflict-respecting
 # selections, keeping the bounded-failure contract on pathological input.
 _MAX_SELECTIONS = 100_000
-
-_PREPARED_SET_LIMIT = 32
-_PREPARED_TEXT_LIMIT = 65_536
-_PREPARED_LITERAL_LIMIT = 64
-_QUOTED_LITERAL = re.compile(r"""(?:"[^"]*"|'[^']*')""")
-_NATIVE_MARKER_STR: object = Marker.__str__
-
-
-def _native_marker_text(marker: Marker | None) -> str | None:
-    """Read an original native renderer, leaving other inputs to the factory."""
-    if type(marker) is not Marker or Marker.__str__ is not _NATIVE_MARKER_STR:
-        return None
-    try:
-        return str(marker)
-    except RecursionError:
-        return None
-
-
-class PreparedMarkerSets:
-    """Hand successful finalizer conversions to one lock validation on one thread."""
-
-    __slots__ = ("_characters", "_sets")
-
-    def __init__(self) -> None:
-        """Start an empty handoff for one lock build."""
-        self._sets: dict[tuple[str, int], MarkerSet] = {}
-        self._characters = 0
-
-    def prepare(self, marker: Marker) -> MarkerSet:
-        """Convert afresh for the finalizer, retaining eligible successes."""
-        text = _native_marker_text(marker)
-        limit = sys.getrecursionlimit()
-        converted = MarkerSet.from_marker(marker if text is None else text)
-        if text is not None and limit == sys.getrecursionlimit():
-            self._remember(text, converted, limit)
-        return converted
-
-    def _remember(self, text: str, converted: MarkerSet, limit: int) -> None:
-        """Retain a bounded source and its conversion for the validator."""
-        if "\\" in text:
-            return
-        key = (text, limit)
-        if (
-            key in self._sets
-            or len(self._sets) >= _PREPARED_SET_LIMIT
-            or self._characters + len(text) > _PREPARED_TEXT_LIMIT
-        ):
-            return
-        # Check original literals, including any the converted formula folded away.
-        if any(
-            match.end() - match.start() - 2 > _PREPARED_LITERAL_LIMIT
-            for match in _QUOTED_LITERAL.finditer(text)
-        ):
-            return
-        self._sets[key] = converted
-        self._characters += len(text)
-
-    def convert(self, marker: Marker | None) -> MarkerSet:
-        """Use a matching prepared conversion for the validator, or build it here."""
-        text = _native_marker_text(marker)
-        if text is None:
-            return _marker_set(marker)
-        converted = self._sets.get((text, sys.getrecursionlimit()))
-        return MarkerSet.from_marker(text) if converted is None else converted
 
 
 class DisjointnessError(ValueError):
@@ -194,8 +128,9 @@ def validate_marker_disjointness(
     declared_members = _declared_membership_literals(extras, groups)
 
     for entries in same_name_entries:
-        convert = _marker_set if prepared_sets is None else prepared_sets.convert
-        marker_sets = [convert(pkg.marker) for pkg in entries]
+        marker_sets = [
+            _marker_set(pkg.marker, prepared_sets=prepared_sets) for pkg in entries
+        ]
         literals = [ms.set_memberships() for ms in marker_sets]
         for i, j in itertools.combinations(range(len(entries)), 2):
             names = literals[i] | literals[j]
@@ -234,11 +169,17 @@ def _distinct_environments(
     return distinct
 
 
-def _marker_set(marker: Marker | None) -> MarkerSet:
+def _marker_set(
+    marker: Marker | None, *, prepared_sets: PreparedMarkerSets | None = None
+) -> MarkerSet:
     """Return the algebra set for ``marker``; the full set when absent."""
     if marker is None:
         return MarkerSet.full()
-    return MarkerSet.from_marker(marker)
+    return (
+        MarkerSet.from_marker(marker)
+        if prepared_sets is None
+        else prepared_sets.convert(marker)
+    )
 
 
 def _canonical_exclusion_sets(

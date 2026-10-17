@@ -25,12 +25,12 @@ else:
 
 from nab_markersets import _markersets as engine
 from nab_markersets import markersets
+from nab_markersets.conversions import PreparedMarkerSets
 from nab_markersets.errors import IntractableMarkerSet
 from nab_markersets.markersets import DecisionStore, MarkerSet
 from nab_project._lockfile import disjointness, pylock
 from nab_project._lockfile.coverage import CoverageError
 from nab_project._lockfile.disjointness import (
-    PreparedMarkerSets,
     validate_marker_disjointness,
 )
 from nab_project._lockfile.pylock import (

@@ -1,25 +1,21 @@
-"""Finalizer conversions remain fresh and validator reuse stays within one build."""
+"""Fresh preparation and bounded consumer reuse preserve marker-set semantics."""
 
 from __future__ import annotations
 
 import importlib.util
 import re
+import subprocess
 import sys
 import warnings
 
 import pytest
 from packaging.markers import Marker as ExternalMarker
 
+from nab_markersets import conversions as conversion_module
+from nab_markersets._packaging import InvalidMarker, Marker, UndefinedComparison
+from nab_markersets.conversions import PreparedMarkerSets
 from nab_markersets.errors import IntractableMarkerSet
-from nab_markersets.markersets import DecisionStore, MarkerSet
-from nab_project._lockfile import disjointness, pylock
-from nab_project._lockfile.disjointness import PreparedMarkerSets
-from nab_provider._vendor.packaging.markers import (
-    InvalidMarker,
-    Marker,
-    UndefinedComparison,
-)
-from nab_provider.conflict_kind import KIND_EXTRA
+from nab_markersets.markersets import MarkerSet
 
 
 @pytest.fixture
@@ -58,7 +54,6 @@ def test_prepare_is_fresh_but_validation_reuses_matching_text(
     another = PreparedMarkerSets()
     assert another.convert(marker).evaluate({"sys_platform": "linux"})
     assert another.convert(marker).evaluate({"sys_platform": "linux"})
-    assert owner.convert(None).evaluate({})
     assert len(conversions) == 5
 
 
@@ -80,7 +75,7 @@ def test_capacity_keeps_existing_handoffs(
     monkeypatch: pytest.MonkeyPatch,
     conversions: list[str | Marker | ExternalMarker],
 ) -> None:
-    monkeypatch.setattr(disjointness, "_PREPARED_SET_LIMIT", 2)
+    monkeypatch.setattr(conversion_module, "_PREPARED_SET_LIMIT", 2)
     markers = [Marker(f'os_name == "p{index}"') for index in range(3)]
     owner = PreparedMarkerSets()
     for marker in markers:
@@ -97,7 +92,7 @@ def test_total_text_budget_counts_each_distinct_key_once(
 ) -> None:
     first, second, third = (Marker(f'os_name == "p{index}"') for index in range(3))
     monkeypatch.setattr(
-        disjointness, "_PREPARED_TEXT_LIMIT", len(str(first)) + len(str(second))
+        conversion_module, "_PREPARED_TEXT_LIMIT", len(str(first)) + len(str(second))
     )
     owner = PreparedMarkerSets()
     owner.prepare(first)
@@ -122,8 +117,8 @@ def test_failed_preparation_leaves_validation_fresh(
     assert len(conversions) == 3
 
 
-def test_foreign_and_custom_renderers_are_never_handed_off(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.skipif(Marker is ExternalMarker, reason="requires both packaging backends")
+def test_foreign_markers_are_never_handed_off(
     conversions: list[str | Marker | ExternalMarker],
 ) -> None:
     owner = PreparedMarkerSets()
@@ -132,6 +127,12 @@ def test_foreign_and_custom_renderers_are_never_handed_off(
     assert owner.convert(foreign).evaluate({"sys_platform": "linux"})
     assert conversions == [foreign, foreign]
 
+
+def test_custom_renderers_are_never_handed_off(
+    monkeypatch: pytest.MonkeyPatch,
+    conversions: list[str | Marker | ExternalMarker],
+) -> None:
+    owner = PreparedMarkerSets()
     original = Marker.__str__
     rendered: list[Marker] = []
 
@@ -143,7 +144,7 @@ def test_foreign_and_custom_renderers_are_never_handed_off(
     native = Marker('os_name == "posix"')
     owner.prepare(native)
     assert owner.convert(native).evaluate({"os_name": "posix"})
-    assert conversions[2:] == [native, native]
+    assert conversions == [native, native]
     assert rendered == [native, native]
 
 
@@ -163,7 +164,7 @@ def test_handoff_keys_the_rendering_converted_by_the_factory(
 
     monkeypatch.setattr(Marker, "__str__", changing)
     spec = importlib.util.spec_from_file_location(
-        "prepared_renderer_boundary", disjointness.__file__
+        "nab_markersets.prepared_renderer_boundary", conversion_module.__file__
     )
     assert spec is not None
     assert spec.loader is not None
@@ -282,45 +283,86 @@ def test_native_rendering_recursion_uses_the_factory_error() -> None:
         sys.setrecursionlimit(previous)
 
 
-def test_finalizer_hands_off_the_emitted_and_fallback_sets(
-    conversions: list[str | Marker | ExternalMarker],
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('sys_platform == "linux"', (True, False)),
+        ('python_version >= "3.13"', (True, False)),
+        ('implementation_version < "3.13.2"', (False, True)),
+        ('extra == "feature"', (True, False)),
+        ('"gpu" in extras and "dev" not in dependency_groups', (True, False)),
+        ('"a" == "a"', (True, True)),
+        ('"a" == "b"', (False, False)),
+        ('sys_platform == "linux" and sys_platform == "win32"', (False, False)),
+        ('os_name == "posix" or sys_platform == "win32"', (True, True)),
+    ],
+)
+def test_handoff_matches_fresh_factory_over_distinct_environments(
+    source: str, expected: tuple[bool, bool]
 ) -> None:
     owner = PreparedMarkerSets()
-    raw = Marker('sys_platform == "linux" and os_name == "posix"')
-    within = MarkerSet.from_marker('os_name == "posix"')
-    emitted = pylock._finalize_marker(raw, within, prepared_sets=owner)
-    assert emitted is not None
-    assert str(emitted) != str(raw)
-    before = len(conversions)
-    assert owner.convert(emitted).evaluate({"sys_platform": "linux", "os_name": "nt"})
-    assert not owner.convert(emitted).evaluate(
-        {"sys_platform": "win32", "os_name": "nt"}
-    )
-    assert len(conversions) == before
-
-    raw = Marker('extras == "unused"')
-    assert pylock._finalize_marker(raw, MarkerSet.full(), prepared_sets=owner) is raw
-    before = len(conversions)
-    assert owner.convert(raw).is_empty()
-    assert len(conversions) == before
-
-
-def test_final_assembly_hands_off_the_complete_gated_marker(
-    conversions: list[str | Marker | ExternalMarker],
-) -> None:
-    owner = PreparedMarkerSets()
-    parts = [
-        pylock._GatedMarker(Marker('sys_platform == "linux"'), ((KIND_EXTRA, "a"),)),
-        pylock._GatedMarker(Marker('sys_platform == "win32"'), ((KIND_EXTRA, "b"),)),
+    marker = Marker(source)
+    environments = [
+        {
+            "sys_platform": "linux",
+            "os_name": "posix",
+            "python_full_version": "3.13.2",
+            "implementation_version": "3.13.2",
+            "extra": frozenset({"feature"}),
+            "extras": frozenset({"gpu"}),
+            "dependency_groups": frozenset(),
+        },
+        {
+            "sys_platform": "win32",
+            "os_name": "nt",
+            "python_full_version": "3.12.4",
+            "implementation_version": "3.12.4",
+            "extra": frozenset(),
+            "extras": frozenset(),
+            "dependency_groups": frozenset({"dev"}),
+        },
     ]
-    marker = pylock._finalize_parts(
-        parts, MarkerSet.full(), "demo", {}, DecisionStore(), prepared_sets=owner
+    prepared = owner.prepare(marker)
+    for converted in (
+        prepared,
+        owner.convert(Marker(str(marker))),
+        MarkerSet.from_marker(marker),
+    ):
+        assert tuple(converted.evaluate(env) for env in environments) == expected
+        assert converted.equivalent(prepared)
+
+
+@pytest.mark.parametrize("method", ["prepare", "convert"])
+def test_absent_marker_is_left_to_the_callers_domain(method: str) -> None:
+    owner = PreparedMarkerSets()
+    with pytest.raises(TypeError):
+        getattr(owner, method)(None)
+
+
+def test_handoff_works_with_released_packaging_without_provider() -> None:
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+sys.modules["nab_provider"] = None
+from packaging.markers import Marker
+from nab_markersets._packaging import BACKEND
+from nab_markersets.conversions import PreparedMarkerSets
+assert BACKEND == "packaging"
+owner = PreparedMarkerSets()
+marker = Marker('sys_platform == "linux"')
+prepared = owner.prepare(marker)
+assert owner.prepare(marker) is not prepared
+converted = owner.convert(Marker('sys_platform == "linux"'))
+assert converted is prepared
+assert converted.evaluate({"sys_platform": "linux"})
+assert not converted.evaluate({"sys_platform": "win32"})
+""",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    assert marker is not None
-    before = len(conversions)
-    converted = owner.convert(marker)
-    assert converted.evaluate({"sys_platform": "linux", "extras": frozenset({"a"})})
-    assert not converted.evaluate({"sys_platform": "linux", "extras": frozenset({"b"})})
-    assert converted.evaluate({"sys_platform": "win32", "extras": frozenset({"b"})})
-    assert not converted.evaluate({"sys_platform": "win32", "extras": frozenset({"a"})})
-    assert len(conversions) == before
+    assert done.returncode == 0, done.stderr

@@ -58,7 +58,7 @@ The supported API is the module paths below. Everything else in the package is i
 renamed or relocated in any release.
 
 ```text
-nab_markersets.conversions  MarkerSetCache
+nab_markersets.conversions  MarkerSetCache, PreparedMarkerSets
 nab_markersets.errors       IntractableMarkerSet, UnserializableMarkerSet
 nab_markersets.markersets   DecisionStore, MarkerSet, variable_names
 ```
