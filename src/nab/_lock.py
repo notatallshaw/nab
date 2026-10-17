@@ -83,16 +83,16 @@ from ._resolve import (
 )
 from ._run import (
     ConfigLadder,
-    _cli_overrides,
-    _layered_run_settings_or_exit,
-    _project_cli_overrides_or_exit,
     _reject_python_flag_in_universal,
     _resolve_effective_cache_dir,
+    command_overrides,
     lock_anchor,
-    project_config_overrides,
     project_override_arguments,
     read_config_ladder,
+    run_settings,
+    validate_project_cli_bindings,
 )
+from .config.ladder import ConfigSnapshot
 from .config.model import NabProjectConfig, ResolveMode, plan_targets
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
@@ -162,8 +162,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     extras: tuple[str, ...] = (),
     all_extras: bool = False,
     build_requirements: bool = False,
-    workspace_discovery: bool = True,
-    sources: bool = True,
+    workspace_discovery: bool | None = None,
+    sources: bool | None = None,
     no_emit_workspace: bool = False,
     project_resolution: ResolutionFlag | None = None,
     project_mode: ModeFlag | None = None,
@@ -231,34 +231,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
             base_group=project_base_group,
             build_group=project_build_group,
         )
-    overrides = _cli_overrides(
-        cli_resolution=project_resolution,
-        cli_offline=offline,
-        cli_cache_dir=cache_dir,
-        cli_http_backend=http_backend,
-        cli_mode=project_mode,
-        cli_requires_python=project_requires_python,
-        cli_uploaded_prior_to=project_uploaded_prior_to,
-        cli_dist_policy=project_dist_policy,
-        cli_build_policy=project_build_policy,
-        cli_build_requires_depth=project_build_requires_depth,
-        cli_decision_order=project_decision_order,
-        cli_constraint=project_constraint,
-        cli_default_group=project_default_group,
-        cli_base_group=project_base_group,
-        cli_build_group=project_build_group,
-        cli_matrix_python=project_matrix_python,
-        cli_matrix_platforms=project_matrix_platforms,
-        cli_matrix_implementations=project_matrix_implementations,
-        cli_matrix_python_order=project_matrix_python_order,
-        cli_matrix_python_patches=project_matrix_python_patches,
-        cli_python=python,
-        cli_environment_python=project_environment_python,
-        cli_environment_platform=project_environment_platform,
-        cli_environment_implementation=project_environment_implementation,
-    )
-    project_overrides = project_config_overrides(overrides)
-    _project_cli_overrides_or_exit(project_overrides)
+    overrides = command_overrides(locals())
+    validate_project_cli_bindings(overrides)
     ladder = read_config_ladder(path, overrides)
     _reject_python_flag_in_universal(ladder, python)
     anchor = _determine_lock_anchor(
@@ -270,11 +244,10 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
     )
     config = _load_config(
         path,
-        discover_workspace=workspace_discovery,
-        use_sources=sources,
         anchor=anchor,
-        cli_overrides=project_overrides,
+        snapshot=ladder,
     )
+    assert isinstance(ladder, ConfigSnapshot)
     inputs = config.resolve_inputs()
     if build_requirements:
         inputs = inputs_for_build_requirements(inputs)
@@ -282,7 +255,7 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         printer().error("--locked is not supported in universal mode.")
         sys.exit(1)
     _check_targets_or_exit(config)
-    settings = _layered_run_settings_or_exit(ladder)
+    settings = run_settings(ladder)
     effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
     provenance = _build_provenance(
         path,
@@ -316,8 +289,8 @@ def lock(  # noqa: PLR0913 - one keyword per flag is the public surface
         all_extras=all_extras,
         offline=offline,
         build_requirements=build_requirements,
-        workspace_discovery=workspace_discovery,
-        sources=sources,
+        workspace_discovery=settings.workspace_discovery,
+        sources=settings.sources,
         no_emit_workspace=no_emit_workspace,
         cli_overrides=overrides,
         upgrade=upgrade,
@@ -565,9 +538,12 @@ class _LockRun:
 
         if self.build_requirements:
             arguments.append("--build-requirements")
-        if not self.sources:
+        if not self.sources and "sources" not in self.cli_overrides:
             arguments.append("--no-sources")
-        if not self.workspace_discovery:
+        if (
+            not self.workspace_discovery
+            and "workspace-discovery" not in self.cli_overrides
+        ):
             arguments.append("--no-workspace-discovery")
         if self.no_emit_workspace:
             arguments.append("--no-emit-workspace")

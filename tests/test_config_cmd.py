@@ -75,6 +75,8 @@ _CLI_FLAG_CASES: tuple[tuple[str, str, str], ...] = (
     ("http-backend", "httpx", "httpx"),
     ("http-backend", "httpx2", "httpx2"),
     ("max-concurrency", "5", "5"),
+    ("sources", "False", "false"),
+    ("workspace-discovery", "False", "false"),
 )
 
 # The ``--project-*`` flags ``nab download`` is driven with, and the argv value
@@ -95,6 +97,8 @@ _DOWNLOAD_PROJECT_ARGV: tuple[tuple[str, str], ...] = (
     ("--project-dist-policy", "sdist-only"),
     ("--project-build-policy", "never"),
     ("--project-build-requires-depth", "3"),
+    ("--sources", "False"),
+    ("--workspace-discovery", "False"),
 )
 
 # A ``[tool.nab]`` body declaring universal mode and the matrix it needs.
@@ -421,11 +425,9 @@ class TestConfigExplain:
         )
         assert "rejected" in out
 
-    def test_explain_include_rejected_records_renamed_env(
+    def test_explain_include_rejected_applies_project_env(
         self, hermetic_roots: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # NAB_RESOLUTION (a renamed PROJECT name) crashes a real run, but
-        # explain --include-rejected records the env layer instead.
         _project(hermetic_roots, 'resolution = "lowest"\n')
         monkeypatch.setenv("NAB_RESOLUTION", "highest")
         out = _run_config(
@@ -437,7 +439,9 @@ class TestConfigExplain:
                 str(hermetic_roots / "pyproject.toml"),
             ]
         )
-        assert "rejected" in out
+        winner = next(line for line in out.splitlines() if line.startswith(">"))
+        assert winner.split()[-2:] == ["winner", "NAB_RESOLUTION"]
+        assert "highest" in out
         assert "NAB_RESOLUTION" in out
 
     def test_explain_include_rejected_records_unknown_env(
@@ -478,10 +482,7 @@ class TestConfigExplain:
     def test_list_include_rejected_surfaces_known_key_gate(
         self, hermetic_roots: Path
     ) -> None:
-        # A PROJECT key set in a user nab.toml attaches to its option, so it
-        # is reachable from explain; `list --include-rejected` lists it too.
-        _project(hermetic_roots)
-        _write(hermetic_roots.parent / "usr" / "nab.toml", 'resolution = "lowest"\n')
+        _project(hermetic_roots, "offline = true\n")
         out = _run_config(
             [
                 "list",
@@ -491,7 +492,7 @@ class TestConfigExplain:
             ]
         )
         assert "rejected:" in out
-        assert "resolution" in out
+        assert "offline" in out
 
     def test_list_reports_unknown_pyproject_key(self, hermetic_roots: Path) -> None:
         # The inspector reports a typo'd [tool.nab] key the resolve would
@@ -978,12 +979,13 @@ def _fold_run_settings(
     The assert reports a ladder holding a config error as itself, rather
     than as a subscript failure inside the fold.
     """
-    overrides = nab_run._cli_overrides(
-        cli_resolution=None,
-        cli_offline=cli_offline,
-        cli_cache_dir=cli_cache_dir,
-        cli_http_backend=cli_http_backend,
-        cli_max_concurrency=cli_max_concurrency,
+    overrides = nab_run.command_overrides(
+        {
+            "offline": cli_offline,
+            "cache_dir": cli_cache_dir,
+            "http_backend": cli_http_backend,
+            "max_concurrency": cli_max_concurrency,
+        }
     )
     ladder = nab_run.read_config_ladder(path, overrides)
     assert not isinstance(ladder, SourceConfigError), ladder
@@ -1112,15 +1114,12 @@ def test_config_module_imports_cleanly() -> None:
 def test_lock_exits_cleanly_on_layered_config_error(
     hermetic_roots: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """A category error from the lock ladder exits 1 without a traceback."""
-    # A user nab.toml setting the PROJECT resolution key is a category
-    # error the pyproject parser never sees, so it surfaces through the
-    # lock ladder's SourceConfigError handler.
+    """Invalid external configuration exits 1 without a traceback."""
     _project(hermetic_roots)
-    _write(tmp_path / "usr" / "nab.toml", 'resolution = "lowest"\n')
+    _write(tmp_path / "usr" / "nab.toml", 'resolution = "sideways"\n')
     with pytest.raises(SystemExit):
         lock(hermetic_roots / "pyproject.toml", output=hermetic_roots / "pylock.toml")
-    assert "config error" in capsys.readouterr().err
+    assert "resolution must be one of" in capsys.readouterr().err
 
 
 def test_lock_exits_on_pyproject_user_key_via_fold(
@@ -1471,13 +1470,12 @@ class TestDownloadLadder:
     def test_layered_config_error_exits(
         self, hermetic_roots: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        # A category error reached via the download ladder exits 1.
         _project(hermetic_roots)
         # The fixture's user_toml lives at <tmp>/usr; project_dir is <tmp>/proj.
-        _write(hermetic_roots.parent / "usr" / "nab.toml", 'resolution = "lowest"\n')
+        _write(hermetic_roots.parent / "usr" / "nab.toml", 'resolution = "sideways"\n')
         with pytest.raises(SystemExit):
             download(hermetic_roots / "pyproject.toml", output=hermetic_roots / "out")
-        assert "config error" in capsys.readouterr().err
+        assert "resolution must be one of" in capsys.readouterr().err
 
 
 class TestDownloadCliOverrides:
@@ -1525,8 +1523,6 @@ class TestDownloadCliOverrides:
         inputs = kwargs["inputs"]
         assert isinstance(inputs, ResolveInputs)
 
-        # --project-resolution keeps its own path into the resolver, so it is
-        # the one flag here that does not land in the merged config.
         assert kwargs["resolution_strategy"] is ResolutionStrategy.LOWEST
         assert inputs.decision_order is DecisionOrder.ARRIVAL
 

@@ -432,7 +432,6 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
         key=Layer[bool](
             rdefault=False, parse=values.parse_bool, render=hooks.render_bool
         ),
-        env=True,
         help="never hit the network; resolve from the cache alone",
     )
 
@@ -443,7 +442,6 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
             render=hooks.render_cache_dir,
             sample="nab-cache",
         ),
-        env=True,
         help="the on-disk cache root",
         docs="reference/cache.md",
         on=_EVERY,
@@ -458,7 +456,6 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
             # ``nab config explain`` prints them alphabetically.
             label="enum(httpx|httpx2|urllib3)",
         ),
-        env=True,
         help="the transport index and artefact fetches go through",
     )
 
@@ -469,7 +466,6 @@ class UserKeys(Table, on=_LAYERED, scope=Scope.USER, docs="reference/cli.md"):
             render=hooks.render_text,
             sample="4",
         ),
-        env=True,
         help="how many fetches may be in flight at once",
         on=("download", "config"),
     )
@@ -582,16 +578,24 @@ class RunFlags(Table, on=_RUN, docs="reference/cli.md"):
         docs="reference/selection.md",
     )
 
-    sources = Switch(
-        default=True,
-        negatable=True,
+    sources = Tri(
+        key=Layer[bool](
+            rdefault=True, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        scope=Scope.PROJECT,
+        cli_prefix="--",
+        on=_LAYERED,
         help="apply the [develop.sources] table",
         docs="how-to/local-sources.md",
     )
 
-    workspace_discovery = Switch(
-        default=True,
-        negatable=True,
+    workspace_discovery = Tri(
+        key=Layer[bool](
+            rdefault=True, parse=values.parse_bool, render=hooks.render_bool
+        ),
+        scope=Scope.PROJECT,
+        cli_prefix="--",
+        on=_LAYERED,
         help="resolve against the workspace members found in the tree",
         docs="how-to/workspaces.md",
     )

@@ -43,7 +43,7 @@ class Table(metaclass=_TableMeta):
     """A group of rows that share a command set, a scope and a page.
 
     The class keywords are the table's defaults, and a row overrides the
-    command set with ``on=`` or the page with ``docs=`` where it differs.
+    command set with ``on=``, its scope, or the page with ``docs=`` where it differs.
     ``under`` names the configuration key the rows spell one key each of,
     and ``needs`` the ones a command line has to give when it spells any
     and no file declares the table.
@@ -81,10 +81,11 @@ class Table(metaclass=_TableMeta):
             raise ValueError(msg)
 
         for row in declared:
-            # File-only keys take no command set.
+            # Table keys do not inherit CLI commands.
             if row.kind:
                 row.on = row.on or on
-            row.scope = scope
+            if row.scope is None:
+                row.scope = scope
             row.docs = row.docs or docs
             row.under = under
             row.needed = row.name in needs

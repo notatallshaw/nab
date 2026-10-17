@@ -134,6 +134,31 @@ def test_the_generator_refuses_a_page_that_lost_its_markers(
     assert "markers" in str(caught.value)
 
 
+def test_configuration_reference_includes_a_new_declarations_environment_name(
+    generator: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new configuration declaration extends the generated table without another inventory."""
+    option = optiondefs.Opt(
+        "future-setting",
+        scope=optiondefs.Scope.PROJECT,
+        rdefault=(),
+        parse=values.parse_string_list,
+        render=hooks.render_string_tuple,
+        help="test extension settings",
+    )
+    page = tmp_path / "configuration.md"
+    page.write_text(generator._OPEN + "\n\n" + generator._CLOSE + "\n")
+    monkeypatch.setattr(generator, "_CONFIG_REFERENCE", page)
+    monkeypatch.setattr(generator, "ALL", (*ALL, option))
+    output = generator._configuration_reference_text()
+    rows = [line for line in output.splitlines() if line.startswith("| `")]
+    assert [cell.strip() for cell in rows[-1].split("|")[1:-1]] == [
+        "`future-setting`",
+        "`NAB_FUTURE_SETTING`",
+    ]
+    assert len(rows) == sum(row.key is not None for row in ALL) + 1
+
+
 def test_the_generator_refuses_to_run_with_neither_flag() -> None:
     finished = subprocess.run(  # noqa: S603 - the interpreter running this suite
         [sys.executable, str(_GENERATOR)],

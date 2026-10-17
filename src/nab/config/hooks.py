@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 __all__ = [
     "inspector_anchor",
     "matrix_table",
+    "parse_anchored_cutoff",
     "parse_index_overrides",
     "parse_matrix",
     "parse_package_rules",
@@ -142,6 +143,11 @@ def _override_anchor() -> datetime:
     if inspector is not None:
         return inspector
     return datetime.now(timezone.utc)
+
+
+def parse_anchored_cutoff(value: Any, where: str) -> datetime:
+    """Normalize a cutoff for comparison with parsed package/index policies."""
+    return values.parse_uploaded_prior_to(value, where, anchor=_override_anchor())
 
 
 # ``packages`` (name-keyed sugar) and ``package-rules`` (array-of-tables) are

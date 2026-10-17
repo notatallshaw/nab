@@ -33,7 +33,7 @@ def _cache_command() -> None:
 
 
 def _config_command() -> None:
-    """``nab config``: 28 parameters."""
+    """``nab config``: 30 parameters."""
     config_command(
         ConfigWords.action,
         ConfigWords.key,
@@ -62,6 +62,8 @@ def _config_command() -> None:
         http_backend=UserKeys.http_backend,
         max_concurrency=UserKeys.max_concurrency,
         path=CacheWords.path,
+        sources=RunFlags.sources,
+        workspace_discovery=RunFlags.workspace_discovery,
         include_rejected=RunFlags.include_rejected,
     )
 

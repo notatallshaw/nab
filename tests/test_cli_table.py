@@ -180,8 +180,8 @@ class TestTheDeclaredTable:
         assert len(root) + len(command) + len(file_only) == len(ALL) == 63
 
         keyed = [row for row in ALL if row.key]
-        assert len(keyed) == 27
-        assert sum(1 for row in keyed if row.cli_flag) == 16
+        assert len(keyed) == 29
+        assert sum(1 for row in keyed if row.cli_flag) == 18
         assert sum(1 for row in keyed if not row.commands) == 11
 
     def test_the_sub_rows_spell_the_two_tables(self) -> None:
@@ -208,16 +208,15 @@ class TestTheDeclaredTable:
     def test_the_layered_rows_split_by_scope_as_the_registry_does(self) -> None:
         keyed = [row for row in ALL if row.key]
 
-        assert sum(row.scope is Scope.PROJECT for row in keyed) == 23
+        assert sum(row.scope is Scope.PROJECT for row in keyed) == 25
         assert sum(row.scope is Scope.USER for row in keyed) == 4
 
-    def test_the_environment_names_are_the_four_user_keys(self) -> None:
-        assert [row.env_var for row in ALL if row.env_var] == [
-            "NAB_OFFLINE",
-            "NAB_CACHE_DIR",
-            "NAB_HTTP_BACKEND",
-            "NAB_MAX_CONCURRENCY",
-        ]
+    def test_every_configuration_key_derives_an_environment_name(self) -> None:
+        for row in ALL:
+            if row.key is None:
+                assert row.env_var is None
+            else:
+                assert row.env_var == "NAB_" + row.key.upper().replace("-", "_")
 
     def test_a_row_declares_a_page_and_a_line_of_help(self) -> None:
         assert all(row.help for row in ALL)
@@ -399,7 +398,7 @@ class TestDerivedSpellings:
         )
 
         assert row.cli_flag is None
-        assert row.env_var is None
+        assert row.env_var == "NAB_MATRIX"
         assert row.key == "matrix"
 
     def test_a_command_local_row_carries_no_config_key(self) -> None:
@@ -413,9 +412,7 @@ class TestDerivedSpellings:
             _ = _row("format").scope_name
 
     def test_the_environment_name_is_the_key_shouted(self) -> None:
-        row = _row(
-            "max-concurrency", scope=Scope.USER, env=True, vtype=VType.INT, sample="4"
-        )
+        row = _row("max-concurrency", scope=Scope.USER, vtype=VType.INT, sample="4")
 
         assert row.env_var == "NAB_MAX_CONCURRENCY"
 
@@ -433,8 +430,8 @@ class TestTheCategoryGate:
         [
             (Scope.PROJECT, SourceKind.PYPROJECT, True),
             (Scope.PROJECT, SourceKind.PROJECT_TOML, True),
-            (Scope.PROJECT, SourceKind.USER_TOML, False),
-            (Scope.PROJECT, SourceKind.SYSTEM_TOML, False),
+            (Scope.PROJECT, SourceKind.USER_TOML, True),
+            (Scope.PROJECT, SourceKind.SYSTEM_TOML, True),
             (Scope.USER, SourceKind.PYPROJECT, False),
             (Scope.USER, SourceKind.PROJECT_TOML, True),
             (Scope.USER, SourceKind.USER_TOML, True),
@@ -454,6 +451,16 @@ class TestTheCategoryGate:
 
 class TestPerRowRules:
     """The rules one row can be judged by, run as it is built."""
+
+    def test_enforcement_table_name_is_reserved(self) -> None:
+        assert _construction_error("enforce", scope=Scope.PROJECT) == (
+            "enforce is reserved for external configuration bindings"
+        )
+
+    def test_cli_prefix_is_an_existing_prefix(self) -> None:
+        assert _construction_error("mode", cli_prefix="--other-") == (
+            "mode has an invalid CLI prefix '--other-'"
+        )
 
     def test_refuses_a_short_name_that_is_not_one_character(self) -> None:
         assert _construction_error("verbose", short="vv") == (
@@ -498,15 +505,15 @@ class TestPerRowRules:
             == "constraint is repeatable, so its name has to be plural"
         )
 
-    def test_refuses_an_environment_name_on_a_project_key(self) -> None:
-        assert _construction_error(
-            "mode", scope=Scope.PROJECT, env=True, sample="x"
-        ) == ("mode is not a USER key, so it takes no NAB_ name")
+    def test_project_keys_get_environment_names_without_changing_cli_names(
+        self,
+    ) -> None:
+        row = _row("mode", scope=Scope.PROJECT, sample="x")
+        assert row.env_var == "NAB_MODE"
+        assert row.cli_flag == "--project-mode"
 
-    def test_refuses_an_environment_name_on_a_row_with_no_key(self) -> None:
-        assert _construction_error("format", env=True) == (
-            "format is not a USER key, so it takes no NAB_ name"
-        )
+    def test_a_row_with_no_key_has_no_environment_name(self) -> None:
+        assert _row("format").env_var is None
 
     def test_refuses_a_layered_row_with_no_parse_hook(self) -> None:
         assert _construction_error("offline", scope=Scope.USER, parse=None) == (
@@ -539,7 +546,7 @@ class TestPerRowRules:
         ) == ("matrix has no command line, so it needs a key and rdefault")
 
     @pytest.mark.parametrize(
-        "field", [{"short": "m"}, {"env": True}, {"default": None}]
+        "field", [{"short": "m"}, {"cli_prefix": "--"}, {"default": None}]
     )
     def test_refuses_a_file_only_row_that_declares_a_cli_field(
         self, field: dict[str, Any]

@@ -2256,7 +2256,9 @@ path = "mylocal"
             pytest.raises(SystemExit, match="1"),
         ):
             lock(pyproject, output=out)
-        assert "config error:" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert str(user) in err
+        assert "not valid TOML" in err
 
     def test_standalone_nab_toml_unknown_key_exits(
         self,
@@ -2282,7 +2284,7 @@ path = "mylocal"
         ):
             lock(pyproject, output=out)
         err = capsys.readouterr().err
-        assert "config error:" in err
+        assert str(user) in err
         assert "typoo" in err
 
 
@@ -5174,13 +5176,12 @@ class TestDetermineLockAnchor:
     def test_invalid_config_falls_through_to_prior(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # A category-gated value (uploaded-prior-to in a USER source) makes
-        # the ladder read fail, so the anchor falls through to the prior lock.
+        # Invalid external configuration falls back to the prior lock anchor.
         target = tmp_path / "pylock.toml"
         self._write_prior(target)
         pyproject = _make_pyproject(tmp_path)
         user_toml = tmp_path / "user.toml"
-        user_toml.write_text(f'uploaded-prior-to = "{self._ABSOLUTE.isoformat()}"\n')
+        user_toml.write_text('uploaded-prior-to = "invalid"\n')
 
         def fake_roots(p: Path) -> SourceRoots:
             return SourceRoots(
@@ -6308,7 +6309,10 @@ class TestHelpText:
     def test_lock_workspace_discovery_has_no_double_negative(self) -> None:
         help_text = _command_help("lock")
         assert "--no-no-workspace-discovery" not in help_text
-        assert "--workspace-discovery / --no-workspace-discovery" in help_text
+        assert (
+            "--workspace-discovery [{True,False}] / --no-workspace-discovery"
+            in help_text
+        )
 
     def test_emit_workspace_has_no_double_negative(self) -> None:
         """It is declared non-negatable, so ``--no-no-emit-workspace`` is gone."""

@@ -17,6 +17,26 @@ require-pin = true
 requires a full 40-character commit SHA. A declaration does not waive the pin or build policy. Set
 `policy = "block"` to refuse even declared Git sources.
 
+## Block Git across projects
+
+Source and build policies are security controls. Enforce a block in user/system configuration to
+refuse both declared repositories and cached clones:
+
+```toml
+# ~/.config/nab/nab.toml or /etc/nab/nab.toml
+[enforce.vcs]
+policy = "block"
+```
+
+Or set the same restriction in the environment:
+
+```bash
+export NAB_ENFORCE='{ vcs = { policy = "block" } }'
+```
+
+An ordinary `[vcs]` table provides an overridable default. See
+{ref}`enforced settings <enforced-settings>`.
+
 ## Pinned VCS sources
 
 ```toml

@@ -1467,13 +1467,13 @@ def test_remedy_carries_every_run_shaping_flag(
         *["--groups", "dev", "test"],
         *["--extras", "cpu", "gpu"],
         *["--offline", "True"],
-        "--no-workspace-discovery",
         "--no-emit-workspace",
         *["--project-resolution", "lowest"],
         *["--project-constraint", "foo<2"],
         *["--project-constraint", "bar<3"],
         *["--project-requires-python", ">=3.9"],
         *["--python", "3.12"],
+        "--no-workspace-discovery",
         "--upgrade",
     ]
 

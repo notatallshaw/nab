@@ -121,7 +121,7 @@ _SAMPLED_VTYPES = frozenset({VType.STR, VType.PATH, VType.INT})
 # The TOML sources that may set a row of each scope, by the
 # value of the SourceKind member naming them.
 _ALLOWED_TOML_SOURCES = {
-    Scope.PROJECT: frozenset({"pyproject", "project"}),
+    Scope.PROJECT: frozenset({"pyproject", "project", "user", "system"}),
     Scope.USER: frozenset({"project", "user", "system"}),
 }
 
@@ -141,11 +141,11 @@ class Opt:
 
     __slots__ = (
         "choices",
+        "cli_prefix",
         "commands",
         "default",
         "deprecated",
         "docs",
-        "env",
         "help",
         "kind",
         "name",
@@ -171,9 +171,9 @@ class Opt:
     kind: Kind | None
     vtype: VType | None
     choices: tuple[str, ...]
+    cli_prefix: str | None
     nullable: bool
     negatable: bool
-    env: bool
     commands: tuple[str, ...]
     default: Any
     rdefault: Any
@@ -197,9 +197,9 @@ class Opt:
         kind: Kind | None = None,
         vtype: VType | None = None,
         choices: tuple[str, ...] = (),
+        cli_prefix: str | None = None,
         nullable: bool = False,
         negatable: bool = False,
-        env: bool = False,
         commands: tuple[str, ...] = (),
         default: Any = UNSET,
         rdefault: Any = UNSET,
@@ -228,9 +228,9 @@ class Opt:
         self.kind = kind
         self.vtype = vtype
         self.choices = choices
+        self.cli_prefix = cli_prefix
         self.nullable = nullable
         self.negatable = negatable
-        self.env = env
         self.commands = commands
         self.default = default
         self.rdefault = rdefault
@@ -291,13 +291,16 @@ class Opt:
     def cli_flag(self) -> str | None:
         """The long flag, or ``None`` on a row that has no flag.
 
-        The scope decides the prefix. A repeatable option is singular
-        because one occurrence contributes one value. A row under a table
-        key includes that key.
+        A declaration can override the scope's default prefix.
+
+        Flags appending one value use a singular name. Table fields include
+        their parent key in the flag.
         """
         if not self.commands or self.is_positional:
             return None
-        prefix = "--project-" if self.scope is Scope.PROJECT else "--"
+        prefix = self.cli_prefix
+        if prefix is None:
+            prefix = "--project-" if self.scope is Scope.PROJECT else "--"
         stem = self.name[:-1] if self.kind is Kind.APPEND else self.name
         if self.under:
             stem = f"{self.under}-{stem}"
@@ -318,7 +321,11 @@ class Opt:
     @property
     def env_var(self) -> str | None:
         """The ``NAB_*`` variable that may set this row, or ``None``."""
-        return f"NAB_{self.name.upper().replace('-', '_')}" if self.env else None
+        return (
+            f"NAB_{self.name.upper().replace('-', '_')}"
+            if self.key is not None
+            else None
+        )
 
     def allowed_in_toml(self, kind: _SourceKind) -> bool:
         """Whether a TOML source of ``kind`` may set this row.
@@ -352,10 +359,6 @@ class Opt:
         self._check_derivation()
         self._check_sub_row()
 
-        if self.env and self.scope is not Scope.USER:
-            msg = f"{self.name} is not a USER key, so it takes no NAB_ name"
-            raise ValueError(msg)
-
         if self.key is not None and (self.parse is _no_hook or self.render is _no_hook):
             msg = f"{self.name} is layered, so it needs a parse and a render hook"
             raise ValueError(msg)
@@ -364,7 +367,7 @@ class Opt:
             msg = f"{self.name} declares no help"
             raise ValueError(msg)
 
-        self._check_file_only()
+        self._check_config_only()
 
         if self.key is not None and self.vtype in _SAMPLED_VTYPES and not self.sample:
             msg = f"{self.name} is layered and free-form, so it needs a sample"
@@ -372,6 +375,12 @@ class Opt:
 
     def _check_derivation(self) -> None:
         """Check the name against the two derivations :attr:`cli_flag` runs on it."""
+        if self.key == "enforce":
+            msg = "enforce is reserved for external configuration bindings"
+            raise ValueError(msg)
+        if self.cli_prefix is not None and self.cli_prefix not in {"--", "--project-"}:
+            msg = f"{self.name} has an invalid CLI prefix {self.cli_prefix!r}"
+            raise ValueError(msg)
         if self.scope is Scope.PROJECT and self.name.startswith("project-"):
             msg = f"{self.name} takes its project- prefix from its scope"
             raise ValueError(msg)
@@ -401,11 +410,11 @@ class Opt:
             msg = f"{self.name} is under {self.under!r}, so it cannot be an operand"
             raise ValueError(msg)
 
-        if self.rdefault is not UNSET or self.parse is not _no_hook or self.env:
+        if self.rdefault is not UNSET or self.parse is not _no_hook:
             msg = f"{self.name} is under {self.under!r}, so it takes no key of its own"
             raise ValueError(msg)
 
-    def _check_file_only(self) -> None:
+    def _check_config_only(self) -> None:
         """Check a row with no command line, which is a configuration key alone."""
         if self.commands:
             return
@@ -414,7 +423,7 @@ class Opt:
             msg = f"{self.name} has no command line, so it needs a key and rdefault"
             raise ValueError(msg)
 
-        if self.short or self.env or self.default is not UNSET:
+        if self.short or self.cli_prefix is not None or self.default is not UNSET:
             msg = f"{self.name} has no command line, so it takes no CLI fields"
             raise ValueError(msg)
 

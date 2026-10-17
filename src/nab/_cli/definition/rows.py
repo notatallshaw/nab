@@ -67,10 +67,10 @@ class Row:
 
     __slots__ = (
         "__orig_class__",
+        "cli_prefix",
         "default",
         "deprecated",
         "docs",
-        "env",
         "help",
         "key",
         "mirrors",
@@ -94,8 +94,9 @@ class Row:
         default: Any = OMITTED,
         on: tuple[str, ...] = (),
         key: Layer[Any] | None = None,
+        scope: Scope | None = None,
+        cli_prefix: str | None = None,
         negatable: bool = False,
-        env: bool = False,
         deprecated: bool = False,
         required: bool = False,
         mirrors: type[enum.Enum] | None = None,
@@ -107,14 +108,14 @@ class Row:
         self.default = default
         self.on = on
         self.key = key
+        self.cli_prefix = cli_prefix
         self.negatable = negatable
-        self.env = env
         self.deprecated = deprecated
         self.required = required
         self.mirrors = mirrors
 
         self.name = ""
-        self.scope: Scope | None = None
+        self.scope = scope
         self.opened_by = ""
         self.under = ""
         self.needed = False
@@ -213,12 +214,21 @@ class Tri(Row):
         *,
         help: str,  # noqa: A002
         key: Layer[Any] | None = None,
+        scope: Scope | None = None,
+        cli_prefix: str | None = None,
         docs: str = "",
         on: tuple[str, ...] = (),
-        env: bool = False,
     ) -> None:
         """Record one row; the table names it and fills its defaults."""
-        super().__init__(help=help, key=key, docs=docs, on=on, env=env, negatable=True)
+        super().__init__(
+            help=help,
+            key=key,
+            docs=docs,
+            on=on,
+            scope=scope,
+            cli_prefix=cli_prefix,
+            negatable=True,
+        )
 
 
 class Value(Row, Generic[T]):
@@ -233,7 +243,7 @@ class Value(Row, Generic[T]):
             """Read the value a command receives for this row."""
             ...
 
-    def __init__(  # noqa: PLR0913 - the row's own fields, in its own order
+    def __init__(
         self,
         *,
         help: str,  # noqa: A002
@@ -242,7 +252,6 @@ class Value(Row, Generic[T]):
         docs: str = "",
         on: tuple[str, ...] = (),
         key: Layer[Any] | None = None,
-        env: bool = False,
         deprecated: bool = False,
         mirrors: type[enum.Enum] | None = None,
     ) -> None:
@@ -254,7 +263,6 @@ class Value(Row, Generic[T]):
             docs=docs,
             on=on,
             key=key,
-            env=env,
             deprecated=deprecated,
             mirrors=mirrors,
         )

@@ -67,6 +67,9 @@ nab fails without writing a lock.
 
 ### Choose which sources nab may fetch and build
 
+Source and build policies are security controls. They restrict which locations nab may fetch and
+whether package build code may run.
+
 Reading dependency metadata can require running a package's build backend. nab
 [reads remote sources without building them by default][build-policy]; local checkouts may build
 when their metadata needs it. If a remote package requires a build, you can opt in for that package.
@@ -81,11 +84,15 @@ A [Git entry][vcs] permits that repository without repeating it in an allowlist.
 rejected. Fetching a source does not permit running its backend. Set `policy = "block"` under
 `[tool.nab.vcs]` or `[tool.nab.archive]` to refuse those sources, including declared ones.
 
-### Override global policies for specific packages and indexes
+Administrators can [enforce these settings][configuration] in system/user configuration or through
+`NAB_ENFORCE`. Enforced blocks also refuse cached sources and cannot be relaxed by a project's
+settings.
 
-To keep global policies strict and secure while allowing exceptions for specific needs, you can
-[override global policies][policy-overrides] for a package, a version range such as `numpy > 2`, or
-every package served by a named index.
+### Set exceptions for specific packages and indexes
+
+You can [override default policies][policy-overrides] for a package, a version range such as
+`numpy > 2`, or every package served by a named index. Enforced policies reject exceptions that
+declare a different value.
 
 For example, allow remote builds for one package, require wheels for selected versions, or set a
 different upload cutoff for an internal index. Use `[tool.nab.packages."numpy > 2"]` for one
@@ -179,6 +186,7 @@ experimental features.
 [archive-sources]: https://nab.readthedocs.io/en/stable/how-to/archive-sources.html
 [build-policy]: https://nab.readthedocs.io/en/stable/reference/build-policy.html
 [check-lock]: https://nab.readthedocs.io/en/stable/reference/lockfile.html#checking-the-lock-in-ci
+[configuration]: https://nab.readthedocs.io/en/stable/reference/configuration.html#enforced-settings
 [getting-started]: https://nab.readthedocs.io/en/stable/tutorial/getting-started.html
 [lockfiles]: https://nab.readthedocs.io/en/stable/reference/lockfile.html
 [output-formats]: https://nab.readthedocs.io/en/stable/reference/formats.html

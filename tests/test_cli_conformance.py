@@ -231,7 +231,7 @@ def test_the_implementation_alias_holds_the_tokens_its_parser_offers() -> None:
     assert get_args(ImplementationFlag) == values.IMPLEMENTATIONS
 
 
-# The sixteen rows reached by both a configuration source and a flag.
+# The eighteen rows reached by both a configuration source and a flag.
 _SETTABLE = [row for row in ALL if row.key and row.cli_flag]
 
 _BOOL_TOKENS = ("True", "False")
@@ -268,6 +268,6 @@ class TestHooksReadWhatTheWalkStores:
 
             build_cli_layer({row.name: value})
 
-    def test_the_settable_keys_are_the_sixteen_flagged_rows(self) -> None:
+    def test_the_settable_keys_are_the_eighteen_flagged_rows(self) -> None:
         """A derivation that emptied would leave the case above with no rows."""
-        assert len(_SETTABLE) == 16
+        assert len(_SETTABLE) == 18

@@ -57,6 +57,7 @@ from .config.model import (
     plan_targets,
     read_pyproject_config,
 )
+from .config.values import SourceConfigError
 from .output import Verbosity, printer
 
 if TYPE_CHECKING:
@@ -69,6 +70,7 @@ if TYPE_CHECKING:
     from nab_project.resolve import ResolveResult
     from nab_provider.provider import ResolutionStrategy
 
+    from ._run import ConfigLadder
     from .output import ProgressReporter
 
 
@@ -223,20 +225,24 @@ def _make_resolve_transport(backend: str, *, offline: bool) -> AsyncHttpTranspor
 def _load_config(
     path: Path,
     *,
-    discover_workspace: bool = True,
-    use_sources: bool = True,
+    discover_workspace: bool | None = None,
+    use_sources: bool | None = None,
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, object] | None = None,
+    snapshot: ConfigLadder | None = None,
 ) -> NabProjectConfig:
     require_pyproject_file(path)
 
     try:
+        if isinstance(snapshot, SourceConfigError):
+            raise snapshot
         return read_pyproject_config(
             path,
             discover_workspace=discover_workspace,
             use_sources=use_sources,
             anchor=anchor,
             cli_overrides=cli_overrides,
+            snapshot=snapshot,
         )
     except ConfigError as exc:
         printer().error(str(exc))

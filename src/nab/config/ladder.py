@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import enum
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -20,13 +21,14 @@ import tomli
 from nab_project import toml_io
 from nab_project.paths import PathState, path_state, realpath
 from nab_project.value import ValueType
+from nab_provider.overrides import IndexOverride, PackageOverride
 
 from .. import env
 from .._cli.definition.model import Opt, Scope
-from .hooks import matrix_table
+from .._compat import override
+from .hooks import matrix_table, parse_anchored_cutoff, resolve_anchor
 from .registry import OPTIONS
 from .subflags import (
-    BY_PARENT,
     CliTable,
     build_cli_tables,
     cli_table_label,
@@ -36,12 +38,15 @@ from .subflags import (
 from .values import CliTableError, SourceConfigError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Iterable, Iterator, Sequence
+    from datetime import datetime
+
 
 __all__ = [
     "BY_KEY",
     "OPTIONS",
     "PRECEDENCE",
+    "ConfigSnapshot",
     "EffectiveValue",
     "Layer",
     "Opt",
@@ -105,8 +110,12 @@ BY_KEY: dict[str, Opt] = {row.name: row for row in OPTIONS}
 
 
 def project_key_path(key: str, kind: SourceKind) -> str:
-    """Return a project's TOML path for ``key``."""
-    return key if kind is SourceKind.PROJECT_TOML else f"tool.nab.{key}"
+    """Return the setting path used by this source's diagnostics."""
+    if kind in {SourceKind.SYSTEM_TOML, SourceKind.USER_TOML, SourceKind.PROJECT_TOML}:
+        return key
+    if kind is SourceKind.ENV:
+        return "NAB_" + key.upper().replace("-", "_")
+    return f"tool.nab.{key}"
 
 
 def pyproject_registry_keys() -> frozenset[str]:
@@ -117,17 +126,19 @@ def pyproject_registry_keys() -> frozenset[str]:
 
 
 class Origin(ValueType):
-    """Where a value came from: a source kind plus a display label."""
+    """Where a binding came from and whether it fixes the setting."""
 
-    __slots__ = __match_args__ = ("kind", "label")
+    __slots__ = __match_args__ = ("kind", "label", "enforced")
 
     kind: SourceKind
     label: str
+    enforced: bool
 
-    def __init__(self, kind: SourceKind, label: str) -> None:
+    def __init__(self, kind: SourceKind, label: str, *, enforced: bool = False) -> None:
         """Record the source a value came from."""
         self.kind = kind
         self.label = label
+        self.enforced = enforced
 
     @property
     def scope(self) -> str:
@@ -136,7 +147,10 @@ class Origin(ValueType):
 
     def outranks(self, other: Origin) -> bool:
         """Return whether this origin has strictly higher precedence."""
-        return PRECEDENCE[self.kind] > PRECEDENCE[other.kind]
+        return (self.enforced, PRECEDENCE[self.kind]) > (
+            other.enforced,
+            PRECEDENCE[other.kind],
+        )
 
 
 def scope_label(kind: SourceKind) -> str:
@@ -151,25 +165,30 @@ _NO_RAW: Mapping[str, Any] = {}
 class Layer(ValueType):
     """Bindings discovered from one configuration source.
 
-    ``raw`` retains tables that must be folded before parsing.
+    ``raw`` retains inputs for anchoring durations and folding CLI table keys.
+    Trusted sources may also supply an ``enforced`` layer.
     """
 
-    __slots__ = __match_args__ = ("origin", "values", "raw")
+    __slots__ = __match_args__ = ("origin", "values", "raw", "enforced")
 
     origin: Origin
     values: Mapping[str, Any]
     raw: Mapping[str, Any]
+    enforced: Layer | None
 
     def __init__(
         self,
         origin: Origin,
         values: Mapping[str, Any],
         raw: Mapping[str, Any] = _NO_RAW,
+        *,
+        enforced: Layer | None = None,
     ) -> None:
         """Record the bindings ``origin`` supplied."""
         self.origin = origin
         self.values = values
         self.raw = raw
+        self.enforced = enforced
 
 
 class RejectedLayer(ValueType):
@@ -259,18 +278,90 @@ class SourceRoots(ValueType):
         self.pyproject = pyproject
 
 
+class ConfigSnapshot(Mapping[str, EffectiveValue]):
+    """Hold one invocation's bindings so execution can apply its lock timestamp."""
+
+    def __init__(
+        self,
+        layers: Sequence[Layer],
+        environment: Layer,
+        cli: Mapping[str, Any],
+        *,
+        rejected: Sequence[RejectedLayer] = (),
+    ) -> None:
+        """Keep discovered inputs and the initially resolved values for this run."""
+        self.layers = tuple(layers)
+        self.environment = environment
+        self.cli = dict(cli)
+        self.rejected = tuple(rejected)
+        self.effective = resolve_config(
+            self.layers,
+            environment,
+            build_cli_layer(self.cli),
+            rejected=self.rejected,
+        )
+
+    @override
+    def __getitem__(self, key: str) -> EffectiveValue:
+        """Return one resolved setting."""
+        return self.effective[key]
+
+    @override
+    def __iter__(self) -> Iterator[str]:
+        """Iterate over the configured keys."""
+        return iter(self.effective)
+
+    @override
+    def __len__(self) -> int:
+        """Return the number of resolved settings."""
+        return len(self.effective)
+
+    def at_anchor(self, anchor: datetime) -> dict[str, EffectiveValue]:
+        """Resolve captured inputs at a lock timestamp without rediscovering sources."""
+        with resolve_anchor(anchor):
+            layers = [_reparse_layer(layer) for layer in self.layers]
+            environment = _reparse_layer(self.environment)
+            return resolve_config(
+                layers,
+                environment,
+                build_cli_layer(self.cli),
+                rejected=self.rejected,
+            )
+
+
+def _reparse_layer(layer: Layer) -> Layer:
+    """Revalidate captured raw inputs under the caller's duration anchor."""
+    parsed: dict[str, Any] = {}
+    for key, raw in layer.raw.items():
+        spec = BY_KEY[key]
+        if layer.origin.kind is SourceKind.ENV and not layer.origin.enforced:
+            where = str(spec.env_var)
+            table = where
+        else:
+            where = f"{layer.origin.label}: {key}"
+            table = project_key_path("matrix", layer.origin.kind)
+        with matrix_table(table):
+            parsed[key] = _parse_setting(spec, raw, where)
+    return Layer(
+        layer.origin,
+        parsed,
+        layer.raw,
+        enforced=None if layer.enforced is None else _reparse_layer(layer.enforced),
+    )
+
+
 def build_cli_overrides(
     locals_by_param: Mapping[str, Any], flags: Mapping[str, str]
-) -> dict[str, Any]:
+) -> dict[str, object]:
     """Return registry-keyed overrides for CLI parameters the user set.
 
     Table sub-flags are collected by :func:`build_cli_tables`.
     """
-    out: dict[str, Any] = {}
+    out: dict[str, object] = {}
     for spec in OPTIONS:
         if spec.cli_param is None:
             continue
-        value = locals_by_param[spec.cli_param]
+        value = locals_by_param.get(spec.cli_param)
         if value is None or (isinstance(value, tuple) and not value):
             continue
         out[spec.name] = value
@@ -300,7 +391,7 @@ def reject_user_keys_in_pyproject(raw: Mapping[str, Any]) -> None:
         if spec is None:
             continue
         if not spec.allowed_in_toml(SourceKind.PYPROJECT):
-            raise SourceConfigError(_gate_reason(spec, SourceKind.PYPROJECT))
+            raise SourceConfigError(_pyproject_scope_refusal(spec))
 
 
 def _load_toml_layer(
@@ -312,8 +403,50 @@ def _load_toml_layer(
     """Read a TOML source, collecting or raising scope errors."""
     raw = _read_raw_table(path, kind)
     origin = Origin(kind, str(path))
+    layer = _parse_bindings(
+        {key: value for key, value in raw.items() if key != "enforce"},
+        origin,
+        rejections=rejections,
+    )
+    if "enforce" in raw:
+        if kind not in {SourceKind.SYSTEM_TOML, SourceKind.USER_TOML}:
+            msg = f"{path}: enforce is allowed only in system or user configuration"
+            raise SourceConfigError(msg)
+        layer.enforced = _parse_enforced(raw["enforce"], origin)
+    return layer
+
+
+def _parse_enforced(raw: Any, origin: Origin) -> Layer:
+    """Parse external bindings that ordinary configuration cannot override."""
+    if not isinstance(raw, dict):
+        msg = f"{origin.label}: enforce must be a table of configuration settings"
+        raise SourceConfigError(msg)
+    enforced_origin = Origin(origin.kind, origin.label + " [enforce]", enforced=True)
+    return _parse_bindings(raw, enforced_origin)
+
+
+def _parse_setting(spec: Opt, raw: Any, where: str) -> Any:
+    """Attach the binding's source when a validator only names its domain error."""
+    try:
+        return spec.parse(raw, where)
+    except SourceConfigError as exc:
+        if where in str(exc):
+            raise
+        msg = f"{where}: {exc}"
+        raise SourceConfigError(msg) from exc
+
+
+def _parse_bindings(
+    raw: Mapping[str, Any],
+    origin: Origin,
+    *,
+    rejections: list[RejectedLayer] | None = None,
+) -> Layer:
+    """Validate a file's configuration bindings with their original source labels."""
+    kind = origin.kind
+    path = origin.label
     values: dict[str, Any] = {}
-    raw_tables: dict[str, Any] = {}
+    raw_values: dict[str, Any] = {}
     # Bind file-specific state used by parse hooks.
     with matrix_table(project_key_path("matrix", kind)):
         for key, value in raw.items():
@@ -332,27 +465,23 @@ def _load_toml_layer(
                     continue
                 raise SourceConfigError(msg)
             where = f"{path}: {key}"
-            if not spec.allowed_in_toml(kind):
-                reason = _gate_reason(spec, kind)
+            if kind is not SourceKind.ENV and not spec.allowed_in_toml(kind):
+                reason = _pyproject_scope_refusal(spec)
                 if rejections is not None:
                     rejections.append(RejectedLayer(origin, key, reason))
                     continue
                 msg = f"{path}: {reason}"
                 raise SourceConfigError(msg)
-            values[key] = spec.parse(value, where)
-            if key in BY_PARENT:
-                raw_tables[key] = value
-    return Layer(origin, values, raw_tables)
+            values[key] = _parse_setting(spec, value, where)
+            raw_values[key] = value
+    return Layer(origin, values, raw_values)
 
 
-def _gate_reason(spec: Opt, kind: SourceKind) -> str:
-    if kind is SourceKind.PYPROJECT:
-        where = "pyproject [tool.nab] (project-scope only)"
-    else:
-        where = f"a {scope_label(kind)} nab.toml"
+def _pyproject_scope_refusal(spec: Opt) -> str:
+    """Explain why a runtime setting cannot be declared by the project manifest."""
     return (
         f"{spec.name!r} is a {spec.scope_name}-scope option and cannot be set"
-        f" in {where}"
+        " in pyproject [tool.nab] (project-scope only)"
     )
 
 
@@ -382,31 +511,51 @@ def read_env_layer(
     *,
     rejections: list[RejectedLayer] | None = None,
 ) -> Layer:
-    """Read ``NAB_*`` for every registry row that declares an env var.
-
-    ``environ`` defaults to the process environment through
-    :func:`nab.env.current`.  PROJECT options never declare an env var, so
-    the env layer carries USER options only.  A ``NAB_<KEY>`` naming a
-    PROJECT option (e.g. ``NAB_RESOLUTION``) draws a warning from
-    :func:`_warn_renamed_env`; any other unknown ``NAB_*`` name (e.g. a
-    typo) one from :func:`_warn_unknown_env`.  Neither is applied, and
-    neither is fatal.  The two names the output layer owns
-    (:data:`nab.env.OUTPUT_OWNED`) are skipped silently and bind nothing.
-    When ``rejections`` is supplied (``nab config --include-rejected``)
-    those env casualties are recorded there instead of warned, mirroring
-    the TOML loader.
-    """
+    """Read scalar tokens and structured TOML values for every configuration key."""
     environ = env.current(environ)
-    _warn_renamed_env(environ, rejections=rejections)
     _warn_unknown_env(environ, rejections=rejections)
     values: dict[str, Any] = {}
+    raw_values: dict[str, Any] = {}
     for spec in OPTIONS:
-        if spec.env_var is None:
+        name = spec.env_var
+        assert name is not None
+        if name not in environ:
             continue
-        if spec.env_var not in environ:
-            continue
-        values[spec.name] = spec.parse(environ[spec.env_var], spec.env_var)
-    return Layer(Origin(SourceKind.ENV, "env"), values)
+        raw, value = _environment_value(spec, environ[name], name)
+        values[spec.name] = value
+        raw_values[spec.name] = raw
+    origin = Origin(SourceKind.ENV, "env")
+    enforced = None
+    if "NAB_ENFORCE" in environ:
+        raw = _toml_environment_value(environ["NAB_ENFORCE"], "NAB_ENFORCE")
+        enforced = _parse_enforced(raw, Origin(SourceKind.ENV, "NAB_ENFORCE"))
+    return Layer(origin, values, raw_values, enforced=enforced)
+
+
+def _environment_value(spec: Opt, text: str, name: str) -> tuple[Any, Any]:
+    """Validate an environment binding, retaining its input for table subflags."""
+    # Scalar parsers keep literal paths such as [cache].
+    try:
+        return text, _parse_setting(spec, text, name)
+    except SourceConfigError:
+        if not text.lstrip().startswith(("[", "{")):
+            raise
+    raw = _toml_environment_value(text, name)
+    with matrix_table(name):
+        return raw, _parse_setting(spec, raw, name)
+
+
+def _toml_environment_value(text: str, name: str) -> Any:
+    """Decode one TOML value without admitting additional configuration bindings."""
+    try:
+        document = toml_io.loads("value = " + text)
+    except tomli.TOMLDecodeError as exc:
+        msg = f"{name} must contain a TOML value: {exc}"
+        raise SourceConfigError(msg) from exc
+    if set(document) != {"value"}:
+        msg = f"{name} must contain one TOML value"
+        raise SourceConfigError(msg)
+    return document["value"]
 
 
 def _warn_unknown_env(
@@ -414,28 +563,12 @@ def _warn_unknown_env(
     *,
     rejections: list[RejectedLayer] | None = None,
 ) -> None:
-    """Warn about any ``NAB_*`` var that is neither a known nor renamed name.
-
-    For environment sources, a typo'd or made-up ``NAB_<KEY>``
-    (e.g. ``NAB_OFLINE``) is ignored with a warning naming the variable,
-    never applied and never fatal.  Renamed PROJECT names are left for
-    :func:`_warn_renamed_env`, which gives the more specific
-    not-env-settable message.  The names the output layer owns
-    (:data:`nab.env.OUTPUT_OWNED`) set no registry row, so they are skipped
-    here, but the message still offers them: a user who mistyped
-    ``NAB_VERBOSITY`` is reaching for a variable nab honours.  When
-    ``rejections`` is supplied the var is recorded there instead of warned.
-    """
+    """Warn about unknown names, or collect them for configuration inspection."""
     known = {spec.env_var for spec in OPTIONS if spec.env_var is not None}
-    renamed = set(_renamed_env_names())
+    known.add("NAB_ENFORCE")
     honoured = ", ".join(sorted(known | env.OUTPUT_OWNED))
     for name in environ:
-        if (
-            not name.startswith("NAB_")
-            or name in known
-            or name in renamed
-            or name in env.OUTPUT_OWNED
-        ):
+        if not name.startswith("NAB_") or name in known or name in env.OUTPUT_OWNED:
             continue
         msg = (
             f"{name} is not a recognized nab setting and was ignored; the"
@@ -445,51 +578,6 @@ def _warn_unknown_env(
             rejections.append(RejectedLayer(Origin(SourceKind.ENV, name), name, msg))
             continue
         _logger.warning("%s", msg)
-
-
-def _renamed_env_names() -> dict[str, Opt]:
-    """Map every PROJECT row's would-be ``NAB_<KEY>`` name to its row."""
-    names: dict[str, Opt] = {}
-    for spec in OPTIONS:
-        if spec.scope is Scope.PROJECT:
-            env_name = "NAB_" + spec.name.upper().replace("-", "_")
-            names[env_name] = spec
-    return names
-
-
-def _warn_renamed_env(
-    environ: Mapping[str, str],
-    *,
-    rejections: list[RejectedLayer] | None = None,
-) -> None:
-    """Warn about a ``NAB_<KEY>`` naming a PROJECT (non-env-settable) option.
-
-    The variable is ignored, never applied and never fatal.  When
-    ``rejections`` is supplied the var is recorded there under the spec's
-    key (so ``explain <key> --include-rejected`` lists it) instead of
-    warned.
-    """
-    for env_name, spec in _renamed_env_names().items():
-        if env_name in environ:
-            # A file-only row (cli_flag is None) carries no per-run flag,
-            # so the message names only the two project files for it.
-            override = (
-                ""
-                if spec.cli_flag is None
-                else f", or override per-run with {spec.cli_flag}"
-            )
-            msg = (
-                f"{env_name} was ignored: {spec.name!r} is a"
-                f" {spec.scope_name}-scope option and is not env-settable."
-                f"  Set it in pyproject [tool.nab].{spec.name} or a project-dir"
-                f" nab.toml{override}."
-            )
-            if rejections is not None:
-                rejections.append(
-                    RejectedLayer(Origin(SourceKind.ENV, env_name), spec.name, msg)
-                )
-                continue
-            _logger.warning("%s", msg)
 
 
 def config_search_roots(pyproject: Path) -> SourceRoots:
@@ -593,13 +681,19 @@ def resolve_config(
     are laid over the table the files declare and the merged table goes
     to the key's parse hook.
     """
-    all_layers = [*layers, env_layer, cli_layer]
+    ordinary = [*layers, env_layer, cli_layer]
+    all_layers = [
+        *ordinary,
+        *(layer.enforced for layer in ordinary if layer.enforced is not None),
+    ]
     out: dict[str, EffectiveValue] = {}
     for spec in OPTIONS:
         stack = _stack_for(spec, all_layers)
         cli_table = cli_layer.raw.get(spec.name)
         if cli_table is not None:
             stack = [*stack, _folded(spec, cli_table, all_layers)]
+            stack.sort(key=_rank)
+        _check_enforced_conflict(spec, stack)
         rejected_for_key = tuple(r for r in rejected if r.key == spec.name)
         if stack:
             origin, value = stack[-1]
@@ -613,23 +707,73 @@ def resolve_config(
             rejected=rejected_for_key,
             cli_table=cli_table,
         )
+    _check_enforced_policy_overrides(out)
     return out
+
+
+def _check_enforced_policy_overrides(effective: Mapping[str, EffectiveValue]) -> None:
+    """Keep scoped package/index policies from changing an enforced global policy."""
+    policies = (
+        ("build-policy", "build_policy", effective["build-policy"].value),
+        ("dist-policy", "dist_policy", effective["dist-policy"].value[0]),
+        (
+            "dist-policy",
+            "dist_trust_unverified_deps",
+            effective["dist-policy"].value[1],
+        ),
+        (
+            "uploaded-prior-to",
+            "uploaded_prior_to",
+            effective["uploaded-prior-to"].value,
+        ),
+    )
+    for key, field, configured in policies:
+        setting = effective[key]
+        if not setting.origin.enforced:
+            continue
+        expected = (
+            parse_anchored_cutoff(configured, setting.origin.label)
+            if key == "uploaded-prior-to" and isinstance(configured, str)
+            else configured
+        )
+        for table, source, scoped in _scoped_policy_entries(effective):
+            value = getattr(scoped, field)
+            disabled = key == "uploaded-prior-to" and scoped.uploaded_prior_to_disabled
+            if disabled or (value is not None and value != expected):
+                msg = (
+                    f"{setting.origin.label} enforces {key} = "
+                    f"{setting.spec.render(setting.value)}; {table} in {source}"
+                    f" declares a conflicting {key} override"
+                )
+                raise SourceConfigError(msg)
+
+
+def _scoped_policy_entries(
+    effective: Mapping[str, EffectiveValue],
+) -> Iterator[tuple[str, str, PackageOverride | IndexOverride]]:
+    """Yield scoped policies with the setting and source that declared them."""
+    for table in ("packages", "package-rules", "index"):
+        entry = effective[table]
+        overrides = entry.value.values() if table == "index" else entry.value
+        for scoped in overrides:
+            assert isinstance(scoped, (PackageOverride, IndexOverride))
+            yield table, entry.origin.label, scoped
 
 
 def _folded(
     spec: Opt, table: CliTable, all_layers: Sequence[Layer]
 ) -> tuple[Origin, Any]:
-    """Parse CLI table keys over the table declared by project files."""
-    merged = fold_cli_table(spec, table, _file_raw(spec, all_layers))
+    """Parse CLI fields over the highest-precedence base table."""
+    merged = fold_cli_table(spec, table, _table_base(spec, all_layers))
     try:
-        value = spec.parse(merged, cli_table_label(spec))
+        value = _parse_setting(spec, merged, cli_table_label(spec))
     except SourceConfigError as exc:
         raise CliTableError(str(exc)) from exc
     return Origin(SourceKind.CLI, "cli"), value
 
 
-def _file_raw(spec: Opt, all_layers: Iterable[Layer]) -> Any | None:
-    """Return the highest-precedence unparsed project table, if any."""
+def _table_base(spec: Opt, all_layers: Iterable[Layer]) -> Any | None:
+    """Return the highest-precedence raw table outside the CLI, if any."""
     found = [
         (layer.origin, layer.raw[spec.name])
         for layer in all_layers
@@ -648,7 +792,12 @@ def _stack_for(spec: Opt, all_layers: Iterable[Layer]) -> list[tuple[Origin, Any
     values pass.
     """
     found = [
-        (layer.origin, layer.values[spec.name])
+        (
+            Origin(SourceKind.ENV, str(spec.env_var))
+            if layer.origin.kind is SourceKind.ENV and not layer.origin.enforced
+            else layer.origin,
+            layer.values[spec.name],
+        )
         for layer in all_layers
         if spec.name in layer.values
     ]
@@ -657,10 +806,29 @@ def _stack_for(spec: Opt, all_layers: Iterable[Layer]) -> list[tuple[Origin, Any
     return found
 
 
-def _rank(binding: tuple[Origin, Any]) -> tuple[int, bool]:
+def _rank(binding: tuple[Origin, Any]) -> tuple[bool, int, bool]:
     """Sort a binding by precedence, with project nab.toml winning its tie."""
     origin, _value = binding
-    return (PRECEDENCE[origin.kind], origin.kind is SourceKind.PROJECT_TOML)
+    return (
+        origin.enforced,
+        PRECEDENCE[origin.kind],
+        origin.kind is SourceKind.PROJECT_TOML,
+    )
+
+
+def _check_enforced_conflict(spec: Opt, stack: Sequence[tuple[Origin, Any]]) -> None:
+    """Refuse conflicting enforced values rather than let one source remove another."""
+    enforced = [(origin, value) for origin, value in stack if origin.enforced]
+    if not enforced:
+        return
+    first, expected = enforced[0]
+    for origin, value in enforced[1:]:
+        if value != expected:
+            msg = (
+                f"{spec.name!r} has conflicting enforced values in"
+                f" {first.label} and {origin.label}"
+            )
+            raise SourceConfigError(msg)
 
 
 def _check_project_file_conflict(
@@ -702,7 +870,7 @@ def build_cli_layer(values: Mapping[str, Any]) -> Layer:
 
         # Parse hooks expect repeatable flags in their TOML list form.
         raw_value = list(value) if isinstance(value, tuple) else value
-        parsed[key] = spec.parse(raw_value, str(spec.cli_flag))
+        parsed[key] = _parse_setting(spec, raw_value, str(spec.cli_flag))
     return Layer(Origin(SourceKind.CLI, "cli"), parsed, raw_tables)
 
 
@@ -788,7 +956,7 @@ def render_explain(
         status = _explain_status(ev, i, winner_index)
         rendered = (
             render_cli_table(ev.cli_table)
-            if winner and ev.cli_table is not None
+            if origin.kind is SourceKind.CLI and ev.cli_table is not None
             else ev.spec.render(value)
         )
         lines.append(
@@ -810,8 +978,12 @@ def _explain_status(ev: EffectiveValue, index: int, winner_index: int) -> str:
     Only the winner's predecessor can supply keys omitted from a CLI table.
     """
     if index == winner_index:
-        return "winner"
-    if ev.cli_table is not None and index == winner_index - 1:
+        return "enforced" if ev.origin.enforced else "winner"
+    if (
+        ev.cli_table is not None
+        and not ev.origin.enforced
+        and index == winner_index - 1
+    ):
         return "merged"
     return "shadowed"
 

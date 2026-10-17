@@ -109,7 +109,7 @@ class TestWhatTheTableFillsIn:
         class Fixture(Table, on=GLOBAL, scope=Scope.USER, docs="reference/cli.md"):
             """One row that writes none of the three."""
 
-            offline = Tri(key=_layer(rdefault=False), env=True, help="stay offline")
+            offline = Tri(key=_layer(rdefault=False), help="stay offline")
 
         row = _only(Fixture)
         assert (row.on, row.scope, row.docs) == (GLOBAL, Scope.USER, "reference/cli.md")

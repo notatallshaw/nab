@@ -1,7 +1,7 @@
 """Assemble CLI flags that set individual configuration table keys.
 
 ``build_cli_tables`` records the keys written on the command line.
-``fold_cli_table`` overlays them on a table from the project files.
+``fold_cli_table`` overlays them on a table from configuration.
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ def _cli_keys(
     keys: list[CliKey] = []
     for row in sub_rows:
         param = str(row.cli_param)
-        raw = locals_by_param[param]
+        raw = locals_by_param.get(param, row.default)
         if not _written(row, raw):
             continue
         tokens = (raw,) if row.tokens is Tokens.SCALAR else tuple(raw)
@@ -113,9 +113,9 @@ def _cli_keys(
 def fold_cli_table(
     parent: Opt, table: CliTable, file_raw: Mapping[str, Any] | None
 ) -> dict[str, Any]:
-    """Overlay CLI keys on the file table.
+    """Overlay CLI keys on a base table.
 
-    Without a file table, all required keys must appear on the command line.
+    Without a base table, all required keys must appear on the command line.
     """
     if file_raw is None:
         _check_needed(parent, table)

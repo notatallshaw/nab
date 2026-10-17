@@ -226,12 +226,11 @@ class TestConfigExplainOutput:
     def test_explain_prints_every_status(
         self, hermetic_roots: Path, tmp_path: Path
     ) -> None:
-        # Exercise a rejected user file, shadowed pyproject binding, and
-        # winning CLI source.
+        # A rejected project binding accompanies the normal source stack.
         _write(
             hermetic_roots / "pyproject.toml",
             '[project]\nname = "x"\nversion = "0"\ndependencies = []\n'
-            '[tool.nab]\nresolution = "lowest"\nmode = "universal"\n'
+            '[tool.nab]\nresolution = "lowest"\nmode = "universal"\noffline = true\n'
             '[tool.nab.matrix]\npython = ">=3.11,<3.14"\n'
             'platforms = ["linux_x86_64", "macos_arm64"]\n',
         )
@@ -253,6 +252,16 @@ class TestConfigExplainOutput:
                 "matrix",
                 "--project-matrix-platforms",
                 "macos_arm64",
+                "--include-rejected",
+                "--path",
+                str(hermetic_roots / "pyproject.toml"),
+            ]
+        )
+
+        printed += _run_config(
+            [
+                "explain",
+                "offline",
                 "--include-rejected",
                 "--path",
                 str(hermetic_roots / "pyproject.toml"),

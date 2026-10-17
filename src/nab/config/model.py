@@ -62,6 +62,7 @@ from nab_provider.vcs_admission import VcsConfig
 
 from .hooks import resolve_anchor
 from .ladder import (
+    ConfigSnapshot,
     EffectiveValue,
     Origin,
     SourceKind,
@@ -113,6 +114,9 @@ _DEFAULT_INDEXES = (IndexConfig(DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL),)
 _NO_INDEX_OVERRIDES: Mapping[str, IndexOverride] = MappingProxyType({})
 _DEFAULT_VCS = VcsConfig()
 _DEFAULT_ARCHIVE = ArchiveConfig()
+_EXTERNAL_KINDS = frozenset(
+    {SourceKind.SYSTEM_TOML, SourceKind.USER_TOML, SourceKind.ENV}
+)
 
 
 class EnvironmentConfig(ValueType):
@@ -301,11 +305,12 @@ class NabProjectConfig(ValueType):
 def read_pyproject_config(
     path: Path,
     *,
-    discover_workspace: bool = True,
-    use_sources: bool = True,
+    discover_workspace: bool | None = None,
+    use_sources: bool | None = None,
     invocation_root: Path | None = None,
     anchor: datetime | None = None,
     cli_overrides: Mapping[str, Any] | None = None,
+    snapshot: ConfigSnapshot | None = None,
 ) -> NabProjectConfig:
     """Read the project's effective :class:`NabProjectConfig`.
 
@@ -318,6 +323,11 @@ def read_pyproject_config(
     ``anchor`` fixes the instant used by ``P<n>D`` durations. It defaults to
     the current UTC time; the lock CLI may reuse a lock's recorded timestamp.
 
+    ``snapshot`` supplies settings already discovered by the CLI, including
+    external files and environment variables. Its inputs are reparsed at
+    ``anchor``; it cannot be combined with ``cli_overrides``. Without a
+    snapshot, this library entry point reads project files only.
+
     By default, workspace discovery finds the declared or nearest ancestor
     workspace and adds its members as local sources, with explicit sources
     winning name collisions. It does not relax ``build-policy``. Pass
@@ -328,6 +338,9 @@ def read_pyproject_config(
     apply. Unknown keys and invalid cross-field combinations raise
     :class:`ConfigError`.
     """
+    if snapshot is not None and cli_overrides is not None:
+        msg = "snapshot and cli_overrides cannot be supplied together"
+        raise ValueError(msg)
     if anchor is None:
         anchor = datetime.now(timezone.utc)
     pyproject_dir = realpath(path.parent)
@@ -340,10 +353,17 @@ def read_pyproject_config(
     # and the project-dir nab.toml lookup resolve against.  ``open`` still
     # follows the symlink, so the same file is read.
     roots = SourceRoots(project_dir=pyproject_dir, pyproject=pyproject_dir / path.name)
-    with resolve_anchor(anchor):
-        layers = discover_layers(roots)
-        cli_layer = build_cli_layer(cli_overrides or {})
-        effective = resolve_config(layers, read_env_layer({}), cli_layer)
+    if snapshot is None:
+        with resolve_anchor(anchor):
+            layers = discover_layers(roots)
+            cli_layer = build_cli_layer(cli_overrides or {})
+            effective = resolve_config(layers, read_env_layer({}), cli_layer)
+    else:
+        effective = snapshot.at_anchor(anchor)
+    discover_workspace = _configured_boolean(
+        effective["workspace-discovery"], override=discover_workspace
+    )
+    use_sources = _configured_boolean(effective["sources"], override=use_sources)
     config = _config_from_effective(
         effective,
         anchor=anchor,
@@ -364,6 +384,21 @@ def read_pyproject_config(
             )
         )
     return config
+
+
+def _configured_boolean(setting: EffectiveValue, *, override: bool | None) -> bool:
+    """Apply a library caller's selection without relaxing an enforced setting."""
+    configured = setting.value
+    assert isinstance(configured, bool)
+    if override is None:
+        return configured
+    if setting.origin.enforced and override != configured:
+        msg = (
+            f"{setting.origin.label} enforces {setting.spec.name} = {configured};"
+            " a caller cannot override it"
+        )
+        raise ConfigError(msg)
+    return override
 
 
 def _config_from_effective(
@@ -395,6 +430,11 @@ def _config_from_effective(
                 " top-level [matrix] table to the project's nab.toml, or drop"
                 " --project-mode universal."
             )
+        elif mode_value.origin.kind in _EXTERNAL_KINDS:
+            msg = (
+                f"{mode_value.origin.label}: mode = 'universal' requires a matrix;"
+                " set matrix in configuration or through NAB_MATRIX."
+            )
         else:
             # PROJECT_TOML is the project-dir nab.toml, whose keys are top-level.
             table = (
@@ -407,7 +447,9 @@ def _config_from_effective(
             )
         raise ConfigError(msg)
     if mode is ResolveMode.SPECIFIC and matrix is not None:
-        if not mode_value.origin.outranks(matrix_value.origin):
+        if matrix_value.origin.enforced or not mode_value.origin.outranks(
+            matrix_value.origin
+        ):
             raise ConfigError(_specific_mode_message(matrix_value))
         # A higher-precedence source (--project-mode) selected a
         # single-environment resolve, so the matrix it shadows does not apply.
@@ -444,7 +486,12 @@ def _config_from_effective(
     )
 
     requires_python = effective["requires-python"].value
-    requires_python_source = _TOOL_NAB_REQUIRES_PYTHON
+    requires_python_source = (
+        _TOOL_NAB_REQUIRES_PYTHON
+        if effective["requires-python"].origin.kind
+        in {SourceKind.DEFAULT, SourceKind.PYPROJECT}
+        else f"requires-python from {effective['requires-python'].origin.label}"
+    )
     if requires_python is None and project_requires_python is not None:
         requires_python = project_requires_python
         requires_python_source = _PROJECT_REQUIRES_PYTHON
@@ -490,7 +537,7 @@ def _config_from_effective(
 
 def _declared_by(ev: EffectiveValue) -> tuple[str, ...]:
     """Return the flags that declared this key, empty for a file source."""
-    if ev.cli_table is None:
+    if ev.cli_table is None or ev.origin.kind is not SourceKind.CLI:
         return ()
     return tuple(key.flag for key in ev.cli_table.keys)
 
@@ -510,9 +557,13 @@ def _specific_mode_message(matrix_value: EffectiveValue) -> str:
             " pass --project-mode universal as well, or drop the matrix flags."
         )
     declared = (
-        "[matrix] in nab.toml"
-        if matrix_value.origin.kind is SourceKind.PROJECT_TOML
-        else "[tool.nab.matrix] in pyproject.toml"
+        _table_location("matrix", matrix_value.origin)
+        if matrix_value.origin.kind in _EXTERNAL_KINDS
+        else (
+            "[matrix] in nab.toml"
+            if matrix_value.origin.kind is SourceKind.PROJECT_TOML
+            else "[tool.nab.matrix] in pyproject.toml"
+        )
     )
     return (
         f"{declared} is set but mode is 'specific'; set mode = 'universal' to"
@@ -528,9 +579,11 @@ def _matrix_environment_message(
     """Explain why matrix and environment declarations conflict."""
     matrix_flags = _declared_by(matrix_value)
     environment_flags = _declared_by(environment_value)
-    matrix = " and ".join(matrix_flags) or f"[{_declared_table(matrix_value)}]"
-    environment = (
-        " and ".join(environment_flags) or f"[{_declared_table(environment_value)}]"
+    matrix = " and ".join(matrix_flags) or _table_location(
+        "matrix", matrix_value.origin
+    )
+    environment = " and ".join(environment_flags) or _table_location(
+        environment_value.spec.name, environment_value.origin
     )
     if not matrix_flags and not environment_flags:
         return (
@@ -826,6 +879,8 @@ def _option_label(value: EffectiveValue) -> str:
     and both carry a flag, so a CLI origin on a flagless row is a bug.
     """
     if value.origin.kind is not SourceKind.CLI:
+        if value.origin.kind in _EXTERNAL_KINDS:
+            return f"{value.origin.label}: {value.spec.name}"
         return value.spec.name
     if value.spec.cli_flag is None:
         msg = f"Bug: {value.spec.name!r} has no CLI flag but carries a CLI origin"
@@ -1100,12 +1155,14 @@ def _environment_from_effective(
     declared: Mapping[str, Any] = entry.value
     marker_environment: Mapping[str, str] = effective["marker-environment"].value
     if marker_environment:
-        file_origin = _environment_file_origin(entry)
+        file_origin = _environment_table_origin(entry)
         if file_origin is not None:
-            environment_table = project_key_path("environment", file_origin.kind)
-            marker_table = _declared_table(effective["marker-environment"])
+            environment_table = _table_location("environment", file_origin)
+            marker_table = _table_location(
+                "marker-environment", effective["marker-environment"].origin
+            )
             msg = (
-                f"[{environment_table}] and the deprecated [{marker_table}]"
+                f"{environment_table} and the deprecated {marker_table}"
                 " are both set; drop the marker-environment table."
             )
             raise ConfigError(msg)
@@ -1124,14 +1181,14 @@ def _environment_from_effective(
     if environment.implementation is not None and environment.platform is None:
         # The message asks for environment.platform, so name that table even
         # when the deprecated overlay is what declared it.
-        origin = _environment_file_origin(entry)
+        origin = _environment_table_origin(entry)
         if origin is None:
             origin = _environment_source(effective).origin
-        table = project_key_path("environment", origin.kind)
+        table = _table_location("environment", origin)
 
         valid = sorted(PLATFORM_MARKERS)
         msg = (
-            f"[{table}].implementation needs a platform: an interpreter is"
+            f"{table}.implementation needs a platform: an interpreter is"
             " modelled on a declared machine, not on the host's."
             f"  Add platform = one of {valid!r}."
         )
@@ -1139,17 +1196,11 @@ def _environment_from_effective(
     return environment
 
 
-def _environment_file_origin(entry: EffectiveValue) -> Origin | None:
-    """Return the file layer that declared ``[tool.nab.environment]``, if any.
-
-    Read off the stack rather than the effective value: the command line
-    folds its keys into the same key, and a flag narrowing the deprecated
-    overlay is not a second declaration of the table.  The origin rather than
-    a bare yes, so a message can name the table the way that file writes it.
-    """
+def _environment_table_origin(entry: EffectiveValue) -> Origin | None:
+    """Return the highest non-CLI binding supplying environment fields, if any."""
     stack: Sequence[tuple[Origin, object]] = entry.stack
     for origin, value in reversed(stack):
-        if value and origin.kind is not SourceKind.CLI:
+        if (value or origin.enforced) and origin.kind is not SourceKind.CLI:
             return origin
     return None
 
@@ -1162,9 +1213,15 @@ def _environment_source(
     return environment if environment.value else effective["marker-environment"]
 
 
-def _declared_table(value: EffectiveValue) -> str:
-    """Return the table path the file that declared ``value`` writes for its key."""
-    return project_key_path(value.spec.name, value.origin.kind)
+def _table_location(key: str, origin: Origin) -> str:
+    """Locate a configuration table in its file or environment binding."""
+    if origin.kind is SourceKind.ENV:
+        return f"{origin.label}: {key}" if origin.enforced else origin.label
+    prefix = "enforce." if origin.enforced else ""
+    table = f"[{prefix}{project_key_path(key, origin.kind)}]"
+    if origin.kind in _EXTERNAL_KINDS:
+        return f"{table} in {origin.label.removesuffix(' [enforce]')}"
+    return table
 
 
 def _validate_default_groups_against_conflicts(

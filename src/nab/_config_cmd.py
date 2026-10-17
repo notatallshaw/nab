@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._run import (
-    _cli_overrides,
     _fail_config,
+    command_overrides,
     effective_config,
     require_pyproject_file,
 )
@@ -69,6 +69,8 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
     project_environment_python: str | None = None,
     project_environment_platform: tuple[str, ...] = (),
     project_environment_implementation: ImplementationFlag | None = None,
+    sources: bool | None = None,
+    workspace_discovery: bool | None = None,
     include_rejected: bool = False,
 ) -> None:
     """Inspect the effective layered configuration.
@@ -77,7 +79,7 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
     prints one value. ``explain`` prints one option's source stack.
 
     Without ``--include-rejected``, a refused config file is a fatal config
-    error. An unknown or renamed ``NAB_*`` variable is never fatal: it is
+    error. An unknown ``NAB_*`` variable is never fatal: it is
     dropped with a warning.
 
     With the flag, ``list`` appends refusals. ``explain`` adds a ``rejected``
@@ -90,32 +92,7 @@ def config_command(  # noqa: PLR0913 - one keyword per flag is the public surfac
     # Reject an invalid path before discovery can treat it as an absent source.
     require_pyproject_file(path)
 
-    cli_overrides = _cli_overrides(
-        cli_resolution=project_resolution,
-        cli_offline=offline,
-        cli_cache_dir=cache_dir,
-        cli_http_backend=http_backend,
-        cli_max_concurrency=max_concurrency,
-        cli_mode=project_mode,
-        cli_requires_python=project_requires_python,
-        cli_uploaded_prior_to=project_uploaded_prior_to,
-        cli_dist_policy=project_dist_policy,
-        cli_build_policy=project_build_policy,
-        cli_build_requires_depth=project_build_requires_depth,
-        cli_decision_order=project_decision_order,
-        cli_constraint=project_constraint,
-        cli_default_group=project_default_group,
-        cli_base_group=project_base_group,
-        cli_build_group=project_build_group,
-        cli_matrix_python=project_matrix_python,
-        cli_matrix_platforms=project_matrix_platforms,
-        cli_matrix_implementations=project_matrix_implementations,
-        cli_matrix_python_order=project_matrix_python_order,
-        cli_matrix_python_patches=project_matrix_python_patches,
-        cli_environment_python=project_environment_python,
-        cli_environment_platform=project_environment_platform,
-        cli_environment_implementation=project_environment_implementation,
-    )
+    cli_overrides = command_overrides(locals())
 
     rejected: list[RejectedLayer] = []
     try:

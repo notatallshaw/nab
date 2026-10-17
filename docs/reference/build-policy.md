@@ -4,6 +4,9 @@ Some Python packages publish dependency metadata that nab can read without runni
 require invoking a PEP 517 build backend. `[tool.nab].build-policy` is the single knob that controls
 how far nab is willing to go.
 
+Build policy is a security control over package backend execution. Source permission and artifact
+hash or commit-pin requirements apply independently.
+
 Three levels, strictest first. Each level reads static metadata from every source it admits; the
 difference is what is permitted to fall through to a backend invocation when the static read returns
 nothing usable.
@@ -38,6 +41,18 @@ Static metadata only, from any source:
 
 `never` runs no build backend unless a per-package or per-index override raises the policy. It still
 reads configured indexes and source files.
+
+To prohibit backend execution across projects, including package/index exceptions, enforce the
+setting in system/user configuration:
+
+```toml
+[enforce]
+build-policy = "never"
+```
+
+Or use `NAB_ENFORCE='{ build-policy = "never" }'`. Conflicting package/index exceptions are then
+errors. A plain `build-policy = "never"` outside `[enforce]`, or `NAB_BUILD_POLICY=never`, remains a
+default with the usual override rules. See {ref}`enforced settings <enforced-settings>`.
 
 ## `build-local` (default)
 

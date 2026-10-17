@@ -218,8 +218,9 @@ CASES = [
     ),
     Case(
         Origin,
-        {"kind": SourceKind.PYPROJECT, "label": "/p/pyproject.toml"},
-        {"kind": SourceKind.USER_TOML, "label": "/u/nab.toml"},
+        {"kind": SourceKind.PYPROJECT, "label": "/p/pyproject.toml", "enforced": False},
+        {"kind": SourceKind.USER_TOML, "label": "/u/nab.toml", "enforced": True},
+        positional=False,
     ),
     Case(
         Layer,
@@ -227,13 +228,16 @@ CASES = [
             "origin": ORIGIN,
             "values": {"mode": "specific"},
             "raw": {"matrix": {"python": "==3.11"}},
+            "enforced": None,
         },
         {
             "origin": OTHER_ORIGIN,
             "values": {"mode": "universal"},
             "raw": {},
+            "enforced": Layer(OTHER_ORIGIN, {"offline": True}),
         },
         hashable=False,
+        positional=False,
     ),
     Case(
         RejectedLayer,

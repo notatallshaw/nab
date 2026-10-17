@@ -25,10 +25,12 @@ from nab_project.paths import PathState, path_state
 from nab_provider.policy import ResolveMode
 
 from . import env
+from ._cli.definition.model import Kind
 from ._cli.parse import option_tokens
 from .config.hooks import inspector_anchor
 from .config.ladder import (
     OPTIONS,
+    ConfigSnapshot,
     EffectiveValue,
     RejectedLayer,
     Scope,
@@ -40,8 +42,8 @@ from .config.ladder import (
     project_cli_override_notice,
     project_cli_override_records,
     read_env_layer,
-    resolve_config,
 )
+from .config.registry import SUB_ROWS
 from .config.subflags import CliTable
 from .config.values import CliTableError, SourceConfigError
 from .output import printer
@@ -103,7 +105,7 @@ def effective_config(
     collect_rejected: bool = False,
     rejected_out: list[RejectedLayer] | None = None,
     read_pyproject: bool = True,
-) -> dict[str, EffectiveValue]:
+) -> ConfigSnapshot:
     """Resolve config layers for the project at ``path``.
 
     The option registry parses and merges the discovered TOML,
@@ -125,13 +127,12 @@ def effective_config(
     with inspector_anchor():
         layers = discover_layers(roots, rejections=sink, read_pyproject=read_pyproject)
         env_layer = read_env_layer(rejections=sink)
-        cli_layer = build_cli_layer(cli_overrides or {})
         if rejected_out is not None:
             rejected_out.extend(rejected)
-        return resolve_config(layers, env_layer, cli_layer, rejected=rejected)
+        return ConfigSnapshot(layers, env_layer, cli_overrides or {}, rejected=rejected)
 
 
-ConfigLadder = dict[str, EffectiveValue] | SourceConfigError
+ConfigLadder = ConfigSnapshot | SourceConfigError
 """One read of the layered config: the effective map, or the error it raised."""
 
 
@@ -141,7 +142,7 @@ def read_config_ladder(path: Path, cli_overrides: Mapping[str, object]) -> Confi
     A command builds one of these and threads it, so the environment is
     read, and an unknown ``NAB_*`` var warned about, once per
     invocation.  A category error is held rather than raised because the
-    lock anchor tolerates one and the run-settings fold exits on it.
+    lock anchor tolerates one and config loading reports it before execution.
     """
     try:
         return effective_config(path, cli_overrides=cli_overrides)
@@ -174,8 +175,10 @@ class RunSettings:
     cache_dir: Path | None
     http_backend: str
     max_concurrency: int
-    # Explicit --project-* overrides as rendered flag/value pairs.
+    # Explicit project settings as rendered flag/value pairs.
     cli_project_overrides: tuple[tuple[str, str], ...]
+    sources: bool = True
+    workspace_discovery: bool = True
 
 
 _BOTH_PYTHON_AXES = (
@@ -184,83 +187,23 @@ _BOTH_PYTHON_AXES = (
 )
 
 
-def _cli_overrides(  # noqa: PLR0913 - one keyword per CLI flag it maps to a registry key
-    *,
-    cli_resolution: str | None,
-    cli_offline: bool | None,
-    cli_cache_dir: Path | None,
-    cli_http_backend: str | None = None,
-    cli_max_concurrency: int | None = None,
-    cli_mode: str | None = None,
-    cli_requires_python: str | None = None,
-    cli_uploaded_prior_to: str | None = None,
-    cli_dist_policy: str | None = None,
-    cli_build_policy: str | None = None,
-    cli_build_requires_depth: int | None = None,
-    cli_decision_order: str | None = None,
-    cli_constraint: tuple[str, ...] = (),
-    cli_default_group: tuple[str, ...] = (),
-    cli_base_group: str | None = None,
-    cli_build_group: str | None = None,
-    cli_matrix_python: str | None = None,
-    cli_matrix_platforms: tuple[str, ...] = (),
-    cli_matrix_implementations: tuple[str, ...] = (),
-    cli_matrix_python_order: str | None = None,
-    cli_matrix_python_patches: tuple[str, ...] = (),
-    cli_python: str | None = None,
-    cli_environment_python: str | None = None,
-    cli_environment_platform: tuple[str, ...] = (),
-    cli_environment_implementation: str | None = None,
-) -> dict[str, object]:
-    """Build the registry-keyed CLI override dict from the named flags.
-
-    The one place the ``cli_param`` -> value mapping is written: the run
-    subcommands and ``nab config`` route their flag values through here so
-    the literal lives once.  ``build_cli_overrides`` then keeps only the
-    keys the user actually set.  USER options and the ``--project-*``
-    overrides for the scalar and array PROJECT options pass through; a
-    structured table has no flag of its own, so the ``--project-matrix-*``
-    and ``--project-environment-*`` flags spell one key each of ``matrix``
-    and ``environment``.  ``--python`` is the short form of
-    ``--project-environment-python``, recorded under its own name; writing
-    both is refused.  A refusal assembling a table exits 1 rather than
-    raising.
-    """
-    values: dict[str, object] = {
-        "project_resolution": cli_resolution,
-        "offline": cli_offline,
-        "cache_dir": cli_cache_dir,
-        "http_backend": cli_http_backend,
-        "max_concurrency": cli_max_concurrency,
-        "project_mode": cli_mode,
-        "project_requires_python": cli_requires_python,
-        "project_uploaded_prior_to": cli_uploaded_prior_to,
-        "project_dist_policy": cli_dist_policy,
-        "project_build_policy": cli_build_policy,
-        "project_build_requires_depth": cli_build_requires_depth,
-        "project_decision_order": cli_decision_order,
-        "project_constraint": cli_constraint,
-        "project_default_group": cli_default_group,
-        "project_base_group": cli_base_group,
-        "project_build_group": cli_build_group,
-        "project_matrix_python": cli_matrix_python,
-        "project_matrix_platforms": cli_matrix_platforms,
-        "project_matrix_implementations": cli_matrix_implementations,
-        "project_matrix_python_order": cli_matrix_python_order,
-        "project_matrix_python_patches": cli_matrix_python_patches,
-        "project_environment_python": cli_environment_python,
-        "project_environment_platform": cli_environment_platform,
-        "project_environment_implementation": cli_environment_implementation,
+def command_overrides(arguments: Mapping[str, object]) -> dict[str, object]:
+    """Collect declared CLI bindings and resolve the Python-version shorthand."""
+    values = {
+        row.cli_param: row.default
+        for row in (*OPTIONS, *SUB_ROWS)
+        if row.cli_param is not None
     }
-
+    values.update(arguments)
+    python = arguments.get("python")
     flags: dict[str, str] = {}
-    if cli_python is not None:
-        if cli_environment_python is not None:
+    if python is not None:
+        assert isinstance(python, str)
+        if values["project_environment_python"] is not None:
             _fail_cli(SourceConfigError(_BOTH_PYTHON_AXES))
-        _check_python_flag(cli_python)
-        values["project_environment_python"] = cli_python
+        _check_python_flag(python)
+        values["project_environment_python"] = python
         flags["project_environment_python"] = "--python"
-
     try:
         return build_cli_overrides(values, flags)
     except SourceConfigError as exc:
@@ -294,33 +237,8 @@ def _reject_python_flag_in_universal(ladder: ConfigLadder, python: str | None) -
         sys.exit(1)
 
 
-def project_config_overrides(
-    cli_overrides: Mapping[str, object],
-) -> dict[str, object]:
-    """Return the PROJECT-scope CLI overrides that belong in the config.
-
-    ``resolution`` is excluded: it keeps its own ``resolution_strategy``
-    path into the resolver, so it must not also enter the merged config.
-    USER options are excluded too (they configure the run, not the project).
-    The rest are the ``--project-*`` overrides the resolve folds in through
-    :func:`read_pyproject_config`.
-    """
-    project_keys = {
-        spec.name
-        for spec in OPTIONS
-        if spec.scope is Scope.PROJECT and spec.name != "resolution"
-    }
-    return {key: value for key, value in cli_overrides.items() if key in project_keys}
-
-
 def project_override_arguments(cli_overrides: Mapping[str, object]) -> list[str]:
-    """Return the CLI tokens that re-apply this run's ``--project-*`` overrides.
-
-    Takes the raw map :func:`_cli_overrides` built, not the config subset, so
-    ``resolution`` is carried too: it shapes the resolve without entering the
-    merged config.  A repeatable flag is emitted once per element, and a
-    table key is re-spelled flag by flag with the tokens the user typed.
-    """
+    """Return CLI tokens reproducing the project settings selected for this run."""
     arguments: list[str] = []
     for spec in OPTIONS:
         if spec.scope is not Scope.PROJECT:
@@ -332,6 +250,9 @@ def project_override_arguments(cli_overrides: Mapping[str, object]) -> list[str]
             continue
         flag = spec.cli_flag
         if flag is None or value is None:
+            continue
+        if spec.kind is Kind.TRI:
+            arguments.append(flag if value else "--no-" + flag[2:])
             continue
         items = value if isinstance(value, tuple) else (value,)
         for item in items:
@@ -355,19 +276,19 @@ def _layered_run_settings(effective: Mapping[str, EffectiveValue]) -> RunSetting
         http_backend=effective["http-backend"].value,
         max_concurrency=effective["max-concurrency"].value,
         cli_project_overrides=project_cli_override_records(effective),
+        sources=effective["sources"].value,
+        workspace_discovery=effective["workspace-discovery"].value,
     )
 
 
-def _layered_run_settings_or_exit(
-    ladder: ConfigLadder, *, produces_lock: bool = True
+def run_settings(
+    ladder: Mapping[str, EffectiveValue], *, produces_lock: bool = True
 ) -> RunSettings:
-    """Fold the run settings or exit on a config error.
+    """Fold the validated run settings and report project overrides.
 
     Emit a normal-level notice for CLI PROJECT overrides.
     ``produces_lock`` selects its wording.
     """
-    if isinstance(ladder, SourceConfigError):
-        _fail_config(ladder)
     settings = _layered_run_settings(ladder)
     notice = project_cli_override_notice(ladder, produces_lock=produces_lock)
     if notice is not None:
@@ -407,17 +328,12 @@ def _is_pylock(path: Path) -> bool:
     return "lock-version" in data and "project" not in data
 
 
-def _project_cli_overrides_or_exit(project_overrides: Mapping[str, object]) -> None:
-    """Exit 1 when a ``--project-*`` override has a bad value.
-
-    The refusal names the flag, since that is the ``where`` the CLI layer
-    parses under.  Without this the value is validated by the ``[tool.nab]``
-    parse instead, which points at a table the project may not have.
-    """
+def validate_project_cli_bindings(overrides: Mapping[str, object]) -> None:
+    """Validate project flags before reading configuration sources."""
     for spec in OPTIONS:
-        if spec.name not in project_overrides:
+        if spec.scope is not Scope.PROJECT or spec.name not in overrides:
             continue
         try:
-            build_cli_layer({spec.name: project_overrides[spec.name]})
+            build_cli_layer({spec.name: overrides[spec.name]})
         except SourceConfigError as exc:
             _fail_cli(exc)

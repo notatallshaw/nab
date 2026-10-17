@@ -18,3 +18,5 @@
 --project-environment-python
 --project-environment-platform
 --project-environment-implementation
+--sources
+--workspace-discovery

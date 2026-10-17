@@ -36,6 +36,26 @@ an expected input hash.
 Inspect the effective permission with `nab config explain archive --path pyproject.toml`. An unused
 table entry does not require acquisition permission.
 
+## Block archives across projects
+
+Source and build policies are security controls. To refuse direct archive and wheel sources even
+when a project declares their URLs or they are cached, enforce a block in user/system configuration:
+
+```toml
+# ~/.config/nab/nab.toml or /etc/nab/nab.toml
+[enforce.archive]
+policy = "block"
+```
+
+Or set it in the environment:
+
+```bash
+export NAB_ENFORCE='{ archive = { policy = "block" } }'
+```
+
+An ordinary `[archive]` table in the same file provides an overridable default. See
+{ref}`enforced settings <enforced-settings>` for precedence and scope.
+
 Lock and install the result:
 
 ```bash

@@ -1,4 +1,4 @@
-"""Generate CLI tables and the global-flags reference from option declarations.
+"""Generate CLI tables and option references from declarations.
 
 Use ``--write`` to update both outputs or ``--check`` to report a diff. Page
 validation stays here because installed distributions omit ``docs``.
@@ -32,6 +32,7 @@ _SPEC = _ROOT / "src" / "nab" / "_cli" / "spec.py"
 _REGISTRY = _ROOT / "src" / "nab" / "config" / "registry.py"
 _DOCS = _ROOT / "docs"
 _REFERENCE = _DOCS / "reference" / "cli.md"
+_CONFIG_REFERENCE = _DOCS / "reference" / "configuration.md"
 
 # What the generated block on the reference page is fenced by.  The opening
 # line says where the rows come from, because that is where a reader who
@@ -77,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         (_SPEC, _module_text()),
         (_REGISTRY, _registry_text()),
         (_REFERENCE, _reference_text()),
+        (_CONFIG_REFERENCE, _configuration_reference_text()),
     ]
     if arguments.write:
         for path, text in wanted:
@@ -111,14 +113,32 @@ def _reference_text() -> str:
     block between them is the seven root rows, so the page cannot describe
     a flag the declaration does not carry.
     """
-    page = _REFERENCE.read_text(encoding="utf-8")
+    return _replace_reference_block(_REFERENCE, _global_flags())
+
+
+def _configuration_reference_text() -> str:
+    """List the derived environment name for each persistent setting."""
+    rows = [("Setting", "Environment variable")]
+    rows.extend(
+        (f"`{row.key}`", f"`{row.env_var}`") for row in ALL if row.key is not None
+    )
+    left = max(len(key) for key, _variable in rows)
+    right = max(len(variable) for _key, variable in rows)
+    lines = [f"| {key:<{left}} | {variable:<{right}} |" for key, variable in rows]
+    lines.insert(1, f"| {'-' * left} | {'-' * right} |")
+    return _replace_reference_block(_CONFIG_REFERENCE, "\n".join(lines) + "\n")
+
+
+def _replace_reference_block(path: Path, block: str) -> str:
+    """Replace a generated reference block while retaining the surrounding page."""
+    page = path.read_text(encoding="utf-8")
     head, opened, rest = page.partition(_OPEN + "\n")
     _body, closed, tail = rest.partition(_CLOSE + "\n")
     if not opened or not closed:
-        msg = f"{_REFERENCE.name} has lost the generated block's markers"
+        msg = f"{path.name} has lost the generated block's markers"
         raise SystemExit(msg)
 
-    return head + opened + "\n" + _global_flags() + "\n" + closed + tail
+    return head + opened + "\n" + block + "\n" + closed + tail
 
 
 def _global_flags() -> str:

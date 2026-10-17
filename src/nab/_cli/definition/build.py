@@ -45,12 +45,12 @@ def build_option(row: Row) -> Opt:
 
     fields: dict[str, Any] = {
         "scope": row.scope,
+        "cli_prefix": row.cli_prefix,
         "kind": Kind(row.kind) if row.kind else None,
         "vtype": VType(read.vtype) if read.vtype else None,
         "choices": read.choices,
         "nullable": read.nullable,
         "negatable": row.negatable,
-        "env": row.env,
         "commands": row.on,
         "default": _default(row, read),
         "required": row.required,

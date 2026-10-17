@@ -202,32 +202,27 @@ class TestResolutionLadder:
         assert eff["resolution"].value is ResolutionStrategy.HIGHEST
         assert eff["resolution"].origin.kind is SourceKind.CLI
 
-    def test_resolution_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_resolution_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(tmp_path / "usr" / "nab" / "nab.toml", 'resolution = "lowest"\n')
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["resolution"].origin.kind is SourceKind.USER_TOML
 
-    def test_resolution_in_system_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_resolution_in_system_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         sys_toml = _write(tmp_path / "etc" / "nab.toml", 'resolution = "lowest"\n')
         roots = SourceRoots(system_toml=sys_toml, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="cannot be set in a system"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["resolution"].origin.kind is SourceKind.SYSTEM_TOML
 
-    def test_nab_resolution_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_resolution_env_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
-            eff = _resolve(
-                SourceRoots(project_dir=tmp_path),
-                environ={"NAB_RESOLUTION": "lowest"},
-            )
-        assert eff["resolution"].value is ResolutionStrategy.HIGHEST
-        assert "NAB_RESOLUTION" in caplog.text
-        assert "not env-settable" in caplog.text
+        effective = _resolve(
+            SourceRoots(project_dir=tmp_path), environ={"NAB_RESOLUTION": "lowest"}
+        )
+        assert effective["resolution"].value is ResolutionStrategy.LOWEST
+        assert effective["resolution"].origin.kind is SourceKind.ENV
 
     def test_bad_resolution_value_errors(self, tmp_path: Path) -> None:
         _project(tmp_path, 'resolution = "sideways"\n')
@@ -268,14 +263,14 @@ class TestDecisionOrderLadder:
         assert eff["decision-order"].value is DecisionOrder.ARRIVAL
         assert eff["decision-order"].origin.kind is SourceKind.CLI
 
-    def test_decision_order_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_decision_order_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(
             tmp_path / "usr" / "nab" / "nab.toml", 'decision-order = "stable"\n'
         )
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["decision-order"].origin.kind is SourceKind.USER_TOML
 
     def test_bad_decision_order_value_errors(self, tmp_path: Path) -> None:
         _project(tmp_path, 'decision-order = "whenever"\n')
@@ -586,32 +581,28 @@ class TestPyprojectRoot:
 
 
 class TestRejectedCollection:
-    def test_include_rejected_captures_gate_casualty(self, tmp_path: Path) -> None:
-        _project(tmp_path, 'resolution = "lowest"\n')
-        user = _write(tmp_path / "usr" / "nab" / "nab.toml", 'resolution = "highest"\n')
-        eff = _resolve(
-            SourceRoots(user_toml=user, project_dir=tmp_path),
-            collect_rejected=True,
-        )
-        rejected = eff["resolution"].rejected
+    def test_include_rejected_captures_user_key_in_pyproject(
+        self, tmp_path: Path
+    ) -> None:
+        _project(tmp_path, "offline = true\n")
+        eff = _resolve(SourceRoots(project_dir=tmp_path), collect_rejected=True)
+        rejected = eff["offline"].rejected
         assert len(rejected) == 1
-        assert rejected[0].origin.kind is SourceKind.USER_TOML
-        assert "project-scope" in rejected[0].reason
+        assert rejected[0].origin.kind is SourceKind.PYPROJECT
+        assert "user-scope" in rejected[0].reason
 
-    def test_include_rejected_captures_renamed_env(self, tmp_path: Path) -> None:
-        # A real run raises on NAB_RESOLUTION; collecting records it under
-        # the resolution key instead, so explain --include-rejected lists it.
+    def test_include_rejected_applies_recognized_project_environment(
+        self, tmp_path: Path
+    ) -> None:
         _project(tmp_path, 'resolution = "lowest"\n')
         eff = _resolve(
             SourceRoots(project_dir=tmp_path),
             environ={"NAB_RESOLUTION": "highest"},
             collect_rejected=True,
         )
-        rejected = eff["resolution"].rejected
-        assert len(rejected) == 1
-        assert rejected[0].origin.kind is SourceKind.ENV
-        assert rejected[0].origin.label == "NAB_RESOLUTION"
-        assert "not env-settable" in rejected[0].reason
+        assert eff["resolution"].rejected == ()
+        assert eff["resolution"].value is ResolutionStrategy.HIGHEST
+        assert eff["resolution"].origin.label == "NAB_RESOLUTION"
 
     def test_include_rejected_captures_unknown_env(self, tmp_path: Path) -> None:
         _project(tmp_path)
@@ -850,22 +841,17 @@ class TestRenderers:
         assert "rejected:" in out
         assert "NAB_OFLINE" in out
 
-    def test_render_list_surfaces_known_key_gate_rejection(
+    def test_render_list_surfaces_known_key_source_rejection(
         self, tmp_path: Path
     ) -> None:
-        # A PROJECT key set in a user nab.toml attaches to its option, so
-        # both explain and list can name it.
-        _project(tmp_path)
-        user_toml = tmp_path / "user.toml"
-        user_toml.write_text('resolution = "lowest"\n', encoding="utf-8")
+        project = _project(tmp_path, "offline = true\n")
         eff, rejected = _resolve_collect(
-            SourceRoots(project_dir=tmp_path, user_toml=user_toml),
-            collect_rejected=True,
+            SourceRoots(project_dir=tmp_path), collect_rejected=True
         )
         out = render_list(eff, rejected=rejected)
         assert "rejected:" in out
-        assert "resolution" in out
-        assert str(user_toml) in out
+        assert "offline" in out
+        assert str(project) in out
 
     def test_render_list_no_rejected_section_when_clean(self, tmp_path: Path) -> None:
         _project(tmp_path)
@@ -933,23 +919,17 @@ class TestRenderers:
             render_explain(eff, "bogus")
 
     def test_render_explain_include_rejected(self, tmp_path: Path) -> None:
-        _project(tmp_path, 'resolution = "lowest"\n')
-        user = _write(tmp_path / "usr" / "nab" / "nab.toml", 'resolution = "highest"\n')
-        eff = _resolve(
-            SourceRoots(user_toml=user, project_dir=tmp_path),
-            collect_rejected=True,
-        )
-        out = render_explain(eff, "resolution", include_rejected=True)
+        _project(tmp_path, "offline = true\n")
+        eff = _resolve(SourceRoots(project_dir=tmp_path), collect_rejected=True)
+        out = render_explain(eff, "offline", include_rejected=True)
         assert "rejected" in out
-        assert "project-scope" in out
+        assert "user-scope" in out
 
     def test_render_explain_emits_every_status(self, tmp_path: Path) -> None:
-        # One source per status: the user file is rejected (project-scope
-        # key), the pyproject binding is shadowed, the CLI wins, and a
-        # narrowed matrix marks the file table it was laid over.
+        # The project offline binding is rejected; other keys exercise merging and precedence.
         _project(
             tmp_path,
-            'resolution = "lowest"\nmode = "universal"\n'
+            'resolution = "lowest"\nmode = "universal"\noffline = true\n'
             '[tool.nab.matrix]\npython = ">=3.11,<3.14"\n'
             'platforms = ["linux_x86_64", "macos_arm64"]\n',
         )
@@ -963,9 +943,11 @@ class TestRenderers:
             },
             collect_rejected=True,
         )
-        printed = render_explain(
-            eff, "resolution", include_rejected=True
-        ) + render_explain(eff, "matrix")
+        printed = (
+            render_explain(eff, "resolution", include_rejected=True)
+            + render_explain(eff, "matrix")
+            + render_explain(eff, "offline", include_rejected=True)
+        )
 
         for status in ("winner", "shadowed", "rejected", "merged"):
             assert status in printed, status
@@ -1514,6 +1496,8 @@ class TestParserFoldHelpers:
                 "index",
                 "conflicts",
                 "matrix",
+                "sources",
+                "workspace-discovery",
             }
         )
 
@@ -1546,10 +1530,10 @@ class TestRegistryShape:
         keys = [spec.key for spec in OPTIONS]
         assert len(keys) == len(set(keys))
 
-    def test_project_options_have_no_env_var(self) -> None:
+    def test_project_options_have_env_var(self) -> None:
         for spec in OPTIONS:
             if spec.scope is Scope.PROJECT:
-                assert spec.env_var is None
+                assert spec.env_var is not None
 
     def test_user_options_have_env_var(self) -> None:
         for spec in OPTIONS:
@@ -1585,7 +1569,7 @@ class TestRegistryShape:
         spec = next(s for s in OPTIONS if s.key == "resolution")
         assert spec.allowed_in_toml(SourceKind.PYPROJECT)
         assert spec.allowed_in_toml(SourceKind.PROJECT_TOML)
-        assert not spec.allowed_in_toml(SourceKind.USER_TOML)
+        assert spec.allowed_in_toml(SourceKind.USER_TOML)
 
     def test_allowed_in_toml_user(self) -> None:
         spec = next(s for s in OPTIONS if s.key == "offline")
@@ -1617,30 +1601,27 @@ class TestScalarProjectOptions:
         assert eff["mode"].value is ResolveMode.UNIVERSAL
         assert eff["mode"].origin.kind is SourceKind.PROJECT_TOML
 
-    def test_mode_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_mode_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(tmp_path / "usr" / "nab" / "nab.toml", 'mode = "universal"\n')
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["mode"].origin.kind is SourceKind.USER_TOML
 
-    def test_mode_in_system_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_mode_in_system_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         sys_toml = _write(tmp_path / "etc" / "nab.toml", 'mode = "universal"\n')
         roots = SourceRoots(system_toml=sys_toml, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["mode"].origin.kind is SourceKind.SYSTEM_TOML
 
-    def test_nab_mode_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_mode_env_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
-            _resolve(
-                SourceRoots(project_dir=tmp_path), environ={"NAB_MODE": "universal"}
-            )
-        assert "NAB_MODE" in caplog.text
-        assert "not env-settable" in caplog.text
+        effective = _resolve(
+            SourceRoots(project_dir=tmp_path), environ={"NAB_MODE": "universal"}
+        )
+        assert effective["mode"].value is ResolveMode.UNIVERSAL
+        assert effective["mode"].origin.kind is SourceKind.ENV
 
     def test_mode_bad_value_keeps_existing_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'mode = "sideways"\n')
@@ -1666,13 +1647,13 @@ class TestScalarProjectOptions:
         assert eff["requires-python"].value == ">=3.11"
         assert eff["requires-python"].origin.kind is SourceKind.PROJECT_TOML
 
-    def test_requires_python_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_requires_python_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(
             tmp_path / "usr" / "nab" / "nab.toml", 'requires-python = ">=3.11"\n'
         )
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(SourceRoots(user_toml=user, project_dir=tmp_path))
+        effective = _resolve(SourceRoots(user_toml=user, project_dir=tmp_path))
+        assert effective["requires-python"].origin.kind is SourceKind.USER_TOML
 
     def test_requires_python_bad_specifier_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'requires-python = "3.11"\n')
@@ -1694,13 +1675,13 @@ class TestScalarProjectOptions:
         eff = _resolve(SourceRoots(project_dir=tmp_path))
         assert eff["dist-policy"].value == (DistPolicy.SDIST_ONLY, True)
 
-    def test_dist_policy_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_dist_policy_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(
             tmp_path / "usr" / "nab" / "nab.toml", 'dist-policy = "sdist-only"\n'
         )
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(SourceRoots(user_toml=user, project_dir=tmp_path))
+        effective = _resolve(SourceRoots(user_toml=user, project_dir=tmp_path))
+        assert effective["dist-policy"].origin.kind is SourceKind.USER_TOML
 
     def test_dist_policy_bad_value_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'dist-policy = "nonsense"\n')
@@ -1713,11 +1694,11 @@ class TestScalarProjectOptions:
         eff = _resolve(SourceRoots(project_dir=tmp_path))
         assert eff["build-policy"].value is BuildPolicy.NEVER
 
-    def test_build_policy_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_build_policy_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(tmp_path / "usr" / "nab" / "nab.toml", 'build-policy = "never"\n')
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(SourceRoots(user_toml=user, project_dir=tmp_path))
+        effective = _resolve(SourceRoots(user_toml=user, project_dir=tmp_path))
+        assert effective["build-policy"].origin.kind is SourceKind.USER_TOML
 
     def test_build_policy_bad_value_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'build-policy = "nonsense"\n')
@@ -1754,13 +1735,13 @@ class TestScalarProjectOptions:
         with pytest.raises(SourceConfigError, match="conflicting values"):
             _resolve(SourceRoots(project_dir=tmp_path))
 
-    def test_uploaded_prior_to_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_uploaded_prior_to_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(
             tmp_path / "usr" / "nab" / "nab.toml", 'uploaded-prior-to = "P4D"\n'
         )
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(SourceRoots(user_toml=user, project_dir=tmp_path))
+        effective = _resolve(SourceRoots(user_toml=user, project_dir=tmp_path))
+        assert effective["uploaded-prior-to"].origin.kind is SourceKind.USER_TOML
 
     def test_uploaded_prior_to_bad_value_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'uploaded-prior-to = "not-a-date"\n')
@@ -1838,27 +1819,25 @@ class TestTableProjectOptions:
         assert eff["marker-environment"].value == {"platform_system": "Darwin"}
         assert eff["marker-environment"].origin.kind is SourceKind.PROJECT_TOML
 
-    def test_marker_environment_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_marker_environment_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(
             tmp_path / "usr" / "nab.toml",
             '[marker-environment]\nplatform_system = "Linux"\n',
         )
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["marker-environment"].origin.kind is SourceKind.USER_TOML
 
-    def test_nab_marker_environment_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    def test_nab_marker_environment_env_rejects_invalid_value(
+        self, tmp_path: Path
     ) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
+        with pytest.raises(SourceConfigError, match="NAB_MARKER_ENVIRONMENT"):
             _resolve(
                 SourceRoots(project_dir=tmp_path),
                 environ={"NAB_MARKER_ENVIRONMENT": "x"},
             )
-        assert "NAB_MARKER_ENVIRONMENT" in caplog.text
-        assert "not env-settable" in caplog.text
 
     def test_marker_environment_bad_value_keeps_message(self, tmp_path: Path) -> None:
         _project(
@@ -1938,21 +1917,17 @@ class TestTableProjectOptions:
         assert eff["vcs"].value.policy is VcsPolicy.ALLOW
         assert eff["vcs"].origin.kind is SourceKind.PROJECT_TOML
 
-    def test_vcs_in_system_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_vcs_in_system_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         sys_toml = _write(tmp_path / "etc" / "nab.toml", '[vcs]\npolicy = "allow"\n')
         roots = SourceRoots(system_toml=sys_toml, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["vcs"].origin.kind is SourceKind.SYSTEM_TOML
 
-    def test_nab_vcs_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_vcs_env_rejects_invalid_value(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
+        with pytest.raises(SourceConfigError, match="NAB_VCS"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_VCS": "x"})
-        assert "NAB_VCS" in caplog.text
-        assert "not env-settable" in caplog.text
 
     def test_vcs_bad_value_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, '[tool.nab.vcs]\npolicy = "sometimes"\n')
@@ -2015,23 +1990,19 @@ class TestTableProjectOptions:
         assert eff["workspace"].value == WorkspaceConfig(members=("pkgs/b",))
         assert eff["workspace"].origin.kind is SourceKind.PROJECT_TOML
 
-    def test_workspace_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_workspace_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(
             tmp_path / "usr" / "nab.toml", '[workspace]\nmembers = ["pkgs/a"]\n'
         )
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["workspace"].origin.kind is SourceKind.USER_TOML
 
-    def test_nab_workspace_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_workspace_env_rejects_invalid_value(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
+        with pytest.raises(SourceConfigError, match="NAB_WORKSPACE"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_WORKSPACE": "x"})
-        assert "NAB_WORKSPACE" in caplog.text
-        assert "not env-settable" in caplog.text
 
     def test_workspace_bad_value_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, '[tool.nab.workspace]\nmember = ["pkgs/a"]\n')
@@ -2107,30 +2078,26 @@ class TestArrayProjectOptions:
         assert eff["constraints"].value == ("certifi>=2024",)
         assert eff["constraints"].origin.kind is SourceKind.PROJECT_TOML
 
-    def test_constraints_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_constraints_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(tmp_path / "usr" / "nab.toml", 'constraints = ["urllib3<2"]\n')
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["constraints"].origin.kind is SourceKind.USER_TOML
 
-    def test_constraints_in_system_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_constraints_in_system_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         sys_toml = _write(tmp_path / "etc" / "nab.toml", 'constraints = ["a"]\n')
         roots = SourceRoots(system_toml=sys_toml, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["constraints"].origin.kind is SourceKind.SYSTEM_TOML
 
-    def test_nab_constraints_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_constraints_env_rejects_invalid_value(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
+        with pytest.raises(SourceConfigError, match="NAB_CONSTRAINTS"):
             _resolve(
                 SourceRoots(project_dir=tmp_path), environ={"NAB_CONSTRAINTS": "x"}
             )
-        assert "NAB_CONSTRAINTS" in caplog.text
-        assert "not env-settable" in caplog.text
 
     def test_constraints_bad_pep508_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'constraints = ["not a valid !! req"]\n')
@@ -2169,24 +2136,19 @@ class TestArrayProjectOptions:
         assert eff["default-groups"].value == ("docs",)
         assert eff["default-groups"].origin.kind is SourceKind.PROJECT_TOML
 
-    def test_default_groups_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_default_groups_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(tmp_path / "usr" / "nab.toml", 'default-groups = ["dev"]\n')
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["default-groups"].origin.kind is SourceKind.USER_TOML
 
-    def test_nab_default_groups_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_default_groups_env_rejects_invalid_value(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
+        with pytest.raises(SourceConfigError, match="NAB_DEFAULT_GROUPS"):
             _resolve(
-                SourceRoots(project_dir=tmp_path),
-                environ={"NAB_DEFAULT_GROUPS": "x"},
+                SourceRoots(project_dir=tmp_path), environ={"NAB_DEFAULT_GROUPS": "x"}
             )
-        assert "NAB_DEFAULT_GROUPS" in caplog.text
-        assert "not env-settable" in caplog.text
 
     def test_default_groups_non_string_item_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, "default-groups = [1]\n")
@@ -2291,34 +2253,30 @@ class TestArrayOfTablesSources:
         assert [i.name for i in value] == ["pypi"]
         assert eff["indexes"].origin.kind is SourceKind.DEFAULT
 
-    def test_indexes_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_indexes_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(
             tmp_path / "usr" / "nab.toml",
             '[[indexes]]\nname = "pypi"\nurl = "https://pypi.org/simple/"\n',
         )
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["indexes"].origin.kind is SourceKind.USER_TOML
 
-    def test_indexes_in_system_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_indexes_in_system_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         sys_toml = _write(
             tmp_path / "etc" / "nab.toml",
             '[[indexes]]\nname = "pypi"\nurl = "https://pypi.org/simple/"\n',
         )
         roots = SourceRoots(system_toml=sys_toml, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["indexes"].origin.kind is SourceKind.SYSTEM_TOML
 
-    def test_nab_indexes_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_indexes_env_rejects_invalid_value(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
+        with pytest.raises(SourceConfigError, match="NAB_INDEXES"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_INDEXES": "x"})
-        assert "NAB_INDEXES" in caplog.text
-        assert "not env-settable" in caplog.text
 
     def test_indexes_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'indexes = "pypi"\n')
@@ -2459,24 +2417,20 @@ class TestOverrideTables:
         assert [o.name for o in eff["packages"].value] == ["lxml"]
         assert eff["packages"].origin.kind is SourceKind.PROJECT_TOML
 
-    def test_packages_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_packages_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(
             tmp_path / "usr" / "nab.toml",
             '[packages.lxml]\ndist-policy = "sdist-only"\n',
         )
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["packages"].origin.kind is SourceKind.USER_TOML
 
-    def test_nab_packages_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_packages_env_rejects_invalid_value(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
+        with pytest.raises(SourceConfigError, match="NAB_PACKAGES"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_PACKAGES": "x"})
-        assert "NAB_PACKAGES" in caplog.text
-        assert "not env-settable" in caplog.text
 
     def test_packages_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, '[[tool.nab.packages]]\nmatch = ["foo"]\n')
@@ -2553,27 +2507,22 @@ class TestOverrideTables:
         assert [o.name for o in eff["package-rules"].value] == ["lxml"]
         assert eff["package-rules"].origin.kind is SourceKind.PROJECT_TOML
 
-    def test_package_rules_in_system_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_package_rules_in_system_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         sys_toml = _write(
             tmp_path / "etc" / "nab.toml",
             '[[package-rules]]\nmatch = ["lxml"]\ndist-policy = "sdist-only"\n',
         )
         roots = SourceRoots(system_toml=sys_toml, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["package-rules"].origin.kind is SourceKind.SYSTEM_TOML
 
-    def test_nab_package_rules_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_package_rules_env_rejects_invalid_value(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
+        with pytest.raises(SourceConfigError, match="NAB_PACKAGE_RULES"):
             _resolve(
-                SourceRoots(project_dir=tmp_path),
-                environ={"NAB_PACKAGE_RULES": "x"},
+                SourceRoots(project_dir=tmp_path), environ={"NAB_PACKAGE_RULES": "x"}
             )
-        assert "NAB_PACKAGE_RULES" in caplog.text
-        assert "not env-settable" in caplog.text
 
     def test_package_rules_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'package-rules = ["x"]\n')
@@ -2623,24 +2572,20 @@ class TestOverrideTables:
         assert set(eff["index"].value) == {"internal"}
         assert eff["index"].origin.kind is SourceKind.PROJECT_TOML
 
-    def test_index_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_index_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(
             tmp_path / "usr" / "nab.toml",
             '[index.pypi]\ndist-policy = "wheel-only"\n',
         )
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["index"].origin.kind is SourceKind.USER_TOML
 
-    def test_nab_index_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_index_env_rejects_invalid_value(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
+        with pytest.raises(SourceConfigError, match="NAB_INDEX"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_INDEX": "x"})
-        assert "NAB_INDEX" in caplog.text
-        assert "not env-settable" in caplog.text
 
     def test_index_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'index = "pypi"\n')
@@ -2808,28 +2753,24 @@ class TestCrossFieldProjectOptions:
         assert eff["conflicts"].origin.kind is SourceKind.PROJECT_TOML
         assert len(eff["conflicts"].value) == 1
 
-    def test_conflicts_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_conflicts_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(tmp_path / "usr" / "nab.toml", _CONFLICTS_PYPROJECT)
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["conflicts"].origin.kind is SourceKind.USER_TOML
 
-    def test_conflicts_in_system_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_conflicts_in_system_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         sys_toml = _write(tmp_path / "etc" / "nab.toml", _CONFLICTS_PYPROJECT)
         roots = SourceRoots(system_toml=sys_toml, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["conflicts"].origin.kind is SourceKind.SYSTEM_TOML
 
-    def test_nab_conflicts_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_conflicts_env_rejects_invalid_value(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
+        with pytest.raises(SourceConfigError, match="NAB_CONFLICTS"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_CONFLICTS": "x"})
-        assert "NAB_CONFLICTS" in caplog.text
-        assert "not env-settable" in caplog.text
 
     def test_conflicts_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, 'conflicts = "cpu"\n')
@@ -2887,28 +2828,24 @@ class TestCrossFieldProjectOptions:
         )
         assert eff["matrix"].origin.kind is SourceKind.PROJECT_TOML
 
-    def test_matrix_in_user_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_matrix_in_user_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         user = _write(tmp_path / "usr" / "nab.toml", _MATRIX_PROJECT_TOML)
         roots = SourceRoots(user_toml=user, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["matrix"].origin.kind is SourceKind.USER_TOML
 
-    def test_matrix_in_system_nab_toml_errors(self, tmp_path: Path) -> None:
+    def test_matrix_in_system_nab_toml_applies(self, tmp_path: Path) -> None:
         _project(tmp_path)
         sys_toml = _write(tmp_path / "etc" / "nab.toml", _MATRIX_PROJECT_TOML)
         roots = SourceRoots(system_toml=sys_toml, project_dir=tmp_path)
-        with pytest.raises(SourceConfigError, match="project-scope option"):
-            _resolve(roots)
+        effective = _resolve(roots)
+        assert effective["matrix"].origin.kind is SourceKind.SYSTEM_TOML
 
-    def test_nab_matrix_env_warns(
-        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_nab_matrix_env_rejects_invalid_value(self, tmp_path: Path) -> None:
         _project(tmp_path)
-        with caplog.at_level(logging.WARNING, logger="nab_project"):
+        with pytest.raises(SourceConfigError, match="NAB_MATRIX"):
             _resolve(SourceRoots(project_dir=tmp_path), environ={"NAB_MATRIX": "x"})
-        assert "NAB_MATRIX" in caplog.text
-        assert "not env-settable" in caplog.text
 
     def test_matrix_bad_shape_keeps_message(self, tmp_path: Path) -> None:
         _project(tmp_path, "matrix = 3\n")

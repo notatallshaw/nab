@@ -27,14 +27,14 @@ from ._resolve import (
     resolve_group_selection,
 )
 from ._run import (
-    _cli_overrides,
-    _layered_run_settings_or_exit,
-    _project_cli_overrides_or_exit,
     _reject_python_flag_in_universal,
     _resolve_effective_cache_dir,
-    project_config_overrides,
+    command_overrides,
     read_config_ladder,
+    run_settings,
+    validate_project_cli_bindings,
 )
+from .config.ladder import ConfigSnapshot
 from .flagtypes import (  # noqa: TC001 - get_type_hints resolves these at runtime
     BuildPolicyFlag,
     DecisionOrderFlag,
@@ -58,8 +58,8 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
     offline: bool | None = None,
     python: str | None = None,
     max_concurrency: int | None = None,
-    workspace_discovery: bool = True,
-    sources: bool = True,
+    workspace_discovery: bool | None = None,
+    sources: bool | None = None,
     groups: tuple[str, ...] = (),
     all_groups: bool = False,
     extras: tuple[str, ...] = (),
@@ -114,44 +114,16 @@ def download(  # noqa: PLR0913 - one keyword per flag is the public surface
         path, extras=extras, all_extras=all_extras
     )
 
-    overrides = _cli_overrides(
-        cli_resolution=project_resolution,
-        cli_offline=offline,
-        cli_cache_dir=cache_dir,
-        cli_http_backend=http_backend,
-        cli_max_concurrency=max_concurrency,
-        cli_mode=project_mode,
-        cli_requires_python=project_requires_python,
-        cli_uploaded_prior_to=project_uploaded_prior_to,
-        cli_dist_policy=project_dist_policy,
-        cli_build_policy=project_build_policy,
-        cli_build_requires_depth=project_build_requires_depth,
-        cli_decision_order=project_decision_order,
-        cli_constraint=project_constraint,
-        cli_default_group=project_default_group,
-        cli_base_group=project_base_group,
-        cli_build_group=project_build_group,
-        cli_matrix_python=project_matrix_python,
-        cli_matrix_platforms=project_matrix_platforms,
-        cli_matrix_implementations=project_matrix_implementations,
-        cli_matrix_python_order=project_matrix_python_order,
-        cli_matrix_python_patches=project_matrix_python_patches,
-        cli_python=python,
-        cli_environment_python=project_environment_python,
-        cli_environment_platform=project_environment_platform,
-        cli_environment_implementation=project_environment_implementation,
-    )
-    project_overrides = project_config_overrides(overrides)
-    _project_cli_overrides_or_exit(project_overrides)
+    overrides = command_overrides(locals())
+    validate_project_cli_bindings(overrides)
     ladder = read_config_ladder(path, overrides)
     _reject_python_flag_in_universal(ladder, python)
     config = _load_config(
         path,
-        discover_workspace=workspace_discovery,
-        use_sources=sources,
-        cli_overrides=project_overrides,
+        snapshot=ladder,
     )
-    settings = _layered_run_settings_or_exit(ladder, produces_lock=False)
+    assert isinstance(ladder, ConfigSnapshot)
+    settings = run_settings(ladder, produces_lock=False)
     effective_cache_dir = _resolve_effective_cache_dir(settings.cache_dir, cache=cache)
     _check_targets_or_exit(config)
     transport = _make_transport(settings.http_backend)

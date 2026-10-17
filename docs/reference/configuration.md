@@ -1,7 +1,7 @@
 # Configuration
 
-Project settings live in `[tool.nab]` inside `pyproject.toml` or at the top level of a
-project-directory `nab.toml`. CLI flags apply to one run.
+Project settings live in `[tool.nab]` inside `pyproject.toml` or at the top level of a `nab.toml`
+file. Every configuration key also accepts an environment variable. CLI flags apply to one run.
 
 ## Find the effective value
 
@@ -15,9 +15,9 @@ shows the sources that lost too.
 
 Project options describe the resolve. Higher sources replace whole values rather than merging them.
 
-Runtime options such as `offline` and `cache-dir` may also come from system or user files and
-`NAB_*` variables. The Layered configuration sources section below gives the complete order and
-scope rules.
+System/user files provide defaults for all configuration keys. Use
+[enforced settings](#enforced-settings) for restrictions that project configuration and CLI flags
+cannot relax.
 
 ## Top-level keys
 
@@ -876,19 +876,19 @@ override prints a notice and is recorded in the lockfile.
 
 ## Layered configuration sources
 
-A few options can be set from more than one place. Each option has a scope that fixes where it may
-come from:
+Every configuration key can be set in system, user or project-directory `nab.toml`, or through its
+derived `NAB_*` variable. An option's scope distinguishes project settings from machine settings:
 
 - Project-scope options describe the resolve itself, so they live with the project. Every
-  `[tool.nab]` key is project-scope (`mode`, `indexes`, `constraints`, `vcs`, `workspace`,
-  `dist-policy`, `build-policy`, `environment`, `conflicts`, `matrix`, `packages`, `resolution`, and
-  the rest), and each may be set in either `pyproject.toml`'s `[tool.nab]` or a project-directory
-  `nab.toml`.
+  `[tool.nab]` key is project-scope (`sources`, `workspace-discovery`, `mode`, `indexes`,
+  `constraints`, `vcs`, `workspace`, `dist-policy`, `build-policy`, `environment`, `conflicts`,
+  `matrix`, `packages`, `resolution`, and the rest), and each may be set in either
+  `pyproject.toml`'s `[tool.nab]` or a project-directory `nab.toml`.
 
-  They are never read from a user/system file or an environment variable. Each project option with a
-  scalar or list form also takes a CLI override under a `--project-` prefix (for example
-  `--project-resolution`); the structured table options stay file-only, except `matrix` and
-  `environment`, which the `--project-<table>-<key>` flags set one key at a time.
+  Scalar and list project options have CLI overrides under a `--project-` prefix (for example
+  `--project-resolution`). The existing `--sources` and `--workspace-discovery` flags keep their
+  names. The `--project-<table>-<key>` flags set individual `matrix` and `environment` fields; other
+  tables have no CLI flags. Tables and lists accept structured environment values.
 
 - User-scope options (`offline`, `cache-dir`, `http-backend`, `max-concurrency`) describe how a run
   executes on this machine, so they may come from a system, user, or project `nab.toml`, a `NAB_*`
@@ -906,12 +906,12 @@ Sources are consulted low to high; a higher source wins:
 6. the CLI flag
 
 Winning is all-or-nothing. Whatever the key's type, the highest source that sets it supplies the
-whole value and nothing from a lower source survives.
+whole value. Explicit enforcement is applied separately, after this ordinary precedence order.
 
 A CLI `constraints` list replaces every lower-precedence constraint. An `[environment]` table
 replaces every lower-precedence environment. No source adds to the one beneath it; to extend a list,
 edit the file that declares it. A `--project-<table>-<key>` flag replaces only its named key in the
-file's table.
+highest-precedence table, including one supplied by an environment variable.
 
 The two project files share one rank. They may set the same key only to identical whole values; a
 difference is an error naming both files. This applies equally to lists, arrays of tables, and an
@@ -941,18 +941,116 @@ url = "https://pypi.example.com/simple/"
 
 Project-directory discovery is the directory of the `pyproject.toml` only; there is no walk-up.
 
+Project settings from a user/system file or the environment can change the locked package set. Use
+`nab config explain <key>` to inspect these inputs when reproducing a lock on another machine.
+Workspace member paths remain relative to the target project directory; relative cache paths remain
+relative to the invocation directory.
+
 `nab config` reports configured rather than derived values. `build-policy` is forced to `never` in
 universal mode, and workspace members are discovered only during a resolve.
 
 ### Environment variables
 
-| Variable              | Option            | Effect                                                                          |
-| --------------------- | ----------------- | ------------------------------------------------------------------------------- |
-| `NAB_OFFLINE`         | `offline`         | `1`/`0`/`true`/`false`.                                                         |
-| `NAB_CACHE_DIR`       | `cache-dir`       | Cache root path.                                                                |
-| `NAB_HTTP_BACKEND`    | `http-backend`    | `urllib3`, `httpx`, or `httpx2`.                                                |
-| `NAB_MAX_CONCURRENCY` | `max-concurrency` | Parallel HTTP fetches, for the resolve as well as the downloads (at least `1`). |
+Names derive from configuration keys: uppercase the key, replace hyphens with underscores, and add
+`NAB_`. For example, `build-policy` becomes `NAB_BUILD_POLICY`.
+
+Scalars use plain tokens. Lists, tables and arrays of tables use a single TOML value:
+
+```bash
+export NAB_BUILD_POLICY=never
+export NAB_SOURCES=false
+export NAB_CONSTRAINTS='["urllib3<2", "requests>=2"]'
+export NAB_ARCHIVE='{ policy = "block" }'
+export NAB_INDEXES='[{ name = "internal", url = "https://pypi.example.com/simple/" }]'
+```
+
+An empty list replaces a lower list. A table replaces the lower table completely, including fields
+omitted from the higher table. CLI table subflags then replace only their named fields.
+
+<!-- generated by tasks/gen_cli.py --write from nab/_cli/definition/options.py; do not edit -->
+
+| Setting                | Environment variable       |
+| ---------------------- | -------------------------- |
+| `resolution`           | `NAB_RESOLUTION`           |
+| `decision-order`       | `NAB_DECISION_ORDER`       |
+| `mode`                 | `NAB_MODE`                 |
+| `constraints`          | `NAB_CONSTRAINTS`          |
+| `default-groups`       | `NAB_DEFAULT_GROUPS`       |
+| `base-group`           | `NAB_BASE_GROUP`           |
+| `build-group`          | `NAB_BUILD_GROUP`          |
+| `requires-python`      | `NAB_REQUIRES_PYTHON`      |
+| `uploaded-prior-to`    | `NAB_UPLOADED_PRIOR_TO`    |
+| `dist-policy`          | `NAB_DIST_POLICY`          |
+| `build-policy`         | `NAB_BUILD_POLICY`         |
+| `build-requires-depth` | `NAB_BUILD_REQUIRES_DEPTH` |
+| `environment`          | `NAB_ENVIRONMENT`          |
+| `marker-environment`   | `NAB_MARKER_ENVIRONMENT`   |
+| `archive`              | `NAB_ARCHIVE`              |
+| `vcs`                  | `NAB_VCS`                  |
+| `workspace`            | `NAB_WORKSPACE`            |
+| `indexes`              | `NAB_INDEXES`              |
+| `packages`             | `NAB_PACKAGES`             |
+| `package-rules`        | `NAB_PACKAGE_RULES`        |
+| `index`                | `NAB_INDEX`                |
+| `conflicts`            | `NAB_CONFLICTS`            |
+| `matrix`               | `NAB_MATRIX`               |
+| `offline`              | `NAB_OFFLINE`              |
+| `cache-dir`            | `NAB_CACHE_DIR`            |
+| `http-backend`         | `NAB_HTTP_BACKEND`         |
+| `max-concurrency`      | `NAB_MAX_CONCURRENCY`      |
+| `sources`              | `NAB_SOURCES`              |
+| `workspace-discovery`  | `NAB_WORKSPACE_DISCOVERY`  |
+
+<!-- /generated -->
+
+Boolean configuration variables accept `1`, `0`, `true` and `false` (case-insensitive).
+`NAB_HTTP_BACKEND` accepts `urllib3`, `httpx` or `httpx2`; `NAB_MAX_CONCURRENCY` is an integer of at
+least 1. `NAB_CACHE_DIR` is a path. A structured variable contains one TOML value, as in the
+examples above.
 
 An unknown `NAB_*` name is ignored with a warning; `-qq` and `NAB_VERBOSITY=silent` suppress it.
 `NAB_VERBOSITY` and `NAB_NO_PROGRESS` belong to the [output layer](cli.md) and pass through. Run
 `nab config list` to see each effective value and source.
+
+(enforced-settings)=
+
+### Enforced settings
+
+Source and build policies are security controls. Ordinary user/system values are defaults that a
+project may override. To require values for this invocation, place any configuration keys under
+`[enforce]` in a system or user file:
+
+```toml
+# /etc/nab/nab.toml or ~/.config/nab/nab.toml
+[enforce]
+build-policy = "never"
+
+[enforce.archive]
+policy = "block"
+
+[enforce.vcs]
+policy = "block"
+```
+
+The equivalent environment setting is one TOML table:
+
+```bash
+export NAB_ENFORCE='{ build-policy = "never", archive = { policy = "block" }, vcs = { policy = "block" } }'
+```
+
+Enforced values override ordinary project, environment and CLI bindings. A project cannot supply an
+`enforce` table. Conflicting enforced values from different external sources are errors, so a user
+file or environment setting cannot silently remove a system restriction. `nab config explain` marks
+an enforced winner and shows the settings it shadows.
+
+An enforced matrix cannot be discarded by selecting specific mode. An enforced empty environment
+also prevents a deprecated marker overlay from selecting a different target.
+
+Enforcement fixes the whole setting, including a complete list or table. An enforced build,
+distribution or upload-cutoff policy also refuses package/index exceptions that declare a different
+policy. Ordinary defaults continue to allow those exceptions. Archive/VCS blocks refuse declared and
+cached sources before acquisition, and source/build restrictions carry into isolated backend
+dependency resolution.
+
+These controls govern the invoked Nab process. They do not prevent a caller who controls its
+environment or executable from running a differently configured process.
