@@ -133,7 +133,9 @@ def test_only_multiple_value_predicates_use_scalar_assembly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[object] = []
+    generic_calls: list[object] = []
     original = engine._scalar_truth_vector
+    original_truth = engine._truth
 
     def vector(
         atoms: Iterable[engine.Atom], point: object, store: engine.Memo
@@ -141,11 +143,17 @@ def test_only_multiple_value_predicates_use_scalar_assembly(
         calls.append(point)
         return original(tuple(atoms), point, store)
 
+    def truth(atom: engine.Atom, point: object, store: engine.Memo) -> bool:
+        generic_calls.append(point)
+        return original_truth(atom, point, store)
+
     monkeypatch.setattr(engine, "_scalar_truth_vector", vector)
+    monkeypatch.setattr(engine, "_truth", truth)
     store = engine.Memo()
     atoms = _version_atoms()
     engine.partition_value_axis("implementation_version", atoms, 1000, store)
     assert calls
+    assert generic_calls == []
     calls.clear()
     engine.partition_value_axis("implementation_version", atoms[:1], 1000, store)
     assert calls == []
@@ -158,6 +166,34 @@ def test_only_multiple_value_predicates_use_scalar_assembly(
     contains = engine.collect_atoms(engine.parse('"x" in platform_release'))
     engine.partition_boolean_axis(contains, 1000, store)
     assert calls == []
+    assert generic_calls
+
+
+def test_scalar_reduction_stops_after_all_truth_vectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    atoms = engine.collect_atoms(
+        engine.parse('sys_platform in "ab" and sys_platform in "ac"')
+    )
+    points = ["x", "b", "c", "a", "trailing"]
+    observed: list[object] = []
+    original = engine._scalar_truth_vector
+
+    def vector(
+        predicates: Iterable[engine.Atom], point: object, store: engine.Memo
+    ) -> tuple[bool, ...]:
+        observed.append(point)
+        return original(tuple(predicates), point, store)
+
+    monkeypatch.setattr(engine, "_scalar_truth_vector", vector)
+    cells = engine._reduce_cells(points, atoms, 1000, engine.Memo(), value_points=True)
+    assert cells == [
+        engine.Cell("x", (False, False)),
+        engine.Cell("b", (True, False)),
+        engine.Cell("c", (False, True)),
+        engine.Cell("a", (True, True)),
+    ]
+    assert observed == points[:4]
 
 
 def test_generic_object_points_keep_per_atom_conversion() -> None:

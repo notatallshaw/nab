@@ -1262,8 +1262,9 @@ def _reduce_cells(
     """Return one cell per distinct truth vector ``atoms`` take over ``points``.
 
     Points agreeing on every atom decide the same way, so the first of them
-    stands for the rest. With ``value_points``, the caller supplies owned
-    plain-string candidates.
+    stands for the rest.
+
+    ``value_points`` permits reuse of owned plain-string candidates.
     """
     if not value_points or type(points) is not list:
         points = list(points)
