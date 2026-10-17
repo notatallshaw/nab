@@ -1243,7 +1243,8 @@ def _reduce_cells(
     Points agreeing on every atom decide the same way, so the first of them
     stands for the rest.
     """
-    points = list(points)
+    if type(points) is not list:
+        points = list(points)
 
     if len(points) * len(atoms) > max_cells:
         msg = (
