@@ -30,10 +30,9 @@ def _native_marker_text(marker: str | MarkerLike) -> str | None:
 
 
 class MarkerSetCache:
-    """Reuse short native-marker conversions within one operation on one thread.
+    """Reuse short native marker conversions within one operation on one thread.
 
-    Strings and non-native renderers are converted afresh. Evaluation always
-    belongs to the caller and is never cached here.
+    Strings and non-native renderers stay fresh. Evaluate the returned set separately.
     """
 
     __slots__ = ("_sets",)

@@ -119,3 +119,35 @@ def test_native_rendering_recursion_keeps_the_bounded_error() -> None:
         assert actual.value.args == expected.value.args
     finally:
         sys.setrecursionlimit(previous)
+
+
+@pytest.mark.parametrize(
+    ("text", "environment", "expected"),
+    [
+        ('extra == "feature"', {}, False),
+        ('extra == "feature"', {"extra": frozenset({"feature"})}, True),
+        ('extra != "feature"', {}, True),
+        ('"gpu" in extras', {}, False),
+        ('"gpu" in extras', {"extras": frozenset({"gpu"})}, False),
+        (
+            '"dev" in dependency_groups',
+            {"dependency_groups": frozenset({"dev"})},
+            False,
+        ),
+        ('"dev" not in dependency_groups', {}, True),
+    ],
+)
+def test_cached_evaluator_keeps_dependency_membership_defaults(
+    conversions: list[str | Marker],
+    text: str,
+    environment: dict[str, str | frozenset[str]],
+    expected: bool,
+) -> None:
+    original = environment.copy()
+    marker = Marker(text)
+    assert marker_holds.dependency_marker_holds(marker, environment) is expected
+    evaluator = DependencyMarkerEvaluator()
+    assert evaluator(marker, environment) is expected
+    assert evaluator(marker, environment) is expected
+    assert len(conversions) == 2
+    assert environment == original

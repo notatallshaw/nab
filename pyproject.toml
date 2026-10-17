@@ -61,6 +61,7 @@ only-include = ["src/nab", "tests", "conftest.py"]
 exclude = [
     "tests/test_build_dists.py",
     "tests/test_check_boundaries.py",
+    "tests/test_check_engine_markersets.py",
     "tests/test_cli_bijection.py",
     "tests/test_classifiers.py",
     "tests/test_cli_docs.py",
