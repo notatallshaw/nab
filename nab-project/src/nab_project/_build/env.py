@@ -60,6 +60,7 @@ from nab_provider.marker_holds import (
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import BuildPolicy, DistPolicy
 from nab_provider.requirements_file import InvalidProjectRequirementError
+from nab_provider.tags import TagSet
 from nab_provider.target import ResolveTarget, host_environment
 from nab_provider.vcs_admission import UnsupportedVcsError
 
@@ -80,7 +81,6 @@ if TYPE_CHECKING:
 
     from nab_index.transport import AsyncHttpTransport, HttpResponse
     from nab_provider.overrides import IndexOverride, PackageOverride
-    from nab_provider.tags import TagSet
 
     from ..lockfile import LockInput, PinShape, SdistArtifact, TargetLock
 
@@ -641,9 +641,7 @@ class NabBuildEnv:
     def _build_requirement(self, pending: _PendingBuild, wheel_dir: Path) -> Path:
         """Build the downloaded sdist of ``pending`` and return the wheel's path.
 
-        The wheel lands beside the downloaded artifacts, which live as
-        long as the env does.  A wheel naming another release is
-        refused.
+        The wheel stays beside the downloaded artifacts for the env's lifetime.
         """
         # Late import: ``runner`` imports this module at module load.
         from .runner import build_wheel_for_install
@@ -677,16 +675,12 @@ class NabBuildEnv:
                 msg = f"build requirement {label} could not be built: {exc}"
                 raise BuildEnvError(msg) from exc
 
-            _check_built_identity(pending, built)
+            _check_built_wheel(pending, built)
             return built
 
 
-def _check_built_identity(pending: _PendingBuild, wheel: Path) -> None:
-    """Raise unless ``wheel``'s filename names the release ``pending`` pinned.
-
-    A backend picks the name and version it emits, and the env's other
-    wheels were resolved for the release the pin names.
-    """
+def _check_built_wheel(pending: _PendingBuild, wheel: Path) -> None:
+    """Check the built wheel's filename against the pinned release and host tags."""
     try:
         name, version, _build, _tags = parse_wheel_filename(wheel.name)
     except ValueError as exc:
@@ -700,6 +694,13 @@ def _check_built_identity(pending: _PendingBuild, wheel: Path) -> None:
         msg = (
             f"build requirement {pending.label} built a wheel whose filename"
             f" names {name}=={version}, not the release the resolve pinned"
+        )
+        raise BuildEnvError(msg)
+
+    if not TagSet.for_host().accepts(wheel.name):
+        msg = (
+            f"build requirement {pending.label} produced {wheel.name!r},"
+            " which is not compatible with the host"
         )
         raise BuildEnvError(msg)
 
