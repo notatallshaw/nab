@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     Layer: TypeAlias = Literal[
         "global",
         "global-scoped-entry",
+        "global-scoped-overlap",
         "global-bare-entry",
         "package",
         "index",
@@ -110,7 +111,7 @@ DIST_POLICY_CAUSES = frozenset(
 class OverrideLayer:
     """Which config layer set the policy field a candidate was judged by.
 
-    The project level splits in three because the remedy does.  A package
+    The project-level remedy depends on existing entries.  A package
     that already sets the field over some other version range cannot be
     given a second, bare-name entry, which the config layer refuses as two
     entries setting one field over overlapping ranges.  A package that
@@ -121,6 +122,7 @@ class OverrideLayer:
 
     GLOBAL: Final = "global"
     GLOBAL_SCOPED_ENTRY: Final = "global-scoped-entry"
+    GLOBAL_SCOPED_OVERLAP: Final = "global-scoped-overlap"
     GLOBAL_BARE_ENTRY: Final = "global-bare-entry"
     PACKAGE: Final = "package"
     INDEX: Final = "index"
@@ -987,14 +989,20 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
         "the project-level uploaded-prior-to set that cutoff; {label}{covers}"
-        " already sets uploaded-prior-to over another version range, so widen"
-        " that entry over this version and set uploaded-prior-to = false there,"
+        " already sets uploaded-prior-to over another version range; add a"
+        ' package-rules entry with match = ["{selector}"] and'
+        " uploaded-prior-to = false,"
         " or drop the project-level cutoff"
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_BARE_ENTRY): (
         "the project-level uploaded-prior-to set that cutoff; {label} already"
         " exists, so adding uploaded-prior-to = false there lifts it for this"
         " package"
+    ),
+    ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_OVERLAP): (
+        "the project-level uploaded-prior-to set that cutoff; revise the scoped"
+        " entries to allow this version without overlapping uploaded-prior-to"
+        " settings, or drop the project-level cutoff"
     ),
     ("uploaded-prior-to", OverrideLayer.PACKAGE): (
         "the uploaded-prior-to on {label}{covers} set that cutoff; setting it"
@@ -1011,14 +1019,19 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
     ),
     ("dist-policy", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
         "the project-level dist-policy set that policy; {label}{covers} already"
-        " sets dist-policy over another version range, so widen that entry over"
-        ' this version and set dist-policy = "wheel-or-sdist" there, or drop'
+        " sets dist-policy over another version range; add a package-rules entry"
+        ' with match = ["{selector}"] and dist-policy = "wheel-or-sdist", or drop'
         " the project-level policy"
     ),
     ("dist-policy", OverrideLayer.GLOBAL_BARE_ENTRY): (
         "the project-level dist-policy set that policy; {label} already exists,"
         ' so adding dist-policy = "wheel-or-sdist" there admits both formats for'
         " this package"
+    ),
+    ("dist-policy", OverrideLayer.GLOBAL_SCOPED_OVERLAP): (
+        "the project-level dist-policy set that policy; revise the scoped entries"
+        " to allow this version without overlapping dist-policy settings, or"
+        " drop the project-level policy"
     ),
     ("dist-policy", OverrideLayer.PACKAGE): (
         "the dist-policy on {label}{covers} set that policy; setting it to"
@@ -1037,11 +1050,16 @@ _TRY_LINES: dict[tuple[Field, Layer], str] = {
         'set packages."{selector}".uploaded-prior-to = false'
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        "widen {label} over this version and set uploaded-prior-to = false there,"
+        'add a package-rules entry with match = ["{selector}"] and'
+        " uploaded-prior-to = false,"
         " or drop the project cutoff"
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_BARE_ENTRY): (
         "add uploaded-prior-to = false to {label}"
+    ),
+    ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_OVERLAP): (
+        "revise the scoped entries to allow this version without overlapping"
+        " uploaded-prior-to settings, or drop the project cutoff"
     ),
     ("uploaded-prior-to", OverrideLayer.PACKAGE): (
         "set uploaded-prior-to = false on {label}"
@@ -1053,11 +1071,15 @@ _TRY_LINES: dict[tuple[Field, Layer], str] = {
         'set packages."{selector}".dist-policy = "wheel-or-sdist"'
     ),
     ("dist-policy", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        'widen {label} over this version and set dist-policy = "wheel-or-sdist"'
-        " there, or drop the project dist-policy"
+        'add a package-rules entry with match = ["{selector}"] and'
+        ' dist-policy = "wheel-or-sdist", or drop the project dist-policy'
     ),
     ("dist-policy", OverrideLayer.GLOBAL_BARE_ENTRY): (
         'add dist-policy = "wheel-or-sdist" to {label}'
+    ),
+    ("dist-policy", OverrideLayer.GLOBAL_SCOPED_OVERLAP): (
+        "revise the scoped entries to allow this version without overlapping"
+        " dist-policy settings, or drop the project dist-policy"
     ),
     ("dist-policy", OverrideLayer.PACKAGE): (
         'set dist-policy = "wheel-or-sdist" on {label}'

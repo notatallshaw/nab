@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import platform
+import re
 import runpy
 import stat
 import subprocess
@@ -2305,7 +2306,7 @@ class TestScopedDiagnosticRemedies:
         verbose: bool,
         entry: str,
     ) -> None:
-        """Widening alone leaves the file excluded; each complete remedy admits it."""
+        """A scoped exception must relax the filter to admit the refused file."""
         wheel_url = "https://files.example.com/foo-2.0-py3-none-any.whl"
         listing = {
             "meta": {"api-version": "1.2"},
@@ -2354,19 +2355,27 @@ class TestScopedDiagnosticRemedies:
             _cli(*arguments, status=1)
             refused = capsys.readouterr()
             assert diagnosis in refused.err
-            assert "widen " in refused.err
-            assert (
-                f"over this version and set {field} = {permissive} there" in refused.err
+
+            remedy = re.search(
+                r"add a package-rules entry with match = (\[.*?\]) and (.*?)(?:, or|$)",
+                refused.err,
+                re.MULTILINE,
+            )
+            assert remedy is not None, refused.err
+            exception = (
+                f"\n[[tool.nab.package-rules]]\nmatch = {remedy[1]}\n{remedy[2]}\n"
             )
 
-            widened = body.replace("foo<2", "foo<=2")
-            pyproject.write_text(widened)
+            pyproject.write_text(
+                body
+                + exception.replace(
+                    f"{field} = {permissive}", f"{field} = {restrictive}"
+                )
+            )
             _cli(*arguments, status=1)
             assert diagnosis in capsys.readouterr().err
 
-            pyproject.write_text(
-                project + entry.replace("foo<2", "foo<=2") + f"{field} = {permissive}\n"
-            )
+            pyproject.write_text(body + exception)
             _cli(*arguments)
             assert capsys.readouterr().out == "foo==2.0\n"
 

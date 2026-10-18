@@ -2194,7 +2194,7 @@ class Provider:
                     index_name,
                 )
 
-        scoped = self._scoped_entry(canonical_name, field, value)
+        scoped = self._scoped_exception(canonical_name, version, field, value)
         if scoped is not None:
             return scoped
 
@@ -2241,26 +2241,39 @@ class Provider:
             }
         )
 
-    def _scoped_entry(
+    def _scoped_exception(
         self,
         canonical_name: str,
+        version: Version,
         field: _diagnosis.Field,
         value: Callable[[PackageOverride | IndexOverride], object],
     ) -> _diagnosis.Remedy | None:
-        """Return the entry setting ``canonical_name``'s ``field`` over another range.
+        """Suggest a standard selector outside existing ranges setting the field."""
+        scoped = [
+            override
+            for override in self._package_overrides
+            if override.name == canonical_name and value(override) is not _UNSET
+        ]
+        if not scoped:
+            return None
 
-        Asked only where the project-level value answered, so a bare-name
-        entry would have matched the candidate and any entry found here is
-        version-scoped around it.  A second entry for the package would
-        overlap that one, which the config layer refuses, so the remedy for
-        this candidate points at widening the entry that exists.
-        """
-        for override in self._package_overrides:
-            if override.name == canonical_name and value(override) is not _UNSET:
-                return self._entry_remedy(
-                    field, _diagnosis.OverrideLayer.GLOBAL_SCOPED_ENTRY, override
-                )
-        return None
+        uncovered = SpecifierSet(f"=={version}").to_range()
+        for override in scoped:
+            uncovered -= override.version_range
+        selector = uncovered.to_specifier_set()
+        layer: _diagnosis.Layer = (
+            _diagnosis.OverrideLayer.GLOBAL_SCOPED_OVERLAP
+            if selector is None
+            else _diagnosis.OverrideLayer.GLOBAL_SCOPED_ENTRY
+        )
+        first = scoped[0]
+        return _diagnosis.Remedy(
+            field,
+            layer,
+            first.source_label or str(first.requirement),
+            "" if selector is None else f"{canonical_name}{selector}",
+            self._entry_covers(first.source_label),
+        )
 
     def _bare_name_entry(self, canonical_name: str) -> PackageOverride | None:
         """Return the name-keyed entry a bare-name remedy would collide with.

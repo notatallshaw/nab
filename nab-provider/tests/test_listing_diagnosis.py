@@ -528,8 +528,8 @@ class TestClauseText:
             "\nnote: the uploaded-prior-to on pkg<2 set that cutoff; setting it"
             " to false there lifts it"
             "\nnote: the project-level uploaded-prior-to set that cutoff; pkg<2"
-            " already sets uploaded-prior-to over another version range, so widen"
-            " that entry over this version and set uploaded-prior-to = false there,"
+            " already sets uploaded-prior-to over another version range; add a"
+            ' package-rules entry with match = ["pkg==2.0"] and uploaded-prior-to = false,'
             " or drop the project-level cutoff"
         )
 
@@ -573,8 +573,8 @@ class TestClauseText:
             "\nnote: the dist-policy on pkg==1.0 set that policy; setting it to"
             ' "wheel-or-sdist" there admits both formats'
             "\nnote: the project-level dist-policy set that policy; pkg==1.0"
-            " already sets dist-policy over another version range, so widen that"
-            ' entry over this version and set dist-policy = "wheel-or-sdist" there,'
+            " already sets dist-policy over another version range; add a package-rules entry"
+            ' with match = ["pkg==2.0"] and dist-policy = "wheel-or-sdist",'
             " or drop the project-level policy"
         )
 
@@ -851,18 +851,15 @@ class TestTheRemedyNamesTheLayer:
             " set that cutoff; setting it to false there lifts it"
         )
 
-    def test_a_package_that_already_scopes_the_cutoff_is_offered_no_entry(
-        self,
-    ) -> None:
-        """The note edits the existing entry because a bare-name entry would overlap."""
+    def test_scoped_cutoff_gets_a_disjoint_rule(self) -> None:
         assert reason_for(
             [wheel("1.0", upload_time=BETWEEN), wheel("2.0", upload_time=AFTER)],
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ).endswith(
             "\nnote: the project-level uploaded-prior-to set that cutoff; pkg<2"
-            " already sets uploaded-prior-to over another version range, so widen"
-            " that entry over this version and set uploaded-prior-to = false there,"
+            " already sets uploaded-prior-to over another version range; add a"
+            ' package-rules entry with match = ["pkg==2.0"] and uploaded-prior-to = false,'
             " or drop the project-level cutoff"
         )
 
@@ -964,8 +961,7 @@ class TestTheRemedyNamesTheLayer:
             " packages, set that cutoff; setting it to false there lifts it"
         )
 
-    def test_a_scoped_rule_matching_two_packages_says_how_wide_it_is(self) -> None:
-        """The entry a widening points at is as wide as the one a setting points at."""
+    def test_shared_scoped_rule_gets_a_separate_exception(self) -> None:
         assert reason_for(
             [wheel("2.0", upload_time=AFTER)],
             uploaded_prior_to=CUTOFF,
@@ -984,8 +980,8 @@ class TestTheRemedyNamesTheLayer:
         ).endswith(
             "\nnote: the project-level uploaded-prior-to set that cutoff;"
             " package-rules[0], which matches 2 packages, already sets"
-            " uploaded-prior-to over another version range, so widen that entry"
-            " over this version and set uploaded-prior-to = false there, or drop"
+            " uploaded-prior-to over another version range; add a package-rules entry"
+            ' with match = ["pkg==2.0"] and uploaded-prior-to = false, or drop'
             " the project-level cutoff"
         )
 
@@ -1087,6 +1083,61 @@ class TestTheRemedyNamesTheLayer:
         assert "note:" not in reason
 
 
+class TestScopedExceptionSelectors:
+    """Scoped advice keeps standard equality and existing same-field ranges."""
+
+    @pytest.mark.parametrize(
+        ("version", "covered"),
+        [
+            ("3.0", ("==3.0+other",)),
+            ("3.0rc1", ("==3.0rc1+other",)),
+            ("3.0+local", ("==3.0+other",)),
+            ("3.0", ("==3.0+other", "==3.0+another")),
+        ],
+    )
+    def test_exception_preserves_standard_equality(
+        self, version: str, covered: tuple[str, ...]
+    ) -> None:
+        overrides = [
+            pkg_override(f"pkg{selector}", uploaded_prior_to=EARLY_CUTOFF)
+            for selector in covered
+        ]
+        provider = build(
+            [wheel(version, upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=overrides,
+        )
+        source = provider.override_source(
+            "pkg", Version(version), None, field="uploaded-prior-to"
+        )
+        assert source.layer == OverrideLayer.GLOBAL_SCOPED_ENTRY
+        specifier = SpecifierSet(source.selector.removeprefix("pkg"))
+        assert all(clause.operator != "===" for clause in specifier)
+        assert specifier.contains(version)
+        assert not specifier.contains("3.1")
+        if version == "3.0":
+            assert specifier.contains("3.0.0")
+            assert specifier.contains("3.0+uncovered")
+
+        for override in overrides:
+            assert (specifier.to_range() & override.version_range).is_empty
+
+    @pytest.mark.parametrize("covered", ["===3.0.0", "===3.0+other"])
+    def test_legacy_overlap_gets_no_generated_selector(self, covered: str) -> None:
+        provider = build(
+            [wheel("3.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[
+                pkg_override(f"pkg{covered}", uploaded_prior_to=EARLY_CUTOFF)
+            ],
+        )
+        source = provider.override_source(
+            "pkg", Version("3.0"), None, field="uploaded-prior-to"
+        )
+        assert source.layer == OverrideLayer.GLOBAL_SCOPED_OVERLAP
+        assert source.selector == ""
+
+
 class TestTheTryLine:
     """The instruction a default run prints under the line, per layer.
 
@@ -1170,16 +1221,14 @@ class TestTheTryLine:
         assert diagnostic is not None
         assert diagnostic.remedy == f"set index.{key}.uploaded-prior-to = false"
 
-    def test_a_scoped_cutoff_is_told_to_widen_and_disable_it(
-        self,
-    ) -> None:
-        """Widening alone would apply the scoped entry's restrictive cutoff."""
+    def test_scoped_cutoff_exception_disables_the_cutoff(self) -> None:
         assert remedy_for(
             [wheel("2.0", upload_time=AFTER)],
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ) == (
-            "widen pkg<2 over this version and set uploaded-prior-to = false there,"
+            'add a package-rules entry with match = ["pkg==2.0"] and'
+            " uploaded-prior-to = false,"
             " or drop the project cutoff"
         )
 
@@ -1323,10 +1372,7 @@ class TestTheTryLine:
             'set index."corp mirror".dist-policy = "wheel-or-sdist"'
         )
 
-    def test_a_scoped_policy_is_told_to_widen_and_allow_both_formats(
-        self,
-    ) -> None:
-        """The hint changes the existing entry's selector and policy together."""
+    def test_scoped_policy_exception_allows_both_formats(self) -> None:
         assert remedy_for(
             [wheel("2.0")],
             target=_LINUX312,
@@ -1335,8 +1381,8 @@ class TestTheTryLine:
                 pkg_override("pkg<2", dist_policy=DistPolicy.WHEEL_OR_SDIST)
             ],
         ) == (
-            'widen pkg<2 over this version and set dist-policy = "wheel-or-sdist"'
-            " there, or drop the project dist-policy"
+            'add a package-rules entry with match = ["pkg==2.0"] and'
+            ' dist-policy = "wheel-or-sdist", or drop the project dist-policy'
         )
 
     def test_the_first_rung_in_report_order_answers(self) -> None:
