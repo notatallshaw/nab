@@ -2194,7 +2194,7 @@ class Provider:
                     index_name,
                 )
 
-        scoped = self._scoped_entry(canonical_name, field, value)
+        scoped = self._scoped_exception(canonical_name, version, field, value)
         if scoped is not None:
             return scoped
 
@@ -2241,24 +2241,23 @@ class Provider:
             }
         )
 
-    def _scoped_entry(
+    def _scoped_exception(
         self,
         canonical_name: str,
+        version: Version,
         field: _diagnosis.Field,
         value: Callable[[PackageOverride | IndexOverride], object],
     ) -> _diagnosis.Remedy | None:
-        """Return the entry setting ``canonical_name``'s ``field`` over another range.
-
-        Asked only where the project-level value answered, so a bare-name
-        entry would have matched the candidate and any entry found here is
-        version-scoped around it.  A second entry for the package would
-        overlap that one, which the config layer refuses, so the remedy for
-        this candidate points at widening the entry that exists.
-        """
+        """Suggest a rule for this version when another range sets the field."""
         for override in self._package_overrides:
             if override.name == canonical_name and value(override) is not _UNSET:
-                return self._entry_remedy(
-                    field, _diagnosis.OverrideLayer.GLOBAL_SCOPED_ENTRY, override
+                # PEP 440 == also admits local variants that other entries may cover.
+                return _diagnosis.Remedy(
+                    field,
+                    _diagnosis.OverrideLayer.GLOBAL_SCOPED_ENTRY,
+                    override.source_label or str(override.requirement),
+                    f"{canonical_name}==={version}",
+                    self._entry_covers(override.source_label),
                 )
         return None
 

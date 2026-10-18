@@ -987,8 +987,9 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
         "the project-level uploaded-prior-to set that cutoff; {label}{covers}"
-        " already sets uploaded-prior-to over another version range, so widen"
-        " that entry over this version and set uploaded-prior-to = false there,"
+        " already sets uploaded-prior-to over another version range; add a"
+        ' package-rules entry with match = ["{selector}"] and'
+        " uploaded-prior-to = false,"
         " or drop the project-level cutoff"
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_BARE_ENTRY): (
@@ -1011,8 +1012,8 @@ _REMEDIES: dict[tuple[Field, Layer], str] = {
     ),
     ("dist-policy", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
         "the project-level dist-policy set that policy; {label}{covers} already"
-        " sets dist-policy over another version range, so widen that entry over"
-        ' this version and set dist-policy = "wheel-or-sdist" there, or drop'
+        " sets dist-policy over another version range; add a package-rules entry"
+        ' with match = ["{selector}"] and dist-policy = "wheel-or-sdist", or drop'
         " the project-level policy"
     ),
     ("dist-policy", OverrideLayer.GLOBAL_BARE_ENTRY): (
@@ -1037,7 +1038,8 @@ _TRY_LINES: dict[tuple[Field, Layer], str] = {
         'set packages."{selector}".uploaded-prior-to = false'
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        "widen {label} over this version and set uploaded-prior-to = false there,"
+        'add a package-rules entry with match = ["{selector}"] and'
+        " uploaded-prior-to = false,"
         " or drop the project cutoff"
     ),
     ("uploaded-prior-to", OverrideLayer.GLOBAL_BARE_ENTRY): (
@@ -1053,8 +1055,8 @@ _TRY_LINES: dict[tuple[Field, Layer], str] = {
         'set packages."{selector}".dist-policy = "wheel-or-sdist"'
     ),
     ("dist-policy", OverrideLayer.GLOBAL_SCOPED_ENTRY): (
-        'widen {label} over this version and set dist-policy = "wheel-or-sdist"'
-        " there, or drop the project dist-policy"
+        'add a package-rules entry with match = ["{selector}"] and'
+        ' dist-policy = "wheel-or-sdist", or drop the project dist-policy'
     ),
     ("dist-policy", OverrideLayer.GLOBAL_BARE_ENTRY): (
         'add dist-policy = "wheel-or-sdist" to {label}'
