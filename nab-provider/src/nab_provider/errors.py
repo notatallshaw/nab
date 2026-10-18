@@ -93,12 +93,7 @@ class ForeignMetadataError(MetadataError):
 
 
 class IncompatiblePythonError(MetadataError):
-    """An index candidate's METADATA Requires-Python excludes the resolve target.
-
-    The optional Simple-API ``requires-python`` hint filters listings. A
-    version omitting it reaches wheel METADATA (or sdist PKG-INFO),
-    which carries the authoritative value.
-    """
+    """A candidate's effective Requires-Python excludes the resolve target."""
 
 
 class InvalidUploadTimeError(Exception):
