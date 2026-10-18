@@ -1757,6 +1757,19 @@ class TestBlockerLines:
             "No metadata for pkg==2.0",
         )
 
+    def test_a_blocker_beside_filtered_metadata_names_the_filter(self) -> None:
+        provider = build([wheel("1.0"), sdist("1.0", upload_time=AFTER)], **WITH_CUTOFF)
+        block = diagnosis_mod.MetadataBlock("No metadata for pkg==1.0", Version("1.0"))
+
+        diagnostic = self._diagnostic(
+            [blocker("bar", diagnosis_mod.BlockerKind.ROOT)], (block,), provider
+        )
+
+        assert "bar" in diagnostic.short
+        assert "uploaded-prior-to" in diagnostic.short
+        assert "the uploaded-prior-to cutoff" in "\n".join(diagnostic.detail)
+        assert diagnostic.remedy == 'set packages."pkg".uploaded-prior-to = false'
+
     def test_metadata_alone_reads_as_the_metadata_line(self) -> None:
         """One unreadable version reads like several: a line, then the error."""
         block = diagnosis_mod.MetadataBlock("No metadata for pkg==2.0")

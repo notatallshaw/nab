@@ -1284,8 +1284,8 @@ def blockers_diagnostic(
     One rejection states its ranges on the line, and gets no ``-v`` body:
     the detail would be that same pair of ranges again.  Several name their
     packages and leave the ranges to ``-v``, since two pairs do not fit.
-    ``provider`` spells every range, and ``normalized`` is read only where
-    the one rejection is a metadata failure the walk can say more about.
+    When a listing filter explains a metadata failure, name it and include
+    any available remedy.
     """
     if len(blockers) + bool(metadata) == 1:
         if not blockers:
@@ -1295,8 +1295,14 @@ def blockers_diagnostic(
         )
 
     detail = [_blocker_clause(provider, blocker) for blocker in blockers]
-    detail.extend(block.message for block in metadata)
-    return Diagnostic(_several_blockers_short(blockers, metadata), tuple(detail))
+    rejected = metadata_diagnostic(provider, normalized, metadata) if metadata else None
+    if rejected is not None:
+        detail.extend(rejected.detail)
+    return Diagnostic(
+        _several_blockers_short(blockers, rejected),
+        tuple(detail),
+        None if rejected is None else rejected.remedy,
+    )
 
 
 def _blocker_clause(provider: Provider, blocker: Blocker, count: int = 1) -> str:
@@ -1332,18 +1338,16 @@ def _blocker_side(provider: Provider, constraint: RangeProtocol[Version]) -> str
 
 
 def _several_blockers_short(
-    blockers: Sequence[Blocker], metadata: Sequence[MetadataBlock]
+    blockers: Sequence[Blocker], metadata: Diagnostic | None
 ) -> str:
-    """Name the packages holding every candidate out, without their ranges.
-
-    Called only where more than one thing rejected the candidates, so at
-    least one dependency is named however the metadata failures fall.
-    """
+    """Summarize blockers and metadata failures without their ranges."""
     names = _named_or_counted(
         list(dict.fromkeys(blocker.package for blocker in blockers)), "packages"
     )
-    if not metadata:
+    if metadata is None:
         return f"every version in range is blocked by {names}"
+    if metadata.short != _METADATA_REJECTED:
+        return f"some versions in range are blocked by {names}; {metadata.short}"
     return f"every version in range is blocked by {names} or rejected on its metadata"
 
 

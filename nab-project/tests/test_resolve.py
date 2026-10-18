@@ -76,7 +76,7 @@ from nab_provider.provider import (
     UnsupportedVcsError,
     VcsConfig,
 )
-from nab_provider.records import IndexConfig
+from nab_provider.records import IndexConfig, RangeMetadataResult, RangeOutcome
 from nab_provider.requirements_file import (
     InvalidProjectRequirementError,
     expand_extra_requirements,
@@ -4677,6 +4677,89 @@ class TestAugmentResolutionError:
             "foo: uploaded-prior-to excluded the sdist nab needed for metadata"
             in diagnostics
         )
+
+    def test_cutoff_attribution_survives_a_look_ahead_blocker(
+        self, tmp_path: Path
+    ) -> None:
+        """A filtered sdist and a dependency blocker remain distinct causes."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            '[project]\nname = "proj"\ndependencies = ["foo", "bar==1.0"]\n',
+            encoding="utf-8",
+        )
+
+        def wheel(name: str, version: str, *, has_metadata: bool = True) -> WheelFile:
+            filename = f"{name}-{version}-py3-none-any.whl"
+            return WheelFile(
+                filename=filename,
+                url=f"https://example.com/{filename}",
+                version=version,
+                requires_python=None,
+                has_metadata=has_metadata,
+                upload_time="2026-01-01T00:00:00Z",
+            )
+
+        foo_sdist = SdistFile(
+            filename="foo-1.0.tar.gz",
+            url="https://example.com/foo-1.0.tar.gz",
+            version="1.0",
+            requires_python=None,
+            upload_time="2026-01-20T00:00:00Z",
+        )
+
+        def resolve(cutoff: datetime | None, *, readable_sdist: bool) -> ResolveResult:
+            coordinator = make_coordinator(
+                listings={
+                    "foo": [
+                        wheel("foo", "2.0"),
+                        wheel("foo", "1.0", has_metadata=False),
+                        foo_sdist,
+                    ],
+                    "bar": [wheel("bar", "1.0"), wheel("bar", "2.0")],
+                },
+                metadata_by_version={
+                    "2.0": _metadata("foo", "2.0", "bar==2.0"),
+                    "1.0": _metadata("bar", "1.0"),
+                },
+                sdist_pkg_info=_metadata("foo", "1.0") if readable_sdist else None,
+                sdist_pyproject_toml=(
+                    '[project]\nname = "foo"\nversion = "1.0"\ndependencies = []\n'
+                    if readable_sdist
+                    else None
+                ),
+                range_result=RangeMetadataResult(None, RangeOutcome.UNSUPPORTED),
+            )
+            with patch(
+                "nab_project.resolve.FetchCoordinator",
+                return_value=nullcontext(coordinator),
+            ):
+                return _resolved(
+                    pyproject,
+                    _FAKE_TRANSPORT,
+                    python_version="3.12.0",
+                    inputs=ResolveInputs(uploaded_prior_to=cutoff),
+                )
+
+        with pytest.raises(ResolutionError) as info:
+            resolve(datetime(2026, 1, 10, tzinfo=timezone.utc), readable_sdist=True)
+
+        assert (
+            "foo: some versions in range are blocked by bar; uploaded-prior-to"
+            in str(info.value)
+        )
+        assert 'try: set packages."foo".uploaded-prior-to = false' in str(info.value)
+        assert info.value.verbose_message is not None
+        assert "needs bar in ==2.0" in info.value.verbose_message
+        assert "the uploaded-prior-to cutoff" in info.value.verbose_message
+
+        assert _pins(resolve(None, readable_sdist=True))["foo"] == Version("1.0")
+
+        with pytest.raises(ResolutionError) as unreadable:
+            resolve(None, readable_sdist=False)
+        assert "rejected on its metadata" in str(unreadable.value)
+        assert "uploaded-prior-to" not in str(unreadable.value)
+        assert unreadable.value.verbose_message is not None
+        assert "no readable PKG-INFO" in unreadable.value.verbose_message
 
     def test_zip_sdist_is_not_reported_as_never_published(self, tmp_path: Path) -> None:
         """The diagnostics name the format, rather than reporting no sdist.
