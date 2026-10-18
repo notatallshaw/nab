@@ -3579,12 +3579,8 @@ class TestBuildRequirementBuildFailures:
             )
 
 
-class TestBuiltWheelIdentity:
-    """``_build_requirement`` refuses a wheel naming another release.
-
-    The backend picks the name and version it emits, and the env's
-    other wheels were resolved for the release the pin names.
-    """
+class TestBuiltWheelValidation:
+    """Built wheels must match the pinned release and the host's supported tags."""
 
     PENDING = _PendingBuild(
         name="build-stub",
@@ -3603,11 +3599,7 @@ class TestBuiltWheelIdentity:
         filename: str,
         pending: _PendingBuild | None = None,
     ) -> Path:
-        """Run ``_build_requirement`` over a build emitting ``filename``.
-
-        ``pending`` defaults to :attr:`PENDING`, whose name is already
-        canonical.
-        """
+        """Run ``_build_requirement`` with a stubbed wheel output."""
         pending = pending or self.PENDING
         (tmp_path / pending.sdist.filename).write_bytes(b"sdist")
 
@@ -3645,15 +3637,48 @@ class TestBuiltWheelIdentity:
             self._built(monkeypatch, tmp_path, "dist.zip")
 
     @pytest.mark.parametrize(
+        "tag", ["py2-none-any", "py3-cp20-any", "py3-none-unsupported_platform"]
+    )
+    def test_host_incompatible_wheel_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tag: str
+    ) -> None:
+        filename = f"build_stub-1.0-{tag}.whl"
+        with pytest.raises(BuildEnvError, match="not compatible with the host") as exc:
+            self._built(monkeypatch, tmp_path, filename)
+
+        assert self.PENDING.label in str(exc.value)
+        assert filename in str(exc.value)
+
+    def test_real_backend_with_incompatible_tags_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            sys.modules[__name__],
+            "_SDIST_BACKEND_SRC",
+            _SDIST_BACKEND_SRC.replace("py3-none-any", "py2-none-any"),
+        )
+        _make_buildable_sdist(
+            tmp_path / self.PENDING.sdist.filename,
+            self.PENDING.name,
+            self.PENDING.version,
+        )
+        monkeypatch.setattr(env_mod, "extract_sdist_archive", _unpack_fixture_sdist)
+        env = NabBuildEnv(requires=[], config=ResolveInputs(build_requires_depth=1))
+
+        with pytest.raises(BuildEnvError, match=r"build-stub 1\.0.*py2-none-any.*host"):
+            env._build_requirement(self.PENDING, tmp_path)
+
+    @pytest.mark.parametrize(
         ("pinned", "filename"),
         [
             ("build-stub", "build_stub-1.0-py3-none-any.whl"),
             ("Build.Stub", "build_stub-1.0-py3-none-any.whl"),
             ("build-stub", "build_stub-1.0.0-py3-none-any.whl"),
+            ("build-stub", "build_stub-1.0-py2.py3-none-any.whl"),
         ],
-        ids=["as-pinned", "spelled-differently", "same-release"],
+        ids=["as-pinned", "spelled-differently", "same-release", "compressed-tags"],
     )
-    def test_the_pinned_release_is_installed(
+    def test_compatible_pinned_wheel_is_returned(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
