@@ -2248,18 +2248,32 @@ class Provider:
         field: _diagnosis.Field,
         value: Callable[[PackageOverride | IndexOverride], object],
     ) -> _diagnosis.Remedy | None:
-        """Suggest a rule for this version when another range sets the field."""
-        for override in self._package_overrides:
-            if override.name == canonical_name and value(override) is not _UNSET:
-                # PEP 440 == also admits local variants that other entries may cover.
-                return _diagnosis.Remedy(
-                    field,
-                    _diagnosis.OverrideLayer.GLOBAL_SCOPED_ENTRY,
-                    override.source_label or str(override.requirement),
-                    f"{canonical_name}==={version}",
-                    self._entry_covers(override.source_label),
-                )
-        return None
+        """Suggest a standard selector outside existing ranges setting the field."""
+        scoped = [
+            override
+            for override in self._package_overrides
+            if override.name == canonical_name and value(override) is not _UNSET
+        ]
+        if not scoped:
+            return None
+
+        uncovered = SpecifierSet(f"=={version}").to_range()
+        for override in scoped:
+            uncovered -= override.version_range
+        selector = uncovered.to_specifier_set()
+        layer: _diagnosis.Layer = (
+            _diagnosis.OverrideLayer.GLOBAL_SCOPED_OVERLAP
+            if selector is None
+            else _diagnosis.OverrideLayer.GLOBAL_SCOPED_ENTRY
+        )
+        first = scoped[0]
+        return _diagnosis.Remedy(
+            field,
+            layer,
+            first.source_label or str(first.requirement),
+            "" if selector is None else f"{canonical_name}{selector}",
+            self._entry_covers(first.source_label),
+        )
 
     def _bare_name_entry(self, canonical_name: str) -> PackageOverride | None:
         """Return the name-keyed entry a bare-name remedy would collide with.

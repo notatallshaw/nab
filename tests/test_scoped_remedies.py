@@ -39,14 +39,28 @@ def _apply_remedy(body: str, diagnostic: str) -> str:
     return body + f"\n[[tool.nab.package-rules]]\nmatch = {match[1]}\n{match[2]}\n"
 
 
-@pytest.mark.parametrize("version", ["3.0", "3.0.0", "3.0rc1", "3.0+local"])
+@pytest.mark.parametrize(
+    ("version", "covered", "automatic"),
+    [
+        ("3.0", ("==3.0+other",), True),
+        ("3.0.0", ("==3.0+other",), True),
+        ("3.0rc1", ("==3.0rc1+other",), True),
+        ("3.0+local", ("==3.0+other",), True),
+        ("3.0", ("==3.0+other", "==3.0+another"), True),
+        ("3.0", ("===3.0.0",), False),
+        ("3.0", ("===3.0+other",), False),
+    ],
+)
 @pytest.mark.parametrize("surface", ["table", "rule"])
 @pytest.mark.parametrize("field", ["uploaded-prior-to", "dist-policy"])
 @pytest.mark.parametrize("verbosity", [[], ["-v"]])
-def test_scoped_remedy_parses_and_admits_the_refused_wheel(
+def test_scoped_remedy_admits_the_refused_wheel(
     hermetic_roots: Path,
     capsys: CaptureFixture[str],
     version: str,
+    covered: tuple[str, ...],
+    *,
+    automatic: bool,
     surface: str,
     field: str,
     verbosity: list[str],
@@ -66,7 +80,10 @@ def test_scoped_remedy_parses_and_admits_the_refused_wheel(
         + global_restriction
         + _scoped_entry(surface, "pkg<2", field_exception + "\n" + other_policy)
         + _scoped_entry(surface, "pkg>=2", other_policy)
-        + _scoped_entry(surface, "pkg==3.0+other", field_exception + "\n")
+        + "".join(
+            _scoped_entry(surface, f"pkg{selector}", field_exception + "\n")
+            for selector in covered
+        )
     )
     path = hermetic_roots / "pyproject.toml"
     path.write_text(body, encoding="utf-8")
@@ -107,12 +124,23 @@ def test_scoped_remedy_parses_and_admits_the_refused_wheel(
         diagnostic = capsys.readouterr().err
         assert field in diagnostic
 
-        path.write_text(_apply_remedy(body, diagnostic), encoding="utf-8")
+        if automatic:
+            path.write_text(_apply_remedy(body, diagnostic), encoding="utf-8")
+        else:
+            assert "revise the scoped entries" in diagnostic
+            assert "add a package-rules entry" not in diagnostic
+            path.write_text(body.replace(global_restriction, ""), encoding="utf-8")
         repaired = read_pyproject_config(path, discover_workspace=False)
-        assert (
-            repaired.resolve_inputs().package_overrides[:-1]
-            == original.resolve_inputs().package_overrides
-        )
+        overrides = repaired.resolve_inputs().package_overrides
+        original_overrides = original.resolve_inputs().package_overrides
+        if automatic:
+            assert overrides[:-1] == original_overrides
+            exception = overrides[-1]
+            assert all(
+                spec.operator != "===" for spec in exception.requirement.specifier
+            )
+        else:
+            assert overrides == original_overrides
 
         assert run(args) == 0
         assert capsys.readouterr().out == f"pkg=={version}\n"

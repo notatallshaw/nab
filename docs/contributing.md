@@ -20,6 +20,18 @@ shell too.
 
 Ruff and the docs toolchain live in their own hatch environments, reached through `hatch run`.
 
+## Version recommendations
+
+Never recommend `===` in diagnostics, generated configuration, or usage examples. PEP 440
+[arbitrary equality] is a legacy compatibility escape hatch. Use ordinary specifiers such as `==`
+for version pins, and preserve support for user-supplied specifiers.
+
+A public-version pin such as `==3.0` also matches local builds such as `3.0+local`. When suggesting
+a policy exception, exclude ranges already setting the same field; for example, `==3.0,!=3.0+local`
+avoids an existing `==3.0+local` rule. If no standard selector can express a disjoint exception,
+explain how to revise the scoped rules or remove the project-wide restriction. Do not substitute
+`===` to avoid overlap.
+
 ## Running the tests
 
 Test executable behavior. Do not assert wording in docstrings, comments, Markdown pages or READMEs,
@@ -170,4 +182,5 @@ When code is unreachable from the default suite, prefer:
 Code under `_build/env.py` and the CLI typically mocks subprocesses, network calls, and venv
 creation rather than lowering coverage.
 
+[arbitrary equality]: https://packaging.python.org/en/latest/specifications/version-specifiers/#arbitrary-equality
 [hatch]: https://hatch.pypa.io/

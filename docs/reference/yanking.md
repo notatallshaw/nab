@@ -5,12 +5,12 @@ allow them.
 
 Suppose `lib==1.2` is yanked and `lib==1.1` is not:
 
-| Requirement               | Result                                       |
-| ------------------------- | -------------------------------------------- |
-| `lib>=1`                  | Uses `1.1`.                                  |
-| `lib==1.2` or `lib===1.2` | Can use the yanked `1.2`.                    |
-| `lib==1.*`                | Skips `1.2`; a wildcard is not an exact pin. |
-| `lib>=1.2,<=1.2`          | Fails; a range is not an exact pin.          |
+| Requirement      | Result                                       |
+| ---------------- | -------------------------------------------- |
+| `lib>=1`         | Uses `1.1`.                                  |
+| `lib==1.2`       | Can use the yanked `1.2`.                    |
+| `lib==1.*`       | Skips `1.2`; a wildcard is not an exact pin. |
+| `lib>=1.2,<=1.2` | Fails; a range is not an exact pin.          |
 
 The pin can come from your requirements, a selected dependency, or a constraint on a required
 package. Pins for inactive extras or other environments do not apply.

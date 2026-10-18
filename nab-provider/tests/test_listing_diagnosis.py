@@ -529,7 +529,7 @@ class TestClauseText:
             " to false there lifts it"
             "\nnote: the project-level uploaded-prior-to set that cutoff; pkg<2"
             " already sets uploaded-prior-to over another version range; add a"
-            ' package-rules entry with match = ["pkg===2.0"] and uploaded-prior-to = false,'
+            ' package-rules entry with match = ["pkg==2.0"] and uploaded-prior-to = false,'
             " or drop the project-level cutoff"
         )
 
@@ -574,7 +574,7 @@ class TestClauseText:
             ' "wheel-or-sdist" there admits both formats'
             "\nnote: the project-level dist-policy set that policy; pkg==1.0"
             " already sets dist-policy over another version range; add a package-rules entry"
-            ' with match = ["pkg===2.0"] and dist-policy = "wheel-or-sdist",'
+            ' with match = ["pkg==2.0"] and dist-policy = "wheel-or-sdist",'
             " or drop the project-level policy"
         )
 
@@ -859,7 +859,7 @@ class TestTheRemedyNamesTheLayer:
         ).endswith(
             "\nnote: the project-level uploaded-prior-to set that cutoff; pkg<2"
             " already sets uploaded-prior-to over another version range; add a"
-            ' package-rules entry with match = ["pkg===2.0"] and uploaded-prior-to = false,'
+            ' package-rules entry with match = ["pkg==2.0"] and uploaded-prior-to = false,'
             " or drop the project-level cutoff"
         )
 
@@ -981,7 +981,7 @@ class TestTheRemedyNamesTheLayer:
             "\nnote: the project-level uploaded-prior-to set that cutoff;"
             " package-rules[0], which matches 2 packages, already sets"
             " uploaded-prior-to over another version range; add a package-rules entry"
-            ' with match = ["pkg===2.0"] and uploaded-prior-to = false, or drop'
+            ' with match = ["pkg==2.0"] and uploaded-prior-to = false, or drop'
             " the project-level cutoff"
         )
 
@@ -1083,6 +1083,61 @@ class TestTheRemedyNamesTheLayer:
         assert "note:" not in reason
 
 
+class TestScopedExceptionSelectors:
+    """Scoped advice keeps standard equality and existing same-field ranges."""
+
+    @pytest.mark.parametrize(
+        ("version", "covered"),
+        [
+            ("3.0", ("==3.0+other",)),
+            ("3.0rc1", ("==3.0rc1+other",)),
+            ("3.0+local", ("==3.0+other",)),
+            ("3.0", ("==3.0+other", "==3.0+another")),
+        ],
+    )
+    def test_exception_preserves_standard_equality(
+        self, version: str, covered: tuple[str, ...]
+    ) -> None:
+        overrides = [
+            pkg_override(f"pkg{selector}", uploaded_prior_to=EARLY_CUTOFF)
+            for selector in covered
+        ]
+        provider = build(
+            [wheel(version, upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=overrides,
+        )
+        source = provider.override_source(
+            "pkg", Version(version), None, field="uploaded-prior-to"
+        )
+        assert source.layer == OverrideLayer.GLOBAL_SCOPED_ENTRY
+        specifier = SpecifierSet(source.selector.removeprefix("pkg"))
+        assert all(clause.operator != "===" for clause in specifier)
+        assert specifier.contains(version)
+        assert not specifier.contains("3.1")
+        if version == "3.0":
+            assert specifier.contains("3.0.0")
+            assert specifier.contains("3.0+uncovered")
+
+        for override in overrides:
+            assert (specifier.to_range() & override.version_range).is_empty
+
+    @pytest.mark.parametrize("covered", ["===3.0.0", "===3.0+other"])
+    def test_legacy_overlap_gets_no_generated_selector(self, covered: str) -> None:
+        provider = build(
+            [wheel("3.0", upload_time=AFTER)],
+            uploaded_prior_to=CUTOFF,
+            package_overrides=[
+                pkg_override(f"pkg{covered}", uploaded_prior_to=EARLY_CUTOFF)
+            ],
+        )
+        source = provider.override_source(
+            "pkg", Version("3.0"), None, field="uploaded-prior-to"
+        )
+        assert source.layer == OverrideLayer.GLOBAL_SCOPED_OVERLAP
+        assert source.selector == ""
+
+
 class TestTheTryLine:
     """The instruction a default run prints under the line, per layer.
 
@@ -1172,7 +1227,7 @@ class TestTheTryLine:
             uploaded_prior_to=CUTOFF,
             package_overrides=[pkg_override("pkg<2", uploaded_prior_to=EARLY_CUTOFF)],
         ) == (
-            'add a package-rules entry with match = ["pkg===2.0"] and'
+            'add a package-rules entry with match = ["pkg==2.0"] and'
             " uploaded-prior-to = false,"
             " or drop the project cutoff"
         )
@@ -1326,7 +1381,7 @@ class TestTheTryLine:
                 pkg_override("pkg<2", dist_policy=DistPolicy.WHEEL_OR_SDIST)
             ],
         ) == (
-            'add a package-rules entry with match = ["pkg===2.0"] and'
+            'add a package-rules entry with match = ["pkg==2.0"] and'
             ' dist-policy = "wheel-or-sdist", or drop the project dist-policy'
         )
 
