@@ -7511,7 +7511,7 @@ class TestSkipFetch:
 
 
 class TestLocalVcsPythonGuardOverride:
-    """The local/VCS python guard reads the overridden requires-python."""
+    """Source Python overrides apply during admission and final-pin checks."""
 
     def _local_provider(
         self, tmp_path: Path, pyproject_rp: str, override_rp: str
@@ -7532,25 +7532,23 @@ class TestLocalVcsPythonGuardOverride:
             build_policy=BuildPolicy.NEVER,
             package_overrides=(pkg_override("foo", requires_python=override_rp),),
         )
-        provider.get_dependencies("foo", V("1.0"))
+        provider.fetch_versions("foo")
         return provider
 
     def test_widen_admits(self, tmp_path: Path) -> None:
-        # pyproject demands >=3.11 (would reject 3.9); the bare-name override
-        # widens to >=3.0, so the guard admits the 3.9 target.
         provider = self._local_provider(tmp_path, ">=3.11", ">=3.0")
+        provider.get_dependencies("foo", V("1.0"))
         stamped = provider.metadata_cache[("foo", V("1.0"))].requires_python
         assert stamped == SpecifierSet(">=3.0")
         _raise_for_source_python(provider, provider.target, {"foo": V("1.0")})
 
     def test_narrow_rejects(self, tmp_path: Path) -> None:
-        # pyproject allows >=3.0; the override narrows to >=3.11, so the
-        # guard rejects the 3.9 target.
         provider = self._local_provider(tmp_path, ">=3.0", ">=3.11")
-        stamped = provider.metadata_cache[("foo", V("1.0"))].requires_python
-        assert stamped == SpecifierSet(">=3.11")
-        with pytest.raises(ResolutionError):
-            _raise_for_source_python(provider, provider.target, {"foo": V("1.0")})
+        with pytest.raises(
+            IncompatiblePythonError, match="foo 1.0 requires Python >=3.11"
+        ):
+            provider.get_dependencies("foo", V("1.0"))
+        assert ("foo", V("1.0")) not in provider.deps_cache
 
 
 class TestEffectiveFieldResolution:

@@ -1011,7 +1011,6 @@ def parse_and_cache_metadata(
     ):
         metadata = resolve_dynamic_sdist(provider, cache_key, metadata)
 
-    _reject_incompatible_python(provider, cache_key, metadata)
     cache_deps_from_metadata(provider, cache_key, metadata)
 
 
@@ -1046,28 +1045,13 @@ def _reject_foreign_metadata(
 def _reject_incompatible_python(
     provider: Provider, cache_key: tuple[str, Version], metadata: WheelMetadata
 ) -> None:
-    """Reject an index candidate whose METADATA Requires-Python excludes the target.
-
-    The listing filter
-    (:func:`nab_provider._provider.listing.excluded_by_python`)
-    reads the optional Simple-API ``requires-python`` hint, so a version whose
-    listing omits it reaches here unfiltered.  The wheel's own METADATA (or the
-    sdist's PKG-INFO) carries the authoritative field; a per-package override
-    still replaces it, matching the listing filter. Raised before deps
-    are
-    cached, so no partial state survives the rejection.
-    """
+    """Reject effective metadata whose Requires-Python excludes the target."""
     target = provider.target
     if target is None:
         return
 
     package, version = cache_key
-    override_rp = provider.effective_requires_python(package, version)
-    spec = (
-        SpecifierSet(override_rp)
-        if override_rp is not None
-        else metadata.requires_python
-    )
+    spec = metadata.requires_python
     if spec is None or target.admits_requires_python(spec):
         return
 
@@ -1143,6 +1127,7 @@ def cache_deps_from_metadata(
     one is refused now or deferred depends on which extras name it.
     """
     metadata = effective_metadata(provider, cache_key, metadata)
+    _reject_incompatible_python(provider, cache_key, metadata)
 
     package = cache_key[0]
     provider.metadata_cache[cache_key] = metadata

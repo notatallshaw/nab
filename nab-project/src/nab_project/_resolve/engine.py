@@ -904,12 +904,7 @@ def _raise_for_source_python(
     target: ResolveTarget,
     pins: Mapping[str, Version],
 ) -> None:
-    """Reject a local, VCS, or archive pin whose Requires-Python excludes ``target``.
-
-    Index candidates are filtered by Requires-Python at listing and again from
-    fetched metadata; local, VCS and archive sources skip both, so one that
-    rejects the target could otherwise reach the lock.
-    """
+    """Check the final local, VCS, and archive pins against ``target``."""
     managed = (
         provider.local_sources.keys()
         | provider.vcs_sources.keys()

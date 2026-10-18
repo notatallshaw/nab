@@ -5335,12 +5335,7 @@ class TestResolveUniversalPyprojectGroupConflict:
 
 
 class TestLocalVcsRequiresPython:
-    """A local or VCS pin must satisfy the resolve's target Python.
-
-    Index candidates are filtered by Requires-Python while listing;
-    local-path and VCS sources skip that filter, so the single-env
-    resolve checks them after resolving, mirroring the universal path.
-    """
+    """A local or VCS pin must satisfy the resolve's target Python."""
 
     def _provider_with_local(
         self, tmp_path: Path, body: str, *, python_version: str = "3.10.0"
@@ -5406,7 +5401,9 @@ class TestLocalVcsRequiresPython:
         ):
             mock_coord_cls.return_value.__enter__ = lambda _self: fake
             mock_coord_cls.return_value.__exit__ = MagicMock(return_value=False)
-            with pytest.raises(ResolutionError, match="foo 1.0 requires Python"):
+            with pytest.raises(
+                ResolutionError, match="rejected on its metadata"
+            ) as info:
                 _resolved(
                     root,
                     _FAKE_TRANSPORT,
@@ -5415,6 +5412,9 @@ class TestLocalVcsRequiresPython:
                         local_sources=(LocalSource("foo", str(tmp_path / "foo")),)
                     ),
                 )
+
+        assert info.value.verbose_message is not None
+        assert "foo 1.0 requires Python" in info.value.verbose_message
 
     def test_resolve_pyproject_declared_target_satisfies_local(
         self, tmp_path: Path

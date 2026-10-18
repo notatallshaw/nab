@@ -2636,12 +2636,7 @@ class TestResolveWithCoordinator:
 
 
 class TestLocalVcsRequiresPython:
-    """A local or VCS pin must satisfy each targeted Python version.
-
-    Index candidates are filtered by Requires-Python while listing;
-    local-path and VCS sources skip that filter, so the resolve checks
-    them after resolving.
-    """
+    """A local or VCS pin must satisfy each targeted Python version."""
 
     def _write(self, tmp_path: Path, body: str) -> LocalSource:
         (tmp_path / "pyproject.toml").write_text(body, encoding="utf-8")
@@ -2657,6 +2652,42 @@ class TestLocalVcsRequiresPython:
             inputs=ResolveInputs(local_sources=(local,)),
         )
 
+    def test_backtracks_past_python_incompatible_source(self, tmp_path: Path) -> None:
+        local = self._write(
+            tmp_path,
+            '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n',
+        )
+        coordinator = make_coordinator(
+            [_make_wheel("1.0", package="alpha"), _make_wheel("2.0", package="alpha")],
+            package="alpha",
+            metadata_by_version={
+                "1.0": "Metadata-Version: 2.4\nName: alpha\nVersion: 1.0\n\n",
+                "2.0": "Metadata-Version: 2.4\nName: alpha\nVersion: 2.0\nRequires-Dist: foo\n\n",
+            },
+        )
+        result = resolve_with_coordinator(
+            coordinator,
+            Matrix(
+                python=">=3.11,<3.13", platforms=(PlatformSpec("linux_x86_64"),)
+            ).expand(),
+            _reqs("alpha"),
+            align_across_targets=False,
+            inputs=ResolveInputs(
+                local_sources=(local,), build_policy=BuildPolicy.NEVER
+            ),
+        )
+
+        assert result.success
+        older, newer = result.target_results
+        assert older.pins == {"alpha": Version("1.0")}
+        assert newer.pins == {"alpha": Version("2.0"), "foo": Version("1.0")}
+
+        assert older.lock is not None
+        assert newer.lock is not None
+
+        assert older.lock.dependencies == {}
+        assert newer.lock.dependencies == {"alpha": ("foo",)}
+
     def test_excluding_python_fails_the_target(self, tmp_path: Path) -> None:
         local = self._write(
             tmp_path,
@@ -2670,8 +2701,10 @@ class TestLocalVcsRequiresPython:
         assert not result.success
         error = result.target_results[0].error
         assert error is not None
-        assert "foo 1.0 requires Python" in str(error)
-        assert "3.10" in str(error)
+        assert "rejected on its metadata" in str(error)
+        assert error.verbose_message is not None
+        assert "foo 1.0 requires Python" in error.verbose_message
+        assert "3.10" in error.verbose_message
 
     def test_compatible_python_with_index_dep_succeeds(self, tmp_path: Path) -> None:
         local = self._write(
@@ -2857,8 +2890,6 @@ class TestArchiveSourceAcrossTargets:
         assert str(result.target_results[0].pins["foo"]) == "1.0"
 
     def test_requires_python_excluding_target_fails(self, tmp_path: Path) -> None:
-        # An archive skips the listing Requires-Python filter, so the source
-        # guard must reject one that excludes the target's Python.
         pyproject = (
             '[project]\nname = "foo"\nversion = "1.0"\nrequires-python = ">=3.12"\n'
         )
@@ -2881,7 +2912,9 @@ class TestArchiveSourceAcrossTargets:
         assert not result.success
         error = result.target_results[0].error
         assert error is not None
-        assert "foo 1.0 requires Python" in str(error)
+        assert "rejected on its metadata" in str(error)
+        assert error.verbose_message is not None
+        assert "foo 1.0 requires Python" in error.verbose_message
 
 
 class TestSharedListingFilter:
