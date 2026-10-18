@@ -213,10 +213,11 @@ artifacts in `packages.wheels.path` or `packages.sdist.path`.
 PEP 751 resolves the path against the lock, so both can move together. A Windows path on another
 drive stays absolute. With `--output -`, paths are relative to the current directory instead.
 
-A URL declared in the configuration is written as it was declared, minus any embedded credentials:
-an archive source in `packages.archive.url`, a local index in `packages.index`, and a local
-repository in `packages.vcs.url`. A `file://` URL is not made relative, so a lock that carries one
-is usable only where that location exists.
+Configured URLs have embedded credentials removed. Archive sources use `packages.archive.url`
+without the fragment, with hashes and any subdirectory recorded separately in
+`packages.archive.hashes` and `packages.archive.subdirectory`. Local indexes use `packages.index`,
+and local repositories use `packages.vcs.url`. A `file://` URL is not made relative, so a lock that
+carries one is usable only where that location exists.
 
 ### The environments the lock is for
 
