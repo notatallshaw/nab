@@ -240,6 +240,7 @@ def build_wheel(wheel_directory, config_settings=None, metadata_directory=None):
         escaped + "/__init__.py": b"",
         distinfo + "/METADATA": (
             "Metadata-Version: 2.1\\nName: " + NAME + "\\nVersion: " + VERSION + "\\n"
+            + {requires_python}
         ).encode(),
         distinfo + "/WHEEL": (
             b"Wheel-Version: 1.0\\nGenerator: nab-test\\n"
@@ -316,28 +317,32 @@ def _make_pep643_sdist(path: Path, name: str, version: str) -> None:
 
 
 def _make_buildable_sdist(
-    path: Path, name: str, version: str, requires: tuple[str, ...] = ()
+    path: Path,
+    name: str,
+    version: str,
+    requires: tuple[str, ...] = (),
+    *,
+    requires_python: str | None = None,
 ) -> None:
-    """Write an sdist that builds into an installable wheel.
-
-    Static PKG-INFO so the inner resolve can read it without a build,
-    and an in-tree backend reached through ``backend-path`` so the
-    build needs nothing from an index beyond ``requires``.  Passing a
-    non-empty ``requires`` is how a fixture reaches a second level of
-    nesting.
-    """
+    """Write an sdist with an in-tree backend and optional dynamic Requires-Python."""
     escaped = name.replace("-", "_")
     root = f"{name}-{version}"
     requires_block = ", ".join(f'"{req}"' for req in requires)
+    python_header = f"Requires-Python: {requires_python}\n" if requires_python else ""
     members = {
-        "PKG-INFO": f"Metadata-Version: 2.2\nName: {name}\nVersion: {version}\n",
+        "PKG-INFO": (
+            f"Metadata-Version: 2.2\nName: {name}\nVersion: {version}\n"
+            + ("Dynamic: Requires-Python\n" if requires_python is not None else "")
+        ),
         "pyproject.toml": (
             "[build-system]\n"
             f"requires = [{requires_block}]\n"
             f'build-backend = "{escaped}_backend"\n'
             'backend-path = ["."]\n'
         ),
-        f"{escaped}_backend.py": _SDIST_BACKEND_SRC.format(name=name, version=version),
+        f"{escaped}_backend.py": _SDIST_BACKEND_SRC.format(
+            name=name, version=version, requires_python=repr(python_header)
+        ),
     }
     with tarfile.open(path, "w:gz") as tf:
         for member, text in members.items():
@@ -3529,6 +3534,7 @@ class TestBuildRequirementBuildFailures:
     ) -> None:
         (tmp_path / self.PENDING.sdist.filename).write_bytes(b"sdist")
         wheel = tmp_path / "demo-1.0-py3-none-any.whl"
+        _make_installable_wheel(wheel, "demo", "1.0")
 
         monkeypatch.setattr(
             env_mod.tempfile,
@@ -3580,7 +3586,7 @@ class TestBuildRequirementBuildFailures:
 
 
 class TestBuiltWheelValidation:
-    """Built wheels must match the pinned release and the host's supported tags."""
+    """Built wheels must match the pinned release and support the host."""
 
     PENDING = _PendingBuild(
         name="build-stub",
@@ -3602,6 +3608,7 @@ class TestBuiltWheelValidation:
         """Run ``_build_requirement`` with a stubbed wheel output."""
         pending = pending or self.PENDING
         (tmp_path / pending.sdist.filename).write_bytes(b"sdist")
+        _make_installable_wheel(tmp_path / filename, "build_stub", "1.0")
 
         monkeypatch.setattr(
             env_mod, "extract_sdist_archive", lambda _data, target: target
@@ -3667,6 +3674,98 @@ class TestBuiltWheelValidation:
 
         with pytest.raises(BuildEnvError, match=r"build-stub 1\.0.*py2-none-any.*host"):
             env._build_requirement(self.PENDING, tmp_path)
+
+    @pytest.mark.parametrize(
+        ("requires_python", "overrides", "expected_error"),
+        [
+            (None, (), None),
+            (">=3", (), None),
+            (f"=={sys.version_info.major}.{sys.version_info.minor}.999", (), None),
+            ("not-a-specifier", (), "invalid Requires-Python"),
+            (">=999", (), "requires Python >=999.*host"),
+            (">=999", (pkg_override("Build.Stub==1.0", requires_python=">=3"),), None),
+            (">=999", (pkg_override("build-stub", requires_python=""),), None),
+            (
+                ">=3",
+                (pkg_override("build-stub", requires_python=">=999"),),
+                "requires Python >=999.*host",
+            ),
+            (
+                ">=999",
+                (pkg_override("other", requires_python=""),),
+                "requires Python >=999.*host",
+            ),
+            (
+                ">=999",
+                (pkg_override("build-stub>=2", requires_python=""),),
+                "requires Python >=999.*host",
+            ),
+            (
+                ">=3",
+                (
+                    pkg_override("build-stub", dependencies=()),
+                    pkg_override("build-stub", requires_python=">=999"),
+                ),
+                "requires Python >=999.*host",
+            ),
+        ],
+        ids=[
+            "absent",
+            "compatible",
+            "language-minor",
+            "invalid",
+            "incompatible",
+            "matching-override",
+            "empty-override",
+            "restrictive-override",
+            "other-package",
+            "other-version",
+            "independent-fields",
+        ],
+    )
+    def test_computed_requires_python(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        requires_python: str | None,
+        overrides: tuple[PackageOverride, ...],
+        expected_error: str | None,
+    ) -> None:
+        _make_buildable_sdist(
+            tmp_path / self.PENDING.sdist.filename,
+            self.PENDING.name,
+            self.PENDING.version,
+            requires_python=requires_python,
+        )
+        monkeypatch.setattr(env_mod, "extract_sdist_archive", _unpack_fixture_sdist)
+        config = ResolveInputs(build_requires_depth=1, package_overrides=overrides)
+        env = NabBuildEnv(requires=[], config=config)
+
+        if expected_error is None:
+            wheel = env._build_requirement(self.PENDING, tmp_path)
+            assert wheel.name == "build_stub-1.0-py3-none-any.whl"
+            assert wheel.is_file()
+        else:
+            with pytest.raises(BuildEnvError, match=expected_error) as exc:
+                env._build_requirement(self.PENDING, tmp_path)
+
+            assert self.PENDING.label in str(exc.value)
+
+    @pytest.mark.parametrize("kind", ["corrupt", "missing", "other-project"])
+    def test_unreadable_built_metadata_is_refused(
+        self, tmp_path: Path, kind: str
+    ) -> None:
+        wheel = tmp_path / "build_stub-1.0-py3-none-any.whl"
+        if kind == "corrupt":
+            wheel.write_bytes(b"not a zip file")
+        elif kind == "other-project":
+            _make_installable_wheel(wheel, "other", "1.0")
+
+        with pytest.raises(
+            BuildEnvError, match="(unreadable|no readable) wheel"
+        ) as exc:
+            env_mod._check_built_requires_python(self.PENDING, wheel, ())
+        assert self.PENDING.label in str(exc.value)
 
     @pytest.mark.parametrize(
         ("pinned", "filename"),

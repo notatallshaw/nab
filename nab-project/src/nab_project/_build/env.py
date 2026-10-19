@@ -34,6 +34,7 @@ import venv
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
+from email import message_from_string
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -44,19 +45,22 @@ from installer.sources import WheelFile
 from installer.utils import get_launcher_kind
 
 from nab_index.client import extract_sdist_archive
+from nab_index.local_index import UnreadableLocalIndexError, read_wheel_metadata
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
 from nab_provider._vendor.packaging.requirements import InvalidRequirement
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import (
     canonicalize_name,
     parse_wheel_filename,
 )
 from nab_provider._vendor.packaging.version import Version
-from nab_provider.errors import MissingExtraError
+from nab_provider.errors import MissingExtraError, UnsupportedWheelError
 from nab_provider.marker_holds import (
     IntractableMarkerError,
     UnevaluableMarkerError,
     dependency_marker_holds,
 )
+from nab_provider.metadata import validate_specifier_versions
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import BuildPolicy, DistPolicy
 from nab_provider.requirements_file import InvalidProjectRequirementError
@@ -676,6 +680,7 @@ class NabBuildEnv:
                 raise BuildEnvError(msg) from exc
 
             _check_built_wheel(pending, built)
+            _check_built_requires_python(pending, built, self._config.package_overrides)
             return built
 
 
@@ -701,6 +706,51 @@ def _check_built_wheel(pending: _PendingBuild, wheel: Path) -> None:
         msg = (
             f"build requirement {pending.label} produced {wheel.name!r},"
             " which is not compatible with the host"
+        )
+        raise BuildEnvError(msg)
+
+
+def _check_built_requires_python(
+    pending: _PendingBuild, wheel: Path, overrides: tuple[PackageOverride, ...]
+) -> None:
+    """Check nested wheel Python compatibility, honoring package overrides."""
+    try:
+        text = read_wheel_metadata(wheel)
+    except (UnreadableLocalIndexError, UnsupportedWheelError) as exc:
+        msg = f"build requirement {pending.label} has unreadable wheel metadata: {exc}"
+        raise BuildEnvError(msg) from exc
+    if text is None:
+        msg = f"build requirement {pending.label} has no readable wheel METADATA"
+        raise BuildEnvError(msg)
+
+    requires_python = message_from_string(text).get("Requires-Python")
+    for package_override in overrides:
+        if (
+            package_override.name == canonicalize_name(pending.name)
+            and Version(pending.version) in package_override.version_range
+            and package_override.requires_python is not None
+        ):
+            requires_python = package_override.requires_python
+            break
+
+    if requires_python is None:
+        return
+
+    try:
+        spec = SpecifierSet(requires_python)
+        validate_specifier_versions(spec)
+    except ValueError as exc:
+        msg = (
+            f"build requirement {pending.label} has invalid Requires-Python"
+            f" {requires_python!r}: {exc}"
+        )
+        raise BuildEnvError(msg) from exc
+
+    host = ResolveTarget.for_host()
+    if not host.admits_requires_python(spec):
+        msg = (
+            f"build requirement {pending.label} requires Python {spec} but the"
+            f" host is Python {host.python_full_version}"
         )
         raise BuildEnvError(msg)
 
