@@ -72,7 +72,16 @@ def dispatch(
                 return _FAILED_STATUS, (
                     f"error: expected a file path, got a directory path: {value}"
                 )
-            values[dest] = Path(value)
+            path = Path(value)
+            if (
+                parsed.command == "lock"
+                and dest == "output"
+                and value != "-"
+                and path == Path("-")
+            ):
+                # Path strips the explicit ./ prefix; only bare - selects stdout.
+                path = path.absolute()
+            values[dest] = path
 
     try:
         command(**values)

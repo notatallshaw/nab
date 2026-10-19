@@ -1179,6 +1179,59 @@ class TestLockCommandSpecific:
         assert "foo==1.0" in out
         assert "--hash=sha256:" in out
 
+    @pytest.mark.parametrize(
+        "output_path", ["-", "./-", "././-", "absolute", "sub/../-"]
+    )
+    @pytest.mark.parametrize("existing", [False, True])
+    def test_cli_dash_output_destination(
+        self,
+        hermetic_roots: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        output_path: str,
+        existing: bool,
+    ) -> None:
+        monkeypatch.chdir(hermetic_roots)
+        dependency = hermetic_roots / "dep"
+        dependency.mkdir()
+        _make_pyproject(dependency, '[project]\nname="dep"\nversion="1.0"\n')
+        _make_pyproject(
+            hermetic_roots,
+            '[project]\nname="app"\nversion="1.0"\ndependencies=["dep"]\n'
+            '[[tool.nab.local-sources]]\nname="dep"\npath="dep"\n',
+        )
+        (hermetic_roots / "sub").mkdir()
+        destination = hermetic_roots / "-"
+        previous = "old-package==0.1\n"
+        if existing:
+            destination.write_text(previous)
+        argument = str(destination) if output_path == "absolute" else output_path
+
+        with patch(
+            "nab_project.resolve.FetchCoordinator",
+            return_value=contextlib.nullcontext(make_coordinator([])),
+        ):
+            _lock_cli(
+                "--offline",
+                "--no-cache",
+                "--format",
+                "requirements-without-hashes",
+                "--output",
+                argument,
+            )
+
+        expected = f"dep @ {dependency.as_uri()}\n"
+        captured = capsys.readouterr()
+        if output_path == "-":
+            assert captured.out == expected
+            if existing:
+                assert destination.read_text() == previous
+            else:
+                assert not destination.exists()
+        else:
+            assert captured.out == ""
+            assert destination.read_text() == expected
+
     def test_requirements_without_hashes_to_stdout(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -7804,6 +7857,26 @@ class TestPackageEntryStatements:
 
 class TestDownloadCommand:
     """Tests for the download subcommand."""
+
+    @pytest.mark.parametrize("output_path", ["-", "./-"])
+    def test_cli_dash_output_is_a_directory(
+        self,
+        hermetic_roots: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        output_path: str,
+    ) -> None:
+        monkeypatch.chdir(hermetic_roots)
+        _make_pyproject(hermetic_roots, '[project]\nname="app"\nversion="1.0"\n')
+
+        with patch(
+            "nab_project.resolve.FetchCoordinator",
+            return_value=contextlib.nullcontext(make_coordinator([])),
+        ):
+            _cli("download", "--offline", "--no-cache", "--output", output_path)
+
+        assert (hermetic_roots / "-").is_dir()
+        assert capsys.readouterr().out == ""
 
     def test_invokes_download_lock(self, tmp_path: Path) -> None:
         pyproject = _make_pyproject(tmp_path)
