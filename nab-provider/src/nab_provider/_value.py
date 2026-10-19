@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from ._compat import override
 
 __all__ = ["SlottedValue"]
@@ -15,7 +17,7 @@ class SlottedValue:
     """
 
     __slots__ = ()
-    __match_args__: tuple[str, ...]
+    __match_args__: ClassVar[tuple[str, ...]]
 
     @override
     def __eq__(self, other: object) -> bool:

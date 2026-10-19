@@ -37,5 +37,5 @@ Source = "https://github.com/notatallshaw/nab"
 Changelog = "https://github.com/notatallshaw/nab/releases"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.32.4"]
 build-backend = "hatchling.build"

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from functools import partial
 from typing import TYPE_CHECKING, Final, TypeGuard
 
-from nab_provider._vendor.packaging.specifiers import InvalidSpecifier, SpecifierSet
+from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import InvalidVersion, Version
 from nab_provider.records import SdistFile, WheelFile, release_wheel_payload
 
@@ -1239,8 +1239,6 @@ def parse_prefetched_metadata(
         provider.parse_and_cache_metadata(cache_key, text)
     except (
         ValueError,
-        InvalidVersion,
-        InvalidSpecifier,
         ForeignMetadataError,
         IncompatiblePythonError,
         UnsupportedVcsError,

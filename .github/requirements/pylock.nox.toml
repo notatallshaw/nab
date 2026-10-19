@@ -210,27 +210,27 @@ sha256 = "8c337f7b92445823b0d0ea507f611390c58dcd2112be00aebcd738a2ca7a1c64"
 
 [[packages]]
 name = "distlib"
-version = "0.4.3"
+version = "0.4.4"
 marker = "\"nox\" in dependency_groups"
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "distlib-0.4.3.tar.gz"
-upload-time = 2026-06-12 08:04:52.847314+00:00
-url = "https://files.pythonhosted.org/packages/c9/02/bd72be9134d25ed783ecbbc38a539ffaefbf90c78418c7fb7229600dbac7/distlib-0.4.3.tar.gz"
-size = 615141
+name = "distlib-0.4.4.tar.gz"
+upload-time = 2026-10-16 13:56:34.203008+00:00
+url = "https://files.pythonhosted.org/packages/68/bc/d36966de7304047a1001a7559fbf266c464bb5d8cc85464536ef8c9bcc32/distlib-0.4.4.tar.gz"
+size = 621304
 
 [packages.sdist.hashes]
-sha256 = "f152097224a0ae24be5a0f6bae1b9359af82133bce63f98a95f86cae1aede9ed"
+sha256 = "ca4175b4ac7f71223cc30ed7248c45d2b38c2439d8ee6e498ab67ed63cf3508d"
 
 [[packages.wheels]]
-name = "distlib-0.4.3-py2.py3-none-any.whl"
-upload-time = 2026-06-12 08:04:50.506662+00:00
-url = "https://files.pythonhosted.org/packages/02/08/9c41fb51ab5b43eb21674aff13df270e8ba6c4b29c8624e328dc7a9482af/distlib-0.4.3-py2.py3-none-any.whl"
-size = 470628
+name = "distlib-0.4.4-py2.py3-none-any.whl"
+upload-time = 2026-10-16 13:56:32.053304+00:00
+url = "https://files.pythonhosted.org/packages/c1/2b/238f02a4927fa2e27aa995371d240a468b52e42eae44a678434aff736b38/distlib-0.4.4-py2.py3-none-any.whl"
+size = 472099
 
 [packages.wheels.hashes]
-sha256 = "4b0ce306c966eb73bc3a7b6abad017c556dadd92c44701562cd528ac7fde4d5b"
+sha256 = "cf09d55b1e85a89576b036aeb71550bfd68320f3f21761ca329eadadad918638"
 
 [[packages]]
 name = "filelock"
@@ -446,7 +446,7 @@ sha256 = "5fc53fdac9f7bd63fbcdc868fb5f90b4784d78a53a3d3388cd738b807441a20b"
 
 [[packages]]
 name = "python-discovery"
-version = "1.6.2"
+version = "1.6.4"
 marker = "\"nox\" in dependency_groups"
 requires-python = ">=3.9"
 dependencies = [
@@ -455,22 +455,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "python_discovery-1.6.2.tar.gz"
-upload-time = 2026-10-10 01:24:27.912841+00:00
-url = "https://files.pythonhosted.org/packages/b0/73/54993df8fc57e906dc9b7e01d1d9b0b2d3eb0ce3190639e33dccb12853f7/python_discovery-1.6.2.tar.gz"
-size = 86921
+name = "python_discovery-1.6.4.tar.gz"
+upload-time = 2026-10-19 01:45:14.855085+00:00
+url = "https://files.pythonhosted.org/packages/f3/ee/cf608372c88ce2c136ee13c69ab6f667dbc0d0c1176af188b4ddc8853e66/python_discovery-1.6.4.tar.gz"
+size = 89883
 
 [packages.sdist.hashes]
-sha256 = "cd1738ca1d37c86ef9d0b654dd46fcee1e41c97c6add12575e8501ced39afdb4"
+sha256 = "bc70d31f0ec5de11eda13d4d64c16e24b3506a65984684f2b6c98cb83b2ea9df"
 
 [[packages.wheels]]
-name = "python_discovery-1.6.2-py3-none-any.whl"
-upload-time = 2026-10-10 01:24:26.721179+00:00
-url = "https://files.pythonhosted.org/packages/61/3b/50ed32583bfffa737df67d33b9c15d7b25df232c55ab606d059f610ef6ca/python_discovery-1.6.2-py3-none-any.whl"
-size = 38912
+name = "python_discovery-1.6.4-py3-none-any.whl"
+upload-time = 2026-10-19 01:45:13.668192+00:00
+url = "https://files.pythonhosted.org/packages/60/91/1aa70d3dfcab0dbcf88a2cbc3bce7f7c69562287a90216e617eaa4937e25/python_discovery-1.6.4-py3-none-any.whl"
+size = 39385
 
 [packages.wheels.hashes]
-sha256 = "f0c697f95a3aaec4174a6e5e58f5885e25768684bafc76f1afde384709ebdcf2"
+sha256 = "530179cc51a1816d512b15635b3dc931295ae12efb183783ad31190a5d425d2b"
 
 [[packages]]
 name = "tomli"
@@ -819,7 +819,7 @@ sha256 = "0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
 
 [[packages]]
 name = "virtualenv"
-version = "21.14.7"
+version = "21.14.11"
 marker = "\"nox\" in dependency_groups"
 requires-python = ">=3.9"
 dependencies = [
@@ -833,22 +833,22 @@ dependencies = [
 index = "https://pypi.org/simple/"
 
 [packages.sdist]
-name = "virtualenv-21.14.7.tar.gz"
-upload-time = 2026-10-12 01:27:31.842376+00:00
-url = "https://files.pythonhosted.org/packages/dc/3f/935cf1757643381fb7f7cc98197b4bc119223d9c2cf37dc3b03ad2a4455f/virtualenv-21.14.7.tar.gz"
-size = 5471741
+name = "virtualenv-21.14.11.tar.gz"
+upload-time = 2026-10-18 07:06:34.716606+00:00
+url = "https://files.pythonhosted.org/packages/7f/be/4d1d59d309db76b5808fcfd78bd5996f4e7241366691c38fc331a3136398/virtualenv-21.14.11.tar.gz"
+size = 5503091
 
 [packages.sdist.hashes]
-sha256 = "5f427d56f39eb7e7447d641dd4b7ab1e9c92793f498f35f26da2e4972c5546ae"
+sha256 = "593052d8477ea8c55a842387ce111bd08c72618f0c1133c302cafe335e570a57"
 
 [[packages.wheels]]
-name = "virtualenv-21.14.7-py3-none-any.whl"
-upload-time = 2026-10-12 01:27:29.370747+00:00
-url = "https://files.pythonhosted.org/packages/52/5b/799c3e5b8e04d5fa1c9b61a4c1f5079603e747205c7311b92abd30283df5/virtualenv-21.14.7-py3-none-any.whl"
-size = 5487587
+name = "virtualenv-21.14.11-py3-none-any.whl"
+upload-time = 2026-10-18 07:06:32.719110+00:00
+url = "https://files.pythonhosted.org/packages/ce/6b/d85da8982b41190eafcb9df91dff9d83fc6989e98af4b5be4c8f85510c95/virtualenv-21.14.11-py3-none-any.whl"
+size = 5495268
 
 [packages.wheels.hashes]
-sha256 = "3769219a308c5d2f093e7729621ad12a6346b5767a7ec4338414e2a0fb0c526b"
+sha256 = "b319f8590a84e5de5f8f2c803ecd2237e9bc0ffa7c1e875e3169c107cecb7454"
 
 [[packages]]
 name = "zipp"
@@ -876,8 +876,8 @@ size = 10582
 sha256 = "8979f52d874162f485ff2981e3891f3a3317b7a3dd43ff1e1775b9304f307a9c"
 
 [tool.nab]
-nab-version = "0.0.22.dev0"
-created-at = 2026-10-15 15:21:16.892365+00:00
+nab-version = "0.0.23.dev0"
+created-at = 2026-10-19 15:48:41.767041+00:00
 command-line = [
     "nab",
     "lock",

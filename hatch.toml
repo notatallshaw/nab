@@ -30,9 +30,10 @@ workspace.members = [
 ]
 features = ["httpx", "httpx2"]
 extra-dependencies = [
-    "hypothesis>=6.100",
-    "pytest-timeout>=2.3",
-    "respx>=0.22",
+    "hypothesis>=6.168.5; python_version < '3.11'",
+    "hypothesis>=6.170.2; python_version >= '3.11'",
+    "pytest-timeout>=2.4.0",
+    "respx>=0.23.1",
 ]
 
 [envs.crosshair]
@@ -45,11 +46,12 @@ workspace.members = [
     "nab-index",
 ]
 extra-dependencies = [
-    "crosshair-tool>=0.0.104",
-    "hypothesis-crosshair>=0.0.28",
-    "hypothesis>=6.100",
-    "pytest>=9.0",
-    "pytest-timeout>=2.3",
+    "crosshair-tool>=0.0.111",
+    "hypothesis-crosshair>=0.0.31",
+    "hypothesis>=6.168.5; python_version < '3.11'",
+    "hypothesis>=6.170.2; python_version >= '3.11'",
+    "pytest>=9.1.1",
+    "pytest-timeout>=2.4.0",
 ]
 
 [envs.crosshair.scripts]
@@ -91,7 +93,7 @@ python = "3.13"
 skip-install = true
 dependency-groups = ["docs"]
 dependencies = [
-    "sphinx-autobuild>=2024.10",
+    "sphinx-autobuild>=2025.8.25",
 ]
 
 [envs.docs.scripts]
