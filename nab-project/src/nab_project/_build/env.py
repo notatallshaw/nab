@@ -47,6 +47,7 @@ from installer.utils import get_launcher_kind
 from nab_index.client import extract_sdist_archive
 from nab_index.local_index import UnreadableLocalIndexError, read_wheel_metadata
 from nab_index.urllib3_async_transport import Urllib3AsyncTransport
+from nab_provider._vendor.packaging.ranges import VersionRange
 from nab_provider._vendor.packaging.requirements import InvalidRequirement
 from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.utils import (
@@ -61,12 +62,14 @@ from nab_provider.marker_holds import (
     dependency_marker_holds,
 )
 from nab_provider.metadata import validate_specifier_versions
+from nab_provider.overrides import PackageOverride
 from nab_provider.pep508 import parse_requirement
 from nab_provider.policy import BuildPolicy, DistPolicy
 from nab_provider.requirements_file import InvalidProjectRequirementError
 from nab_provider.tags import TagSet
 from nab_provider.target import ResolveTarget, host_environment
 from nab_provider.vcs_admission import UnsupportedVcsError
+from nab_resolver.errors import ResolutionError, ResolutionTerminatedError
 
 from .._compat import override
 from ..download import DownloadError, download_lock
@@ -84,7 +87,7 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from nab_index.transport import AsyncHttpTransport, HttpResponse
-    from nab_provider.overrides import IndexOverride, PackageOverride
+    from nab_provider.overrides import IndexOverride
 
     from ..lockfile import LockInput, PinShape, SdistArtifact, TargetLock
 
@@ -256,6 +259,21 @@ class _PendingBuild:
     def label(self) -> str:
         """The chain entry naming this build."""
         return chain_label(self.name, self.version)
+
+
+class _BuiltRequiresPythonError(BuildEnvError):
+    """A built release whose Python restriction excludes the host."""
+
+    def __init__(
+        self, pending: _PendingBuild, spec: SpecifierSet, message: str
+    ) -> None:
+        super().__init__(message)
+        self.package_override = PackageOverride(
+            requirement=parse_requirement(f"{pending.name}=={pending.version}"),
+            name=canonicalize_name(pending.name),
+            version_range=VersionRange.singleton(pending.version),
+            requires_python=str(spec),
+        )
 
 
 class NabBuildEnv:
@@ -462,32 +480,11 @@ class NabBuildEnv:
     ) -> list[Path]:
         """Resolve ``requires`` (+ ``extra``) and write wheels under ``wheel_dir``.
 
-        The inner resolve runs against a synthetic pyproject so it
-        can reuse :func:`nab_project.resolve.resolve_for_targets` and
-        :func:`nab_project.download.download_lock` end-to-end.  No
-        local sources and no marker overlay; build deps come from the
-        configured indexes only.
+        The synthetic project uses only configured indexes, without marker overlays.
+        Metadata stays static because building it would bypass the depth budget.
 
-        It admits wheels and sdists, like any resolve, so the version
-        it settles on is the one the requirement asked for rather than
-        the newest that happens to publish a wheel.  Whether a version
-        without an installable wheel can be used is
-        :meth:`_plan_install`'s decision, taken once the resolve has
-        named it.
-
-        It reads metadata statically: its build policy is ``never`` and
-        no inherited override may raise it.  A backend invocation to
-        learn a build requirement's dependencies would be a second
-        recursion, one the depth budget does not count.
-
-        Offline it returns no wheels rather than refusing when the
-        host's markers exclude every entry.
+        Retry with a built wheel's Python restriction when it excludes the host.
         """
-        # Late import, breaking the cycle ``resolve`` -> ``fetch`` ->
-        # ``_sources`` -> ``build_backend`` -> ``_build.runner`` -> this
-        # module: building an sdist resolves that sdist's build requirements.
-        from ..resolve import build_lock_input, resolve_for_targets
-
         requires = list(self._requires)
         if extra:
             requires.extend(extra)
@@ -508,6 +505,36 @@ class NabBuildEnv:
 
         inner_inputs = _inner_resolve_inputs(self._config)
 
+        last_rejection: _BuiltRequiresPythonError | None = None
+        while True:
+            try:
+                lock_input = self._resolve_requirements(synthetic, inner_inputs)
+            except ResolutionTerminatedError:
+                raise
+            except ResolutionError as exc:
+                if last_rejection is not None:
+                    raise last_rejection from exc
+                raise
+
+            try:
+                return self._download_build_wheels(lock_input, wheel_dir)
+            except _BuiltRequiresPythonError as exc:
+                # Accumulated restrictions prevent retrying rejected releases.
+                last_rejection = exc
+                inner_inputs = inner_inputs.replace(
+                    package_overrides=(
+                        *inner_inputs.package_overrides,
+                        exc.package_override,
+                    )
+                )
+
+    def _resolve_requirements(
+        self, synthetic: Path, inputs: ResolveInputs
+    ) -> LockInput:
+        """Resolve build requirements with the Python restrictions learned so far."""
+        # Late import: project resolution can itself open a build environment.
+        from ..resolve import build_lock_input, resolve_for_targets
+
         transport = _OwnedBuildTransport(self._transport_factory())
         try:
             with transport:
@@ -515,7 +542,7 @@ class NabBuildEnv:
                     synthetic,
                     transport,
                     targets=(ResolveTarget.for_host(),),
-                    inputs=inner_inputs,
+                    inputs=inputs,
                 )
                 result.raise_for_failure()
         except (
@@ -524,25 +551,22 @@ class NabBuildEnv:
             InvalidProjectRequirementError,
             MissingExtraError,
         ) as exc:
-            # A build requirement nab cannot resolve: a direct-URL/VCS pin, an
-            # invalid PEP 508 string, or an extra the resolved version does not
-            # declare. Wrap it so the outer resolve skips this sdist rather
-            # than aborting on the raw error.
             msg = f"build env resolve failed: {exc}"
             raise BuildEnvError(msg) from exc
 
-        lock_input, to_build = self._plan_install(
-            build_lock_input(result, inputs=inner_inputs)
-        )
+        return build_lock_input(result, inputs=inputs)
+
+    def _download_build_wheels(
+        self, lock_input: LockInput, wheel_dir: Path
+    ) -> list[Path]:
+        """Download and build one tentative solution without installing any of it."""
+        lock_input, to_build = self._plan_install(lock_input)
 
         try:
             download_result = download_lock(
                 lock_input, self._transport_factory(), wheel_dir
             )
         except DownloadError as exc:
-            # A build dependency failed its HTTP fetch or hash check. Wrap it so
-            # the outer resolve skips this sdist rather than aborting on the raw
-            # download error.
             msg = f"build env download failed: {exc}"
             raise BuildEnvError(msg) from exc
 
@@ -752,7 +776,7 @@ def _check_built_requires_python(
             f"build requirement {pending.label} requires Python {spec} but the"
             f" host is Python {host.python_full_version}"
         )
-        raise BuildEnvError(msg)
+        raise _BuiltRequiresPythonError(pending, spec, msg)
 
 
 def _chain_suffix(chain: BuildChain) -> str:
