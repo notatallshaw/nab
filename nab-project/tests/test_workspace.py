@@ -7,6 +7,7 @@ import logging
 import re
 from collections.abc import Callable
 from contextlib import AbstractContextManager
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -14,12 +15,24 @@ from unittest.mock import patch
 import pytest
 
 from nab_project.workspace import (
+    WorkspaceConfig,
     WorkspaceDiscoveryError,
     discover_workspace_root,
     merge_workspace_local_sources,
     read_workspace_members,
 )
 from nab_provider.provider import LocalSource
+from nab_provider.value import replace
+
+
+def test_workspace_config_preserves_literal_members_when_copied() -> None:
+    members = ("packages/*", "../shared", ".", "pkg_foo")
+    config = WorkspaceConfig(members)
+    assert config.members == members
+    assert replace(config) == config
+    assert replace(config, members=("other",)).members == ("other",)
+    with pytest.raises(FrozenInstanceError):
+        config.__setattr__("members", ())
 
 
 def _write(path: Path, body: str) -> Path:
