@@ -36,6 +36,7 @@ from nab_provider._vendor.packaging.specifiers import SpecifierSet
 from nab_provider._vendor.packaging.version import Version
 from nab_provider.provider import Provider
 from nab_provider.target import ResolveTarget
+from nab_provider.testing import make_metadata
 from nab_resolver.errors import ResolutionError
 from nab_resolver.resolver import Resolver
 from nab_resolver.types import Incompatibility
@@ -74,12 +75,6 @@ def _wheel(package: str, version: str) -> WheelFile:
         has_metadata=True,
         upload_time=None,
     )
-
-
-def _metadata(package: str, version: str, requires: Sequence[str]) -> str:
-    lines = ["Metadata-Version: 2.1", f"Name: {package}", f"Version: {version}"]
-    lines += [f"Requires-Dist: {requirement}" for requirement in requires]
-    return "\n".join(lines) + "\n"
 
 
 def _requires(rng: random.Random, candidates: Sequence[str]) -> list[str]:
@@ -135,8 +130,8 @@ def _build_graph(seed: int) -> _Graph:
     for depth, package in enumerate(packages):
         for version in VERSIONS:
             requires = _requires(rng, packages[depth + 1 :])
-            metadata_by_url[_sidecar_url(package, version)] = _metadata(
-                package, version, requires
+            metadata_by_url[_sidecar_url(package, version)] = make_metadata(
+                package, version, *requires
             )
 
     return _Graph(_root_requirements(rng, packages), listings, metadata_by_url)
@@ -243,10 +238,8 @@ def _decision_rejection_graph() -> _Graph:
             for package, package_versions in versions_by_package.items()
         },
         metadata_by_url={
-            _sidecar_url(package, version): _metadata(
-                package,
-                version,
-                requirements_by_candidate.get((package, version), []),
+            _sidecar_url(package, version): make_metadata(
+                package, version, *requirements_by_candidate.get((package, version), [])
             )
             for package, package_versions in versions_by_package.items()
             for version in package_versions

@@ -14,6 +14,7 @@ from nab_index.client import SdistFile, WheelFile
 from nab_index.lazy_wheel import RangeMetadataResult, RangeOutcome
 from nab_index.local_index import LocalIndexClient
 from nab_index.multi_index import IndexConfig, MultiIndexClient
+from nab_provider.testing import make_wheel
 
 if TYPE_CHECKING:
     from collections.abc import Coroutine
@@ -25,17 +26,6 @@ _T = TypeVar("_T")
 
 def run(coro: Coroutine[Any, Any, _T]) -> _T:
     return asyncio.run(coro)
-
-
-def _wheel(name: str, version: str = "1.0") -> WheelFile:
-    return WheelFile(
-        filename=f"{name}-{version}-py3-none-any.whl",
-        url=f"https://example.com/{name}-{version}-py3-none-any.whl",
-        version=version,
-        requires_python=None,
-        has_metadata=False,
-        upload_time=None,
-    )
 
 
 class FakeClient:
@@ -156,8 +146,10 @@ class TestNormaliseName:
 
 class TestPresenceBased:
     def test_first_index_hit_short_circuits(self) -> None:
-        first = FakeClient({"foo": [_wheel("foo")]})
-        second = FakeClient({"foo": [_wheel("foo", "2.0")]})
+        first = FakeClient({"foo": [make_wheel(package="foo", has_metadata=False)]})
+        second = FakeClient(
+            {"foo": [make_wheel("2.0", package="foo", has_metadata=False)]}
+        )
         client = MultiIndexClient(
             {"a": first, "b": second},
             ["a", "b"],
@@ -171,7 +163,7 @@ class TestPresenceBased:
 
     def test_first_miss_falls_through(self) -> None:
         first = FakeClient({})
-        second = FakeClient({"foo": [_wheel("foo")]})
+        second = FakeClient({"foo": [make_wheel(package="foo", has_metadata=False)]})
         client = MultiIndexClient(
             {"a": first, "b": second},
             ["a", "b"],
@@ -208,7 +200,7 @@ class TestPresenceBased:
 
     def test_zip_sdists_collected_from_every_walked_index(self) -> None:
         """The index serving the wheel need not be the one serving the ``.zip``."""
-        first = FakeClient({"foo": [_wheel("foo")]})
+        first = FakeClient({"foo": [make_wheel(package="foo", has_metadata=False)]})
         second = FakeClient({})
         second.zip_sdists["foo"] = frozenset({"1.0"})
         client = MultiIndexClient(
@@ -222,7 +214,7 @@ class TestPresenceBased:
 
     def test_route_cache_subsequent_calls(self) -> None:
         first = FakeClient({})
-        second = FakeClient({"foo": [_wheel("foo")]})
+        second = FakeClient({"foo": [make_wheel(package="foo", has_metadata=False)]})
         client = MultiIndexClient(
             {"a": first, "b": second},
             ["a", "b"],
@@ -301,8 +293,12 @@ class TestOfflinePresenceWalk:
 
 class TestOverrides:
     def test_override_wins(self) -> None:
-        pypi = FakeClient({"foo": [_wheel("foo", "1.0")]})
-        torch = FakeClient({"foo": [_wheel("foo", "9.9")]})
+        pypi = FakeClient(
+            {"foo": [make_wheel("1.0", package="foo", has_metadata=False)]}
+        )
+        torch = FakeClient(
+            {"foo": [make_wheel("9.9", package="foo", has_metadata=False)]}
+        )
         client = MultiIndexClient(
             {"pypi": pypi, "torch": torch},
             ["pypi", "torch"],
@@ -314,7 +310,9 @@ class TestOverrides:
         assert torch.get_files_calls == ["foo"]
 
     def test_override_strict_no_fall_through(self) -> None:
-        pypi = FakeClient({"foo": [_wheel("foo", "1.0")]})
+        pypi = FakeClient(
+            {"foo": [make_wheel("1.0", package="foo", has_metadata=False)]}
+        )
         torch = FakeClient({})  # missing the package
         client = MultiIndexClient(
             {"pypi": pypi, "torch": torch},
@@ -327,7 +325,9 @@ class TestOverrides:
 
     def test_canonical_name_match_in_overrides(self) -> None:
         pypi = FakeClient({})
-        other = FakeClient({"foo-bar": [_wheel("foo-bar")]})
+        other = FakeClient(
+            {"foo-bar": [make_wheel(package="foo-bar", has_metadata=False)]}
+        )
         client = MultiIndexClient(
             {"pypi": pypi, "other": other},
             ["pypi", "other"],
@@ -340,7 +340,7 @@ class TestOverrides:
 class TestMetadataRouting:
     def test_metadata_goes_to_routed_client(self) -> None:
         first = FakeClient({})
-        second = FakeClient({"foo": [_wheel("foo")]})
+        second = FakeClient({"foo": [make_wheel(package="foo", has_metadata=False)]})
         client = MultiIndexClient(
             {"a": first, "b": second},
             ["a", "b"],
@@ -354,7 +354,7 @@ class TestMetadataRouting:
 
     def test_sdist_goes_to_routed_client(self) -> None:
         first = FakeClient({})
-        second = FakeClient({"foo": [_wheel("foo")]})
+        second = FakeClient({"foo": [make_wheel(package="foo", has_metadata=False)]})
         client = MultiIndexClient(
             {"a": first, "b": second},
             ["a", "b"],
@@ -377,7 +377,7 @@ class TestMetadataRouting:
 
     def test_range_metadata_goes_to_routed_client(self) -> None:
         first = FakeClient({})
-        second = FakeClient({"foo": [_wheel("foo")]})
+        second = FakeClient({"foo": [make_wheel(package="foo", has_metadata=False)]})
         client = MultiIndexClient(
             {"a": first, "b": second},
             ["a", "b"],

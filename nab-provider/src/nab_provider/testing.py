@@ -21,11 +21,18 @@ from __future__ import annotations
 import threading
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar
 
+from ._compat import override
 from ._vendor.packaging.utils import canonicalize_name
 from .errors import IndexAccessError
 from .overrides import PackageOverride
 from .pep508 import parse_requirement
-from .records import DEFAULT_INDEX_NAME, DEFAULT_INDEX_URL, IndexConfig
+from .records import (
+    DEFAULT_INDEX_NAME,
+    DEFAULT_INDEX_URL,
+    IndexConfig,
+    SdistFile,
+    WheelFile,
+)
 from .store import InMemoryIndex, sdist_artifact_key
 
 if TYPE_CHECKING:
@@ -38,11 +45,17 @@ if TYPE_CHECKING:
     from ._vendor.packaging.requirements import Requirement
     from .metadata import WheelMetadata
     from .policy import BuildPolicy, DistPolicy, SourceMaterialization, SourceRequest
-    from .records import RangeMetadataResult, SdistFile, WheelFile
+    from .records import RangeMetadataResult
 
-__all__ = ["REQUESTS", "FakeFetchPort", "make_coordinator", "pkg_override"]
-
-_MINIMAL_METADATA = "Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n\n"
+__all__ = [
+    "REQUESTS",
+    "FakeFetchPort",
+    "make_coordinator",
+    "make_metadata",
+    "make_sdist",
+    "make_wheel",
+    "pkg_override",
+]
 
 _UNSERVED = (
     "{name} is not offered by this port; pass its handler to make_coordinator"
@@ -71,6 +84,101 @@ def _done_event() -> threading.Event:
     ev = threading.Event()
     ev.set()
     return ev
+
+
+def make_wheel(  # noqa: PLR0913 - tests vary the record's independent fields
+    version: str = "1.0",
+    *,
+    package: str = "pkg",
+    tag: str = "py3-none-any",
+    url: str | None = None,
+    requires_python: str | None = None,
+    has_metadata: bool = True,
+    upload_time: str | None = None,
+    local_path: Path | None = None,
+    hashes: tuple[tuple[str, str], ...] = (),
+    metadata_hash: tuple[str, str] | None = None,
+    size: int | None = None,
+) -> WheelFile:
+    """Build an independent wheel record; derive its filename and default URL."""
+    filename = f"{package}-{version}-{tag}.whl"
+    return WheelFile(
+        filename=filename,
+        url=f"https://example.com/{filename}" if url is None else url,
+        version=version,
+        requires_python=requires_python,
+        has_metadata=has_metadata,
+        upload_time=upload_time,
+        local_path=local_path,
+        hashes=hashes,
+        metadata_hash=metadata_hash,
+        size=size,
+    )
+
+
+def make_sdist(
+    version: str = "1.0",
+    *,
+    package: str = "pkg",
+    url: str | None = None,
+    requires_python: str | None = None,
+    upload_time: str | None = None,
+    local_path: Path | None = None,
+    hashes: tuple[tuple[str, str], ...] = (),
+    size: int | None = None,
+) -> SdistFile:
+    """Build an independent gzip-tar sdist record with a default index URL."""
+    filename = f"{package}-{version}.tar.gz"
+    return SdistFile(
+        filename=filename,
+        url=f"https://example.com/{filename}" if url is None else url,
+        version=version,
+        requires_python=requires_python,
+        upload_time=upload_time,
+        local_path=local_path,
+        hashes=hashes,
+        size=size,
+    )
+
+
+def make_metadata(
+    name: str,
+    version: str,
+    *requires: str,
+    requires_python: str | None = None,
+    provides_extra: Sequence[str] = (),
+    metadata_version: str = "2.1",
+) -> str:
+    """Build Core Metadata headers without interpreting dependency text."""
+    lines = [
+        f"Metadata-Version: {metadata_version}",
+        f"Name: {name}",
+        f"Version: {version}",
+    ]
+    if requires_python is not None:
+        lines.append(f"Requires-Python: {requires_python}")
+    lines.extend(f"Provides-Extra: {extra}" for extra in provides_extra)
+    lines.extend(f"Requires-Dist: {requirement}" for requirement in requires)
+    return "\n".join(lines) + "\n"
+
+
+class _ListingEvent(threading.Event):
+    """Publish a configured listing when the provider waits for its request."""
+
+    def __init__(
+        self, index: InMemoryIndex, package: str, files: Sequence[WheelFile | SdistFile]
+    ) -> None:
+        super().__init__()
+        self._index = index
+        self._package = package
+        self._files = files
+
+    @override
+    def wait(self, timeout: float | None = None) -> bool:
+        self._index.store_listing(self._package, self._files)
+        self._index.store_listing_index(self._package, DEFAULT_INDEX_NAME)
+        self.set()
+        return super().wait(timeout)
 
 
 class _OverrideBody(TypedDict, total=False):
@@ -121,7 +229,8 @@ def _resolve_listings(
         return listings
     if wheels is not None:
         return {package: wheels}
-    return {}
+    empty: dict[str, Sequence[WheelFile | SdistFile]] = {}
+    return empty
 
 
 def _make_metadata_resolver(
@@ -141,7 +250,7 @@ def _make_metadata_resolver(
         if metadata_text is not None:
             return metadata_text
         if auto_metadata:
-            return _MINIMAL_METADATA.format(name=pkg, version=ver)
+            return make_metadata(pkg, ver) + "\n"
         return None
 
     return _resolve
@@ -233,6 +342,7 @@ class FakeFetchPort:
         materialize: Callable[..., SourceMaterialization] | None = None,
         build_sdist: Callable[..., WheelMetadata] | None = None,
         read_wheel: Callable[[Path], str | None] | None = None,
+        pending_listings: Mapping[str, Sequence[WheelFile | SdistFile]] | None = None,
     ) -> None:
         """Wire the port to ``index`` and to one server per fetch kind."""
         self.index = index
@@ -248,6 +358,7 @@ class FakeFetchPort:
         self._materialize = materialize
         self._build_sdist = build_sdist
         self._read_wheel = read_wheel
+        self._pending_listings = dict(pending_listings or {})
 
         self._calls: dict[str, list[tuple[object, ...]]] = {n: [] for n in REQUESTS}
         self._overrides: dict[str, Callable[..., Any]] = {}
@@ -283,7 +394,7 @@ class FakeFetchPort:
     def request_listing(
         self, package: str, *, speculative: bool = False
     ) -> threading.Event:
-        """Return a set event: listings are pre-loaded into the index."""
+        """Return a ready event, or publish a pending listing when waited on."""
         return self._handle("request_listing", (package, speculative), self._listing)
 
     def request_metadata(
@@ -376,9 +487,10 @@ class FakeFetchPort:
             self._store_built_metadata,
         )
 
-    def _listing(self, package: str, speculative: bool) -> threading.Event:  # noqa: FBT001 - _handle calls this positionally
-        """Serve a listing request: the index already holds what was pre-loaded."""
-        del package, speculative
+    def _listing(self, package: str, _speculative: bool) -> threading.Event:  # noqa: FBT001 - _handle calls this positionally
+        """Serve a pre-loaded listing or defer its arrival until the caller waits."""
+        if package in self._pending_listings:
+            return _ListingEvent(self.index, package, self._pending_listings[package])
         return _done_event()
 
     def _fetch_metadata(self, package: str, version: str, url: str) -> None:
@@ -518,6 +630,7 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
     materialize: Callable[..., SourceMaterialization] | None = None,
     build_sdist: Callable[..., WheelMetadata] | None = None,
     read_wheel: Callable[[Path], str | None] | None = None,
+    pending_listings: Mapping[str, Sequence[WheelFile | SdistFile]] | None = None,
 ) -> FakeFetchPort:
     """Build a :class:`FakeFetchPort` backed by an :class:`InMemoryIndex`.
 
@@ -527,10 +640,12 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
       ``None`` skips listing setup.
     * ``listings``: pre-load each ``(package, wheels)`` pair.  Overrides
       ``wheels``/``package``.
+    * ``pending_listings``: publish listings when their request events are waited on.
 
     What each request then serves:
 
-    * ``request_listing`` always returns a set event.
+    * ``request_listing`` returns a set event for pre-loaded listings.
+      Pending listings arrive when the caller waits on their unset events.
     * ``request_metadata`` and ``request_metadata_batch`` write METADATA under
       the requested sidecar URL, from the first of ``metadata_by_url``,
       ``metadata_by_version``, ``metadata_text`` and ``auto_metadata`` (a
@@ -588,4 +703,5 @@ def make_coordinator(  # noqa: PLR0913 - one keyword per index slot a test pre-l
         materialize=materialize,
         build_sdist=build_sdist,
         read_wheel=read_wheel,
+        pending_listings=pending_listings,
     )

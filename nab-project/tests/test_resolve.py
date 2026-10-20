@@ -83,6 +83,7 @@ from nab_provider.requirements_file import (
 )
 from nab_provider.tags import PlatformSpec
 from nab_provider.target import Matrix, ResolveTarget
+from nab_provider.testing import make_metadata
 from nab_provider.vcs_admission import VcsPolicy
 from nab_resolver.errors import (
     ResolutionError,
@@ -4246,11 +4247,11 @@ class TestAugmentResolutionError:
                 "baz": _index_wheels("baz", "5.0"),
             },
             metadata_by_version={
-                "3.0": _metadata("foo", "3.0", "bar>=2"),
-                "3.1": _metadata("foo", "3.1", "bar>=2"),
-                "1.0": _metadata("bar", "1.0"),
-                "2.0": _metadata("bar", "2.0"),
-                "5.0": _metadata("baz", "5.0", "bar==1.0"),
+                "3.0": make_metadata("foo", "3.0", "bar>=2"),
+                "3.1": make_metadata("foo", "3.1", "bar>=2"),
+                "1.0": make_metadata("bar", "1.0"),
+                "2.0": make_metadata("bar", "2.0"),
+                "5.0": make_metadata("baz", "5.0", "bar==1.0"),
             },
         )
 
@@ -4289,13 +4290,13 @@ class TestAugmentResolutionError:
                 "dep": _index_wheels("dep", "2.2", "2.1"),
             },
             metadata_by_version={
-                "1.0": _metadata("app", "1.0", "lib>=3"),
-                "1.1": _metadata("web", "1.1", "dep==2.1"),
-                "3.0": _metadata("lib", "3.0", "dep==2.2"),
-                "2.0": _metadata("lib", "2.0"),
-                "1.2": _metadata("lib", "1.2"),
-                "2.2": _metadata("dep", "2.2"),
-                "2.1": _metadata("dep", "2.1"),
+                "1.0": make_metadata("app", "1.0", "lib>=3"),
+                "1.1": make_metadata("web", "1.1", "dep==2.1"),
+                "3.0": make_metadata("lib", "3.0", "dep==2.2"),
+                "2.0": make_metadata("lib", "2.0"),
+                "1.2": make_metadata("lib", "1.2"),
+                "2.2": make_metadata("dep", "2.2"),
+                "2.1": make_metadata("dep", "2.1"),
             },
         )
 
@@ -4337,8 +4338,8 @@ class TestAugmentResolutionError:
         coordinator = make_coordinator(
             listings={"foo": [newer, *_index_wheels("foo", "1.0")]},
             metadata_by_version={
-                "2.0": _metadata("foo", "2.0"),
-                "1.0": _metadata("foo", "1.0"),
+                "2.0": make_metadata("foo", "2.0"),
+                "1.0": make_metadata("foo", "1.0"),
             },
         )
 
@@ -4378,11 +4379,11 @@ class TestAugmentResolutionError:
                 "lib": _index_wheels("lib", "5.0", "9.0"),
             },
             metadata_by_version={
-                "3.0": _metadata("foo", "3.0", "lib==5.0"),
-                "4.0": _metadata("foo", "4.0", "lib==5.0"),
-                "1.0": _metadata("app", "1.0", "lib==9.0"),
-                "5.0": _metadata("lib", "5.0"),
-                "9.0": _metadata("lib", "9.0"),
+                "3.0": make_metadata("foo", "3.0", "lib==5.0"),
+                "4.0": make_metadata("foo", "4.0", "lib==5.0"),
+                "1.0": make_metadata("app", "1.0", "lib==9.0"),
+                "5.0": make_metadata("lib", "5.0"),
+                "9.0": make_metadata("lib", "9.0"),
             },
         )
 
@@ -4431,9 +4432,9 @@ class TestAugmentResolutionError:
                 "5.0": None,
                 "4.0": None,
                 "3.0": None,
-                "2.0": _metadata("foo", "2.0", "lib==9.9"),
-                "1.0": _metadata("foo", "1.0", "lib==9.8"),
-                "6.0": _metadata("lib", "6.0"),
+                "2.0": make_metadata("foo", "2.0", "lib==9.9"),
+                "1.0": make_metadata("foo", "1.0", "lib==9.8"),
+                "6.0": make_metadata("lib", "6.0"),
             },
         )
 
@@ -4478,11 +4479,11 @@ class TestAugmentResolutionError:
                 "5.0": None,
                 "4.0": None,
                 "3.0": None,
-                "2.0": _metadata("foo", "2.0", "lib==9.9"),
-                "1.0": _metadata("foo", "1.0", "lib==9.8"),
-                "22.0": _metadata("bar", "22.0", "foo>=6.0"),
-                "21.0": _metadata("bar", "21.0"),
-                "6.0": _metadata("lib", "6.0"),
+                "2.0": make_metadata("foo", "2.0", "lib==9.9"),
+                "1.0": make_metadata("foo", "1.0", "lib==9.8"),
+                "22.0": make_metadata("bar", "22.0", "foo>=6.0"),
+                "21.0": make_metadata("bar", "21.0"),
+                "6.0": make_metadata("lib", "6.0"),
             },
         )
 
@@ -4522,10 +4523,10 @@ class TestAugmentResolutionError:
             },
             metadata_by_version={
                 "5.0": None,
-                "4.0": _metadata("foo", "4.0", "lib==9.9"),
+                "4.0": make_metadata("foo", "4.0", "lib==9.9"),
                 "3.0": None,
-                "2.0": _metadata("foo", "2.0", "lib==9.8"),
-                "6.0": _metadata("lib", "6.0"),
+                "2.0": make_metadata("foo", "2.0", "lib==9.8"),
+                "6.0": make_metadata("lib", "6.0"),
             },
         )
 
@@ -4566,11 +4567,11 @@ class TestAugmentResolutionError:
                 "other": _index_wheels("other", "6.0"),
             },
             metadata_by_version={
-                "5.0": _metadata("foo", "5.0", "lib==8.0"),
-                "4.0": _metadata("foo", "4.0", "other==7.0"),
-                "9.0": _metadata("lib", "9.0"),
-                "8.0": _metadata("lib", "8.0"),
-                "6.0": _metadata("other", "6.0"),
+                "5.0": make_metadata("foo", "5.0", "lib==8.0"),
+                "4.0": make_metadata("foo", "4.0", "other==7.0"),
+                "9.0": make_metadata("lib", "9.0"),
+                "8.0": make_metadata("lib", "8.0"),
+                "6.0": make_metadata("other", "6.0"),
             },
         )
 
@@ -4607,11 +4608,11 @@ class TestAugmentResolutionError:
                 "tool": _index_wheels("tool", "1.0"),
             },
             metadata_by_version={
-                "5.0": _metadata("app", "5.0", "lib==8.0"),
-                "4.0": _metadata("app", "4.0"),
-                "9.0": _metadata("lib", "9.0"),
-                "8.0": _metadata("lib", "8.0"),
-                "1.0": _metadata("tool", "1.0", "app>=6.0"),
+                "5.0": make_metadata("app", "5.0", "lib==8.0"),
+                "4.0": make_metadata("app", "4.0"),
+                "9.0": make_metadata("lib", "9.0"),
+                "8.0": make_metadata("lib", "8.0"),
+                "1.0": make_metadata("tool", "1.0", "app>=6.0"),
             },
         )
 
@@ -4718,10 +4719,10 @@ class TestAugmentResolutionError:
                     "bar": [wheel("bar", "1.0"), wheel("bar", "2.0")],
                 },
                 metadata_by_version={
-                    "2.0": _metadata("foo", "2.0", "bar==2.0"),
-                    "1.0": _metadata("bar", "1.0"),
+                    "2.0": make_metadata("foo", "2.0", "bar==2.0"),
+                    "1.0": make_metadata("bar", "1.0"),
                 },
-                sdist_pkg_info=_metadata("foo", "1.0") if readable_sdist else None,
+                sdist_pkg_info=make_metadata("foo", "1.0") if readable_sdist else None,
                 sdist_pyproject_toml=(
                     '[project]\nname = "foo"\nversion = "1.0"\ndependencies = []\n'
                     if readable_sdist
@@ -4842,7 +4843,7 @@ class TestAugmentResolutionError:
                     ),
                 ]
             },
-            metadata_by_version={"1.0": _metadata("foo", "1.0")},
+            metadata_by_version={"1.0": make_metadata("foo", "1.0")},
         )
 
         walks: list[str] = []
@@ -4887,10 +4888,10 @@ class TestAugmentResolutionError:
                 "c": _index_wheels("c", "5.0", "6.0"),
             },
             metadata_by_version={
-                "1.0": _metadata("b", "1.0"),
-                "2.0": _metadata("b", "2.0"),
-                "5.0": _metadata("c", "5.0", "b==1.0"),
-                "6.0": _metadata("c", "6.0", "b==1.0"),
+                "1.0": make_metadata("b", "1.0"),
+                "2.0": make_metadata("b", "2.0"),
+                "5.0": make_metadata("c", "5.0", "b==1.0"),
+                "6.0": make_metadata("c", "6.0", "b==1.0"),
             },
         )
 
@@ -4928,12 +4929,12 @@ class TestAugmentResolutionError:
                 "c": _index_wheels("c", "1.0", "2.0", "3.0"),
             },
             metadata_by_version={
-                "7.0": _metadata("a", "7.0", "c==1.0"),
-                "7.1": _metadata("a", "7.1", "c==2.0"),
-                "8.0": _metadata("b", "8.0", "c==3.0"),
-                "1.0": _metadata("c", "1.0"),
-                "2.0": _metadata("c", "2.0"),
-                "3.0": _metadata("c", "3.0"),
+                "7.0": make_metadata("a", "7.0", "c==1.0"),
+                "7.1": make_metadata("a", "7.1", "c==2.0"),
+                "8.0": make_metadata("b", "8.0", "c==3.0"),
+                "1.0": make_metadata("c", "1.0"),
+                "2.0": make_metadata("c", "2.0"),
+                "3.0": make_metadata("c", "3.0"),
             },
         )
 
@@ -4969,10 +4970,10 @@ class TestAugmentResolutionError:
                 "c": _index_wheels("c", "1.0", "2.0"),
             },
             metadata_by_version={
-                "7.0": _metadata("a", "7.0", "c==1.0"),
-                "8.0": _metadata("b", "8.0", "c==2.0"),
-                "1.0": _metadata("c", "1.0"),
-                "2.0": _metadata("c", "2.0"),
+                "7.0": make_metadata("a", "7.0", "c==1.0"),
+                "8.0": make_metadata("b", "8.0", "c==2.0"),
+                "1.0": make_metadata("c", "1.0"),
+                "2.0": make_metadata("c", "2.0"),
             },
         )
 
@@ -5006,8 +5007,8 @@ class TestConflictingRootRequirements:
         coordinator = make_coordinator(
             listings={"foo": _index_wheels("foo", "1.0", "2.0")},
             metadata_by_version={
-                "1.0": _metadata("foo", "1.0"),
-                "2.0": _metadata("foo", "2.0"),
+                "1.0": make_metadata("foo", "1.0"),
+                "2.0": make_metadata("foo", "2.0"),
             },
         )
 
@@ -5035,8 +5036,8 @@ class TestConflictingRootRequirements:
         coordinator = make_coordinator(
             listings={"foo": _index_wheels("foo", "1.0", "2.0")},
             metadata_by_version={
-                "1.0": _metadata("foo", "1.0"),
-                "2.0": _metadata("foo", "2.0"),
+                "1.0": make_metadata("foo", "1.0"),
+                "2.0": make_metadata("foo", "2.0"),
             },
         )
 
@@ -5542,12 +5543,6 @@ class TestLocalVcsRequiresPython:
         assert "rejected on its metadata" in str(info.value)
         assert info.value.verbose_message is not None
         assert "requires Python" in info.value.verbose_message
-
-
-def _metadata(name: str, version: str, *requires: str) -> str:
-    """METADATA text for ``name`` ``version`` with one Requires-Dist per entry."""
-    body = "".join(f"Requires-Dist: {req}\n" for req in requires)
-    return f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n{body}\n"
 
 
 def _index_wheels(name: str, *versions: str) -> list[WheelFile]:
