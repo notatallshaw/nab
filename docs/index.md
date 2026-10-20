@@ -5,9 +5,6 @@ support, then use one PEP 751 `pylock.toml` to share dependency selections acros
 environments.
 
 ```toml
-[tool.nab]
-mode = "universal"
-
 [tool.nab.matrix]
 python = ">=3.12,<3.16"
 platforms = ["linux_x86_64", "macos_arm64"]
@@ -23,8 +20,8 @@ multi-target lockfile support are experimental.
 
 Start with [What nab locks](explanation/locking.md), then
 [make your first universal lock](tutorial/getting-started.md). The tutorial declares a target
-matrix, generates the lock and installs from it. Universal mode is opt-in; an unconfigured
-`nab lock` resolves only for the Python and platform running nab.
+matrix, generates the lock and installs from it. nab infers universal mode from the multiple
+targets; an unconfigured `nab lock` resolves only for the Python and platform running nab.
 
 For an existing project, [browse the guides](how-to/index.md) to choose dependencies and targets,
 use other package sources, or install from a lock. Use the

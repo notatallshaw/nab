@@ -14,8 +14,10 @@ decision-order = "stable"
 
 ## Mode
 
-`mode` defaults to `"specific"`, which resolves one environment. `"universal"` resolves a
-[target matrix](target-matrix.md); its multi-target lock format is experimental.
+When `mode` is omitted, nab uses `"specific"` for one target and `"universal"` when the effective
+[target matrix](target-matrix.md) contains multiple targets. A singleton matrix still selects its
+declared environment. An explicit mode overrides this default. The multi-target lock format is
+experimental.
 
 ## Version preference
 

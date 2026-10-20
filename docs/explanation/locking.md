@@ -50,9 +50,6 @@ A target is a Python version and platform, with an interpreter implementation su
 settings declare eight targets:
 
 ```toml
-[tool.nab]
-mode = "universal"
-
 [tool.nab.matrix]
 python = ">=3.12,<3.16"
 platforms = ["linux_x86_64", "macos_arm64"]
@@ -68,8 +65,12 @@ without a Mac.
 
 nab resolves the Python versions and platforms listed in `[tool.nab.matrix]`. It uses CPython unless
 `implementations` selects another interpreter. You choose the environments to cover, because
-explicit is better than implicit; `mode = "universal"` does not add deployment targets on its own.
-See [Target matrix](../reference/target-matrix.md) for the settings and their defaults.
+explicit is better than implicit; nab does not add deployment targets you have not configured. See
+[Target matrix](../reference/target-matrix.md) for the settings and their defaults.
+
+With `mode` omitted, nab chooses `universal` when that matrix expands to multiple targets and
+`specific` when it has one. A singleton matrix resolves its declared environment. An explicit mode
+overrides this default.
 
 To resolve for PyPy alongside CPython, add this to the same matrix table:
 
@@ -85,8 +86,7 @@ same interpreter and platform need separate locks; see
 Dependency markers select requirements within the declared targets; a Windows-only dependency does
 not add a Windows target. Extras and groups also need [selection](../how-to/choose-dependencies.md).
 
-Without universal configuration, `nab lock` defaults to one environment: the Python and platform
-running nab.
+With no matrix or environment settings, `nab lock` resolves for the Python and platform running nab.
 
 ## Why the lock can contain different versions
 
@@ -129,5 +129,4 @@ python -m pip install -r pylock.toml
 
 After changing dependencies or targets, run `nab lock` again and review the diff. Index contents can
 change between resolves; [Reproducible locks](../reference/reproducibility.md) explains upload
-cutoffs and stable decision order. The current `--locked` check supports single-environment locks
-only.
+cutoffs and stable decision order. `--locked` requires `specific` mode.

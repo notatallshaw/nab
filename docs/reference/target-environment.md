@@ -93,17 +93,17 @@ platform table (`platform-release`, `platform-version`) and need the pair alongs
   run.
 
 - `[tool.nab.matrix].python`: a range like `>=3.11,<3.14`, expanded into one target per minor
-  version. Used only by universal mode. Pair with `[tool.nab.matrix].platforms`,
-  `[tool.nab.matrix].implementations`, per-implementation overrides and (optionally)
-  `[tool.nab.matrix].python-patches` to select targets and their lockfile markers.
+  version. Pair with `[tool.nab.matrix].platforms`, `[tool.nab.matrix].implementations`,
+  per-implementation overrides and (optionally) `[tool.nab.matrix].python-patches` to select targets
+  and their lockfile markers.
 
-Declaring a `[tool.nab.matrix]` table while `mode` is `specific` is an error: the matrix is the list
-of targets to resolve, so the project must set `mode = "universal"` too.
+A matrix with one effective target defaults to `specific` and resolves that declared target. A
+matrix with multiple targets defaults to `universal`; an explicit `specific` at the same precedence
+is an error.
 
-The one exception is an explicit `--project-mode specific` on the command line. A CLI override
-outranks the `[tool.nab]` table, so it selects a single-environment resolve for that run and the
-declared matrix does not apply. This is how a universal project takes one single-environment lock
-without editing its `pyproject.toml`:
+A higher-precedence `--project-mode specific` on the command line outranks the `[tool.nab]` table,
+so it selects a single-environment resolve for that run and the declared matrix does not apply. This
+is how a universal project takes one single-environment lock without editing its `pyproject.toml`:
 
 ```bash
 nab lock --project-mode specific --python 3.13

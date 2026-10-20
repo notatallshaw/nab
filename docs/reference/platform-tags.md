@@ -10,9 +10,6 @@ A `platforms` entry is either a bare platform id, which takes that platform's de
 declaring wheel compatibility settings:
 
 ```toml
-[tool.nab]
-mode = "universal"
-
 [tool.nab.matrix]
 python = ">=3.11,<3.14"
 platforms = [
@@ -72,9 +69,6 @@ for any native PyPy ABI of the declared Python minor, deferring ABI compatibilit
 To target one ABI in a mixed matrix, declare the suffix in PyPy's platform override:
 
 ```toml
-[tool.nab]
-mode = "universal"
-
 [tool.nab.matrix]
 python = ">=3.10,<3.13"
 platforms = ["windows_amd64", "macos_arm64"]
@@ -126,6 +120,6 @@ Each implementation's platform list may name an id once. PEP 508 cannot distingu
 free-threaded builds for the same interpreter, so duplicate ids would render the same lock marker.
 Lock another libc family or ABI for that interpreter in a separate run and file.
 
-Universal resolution models declared platforms without running on them, so `build-policy` defaults
-to `never` and cannot be raised. An explicit non-`never` value (global or in any override) is a
+nab forbids build backends for declared platform targets, including singleton matrices.
+`build-policy` defaults to `never`; an explicit non-`never` value, global or in an override, is a
 config error. See [Build policy](build-policy.md).

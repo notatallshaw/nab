@@ -1,7 +1,8 @@
 # Change a universal lock's targets
 
-Start with the project in [Your first universal lock](../tutorial/getting-started.md). Keep
-`mode = "universal"` and change its matrix to match your deployments.
+Start with the project in [Your first universal lock](../tutorial/getting-started.md) and change its
+matrix to match your deployments. With `mode` omitted, nab chooses universal mode when the matrix
+contains multiple targets.
 
 nab resolves the Python versions and platforms listed in the matrix, using CPython unless you select
 other implementations. See {ref}`how nab chooses coverage <explicit-is-better-than-implicit>`.
@@ -31,10 +32,10 @@ nab lock --project-matrix-platforms macos_arm64
 Other matrix keys keep their configured values. An implementation-specific override still takes
 precedence over the shared platform list.
 
-For a project without a configured matrix, supply its required axes and select universal mode:
+For a project without a configured matrix, supply the Python versions and platforms:
 
 ```bash
-nab lock --project-mode universal \
+nab lock \
   --project-matrix-python '>=3.12,<3.16' \
   --project-matrix-platforms linux_x86_64 windows_amd64
 ```

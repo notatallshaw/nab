@@ -38,9 +38,6 @@ version = "0.1.0"
 requires-python = ">=3.12,<3.16"
 dependencies = ["requests>=2,<3"]
 
-[tool.nab]
-mode = "universal"
-
 [tool.nab.matrix]
 python = ">=3.12,<3.16"
 platforms = ["linux_x86_64", "macos_arm64"]
@@ -78,8 +75,8 @@ musl Linux and free-threaded CPython require explicit
 [target configuration](https://nab.readthedocs.io/en/stable/reference/target-matrix.html) and
 [platform settings](https://nab.readthedocs.io/en/stable/reference/platform-tags.html).
 
-Universal mode itself is opt-in. Without that configuration, `nab lock` defaults to the Python and
-platform running nab.
+When `mode` is omitted, nab uses `specific` for one target and `universal` when the matrix selects
+multiple targets. With no target configuration, it resolves for the Python and platform running nab.
 
 ## Safer defaults
 

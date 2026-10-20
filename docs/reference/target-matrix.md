@@ -3,14 +3,11 @@
 For a complete workflow, see
 [Lock for multiple environments](../how-to/lock-multiple-environments.md).
 
-Universal mode resolves each `(python, platform, implementation)` point with the same engine as a
-single target. Targets share one fetcher: one listing per package, metadata once per selected wheel,
+The matrix declares `(python, platform, implementation)` targets. nab resolves each target with the
+same engine. Targets share one fetcher: one listing per package, metadata once per selected wheel,
 and PKG-INFO once per sdist version. The multi-target lockfile format is experimental.
 
 ```toml
-[tool.nab]
-mode = "universal"
-
 [tool.nab.matrix]
 python = ">=3.11,<3.14"
 platforms = ["linux_x86_64", "macos_arm64"]
@@ -37,6 +34,16 @@ defaults for omitted platform settings; it does not expand them into extra targe
 | `overrides`       | none          | Keyed bodies under `implementations.<name>`, with optional `python` and `platforms`        |
 | `python-order`    | `"asc"`       | Cross-target alignment direction                                                           |
 | `python-patches`  | none          | Pins a minor to one patch release, resolved whole instead of split into slices             |
+
+## Mode selection
+
+With `mode` omitted, nab uses `specific` for one target and `universal` for multiple targets. It
+counts the targets after expanding Python minors and applying overrides for enabled implementations.
+An override for a disabled implementation does not affect the inferred mode.
+
+A singleton matrix selects its declared environment. Explicit `mode = "universal"` forces universal
+behavior even with one target. Explicit `specific` rejects multiple targets at the same precedence;
+a higher-precedence `--project-mode specific` suppresses a file matrix for that run.
 
 ## Resolution order
 
@@ -88,7 +95,7 @@ suffixes. Nonzero epochs and post releases are rejected in `environment.python`,
 ## Declaring the matrix on the command line
 
 ```bash
-nab lock --project-mode universal \
+nab lock \
   --project-matrix-python '>=3.11,<3.14' \
   --project-matrix-platforms windows_amd64 linux_x86_64 libc=musl runs-on-libc=1.2 \
   --project-matrix-python-patches 3.11=3.11.4

@@ -22,9 +22,6 @@ dependencies = [
     "tomli>=2 ; python_version < '3.11'",
 ]
 
-[tool.nab]
-mode = "universal"
-
 [tool.nab.matrix]
 python = ">=3.10,<3.12"
 platforms = ["linux_x86_64", "windows_amd64"]

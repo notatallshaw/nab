@@ -34,21 +34,19 @@ version = "0.1.0"
 requires-python = ">=3.12,<3.16"
 dependencies = ["requests>=2,<3"]
 
-[tool.nab]
-mode = "universal"
-
 [tool.nab.matrix]
 python = ">=3.12,<3.16"
 platforms = ["linux_x86_64", "macos_arm64"]
 ```
 
 `requires-python` declares the project's supported Python range. The matrix chooses four Python
-minors on each platform: eight targets. `mode = "universal"` tells nab to resolve them together into
-one file.
+minors on each platform: eight targets. nab infers universal mode from these multiple targets and
+resolves them together into one file.
 
 With `implementations` omitted, nab selects CPython. It does not add Windows, PyPy, musl Linux or
-free-threaded CPython unless you configure them. Without universal configuration, nab resolves for
-the Python and platform running it.
+free-threaded CPython unless you configure them. A matrix with one target defaults to specific mode
+and resolves that declared target. With no target settings, nab resolves for the Python and platform
+running it.
 
 Change the range and platform IDs to match your deployments when using your own project. See
 [Target matrix](../reference/target-matrix.md) for Windows, other architectures and PyPy, and

@@ -77,8 +77,8 @@ directly rather than selecting a wheel from `wheelhouse`.
 
 ## Check a committed lock in CI
 
-Use this check for a single-environment `pylock.toml`. It fails if the file is missing or a fresh
-resolve would change it.
+`nab lock --locked` works in `specific` mode, including a singleton matrix. It fails if the file is
+missing or a fresh resolve would change it. Universal mode does not support this check.
 
 Set a stable search order before generating the lock you will commit:
 
