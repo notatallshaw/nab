@@ -13,6 +13,10 @@ python = ">=3.12,<3.16"
 platforms = ["linux_x86_64", "macos_arm64"]
 ```
 
+Explicit is better than implicit: choose the dimensions and values to resolve universally. This
+matrix varies Python and platform; implementation defaults to CPython. Other implementations or
+platform variants require {ref}`explicit configuration <explicit-is-better-than-implicit>`.
+
 An installer such as pip uses the lock to install packages for its current environment. nab resolves
 and records dependencies; it does not install them or manage virtual environments. Both nab and its
 multi-target lockfile support are experimental.

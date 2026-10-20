@@ -14,6 +14,12 @@ pipx install nab
 nab --version
 ```
 
+Or install with uv:
+
+```bash
+uv tool install nab
+```
+
 nab runs on CPython 3.10 and newer. See [Install nab](../how-to/install.md) for other installation
 methods.
 
@@ -38,7 +44,12 @@ platforms = ["linux_x86_64", "macos_arm64"]
 
 `requires-python` declares the project's supported Python range. The matrix chooses four Python
 minors on each platform: eight targets. `mode = "universal"` tells nab to resolve them together into
-one file. Without it, nab defaults to a single-environment resolve.
+one file.
+
+Explicit is better than implicit: each dimension covers the values you select. Here, Python and
+platform vary; the implementation stays at its CPython default. Windows, PyPy, musl Linux and
+free-threaded CPython are not included. Without universal configuration, nab defaults to one
+environment.
 
 Change the range and platform IDs to match your deployments when using your own project. See
 [Target matrix](../reference/target-matrix.md) for Windows, other architectures and PyPy, and
@@ -50,6 +61,12 @@ Run from the project directory:
 
 ```bash
 nab lock pyproject.toml
+```
+
+Or run on demand with uvx:
+
+```bash
+uvx nab lock pyproject.toml
 ```
 
 This reads PyPI metadata and writes `pylock.toml` beside your project. It does not install anything.

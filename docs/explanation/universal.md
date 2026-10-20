@@ -11,6 +11,10 @@ Declare the supported targets in a [target matrix](../reference/target-matrix.md
 [Lock for multiple environments](../how-to/lock-multiple-environments.md) gives the commands and
 output formats.
 
+Explicit is better than implicit: the matrix varies only the dimensions you select. Unselected
+implementations and platform variants are not added automatically; omitted optional settings retain
+their defaults. See {ref}`explicit coverage <explicit-is-better-than-implicit>`.
+
 ## How it works
 
 A matrix expands into a list of resolve targets, one target per `(python, platform, implementation)`

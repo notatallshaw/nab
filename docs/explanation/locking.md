@@ -62,9 +62,32 @@ The Python running nab can differ from those targets. nab computes their depende
 wheel compatibility without launching each target interpreter. You can generate that matrix on Linux
 without a Mac.
 
-Universal locking is opt-in: set `mode = "universal"` and declare a
-[target matrix](../reference/target-matrix.md). Without that configuration, `nab lock` defaults to
-one environment: the Python and platform running nab.
+(explicit-is-better-than-implicit)=
+
+## Explicit is better than implicit
+
+Universal locking covers the dimensions and values you ask for. Enabling it does not select every
+Python environment. Set `mode = "universal"` and declare a
+[target matrix](../reference/target-matrix.md); omitted optional settings keep their documented
+defaults.
+
+The matrix above varies Python versions and platforms. It uses CPython only. To vary the
+implementation too, add PyPy to the same matrix table:
+
+```toml
+implementations = ["cpython", "pypy"]
+```
+
+Likewise, musl Linux and free-threaded CPython need explicit
+[platform settings](../reference/platform-tags.md). Different libc families or ABI variants for the
+same interpreter and platform need separate locks; see
+[platform matrix restrictions](../reference/platform-tags.md).
+
+Dependency markers select requirements within the declared targets; a Windows-only dependency does
+not add a Windows target. Extras and groups also need [selection](../how-to/choose-dependencies.md).
+
+Without universal configuration, `nab lock` defaults to one environment: the Python and platform
+running nab.
 
 ## Why the lock can contain different versions
 

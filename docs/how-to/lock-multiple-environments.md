@@ -3,6 +3,9 @@
 Start with the project in [Your first universal lock](../tutorial/getting-started.md). Keep
 `mode = "universal"` and change its matrix to match your deployments.
 
+Each dimension covers the values you select. Universal mode does not add unrequested platforms or
+implementations; see {ref}`explicit coverage <explicit-is-better-than-implicit>`.
+
 ## Change the project matrix
 
 For Python 3.12 through 3.15 on Linux x86-64 and Windows x86-64:

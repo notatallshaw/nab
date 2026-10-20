@@ -10,8 +10,8 @@ isolated tool.
 uv tool install nab
 ```
 
-Drops `nab` into a uv-managed tool venv and exposes the console script on `PATH`. uv resolves and
-installs all six distributions together. Confirm with:
+Installs `nab` in a uv-managed tool environment and exposes the console script on `PATH`. uv
+resolves and installs all six distributions together. Confirm with:
 
 ```bash
 nab --version
@@ -25,8 +25,18 @@ nab --version
 pipx install nab
 ```
 
-pipx creates a per-tool virtual environment. The default backend is `uv` on recent pipx; the `pip`
-backend works equivalently.
+pipx creates a per-tool virtual environment and exposes `nab` on `PATH`.
+
+## Run without installing a persistent command
+
+```bash
+uvx nab lock pyproject.toml
+```
+
+[`uvx` is an alias for `uv tool run`](https://docs.astral.sh/uv/guides/tools/). It runs nab in an
+isolated tool environment. Replace `nab` with `uvx nab` in commands throughout these guides.
+
+With pipx, use `pipx run nab lock pyproject.toml`.
 
 ## Picking an HTTP backend
 
@@ -44,15 +54,6 @@ package for HTTP/2 support. Missing dependencies produce an installation hint wh
 backend.
 
 All backends use system certificates through truststore and send `User-Agent: nab-index/<version>`.
-
-## Throw-away invocations
-
-```bash
-uvx nab --help
-pipx run nab --help
-```
-
-Both fetch the wheel into an ephemeral environment and run the CLI against it.
 
 ## Installing from a checkout
 

@@ -18,6 +18,12 @@ pipx install nab
 nab --version
 ```
 
+Or install with uv:
+
+```bash
+uv tool install nab
+```
+
 nab runs on CPython 3.10 and newer. See
 [installation options](https://nab.readthedocs.io/en/stable/how-to/install.html).
 
@@ -46,6 +52,12 @@ Run:
 nab lock pyproject.toml
 ```
 
+Or run on demand with uvx:
+
+```bash
+uvx nab lock pyproject.toml
+```
+
 This writes one lock for Python 3.12 through 3.15 on Linux x86-64 and Apple Silicon macOS. You can
 generate it on one machine without installing every target Python. Targets can use different
 dependency versions when needed; the lock records the conditions for each selection.
@@ -61,10 +73,33 @@ pip's pylock support is experimental. The
 setup and pip upgrading. Commit the project file and lock together; other covered environments can
 install from the same lock.
 
-Universal mode is opt-in. Without a matrix configuration, `nab lock` defaults to the Python and
-platform running nab. See
-[target configuration](https://nab.readthedocs.io/en/stable/reference/target-matrix.html) for other
-platforms and minimum system versions.
+Explicit is better than implicit. Choose which dimensions to resolve universally and declare their
+values. This example spans Python versions and platforms, with CPython as the default
+implementation; it does not also cover PyPy, musl Linux or free-threaded CPython. Select those
+explicitly through
+[target configuration](https://nab.readthedocs.io/en/stable/reference/target-matrix.html) and
+[platform settings](https://nab.readthedocs.io/en/stable/reference/platform-tags.html).
+
+Universal mode itself is opt-in. Without that configuration, `nab lock` defaults to the Python and
+platform running nab.
+
+## Safer defaults
+
+[pip](https://pip.pypa.io/en/stable/reference/build-system/#metadata-generation) and
+[uv](https://docs.astral.sh/uv/reference/settings/#no-build) can run a downloaded package's build
+backend just to discover its dependencies. nab makes remote builds opt-in, reducing code execution
+during locking.
+
+- Universal locking runs no build backends. Host-specific locking allows local project builds;
+  remote builds need explicit permission, which you can limit to one package or index. See
+  [build policy](https://nab.readthedocs.io/en/stable/reference/build-policy.html).
+- Git sources are blocked until you allow them. Opting in requires allowed schemes and repository
+  prefixes, with full commit pins required by default. See
+  [Git sources](https://nab.readthedocs.io/en/stable/how-to/vcs.html).
+- Direct archive sources require a hash, verified before reading metadata. See
+  [archive sources](https://nab.readthedocs.io/en/stable/how-to/archive-sources.html).
+
+These controls apply during locking; your installer may still build a locked source distribution.
 
 ## More features
 
