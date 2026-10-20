@@ -390,25 +390,22 @@ class TestMode:
     def test_a_cli_matrix_under_specific_mode_names_the_flags(
         self, tmp_path: Path
     ) -> None:
-        """A CLI matrix is refused by the flags that set it, not by a file table.
-
-        Mode left at rung 0 and ``--project-mode specific`` beside the
-        matrix reach the same refusal: neither outranks the CLI matrix.
-        """
+        """An explicit specific mode refuses a multi-target CLI matrix."""
         path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
-        matrix = _cli_matrix(python="==3.11", platforms=("linux_x86_64",))
+        matrix = _cli_matrix(python=">=3.11,<3.13", platforms=("linux_x86_64",))
 
-        for overrides in ({"matrix": matrix}, {"matrix": matrix, "mode": "specific"}):
-            with pytest.raises(ConfigError) as excinfo:
-                read_pyproject_config(
-                    path, discover_workspace=False, cli_overrides=overrides
-                )
-
-            assert str(excinfo.value) == (
-                "--project-matrix-python and --project-matrix-platforms declare"
-                " a matrix but mode is 'specific'; pass --project-mode universal"
-                " as well, or drop the matrix flags."
+        with pytest.raises(ConfigError) as excinfo:
+            read_pyproject_config(
+                path,
+                discover_workspace=False,
+                cli_overrides={"matrix": matrix, "mode": "specific"},
             )
+
+        assert str(excinfo.value) == (
+            "--project-matrix-python and --project-matrix-platforms declare"
+            " a matrix with multiple targets but mode is 'specific'; pass --project-mode universal"
+            " as well, or drop the matrix flags."
+        )
 
     def test_a_cli_matrix_over_a_file_environment_names_the_flags_written(
         self, tmp_path: Path
@@ -526,7 +523,7 @@ class TestMode:
         path = write(
             tmp_path,
             '[tool.nab]\nmode = "universal"\n'
-            '[tool.nab.matrix]\npython = ">=3.12,<3.13"\n'
+            '[tool.nab.matrix]\npython = ">=3.12,<3.14"\n'
             'platforms = ["linux_x86_64", "macos_arm64"]\n',
         )
 
@@ -541,7 +538,7 @@ class TestMode:
             )
 
         assert str(excinfo.value) == (
-            "--project-matrix-platforms declares a matrix but mode is"
+            "--project-matrix-platforms declares a matrix with multiple targets but mode is"
             " 'specific'; pass --project-mode universal as well, or drop the"
             " matrix flags."
         )
@@ -575,32 +572,28 @@ class TestMode:
             " declared environment would contradict it.  Drop one."
         )
 
-    def test_matrix_without_universal_mode_rejected(self, tmp_path: Path) -> None:
+    def test_matrix_without_mode_infers_universal(self, tmp_path: Path) -> None:
         path = write(
             tmp_path,
             '[tool.nab.matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n',
         )
-        with pytest.raises(ConfigError) as excinfo:
-            read_pyproject_config(path)
-        message = str(excinfo.value)
-        assert "[tool.nab.matrix] in pyproject.toml is set" in message
-        assert "set mode = 'universal'" in message
-        assert "resolve for every target the matrix declares" in message
-        assert "matrix-based resolver" not in message
+        config = read_pyproject_config(path)
+        assert config.mode is ResolveMode.UNIVERSAL
+        assert len(plan_targets(config)) > 1
 
-    def test_nab_toml_matrix_without_universal_mode_names_its_own_table(
+    def test_nab_toml_explicit_specific_mode_names_its_matrix_table(
         self, tmp_path: Path
     ) -> None:
         """A matrix declared in nab.toml is named as the [matrix] table there."""
         path = write(tmp_path, '[project]\nname = "x"\nversion = "0"\n')
         (tmp_path / "nab.toml").write_text(
-            '[matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n',
+            'mode = "specific"\n[matrix]\npython = ">=3.11"\nplatforms = ["linux_x86_64"]\n',
             encoding="utf-8",
         )
         with pytest.raises(ConfigError) as excinfo:
             read_pyproject_config(path, discover_workspace=False)
         message = str(excinfo.value)
-        assert "[matrix] in nab.toml is set" in message
+        assert "[matrix] in nab.toml declares multiple targets" in message
         assert "[tool.nab.matrix]" not in message
 
     def test_matrix_with_specific_mode_in_same_file_rejected(

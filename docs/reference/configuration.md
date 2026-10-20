@@ -23,8 +23,7 @@ scope rules.
 
 ```toml
 [tool.nab]
-# "specific" (default) or "universal" (opt-in; its multi-target
-# lockfile format is experimental).
+# "specific" or "universal". When omitted, inferred from the matrix.
 mode = "specific"
 
 # Constraint strings: a package name with an optional version
@@ -646,6 +645,15 @@ another download.
 
 ## Universal mode
 
+When `mode` is omitted, nab uses `specific` for the host or a matrix containing one target. It
+defaults to `universal` when the matrix selects multiple Python minors, platforms or interpreter
+implementations. This uses the effective targets after enabled implementation overrides; unused
+overrides do not add targets.
+
+A singleton matrix still selects its declared target. An explicit `mode = "universal"` keeps
+universal behavior even with one target. Explicit `specific` rejects a multi-target matrix, except
+that a higher-precedence `--project-mode specific` suppresses a file matrix for that run.
+
 Universal mode resolves each `(python, platform, implementation)` point with the same engine as a
 single target. Targets share one fetcher: one listing per package, metadata once per selected wheel,
 and PKG-INFO once per sdist version. The multi-target lockfile format is experimental.
@@ -831,12 +839,12 @@ is a config error. See [Build policy](build-policy.md).
   run.
 
 - `[tool.nab.matrix].python`: a range like `>=3.11,<3.14`, expanded into one target per minor
-  version. Used only by universal mode. Pair with `[tool.nab.matrix].platforms`,
-  `[tool.nab.matrix].implementations`, per-implementation overrides and (optionally)
-  `[tool.nab.matrix].python-patches` to control the resolve and marker shape across all targets.
+  version. Pair with `[tool.nab.matrix].platforms`, `[tool.nab.matrix].implementations`,
+  per-implementation overrides and (optionally) `[tool.nab.matrix].python-patches` to control the
+  resolve and marker shape across all targets.
 
-Declaring a `[tool.nab.matrix]` table while `mode` is `specific` is an error: the matrix is the list
-of targets to resolve, so leaving mode behind is almost always an oversight rather than an intent.
+A matrix with one effective target can use `specific` mode. A matrix with multiple targets defaults
+to `universal`; explicitly selecting `specific` at the same precedence is an error.
 
 The one exception is an explicit `--project-mode specific` on the command line. A CLI override
 outranks the `[tool.nab]` table, so it selects a single-environment resolve for that run and the

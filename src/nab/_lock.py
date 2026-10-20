@@ -1139,7 +1139,7 @@ def _build_provenance(
     """
     python_specifier: str | None
     platforms: tuple[str, ...]
-    if config.mode is ResolveMode.UNIVERSAL and config.matrix is not None:
+    if config.matrix is not None:
         python_specifier = config.matrix.python
         platforms = tuple(p.label for p in config.matrix.platforms)
     else:

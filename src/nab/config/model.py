@@ -392,11 +392,10 @@ def _config_from_effective(
             )
         raise ConfigError(msg)
     if mode is ResolveMode.SPECIFIC and matrix is not None:
-        if not mode_value.origin.outranks(matrix_value.origin):
+        if mode_value.origin.outranks(matrix_value.origin):
+            matrix = None
+        elif len(matrix_from_config(matrix).expand()) > 1:
             raise ConfigError(_specific_mode_message(matrix_value))
-        # A higher-precedence source (--project-mode) selected a
-        # single-environment resolve, so the matrix it shadows does not apply.
-        matrix = None
 
     dist_policy, trust_unverified = effective["dist-policy"].value
     indexes: tuple[IndexConfig, ...] = effective["indexes"].value
@@ -494,12 +493,13 @@ def _declares(flags: tuple[str, ...]) -> str:
 
 
 def _specific_mode_message(matrix_value: EffectiveValue) -> str:
-    """Say why a declared matrix is refused while mode is 'specific'."""
+    """Explain why a multi-target matrix conflicts with explicit specific mode."""
     flags = _declared_by(matrix_value)
     if flags:
         named = " and ".join(flags)
         return (
-            f"{named} {_declares(flags)} a matrix but mode is 'specific';"
+            f"{named} {_declares(flags)} a matrix with multiple targets"
+            " but mode is 'specific';"
             " pass --project-mode universal as well, or drop the matrix flags."
         )
     declared = (
@@ -508,7 +508,8 @@ def _specific_mode_message(matrix_value: EffectiveValue) -> str:
         else "[tool.nab.matrix] in pyproject.toml"
     )
     return (
-        f"{declared} is set but mode is 'specific'; set mode = 'universal' to"
+        f"{declared} declares multiple targets but mode is 'specific';"
+        " set mode = 'universal' to"
         " resolve for every target the matrix declares, or remove the table."
         " The multi-target lockfile format universal mode produces is"
         " experimental."

@@ -20,6 +20,7 @@ import tomli
 from nab_project import toml_io
 from nab_project.paths import PathState, path_state, realpath
 from nab_project.value import ValueType
+from nab_provider.policy import ResolveMode
 
 from .. import env
 from .._cli.definition.model import Opt, Scope
@@ -33,7 +34,7 @@ from .subflags import (
     fold_cli_table,
     render_cli_table,
 )
-from .values import CliTableError, SourceConfigError
+from .values import CliTableError, MatrixConfig, SourceConfigError, matrix_from_config
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -614,7 +615,29 @@ def resolve_config(
             rejected=rejected_for_key,
             cli_table=cli_table,
         )
+    _apply_mode_default(out)
     return out
+
+
+def _apply_mode_default(effective: dict[str, EffectiveValue]) -> None:
+    """Derive an unset mode from the matrix selected by configuration precedence."""
+    mode = effective["mode"]
+    matrix: MatrixConfig | None = effective["matrix"].value
+    if mode.origin.kind is not SourceKind.DEFAULT or matrix is None:
+        return
+    value = (
+        ResolveMode.UNIVERSAL
+        if len(matrix_from_config(matrix).expand()) > 1
+        else ResolveMode.SPECIFIC
+    )
+    origin = Origin(SourceKind.DEFAULT, "inferred from matrix")
+    effective["mode"] = EffectiveValue(
+        spec=mode.spec,
+        value=value,
+        origin=origin,
+        stack=((origin, value),),
+        rejected=mode.rejected,
+    )
 
 
 def _folded(

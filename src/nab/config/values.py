@@ -140,7 +140,7 @@ _VERSION_MARKER_VARIABLES = frozenset({"python_version", "python_full_version"})
 
 
 class MatrixConfig(ValueType):
-    """User-declared matrix axes for universal resolution."""
+    """User-declared Python, platform and interpreter targets."""
 
     __slots__ = __match_args__ = (
         "python",

@@ -180,7 +180,7 @@ host builds, even when it names the host.
 resolution. This covers both ways to declare a machine:
 
 - `[tool.nab.environment]` with a `platform` or an `implementation`.
-- `mode = "universal"`, where every matrix target declares one.
+- `[tool.nab.matrix]`, including a singleton matrix resolved in `specific` mode.
 
 This matches pip, which requires `--only-binary=:all:` under `--platform`, `--abi`, or
 `--implementation`.
